@@ -220,6 +220,23 @@ jobs:
       # moot for push/merge_group/dispatch today -- computed the same way
       # regardless, so it stays correct if that restriction is ever lifted).
       web_e2e_relevant: ${{ steps.filter.outputs.web_e2e_relevant }}
+      # True (POSITIVE match) when this run could plausibly affect the
+      # fault-tolerance issue-state check (adr-numbers job, "Verify every
+      # fault-injection tolerance cites an open issue" below): server/faultops/
+      # (knownOpenTolerances itself, and TestDumpKnownOpenTolerances that reads
+      # it) or scripts/check-fault-tolerance-issues.sh (the check itself), or
+      # ci.yml (same self-skip-proofing reasoning as every other positive-match
+      # output above). Computed the same way for pull_request and merge_group
+      # (both have a real file list); defaults true for push/workflow_dispatch,
+      # same as boot_smoke_relevant/web_e2e_relevant, since there's no file
+      # list to check there and both are rare enough that running it
+      # unconditionally costs nothing. Deliberately NOT run on every PR
+      # regardless of path: this check calls the GitHub API per tolerance row,
+      # and a transient API error or a routinely-closed issue would otherwise
+      # turn CI red for every unrelated PR until someone edits the table. The
+      # nightly schedule (.github/workflows/fault-tolerance-nightly.yml) is
+      # the unconditional full check; this is the narrow PR-time one.
+      fault_tolerance_relevant: ${{ steps.filter.outputs.fault_tolerance_relevant }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -261,6 +278,7 @@ jobs:
               echo "operator_only=false"
               echo "boot_smoke_relevant=true"
               echo "web_e2e_relevant=true"
+              echo "fault_tolerance_relevant=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           else
@@ -324,6 +342,13 @@ jobs:
             echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "web_e2e_relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "fault_tolerance_relevant=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^server/faultops/|^scripts/check-fault-tolerance-issues\.sh$'; then
+            echo "fault_tolerance_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fault_tolerance_relevant=false" >> "$GITHUB_OUTPUT"
           fi
 
   # web/ (ADR-070) has its own pnpm-workspace.yaml. pnpm resolves its
@@ -450,12 +475,14 @@ jobs:
   # regardless of what this specific PR touches, matching
   # pnpm-workspace-root-guard's reasoning for staying ungated.
   adr-numbers:
+    needs: [changes]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # issues: read is for the informational report step only (gh issue list)
-      # -- nothing else in this job touches issues, and that step never fails
-      # the job (see its own step and script header for why).
+      # issues: read is for the informational report step and the
+      # fault-tolerance issue-state check below -- nothing else in this job
+      # touches issues, and the informational step never fails the job (see
+      # its own step and script header for why).
       issues: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -510,6 +537,33 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/report-unlisted-security-issues.sh
+
+      # GATING, unlike the informational step above, and the difference is the
+      # signal each one keys on. That step keys on the `security` LABEL, which
+      # this repo applies unreliably (its header documents four confirmed
+      # misses), so its silence proves nothing and it must never fail a build.
+      # This one keys on issue STATE, which is not a human convention anyone has
+      # to remember to apply -- a closed issue is closed. See the script's own
+      # header, and #2844.
+      #
+      # It fails rather than passes when it cannot reach the API: green would
+      # otherwise mean "no closed issues found" when it actually means "nothing
+      # was looked at". The offline backstop is
+      # TestKnownOpenTolerances_CarryIssueAndExpiry's expiry check, which runs
+      # in the test-suite job regardless.
+      #
+      # Gated on fault_tolerance_relevant (the tolerance table/script changed,
+      # or this run has no PR file list to check): see that output's own
+      # comment in the changes job for why this does NOT run on every PR --
+      # it calls the GitHub API per tolerance row, and a transient error or a
+      # routinely-closed issue must not turn CI red for every unrelated PR.
+      # The unconditional nightly run is
+      # .github/workflows/fault-tolerance-nightly.yml.
+      - name: Verify every fault-injection tolerance cites an open issue
+        if: needs.changes.outputs.fault_tolerance_relevant == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-fault-tolerance-issues.sh
 
   # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
   # not a replacement for it. That hook is the PRIMARY guard: it runs on the
