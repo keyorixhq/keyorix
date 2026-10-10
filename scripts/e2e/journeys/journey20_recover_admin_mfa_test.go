@@ -61,9 +61,6 @@ func TestJourney_RecoverAdminUnderRequireMFA(t *testing.T) {
 		t.Fatalf("admin recover-admin: %v\n%s", err, recoverOut)
 	}
 	otp := parseOneTimePassword(t, recoverOut)
-	if !strings.Contains(recoverOut, "keyorix mfa enroll") || !strings.Contains(recoverOut, "change-password") {
-		t.Fatalf("recover-admin must tell the operator both setup steps under require_mfa, got:\n%s", recoverOut)
-	}
 	restartServer(t, s)
 
 	// ── 3. CLI, MFA first ───────────────────────────────────────────────────────
@@ -76,18 +73,17 @@ func TestJourney_RecoverAdminUnderRequireMFA(t *testing.T) {
 	if !strings.Contains(out, "403") {
 		t.Fatalf("project list in the setup session: want a 403, got:\n%s", out)
 	}
-	setupToken := adminLogin(t, s, adminUser, otp)
-	denied := restCall(t, s, setupToken, http.MethodGet, "/api/v1/projects", nil)
-	assertPendingSteps(t, denied, "change_password", "enroll_mfa")
-	// This API-side session is a second setup session of the same account; it
-	// is revoked with the CLI's once setup completes (checked below).
-
+	// The #3024 deadlock: on main this was refused with PasswordChangeRequired.
 	out = runCLI(t, cliBin, env, "mfa", "enroll")
 	m := regexp.MustCompile(`(?m)^  ([A-Z2-7]{16,})$`).FindStringSubmatch(out)
 	if m == nil {
 		t.Fatalf("could not find the base32 secret in `mfa enroll` output:\n%s", out)
 	}
 	secret := m[1]
+	// A second setup session of the same account, over the API: refused with
+	// both pending steps named, and revoked with the CLI's once setup completes.
+	setupToken := adminLogin(t, s, adminUser, otp)
+	assertPendingSteps(t, restCall(t, s, setupToken, http.MethodGet, "/api/v1/projects", nil), "change_password", "enroll_mfa")
 	now := time.Now().UTC()
 	code, burned := totpCodeAt(t, secret, now), totpStep(now)
 	out = runCLI(t, cliBin, env, "mfa", "activate", "--code", code, "--password", otp)
@@ -126,6 +122,10 @@ func TestJourney_RecoverAdminUnderRequireMFA(t *testing.T) {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("audit logs: want %q, got:\n%s", want, logs)
 		}
+	}
+	// And recover-admin told the operator what this journey just did.
+	if !strings.Contains(recoverOut, "keyorix mfa enroll") || !strings.Contains(recoverOut, "change-password") {
+		t.Fatalf("recover-admin must tell the operator both setup steps under require_mfa, got:\n%s", recoverOut)
 	}
 }
 
@@ -175,8 +175,11 @@ func TestJourney_AccountSetupPasswordFirstUnderRequireMFA(t *testing.T) {
 func passwordFirstSetup(t *testing.T, s *harness.Server, username, otp, newPassword string) string {
 	t.Helper()
 	token := adminLogin(t, s, username, otp)
-	assertPendingSteps(t, restCall(t, s, token, http.MethodGet, "/api/v1/projects", nil), "change_password", "enroll_mfa")
+	if denied := restCall(t, s, token, http.MethodGet, "/api/v1/projects", nil); denied.StatusCode != http.StatusForbidden {
+		t.Fatalf("%s: the setup session must be confined: want 403, got %d: %s", username, denied.StatusCode, denied.Raw)
+	}
 
+	// The #3024 deadlock: on main this was refused with MFAEnrollmentRequired.
 	cp := restExpect(t, s, token, http.MethodPost, "/api/v1/auth/change-password",
 		map[string]string{"current_password": otp, "new_password": newPassword}, http.StatusOK)
 	if reauthRequired(t, cp) {
