@@ -160,10 +160,10 @@ func printCreatedSecret(s *apiclient.Secret) {
 	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectId))
 	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentId))
 	if s.CreatedAt != nil {
-		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("Created:     %s\n", s.CreatedAt.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 	if s.Expiration != nil {
-		fmt.Printf("Expires:     %s\n", s.Expiration.Format(time.RFC3339))
+		fmt.Printf("Expires:     %s\n", s.Expiration.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 }
 
@@ -323,16 +323,16 @@ func displaySecret(s *apiclient.Secret, value string, showValue bool) {
 	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentId))
 	fmt.Printf("Created By:  %s\n", derefStr(s.CreatedBy))
 	if s.CreatedAt != nil {
-		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("Created:     %s\n", s.CreatedAt.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 	if s.UpdatedAt != nil {
-		fmt.Printf("Updated:     %s\n", s.UpdatedAt.Format(time.RFC3339))
+		fmt.Printf("Updated:     %s\n", s.UpdatedAt.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 	if s.MaxReads != nil {
 		fmt.Printf("Max Reads:   %d\n", *s.MaxReads)
 	}
 	if s.Expiration != nil {
-		fmt.Printf("Expires:     %s\n", s.Expiration.Format(time.RFC3339))
+		fmt.Printf("Expires:     %s\n", s.Expiration.UTC().Format("2006-01-02 15:04:05 UTC"))
 		if time.Now().After(*s.Expiration) {
 			fmt.Println("WARNING: secret is EXPIRED")
 		}
@@ -683,6 +683,22 @@ func runSecretList(cmd *cobra.Command, args []string) error {
 	secrets := derefSecretListEntrySlice(resp.JSON200.Data.Secrets)
 	total := int64(derefSecretInt(resp.JSON200.Data.Total))
 
+	// `truncated` means the server hit a bound while assembling this caller's
+	// multi-scope view, so `total` is a FLOOR. Say so rather than print it as a
+	// count — a quietly short number is the defect this flag was added to stop
+	// (#2780 follow-up). Only reachable without --project: every other list call in
+	// this CLI passes an explicit project and so takes the server's scoped branch,
+	// which is never truncated.
+	if resp.JSON200.Data.Truncated != nil && *resp.JSON200.Data.Truncated {
+		reason := derefStr(resp.JSON200.Data.TruncatedReason)
+		fmt.Fprintf(os.Stderr,
+			"warning: the server could not list every secret you can read, so the total below (%d) is a "+
+				"lower bound, not a count. Narrow the query with --project to get an exact listing.\n", total)
+		if reason != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", reason)
+		}
+	}
+
 	switch secretListFormat {
 	case "json":
 		return displaySecretsJSON(secrets, total, page, secretListLimit)
@@ -718,20 +734,20 @@ func displaySecretsTable(secrets []apiclient.SecretListEntry, total int64, page,
 		return
 	}
 
-	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n", "ID", "NAME", "TYPE", "STATUS", "CREATED", "EXPIRES")
+	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n", "ID", "NAME", "TYPE", "STATUS", "CREATED (UTC)", "EXPIRES (UTC)")
 	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n",
 		"-----", "--------------------", "------------", "--------", "--------------------", "--------------------")
 	for _, s := range secrets {
 		expires := "Never"
 		if s.Expiration != nil {
-			expires = s.Expiration.Format("2006-01-02 15:04")
+			expires = s.Expiration.UTC().Format("2006-01-02 15:04")
 			if time.Now().After(*s.Expiration) {
 				expires += " (EXPIRED)"
 			}
 		}
 		created := ""
 		if s.CreatedAt != nil {
-			created = s.CreatedAt.Format("2006-01-02 15:04")
+			created = s.CreatedAt.UTC().Format("2006-01-02 15:04")
 		}
 		fmt.Printf("%-5d %-20s %-12s %-8s %-20s %-20s\n",
 			derefSecretInt(s.Id), truncateSecretString(derefStr(s.Name), 20), truncateSecretString(derefStr(s.Type), 12),

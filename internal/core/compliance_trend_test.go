@@ -32,6 +32,15 @@ func complianceTrendCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{},
 		&models.CompliancePostureSnapshot{},
+		// #2461 round 2: independentBreakGlassReviewImpossible
+		// (INV-CORE-break-glass-independent-review-impossible-is-visible)
+		// queries Role/UserRole on every GetCompliancePosture call now, not
+		// only when a project has break-glass activity -- without these, that
+		// query errors on this deliberately-minimal fixture and degrades the
+		// emergency-access control area, shifting PassedControls versus what
+		// this test's hardcoded prior-snapshot comparison expects.
+		&models.Role{},
+		&models.UserRole{},
 	))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	c.now = func() time.Time { return time.Date(2099, 1, 15, 12, 0, 0, 0, time.UTC) }

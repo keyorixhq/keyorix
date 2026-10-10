@@ -121,16 +121,14 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDelet
 			EnvironmentCount: r.EnvironmentCount,
 		}
 		// Last activity = most recent of the project's own update or any of its
-		// secrets' updates. Computed in Go (not SQL GREATEST) so the query works
-		// on both Postgres and the SQLite-backed tests; the two columns share a
-		// format within a given DB, so a lexical compare is a valid time compare.
-		pc.LastActivity = r.UpdatedAt
-		if r.LastSecretActivity != nil && *r.LastSecretActivity > pc.LastActivity {
-			pc.LastActivity = *r.LastSecretActivity
-		}
+		// secrets' updates, compared as instants (the columns can carry different
+		// offsets, so a lexical compare is not a time compare) and reported as UTC
+		// RFC 3339. Computed in Go (not SQL GREATEST) so the query works on both
+		// Postgres and the SQLite-backed tests.
+		pc.LastActivity = latestUTC(r.UpdatedAt, r.LastSecretActivity)
 		if r.DeletedAt != nil {
 			pc.Deleted = true
-			pc.DeletedAt = *r.DeletedAt
+			pc.DeletedAt = utcRFC3339(*r.DeletedAt)
 		}
 		result = append(result, pc)
 	}
@@ -1331,4 +1329,25 @@ func (ls *LocalStorage) GetSecretAncestors(ctx context.Context, nodeID uint) ([]
 		currentID = parentID
 	}
 	return ancestors, nil
+}
+
+// latestUTC returns the later of a project's own updated_at and its newest
+// secret's updated_at as UTC RFC 3339. If either value does not parse it falls
+// back to the previous lexical choice rather than dropping the field.
+func latestUTC(projectUpdated string, secretUpdated *string) string {
+	if secretUpdated == nil {
+		return utcRFC3339(projectUpdated)
+	}
+	pt, pok := parseDBTimestamp(projectUpdated)
+	st, sok := parseDBTimestamp(*secretUpdated)
+	if pok && sok {
+		if st.After(pt) {
+			return st.UTC().Format(time.RFC3339Nano)
+		}
+		return pt.UTC().Format(time.RFC3339Nano)
+	}
+	if *secretUpdated > projectUpdated {
+		return utcRFC3339(*secretUpdated)
+	}
+	return utcRFC3339(projectUpdated)
 }
