@@ -130,6 +130,13 @@ type secretListResponseWire struct {
 	OwnedCount      int                         `json:"owned_count"`
 	SharedCount     int                         `json:"shared_count"`
 	ACLGrantedCount int                         `json:"acl_granted_count"`
+	// Truncated reports that `total` is a FLOOR, not a count: a listing bound was
+	// hit (the storage row bound on any scoped listing, or the multi-scope
+	// union's per-scope bound). Omitted when false, so the ordinary
+	// response shape is unchanged. A client showing `total` must not present it as a
+	// complete count when this is set — see models.SecretListResponse.Truncated.
+	Truncated       bool   `json:"truncated,omitempty"`
+	TruncatedReason string `json:"truncated_reason,omitempty"`
 }
 
 func newSecretListResponseWire(r *models.SecretListResponse) secretListResponseWire {
@@ -141,5 +148,6 @@ func newSecretListResponseWire(r *models.SecretListResponse) secretListResponseW
 		Secrets: secrets, Total: r.Total, Page: r.Page, PageSize: r.PageSize,
 		TotalPages: r.TotalPages, OwnedCount: r.OwnedCount, SharedCount: r.SharedCount,
 		ACLGrantedCount: r.ACLGrantedCount,
+		Truncated:       r.Truncated, TruncatedReason: r.TruncatedReason,
 	}
 }

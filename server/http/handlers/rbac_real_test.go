@@ -55,7 +55,7 @@ func openTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{},
 		&models.Permission{},
-		&models.RolePermission{},
+		&models.RolePermission{}, &models.SystemMetadata{},
 		&models.UserRole{},
 		&models.Group{},
 		&models.UserGroup{},

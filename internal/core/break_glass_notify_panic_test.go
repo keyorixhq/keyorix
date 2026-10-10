@@ -43,6 +43,16 @@ func (s *breakGlassNotifyPanicSpy) ListProjectMembers(_ context.Context, _ uint)
 	return s.members, nil
 }
 
+// The #2955 install-wide-admin lookup: this spy models an install with none, so
+// the project-member behaviour under test is unchanged.
+func (s *breakGlassNotifyPanicSpy) ListAdminBypassRoleIDs(_ context.Context) ([]uint, error) {
+	return nil, nil
+}
+
+func (s *breakGlassNotifyPanicSpy) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
+	return nil, nil
+}
+
 func (s *breakGlassNotifyPanicSpy) CreateNotification(_ context.Context, n *models.Notification) (*models.Notification, error) {
 	if s.panicOnNotification {
 		panic("simulated CreateNotification panic")
