@@ -12,6 +12,7 @@ const EVENT_BADGE: Record<string, { bg: string; text: string }> = {
     'secret.create': { bg: 'var(--success-subtle)', text: 'var(--success)' },
     'secret.read': { bg: 'var(--accent-subtle)', text: 'var(--accent-text)' },
     'secret.versions_listed': { bg: 'var(--bg-muted)', text: 'var(--text-muted)' },
+    'secret.metadata_read': { bg: 'var(--bg-muted)', text: 'var(--text-muted)' },
     'secret.update': { bg: 'var(--warning-subtle)', text: 'var(--warning)' },
     'secret.delete': { bg: 'var(--error-subtle)', text: 'var(--error)' },
     'secret.rotate': { bg: 'var(--warning-subtle)', text: 'var(--warning)' },
