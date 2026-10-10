@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -169,6 +170,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, core.ErrMFARequired) {
 			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), user.ID)
 			if cerr != nil {
+				// RESIL-1: the password already matched, so a write-gate timeout here
+				// must look exactly like a wrong credential (#2740 option C / #2888);
+				// a 500 or 503 would confirm the guess. Only the gate-contention case
+				// is changed here; the rest of #2888 is its own item.
+				if corestorage.IsWriteContention(cerr) {
+					log.Printf("Login: write gate contention after a matched credential; answering as a wrong credential")
+					sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
+					return
+				}
 				sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
 				return
 			}
@@ -377,6 +387,14 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, core.ErrMFARequired) {
 		challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
 		if cerr != nil {
+			// RESIL-1: same rule as Login — a gate timeout after the setup token and
+			// new password were accepted answers exactly like this endpoint's other
+			// generic failure, not a distinguishable 500.
+			if corestorage.IsWriteContention(cerr) {
+				log.Printf("ConsumeSetup: write gate contention after an accepted setup token; answering with the generic failure")
+				sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
+				return
+			}
 			sendError(w, "Internal", "failed to start MFA challenge", http.StatusInternalServerError, nil)
 			return
 		}
