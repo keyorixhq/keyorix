@@ -59,13 +59,20 @@ async function submitLogin(page: Page) {
     await page.waitForURL('/dashboard', { timeout: 15_000 });
 }
 
-// realLogin is submitLogin's convenience wrapper for callers that don't
-// need to observe the /login page's OWN initial load (the page-walk test
-// below) -- it navigates first, then submits.
-async function realLogin(page: Page) {
-    await page.goto('/login');
-    await submitLogin(page);
-}
+// ONE login for the whole file: the three tests run serially in one shared
+// browser page, and only the first one logs in. Per-test logins cost a login
+// attempt each against the per-IP budget (10 per 15 min, #2956), which
+// scripts/demo/check.sh's earlier steps have already partly spent -- with the
+// MFA-enrolled demo admin a third UI login ran out of it.
+test.describe.configure({ mode: 'serial' });
+let shared: Page;
+test.beforeAll(async ({ browser }, testInfo) => {
+    const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL });
+    shared = await context.newPage();
+});
+test.afterAll(async () => {
+    await shared.context().close();
+});
 
 // watchPage wires up the two listeners every page-load assertion below
 // needs, returning the accumulating arrays directly -- a test resets them
@@ -98,7 +105,8 @@ function watchPage(page: Page) {
     return { consoleErrors, failedRequests };
 }
 
-test('logs in successfully and lands on the real dashboard', async ({ page }) => {
+test('logs in successfully and lands on the real dashboard', async () => {
+    const page = shared;
     await page.goto('/login');
     watchPage(page); // still wired up so a genuinely new failure mode shows up in a trace/screenshot, just not asserted below -- see the two known, non-blocking races this comment documents.
     await submitLogin(page);
@@ -154,11 +162,12 @@ const PAGES: Array<[string, string]> = [
     ['settings (appearance)', '/settings/appearance'],
 ];
 
-test('every main page loads with no console errors or failed API calls (single session)', async ({ page }) => {
+test('every main page loads with no console errors or failed API calls (single session)', async () => {
+    const page = shared; // already logged in by the first test
     const { consoleErrors, failedRequests } = watchPage(page);
-    await realLogin(page);
-    // The login page-load itself may have produced noise (e.g. a harmless
-    // dev-only Vite HMR message) -- reset both trackers right after login so
+    await page.goto('/dashboard');
+    // The page-load itself may have produced noise (e.g. a harmless
+    // dev-only Vite HMR message) -- reset both trackers right after it so
     // each page assertion below is scoped to that page's own navigation.
     consoleErrors.length = 0;
     failedRequests.length = 0;
@@ -193,8 +202,8 @@ test('every main page loads with no console errors or failed API calls (single s
 // legacy-service-accounts.md) -- its page and API client were deleted, but
 // an old bookmark/link to either admin URL must redirect to Machine
 // Identities, not 404 or dead-end silently.
-test('old service-accounts and api-tokens URLs redirect to Machine Identities', async ({ page }) => {
-    await realLogin(page);
+test('old service-accounts and api-tokens URLs redirect to Machine Identities', async () => {
+    const page = shared; // still the session from the first test
 
     for (const oldPath of ['/admin/service-accounts', '/admin/api-tokens']) {
         await page.goto(oldPath);
