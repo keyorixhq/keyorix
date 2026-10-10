@@ -76,9 +76,12 @@ add_header (CORS, Cache-Control, health-check Content-Type) for other
 purposes, which would otherwise strip all of these from those responses. This
 template is the single source of truth; every location block that defines its
 own add_header must also include this so the headers still apply there.
+
+No Strict-Transport-Security here: this nginx listens on plain http (port 80);
+TLS terminates at the Ingress / load balancer in front of it, and HSTS sent
+over http:// is wrong (DEMO-WALK-3 finding 23, same as web/nginx.conf).
 */}}
 {{- define "keyorix.web.securityHeaders" -}}
-add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
 add_header X-Frame-Options "DENY" always;
 add_header X-Content-Type-Options "nosniff" always;
 add_header X-XSS-Protection "1; mode=block" always;

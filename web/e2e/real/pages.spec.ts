@@ -19,9 +19,14 @@
 // navigations inside a single test matches how the real UI is actually
 // used and avoids manufacturing a login burst no real user would produce.
 import { test, expect, Page } from '@playwright/test';
+import { waitForFreshTotpCode } from './helpers';
 
 const ADMIN_USERNAME = process.env.KEYORIX_E2E_ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.KEYORIX_E2E_ADMIN_PASSWORD;
+// Optional: set by scripts/demo/check.sh when the admin has TOTP enrolled. Read
+// from the environment only; never logged or put in a test title/attachment.
+const ADMIN_TOTP_SECRET = process.env.KEYORIX_E2E_ADMIN_TOTP_SECRET;
+let lastTotpStep = Number(process.env.KEYORIX_E2E_ADMIN_TOTP_LAST_STEP || 0) || 0;
 
 if (!ADMIN_USERNAME || !ADMIN_PASSWORD) {
     throw new Error(
@@ -39,6 +44,18 @@ async function submitLogin(page: Page) {
     await page.getByTestId('username-input').fill(ADMIN_USERNAME as string);
     await page.getByTestId('password-input').fill(ADMIN_PASSWORD as string);
     await page.getByTestId('login-button').click();
+    if (ADMIN_TOTP_SECRET) {
+        // scripts/demo/check.sh runs this against the MFA-enrolled demo admin:
+        // answer the second-factor step with a code for a step strictly later
+        // than any the account already spent (anti-replay is one counter per
+        // account, shared by every login in this file).
+        const codeInput = page.getByPlaceholder('123456');
+        await expect(codeInput).toBeVisible({ timeout: 10_000 });
+        const next = await waitForFreshTotpCode(page, ADMIN_TOTP_SECRET, lastTotpStep);
+        lastTotpStep = next.step;
+        await codeInput.fill(next.code);
+        await page.getByRole('button', { name: /verify/i }).click();
+    }
     await page.waitForURL('/dashboard', { timeout: 15_000 });
 }
 

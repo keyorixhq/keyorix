@@ -641,11 +641,19 @@ step_ui() {
     echo "Playwright is not installed -- cd web && pnpm install && pnpm exec playwright install chromium"
     return 1
   }
+  # The demo admin is MFA-enrolled: hand the spec the TOTP key (env only, never
+  # printed) and the last step already spent, so it computes a strictly later code.
+  local totp_last=0
+  [ -z "$ADMIN_MFA_SECRET" ] || totp_last="$(demo_totp_last_step "$ADMIN_MFA_SECRET")"
   (
     cd "$REPO_ROOT/web" || exit 1
     export KEYORIX_E2E_BACKEND_URL="$SERVER_URL"
     export KEYORIX_E2E_ADMIN_USERNAME="$ADMIN_USER"
     export KEYORIX_E2E_ADMIN_PASSWORD="$ADMIN_PASSWORD"
+    if [ -n "$ADMIN_MFA_SECRET" ]; then
+      export KEYORIX_E2E_ADMIN_TOTP_SECRET="$ADMIN_MFA_SECRET"
+      export KEYORIX_E2E_ADMIN_TOTP_LAST_STEP="$totp_last"
+    fi
     export KEYORIX_E2E_WEB_PORT=18199
     pnpm exec playwright test --config=playwright.config.real.ts e2e/real/pages.spec.ts
   )
