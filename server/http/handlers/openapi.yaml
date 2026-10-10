@@ -3656,7 +3656,10 @@ paths:
         shows as the higher level; `grants` lists every grant behind it. Expired shares
         and shares to users who are not project members grant nothing and are not
         listed. Holders of a global role (global admins) have implicit access and are
-        not enumerated.
+        not enumerated. Members who hold access only through a role are listed only
+        when the caller holds users.read at the project (the gate of
+        GET /projects/{id}/members); otherwise they are left out and the response is
+        flagged `degraded`.
       operationId: listAccessors
       security: [{bearerAuth: []}]
       parameters:

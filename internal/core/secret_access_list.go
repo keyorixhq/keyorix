@@ -11,6 +11,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -128,7 +129,16 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 			userNames[m.ID] = m.Username // already loaded; prime the cache
 		}
 	}
-	if members, err := c.shareRecipientCandidates(ctx, secret.ProjectID); err != nil {
+	// The project's role-holders are its member roster. Only a caller who may already
+	// read the project's members (users.read at the project, the gate of
+	// GET /projects/{id}/members) gets it here; a secrets.read-only caller keeps the
+	// owner, share and ACL listing and sees the gap flagged, never a roster they could
+	// not otherwise read.
+	if canRoster, err := c.Authorize(ctx, actorID, "users.read", Scope{ProjectID: secret.ProjectID}); err != nil {
+		result.degrade("project_members", err)
+	} else if !canRoster {
+		result.degrade("project_members", errors.New("project members are not listed: the caller lacks users.read in the project"))
+	} else if members, err := c.shareRecipientCandidates(ctx, secret.ProjectID); err != nil {
 		result.degrade("project_members", err)
 	} else {
 		for _, id := range members {

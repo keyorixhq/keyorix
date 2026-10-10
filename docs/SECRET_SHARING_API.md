@@ -367,7 +367,10 @@ gives the permission (`owner`, `role`, `acl`, `direct_share` or
 `group_share:<group>`). `grants` lists every grant the user holds, for example
 `["role:read", "direct_share:write"]`. Expired shares, and shares to users who are
 no longer project members, grant nothing and are not listed. Holders of a global
-role (global admins) have implicit access and are not listed.
+role (global admins) have implicit access and are not listed. Members who hold
+access only through a role are listed only if the caller holds `users.read` at the
+project (every built-in project role does); otherwise they are left out and the
+response is flagged `degraded`.
 
 ## Group Sharing
 
