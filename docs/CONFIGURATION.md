@@ -450,6 +450,31 @@ A setting on its implicit default with a real problem is also its own deviation.
 file's age are informational: no rotation-age threshold is defined anywhere in
 this codebase, so a number there would be a guess.
 
+Like every `admin` command, `admin validate --posture` needs the database to
+itself: it refuses while the server runs (stop it, or in Docker Compose use
+`docker compose stop backend` then `docker compose run --rm backend ./keyorix-server admin validate --posture`).
+
+### Hardening the generated config (clearing the posture report)
+
+The config written by `admin init` (and `keyorix.docker.yaml`) is a dev baseline:
+on it the report lists the three `insecure_*` settings below (cleartext transport,
+unauthenticated `/metrics`, no API rate limit), and exits 1. Verified on a fresh
+SQLite install: setting exactly these keys makes `admin validate --posture` print
+`No deviations found.` and exit 0 (the startup warning text for each is the
+`insecure_*` name, not the YAML key, so the mapping is:)
+
+| Report names | Set in `keyorix.yaml` |
+|---|---|
+| `security.insecure_allow_cleartext_transport` | `server.http.tls.enabled: true` (with `cert_file`/`key_file`) and `security.require_transport_tls: true`; or terminate TLS at a proxy you trust and list it in `server.http.trusted_proxies` |
+| `server.insecure_allow_unauthenticated_metrics` | `server.http.metrics_token: "<long random string>"`; `/metrics` then answers 401 without `Authorization: Bearer <token>` and 200 with it |
+| `server.insecure_disable_api_ratelimit` | `server.http.ratelimit.enabled: true` (and `server.grpc.ratelimit.enabled: true` if gRPC is on) |
+
+Also keep the key and config files `0600` and owned by the server's user. In
+Docker Compose the bind-mounted `keyorix.docker.yaml` arrives as the host's
+owner/mode (typically `0664`, uid 1000, while the container runs as uid 1001),
+which the report counts as a file-permission deviation until you
+`chmod 600 keyorix.docker.yaml && sudo chown 1001 keyorix.docker.yaml` (tracked in #2922).
+
 With `require_mfa: true` (the default), an interactive (session-authenticated) user
 **without** a second factor is confined to the MFA-enrolment endpoints until they
 enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
@@ -1102,6 +1127,15 @@ Deliberately not RBAC-gated on the *emergency* permissions — the point is acce
 caller does *not* have — but gated on project membership, so the controls are: it
 must be enabled here, the caller must belong to the project, every use is
 justified + audited + alerted, the grant expires, and an admin can revoke it early.
+
+Operating it from the CLI (verified end to end with a `project_viewer` user):
+`keyorix break-glass activate --project-id N --justification "..." --ttl 1h`,
+then an admin runs `keyorix break-glass list --project-id N` (in the test the
+activating user's own `list` printed "No break-glass activations", only the admin's
+did show it) and `keyorix break-glass revoke
+--project-id N --activation-id ID`. There is no CLI command for the review below:
+call `POST /api/v1/projects/N/break-glass/ID/review` with `{"note": "..."}` and a
+bearer token (response `Break-glass activation reviewed`).
 
 `POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
 after-the-fact check — who reviewed it, when, and a note — exactly once per
