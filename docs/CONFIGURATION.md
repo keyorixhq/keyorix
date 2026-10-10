@@ -385,6 +385,15 @@ boots with the checks passing (recorded in the database as
 fresh install. Setting the key explicitly (`true`, or `false` to opt out
 visibly) also ends it.
 
+While in the grace period the deployment is **not** reported as compliant: every
+start logs `WARNING: security.insecure_skip_startup_validation is in effect
+(grace-warn-only)`, and `admin validate --posture` counts it as a deviation. The
+setting's state (`off`, `grace-warn-only`, `enforcing-implicit` or
+`enforcing-explicit`) is recorded in the start-to-start settings diff, so
+entering or leaving the grace period is audited. The first start after upgrading
+to this version records one such change, because the recorded value changed
+from `true`/`false` to these names.
+
 `require_mfa` on an upgraded deployment that never set it gets the same kind of
 grace period: MFA is **not** enforced yet, and every start logs a loud `ADR-112
 grace period` warning. Have every interactive admin enrol, then set
@@ -432,8 +441,12 @@ means the file is silent and the weak state is what an absent key resolves to.
 A key that arrives only through a YAML merge key (`<<:`) reads as not written.
 Startup checks are reported only if they ran: validation stops at the first
 failed check, and any check after it is listed as "not evaluated" rather than
-as a second failure. A grace-period setting merely relying on its new implicit default, with a
-real underlying problem, is its own deviation. Only TLS mode and the KEK salt
+as a second failure. An upgraded deployment in the `enable_file_permission_check`
+or `require_mfa` grace period is a deviation even when nothing is wrong yet, because
+the server would only warn, or not enforce at all, if something were. The report
+works this out from the database the same way the server does; if it cannot read
+the database it counts the deviation instead of assuming the deployment enforces.
+A setting on its implicit default with a real problem is also its own deviation. Only TLS mode and the KEK salt
 file's age are informational: no rotation-age threshold is defined anywhere in
 this codebase, so a number there would be a guess.
 
@@ -1068,23 +1081,29 @@ jit_access_expiry:
 
 ## break_glass
 
-Opt-in **self-service emergency access** (incident response — NIS2/DORA). When
-enabled, any **member of the project** (a user holding a role scoped to that project,
-directly or through a group; install-wide roles do not count) can
+Opt-in **self-service emergency access** (incident response — NIS2/DORA). **Disabled
+by default** (a deliberate secure default): until `break_glass.enabled: true` is set
+and the server restarted, every activation attempt is refused with
+`permission denied: break-glass is not enabled on this server; set
+break_glass.enabled: true in keyorix.yaml and restart`. When enabled, any
+**member of the project** (a user holding a role scoped to that project, directly or
+through a group; a global role such as the install-wide viewer does not count) can
 `POST /api/v1/projects/{id}/break-glass` (or run `keyorix break-glass activate`) to
 **immediately** self-grant the configured emergency role at that project — no
 approval. A non-member is refused with `403 permission denied: break-glass is
-available only to members of the project`. The role is added on top of what the member
-already holds, so a user who can already read a secret sees the *extra* permissions
-(printed by `activate`), not new read access. The activation is **time-bound** (it
+available only to members of the project`, so in practice it elevates a lower project
+role (for example `project_viewer`) to the emergency role. The role is added on top of
+what the member already holds, so a user who can already read a secret sees the *extra*
+permissions (printed by `activate`), not new read access. The activation is **time-bound** (it
 auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
 **written justification**, is **loudly audited** (`break_glass.activated`), and
 **alerts the project's admins**. Each activation is a queryable record for post-hoc
 review (`GET …/break-glass`, `keyorix break-glass list`).
 
-Deliberately not RBAC-gated — the point is access the caller does *not* have — so
-the controls are: it must be enabled here, every use is justified + audited +
-alerted, the grant expires, and an admin can revoke it early.
+Deliberately not RBAC-gated on the *emergency* permissions — the point is access the
+caller does *not* have — but gated on project membership, so the controls are: it
+must be enabled here, the caller must belong to the project, every use is
+justified + audited + alerted, the grant expires, and an admin can revoke it early.
 
 `POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
 after-the-fact check — who reviewed it, when, and a note — exactly once per
