@@ -2400,7 +2400,7 @@ export interface paths {
         };
         /**
          * List who can read a secret
-         * @description Effective access list -- every user who can read the secret, with their EFFECTIVE permission and how it was granted. For a project member the level is max(role permission, active share permission), so a share that elevates a role shows as the higher level; `grants` lists every grant behind it. Expired shares and shares to users who are not project members grant nothing and are not listed. Holders of a global role (global admins) have implicit access and are not enumerated.
+         * @description Effective access list -- every user who can read the secret, with their EFFECTIVE permission and how it was granted. For a project member the level is max(role permission, active share permission), so a share that elevates a role shows as the higher level; `grants` lists every grant behind it. Expired shares and shares to users who are not project members grant nothing and are not listed. Holders of a global role (global admins) have implicit access and are not enumerated. Members who hold access only through a role are listed only when the caller holds users.read at the project (the gate of GET /projects/{id}/members); otherwise they are left out and the response is flagged `degraded`.
          */
         get: operations["listAccessors"];
         put?: never;
