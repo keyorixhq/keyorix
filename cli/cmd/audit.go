@@ -525,12 +525,9 @@ func shortTime(s string) string {
 }
 
 // utcTime is the one human-readable timestamp format of the CLI: UTC, no zone
-// suffix (for table columns headed "(UTC)"). utcTimeLabelled is the same with the
-// zone spelled out, for "Created: ..." style lines. Commands used to mix local
+// suffix (for table columns headed "(UTC)"). Commands used to mix local
 // time, RFC3339 with an offset and raw "...Z" strings (#2942).
 func utcTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
-
-func utcTimeLabelled(t time.Time) string { return utcTime(t) + " UTC" }
 
 func auditTruncate(s string, n int) string {
 	if len(s) <= n {
