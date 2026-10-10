@@ -11,6 +11,7 @@
 
 import { request as apiRequestFactory, Page } from '@playwright/test';
 import { createHmac } from 'node:crypto';
+import { compliantPassword, personalInfoCandidates } from './support/password';
 
 export const ADMIN_USERNAME = process.env.KEYORIX_E2E_ADMIN_USERNAME;
 export const ADMIN_PASSWORD = process.env.KEYORIX_E2E_ADMIN_PASSWORD;
@@ -144,19 +145,26 @@ export async function createDedicatedUser(usernamePrefix: string): Promise<{ use
     try {
         const stamp = Date.now();
         const username = `${usernamePrefix}${stamp}`;
-        // Deliberately NOT derived from `stamp` (or any other username/email/
-        // display-name substring) -- internal/core/rules.password_policy.go's
-        // containsPersonalInfo rejects a password containing any 3+-char word
-        // of the display name, and "MFA Test User <stamp>" has `stamp` as one
-        // of those words. A shared stamp here silently 400s the create-user
-        // call with a generic "ValidationError". Confirmed live.
-        const password = `Quartz-Falcon-${Math.random().toString(36).slice(2, 10)}-Garnet!`;
+        const email = `${username}@example.invalid`;
+        const displayName = `MFA Test User ${stamp}`;
+        // #2815: this used to be
+        //   `Quartz-Falcon-${Math.random().toString(36).slice(2, 10)}-Garnet!`
+        // which contains no literal digit, so DefaultPasswordPolicy's
+        // RequireDigit was met only when the base-36 chunk happened to include
+        // one -- 7.4% of calls it did not, and with two dedicated users per run
+        // ~14% of runs 400'd here in SETUP, failing whatever PR was in CI.
+        // compliantPassword satisfies every class by construction and verifies
+        // the result, and is passed this user's own personal-info candidates so
+        // containsPersonalInfo cannot reject it either (the `stamp` in the
+        // display name is a plain substring match -- the original reason the
+        // password could not simply be derived from the username).
+        const password = compliantPassword(personalInfoCandidates({ username, email, displayName }));
         const createRes = await api.post('/api/v1/users', {
             headers: { Authorization: `Bearer ${token}` },
             data: {
                 username,
-                email: `${username}@example.invalid`,
-                display_name: `MFA Test User ${stamp}`,
+                email,
+                display_name: displayName,
                 password,
             },
         });
