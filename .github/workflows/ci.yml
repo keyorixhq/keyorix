@@ -266,9 +266,11 @@ jobs:
             fi
             echo "Changed files (merge group):"
             echo "$changed"
-            echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
-            echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
-            echo "demo_smoke_relevant=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "boot_smoke_relevant=true"
+              echo "web_e2e_relevant=true"
+              echo "demo_smoke_relevant=true"
+            } >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" != "pull_request" ]; then
             queue_verified=false
             if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
@@ -1697,9 +1699,15 @@ jobs:
       - name: Verify the seed through the public API (not the database)
         run: |
           set -e
+          # Single source of truth: the demo admin password is the fixed
+          # constant scripts/demo/up.sh bootstrapped with; read it from there
+          # instead of repeating the literal in the workflow.
+          admin_pw=$(sed -n 's/^ADMIN_PASSWORD="\(.*\)"$/\1/p' scripts/demo/up.sh)
+          [ -n "$admin_pw" ] || { echo "could not read ADMIN_PASSWORD from scripts/demo/up.sh" >&2; exit 1; }
+          body=$(jq -n --arg p "$admin_pw" '{username:"admin",password:$p}')
           TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
             -H 'Content-Type: application/json' \
-            -d '{"username":"admin","password":"Correct-Horse-Battery-2026"}' | \
+            -d "$body" | \
             python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])')
           projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
             python3 -c 'import sys,json; print(len(json.load(sys.stdin)["data"]["projects"]))')
