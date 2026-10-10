@@ -17,10 +17,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -32,23 +31,30 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-var ncCRUDCounter atomic.Int64
-
 // freshNCCore opens a unique in-memory SQLite DB migrated for notification channels
 // and returns a ready-to-use KeyorixCore.
 func freshNCCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_crud_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_crud_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
 		&models.NotificationChannel{},
 	))
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	return ncCore(db)
+}
+
+// ncCore builds the KeyorixCore these handler tests drive. The webhook URL
+// validator is stubbed to accept: these tests exercise the CRUD handlers, not
+// the SSRF guard (core's own tests cover validateWebhookURL), and the real
+// validator resolves example.com over the network, so with no DNS the tests
+// failed 400 for reasons unrelated to what they assert. Same stub as
+// newNotifChannelHandler.
+func ncCore(db *gorm.DB) *core.KeyorixCore {
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs.SetWebhookURLValidator(func(_ string) error { return nil })
+	return cs
 }
 
 // freshNCCoreWithChannel opens a DB, migrates, seeds one channel, and returns
@@ -56,10 +62,7 @@ func freshNCCore(t *testing.T) *core.KeyorixCore {
 func freshNCCoreWithChannel(t *testing.T) (*core.KeyorixCore, uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_crud_ch_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_crud_ch_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
@@ -82,7 +85,7 @@ func freshNCCoreWithChannel(t *testing.T) (*core.KeyorixCore, uint) {
 		Enabled: true,
 	}
 	require.NoError(t, db.Create(ch).Error)
-	return core.NewKeyorixCore(store.NewLocalStorage(db)), ch.ID
+	return ncCore(db), ch.ID
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -291,12 +294,9 @@ func TestNCList_WithChannel(t *testing.T) {
 func TestNCList_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_list_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_list_err_")
 	// No AutoMigrate — table missing to force a real DB error.
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := ncCore(db)
 	h := NewNotificationChannelHandler(cs)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -368,12 +368,9 @@ func TestNCCreate_ValidationError(t *testing.T) {
 func TestNCCreate_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_create_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_create_err_")
 	// No AutoMigrate — table missing to force a real DB error on create.
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := ncCore(db)
 	h := NewNotificationChannelHandler(cs)
 
 	body, _ := json.Marshal(map[string]any{
@@ -411,10 +408,7 @@ func TestNCGet_BadID(t *testing.T) {
 func TestNCGet_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_get_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_get_err_")
 	// Migrate the table so it exists, then close the connection to cause a real error.
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	ch := &models.NotificationChannel{Name: "ch", Type: "webhook", URL: "https://x.com", Enabled: true}
@@ -481,10 +475,7 @@ func TestNCUpdate_BadID(t *testing.T) {
 func TestNCUpdate_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_upd_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_upd_err_")
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	ch := &models.NotificationChannel{Name: "ch", Type: "webhook", URL: "https://x.com", Enabled: true}
 	require.NoError(t, db.Create(ch).Error)
@@ -551,10 +542,7 @@ func TestNCDelete_BadID(t *testing.T) {
 func TestNCDelete_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_del_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_del_err_")
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	ch := &models.NotificationChannel{Name: "ch", Type: "webhook", URL: "https://x.com", Enabled: true}
 	require.NoError(t, db.Create(ch).Error)
