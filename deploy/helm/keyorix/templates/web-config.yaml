@@ -67,7 +67,7 @@ data:
           {{- if .Values.secureBaseline.enabled }}
           # secureBaseline (SECURE-DEFAULT-1): the server serves TLS; verify it
           # against exactly its own certificate (server.crt from the
-          # <release>-secure-baseline Secret, mounted at /etc/keyorix/tls).
+          # <fullname>-secure-baseline Secret, mounted at /etc/keyorix/tls).
           proxy_pass https://{{ include "keyorix.server.fullname" . }}:{{ .Values.server.service.port }};
           proxy_ssl_verify on;
           proxy_ssl_verify_depth 1;

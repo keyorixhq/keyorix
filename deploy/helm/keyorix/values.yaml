@@ -45,7 +45,7 @@ secureBaseline:
   enabled: false
   # Lifetime of the generated pod-to-pod certificates (server <-> web,
   # server <-> postgresql). Browsers never see them. Rotate by deleting the
-  # <release>-secure-baseline Secret and running `helm upgrade`.
+  # <fullname>-secure-baseline Secret and running `helm upgrade`.
   certValidityDays: 3650
 
 # ── API server ────────────────────────────────────────────────────────────────

@@ -20,7 +20,7 @@ data:
         port: "{{ .Values.server.service.port }}"
         {{- if .Values.secureBaseline.enabled }}
         # secureBaseline (SECURE-DEFAULT-1): /app/run is the memory emptyDir the
-        # prepare-files initContainer fills from the <release>-secure-baseline
+        # prepare-files initContainer fills from the <fullname>-secure-baseline
         # Secret, 0600, owned by the server's uid.
         tls:
           enabled: true
