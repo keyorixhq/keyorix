@@ -27,9 +27,15 @@ func newMFATestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// #2841: the RBAC tables are part of this harness's minimum schema now.
+	// VerifyMFALogin resolves the response identity (GetUserRoles +
+	// GetUserPermissions) BEFORE minting the session and the user-scoped
+	// MFAStepupToken, so a login against a schema missing them fails outright —
+	// as it would in production, where they always exist.
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.MFASecret{},
 		&models.MFARecoveryCode{}, &models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
-		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
+		&models.MFAStepupToken{}, &models.MFAStepUpGrant{},
+		&models.Role{}, &models.Permission{}, &models.UserRole{}, &models.RolePermission{}))
 	hash, _ := bcrypt.GenerateFromPassword([]byte(mfaTestPassword), int(bcryptCost.Load()))
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", Email: "a@b.com", EmailFolded: "a@b.com",
 		PasswordHash: string(hash), AccountState: "active"}).Error)
@@ -113,7 +119,7 @@ func TestVerifyMFALogin_RejectsSuspendedAccount(t *testing.T) {
 	// Even a correct TOTP code must not yield a session for the suspended account.
 	code, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
-	sess, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
+	sess, _, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not active")
 	assert.Nil(t, sess)
@@ -165,29 +171,29 @@ func TestMFA_FullFlow(t *testing.T) {
 	// ── Verify: wrong code rejected (burns that challenge) ──
 	ch1, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	_, _, err = c.VerifyMFALogin(ctx, ch1, "000000", "ua", "1.2.3.4")
+	_, _, _, err = c.VerifyMFALogin(ctx, ch1, "000000", "ua", "1.2.3.4")
 	require.Error(t, err)
 
 	// ── Verify: correct code → session ──
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
 	code2, _ := totp.GenerateCode(secret, fixed)
-	sess, _, err := c.VerifyMFALogin(ctx, ch2, code2, "ua", "1.2.3.4")
+	sess, _, _, err := c.VerifyMFALogin(ctx, ch2, code2, "ua", "1.2.3.4")
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 
 	// A consumed challenge can't be reused.
-	_, _, err = c.VerifyMFALogin(ctx, ch2, code2, "ua", "1.2.3.4")
+	_, _, _, err = c.VerifyMFALogin(ctx, ch2, code2, "ua", "1.2.3.4")
 	require.Error(t, err, "challenge is single-use")
 
 	// ── Recovery code: works once, then fails ──
 	ch3, _ := c.CreateMFAChallenge(ctx, 1)
-	sess3, _, err := c.VerifyMFALogin(ctx, ch3, codes[0], "ua", "1.2.3.4")
+	sess3, _, _, err := c.VerifyMFALogin(ctx, ch3, codes[0], "ua", "1.2.3.4")
 	require.NoError(t, err)
 	require.NotNil(t, sess3)
 
 	ch4, _ := c.CreateMFAChallenge(ctx, 1)
-	_, _, err = c.VerifyMFALogin(ctx, ch4, codes[0], "ua", "1.2.3.4")
+	_, _, _, err = c.VerifyMFALogin(ctx, ch4, codes[0], "ua", "1.2.3.4")
 	require.Error(t, err, "recovery code is single-use")
 
 	// ── Disable via password → MFA off, secret cleared ──
@@ -312,7 +318,7 @@ func TestMFA_RecoveryCodesRemaining(t *testing.T) {
 	// Consume one recovery code via a login → remaining drops to 9.
 	ch, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	_, _, err = c.VerifyMFALogin(ctx, ch, codes[0], "ua", "1.2.3.4")
+	_, _, _, err = c.VerifyMFALogin(ctx, ch, codes[0], "ua", "1.2.3.4")
 	require.NoError(t, err)
 	rem, _, err = c.MFARecoveryCodesRemaining(ctx, 1)
 	require.NoError(t, err)
@@ -339,13 +345,13 @@ func TestMFA_RegenerateRecoveryCodes(t *testing.T) {
 	// An OLD code no longer authenticates (the set was replaced).
 	ch, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	_, _, err = c.VerifyMFALogin(ctx, ch, original[0], "ua", "1.2.3.4")
+	_, _, _, err = c.VerifyMFALogin(ctx, ch, original[0], "ua", "1.2.3.4")
 	require.Error(t, err, "old recovery codes are revoked on regenerate")
 
 	// A NEW code works.
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	_, _, err = c.VerifyMFALogin(ctx, ch2, fresh[1], "ua", "1.2.3.4")
+	_, _, _, err = c.VerifyMFALogin(ctx, ch2, fresh[1], "ua", "1.2.3.4")
 	require.NoError(t, err)
 
 	// Regenerate with a current TOTP code also works (re-auth via code path).
@@ -393,14 +399,14 @@ func TestVerifyMFALogin_RejectsReplayedTOTPCode(t *testing.T) {
 	// First use succeeds.
 	ch1, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess, _, err := c.VerifyMFALogin(ctx, ch1, code, "ua", "1.2.3.4")
+	sess, _, _, err := c.VerifyMFALogin(ctx, ch1, code, "ua", "1.2.3.4")
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 
 	// Replay of the same code (fresh challenge, same time-step) is refused.
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess2, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
+	sess2, _, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid code")
 	assert.Nil(t, sess2)
@@ -426,7 +432,7 @@ func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		ch, cerr := c.CreateMFAChallenge(ctx, 1)
 		require.NoError(t, cerr)
-		_, _, verr := c.VerifyMFALogin(ctx, ch, "000000", "ua", "9.9.9.9")
+		_, _, _, verr := c.VerifyMFALogin(ctx, ch, "000000", "ua", "9.9.9.9")
 		require.Error(t, verr)
 	}
 
@@ -441,7 +447,7 @@ func TestVerifyMFALogin_FailedCodesFeedAccountLockout(t *testing.T) {
 	require.NoError(t, err)
 	ch, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess, _, err := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
+	sess, _, _, err := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "locked")
 	assert.Nil(t, sess)
@@ -535,7 +541,7 @@ func TestLogin_FullMFACompletionClearsLockout(t *testing.T) {
 	require.NoError(t, err)
 	ch, err := c.CreateMFAChallenge(ctx, u.ID)
 	require.NoError(t, err)
-	session, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "9.9.9.9")
+	session, _, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "9.9.9.9")
 	require.NoError(t, err)
 	require.NotNil(t, session)
 
@@ -645,7 +651,7 @@ func TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout(t *testing.T) 
 	// Unlock first (the login-lockout also blocks VerifyMFALogin's second factor) so
 	// we can confirm the ORIGINAL codes, not a replacement set, are what remain.
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("login_locked_until", nil).Error)
-	_, _, err = c.VerifyMFALogin(ctx, ch, original[0], "ua", "1.2.3.4")
+	_, _, _, err = c.VerifyMFALogin(ctx, ch, original[0], "ua", "1.2.3.4")
 	require.NoError(t, err, "original recovery code must still work; regenerate was blocked by the lock")
 }
 
@@ -846,7 +852,7 @@ func TestVerifyMFALogin_RecordsMFAStepupWhenGateEnabled(t *testing.T) {
 	code, err := totp.GenerateCode(secret, fixed)
 	require.NoError(t, err)
 
-	sess, user, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
+	sess, user, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
 	require.NoError(t, err, "VerifyMFALogin must succeed even with the MFA step-up gate enabled (UpsertMFAStepupToken is best-effort)")
 	require.NotNil(t, sess)
 	assert.Equal(t, "alice", user.Username)

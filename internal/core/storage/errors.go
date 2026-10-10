@@ -33,6 +33,25 @@ var ErrWebAuthnSessionInvalid = errors.New("invalid or expired webauthn session"
 // failure to fail closed on.
 var ErrRoleNotFound = errors.New("role not found")
 
+// ErrSQLiteWriteContention is returned when a write transaction waited the
+// in-process SQLite write gate's full bound without getting the write lock:
+// the clear, bounded failure that replaces an unbounded stall. Callers may
+// retry.
+//
+// Declared HERE, not next to the gate in internal/storage, because the one
+// classifier that most needs it lives in internal/storage/store
+// (isSQLiteBusyErr, local_audit_chain.go) and internal/storage already imports
+// internal/storage/store — so the gate's own package is unreachable from the
+// classifier without an import cycle. Both packages already import this one.
+//
+// That reachability is not cosmetic: the coordinator's review of #2637 found
+// that the audit-chain busy classifier matched only SQLITE_BUSY / "database is
+// locked", so once the gate existed the DOMINANT contention error stopped
+// being recognised by the retry budget built for exactly that condition, and
+// commitAuditBatch bisected a batch-global failure as if it were a poisoned
+// item.
+var ErrSQLiteWriteContention = errors.New("sqlite: timed out waiting for the database write lock (sustained write contention); retry the request")
+
 // ErrSoDPolicyNotFound is returned (wrapped) by GetSoDPolicy when no policy exists
 // for the given id, as distinct from a transient retrieval failure. DeleteSoDPolicy
 // (internal/core/sod.go) matches it with errors.Is to decide whether a real 404 is
@@ -78,6 +97,33 @@ var ErrWouldStrandLastAdmin = errors.New("refusing to remove the last install ad
 // rather than a generic error.
 var ErrBreakGlassNotActive = errors.New("break-glass activation is not active")
 
+// ErrBreakGlassAlreadyReviewed is returned (wrapped) when
+// ReviewBreakGlassActivation's conditional UPDATE finds reviewed_at already
+// set — either a genuine second review attempt, or two concurrent
+// submissions racing for the same activation (only the first wins).
+var ErrBreakGlassAlreadyReviewed = errors.New("break-glass activation has already been reviewed")
+
+// ErrBreakGlassNotFound is returned (wrapped) by GetBreakGlassActivation for a
+// definitive "no such activation row" (gorm.ErrRecordNotFound) only — never
+// for a transient retrieval failure, which keeps its ErrorRetrievalFailed
+// wrapping so a caller can still tell a 404 from a 500. Same convention and
+// same reason as ErrUserNotFound/ErrSecretNotFound: the i18n text
+// GetBreakGlassActivation embeds is an implementation detail that changes with
+// the deployment's locale, so it is not a classification contract (#2461
+// round 2 — ReviewBreakGlass's handler matched the English words "not found"
+// and returned 500 under ru/fr/de).
+var ErrBreakGlassNotFound = errors.New("break-glass activation not found")
+
+// IsBreakGlassNotFound is IsUserNotFound's break-glass counterpart — true only
+// for a definitive "this activation does not exist", false for a transient
+// retrieval failure.
+func IsBreakGlassNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return errors.Is(err, ErrBreakGlassNotFound)
+}
+
 // ErrDuplicateActiveMembership is returned (wrapped) by CreateProjectMembership when the
 // insert collides with the partial unique index on (project_id, user_id) scoped to
 // non-revoked rows. InviteMember's own "no active membership" check races with a
@@ -107,6 +153,18 @@ var ErrDuplicateEmail = errors.New("a user with this email already exists")
 // secret import/export --project production`. Callers translate this into a clean
 // "project name already in use" error rather than a raw constraint-violation message.
 var ErrDuplicateProjectName = errors.New("a project with this name already exists")
+
+// ErrDuplicateGroupName is returned (wrapped) by CreateGroup when the insert collides
+// with the partial unique index on groups.name_folded (live rows only, #1642). Callers
+// translate it into a 409 with a message naming the conflict instead of a bare 500
+// (#2779); matching the driver's message text at the handler is not reliable (SQLite
+// says "UNIQUE constraint failed", Postgres "duplicate key value violates unique
+// constraint").
+var ErrDuplicateGroupName = errors.New("a group with this name already exists")
+
+// ErrDuplicateNotificationChannelName is returned (wrapped) by CreateNotificationChannel
+// when the insert collides with the unique index on notification_channels.name (#2779).
+var ErrDuplicateNotificationChannelName = errors.New("a notification channel with this name already exists")
 
 // ErrDuplicateSecretVersion is returned (wrapped) by CreateSecretVersion when the insert
 // collides with the unique index on (secret_node_id, version_number). RotateSecret's

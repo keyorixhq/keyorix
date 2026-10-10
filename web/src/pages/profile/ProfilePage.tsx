@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useSearchParams } from 'react-router';
 import {
     UserIcon,
     ShieldCheckIcon,
@@ -135,7 +136,7 @@ const BasicInfoTab: React.FC = () => {
 
 // ── Security ────────────────────────────────────────────────────────────────
 
-const SecurityTab: React.FC = () => {
+const SecurityTab: React.FC<{ mfaRequired?: boolean }> = ({ mfaRequired = false }) => {
     const [current, setCurrent] = useState('');
     const [next, setNext] = useState('');
     const [confirm, setConfirm] = useState('');
@@ -223,7 +224,7 @@ const SecurityTab: React.FC = () => {
                 </div>
             </form>
 
-            <MfaSection />
+            <MfaSection enrolmentRequired={mfaRequired} />
         </div>
     );
 };
@@ -725,7 +726,12 @@ const TokensTab: React.FC = () => {
 // ── Page ────────────────────────────────────────────────────────────────────
 
 export const ProfilePage: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['id']>('profile');
+    // #2924: the MFAEnrollmentRequired redirect lands here as /profile?tab=security&mfa=required.
+    const [searchParams] = useSearchParams();
+    const mfaRequired = searchParams.get('mfa') === 'required';
+    const [activeTab, setActiveTab] = useState<(typeof TABS)[number]['id']>(
+        () => TABS.find((t) => t.id === searchParams.get('tab'))?.id ?? 'profile'
+    );
 
     return (
         <div className="p-6 max-w-4xl mx-auto">
@@ -763,7 +769,7 @@ export const ProfilePage: React.FC = () => {
             </div>
 
             {activeTab === 'profile' && <BasicInfoTab />}
-            {activeTab === 'security' && <SecurityTab />}
+            {activeTab === 'security' && <SecurityTab mfaRequired={mfaRequired} />}
             {activeTab === 'sessions' && <SessionsTab />}
             {activeTab === 'tokens' && <TokensTab />}
         </div>

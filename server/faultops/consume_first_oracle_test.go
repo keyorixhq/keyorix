@@ -322,6 +322,16 @@ func atomicityLedgerClasses(t *testing.T) map[string]string {
 		if len(cols) < 2 || strings.HasPrefix(cols[0], "AUDIT:") {
 			continue
 		}
+		// Duplicate keys are rejected rather than letting the last row win: a
+		// second plain row for an already-classified function would silently
+		// change the class this test enforces against, which is the one way a
+		// class-B oracle exemption could come to rest on a row that no longer
+		// says B. See the ledger header's "JIT:" note for what to do instead.
+		if prev, dup := classes[cols[0]]; dup {
+			t.Fatalf("%s: duplicate row for %q (already classified %q, now %q) -- two rows for one function "+
+				"silently reclassify it here; use a key namespace for the second classification",
+				path, cols[0], prev, cols[1])
+		}
 		classes[cols[0]] = cols[1]
 	}
 	if err := sc.Err(); err != nil {
