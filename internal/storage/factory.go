@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -587,7 +586,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// switch; every later Open against an already-WAL file is a same-mode pragma
 	// no-op that always succeeds immediately, regardless of other open connections.
 	migrationMu.Lock()
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := openSQLiteGorm(sqliteDSN(dbPath))
 	migrationMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
