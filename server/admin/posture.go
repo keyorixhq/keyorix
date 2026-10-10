@@ -95,7 +95,11 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 		// TODO(#2461): add collectBreakGlassReviewPosture here -- see its
 		// comment below for the two findings Andrei decided on and why they
 		// cannot be implemented until that PR's API lands.
-		return collectAdminMFAPosture(ctx, cfg, coreService, report)
+		inGrace, err := collectRequireMFAPosture(ctx, cfg, store, report)
+		if err != nil {
+			return err
+		}
+		return collectAdminMFAPosture(ctx, inGrace, coreService, report)
 	})
 	if dbErr != nil {
 		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the admin-MFA check was NOT evaluated: %v", dbErr))
@@ -314,7 +318,7 @@ func collectKEKAgePosture(cfg *config.Config, report *postureReport) {
 // no second factor enrolled (item 1's require_mfa grace period, finally made
 // visible as a concrete, named list rather than a boot-time warning with no
 // way to see who still needs to comply).
-func collectAdminMFAPosture(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore, report *postureReport) error {
+func collectAdminMFAPosture(ctx context.Context, requireMFAInGrace bool, coreService *core.KeyorixCore, report *postureReport) error {
 	admins, err := coreService.ListAdminsWithoutMFA(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to list admins without MFA: %w", err)
@@ -327,10 +331,45 @@ func collectAdminMFAPosture(ctx context.Context, cfg *config.Config, coreService
 		names = append(names, fmt.Sprintf("%s (%s)", u.Username, u.Email))
 	}
 	report.deviate("admin-mfa", fmt.Sprintf("%d admin(s) without MFA or a passkey enrolled: %s", len(admins), strings.Join(names, ", ")))
-	if cfg.Security.RequireMFAImplicitDefault {
+	if requireMFAInGrace {
 		report.deviate("grace-period", "security.require_mfa's grace period is not yet complied with — the admin-mfa deviation above lists who still needs to enrol")
 	}
 	return nil
+}
+
+// collectRequireMFAPosture reports security.require_mfa itself, and whether it
+// is in ADR-112's upgrade grace period. Same facts the server uses at boot
+// (server/adr112_grace.go): the key is absent from the config, the database
+// already has users, and the config.ADR112RequireMFAEnforcedMarker row is
+// absent. In that state the server does NOT enforce MFA, whatever Load()
+// resolved the field to, so it is a deviation even when every admin happens to
+// be enrolled. An explicit false is a deviation of its own.
+func collectRequireMFAPosture(ctx context.Context, cfg *config.Config, store corestorage.Storage, report *postureReport) (inGrace bool, err error) {
+	sec := cfg.Security
+	if !sec.RequireMFA {
+		report.deviate("admin-mfa", "security.require_mfa is false: interactive logins do not require a second factor (ADR-112 requires it on)")
+		return false, nil
+	}
+	if !sec.RequireMFAImplicitDefault {
+		return false, nil
+	}
+	_, users, err := store.ListUsers(ctx, &corestorage.UserFilter{IncludeDeleted: true, PageSize: 1})
+	if err != nil {
+		return false, fmt.Errorf("failed to count users for the require_mfa grace check: %w", err)
+	}
+	if users == 0 {
+		return false, nil // fresh install: the server enforces require_mfa from its first start
+	}
+	since, found, err := store.GetSystemMetadata(ctx, config.ADR112RequireMFAEnforcedMarker)
+	if err != nil {
+		return false, fmt.Errorf("failed to read the require_mfa enforcement marker: %w", err)
+	}
+	if found {
+		report.info("security.require_mfa is enforcing on its ADR-112 default (enforced since " + since + ")")
+		return false, nil
+	}
+	report.deviateShippedDefault("grace-period", "security.require_mfa is in its ADR-112 upgrade grace period: this upgraded deployment never set it, so the server does NOT enforce MFA yet. Have every interactive admin enrol, then set security.require_mfa: true explicitly (#2923 tracks an automatic end condition)")
+	return true, nil
 }
 
 // collectBreakGlassReviewPosture is the two findings Andrei decided on #2461:

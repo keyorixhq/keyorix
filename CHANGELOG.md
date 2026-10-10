@@ -99,7 +99,10 @@ All notable changes to Keyorix are documented here. This project follows
   file-permission / encryption / database problem, an incomplete key-file set
   (item 6), an enabled listener with no TLS while
   `security.require_transport_tls` is set, and an admin-tier holder with
-  neither TOTP MFA nor a passkey enrolled. A grace-period setting (item 1)
+  neither TOTP MFA nor a passkey enrolled. `security.require_mfa: false` is a
+  deviation, and so is an upgraded deployment still in `require_mfa`'s ADR-112
+  grace period (the server does not enforce MFA there yet, even with every
+  admin enrolled). A grace-period setting (item 1)
   still enforcing only via its new secure-by-default value, with the underlying
   condition it covers still non-compliant, is reported as its own deviation
   referencing the detail above it. Each deviation is labelled with whether it
