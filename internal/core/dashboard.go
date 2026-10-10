@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -514,6 +515,11 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 // Returns empty string if the pattern is not found.
 func extractSecretName(description string) string {
 	const marker = " secret "
+	// A secret.deleted description ends in a soft-delete note (softDeleteNoteMarker)
+	// that is not part of the name, and may itself contain " secret ".
+	if i := strings.Index(description, softDeleteNoteMarker); i >= 0 {
+		description = description[:i]
+	}
 	if idx := lastIndex(description, marker); idx >= 0 {
 		return description[idx+len(marker):]
 	}

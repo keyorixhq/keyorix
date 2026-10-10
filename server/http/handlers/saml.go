@@ -77,7 +77,7 @@ func (h *AuthHandler) CompleteSAML(w http.ResponseWriter, r *http.Request) {
 	relayState := r.PostFormValue("RelayState")
 
 	session, _, returnTo, err := h.coreService.CompleteSAML(
-		r.Context(), provider, r, relayState, r.Header.Get("User-Agent"), r.RemoteAddr)
+		r.Context(), provider, r, relayState, r.Header.Get("User-Agent"), clientIP(r))
 	if err != nil {
 		msg := err.Error()
 		if !isSafeSSOError(msg) {
