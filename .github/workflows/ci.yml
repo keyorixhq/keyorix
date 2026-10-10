@@ -47,9 +47,12 @@ permissions: {}
 # left ~20 approved PRs with an all-cancelled run reported as a build-and-test
 # failure. A push (synchronize), reopen, or the ci:full label still supersede
 # the in-flight run exactly as before.
+# Only pull_request runs are ever superseded. push to main, merge_group and
+# workflow_dispatch get a group of their own (run_id), so neither an in-flight
+# nor a queued run of those is cancelled by a newer one.
 concurrency:
-  group: ci-${{ github.ref }}${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:full') && format('-label-{0}', github.run_id) || '' }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.run_id }}${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:full') && format('-label-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
@@ -1699,16 +1702,41 @@ jobs:
       - name: Verify the seed through the public API (not the database)
         run: |
           set -e
-          # Single source of truth: the demo admin password is the fixed
-          # constant scripts/demo/up.sh bootstrapped with; read it from there
-          # instead of repeating the literal in the workflow.
           admin_pw=$(sed -n 's/^ADMIN_PASSWORD="\(.*\)"$/\1/p' scripts/demo/up.sh)
           [ -n "$admin_pw" ] || { echo "could not read ADMIN_PASSWORD from scripts/demo/up.sh" >&2; exit 1; }
+          # up.sh enrols TOTP for the admin (#2982), so a password login gets an
+          # MFA challenge, not a token: answer it like an authenticator app would,
+          # with the key up.sh saved to .demo-2-state and the bin/totpgen it built
+          # (+30s step offset: up.sh just used the current window's code, and a
+          # reused code is rejected as a replay -- same as scripts/smoke.sh).
+          totp_key=$(sed -n 's/^  Admin TOTP key: *\([A-Z2-7]*\)$/\1/p' .demo-2-state)
+          [ -n "$totp_key" ] || { echo "could not read the admin TOTP key from .demo-2-state" >&2; exit 1; }
           body=$(jq -n --arg p "$admin_pw" '{username:"admin",password:$p}')
-          TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
-            -H 'Content-Type: application/json' \
-            -d "$body" | \
-            jq -r '.data.token')
+          # up.sh's last login used the NEXT step's code, and this step starts
+          # seconds later, usually inside the same 30 s window: the +30s code is
+          # then a replay and /auth/mfa/verify refuses it (reproduced on the e2e
+          # VM: fails 1 s after up.sh, passes once the step rolls over). Retry
+          # with a fresh challenge after the step has rolled over; 3 attempts
+          # stay well inside the login rate limit.
+          TOKEN=""
+          for attempt in 1 2 3; do
+            challenge=$(curl -s -X POST http://localhost:8080/auth/login \
+              -H 'Content-Type: application/json' \
+              -d "$body" | \
+              jq -r '.data.mfa_challenge')
+            [ -n "$challenge" ] && [ "$challenge" != "null" ] || { echo "login did not return an MFA challenge" >&2; exit 1; }
+            code=$(./bin/totpgen "$totp_key" 30)
+            verify=$(jq -n --arg c "$challenge" --arg k "$code" '{mfa_challenge:$c,code:$k}')
+            TOKEN=$(curl -s -X POST http://localhost:8080/auth/mfa/verify \
+              -H 'Content-Type: application/json' \
+              -d "$verify" | \
+              jq -r '.data.token')
+            [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] && break
+            TOKEN=""
+            echo "MFA verify attempt $attempt/3 refused (TOTP step still in use); waiting for the next step" >&2
+            [ "$attempt" -lt 3 ] && sleep 31
+          done
+          [ -n "$TOKEN" ] || { echo "MFA verify did not return a session token" >&2; exit 1; }
           projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
             jq -r '.data.projects | length')
           [ "$projects" = "3" ] || { echo "expected 3 seeded projects, got $projects" >&2; exit 1; }
