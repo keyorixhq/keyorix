@@ -45,7 +45,7 @@ func (s *ShareGRPCService) ShareSecret(ctx context.Context, req *pb.ShareSecretR
 	}
 	// Scope secrets.write to the shared secret's project (mirrors the HTTP
 	// /secrets/{id}/share route), not the flat global permission set.
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsWrite); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetSecretId()), permSecretsWrite, core.SecretActionShare); err != nil {
 		return nil, err
 	}
 

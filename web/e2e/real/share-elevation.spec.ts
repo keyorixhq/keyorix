@@ -12,6 +12,7 @@
 //      closes, and the share is listed for A.
 //   2. the viewer edits A in the UI (the value really changes) while B, which was NOT
 //      shared, stays read-only: the UI refuses the edit and the API answers 403.
+//      The same write share does NOT allow Suspend: refused with the server's reason (#3001).
 //   3. owner revokes the share → it is gone from A's share list and the viewer's edit of A
 //      is refused again in the UI (with the server's reason), the value unchanged.
 //   4. a global admin who OWNS a secret but holds no role in its project tries to share →
@@ -362,6 +363,24 @@ test('the viewer can update the shared secret A in the UI, and B stays read-only
     // secrets.read / secrets.write).
     const del = await bearer(viewerToken, 'DELETE', `/api/v1/secrets/${secretA}`);
     expect(del.status, 'a write share must not allow delete').toBe(403);
+});
+
+test("a write-share recipient's Suspend is refused with the server's reason (#3001 allowlist)", async () => {
+    // The write share is still in place (revoked in the next test). It elevates update and
+    // rotate only; suspending would deny every other reader the secret, so the server refuses
+    // it and says why instead of a bare 403. The detail view's Suspend button posts to this
+    // same route (but window.confirm()s first and shows no error), so assert at the API.
+    const res = await bearer(viewerToken, 'POST', `/api/v1/secrets/${secretA}/suspend`, { reason: 'e2e deny service' });
+    expect(res.status, 'POST /secrets/A/suspend as a write-share recipient').toBe(403);
+    expect(typeof res.body?.message, 'the refusal carries a reason').toBe('string');
+    expect(res.body.message).toMatch(/only lets you update its value and metadata or rotate it/i);
+    expect(res.body.message).toMatch(/ask a project admin/i);
+
+    // Nothing happened: a suspended secret blocks value reads, and the owner still reads A.
+    expect(await readValue(ownerPage, secretA), 'A is still active and readable').toBe(valueA1);
+    // And the elevation itself still works (the refusal is per action, not a revoked share).
+    const update = await bearer(viewerToken, 'PUT', `/api/v1/secrets/${secretA}`, { value: valueA1 });
+    expect(update.status, 'update stays elevated').toBe(200);
 });
 
 test('owner revokes the share from Sharing Management: it leaves the list and the viewer is refused again', async () => {

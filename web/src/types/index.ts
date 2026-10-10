@@ -129,12 +129,8 @@ export interface SecretPolicy {
 export interface SecretAccessor {
     user_id: number;
     username: string;
-    // The EFFECTIVE level: for a project member, the higher of their role and any
-    // active share (#2941).
     permission: string; // read | write | owner
-    source: string; // the grant giving it: owner | role | acl | direct_share | group_share:<group>
-    // Every grant the user holds on the secret, e.g. ['role:read', 'direct_share:write'].
-    grants?: string[];
+    source: string; // owner | direct_share | group_share:<group>
 }
 
 export interface Recipient {
@@ -190,7 +186,7 @@ export interface DashboardStats {
 
 export interface ActivityItem {
     id: number;
-    type: 'created' | 'updated' | 'shared' | 'accessed' | 'versions_listed';
+    type: 'created' | 'updated' | 'shared' | 'accessed' | 'versions_listed' | 'metadata_read';
     secretName: string;
     timestamp: string;
     actor: string;
