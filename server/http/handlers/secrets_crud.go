@@ -418,7 +418,9 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 		}
 	}) // #nosec G118
 
-	h.sendSuccess(w, h.secretWireWithTotalReads(r.Context(), secret), "")
+	// No total_reads here: this lookup is itself audited as a secret.read (async, above),
+	// so a count would be non-deterministic and would include non-value reads.
+	h.sendSuccess(w, newSecretNodeWire(secret), "")
 }
 
 // GetSecretValueByRef handles GET /api/v1/secrets/value?ref=project/environment/name —

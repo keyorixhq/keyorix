@@ -97,6 +97,13 @@ func TestSecretGetAndVersions_ReportTotalReads(t *testing.T) {
 	assert.Equal(t, int64(2), *m.TotalReads, "metadata GETs are not reads")
 	assert.Equal(t, 0, m.ReadCount, "read_count keeps its #2963 meaning: 0 without max_reads")
 
+	// GET /secrets/by-name is a metadata lookup that is itself audited (async) as a
+	// secret.read, so a count read there would be non-deterministic and would include
+	// non-value reads. It does not report total_reads.
+	st, nameBody := do(http.MethodGet, "/api/v1/secrets/by-name?name=total-reads&project_id=1&environment_id=1", "")
+	require.Equal(t, http.StatusOK, st, string(nameBody))
+	assert.NotContains(t, string(nameBody), "total_reads", "by-name must not report total_reads")
+
 	// Versions: total_reads beside each version's ReadCount. Compared with the
 	// access log itself, because whether the listing writes a "read" row is
 	// #2970's business (it should not), not this field's.

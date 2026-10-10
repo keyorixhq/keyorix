@@ -4226,7 +4226,7 @@ paths:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
         '200':
-          description: Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime value-read count.
+          description: Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime read count (access-log rows with action read).
           content:
             application/json:
               schema:
@@ -7357,7 +7357,7 @@ components:
         description: {type: string}
         max_reads: {type: integer, nullable: true}
         read_count: {type: integer}
-        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on single-secret GETs (by id, by name), omitted in listings. Not read_count, which counts only reads charged against max_reads."}
+        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. Not read_count, which counts only reads charged against max_reads."}
         expiration: {type: string, format: date-time, nullable: true}
         classification: {type: string}
         status: {type: string}
@@ -7796,7 +7796,7 @@ components:
         description: {type: string}
         max_reads: {type: integer, nullable: true}
         read_count: {type: integer}
-        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on single-secret GETs (by id, by name), omitted in listings. Not read_count, which counts only reads charged against max_reads."}
+        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. Not read_count, which counts only reads charged against max_reads."}
         expiration: {type: string, format: date-time, nullable: true}
         classification: {type: string}
         status: {type: string}
