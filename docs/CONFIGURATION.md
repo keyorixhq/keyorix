@@ -366,12 +366,22 @@ File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 
 **Both `enable_file_permission_check` and `require_mfa` default to `true` when
 omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
-from its first start with no config changes needed. An existing deployment that
-never set either key explicitly keeps booting during a grace period (a loud
-`ADR-112` start-up warning instead of an instant behavior change); see the
-CHANGELOG's Unreleased entry for exactly what that softens. Set either key
-explicitly — to `true` once you've confirmed compliance, or to `false` to opt
-out visibly — to silence the warning.
+from its first start with no config changes needed: the first admin to log in is
+asked to enrol MFA (TOTP or passkey) before doing anything else, and a
+file-permission or key-material problem refuses to start.
+
+**Upgrading an existing deployment** that never set
+`enable_file_permission_check`: the server tells a fresh install from an upgrade
+by its database (users already exist). An upgrade gets a grace period — a
+problem the startup checks find is logged as a loud `ADR-112` warning instead of
+refusing to start. The grace period ends for good the first time the deployment
+boots with the checks passing (recorded in the database as
+`adr112.file_permission_check.enforced`); from then on it fails closed like a
+fresh install. Setting the key explicitly (`true`, or `false` to opt out
+visibly) also ends it. `require_mfa` has no grace period: an upgraded
+deployment's admins are asked to enrol at their next interactive login (never
+locked out; tokens and machine credentials are unaffected), and the server logs
+a start-up warning while the key is unset.
 
 ```yaml
 security:

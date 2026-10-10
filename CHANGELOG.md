@@ -42,15 +42,18 @@ All notable changes to Keyorix are documented here. This project follows
   default to the secure state** (ADR-112, secure-by-default baseline, item 1).
   A fresh install enforces file-permission/DEK-salt-size/database-reachability
   startup checks and admin MFA from its very first start, with no config
-  changes needed. **Upgrade note:** an existing deployment that never set
-  either key explicitly keeps booting during a grace period: a real
-  file-permission or startup-validation problem now logs a loud `ADR-112`
-  warning naming the setting and how to comply, instead of refusing to start;
-  `require_mfa` confines a session-authenticated admin without MFA enrolled to
-  the enrolment endpoints (non-interactive PAT/machine credentials are
-  unaffected) and logs an equivalent warning. Set either key explicitly (to
-  `true` once compliant, or `false` to opt out visibly) to silence the
-  warning and get the key's exact pre-upgrade behavior back.
+  changes needed; the first admin login asks for MFA enrolment.
+  **Upgrade note:** an existing deployment (its database already has users)
+  that never set `enable_file_permission_check` keeps booting during a grace
+  period: a real file-permission or startup-validation problem logs a loud
+  `ADR-112` warning naming the setting and how to comply, instead of refusing
+  to start. The grace period ends for good at the first boot whose checks pass
+  (or when the key is set explicitly). `require_mfa` has no grace period: a
+  session-authenticated admin without MFA is confined to the enrolment
+  endpoints until they enrol (non-interactive PAT/machine credentials are
+  unaffected), with a start-up warning while the key is unset. An explicit
+  `enable_file_permission_check: true` keeps its exact pre-upgrade behavior,
+  including refusing to start when the key material is missing.
 
 ## v0.95.3 — 2026-10-01
 

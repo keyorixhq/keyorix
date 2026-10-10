@@ -1,6 +1,7 @@
 package startup
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -111,7 +112,7 @@ func validateStartup(configPath string, forceAutoFix bool, tolerateUnprovisioned
 	result.ConfigValid = true
 
 	if cfg.Security.EnableFilePermissionCheck {
-		if err := validateFilePermissions(cfg, configPath, forceAutoFix, result); err != nil {
+		if err := validateFilePermissions(cfg, configPath, forceAutoFix, tolerateUnprovisionedKeys, result); err != nil {
 			if !cfg.Security.AllowUnsafeFilePermissions {
 				return result, fmt.Errorf("file permission validation failed: %w", err)
 			}
@@ -234,7 +235,13 @@ func SafeFilePermPath(label, path string) (string, error) {
 	return keyfiles.SafePath(label, path)
 }
 
-func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
+// tolerateUnprovisioned (ValidateStartupTolerant only) leaves out of the audit the
+// files the server itself creates at 0600 later in the same first boot: the key
+// material when EVERY key file is absent (the same both-missing rule as
+// validateEncryption; a partial set is audited, and refused by the key-set
+// consistency check), and a local database file that does not exist yet. The
+// config file and TLS files are never left out: nothing generates them.
+func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix, tolerateUnprovisioned bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	var files []securefiles.FilePermSpec
 
 	// Check the config file that was actually loaded, not a hardcoded "keyorix.yaml":
@@ -260,7 +267,11 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files, specs...)
+		if tolerateUnprovisioned && noneExist(specs) {
+			result.Warnings = append(result.Warnings, "Key material does not exist yet — treating as first boot; its permissions are checked once it is generated")
+		} else {
+			files = append(files, specs...)
+		}
 	}
 
 	// Mirror Config.Validate()'s switch on Storage.Type: only "local"/"" storage has a
@@ -277,10 +288,14 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 			if err != nil {
 				return err
 			}
-			files = append(files, securefiles.FilePermSpec{
-				Path: dbPath,
-				Mode: 0600,
-			})
+			if tolerateUnprovisioned && noneExist([]securefiles.FilePermSpec{{Path: dbPath}}) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Database file %s does not exist yet — treating as first boot; it is created at 0600", dbPath))
+			} else {
+				files = append(files, securefiles.FilePermSpec{
+					Path: dbPath,
+					Mode: 0600,
+				})
+			}
 		}
 	}
 
@@ -323,6 +338,18 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 	}
 
 	return nil
+}
+
+// noneExist reports whether every spec's path is absent (os.ErrNotExist). Any
+// other stat result, including an error, counts as existing, so the file stays
+// in the audit.
+func noneExist(specs []securefiles.FilePermSpec) bool {
+	for _, sp := range specs {
+		if _, err := os.Stat(sp.Path); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return true
 }
 
 // validateEncryption verifies the on-disk key material required by the ADR-004

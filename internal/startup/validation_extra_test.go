@@ -181,7 +181,7 @@ func TestValidateFilePermissions_EncryptionPathsChecked(t *testing.T) {
 	cfg.Storage.Encryption.DEKPath = dek
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 
@@ -200,7 +200,7 @@ func TestValidateFilePermissions_TLSGRPCPathsChecked(t *testing.T) {
 	cfg.Server.GRPC.TLS.KeyFile = key
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 
@@ -219,7 +219,7 @@ func TestValidateFilePermissions_TLSHTTPPathsChecked(t *testing.T) {
 	cfg.Server.HTTP.TLS.KeyFile = key
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 
@@ -236,7 +236,7 @@ func TestValidateFilePermissions_DatabasePathIncluded(t *testing.T) {
 	cfg.Storage.Database.Path = dbPath
 
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, "", false, result)
+	err := validateFilePermissions(cfg, "", false, false, result)
 	require.NoError(t, err)
 }
 

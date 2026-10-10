@@ -1023,8 +1023,18 @@ type SecurityConfig struct {
 	// problem the check finds, until it explicitly sets the key -- see
 	// server/main.go's runStartupValidation and enforceKeyFilePermissions.
 	EnableFilePermissionCheckImplicitDefault bool `yaml:"-"`
-	AutoFixFilePermissions                   bool `yaml:"auto_fix_file_permissions"`
-	AllowUnsafeFilePermissions               bool `yaml:"allow_unsafe_file_permissions"`
+	// EnableFilePermissionCheckUpgradeGrace is the narrower fact the grace
+	// period actually turns on: ImplicitDefault above AND this is an upgraded,
+	// pre-existing deployment (its database already has users) that has never
+	// yet booted clean under the check. Never set by Load(): only
+	// server/main.go's adr112UpgradeGraceEligible sets it, at boot, from the
+	// database itself. A fresh install (no database, or no users yet) and a
+	// deployment that already passed once (the adr112 system_metadata marker)
+	// leave it false and are enforced. False-by-default for the same reason as
+	// ImplicitDefault: a hand-built *Config must never land in the softened path.
+	EnableFilePermissionCheckUpgradeGrace bool `yaml:"-"`
+	AutoFixFilePermissions                bool `yaml:"auto_fix_file_permissions"`
+	AllowUnsafeFilePermissions            bool `yaml:"allow_unsafe_file_permissions"`
 	// RequireMFA mandates TOTP MFA for interactive login: a session-authenticated
 	// user without MFA enabled is confined to the MFA-enrolment endpoints until
 	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.

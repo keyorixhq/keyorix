@@ -18,9 +18,9 @@ import (
 
 // ── enforceKeyFilePermissions: ImplicitDefault grace period ──────────────────
 
-// A deployment that never explicitly set enable_file_permission_check (it is
-// failing closed only because of the ADR-112 secure default) must WARN, not
-// refuse to start, on a pre-existing world-readable key file -- the exact
+// An UPGRADED deployment that never explicitly set enable_file_permission_check
+// (it is failing closed only because of the ADR-112 secure default) must WARN,
+// not refuse to start, on a pre-existing world-readable key file -- the exact
 // scenario an unattended upgrade must not turn into an outage.
 func TestEnforceKeyFilePermissions_ImplicitDefault_WarnsInsteadOfFailingClosed(t *testing.T) {
 	dir := t.TempDir()
@@ -36,6 +36,7 @@ func TestEnforceKeyFilePermissions_ImplicitDefault_WarnsInsteadOfFailingClosed(t
 		Security: config.SecurityConfig{
 			EnableFilePermissionCheck:                true,
 			EnableFilePermissionCheckImplicitDefault: true, // as config.Load sets it for an absent key
+			EnableFilePermissionCheckUpgradeGrace:    true, // as applyADR112UpgradeGrace sets it for an upgrade
 		},
 	}
 
@@ -46,6 +47,30 @@ func TestEnforceKeyFilePermissions_ImplicitDefault_WarnsInsteadOfFailingClosed(t
 	})
 	if !strings.Contains(logged, "ADR-112") {
 		t.Errorf("expected a grace-period warning naming ADR-112, got: %q", logged)
+	}
+}
+
+// A FRESH install with the implicit default (ImplicitDefault true, UpgradeGrace
+// false: no users in its database) must fail closed on a world-readable key
+// file from its first start. Red on 8942a06d, which softened on ImplicitDefault
+// alone and so treated every fresh install as an upgrade (coordinator review #1).
+func TestEnforceKeyFilePermissions_ImplicitDefault_FreshInstall_FailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	dek := filepath.Join(dir, "dek.json")
+	if err := os.WriteFile(dek, []byte("{}"), 0o644); err != nil {
+		t.Fatalf("write dek: %v", err)
+	}
+	cfg := &config.Config{
+		Storage: config.StorageConfig{
+			Encryption: config.EncryptionConfig{Enabled: true, DEKPath: dek},
+		},
+		Security: config.SecurityConfig{
+			EnableFilePermissionCheck:                true,
+			EnableFilePermissionCheckImplicitDefault: true,
+		},
+	}
+	if err := enforceKeyFilePermissions(cfg); err == nil {
+		t.Error("expected a fresh install on the ADR-112 implicit default to fail closed")
 	}
 }
 
@@ -125,8 +150,8 @@ func writeADR112StartupConfig(t *testing.T, explicitCheck bool) *config.Config {
 	return cfg
 }
 
-// A config file that never set enable_file_permission_check (ADR-112 implicit
-// secure default) must continue booting, with a warning, when
+// An upgraded deployment whose config file never set enable_file_permission_check
+// (ADR-112 implicit secure default) must continue booting, with a warning, when
 // ValidateStartup finds a real problem -- the upgrade-safety half of ADR-112's
 // grace period.
 func TestRunStartupValidation_ImplicitDefault_WarnsInsteadOfFailingClosed(t *testing.T) {
@@ -134,6 +159,7 @@ func TestRunStartupValidation_ImplicitDefault_WarnsInsteadOfFailingClosed(t *tes
 	if !cfg.Security.EnableFilePermissionCheckImplicitDefault {
 		t.Fatal("test premise broken: expected an absent key to resolve as an implicit default")
 	}
+	cfg.Security.EnableFilePermissionCheckUpgradeGrace = true // an upgraded deployment (see adr112_grace_test.go for the decision itself)
 
 	logged := captureLogs(func() {
 		if err := runStartupValidation(cfg); err != nil {
@@ -142,6 +168,63 @@ func TestRunStartupValidation_ImplicitDefault_WarnsInsteadOfFailingClosed(t *tes
 	})
 	if !strings.Contains(logged, "ADR-112") {
 		t.Errorf("expected a grace-period warning naming ADR-112, got: %q", logged)
+	}
+}
+
+// The same real problem on a FRESH install (implicit default, no upgrade grace)
+// must refuse to start. Red on 8942a06d (coordinator review #1).
+func TestRunStartupValidation_ImplicitDefault_FreshInstall_FailsClosed(t *testing.T) {
+	cfg := writeADR112StartupConfig(t, false)
+	if !cfg.Security.EnableFilePermissionCheckImplicitDefault || cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+		t.Fatal("test premise broken: expected implicit default without upgrade grace")
+	}
+	if err := runStartupValidation(cfg); err == nil {
+		t.Error("expected a fresh install on the ADR-112 implicit default to refuse to start")
+	}
+}
+
+// An explicit enable_file_permission_check: true with the KEK salt and wrapped
+// DEK both missing (a key volume that failed to mount) must keep refusing to
+// start, as it did before ADR-112, instead of falling through to first-boot key
+// generation and minting a new encryption domain. Red on 8942a06d, which
+// switched every caller to ValidateStartupTolerant (coordinator review #2).
+func TestRunStartupValidation_ExplicitTrue_MissingKeyMaterial_StillFailsClosed(t *testing.T) {
+	cfg := writeADR112StartupConfig(t, true)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.Remove(cfg.Storage.Encryption.DEKPath))
+	must(os.Remove(cfg.Storage.Encryption.SaltPath))
+	// allow_unsafe_file_permissions downgrades the permission audit's "file not
+	// found" to a warning, so only the encryption check stands between this boot
+	// and new key generation -- the exact shape of the review finding.
+	f, err := os.OpenFile(os.Getenv("KEYORIX_CONFIG_PATH"), os.O_APPEND|os.O_WRONLY, 0)
+	must(err)
+	_, err = f.WriteString("  allow_unsafe_file_permissions: true\n")
+	must(err)
+	must(f.Close())
+	if err := runStartupValidation(cfg); err == nil {
+		t.Error("expected an explicit enable_file_permission_check=true with no key material to refuse to start")
+	}
+}
+
+// The implicit default keeps the first-boot tolerance: a fresh install whose
+// salt and DEK are both not generated yet boots (they are generated right after).
+func TestRunStartupValidation_ImplicitDefault_FreshInstall_ToleratesUngeneratedKeys(t *testing.T) {
+	cfg := writeADR112StartupConfig(t, false)
+	must := func(err error) {
+		t.Helper()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	must(os.Remove(cfg.Storage.Encryption.DEKPath))
+	must(os.Remove(cfg.Storage.Encryption.SaltPath))
+	if err := runStartupValidation(cfg); err != nil {
+		t.Errorf("expected a fresh install's first boot (keys not generated yet) to pass: %v", err)
 	}
 }
 

@@ -155,6 +155,10 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
 	// automatically on every boot.
+	// ADR-112: decide, once and from the database, whether this boot is an upgraded
+	// deployment still inside the file-permission-check grace period. Must run before
+	// runStartupValidation/enforceKeyFilePermissions, which both read the result.
+	applyADR112UpgradeGrace(cfg)
 	if err := runStartupValidation(cfg); err != nil {
 		log.Fatalf("startup validation: %v", err)
 	}
@@ -264,6 +268,9 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	if encSvc != nil {
 		defer encSvc.Shutdown()
 	}
+	// ADR-112: a boot that ran the file-permission/startup checks and passed them
+	// without the upgrade grace period ratchets this deployment to enforced for good.
+	recordADR112EnforcedIfClean(cfg)
 	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
 	// queues events in memory (worker.go's Deliver is non-blocking, async), and
 	// nothing would otherwise call Close() to drain that queue before the process
@@ -2003,13 +2010,14 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 // (missing/undersized DEK or salt, unreachable local database) refuses to start, matching
 // this being "the sole automated backstop for a world-readable master-key-material file."
 //
-// ADR-112 grace period: a deployment that never explicitly set this key (it is enforcing
-// only because of the new secure default — EnableFilePermissionCheckImplicitDefault is
-// true) gets a start-up warning instead of an instant boot-blocking regression on upgrade
-// if ValidateStartup actually finds a problem. A deployment that explicitly set the key —
-// whether to true (today's existing opt-in behavior) or false — is unaffected by this: an
-// explicit true keeps failing closed exactly as before, an explicit false still skips the
-// whole check below exactly as before.
+// ADR-112 grace period: only an UPGRADED deployment that never explicitly set this key
+// and has never yet booted clean under the check (EnableFilePermissionCheckUpgradeGrace,
+// decided from the database by adr112UpgradeGraceEligible) gets a start-up warning instead
+// of an instant boot-blocking regression if ValidateStartup finds a problem. A fresh
+// install with the implicit default is enforced from its first start. A deployment that
+// explicitly set the key is unaffected: an explicit true keeps the strict ValidateStartup
+// and fails closed exactly as before (including on missing key material), an explicit
+// false still skips the whole check below exactly as before.
 func runStartupValidation(cfg *config.Config) error {
 	if !cfg.Security.EnableFilePermissionCheck {
 		// #G37: unlike checkTransportTLSPosture's cleartext warning, this opt-out was
@@ -2020,13 +2028,19 @@ func runStartupValidation(cfg *config.Config) error {
 		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks (internal/startup.ValidateStartup) are SKIPPED. Set it true to enable them.")
 		return nil
 	}
-	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
-		log.Printf("INFO: security.enable_file_permission_check is enforcing on its new secure-by-default value (ADR-112) — this config file never set it explicitly. A fresh install is unaffected; an upgraded deployment with a real problem below gets a warning instead of refusing to start, until the key is set explicitly.")
-	}
 	configPath := config.ResolvedPath("")
 	// Server startup has no --fix flag; remediation is governed solely by the
-	// config's Security.AutoFixFilePermissions field, as before.
-	result, err := startup.ValidateStartupTolerant(configPath, false)
+	// config's Security.AutoFixFilePermissions field, as before. Only the ADR-112
+	// implicit default gets the first-boot tolerance for not-yet-generated key
+	// material: before ADR-112 such a deployment skipped this check entirely and
+	// went straight to first-boot key generation. An explicit true keeps the strict
+	// ValidateStartup, which refuses to boot (rather than mint a new encryption
+	// domain) when the salt and wrapped DEK are both missing.
+	validate := startup.ValidateStartup
+	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
+		validate = startup.ValidateStartupTolerant
+	}
+	result, err := validate(configPath, false)
 	if result != nil {
 		for _, w := range result.Warnings {
 			log.Printf("startup validation warning: %s", w)
@@ -2036,8 +2050,9 @@ func runStartupValidation(cfg *config.Config) error {
 		}
 	}
 	if err != nil {
-		if cfg.Security.EnableFilePermissionCheckImplicitDefault {
-			log.Printf("WARNING: startup validation failed (%v) — ADR-112 grace period: security.enable_file_permission_check was never set explicitly, so this upgrade continues instead of refusing to start. Fix the problem above, then set security.enable_file_permission_check: true explicitly to make this fail closed like a compliant deployment.", err)
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: startup validation failed (%v) — ADR-112 grace period: this is an upgraded deployment and security.enable_file_permission_check was never set explicitly, so it continues instead of refusing to start. Fix the problem above, then set security.enable_file_permission_check: true explicitly to make this fail closed like a compliant deployment.", err)
 			return nil
 		}
 		return err
@@ -2090,12 +2105,14 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 	}
 	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(insecure, ", "))
 	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
-		if cfg.Security.EnableFilePermissionCheckImplicitDefault {
-			// ADR-112 grace period: this deployment never explicitly opted into the check —
-			// it's failing closed only because of the new secure default. Don't turn a
-			// pre-existing bad-permission file (present before this upgrade, previously only
-			// warned about) into a boot-blocking regression. Warn loudly instead, naming
-			// exactly how to comply.
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			// ADR-112 grace period: an upgraded deployment that never explicitly opted into
+			// the check — it's failing closed only because of the new secure default. Don't
+			// turn a pre-existing bad-permission file (present before this upgrade, previously
+			// only warned about) into a boot-blocking regression. Warn loudly instead, naming
+			// exactly how to comply. A fresh install never gets here (see
+			// adr112UpgradeGraceEligible).
+			adr112GraceSoftened.Store(true)
 			log.Printf("WARNING: %s — this now fails closed by default (ADR-112); set to warn-only, which is what the pre-upgrade behavior was, with security.allow_unsafe_file_permissions, or (preferred) chmod the files to 0600 and set security.enable_file_permission_check: true explicitly once compliant.", msg)
 			return nil
 		}

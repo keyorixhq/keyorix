@@ -94,7 +94,7 @@ func TestValidateFilePermissions_UsesActualConfigPath(t *testing.T) {
 	}
 
 	cfg := &config.Config{} // no encryption/DB path configured — isolates the config-file check
-	if err := validateFilePermissions(cfg, configPath, false, &ValidationResult{}); err != nil {
+	if err := validateFilePermissions(cfg, configPath, false, false, &ValidationResult{}); err != nil {
 		t.Fatalf("expected the real 0600 config path to pass, got: %v", err)
 	}
 }
@@ -107,7 +107,7 @@ func TestValidateFilePermissions_SkipsDatabasePathForNonLocalStorage(t *testing.
 		cfg := &config.Config{}
 		cfg.Storage.Type = typ
 		// Database.Path intentionally left empty, as it legitimately is for these types.
-		if err := validateFilePermissions(cfg, "", false, &ValidationResult{}); err != nil {
+		if err := validateFilePermissions(cfg, "", false, false, &ValidationResult{}); err != nil {
 			t.Errorf("storage.type=%q must not check a local database file, got: %v", typ, err)
 		}
 	}
@@ -129,21 +129,21 @@ func TestValidateFilePermissions_RejectsPathTraversal(t *testing.T) {
 
 	t.Run("config path", func(t *testing.T) {
 		cfg := &config.Config{}
-		if err := validateFilePermissions(cfg, outside, false, &ValidationResult{}); err == nil {
+		if err := validateFilePermissions(cfg, outside, false, false, &ValidationResult{}); err == nil {
 			t.Fatal("expected error for a config path containing '..'")
 		}
 	})
 
 	t.Run("encryption salt path", func(t *testing.T) {
 		cfg := encCfg(outside, filepath.Join(dir, "dek.key"))
-		if err := validateFilePermissions(cfg, "", false, &ValidationResult{}); err == nil {
+		if err := validateFilePermissions(cfg, "", false, false, &ValidationResult{}); err == nil {
 			t.Fatal("expected error for a KEK salt path containing '..'")
 		}
 	})
 
 	t.Run("encryption dek path", func(t *testing.T) {
 		cfg := encCfg(filepath.Join(dir, "kek.salt"), outside)
-		if err := validateFilePermissions(cfg, "", false, &ValidationResult{}); err == nil {
+		if err := validateFilePermissions(cfg, "", false, false, &ValidationResult{}); err == nil {
 			t.Fatal("expected error for a DEK path containing '..'")
 		}
 	})
@@ -151,7 +151,7 @@ func TestValidateFilePermissions_RejectsPathTraversal(t *testing.T) {
 	t.Run("database path", func(t *testing.T) {
 		cfg := &config.Config{}
 		cfg.Storage.Database.Path = outside
-		if err := validateFilePermissions(cfg, "", false, &ValidationResult{}); err == nil {
+		if err := validateFilePermissions(cfg, "", false, false, &ValidationResult{}); err == nil {
 			t.Fatal("expected error for a database path containing '..'")
 		}
 	})
@@ -161,7 +161,7 @@ func TestValidateFilePermissions_RejectsPathTraversal(t *testing.T) {
 		cfg.Server.HTTP.TLS.Enabled = true
 		cfg.Server.HTTP.TLS.CertFile = outside
 		cfg.Server.HTTP.TLS.KeyFile = filepath.Join(dir, "server.key")
-		if err := validateFilePermissions(cfg, "", false, &ValidationResult{}); err == nil {
+		if err := validateFilePermissions(cfg, "", false, false, &ValidationResult{}); err == nil {
 			t.Fatal("expected error for an HTTP TLS cert path containing '..'")
 		}
 	})
@@ -171,7 +171,7 @@ func TestValidateFilePermissions_RejectsPathTraversal(t *testing.T) {
 		cfg.Server.GRPC.TLS.Enabled = true
 		cfg.Server.GRPC.TLS.CertFile = filepath.Join(dir, "server.crt")
 		cfg.Server.GRPC.TLS.KeyFile = outside
-		if err := validateFilePermissions(cfg, "", false, &ValidationResult{}); err == nil {
+		if err := validateFilePermissions(cfg, "", false, false, &ValidationResult{}); err == nil {
 			t.Fatal("expected error for a gRPC TLS key path containing '..'")
 		}
 	})
@@ -191,7 +191,7 @@ func TestValidateFilePermissions_ForceAutoFixOverridesConfig(t *testing.T) {
 
 	cfg := &config.Config{} // AutoFixFilePermissions left false/zero-value
 	result := &ValidationResult{}
-	if err := validateFilePermissions(cfg, configPath, true, result); err != nil {
+	if err := validateFilePermissions(cfg, configPath, true, false, result); err != nil {
 		t.Fatalf("expected forceAutoFix to remediate the bad mode, got: %v", err)
 	}
 
