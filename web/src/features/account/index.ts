@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountApi } from '../../services/account';
 import { personalTokensApi, type CreatePersonalTokenBody } from '../../services/personalTokens';
-import { mfaApi } from '../../services/mfa';
+import { mfaApi, type MfaReauthProof } from '../../services/mfa';
 import { SENSITIVE_GC_TIME } from '../../lib/queryClient';
 
 const SESSIONS_KEY = 'account-sessions';
@@ -93,7 +93,7 @@ export const useActivateMfa = () => {
 export const useDisableMfa = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (proof: { code?: string; password?: string }) => mfaApi.disable(proof),
+        mutationFn: (proof: MfaReauthProof) => mfaApi.disable(proof),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [MFA_RECOVERY_KEY] }),
     });
 };
@@ -101,7 +101,7 @@ export const useDisableMfa = () => {
 export const useRegenerateRecoveryCodes = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (proof: { code?: string; password?: string }) => mfaApi.regenerateRecoveryCodes(proof),
+        mutationFn: (proof: MfaReauthProof) => mfaApi.regenerateRecoveryCodes(proof),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: [MFA_RECOVERY_KEY] }),
         // G28: the response is the freshly minted recovery codes (plaintext).
         gcTime: SENSITIVE_GC_TIME,

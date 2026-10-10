@@ -132,6 +132,26 @@ test.describe('least-privilege persona (#2780, #2781)', () => {
         // The 403 the page used to get was rendered as a backend-is-down message;
         // whatever the copy, neither that nor an empty list is acceptable now.
         await expect(main).not.toContainText('Check that the backend is running');
+
+        // The negative half, asked for in review: the install's OWN default project
+        // (seed_demo_data creates its fixture project alongside it, and this persona
+        // is a member of only the fixture one) must NOT appear. Without this, the
+        // assertion above would pass just as well against an unfiltered list — the
+        // exact failure mode #2780's fix had to avoid, and the one a "project A never
+        // reveals B" test exists for at every other layer.
+        const listed = await main.innerText();
+        const names = await page.evaluate(async () => {
+            const res = await fetch('/api/v1/projects', { credentials: 'include' });
+            if (!res.ok) return null;
+            const body = await res.json();
+            return (body.data?.projects ?? []).map((p: { name?: string }) => p.name ?? '');
+        });
+        expect(names, 'GET /api/v1/projects must answer this session').not.toBeNull();
+        expect(names, 'exactly the one project this persona is a member of').toEqual([PROJECT_NAME]);
+        expect(
+            listed.includes('default'),
+            'the install default project is not one this persona is a member of, so the page must not show it'
+        ).toBe(false);
     });
 
     test('the New Secret dialog has a project and an environment to choose', async ({ page }) => {
