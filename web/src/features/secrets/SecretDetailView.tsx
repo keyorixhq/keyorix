@@ -49,6 +49,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Textarea } from '../../components/ui/Textarea';
 import { parseServerDate } from '../../utils';
 import { eventLabel, accessActionLabel } from '../../utils/eventLabels';
+import { resolveAuditIds } from '../audit/auditNames';
 import { formatDateTime } from '../../utils/datetime';
 
 const relativeFromNow = (d: string | Date): string => {
@@ -608,9 +609,13 @@ const TagsEditPanel: React.FC<TagsEditPanelProps> = ({ secretTags, tagDraft, set
 
 interface AuditTrailPanelProps {
     auditTrail: AuditEntry[] | undefined;
+    // This secret's own id and name: stored descriptions such as "secret 3 restored" carry
+    // only the id, and the one object every row here is about is already known.
+    secretId: number;
+    secretName: string;
 }
 
-const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail }) => {
+const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail, secretId, secretName }) => {
     if (!auditTrail || auditTrail.length === 0) return null;
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
@@ -628,7 +633,9 @@ const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail }) => {
                             </span>
                             {e.description && (
                                 <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                    {e.description}
+                                    {resolveAuditIds(e.description, {
+                                        secrets: new Map([[secretId, secretName]]),
+                                    })}
                                 </span>
                             )}
                             {e.actor_type === 'machine_identity' && (
@@ -1095,7 +1102,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                 mutation={setTags}
             />
 
-            <AuditTrailPanel auditTrail={auditTrail} />
+            <AuditTrailPanel auditTrail={auditTrail} secretId={secret.id} secretName={secret.name} />
 
             <RiskScorePanel risk={risk} />
 

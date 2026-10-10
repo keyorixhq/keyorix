@@ -270,9 +270,14 @@ test('secret detail History and Recent access update after rotate and reveal, wi
     // No reload, no navigation: the rotation shows up in History by itself.
     await expect(history.getByText('Rotated', { exact: true })).toBeVisible({ timeout: 10_000 });
 
-    // Reveal is a read: it lands in Recent access without a refresh.
-    await expect(page.getByRole('heading', { name: 'Recent access', exact: true })).toHaveCount(0);
+    // Reveal is a read: it lands in Recent access and History without a refresh.
+    const recent = page.locator('div', { has: page.getByRole('heading', { name: 'Recent access', exact: true }) }).last();
+    await expect(recent.getByText(/^Rotated/)).toBeVisible({ timeout: 10_000 });
+    // Opening the view may already log reads; what matters is that Reveal adds one without a refresh.
+    const readsBefore = await recent.getByText(/^Read/).count();
+    const historyReadsBefore = await history.getByText('Read', { exact: true }).count();
     await page.getByRole('button', { name: 'Reveal', exact: true }).click();
     await expect(page.getByText(`rotated-${unique}`, { exact: true })).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByRole('heading', { name: 'Recent access', exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(recent.getByText(/^Read/)).toHaveCount(readsBefore + 1, { timeout: 10_000 });
+    await expect(history.getByText('Read', { exact: true })).toHaveCount(historyReadsBefore + 1, { timeout: 10_000 });
 });

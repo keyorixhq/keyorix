@@ -404,6 +404,31 @@ describe('SecretDetailView history', () => {
         expect(screen.getByText('Versions listed')).toBeInTheDocument();
     });
 
+    it('shows this secret by name in an old, id-only description, and leaves a named one alone', () => {
+        const secret = makeSecret();
+        mockAuditTrail = [
+            {
+                id: 5,
+                event_type: 'secret.restored',
+                timestamp: '2026-06-18T12:00:00Z',
+                actor_type: 'user',
+                description: `secret ${secret.id} restored`,
+                success: true,
+            },
+            {
+                id: 6,
+                event_type: 'secret.description_updated',
+                timestamp: '2026-06-18T13:00:00Z',
+                actor_type: 'user',
+                description: `updated description of secret ${secret.id} ("${secret.name}")`,
+                success: true,
+            },
+        ];
+        render(<SecretDetailView secret={secret} />);
+        expect(screen.getByText(`secret "${secret.name}" restored`)).toBeInTheDocument();
+        expect(screen.getByText(`updated description of secret ${secret.id} ("${secret.name}")`)).toBeInTheDocument();
+    });
+
     it('omits the panel when there is no audit trail', () => {
         mockAuditTrail = [];
         render(<SecretDetailView secret={makeSecret()} />);
