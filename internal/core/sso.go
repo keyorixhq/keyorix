@@ -29,6 +29,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -279,7 +280,13 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
+	// Best-effort last-login stamp, through besteffort.Run: the session above is
+	// already minted, so a PANIC escaping a bare `_ =` reported a 500 for a login
+	// that left a live Session behind (FuzzStorageFaultOperations: SAML ACS,
+	// UpdateLastLogin#1/panic, oracle (a) -- the #2841 shape on the SSO path).
+	besteffort.Run(ctx, "sso.CompleteSSO.RecordLogin", func() error {
+		return c.RecordLogin(ctx, user.ID)
+	})
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SSO login via %s (subject=%s)", providerName, sub))
 	return session, user, st.ReturnTo, nil
@@ -420,7 +427,13 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	if err != nil {
 		return nil, nil, "", err
 	}
-	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
+	// Best-effort last-login stamp, through besteffort.Run: the session above is
+	// already minted, so a PANIC escaping a bare `_ =` reported a 500 for a login
+	// that left a live Session behind (FuzzStorageFaultOperations: SAML ACS,
+	// UpdateLastLogin#1/panic, oracle (a) -- the #2841 shape on the SSO path).
+	besteffort.Run(ctx, "sso.CompleteSAML.RecordLogin", func() error {
+		return c.RecordLogin(ctx, user.ID)
+	})
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))
 	return session, user, st.ReturnTo, nil

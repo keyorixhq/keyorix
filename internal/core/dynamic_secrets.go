@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/dsn"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -615,17 +616,23 @@ func (c *KeyorixCore) cleanupOrphanedRole(ctx context.Context, cfg *models.Dynam
 		}
 		// No credential is stored — the issue was aborted; only the role name
 		// matters so an operator can drop it. CredentialEnc is intentionally empty.
-		_, _ = c.storage.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
-			ConfigID:      cfg.ID,
-			LeaseID:       leaseID,
-			ProjectID:     cfg.ProjectID,
-			EnvironmentID: cfg.EnvironmentID,
-			RoleName:      roleName,
-			Status:        "revoke_failed",
-			RevokeError:   "orphaned on aborted issue: " + err.Error(),
-			IssuedAt:      now,
-			ExpiresAt:     now,
-			RevokedAt:     &now,
+		// Through besteffort.Run: a PANIC in this write must not skip the
+		// revoke_failed audit event below, which is the operator's only other
+		// signal that a live, unleased role exists.
+		besteffort.Run(ctx, "dynamic_secrets.cleanupOrphanedRole.CreateDynamicSecretLease", func() error {
+			_, lerr := c.storage.CreateDynamicSecretLease(ctx, &models.DynamicSecretLease{
+				ConfigID:      cfg.ID,
+				LeaseID:       leaseID,
+				ProjectID:     cfg.ProjectID,
+				EnvironmentID: cfg.EnvironmentID,
+				RoleName:      roleName,
+				Status:        "revoke_failed",
+				RevokeError:   "orphaned on aborted issue: " + err.Error(),
+				IssuedAt:      now,
+				ExpiresAt:     now,
+				RevokedAt:     &now,
+			})
+			return lerr
 		})
 		var uidPtr *uint
 		if userID != 0 {
