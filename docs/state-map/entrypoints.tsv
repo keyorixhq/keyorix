@@ -148,7 +148,7 @@ cli	keyorix machine token-hygiene	cli/cmd/machine_hygiene_audit.go	20	runMachine
 cli	keyorix mfa	cli/cmd/mfa.go	14		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix mfa activate	cli/cmd/mfa.go	35	runMFAActivate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix mfa enroll	cli/cmd/mfa.go	19	runMFAEnroll	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix mfa stepup	cli/cmd/mfa.go	48	runMFAStepUp	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix mfa stepup	cli/cmd/mfa.go	49	runMFAStepUp	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix migrate	server/admin/migrate.go	17	runAdminMigrate	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix notification	cli/cmd/notification.go	17		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix notification channel	cli/cmd/notification.go	22		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
