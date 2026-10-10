@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { ShareSecretModal, expiresAtFromPreset } from '../ShareSecretModal';
 import { Secret } from '../../../types';
+import { AxiosError, AxiosHeaders } from 'axios';
 
 const mockMutate = vi.fn();
 const mockReset = vi.fn();
@@ -335,20 +336,36 @@ describe('ShareSecretModal submission + lifecycle', () => {
         expect(payload.permission).toBe('write');
     });
 
-    it('only offers Read Only when the sharer lacks write on the secret', () => {
-        const readOnlySecret: Secret = { ...secret, permissions: ['read'] };
-        render(<ShareSecretModal secret={readOnlySecret} isOpen onClose={() => {}} />);
+    // The dialog is opened from a secrets-list row, and secretsApi.list maps every row with
+    // `permissions: []` (the list endpoint returns no per-secret permissions). The dialog used to
+    // hide "Read & Write" unless secret.permissions held 'write', so for every real row it never
+    // offered it and a write share (the #2941 elevation) could not be created from the UI. The
+    // server is the enforcement: POST /secrets/{id}/share needs secrets.write on the secret.
+    it('offers Read & Write for a list row, whose permissions array is empty', () => {
+        const listRow: Secret = { ...secret, permissions: [] };
+        render(<ShareSecretModal secret={listRow} isOpen onClose={() => {}} />);
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);
-        expect(optionLabels).toEqual(['Read Only']);
-        expect(optionLabels).not.toContain('Read & Write');
+        expect(optionLabels).toEqual(['Read Only', 'Read & Write']);
     });
 
-    it('offers Read & Write when the sharer holds write on the secret', () => {
+    it('offers Read & Write when the secret carries write', () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);
         expect(optionLabels).toContain('Read & Write');
+    });
+
+    it('says what a Read & Write share grants and what it does not (#3001 allowlist)', () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        expect(screen.getByText('The recipient can read this secret.')).toBeInTheDocument();
+        fireEvent.change(screen.getByDisplayValue('Read Only'), { target: { value: 'write' } });
+        const hint = screen.getByText(/update its value and metadata/);
+        expect(hint).toHaveTextContent('rotate it');
+        expect(hint).toHaveTextContent(
+            /Suspending, changing its expiry, moving, deleting, re-sharing or changing access still needs a project role/
+        );
+        expect(screen.getByDisplayValue('Read & Write')).toHaveAttribute('aria-describedby', hint.id);
     });
 
     it('shows a success message, calls onSuccess, and auto-closes after a delay', async () => {
@@ -372,6 +389,23 @@ describe('ShareSecretModal submission + lifecycle', () => {
         mutationError = new Error('Username not found');
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         expect(screen.getByText('Username not found')).toBeInTheDocument();
+    });
+
+    it("shows the server's reason, not axios's generic text, when a share is refused (#2976)", () => {
+        isError = true;
+        mutationError = new AxiosError('Request failed with status code 403', 'ERR_BAD_REQUEST', undefined, undefined, {
+            status: 403,
+            statusText: 'Forbidden',
+            headers: {},
+            config: { headers: new AxiosHeaders() },
+            data: {
+                error: 'Forbidden',
+                message: "The recipient is not a member of this secret's project.",
+            },
+        });
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        expect(screen.getByText("The recipient is not a member of this secret's project.")).toBeInTheDocument();
+        expect(screen.queryByText('Request failed with status code 403')).not.toBeInTheDocument();
     });
 
     it('shows a fallback message when the mutation fails with a non-Error value', () => {
