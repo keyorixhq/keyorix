@@ -111,11 +111,16 @@ func TestShareTerm_AuthorizeSecret_MaxOfRoleAndShare(t *testing.T) {
 
 	// Expired grants nothing.
 	past := time.Now().Add(-time.Minute)
-	require.NoError(t, db.Model(share).Update("expires_at", past).Error)
+	// ExpiresAt goes through Save() so ShareRecord's BeforeSave hook runs (the
+	// BeforeSave-bypass guard, g1619, rejects raw writes to hooked columns).
+	share.ExpiresAt = &past
+	require.NoError(t, db.Save(share).Error)
 	assert.False(t, allowed(2, permSecretsWrite), "an expired share grants nothing")
 
 	// A corrupt level grants nothing (never reads as owner).
-	require.NoError(t, db.Model(share).Updates(map[string]interface{}{"expires_at": nil, "permission": "owner"}).Error)
+	share.ExpiresAt = nil
+	require.NoError(t, db.Save(share).Error)
+	require.NoError(t, db.Model(share).Update("permission", "owner").Error)
 	assert.False(t, allowed(2, permSecretsRead), "a share level outside read|write grants nothing")
 
 	// Revoked (deleted) grants nothing.

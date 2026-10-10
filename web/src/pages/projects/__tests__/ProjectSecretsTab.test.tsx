@@ -212,6 +212,25 @@ describe('ProjectSecretsTab — secrets table', () => {
         expect(screen.getByText('api-key')).toBeInTheDocument();
     });
 
+    // #2977: the shared SecretTableRow renders a Classification cell, but this
+    // table's header omitted it, so ENVIRONMENT sat over the classification
+    // badge, SHARING over the environment and MODIFIED over "Private".
+    it('has one header per cell of the shared row, in the same order (no shifted columns)', () => {
+        listState.secrets = secretsFixture;
+        render(<ProjectSecretsTab projectId={1} />);
+        const headers = screen.getAllByRole('columnheader').map((th) => th.textContent);
+        expect(headers).toEqual([
+            '',
+            'Name',
+            'Type',
+            'Classification',
+            'Environment',
+            'Sharing',
+            'Modified',
+            'Actions',
+        ]);
+    });
+
     it('shows an error state and retries', () => {
         listState.error = new Error('boom');
         render(<ProjectSecretsTab projectId={1} />);

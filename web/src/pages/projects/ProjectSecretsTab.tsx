@@ -188,7 +188,7 @@ const SecretsTableContent: React.FC<SecretsTableContentProps> = ({
                                 }}
                             />
                         </th>
-                        {['Name', 'Type', 'Environment', 'Sharing', 'Modified'].map((h) => (
+                        {['Name', 'Type', 'Classification', 'Environment', 'Sharing', 'Modified'].map((h) => (
                             <th
                                 key={h}
                                 className="px-6 py-3 text-left text-xs font-medium uppercase tracking-wider"
