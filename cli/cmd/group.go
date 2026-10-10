@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -95,25 +96,31 @@ func runGroupCreate(cmd *cobra.Command, args []string) error {
 var groupGetID int
 
 var groupGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Get a group by id",
+	Use:   "get [group]",
+	Short: "Get a group by name or id",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGroupGet,
 }
 
 func init() {
-	groupGetCmd.Flags().IntVar(&groupGetID, "id", 0, "Group ID (required)")
+	groupGetCmd.Flags().IntVar(&groupGetID, "id", 0, groupIDFlagUsage)
 	groupCmd.AddCommand(groupGetCmd)
 }
 
 func runGroupGet(cmd *cobra.Command, args []string) error {
-	if groupGetID == 0 {
-		return fmt.Errorf("group id is required (use --id)")
+	ref, err := groupRef(args, groupGetID, "")
+	if err != nil {
+		return err
 	}
 	client, _, err := groupAPIClient()
 	if err != nil {
 		return err
 	}
-	resp, err := client.GetGroupWithResponse(context.Background(), groupGetID)
+	gid, err := resolveRBACGroupIDOnly(context.Background(), client, ref)
+	if err != nil {
+		return err
+	}
+	resp, err := client.GetGroupWithResponse(context.Background(), gid)
 	if err != nil {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
@@ -134,21 +141,23 @@ var (
 )
 
 var groupUpdateCmd = &cobra.Command{
-	Use:   "update",
+	Use:   "update [group]",
 	Short: "Update a group",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGroupUpdate,
 }
 
 func init() {
-	groupUpdateCmd.Flags().IntVar(&groupUpdateID, "id", 0, "Group ID (required)")
+	groupUpdateCmd.Flags().IntVar(&groupUpdateID, "id", 0, groupIDFlagUsage)
 	groupUpdateCmd.Flags().StringVar(&groupUpdateName, "name", "", "New name")
 	groupUpdateCmd.Flags().StringVar(&groupUpdateDescription, "description", "", "New description")
 	groupCmd.AddCommand(groupUpdateCmd)
 }
 
 func runGroupUpdate(cmd *cobra.Command, args []string) error {
-	if groupUpdateID == 0 {
-		return fmt.Errorf("group id is required (use --id)")
+	ref, err := groupRef(args, groupUpdateID, "")
+	if err != nil {
+		return err
 	}
 	if groupUpdateName == "" && groupUpdateDescription == "" {
 		return fmt.Errorf("provide at least one of --name or --description")
@@ -157,7 +166,11 @@ func runGroupUpdate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Updating group %d on %s...\n", groupUpdateID, serverURL)
+	gid, err := resolveRBACGroupIDOnly(context.Background(), client, ref)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Updating group %d on %s...\n", gid, serverURL)
 
 	body := apiclient.UpdateGroupJSONRequestBody{}
 	if groupUpdateName != "" {
@@ -166,7 +179,7 @@ func runGroupUpdate(cmd *cobra.Command, args []string) error {
 	if groupUpdateDescription != "" {
 		body.Description = &groupUpdateDescription
 	}
-	resp, err := client.UpdateGroupWithResponse(context.Background(), groupUpdateID, body)
+	resp, err := client.UpdateGroupWithResponse(context.Background(), gid, body)
 	if err != nil {
 		return fmt.Errorf("failed to update group: %w", err)
 	}
@@ -186,13 +199,14 @@ var (
 )
 
 var groupDeleteCmd = &cobra.Command{
-	Use:   "delete",
+	Use:   "delete [group]",
 	Short: "Delete a group",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGroupDelete,
 }
 
 func init() {
-	groupDeleteCmd.Flags().IntVar(&groupDeleteID, "id", 0, "Group ID (required)")
+	groupDeleteCmd.Flags().IntVar(&groupDeleteID, "id", 0, groupIDFlagUsage)
 	groupDeleteCmd.Flags().BoolVar(&groupDeleteForce, "force", false, "Skip the confirmation prompt")
 	groupCmd.AddCommand(groupDeleteCmd)
 }
@@ -202,17 +216,22 @@ func init() {
 // back to an id-only label) so the confirmation prompt and the final result
 // both name the actual target.
 func runGroupDelete(cmd *cobra.Command, args []string) error {
-	if groupDeleteID == 0 {
-		return fmt.Errorf("group id is required (use --id)")
+	ref, err := groupRef(args, groupDeleteID, "")
+	if err != nil {
+		return err
 	}
 	client, serverURL, err := groupAPIClient()
 	if err != nil {
 		return err
 	}
 	ctx := context.Background()
+	gid, err := resolveRBACGroupIDOnly(ctx, client, ref)
+	if err != nil {
+		return err
+	}
 
-	label := fmt.Sprintf("group %d", groupDeleteID)
-	if resp, gerr := client.GetGroupWithResponse(ctx, groupDeleteID); gerr == nil && resp.JSON200 != nil && resp.JSON200.Data != nil {
+	label := fmt.Sprintf("group %d", gid)
+	if resp, gerr := client.GetGroupWithResponse(ctx, gid); gerr == nil && resp.JSON200 != nil && resp.JSON200.Data != nil {
 		g := *resp.JSON200.Data
 		label = fmt.Sprintf("group %d (%s)", derefInt(g.Id), derefStr(g.Name))
 	}
@@ -225,7 +244,7 @@ func runGroupDelete(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Printf("Deleting %s on %s...\n", label, serverURL)
-	resp, err := client.DeleteGroupWithResponse(ctx, groupDeleteID)
+	resp, err := client.DeleteGroupWithResponse(ctx, gid)
 	if err != nil {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
@@ -284,25 +303,31 @@ func runGroupList(cmd *cobra.Command, args []string) error {
 var groupMembersID int
 
 var groupMembersCmd = &cobra.Command{
-	Use:   "members",
+	Use:   "members [group]",
 	Short: "List members of a group",
+	Args:  cobra.MaximumNArgs(1),
 	RunE:  runGroupMembers,
 }
 
 func init() {
-	groupMembersCmd.Flags().IntVar(&groupMembersID, "id", 0, "Group ID (required)")
+	groupMembersCmd.Flags().IntVar(&groupMembersID, "id", 0, groupIDFlagUsage)
 	groupCmd.AddCommand(groupMembersCmd)
 }
 
 func runGroupMembers(cmd *cobra.Command, args []string) error {
-	if groupMembersID == 0 {
-		return fmt.Errorf("group id is required (use --id)")
+	ref, err := groupRef(args, groupMembersID, "")
+	if err != nil {
+		return err
 	}
 	client, _, err := groupAPIClient()
 	if err != nil {
 		return err
 	}
-	resp, err := client.GetGroupMembersWithResponse(context.Background(), groupMembersID)
+	gid, err := resolveRBACGroupIDOnly(context.Background(), client, ref)
+	if err != nil {
+		return err
+	}
+	resp, err := client.GetGroupMembersWithResponse(context.Background(), gid)
 	if err != nil {
 		return fmt.Errorf("failed to list members: %w", err)
 	}
@@ -310,7 +335,7 @@ func runGroupMembers(cmd *cobra.Command, args []string) error {
 		return httpStatusError("failed to list members", resp.StatusCode(), resp.Body)
 	}
 	members := derefUserSummarySlice(resp.JSON200.Data.Members)
-	fmt.Printf("Group %d — %d member(s)\n", groupMembersID, len(members))
+	fmt.Printf("Group %d — %d member(s)\n", gid, len(members))
 	fmt.Printf("%-6s %-20s %-30s\n", "ID", "USERNAME", "EMAIL")
 	for _, u := range members {
 		fmt.Printf("%-6d %-20s %-30s\n", derefInt(u.Id), cliout.SanitizeForTerminal(derefStr(u.Username)), cliout.SanitizeForTerminal(derefStr(u.Email)))
@@ -318,76 +343,104 @@ func runGroupMembers(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// ── add-member ──────────────────────────────────────────────────────────────────
+// ── add-member / remove-member ─────────────────────────────────────────────────
+//
+// Both take the group as a positional <group> (name or id) or --group / --group-id,
+// and the user as --user (username, email or id) or --user-id, so they read like
+// `rbac assign-role-to-group --group` and `rbac assign-role --user` (#2981).
 
 var (
 	groupAddMemberGroupID   int
+	groupAddMemberGroup     string
 	groupAddMemberUserID    int
+	groupAddMemberUser      string
 	groupAddMemberProjectID int
 )
 
 var groupAddMemberCmd = &cobra.Command{
-	Use:   "add-member",
+	Use:   "add-member [group]",
 	Short: "Add a user to a group",
-	RunE:  runGroupAddMember,
+	Example: `  keyorix group add-member platform-team --user alice
+  keyorix group add-member --group-id 1 --user-id 2`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runGroupAddMember,
 }
 
 func init() {
-	groupAddMemberCmd.Flags().IntVar(&groupAddMemberGroupID, "group-id", 0, "Group ID (required)")
-	groupAddMemberCmd.Flags().IntVar(&groupAddMemberUserID, "user-id", 0, "User ID (required)")
+	groupAddMemberCmd.Flags().IntVar(&groupAddMemberGroupID, "group-id", 0, groupIDFlagUsage)
+	groupAddMemberCmd.Flags().StringVar(&groupAddMemberGroup, "group", "", rbacGroupFlagUsage)
+	groupAddMemberCmd.Flags().IntVar(&groupAddMemberUserID, "user-id", 0, "User ID (or use --user)")
+	groupAddMemberCmd.Flags().StringVar(&groupAddMemberUser, "user", "", groupUserFlagUsage)
 	groupAddMemberCmd.Flags().IntVar(&groupAddMemberProjectID, "project", 0, "Scope membership to a project (0 = global)")
 	groupCmd.AddCommand(groupAddMemberCmd)
 }
 
 func runGroupAddMember(cmd *cobra.Command, args []string) error {
-	if groupAddMemberGroupID == 0 || groupAddMemberUserID == 0 {
-		return fmt.Errorf("--group-id and --user-id are required")
+	gref, uref, err := groupMemberRefs(args, groupAddMemberGroupID, groupAddMemberGroup, groupAddMemberUserID, groupAddMemberUser)
+	if err != nil {
+		return err
 	}
 	client, _, err := groupAPIClient()
 	if err != nil {
 		return err
 	}
-	body := apiclient.AddGroupMemberJSONRequestBody{UserId: groupAddMemberUserID}
+	ctx := context.Background()
+	gid, uid, err := resolveGroupMemberIDs(ctx, client, gref, uref)
+	if err != nil {
+		return err
+	}
+	body := apiclient.AddGroupMemberJSONRequestBody{UserId: uid}
 	if groupAddMemberProjectID != 0 {
 		body.ProjectId = &groupAddMemberProjectID
 	}
-	resp, err := client.AddGroupMemberWithResponse(context.Background(), groupAddMemberGroupID, body)
+	resp, err := client.AddGroupMemberWithResponse(ctx, gid, body)
 	if err != nil {
 		return fmt.Errorf("failed to add member: %w", err)
 	}
 	if resp.StatusCode() != 200 {
 		return httpStatusError("failed to add member", resp.StatusCode(), resp.Body)
 	}
-	fmt.Printf("User %d added to group %d (project %d).\n", groupAddMemberUserID, groupAddMemberGroupID, groupAddMemberProjectID)
+	fmt.Printf("User %d added to group %d (project %d).\n", uid, gid, groupAddMemberProjectID)
 	return nil
 }
 
-// ── remove-member ───────────────────────────────────────────────────────────────
-
 var (
 	groupRemoveMemberGroupID   int
+	groupRemoveMemberGroup     string
 	groupRemoveMemberUserID    int
+	groupRemoveMemberUser      string
 	groupRemoveMemberProjectID int
 )
 
 var groupRemoveMemberCmd = &cobra.Command{
-	Use:   "remove-member",
+	Use:   "remove-member [group]",
 	Short: "Remove a user from a group",
-	RunE:  runGroupRemoveMember,
+	Example: `  keyorix group remove-member platform-team --user alice
+  keyorix group remove-member --group-id 1 --user-id 2`,
+	Args: cobra.MaximumNArgs(1),
+	RunE: runGroupRemoveMember,
 }
 
 func init() {
-	groupRemoveMemberCmd.Flags().IntVar(&groupRemoveMemberGroupID, "group-id", 0, "Group ID (required)")
-	groupRemoveMemberCmd.Flags().IntVar(&groupRemoveMemberUserID, "user-id", 0, "User ID (required)")
+	groupRemoveMemberCmd.Flags().IntVar(&groupRemoveMemberGroupID, "group-id", 0, groupIDFlagUsage)
+	groupRemoveMemberCmd.Flags().StringVar(&groupRemoveMemberGroup, "group", "", rbacGroupFlagUsage)
+	groupRemoveMemberCmd.Flags().IntVar(&groupRemoveMemberUserID, "user-id", 0, "User ID (or use --user)")
+	groupRemoveMemberCmd.Flags().StringVar(&groupRemoveMemberUser, "user", "", groupUserFlagUsage)
 	groupRemoveMemberCmd.Flags().IntVar(&groupRemoveMemberProjectID, "project", 0, "Scope membership to a project (0 = global)")
 	groupCmd.AddCommand(groupRemoveMemberCmd)
 }
 
 func runGroupRemoveMember(cmd *cobra.Command, args []string) error {
-	if groupRemoveMemberGroupID == 0 || groupRemoveMemberUserID == 0 {
-		return fmt.Errorf("--group-id and --user-id are required")
+	gref, uref, err := groupMemberRefs(args, groupRemoveMemberGroupID, groupRemoveMemberGroup, groupRemoveMemberUserID, groupRemoveMemberUser)
+	if err != nil {
+		return err
 	}
 	client, _, err := groupAPIClient()
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	gid, uid, err := resolveGroupMemberIDs(ctx, client, gref, uref)
 	if err != nil {
 		return err
 	}
@@ -395,14 +448,14 @@ func runGroupRemoveMember(cmd *cobra.Command, args []string) error {
 	if groupRemoveMemberProjectID != 0 {
 		params = &apiclient.RemoveGroupMemberParams{ProjectId: &groupRemoveMemberProjectID}
 	}
-	resp, err := client.RemoveGroupMemberWithResponse(context.Background(), groupRemoveMemberGroupID, groupRemoveMemberUserID, params)
+	resp, err := client.RemoveGroupMemberWithResponse(ctx, gid, uid, params)
 	if err != nil {
 		return fmt.Errorf("failed to remove member: %w", err)
 	}
 	if resp.StatusCode() != 204 {
 		return httpStatusError("failed to remove member", resp.StatusCode(), resp.Body)
 	}
-	fmt.Printf("User %d removed from group %d (project %d).\n", groupRemoveMemberUserID, groupRemoveMemberGroupID, groupRemoveMemberProjectID)
+	fmt.Printf("User %d removed from group %d (project %d).\n", uid, gid, groupRemoveMemberProjectID)
 	return nil
 }
 
@@ -420,4 +473,93 @@ func derefUserSummarySlice(s *[]apiclient.UserSummary) []apiclient.UserSummary {
 		return nil
 	}
 	return *s
+}
+
+const (
+	groupIDFlagUsage   = "Group ID (alternative to the positional <group>, which also takes a name)"
+	groupUserFlagUsage = "User username, email or numeric ID (alternative to --user-id)"
+)
+
+// groupRef picks the group a command acts on: the positional <group> (name or id)
+// wins, then --group (name or id), then the numeric id flag. It only decides WHAT
+// was asked for; resolveRBACGroupIDOnly turns it into an id. Existing --id /
+// --group-id invocations keep working unchanged (#2981).
+func groupRef(args []string, idFlag int, nameFlag string) (string, error) {
+	switch {
+	case len(args) > 0 && args[0] != "":
+		if idFlag != 0 && strconv.Itoa(idFlag) != args[0] {
+			return "", fmt.Errorf("group given twice and differently: %q and --id/--group-id %d", args[0], idFlag)
+		}
+		return args[0], nil
+	case nameFlag != "":
+		return nameFlag, nil
+	case idFlag != 0:
+		return strconv.Itoa(idFlag), nil
+	}
+	return "", fmt.Errorf("group is required: pass the group name or id (e.g. `keyorix group get platform-team`) or use --id")
+}
+
+// resolveRBACGroupIDOnly is resolveRBACGroupID without the display name. A numeric
+// ref is used as-is (no lookup), so id-based invocations make the same requests as before.
+func resolveRBACGroupIDOnly(ctx context.Context, client *apiclient.ClientWithResponses, ref string) (int, error) {
+	id, _, err := resolveRBACGroupID(ctx, client, ref)
+	return id, err
+}
+
+// groupMemberRefs gathers the group and user references for add-member/remove-member.
+func groupMemberRefs(args []string, groupID int, groupName string, userID int, userRef string) (gref, uref string, err error) {
+	gref, err = groupRef(args, groupID, groupName)
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case userRef != "":
+		if userID != 0 && strconv.Itoa(userID) != userRef {
+			return "", "", fmt.Errorf("user given twice and differently: --user %q and --user-id %d", userRef, userID)
+		}
+		uref = userRef
+	case userID != 0:
+		uref = strconv.Itoa(userID)
+	default:
+		return "", "", fmt.Errorf("user is required: pass --user <username|email|id> (or --user-id)")
+	}
+	return gref, uref, nil
+}
+
+func resolveGroupMemberIDs(ctx context.Context, client *apiclient.ClientWithResponses, gref, uref string) (gid, uid int, err error) {
+	if gid, err = resolveRBACGroupIDOnly(ctx, client, gref); err != nil {
+		return 0, 0, err
+	}
+	if uid, err = resolveUserRef(ctx, client, uref); err != nil {
+		return 0, 0, err
+	}
+	return gid, uid, nil
+}
+
+// resolveUserRef resolves a numeric id, an email or a username to a user id. A
+// numeric ref is used as-is; otherwise it is matched case-insensitively against
+// the user list (email when the ref contains "@", else username).
+func resolveUserRef(ctx context.Context, client *apiclient.ClientWithResponses, ref string) (int, error) {
+	if id, err := strconv.Atoi(ref); err == nil {
+		return id, nil
+	}
+	pageSize := 1000
+	resp, err := client.ListUsersWithResponse(ctx, &apiclient.ListUsersParams{PageSize: &pageSize})
+	if err != nil {
+		return 0, fmt.Errorf("failed to list users: %w", err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Users == nil {
+		return 0, httpStatusError("failed to list users", resp.StatusCode(), resp.Body)
+	}
+	byEmail := strings.Contains(ref, "@")
+	for _, u := range *resp.JSON200.Data.Users {
+		cand := derefStr(u.Username)
+		if byEmail {
+			cand = derefStr(u.Email)
+		}
+		if strings.EqualFold(cand, ref) {
+			return derefInt(u.Id), nil
+		}
+	}
+	return 0, fmt.Errorf("user %q not found", ref)
 }

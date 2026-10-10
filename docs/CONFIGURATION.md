@@ -1010,9 +1010,14 @@ jit_access_expiry:
 ## break_glass
 
 Opt-in **self-service emergency access** (incident response — NIS2/DORA). When
-enabled, any authenticated user can `POST /api/v1/projects/{id}/break-glass` (or run
-`keyorix break-glass activate`) to **immediately** self-grant the configured
-emergency role at that project — no approval. The activation is **time-bound** (it
+enabled, any **member of the project** (a user holding a role scoped to that project,
+directly or through a group; install-wide roles do not count) can
+`POST /api/v1/projects/{id}/break-glass` (or run `keyorix break-glass activate`) to
+**immediately** self-grant the configured emergency role at that project — no
+approval. A non-member is refused with `403 permission denied: break-glass is
+available only to members of the project`. The role is added on top of what the member
+already holds, so a user who can already read a secret sees the *extra* permissions
+(printed by `activate`), not new read access. The activation is **time-bound** (it
 auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
 **written justification**, is **loudly audited** (`break_glass.activated`), and
 **alerts the project's admins**. Each activation is a queryable record for post-hoc
