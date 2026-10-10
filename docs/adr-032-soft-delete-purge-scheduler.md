@@ -56,3 +56,22 @@ idempotent.
   net, so the default (30 days, off) is conservative.
 - Secrets soft-delete + restore (replacing the hard delete) is a follow-up; when
   it lands, adding `secret_nodes` to the purge is a one-line extension.
+
+## Amendment (RETENTION-1): the purge date is exposed, frozen at deletion, and never undercut
+
+A soft-deleted secret now carries `purge_at` (UTC): `deleted_at` + its per-secret
+`retention_override_days`, else the `soft_delete.retention_days` in force when it was
+deleted. It is returned as `purge_at` in `GET /projects/{id}/secrets/deleted`, as the
+`Keyorix-Purge-At` header of the (still 204) `DELETE /secrets/{id}`, and as
+`DeleteSecretResponse.purge_at` over gRPC; the CLI (`secret delete`, `secret trash`) and
+the web Recycle bin show it. No `api_version` bump: every change is additive.
+
+**Rule when the window changes after a deletion:** the date shown is the date used. The
+purge honours the frozen `purge_at` and ignores the current `retention_days`, so shortening
+the window never purges a secret earlier than the date an operator was told, and
+lengthening it never defers that date. A changed window affects deletions made after the
+change. Why not recompute from the live config (the previous behaviour): the date on screen
+would change under the operator, and a shortening would silently remove a secret that the
+UI had promised was restorable. Secrets deleted before this amendment have no frozen date
+and keep the live-config rule (their shown date is `deleted_at` + the current window).
+Invariant: `INV-STORE-secret-purge-never-before-shown-date`.

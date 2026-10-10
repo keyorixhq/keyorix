@@ -606,6 +606,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 	// No SetAuditSkipDurableSync here, deliberately: ADR-112 Amendment 1's
 	// fast audit mode is PostgreSQL-only and config validation refuses to
 	// start a SQLite backend that sets it, so there is nothing to propagate --
@@ -638,6 +639,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 	// ADR-112 Amendment 1: read the computed status rather than the raw bool,
 	// so "configured" and "actually in effect" cannot drift apart between
 	// here and the surfaces that report it (start-up log, posture, API). This

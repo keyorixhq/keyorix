@@ -1382,7 +1382,10 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 			}
 			// Single-replica-gated (ADR-039): only one replica runs the purge.
 			return lockedRun(ctx, coreService.Storage(), schedLockPurge, "Retention purge", func() error {
-				cutoff := time.Now().AddDate(0, 0, -retentionDays)
+				// UTC so the cutoff is exactly the inverse of models.PurgeAtFor
+				// (deleted_at + N days in UTC): a local zone with DST would let a
+				// legacy (un-stamped) secret go an hour before its displayed purge date.
+				cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
 				res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff)
 				if err != nil {
 					log.Printf("Retention purge error: %v", err)
@@ -2799,6 +2802,7 @@ func wireDynamicSecrets(cfg *config.Config, coreService *core.KeyorixCore) {
 	// refuses to mint from backends whose lease TTL only the sweeper enforces
 	// (MySQL/MongoDB) when it is disabled — otherwise the credential never expires.
 	coreService.SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
+	coreService.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 	// SSRF guard for admin DSNs: disabled (private targets allowed) only when the
 	// operator explicitly opts in via dynamic_secrets.allow_private_network_targets.
 	coreService.SetDynamicAllowPrivateTargets(cfg.DynamicSecrets.AllowPrivateNetworkTargets)
