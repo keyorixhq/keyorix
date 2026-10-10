@@ -394,14 +394,32 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 }
 
 // DeleteExpiredBreakGlassBefore hard-deletes old break-glass activations before
-// the cutoff: explicitly non-active (revoked, or reconciled-expired) rows.
-// Before doing so it reconciles ('active' -> 'expired') rows still labeled
-// 'active' whose ExpiresAt has genuinely passed -- ReconcileExpiredBreakGlassActivation
+// the cutoff: explicitly non-active (revoked, or reconciled-expired) AND
+// reviewed rows. Before doing so it reconciles ('active' -> 'expired') rows
+// still labeled 'active' whose ExpiresAt has genuinely passed -- ReconcileExpiredBreakGlassActivation
 // only ever reconciles the SAME user's row at their own next activation in the
 // SAME project, so a user who activates once and never revisits that project
 // leaves their row 'active' in the DB indefinitely otherwise; this retention
 // sweep is the backstop that still reclaims it. A row genuinely still active
 // (ExpiresAt in the future, or nil) is never touched either way.
+//
+// #2461 round 2: an unreviewed row (reviewed_at IS NULL) is NEVER matched by
+// this delete, no matter how old. ADR-112's posture deviation ("an open
+// activation without a recorded review") is exactly what retention would
+// otherwise silently erase: a row old enough to outlive break_glass_days
+// would be purged before anyone reviewed it, and the compliance posture
+// report (accumulateBreakGlassPosture) would then report FEWER unreviewed
+// activations than ever actually went unreviewed -- the same masking effect
+// DeleteAnomalyAlertsBefore's ackBefore/unackCeiling split exists to prevent
+// for unacknowledged anomaly alerts, immediately below. Unlike that sweep,
+// this one has no separate, more-generous ceiling for the unreviewed case:
+// break-glass activation is rare, tightly audited, and already surfaced by
+// RunBreakGlassReviewReminder's recurring overdue warning (and, since round
+// 2, the "emergency-access" compliance control going to Gap), so an
+// unreviewed row has an active, nagging escalation path rather than the
+// anomaly-alert stream's passive accumulation risk a disk-exhaustion ceiling
+// guards against -- there is no legitimate "ancient and still unreviewed and
+// nobody will ever look at it" case here to additionally cap.
 //
 // FIX-7 (adversarial review run 2): #1653 reopened's widen hard-deleted a
 // still-'active' row in the SAME statement as the reconciliation, the instant
@@ -483,7 +501,7 @@ func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, befor
 	if err := ls.reconcileBreakGlassIDsToExpired(ctx, justReconciledIDs); err != nil {
 		return 0, err
 	}
-	q := ls.db.WithContext(ctx).Where("state <> ? AND created_at < ?", breakGlassActiveState, before)
+	q := ls.db.WithContext(ctx).Where("state <> ? AND created_at < ? AND reviewed_at IS NOT NULL", breakGlassActiveState, before)
 	if len(justReconciledIDs) > 0 {
 		q = q.Where("id NOT IN ?", justReconciledIDs)
 	}

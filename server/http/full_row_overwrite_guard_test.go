@@ -89,7 +89,6 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateAccessRequest":              true,
 	"TransitionMachineIdentityState":   true,
 	"ApproveRiskExceptionIfPending":    true,
-	"TransitionSecretStatus":           true,
 	"UpdateUserIfActiveStateMatches":   true,
 	// Plain, unconditional .Save(...).
 	// UpdateMachineIdentityCredential was here until #2696 replaced it with
@@ -120,9 +119,17 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateLegalHold":           true,
 	"UpdateDynamicSecretConfig": true,
 	"UpdateDynamicSecretLease":  true,
-	"UpdateSecret":              true,
 	"UpdateUser":                true,
 	"SaveAnomalyConfig":         true,
+	// UpdateSecret was here until #2695 replaced it with UpdateSecretFields (a
+	// per-field-pointer conditional UPDATE); TransitionSecretStatus was in the
+	// Select("*") group above until the same PR whitelisted it to Status and
+	// UpdatedAt. Neither is a full-row writer any more. UpdateSecret still exists
+	// for ONE caller that open PR #2668 converts (see
+	// TestUpdateSecret_HasNoProductionCallerBeyond2668), but no caller-facing
+	// handler reaches it, which is all this guard scans — and the replacement
+	// takes an id plus a field struct, not a caller-built *models.SecretNode,
+	// so there is no unfetched-struct shape here to catch.
 }
 
 // fullRowOverwriteAllowlist is the exhaustive, reasoned inventory of every

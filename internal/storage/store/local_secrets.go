@@ -650,6 +650,9 @@ var secretNodeSQLOwnedColumns = []string{"read_count"}
 // read_count is omitted deliberately — see secretNodeSQLOwnedColumns. A caller
 // that genuinely needs to change the counter must go through the dedicated
 // conditional path, not through a full-struct save.
+// UpdateSecret is the full-row Save that UpdateSecretFields replaces — see the
+// storage.Storage interface doc for why exactly one caller still reaches it and
+// which open PR removes that caller (#2695 / #2668).
 func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
 	if err := ls.db.WithContext(ctx).Omit(secretNodeSQLOwnedColumns...).Save(secret).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -675,13 +678,82 @@ func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretN
 	return secret, nil
 }
 
+// UpdateSecretFields persists ONLY the fields f names, onto a LIVE secret row:
+// "UPDATE secret_nodes SET <named columns> WHERE id = ? AND deleted_at IS NULL".
+// See the storage.Storage interface doc and SecretFieldUpdate's own comment for
+// why the full-row UpdateSecret this replaced (a bare GORM Save) was unsafe for
+// every one of its callers (#2695).
+//
+// `expiration` is normalised to UTC here because this raw UPDATE bypasses
+// SecretNode.BeforeSave, which exists precisely to keep that column canonical
+// (G81, INV-STORE-19) for the read paths that range-query it in SQL.
+func (ls *LocalStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+	cols := map[string]interface{}{}
+	if f.Name != nil {
+		cols["name"] = *f.Name
+	}
+	if f.Description != nil {
+		cols["description"] = *f.Description
+	}
+	if f.Classification != nil {
+		cols["classification"] = *f.Classification
+	}
+	if f.Type != nil {
+		cols["type"] = *f.Type
+	}
+	if f.OwnerID != nil {
+		cols["owner_id"] = *f.OwnerID
+	}
+	if f.Metadata != nil {
+		cols["metadata"] = *f.Metadata
+	}
+	if f.UpdatedAt != nil {
+		cols["updated_at"] = *f.UpdatedAt
+	}
+	// The four nullable columns carry an explicit Set* flag, so "write NULL" is a
+	// deliberate act rather than indistinguishable from "leave this alone".
+	if f.SetParentID {
+		cols["parent_id"] = f.ParentID
+	}
+	if f.SetExpiration {
+		if f.Expiration != nil {
+			utc := f.Expiration.UTC()
+			cols["expiration"] = &utc
+		} else {
+			cols["expiration"] = nil
+		}
+	}
+	if f.SetMaxReads {
+		cols["max_reads"] = f.MaxReads
+	}
+	if f.SetLastRotatedAt {
+		cols["last_rotated_at"] = f.LastRotatedAt
+	}
+	if len(cols) == 0 {
+		// A caller that asked for nothing has a bug; it must not read the result
+		// as "the row is there". GORM also rejects an empty Updates outright.
+		return false, fmt.Errorf("%s: no secret fields to update", i18n.T("ErrorValidation", nil))
+	}
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).Where(sqlWhereID, id).Updates(cols)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // TransitionSecretStatus persists secret's full row via a conditional UPDATE
 // gated on the row's CURRENT status still being fromStatus (see the interface
 // doc in internal/core/storage/interface.go for why this exists alongside —
-// not instead of — UpdateSecret). Mirrors TransitionMachineIdentityState's
-// `WHERE id = ? AND state = ?` + `Select("*")` shape exactly, so every field
-// the caller mutated on secret (Status, UpdatedAt, ...) is persisted in the
-// same statement, not just a hardcoded column subset.
+// not instead of — UpdateSecretFields).
+//
+// #2695: this CAS used to be paired with Select("*"), copied from
+// TransitionMachineIdentityState. The CAS means it can never resurrect a
+// soft-deleted row, but a full-row write still REVERTED every column a narrower
+// concurrent writer had changed since the caller's read — read_count (and with
+// it a MaxReads budget), owner_id, classification, the rotation columns. Both
+// callers (SuspendSecret, ResumeSecret) set exactly Status and UpdatedAt, so
+// those are the only two columns this may write. Same whitelisting #G42 applied
+// to TransitionDynamicSecretConfigDisabled, for the same reason.
 func (ls *LocalStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
 		Where("id = ? AND status = ?", secret.ID, fromStatus).
@@ -690,6 +762,7 @@ func (ls *LocalStorage) TransitionSecretStatus(ctx context.Context, secret *mode
 		// caller's stale read_count and refund reads against MaxReads. A status
 		// transition has no business moving a read counter.
 		Omit(secretNodeSQLOwnedColumns...).
+		Select("Status", "UpdatedAt").
 		Updates(secret)
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)

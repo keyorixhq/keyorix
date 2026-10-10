@@ -287,7 +287,11 @@ const ReauthModal: React.FC<{
 
 // MfaSection is the Profile → Security two-factor block: it shows enable/enrol when
 // MFA is off, and status + recovery-code management + disable when it is on.
-export const MfaSection: React.FC = () => {
+//
+// enrolmentRequired (#2924): the user was sent here by an MFAEnrollmentRequired 403
+// (security.require_mfa is on and they have no second factor yet). Say why, and don't
+// call the expected 403 on the recovery-code status endpoint "could not load".
+export const MfaSection: React.FC<{ enrolmentRequired?: boolean }> = ({ enrolmentRequired = false }) => {
     const { data: status, isLoading, isError } = useMfaRecoveryStatus();
     const disable = useDisableMfa();
     const regenerate = useRegenerateRecoveryCodes();
@@ -299,6 +303,8 @@ export const MfaSection: React.FC = () => {
     const remaining = status?.remaining ?? 0;
     const total = status?.total ?? 0;
     const lowCodes = enabled && remaining <= LOW_CODES_THRESHOLD;
+
+    const showEnrolmentBanner = enrolmentRequired && !enabled && !isLoading;
 
     const enabledButton = enabled ? (
         <Button variant="destructive" size="sm" onClick={() => setDisableOpen(true)}>
@@ -315,6 +321,16 @@ export const MfaSection: React.FC = () => {
             <h3 className="text-lg font-medium" style={{ color: 'var(--text-primary)' }}>
                 Two-Factor Authentication
             </h3>
+
+            {showEnrolmentBanner && (
+                <div className="mt-4">
+                    <Alert
+                        type="warning"
+                        title="Set up two-factor authentication to continue"
+                        message="Your organisation requires two-factor authentication. Click Enable below and add the key to an authenticator app; the rest of the console unlocks as soon as it is active."
+                    />
+                </div>
+            )}
 
             <div
                 className="mt-4 rounded-lg p-5"
@@ -353,7 +369,7 @@ export const MfaSection: React.FC = () => {
                     {isLoading ? <Spinner size="sm" /> : enabledButton}
                 </div>
 
-                {isError && (
+                {isError && !enrolmentRequired && (
                     <p className="mt-3 text-sm" style={{ color: 'var(--text-muted)' }}>
                         Could not load two-factor status.
                     </p>

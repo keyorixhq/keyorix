@@ -5,11 +5,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -95,6 +97,10 @@ func (h *NotificationChannelHandler) Create(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		if isValidationError(err) {
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
+		if errors.Is(err, storage.ErrDuplicateNotificationChannelName) {
+			sendError(w, "ConflictError", "A notification channel with that name already exists", http.StatusConflict, nil)
 			return
 		}
 		log.Printf("Error creating notification channel: %v", err)
