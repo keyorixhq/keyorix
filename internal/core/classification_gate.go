@@ -479,22 +479,20 @@ func (c *KeyorixCore) notifySecretAccessRequested(ctx context.Context, req *mode
 	// the HTTP layer would report the whole request as failed even though it
 	// succeeded (docs/findings/2026-09-24-FINDING-secret-access-request-notify-panic.md).
 	besteffort.Run(ctx, "classification_gate.notifySecretAccessRequested", func() error {
-		members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
-		if err != nil {
-			return err
-		}
+		recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID)
 		pid := req.ProjectID
 		link := fmt.Sprintf("/projects/%d", req.ProjectID)
-		for _, mbr := range members {
-			if mbr.UserID == req.UserID || !isApproverRole(mbr.RoleName) {
+		// Notify whoever WAS resolved even when part of the resolution failed.
+		for _, uid := range recipients {
+			if uid == req.UserID {
 				continue
 			}
-			c.notify(ctx, mbr.UserID, NotificationAccessRequested,
+			c.notify(ctx, uid, NotificationAccessRequested,
 				"New secret access request",
 				fmt.Sprintf("User %d requested access to read secret %q.", req.UserID, secret.Name),
 				&pid, link)
 		}
-		return nil
+		return rerr
 	})
 }
 

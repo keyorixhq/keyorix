@@ -14,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/connect/connecttypes"
 	"github.com/keyorixhq/keyorix/internal/delivery"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"gopkg.in/yaml.v3"
 )
@@ -1840,7 +1841,7 @@ func (c RotationBackendConfig) GetDSN() string {
 	if c.DSNEnv == "" {
 		return ""
 	}
-	return os.Getenv(c.DSNEnv)
+	return resolveSecret(c.DSNEnv, "") // also honours <DSNEnv>_FILE
 }
 
 // GetInterval returns the auto-rotation run interval (Go duration, e.g. "1h");
@@ -2190,12 +2191,106 @@ func (c PurgeConfig) GetInterval() time.Duration {
 	return 24 * time.Hour
 }
 
-// resolveSecret returns the value of envVar if set and non-empty, otherwise fallback.
+// resolveSecret returns the secret named envVar: the value of envVar, or the
+// contents of the file named by envVar+"_FILE" (Docker secrets / Kubernetes
+// Secret volumes), or fallback (the config-file value) when neither is set.
+//
+// A misconfiguration -- both set, or the file unreadable/empty -- returns ""
+// and NEVER the fallback: it must not quietly use a different credential than
+// the operator intended. The accessors that call this return a bare string, so
+// the error itself is reported by Config.ValidateSecretSources, which
+// Config.Validate runs at startup; the server refuses to boot on it.
 func resolveSecret(envVar, fallback string) string {
-	if v := os.Getenv(envVar); v != "" {
+	v, found, err := secretenv.Lookup(envVar)
+	if err != nil {
+		return ""
+	}
+	if found {
 		return v
 	}
 	return fallback
+}
+
+// SecretEnvVars lists every fixed-name secret the server resolves through
+// resolveSecret. Each also accepts <NAME>_FILE. Secrets whose variable name is
+// operator-chosen (SSO client secrets, key-provider and rotation/vault env
+// vars) are added by secretEnvNames. TestSecretEnvVars_CoversEveryResolveSecretCall
+// fails if a resolveSecret call is added without being listed here.
+//
+// KEYORIX_MASTER_PASSWORD (internal/crypto.ResolvePassphrase) and
+// KEYORIX_BOOTSTRAP_TOKEN (server/main.go) are also *_FILE-capable; they are
+// resolved outside this package and validated by their own callers, but listed
+// here so the file-permission check covers their files too.
+var SecretEnvVars = []string{
+	"KEYORIX_DB_PASSWORD",
+	"KEYORIX_API_KEY",
+	"KEYORIX_SIEM_TOKEN",
+	"KEYORIX_SMTP_PASSWORD",
+	"KEYORIX_EVIDENCE_WEBHOOK_TOKEN",
+	"KEYORIX_NOTIFY_SLACK_WEBHOOK",
+	"KEYORIX_NOTIFY_TEAMS_WEBHOOK",
+	"KEYORIX_NOTIFY_SMTP_PASSWORD",
+	"KEYORIX_NOTIFY_WEBHOOK_TOKEN",
+	"KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET",
+	"KEYORIX_SCIM_TOKEN",
+	"KEYORIX_MASTER_PASSWORD",
+	"KEYORIX_BOOTSTRAP_TOKEN",
+}
+
+// secretEnvNames returns SecretEnvVars plus the operator-named variables this
+// config points at.
+func (c *Config) secretEnvNames() []string {
+	names := append([]string(nil), SecretEnvVars...)
+	for _, p := range c.SSO.Providers {
+		names = append(names, "KEYORIX_SSO_"+strings.ToUpper(p.Name)+"_CLIENT_SECRET")
+	}
+	for _, b := range c.AutoRotation.Backends {
+		if b.DSNEnv != "" {
+			names = append(names, b.DSNEnv)
+		}
+	}
+	for _, cn := range c.Connect.Connectors {
+		if cn.Type == "vault" {
+			if cn.TokenEnv != "" {
+				names = append(names, cn.TokenEnv)
+			} else {
+				names = append(names, "VAULT_TOKEN")
+			}
+		}
+	}
+	kp := c.Storage.Encryption.KeyProvider
+	if kp.EnvVar != "" {
+		names = append(names, kp.EnvVar)
+	}
+	for _, e := range kp.ShamirShareEnv {
+		if e != "" {
+			names = append(names, e)
+		}
+	}
+	return names
+}
+
+// ValidateSecretSources resolves every secret source once and reports every
+// misconfiguration (both X and X_FILE set, unreadable/empty/oversized file) in
+// one error. Error text names variables and paths only, never a value. It does
+// not check file permissions; see SecretFilePaths and internal/startup.
+func (c *Config) ValidateSecretSources() error {
+	var problems []string
+	for _, n := range c.secretEnvNames() {
+		if _, _, err := secretenv.Lookup(n); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("secret source misconfigured: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// SecretFilePaths returns the files named by the <NAME>_FILE variables that are
+// set, for the file-permission check at startup.
+func (c *Config) SecretFilePaths() []string {
+	return secretenv.FilePaths(c.secretEnvNames()...)
 }
 
 const appRootDir = "."
@@ -2208,7 +2303,7 @@ const appRootDir = "."
 // through this helper rather than re-deriving the fallback chain themselves.
 func ResolvedPath(path string) string {
 	if path == "" {
-		path = resolveSecret("KEYORIX_CONFIG_PATH", "")
+		path = os.Getenv("KEYORIX_CONFIG_PATH") // a path, not a secret: no _FILE variant
 	}
 	if path == "" {
 		path = filepath.Join(appRootDir, "keyorix.yaml")
@@ -2428,6 +2523,12 @@ func LoadConfig() (*Config, error) {
 
 // Validate checks the configuration for required fields and correctness.
 func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppress go:S3776
+	// X and X_FILE both set, or an unreadable X_FILE, must stop the boot: the
+	// accessors return "" for those, which would otherwise surface later as a
+	// confusing connection failure (or, worse, an unauthenticated feature).
+	if err := c.ValidateSecretSources(); err != nil {
+		return err
+	}
 	if err := validateTLSMode("server.http.tls_mode", c.Server.HTTP.TLSMode); err != nil {
 		return err
 	}

@@ -223,7 +223,7 @@ func runRotCreate(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("create rotation policy failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("create rotation policy failed", resp.StatusCode(), resp.Body)
 	}
 	p := *resp.JSON201.Data
 	fmt.Printf("Created rotation policy #%d %q (%s, every %dd, alert %dd before).\n",
@@ -245,7 +245,7 @@ func runRotShow(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get rotation policy failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("get rotation policy failed", resp.StatusCode(), resp.Body)
 	}
 	p := *resp.JSON200.Data
 	fmt.Printf("id:               %d\n", derefUint32(p.Id))
@@ -276,7 +276,7 @@ func runRotDelete(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("delete rotation policy failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("delete rotation policy failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Rotation policy %d deleted.\n", id)
 	return nil
@@ -356,7 +356,7 @@ func runRotPlan(_ *cobra.Command, args []string) error {
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get deployment rotation plan failed: HTTP %d", resp.StatusCode())
+			return httpStatusError("get deployment rotation plan failed", resp.StatusCode(), resp.Body)
 		}
 		printDeploymentPlan(resp.JSON200.Data)
 		return nil
@@ -371,7 +371,7 @@ func runRotPlan(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get rotation plan failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("get rotation plan failed", resp.StatusCode(), resp.Body)
 	}
 	plan := resp.JSON200.Data
 	if plan.Waves == nil || len(*plan.Waves) == 0 {
@@ -462,7 +462,7 @@ func runRotOrder(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get rotation order failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("get rotation order failed", resp.StatusCode(), resp.Body)
 	}
 	view := resp.JSON200.Data
 	if view.Order == nil || len(*view.Order) == 0 {

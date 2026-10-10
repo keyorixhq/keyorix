@@ -36,13 +36,21 @@ func TestFreshBootCreatesAccountSchema(t *testing.T) {
 	future := time.Now().Add(time.Hour)
 	seen := time.Now().UTC().Truncate(time.Second)
 
+	// #2701: a session or PAT insert re-checks that its owner is a live,
+	// login-capable user and rolls back otherwise, so the round-trips below
+	// need a real owner. The fresh boot seeds no users.
+	owner, err := st.CreateUser(ctx, &models.User{
+		Username: "boot-owner", Email: "boot-owner@example.test", IsActive: true, AccountState: "active",
+	})
+	require.NoError(t, err)
+
 	// Enriched session columns round-trip.
 	s, err := st.CreateSession(ctx, &models.Session{
-		UserID: 1, SessionToken: "tok", UserAgent: "TestAgent/1.0",
+		UserID: owner.ID, SessionToken: "tok", UserAgent: "TestAgent/1.0",
 		IPAddress: "10.0.0.1", LastSeenAt: &seen, ExpiresAt: &future,
 	})
 	require.NoError(t, err)
-	sessions, err := st.ListSessionsByUser(ctx, 1)
+	sessions, err := st.ListSessionsByUser(ctx, owner.ID)
 	require.NoError(t, err)
 	require.Len(t, sessions, 1)
 	assert.Equal(t, "TestAgent/1.0", sessions[0].UserAgent)
@@ -52,7 +60,7 @@ func TestFreshBootCreatesAccountSchema(t *testing.T) {
 
 	// personal_access_tokens table exists and round-trips.
 	pat, err := st.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
-		UserID: 1, Name: "ci", TokenHash: "h", TokenPrefix: "kx_pat_xyz",
+		UserID: owner.ID, Name: "ci", TokenHash: "h", TokenPrefix: "kx_pat_xyz",
 	})
 	require.NoError(t, err)
 	got, err := st.GetPersonalAccessTokenByHash(ctx, "h")

@@ -61,6 +61,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/keyorixhq/keyorix/internal/startup"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
@@ -217,6 +218,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Refuse (or warn) when key material on disk is readable beyond its owner.
 	if err := enforceKeyFilePermissions(cfg); err != nil {
 		log.Fatalf("key file security: %v", err)
+	}
+
+	// Same policy for the files behind KEYORIX_*_FILE secrets (DB password, master
+	// password, bootstrap token, ...).
+	if err := enforceSecretFilePermissions(cfg); err != nil {
+		log.Fatalf("secret file security: %v", err)
 	}
 
 	// Refuse to start if the installed key files are a PARTIAL set (ADR-112,
@@ -593,7 +600,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// install is still empty, log it so the operator can complete first-boot init. This
 	// closes the unauthenticated, first-caller-wins admin-claim race on a fresh, reachable
 	// instance.
-	bootstrapToken := strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
+	bootstrapToken, btErr := resolveBootstrapToken()
+	if btErr != nil {
+		// Both KEYORIX_BOOTSTRAP_TOKEN and _FILE set, or the file unreadable: do not
+		// fall through to a generated token the operator never asked for.
+		return nil, nil, fmt.Errorf("bootstrap token: %w", btErr)
+	}
 	bootstrapTokenGenerated := false
 	if bootstrapToken == "" {
 		if t, gerr := core.GenerateBootstrapToken(); gerr == nil {
@@ -1286,7 +1298,16 @@ func closeAuditForwarder(coreService *core.KeyorixCore) {
 // Postgres advisory lock (ADR-039), so starting the loop in every process
 // (regardless of which transport it serves) is the existing, intended
 // coordination model — not a new behavior.
-func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+//
+// The returned wait blocks until every scheduler goroutine started here has
+// exited, which happens once ctx is cancelled and any in-flight tick returns.
+// The server process never needs it (it exits); tests do, so a tick cannot
+// outlive the test that started it and run against the next test's process
+// state (log output, i18n, config) -- see startSchedulersForTest.
+func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) (wait func()) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+	var schedulers sync.WaitGroup
+	ctx = withSchedulerTracking(ctx, &schedulers)
+
 	// Start anomaly detection scheduler. Single-replica-gated (ADR-039) so N
 	// replicas don't emit N copies of each alert. When anomaly_alerts is enabled,
 	// each detection pass is followed by an alerting pass that pushes newly detected
@@ -1843,6 +1864,7 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 			})
 		})
 	}
+	return schedulers.Wait
 }
 
 // errHTTPServerFailedToStart wraps every error startHTTPServer can return
@@ -2067,7 +2089,7 @@ func runStartupValidation(cfg *config.Config) error {
 		// "run automatically" had no signal that they hadn't opted in. enforceKeyFilePermissions
 		// (called separately, right after this) still runs unconditionally as the lighter-weight
 		// backstop, so this is visibility only, not a behavior change.
-		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks (internal/startup.ValidateStartup) are SKIPPED. Set it true to enable them.")
+		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks are SKIPPED. Set it true to enable them.")
 		return nil
 	}
 	configPath := config.ResolvedPath("")
@@ -2202,6 +2224,65 @@ func groupOrOtherReadable(paths []string) []string {
 	return out
 }
 
+// resolveBootstrapToken returns the operator-pinned bootstrap token from
+// KEYORIX_BOOTSTRAP_TOKEN or the file named by KEYORIX_BOOTSTRAP_TOKEN_FILE, or
+// "" when neither is set (the caller then generates a one-time token). Both set,
+// or an unreadable/empty file, is an error -- never a silent fall-through to a
+// generated token.
+func resolveBootstrapToken() (string, error) {
+	v, found, err := secretenv.Lookup("KEYORIX_BOOTSTRAP_TOKEN")
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", nil
+	}
+	return strings.TrimSpace(v), nil
+}
+
+// resolveVaultToken returns the Vault connector token from the env var named by
+// tokenEnv (default VAULT_TOKEN) or its _FILE variant; "" when unset.
+func resolveVaultToken(tokenEnv string) (string, error) {
+	if tokenEnv == "" {
+		tokenEnv = "VAULT_TOKEN"
+	}
+	v, _, err := secretenv.Lookup(tokenEnv)
+	return v, err
+}
+
+// enforceSecretFilePermissions applies the key-material permission policy to the
+// files named by *_FILE secret variables (secretenv.CheckPermissions: nothing
+// for "other", no group write; owner not compared because an orchestrator owns
+// the mount). Same warn-vs-refuse matrix as enforceKeyFilePermissions: refuse
+// when security.enable_file_permission_check is on and
+// allow_unsafe_file_permissions is off, otherwise warn.
+func enforceSecretFilePermissions(cfg *config.Config) error {
+	var problems []string
+	for _, p := range cfg.SecretFilePaths() {
+		if err := secretenv.CheckPermissions(p); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	msg := strings.Join(problems, "; ")
+	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
+		// A secret file is key material: strict on the implicit ADR-112 default as
+		// well (only orchestrator-mounted config/TLS files are softened there). The
+		// one exception is the upgrade grace period, same as for the key files in
+		// enforceKeyFilePermissions: warn, and record that this boot was softened.
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: %s -- this now fails closed by default (ADR-112); fix the file mode (chmod 0400/0440, or defaultMode 0440 on a Kubernetes Secret volume) and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+			return nil
+		}
+		return fmt.Errorf("%s -- refusing to start (or set security.allow_unsafe_file_permissions to override)", msg)
+	}
+	log.Printf("WARNING: %s. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+	return nil
+}
+
 // verifyKeyFileSetConsistency is the boot-time key-file-set consistency check
 // (ADR-112, follow-up from #2400) — see keyfiles.VerifyKeySetConsistency's own
 // doc comment for the two things it checks and why. No-op when encryption is
@@ -2248,7 +2329,10 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 func warnInsecureSettingsInEffect(cfg *config.Config) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if s.InEffect(cfg) {
-			log.Printf("WARNING: %s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
+			// Name is a stable identifier, not always a key an operator can
+			// set today; SourcePaths are the config keys that actually
+			// control the state, so print them for the operator to act on.
+			log.Printf("WARNING: %s is in effect (%s; config: %s) — %s", s.Name, s.Value(cfg), strings.Join(s.SourcePaths, ", "), s.Describe)
 		}
 	}
 }
@@ -2895,7 +2979,10 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) error {
 			if tokenEnv == "" {
 				tokenEnv = "VAULT_TOKEN"
 			}
-			token := os.Getenv(tokenEnv)
+			token, terr0 := resolveVaultToken(tokenEnv)
+			if terr0 != nil {
+				return fmt.Errorf("connect: vault connector %q token: %w", cn.Name, terr0)
+			}
 			if token == "" {
 				log.Printf("Keyorix Connect: vault connector %q has no token (%s unset) — reads will fail", cn.Name, tokenEnv)
 			}

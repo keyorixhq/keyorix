@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -385,14 +385,10 @@ func TestBulkRejectAccessRequests_WithIDs_Handler(t *testing.T) {
 // tables, so every bulk-access and template storage call returns a DB error.
 func newBulkAccessBrokenCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	// Migrate everything EXCEPT access_requests, access_request_approvals, and
 	// rejection_reason_templates so those table calls return "no such table".
-	err = db.AutoMigrate(
+	err := db.AutoMigrate(
 		&models.SecretNode{},
 		&models.SecretVersion{},
 		&models.User{},
