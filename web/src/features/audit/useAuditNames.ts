@@ -56,14 +56,43 @@ export function useAuditNames(): (eventType: string, description: string) => str
     });
 
     const maps = {
-        users: isAdmin ? toNameMap(users, (u) => u.id, (u) => u.displayName || u.email || u.username) : undefined,
-        roles: isAdmin && roles ? toNameMap(roles, (r) => r.id, (r) => r.name) : undefined,
+        users: isAdmin
+            ? toNameMap(
+                  users,
+                  (u) => u.id,
+                  (u) => u.displayName || u.email || u.username
+              )
+            : undefined,
+        roles:
+            isAdmin && roles
+                ? toNameMap(
+                      roles,
+                      (r) => r.id,
+                      (r) => r.name
+                  )
+                : undefined,
         groups:
             isAdmin && groups
-                ? toNameMap(groups.groups as { id: number; name: string }[], (g) => g.id, (g) => g.name)
+                ? toNameMap(
+                      groups.groups as { id: number; name: string }[],
+                      (g) => g.id,
+                      (g) => g.name
+                  )
                 : undefined,
-        secrets: secrets ? toNameMap(secrets.data, (s) => s.id, (s) => s.name) : undefined,
-        projects: projects ? toNameMap(projects, (p) => p.id, (p) => p.name) : undefined,
+        secrets: secrets
+            ? toNameMap(
+                  secrets.data,
+                  (s) => s.id,
+                  (s) => s.name
+              )
+            : undefined,
+        projects: projects
+            ? toNameMap(
+                  projects,
+                  (p) => p.id,
+                  (p) => p.name
+              )
+            : undefined,
     };
 
     return (_eventType, description) => resolveAuditIds(description, maps);

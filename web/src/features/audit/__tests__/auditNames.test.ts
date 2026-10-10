@@ -12,7 +12,9 @@ const maps = {
 describe('resolveAuditIds', () => {
     it('turns the id-only description of an old event into names', () => {
         expect(resolveAuditIds('secret 3 restored', maps)).toBe('secret "db-password" restored');
-        expect(resolveAuditIds('project 5 deleted (force=false)', maps)).toBe('project "payments" deleted (force=false)');
+        expect(resolveAuditIds('project 5 deleted (force=false)', maps)).toBe(
+            'project "payments" deleted (force=false)'
+        );
         expect(resolveAuditIds('role 9 assigned to user 2', maps)).toBe('deployer assigned to bob');
         expect(resolveAuditIds('user 2 added to group 4', maps)).toBe('bob added to platform');
     });
@@ -23,7 +25,9 @@ describe('resolveAuditIds', () => {
     });
 
     it('keeps the id for a role, group or user it has no lookup for (not an admin)', () => {
-        expect(resolveAuditIds('role 9 assigned to user 2', { secrets: maps.secrets })).toBe('role 9 assigned to user 2');
+        expect(resolveAuditIds('role 9 assigned to user 2', { secrets: maps.secrets })).toBe(
+            'role 9 assigned to user 2'
+        );
         // Unresolved within a lookup that did run: still the server's text, never a made-up "#".
         expect(resolveAuditIds('role 999 assigned to user 2', maps)).toBe('role 999 assigned to bob');
     });

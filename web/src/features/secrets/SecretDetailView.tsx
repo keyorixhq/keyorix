@@ -50,6 +50,7 @@ import { Textarea } from '../../components/ui/Textarea';
 import { parseServerDate } from '../../utils';
 import { eventLabel, accessActionLabel } from '../../utils/eventLabels';
 import { resolveAuditIds } from '../audit/auditNames';
+import { sharePermissionLabel } from '../../utils/sharePermission';
 import { formatDateTime } from '../../utils/datetime';
 
 const relativeFromNow = (d: string | Date): string => {
@@ -465,7 +466,7 @@ const AccessorsPanel: React.FC<AccessorsPanelProps> = ({ accessors }) => {
                         <span
                             className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${getPermissionColor(a.permission)}`}
                         >
-                            {a.permission}
+                            {a.source === 'owner' ? a.permission : sharePermissionLabel(a.permission)}
                         </span>
                     </div>
                 ))}

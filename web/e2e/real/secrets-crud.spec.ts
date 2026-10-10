@@ -194,6 +194,12 @@ test('secrets lifecycle: project/env creation, reveal gating, update, delete, re
 
     await page.goto(`${projectUrl}/secrets?env=${envName}`);
     await expect(page.getByRole('row', { name: new RegExp(secretName) })).toBeVisible({ timeout: 10_000 });
+
+    // DEMO-UI-2: the restore event names the secret (it used to say only "secret 12 restored").
+    await page.goto('/audit');
+    await expect(page.getByText(new RegExp(`secret \\d+ \\("${secretName}"\\) restored`)).first()).toBeVisible({
+        timeout: 15_000,
+    });
 });
 
 test('revealing a secret value shows the plaintext without crashing the page (regression test for #2450)', async ({
@@ -271,7 +277,9 @@ test('secret detail History and Recent access update after rotate and reveal, wi
     await expect(history.getByText('Rotated', { exact: true })).toBeVisible({ timeout: 10_000 });
 
     // Reveal is a read: it lands in Recent access and History without a refresh.
-    const recent = page.locator('div', { has: page.getByRole('heading', { name: 'Recent access', exact: true }) }).last();
+    const recent = page
+        .locator('div', { has: page.getByRole('heading', { name: 'Recent access', exact: true }) })
+        .last();
     await expect(recent.getByText(/^Rotated/)).toBeVisible({ timeout: 10_000 });
     // Opening the view may already log reads; what matters is that Reveal adds one without a refresh.
     const readsBefore = await recent.getByText(/^Read/).count();

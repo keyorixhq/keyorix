@@ -1127,15 +1127,35 @@ export const AuditLogPage: React.FC = () => {
     );
 
     const nameMaps = {
-        users: toNameMap(rbacUsers, (u) => u.id, (u) => u.displayName || u.email || u.username),
-        roles: toNameMap(rbacRoles, (r) => r.id, (r) => r.name),
+        users: toNameMap(
+            rbacUsers,
+            (u) => u.id,
+            (u) => u.displayName || u.email || u.username
+        ),
+        roles: toNameMap(
+            rbacRoles,
+            (r) => r.id,
+            (r) => r.name
+        ),
         groups: toNameMap(
             rbacGroups?.groups as { id: number; name: string }[] | undefined,
             (g) => g.id,
             (g) => g.name
         ),
-        secrets: auditSecrets ? toNameMap(auditSecrets.data, (s) => s.id, (s) => s.name) : undefined,
-        projects: auditProjects ? toNameMap(auditProjects, (p) => p.id, (p) => p.name) : undefined,
+        secrets: auditSecrets
+            ? toNameMap(
+                  auditSecrets.data,
+                  (s) => s.id,
+                  (s) => s.name
+              )
+            : undefined,
+        projects: auditProjects
+            ? toNameMap(
+                  auditProjects,
+                  (p) => p.id,
+                  (p) => p.name
+              )
+            : undefined,
     };
     // Rewrite "role N" / "group N" / "user N" / "secret N" / "project N" tokens to names, leaving
     // a token that already carries its name (newer events) alone. Unresolvable roles, groups and
