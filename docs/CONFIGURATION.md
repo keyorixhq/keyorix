@@ -406,6 +406,37 @@ security:
     max_cooldown: "1h"            # ceiling for the exponential backoff
 ```
 
+Every setting named `insecure_*` is part of ADR-112's opt-out rule: it weakens
+the baseline below its secure default, is warned about at every start it's in
+effect, appears in the start-to-start settings diff audit, and is reported as a
+deviation by the posture report below.
+
+**`keyorix-server admin validate --posture`** (ADR-112 §4) reports every
+secure-baseline deviation in one place instead of warnings scattered across
+separate start-up log lines, and exits non-zero if any is found. **Every
+security-weakening setting in effect counts** — encryption-at-rest disabled,
+database TLS disabled, unauthenticated `/metrics`, a log-delivered setup link —
+because of what it does, independently of whether its `insecure_` naming has
+been settled yet. Also reported: `enable_file_permission_check` disabled, a real
+file-permission/encryption/database problem, an incomplete key-file set, a
+cleartext listener contradicting `require_transport_tls`, and an admin without
+MFA or a passkey.
+
+Each deviation says whether it comes from a **shipped default** or an
+**explicit** config choice, so "this install has not been hardened yet" is
+distinguishable from "someone turned this off" — both count toward the exit
+code. *Explicit* means the config file literally writes the setting's key (even
+to its default value — `server/config/production.yaml` writes
+`require_transport_tls: false`, so there it is explicit); *shipped default*
+means the file is silent and the weak state is what an absent key resolves to.
+A key that arrives only through a YAML merge key (`<<:`) reads as not written.
+Startup checks are reported only if they ran: validation stops at the first
+failed check, and any check after it is listed as "not evaluated" rather than
+as a second failure. A grace-period setting merely relying on its new implicit default, with a
+real underlying problem, is its own deviation. Only TLS mode and the KEK salt
+file's age are informational: no rotation-age threshold is defined anywhere in
+this codebase, so a number there would be a guess.
+
 With `require_mfa: true` (the default), an interactive (session-authenticated) user
 **without** a second factor is confined to the MFA-enrolment endpoints until they
 enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
