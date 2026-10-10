@@ -1149,6 +1149,19 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"CompliancePostureSnapshot"},
 		findingDoc: "#2834",
 	},
+	// Sibling of the entry above, same root cause (#2834): buildClassificationPosture
+	// degrades instead of failing when ListRotationPolicies errors, so the snapshot is
+	// persisted partial while the request reports success. Found by CI fuzz (shard 4,
+	// input=ac42) on #2969; reproduced byte-for-byte on unmodified origin/main, so not
+	// caused by that PR. Scoped to this one op, method, kind and table. Remove when
+	// #2834 is resolved either way.
+	{
+		op: "REST POST /api/v1/compliance/snapshots", method: "ListRotationPolicies",
+		kind: faultstorage.KindError,
+		nth:  1, oracle: "a", issue: "#2834", expires: "2026-11-07",
+		tables:     []string{"CompliancePostureSnapshot"},
+		findingDoc: "#2834",
+	},
 	// (The third pre-existing finding from the same live runs — #2841, op="REST
 	// POST /auth/webauthn/login/finish", method=GetUserRoles, kind=error, nth 1,
 	// [AuditEvent LoginAttempt MFAStepUpGrant] — was tolerated here and is now
