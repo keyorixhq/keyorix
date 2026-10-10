@@ -6,10 +6,14 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/keyorixhq/keyorix/configs"
 	"github.com/keyorixhq/keyorix/internal/config"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 )
@@ -59,6 +63,63 @@ func TestSecurityPostureSnapshot_CoversEveryRegistryEntryExactlyOnce(t *testing.
 	}
 }
 
+// internalMarker matches text that is meant for the maintainers' working
+// notes, not for an operator reading the boot log (#2979: "NEEDS ANDREI",
+// "item 1", "polarity-inverted rename", "not a boolean today", issue numbers).
+var internalMarker = regexp.MustCompile(`(?i)needs andrei|andrei|polarity|\bitem [0-9]|not a boolean today|known exception|#[0-9]{3,}`)
+
+// Every start-up warning the registry loop can print must read as operator
+// text. The zero-value config has several entries in effect (empty
+// metrics_token, rate limiting off, TLS off, ...), so its boot log is the
+// worst case for the "WARNING: ... is in effect" lines the demo showed.
+func TestWarnInsecureSettingsInEffect_NoInternalMarkersInBootLog(t *testing.T) {
+	out := captureLogs(func() { warnInsecureSettingsInEffect(&config.Config{}) })
+	if !strings.Contains(out, "is in effect") {
+		t.Fatalf("test premise broken: the zero-value config should have warnings in effect, got %q", out)
+	}
+	if m := internalMarker.FindString(out); m != "" {
+		t.Errorf("boot log leaks an internal marker %q:\n%s", m, out)
+	}
+}
+
+// The same check for every registry entry's description, in effect or not,
+// so a setting nobody has in effect today cannot reintroduce a marker.
+func TestInsecureSettingsRegistry_DescribeIsOperatorText(t *testing.T) {
+	for _, s := range config.InsecureSettingsRegistry {
+		if m := internalMarker.FindString(s.Describe); m != "" {
+			t.Errorf("%s: Describe leaks an internal marker %q: %q", s.Name, m, s.Describe)
+		}
+	}
+}
+
+// The config `keyorix-server admin init` writes is what every new install
+// boots with, so its boot log is the first thing an operator reads (#2979).
+// Assert it is free of internal notes and of the "protocol_versions is set but
+// NOT honored" warning the template itself used to trigger on every boot.
+// The real security warnings (cleartext listener, insecure settings in effect)
+// must still be there: this is about wording and noise, not about hiding state.
+func TestDefaultConfigTemplate_BootLogIsOperatorText(t *testing.T) {
+	var cfg config.Config
+	if err := yaml.Unmarshal(configs.DefaultConfigTemplate, &cfg); err != nil {
+		t.Fatalf("default config template does not parse: %v", err)
+	}
+	out := captureLogs(func() {
+		warnInsecureSettingsInEffect(&cfg)
+		_ = checkTransportTLSPosture(&cfg)
+	})
+	if m := internalMarker.FindString(out); m != "" {
+		t.Errorf("default-config boot log leaks an internal marker %q:\n%s", m, out)
+	}
+	if strings.Contains(out, "NOT honored") {
+		t.Errorf("the shipped template sets a field the server warns it ignores on every boot:\n%s", out)
+	}
+	for _, want := range []string{"is in effect", "CLEARTEXT"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("real security warning %q went missing from the default-config boot log:\n%s", want, out)
+		}
+	}
+}
+
 // TestResolveADR112BootPosture_GracePeriodWarnsAndIsDiffed is #2908 at the
 // boot path: an upgraded deployment (users, no enforcement marker) that never
 // set security.enable_file_permission_check only WARNS on a failed startup
@@ -102,3 +163,62 @@ func TestResolveADR112BootPosture_GracePeriodWarnsAndIsDiffed(t *testing.T) {
 		})
 	}
 }
+
+// TestResolveADR112BootPosture_RequireMFAOptOutWarnsAndIsDiffed is #2986: an
+// explicit security.require_mfa: false is an ADR-112 opt-out like any other, so
+// the boot must warn naming the registry entry and the settings-diff snapshot
+// must record it. Before the entry existed neither happened (the posture report
+// counted it, the boot path and the audit trail did not). The grace-period
+// state gets the same treatment as insecure_skip_startup_validation's (#2908):
+// an upgraded deployment that never set the key does NOT enforce MFA yet.
+// RED while security.require_mfa has no registry entry.
+func TestResolveADR112BootPosture_RequireMFAOptOutWarnsAndIsDiffed(t *testing.T) {
+	const name = "security.insecure_disable_mfa_requirement"
+	for _, tc := range []struct {
+		label     string
+		explicit  *bool // non-nil: the config file writes require_mfa
+		users     int
+		marker    bool
+		wantWarn  bool
+		wantValue string
+	}{
+		{"explicit false", boolPtr(false), 0, false, true, "off"},
+		{"explicit true", boolPtr(true), 0, false, false, "enforcing-explicit"},
+		{"implicit, fresh install", nil, 0, false, false, "enforcing-implicit"},
+		{"implicit, upgrade in grace period", nil, 2, false, true, "grace-not-enforced"},
+		{"implicit, upgrade past grace period", nil, 2, true, false, "enforcing-implicit"},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			adr112GraceSoftened.Store(false)
+			cfg := adr112GraceConfig(t)
+			if tc.explicit != nil {
+				cfg.Security.RequireMFA = *tc.explicit
+			} else {
+				cfg.Security.RequireMFA = true
+				cfg.Security.RequireMFAImplicitDefault = true
+			}
+			if tc.users > 0 {
+				migrateADR112DB(t, cfg, tc.users)
+			}
+			if tc.marker {
+				db, err := appstorage.OpenGormDB(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := recordADR112Enforced(db, adr112RequireMFAEnforcedKey, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				closeGormDB(db)
+			}
+			logs := captureLogs(func() { resolveADR112BootPosture(cfg) })
+			if got := strings.Contains(logs, "WARNING: "+name+" is in effect"); got != tc.wantWarn {
+				t.Errorf("opt-out warning for %s: got %v, want %v; logs:\n%s", name, got, tc.wantWarn, logs)
+			}
+			if got := securityPostureSnapshot(cfg)[name]; got != tc.wantValue {
+				t.Errorf("settings-diff value = %q, want %q", got, tc.wantValue)
+			}
+		})
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }

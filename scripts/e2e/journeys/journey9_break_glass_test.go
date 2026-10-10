@@ -47,12 +47,7 @@ func TestJourney_BreakGlass(t *testing.T) {
 	// (ADR-112). Prove that premise first -- an un-enrolled admin session is
 	// confined to enrolment -- then enrol TOTP through the real API and work from
 	// the MFA-backed session, the way a real operator on a fresh install must.
-	preMFA := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
-	if denied := restCall(t, s, preMFA, http.MethodGet, "/api/v1/projects", nil); denied.StatusCode != http.StatusForbidden ||
-		!strings.Contains(string(denied.Raw), "MFAEnrollmentRequired") {
-		t.Fatalf("premise: the shipped config should require MFA enrolment first; GET /api/v1/projects got %d: %s",
-			denied.StatusCode, denied.Raw)
-	}
+	requireMFAEnrolmentPremise(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 	adminToken := enrolTOTPAndLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 	aEnv := adminEnv(s, adminToken)
 

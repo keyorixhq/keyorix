@@ -230,7 +230,7 @@ func runDynCreateConfig(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("create dynamic-secret config failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("create dynamic-secret config failed", resp.StatusCode(), resp.Body)
 	}
 	cfg := resp.JSON200.Data
 	fmt.Printf("Created dynamic-secret config #%d (%s, %s).\n", derefUint32(cfg.Id), derefStr(cfg.Name), derefStr((*string)(cfg.BackendType)))
@@ -280,7 +280,7 @@ func runDynGetConfig(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get dynamic-secret config failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("get dynamic-secret config failed", resp.StatusCode(), resp.Body)
 	}
 	printDynConfig(resp.JSON200.Data)
 	return nil
@@ -314,7 +314,7 @@ func runDynIssue(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("issue dynamic-secret lease failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("issue dynamic-secret lease failed", resp.StatusCode(), resp.Body)
 	}
 	lease := resp.JSON200.Data
 	fmt.Println("Credential issued — shown once, auto-revokes at expiry.")
@@ -381,7 +381,7 @@ func runDynRenew(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("renew lease failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("renew lease failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Lease %s renewed — new expiry %s\n", derefStr(resp.JSON200.Data.LeaseId), derefStr(resp.JSON200.Data.ExpiresAt))
 	return nil
@@ -397,7 +397,7 @@ func runDynRevoke(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("revoke lease failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("revoke lease failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Lease %s %s.\n", derefStr(resp.JSON200.Data.LeaseId), derefStr(resp.JSON200.Data.Status))
 	return nil
@@ -426,7 +426,7 @@ func runDynRevokeAll(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("revoke-all failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("revoke-all failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Config %d: revoked %d lease(s), %d failed.\n", derefUint32(resp.JSON200.Data.ConfigId),
 		derefInt(resp.JSON200.Data.Revoked), derefInt(resp.JSON200.Data.Failed))
@@ -449,7 +449,7 @@ func runDynClassify(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("classify config failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("classify config failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("✅ Classification set to %q for config %d.\n", dynLevel, id)
 	return nil

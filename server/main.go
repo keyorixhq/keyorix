@@ -1293,7 +1293,16 @@ func closeAuditForwarder(coreService *core.KeyorixCore) {
 // Postgres advisory lock (ADR-039), so starting the loop in every process
 // (regardless of which transport it serves) is the existing, intended
 // coordination model — not a new behavior.
-func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+//
+// The returned wait blocks until every scheduler goroutine started here has
+// exited, which happens once ctx is cancelled and any in-flight tick returns.
+// The server process never needs it (it exits); tests do, so a tick cannot
+// outlive the test that started it and run against the next test's process
+// state (log output, i18n, config) -- see startSchedulersForTest.
+func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) (wait func()) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+	var schedulers sync.WaitGroup
+	ctx = withSchedulerTracking(ctx, &schedulers)
+
 	// Start anomaly detection scheduler. Single-replica-gated (ADR-039) so N
 	// replicas don't emit N copies of each alert. When anomaly_alerts is enabled,
 	// each detection pass is followed by an alerting pass that pushes newly detected
@@ -1850,6 +1859,7 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 			})
 		})
 	}
+	return schedulers.Wait
 }
 
 // errHTTPServerFailedToStart wraps every error startHTTPServer can return
@@ -2074,7 +2084,7 @@ func runStartupValidation(cfg *config.Config) error {
 		// "run automatically" had no signal that they hadn't opted in. enforceKeyFilePermissions
 		// (called separately, right after this) still runs unconditionally as the lighter-weight
 		// backstop, so this is visibility only, not a behavior change.
-		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks (internal/startup.ValidateStartup) are SKIPPED. Set it true to enable them.")
+		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks are SKIPPED. Set it true to enable them.")
 		return nil
 	}
 	configPath := config.ResolvedPath("")
@@ -2314,7 +2324,10 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 func warnInsecureSettingsInEffect(cfg *config.Config) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if s.InEffect(cfg) {
-			log.Printf("WARNING: %s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
+			// Name is a stable identifier, not always a key an operator can
+			// set today; SourcePaths are the config keys that actually
+			// control the state, so print them for the operator to act on.
+			log.Printf("WARNING: %s is in effect (%s; config: %s) — %s", s.Name, s.Value(cfg), strings.Join(s.SourcePaths, ", "), s.Describe)
 		}
 	}
 }

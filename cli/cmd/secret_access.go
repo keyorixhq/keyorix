@@ -32,7 +32,7 @@ with their permission and how it was granted. Requires secrets.read.`,
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("list accessors: HTTP %d", resp.StatusCode())
+			return httpStatusError("list accessors", resp.StatusCode(), resp.Body)
 		}
 		rows := derefSecretAccessorSlice(resp.JSON200.Data.Accessors)
 		if len(rows) == 0 {
@@ -74,7 +74,7 @@ var secretAccessLogCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret access log: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret access log", resp.StatusCode(), resp.Body)
 		}
 		rows := derefSecretAccessLogSlice(resp.JSON200.Data.AccessLog)
 		if len(rows) == 0 {
