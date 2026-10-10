@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -21,17 +19,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// notifChannelDBCounter ensures each test gets a unique in-memory DB name
-// to prevent SQLite shared-cache collisions when tests run in parallel.
-var notifChannelDBCounter atomic.Uint64
-
 func newNotifChannelHandler(t *testing.T) (*NotificationChannelHandler, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := notifChannelDBCounter.Add(1)
-	dsn := fmt.Sprintf("file::memory:nc_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "nc_")
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
 	cs.SetWebhookURLValidator(func(_ string) error { return nil })
