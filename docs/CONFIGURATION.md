@@ -931,6 +931,25 @@ authenticity is provable later — verify with `keyorix compliance verify --file
 <pack>` (it asks the server, which recomputes the HMAC; a signature made under a
 pre-rotation DEK is reported as unverifiable rather than tampered).
 
+### Who "the project's admins" are (all project-level alerts)
+
+Every notification addressed to "the project's admins" — new and
+awaiting-approval access requests, anomaly alerts, secret-expiry, rotation,
+certificate-expiry and access-recertification reminders, and break-glass
+activation / overdue-review alerts — goes to the same audience:
+
+- members holding an approver role on that project (`project_admin`,
+  `system_admin`, `admin`, `super_admin`), **and**
+- every active **install-wide admin** (an admin-bypass role held at global scope,
+  directly or through a group), because they have admin authority on every
+  project even though they hold no project-scoped role row.
+
+Each person is notified once however many grants they hold. Deactivated or
+deleted accounts are never notified, and the person who filed an access request
+is never alerted about their own request. License-expiry and machine-credential
+expiry have no project and go to every install-wide admin; personal-token,
+role-grant and read-quota reminders go to the owner of the item.
+
 ## rotation_reminders
 
 An opt-in background scheduler that notifies project admins (in-app) of secrets
