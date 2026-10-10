@@ -217,14 +217,7 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	// recovery-codes-status query refetch, triggered by this call's own success,
 	// would otherwise race this purge and force a global logout before the user ever
 	// sees them). Best-effort: enrolment must not fail on a session-cleanup error.
-	var keepID uint
-	var keepHash string
-	if keepSessionToken != "" {
-		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
-			keepID = s.ID
-			keepHash = s.SessionToken
-		}
-	}
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "activate_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.activated", &uid, nil, nil, "", fmt.Sprintf("user %s activated MFA", user.Username))
@@ -264,14 +257,7 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	// too only forces an immediate, surprising logout of the very request that just
 	// disabled MFA, with no security benefit over letting it continue normally.
 	// Best-effort: disable must not fail on a cleanup error.
-	var keepID uint
-	var keepHash string
-	if keepSessionToken != "" {
-		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
-			keepID = s.ID
-			keepHash = s.SessionToken
-		}
-	}
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "disable_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", fmt.Sprintf("user %s disabled MFA", user.Username))
@@ -515,28 +501,39 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 }
 
 // VerifyMFALogin consumes a challenge, verifies a TOTP code or a recovery code,
-// and on success mints and returns the session (the second login step).
+// and on success mints and returns the session (the second login step) together
+// with the response identity.
+//
+// The identity is resolved BEFORE the session/step-up-token writes, and returned
+// so the handler does not re-read it — see resolveLoginIdentityBeforeMint
+// (#2841). This path is the TOTP sibling of the two WebAuthn login paths: it
+// mints no MFAStepUpGrant, but it DOES write a user-scoped MFAStepupToken, which
+// HasActiveMFAStepup reads per-user rather than per-session. A login reported as
+// failed because the handler's identity read failed used to leave that token
+// behind (completeLogin revoked only the session), so the restricted-secret MFA
+// gate stayed satisfied for the rest of the window on a later session the user
+// never completed a second factor for.
 //
 // Convenience wrapper over VerifyMFALoginPending for callers that own nothing
 // further after this returns; every TRANSPORT must use the Pending form — see
-// Login/LoginPending and LoginCompletion for why.
-func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, error) {
-	session, user, lc, err := c.VerifyMFALoginPending(ctx, challenge, code, userAgent, ip)
+// Login/LoginPending and LoginCompletion for why (#2894).
+func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, UserIdentity, error) {
+	session, user, identity, lc, err := c.VerifyMFALoginPending(ctx, challenge, code, userAgent, ip)
 	if err != nil {
-		return nil, user, err
+		return nil, user, UserIdentity{}, err
 	}
 	lc.Succeeded(ctx)
-	return session, user, nil
+	return session, user, identity, nil
 }
 
 // VerifyMFALoginPending is VerifyMFALogin with the lockout accounting left open
 // — the returned LoginCompletion MUST get Succeeded or Failed exactly once
 // (#2894). On an error return the user is non-nil for every post-verdict
 // failure, so a transport can name the account in its auth.login_error event.
-func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, *LoginCompletion, error) {
+func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	// Apply the same password-expiry hard gate as the non-MFA login path (ADR-025).
 	// Idempotent: the gate is a no-op when the state is already password_reset_required
@@ -544,7 +541,19 @@ func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
 		// The code was already confirmed correct, so this is a post-verdict storage
 		// fault (#2894) — counted toward the lockout exactly like a wrong code.
-		return nil, user, nil, c.denyAfterCredentialMatched(ctx, user, err)
+		return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
+	}
+	// #2841: the LAST fallible-and-reported read, done BEFORE the session and
+	// step-up-token writes. Not "before the first write" — the TOTP step mark and
+	// the password-expiry gate write earlier; what matters is that nothing
+	// fallible runs AFTER the writes that outlive a login reported as failed.
+	// #2894: the code matched, so a failure here is post-verdict — counted toward
+	// the lockout exactly like a wrong code, and wrapped with ErrLoginPostVerdict
+	// so the transport answers byte-identically to a wrong code and audits
+	// auth.login_error. It also keeps ErrLoginIdentityUnavailable in the chain.
+	identity, err := c.resolveLoginIdentityBeforeMint(ctx, user.ID)
+	if err != nil {
+		return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
 	}
 	lc := c.newLoginCompletion(user)
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
@@ -569,7 +578,7 @@ func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code
 		// stays CONSUMED (the handler releases only for ErrMFAVerificationUnavailable),
 		// because a wrong code keeps its slot too.
 		lc.Failed(ctx)
-		return nil, user, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
+		return nil, user, UserIdentity{}, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
 	// Record the MFA step-up window when the classification gate requires it.
 	// Best-effort: a write failure does not block the login, but the user won't
@@ -582,7 +591,7 @@ func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code
 		c.writeAuditEventFull(ctx, "mfa.recovery_used", &uid, nil, nil, ip, fmt.Sprintf("user %s used a recovery code", user.Username))
 	}
 	c.writeAuditEventFull(ctx, "mfa.login_verified", &uid, nil, nil, ip, fmt.Sprintf("user %s passed MFA", user.Username))
-	return session, user, lc, nil
+	return session, user, identity, lc, nil
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────

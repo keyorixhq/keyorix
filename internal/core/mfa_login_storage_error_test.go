@@ -68,7 +68,7 @@ func TestVerifyMFALogin_GetMFASecretErrorDoesNotFeedLockout(t *testing.T) {
 	for i := 0; i < 5; i++ {
 		ch, cerr := c.CreateMFAChallenge(ctx, 1)
 		require.NoError(t, cerr)
-		_, _, verr := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
+		_, _, _, verr := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
 		require.Error(t, verr, "attempt %d: a storage error must still refuse the login", i)
 		assert.NotContains(t, verr.Error(), "invalid code",
 			"attempt %d: a storage error must not be reported as a wrong code", i)
@@ -92,7 +92,7 @@ func TestVerifyMFALogin_GetMFASecretErrorDoesNotFeedLockout(t *testing.T) {
 	c.storage = realStorage
 	ch, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess, _, err := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
+	sess, _, _, err := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
 	require.NoError(t, err)
 	require.NotNil(t, sess)
 }
@@ -151,7 +151,7 @@ func TestVerifyMFALogin_MarkTOTPStepUsedErrorAfterMatch_StillCountsTowardLockout
 	for i := 0; i < 3; i++ {
 		ch, cerr := c.CreateMFAChallenge(ctx, 1)
 		require.NoError(t, cerr)
-		_, _, verr := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
+		_, _, _, verr := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
 		require.Error(t, verr, "attempt %d: a post-match storage error must still refuse the login", i)
 	}
 

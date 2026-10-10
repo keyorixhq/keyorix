@@ -60,7 +60,7 @@ func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	base := c.storage
 	c.storage = &failCreateSessionStorage{Storage: base}
 
-	sess, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
+	sess, _, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
 	require.Error(t, err)
 	require.Nil(t, sess)
 
@@ -75,7 +75,7 @@ func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	c.storage = base
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess2, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
+	sess2, _, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
 	require.NoError(t, err, "the TOTP step must be usable again once the earlier mint failure's fault clears")
 	require.NotNil(t, sess2)
 }
@@ -143,7 +143,7 @@ func TestFinishWebAuthnLogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	base := c.storage
 	c.storage = &failCreateSessionStorage{Storage: base}
 
-	session, user, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	session, user, _, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	require.Nil(t, session)
 	// #2894: a post-verdict failure now returns the resolved user alongside the
@@ -160,7 +160,7 @@ func TestFinishWebAuthnLogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	// Both the MFA challenge and the WebAuthn ceremony session stay consumed
 	// even though the mint failed -- a replay (fault removed) is still refused.
 	c.storage = base
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err, "the challenge/session pair must stay consumed even though the earlier mint failed")
 }
 
@@ -181,7 +181,7 @@ func TestFinishWebAuthnPasswordlessLogin_MintFailureAfterConsume_FailsClosed(t *
 	base := c.storage
 	c.storage = &failCreateSessionStorage{Storage: base}
 
-	session, user, err := c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	session, user, _, err := c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	require.Nil(t, session)
 	// #2894, as in the second-factor sibling above: the user comes back with the

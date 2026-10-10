@@ -247,6 +247,24 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 // error was silently swallowed). The caller (completeLogin) is responsible for
 // revoking the just-minted session when this returns an error.
 func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Session, user *models.User) (loginResponseBody, error) {
+	// Surface roles + permissions so the UI can gate nav/routes.
+	id, ierr := h.coreService.GetUserIdentity(ctx, user.ID)
+	if ierr != nil {
+		return loginResponseBody{}, fmt.Errorf("resolve user identity: %w", ierr)
+	}
+	return h.loginResponseFromIdentity(session, user, id), nil
+}
+
+// loginResponseFromIdentity assembles the response body from an identity the
+// caller has ALREADY resolved. It performs no storage reads and cannot fail.
+//
+// #2841: the WebAuthn login paths resolve the identity inside core, BEFORE
+// minting the session and the ambient MFA step-up grant, and hand it back — so
+// on this side there is nothing fallible left to run after the writes, and
+// therefore no partial state for completeLogin to compensate for. Keeping the
+// assembly separate from the read is what makes that possible without
+// duplicating the body shape.
+func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *models.User, id core.UserIdentity) loginResponseBody {
 	resp := loginResponseBody{
 		Token:       session.SessionToken,
 		UserID:      user.ID,
@@ -262,16 +280,11 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 	if session.AbsoluteExpiresAt != nil {
 		resp.AbsoluteExpiresAt = session.AbsoluteExpiresAt.UTC().Format(time.RFC3339)
 	}
-	// Surface roles + permissions so the UI can gate nav/routes.
-	id, ierr := h.coreService.GetUserIdentity(ctx, user.ID)
-	if ierr != nil {
-		return loginResponseBody{}, fmt.Errorf("resolve user identity: %w", ierr)
-	}
 	resp.Role, resp.Roles, resp.Permissions = id.Role, id.Roles, id.Permissions
 	// Flag an expired/required password change so the UI can route (ADR-025).
 	resp.AccountState = core.NormalizeAccountState(user.AccountState)
 	resp.PasswordChangeRequired = h.coreService.PasswordExpired(user) || core.AccountRestricted(user.AccountState)
-	return resp, nil
+	return resp
 }
 
 // completeLogin finishes a login-completion flow for an already-minted session:
@@ -279,35 +292,30 @@ func (h *AuthHandler) buildLoginResponse(ctx context.Context, session *models.Se
 // response body to hand to sendSuccess. On a buildLoginResponse failure (the
 // identity read errored) it fails closed instead of handing back a session —
 // it revokes the session it was about to issue and returns a non-nil error so
-// the caller stops without setting cookies or logging the login as successful.
-// Shared by every HTTP handler that mints a session and reaches the same
-// response shape: Login, ConsumeSetup, VerifyMFA, FinishWebAuthnLogin, and
-// FinishWebAuthnPasswordlessLogin (#2412).
+// the caller stops without setting cookies or logging the login as successful
+// (#2412).
+//
+// Its callers are Login and ConsumeSetup only. VerifyMFA, FinishWebAuthnLogin
+// and FinishWebAuthnPasswordlessLogin use completeLoginWithIdentity instead,
+// because their core functions write something USER-scoped after minting (an
+// MFAStepUpGrant, or an MFAStepupToken) that this function's session-only
+// revoke never undid — see #2841. Login and ConsumeSetup write only the
+// session, so the compensation here is complete for them.
 //
 // #2888 (#2740 option C): this used to write its OWN 500 "Login could not be
-// completed" response directly. Every one of its five callers reaches this
-// point only once the password/code/assertion has ALREADY been confirmed
-// correct, so a 500 here -- distinct from each caller's own 401/400
-// wrong-credential response -- was a clean oracle: a storage hiccup on this
-// post-verdict identity-resolution read would have confirmed the credential
-// was right, for every login path at once. It no longer writes anything; the
-// caller maps a non-nil error to EXACTLY its own wrong-credential response
-// (same status, body, headers), so the two cases are indistinguishable to
-// the client. LogAuthError (internal/core/audit.go) still records the real
-// reason for an operator.
+// completed" response directly. Both callers reach this point only once the
+// password/token has ALREADY been confirmed correct, so a 500 here -- distinct
+// from each caller's own wrong-credential response -- was a clean oracle. It no
+// longer writes anything; the caller maps a non-nil error to EXACTLY its own
+// wrong-credential response (same status, body, headers). LogAuthError
+// (internal/core/audit.go) still records the real reason for an operator.
 //
-// #2894: this is also the single commit point for the login's LOCKOUT
-// accounting, for every one of those callers at once. The identity read above
-// is the last fallible step of a login, and it happens after the credential has
-// already been confirmed correct, so the account's failed-login counter must
-// not have been reset before it: a fault here denies the login with a response
-// byte-identical to a wrong credential, and the lockout state has to be
-// identical too, or the account locking (or not) is the oracle the response no
-// longer is. lc.Failed() counts the denial exactly as a wrong credential would
-// be counted; lc.Succeeded() is the ONLY place a delivered login clears the
-// counter. lc may be nil for a flow with no per-account lockout stake (the
-// setup-token consume path, which authenticates a one-shot token rather than a
-// guessable credential) — both methods are nil-safe.
+// #2894: this is also the commit point for the login's LOCKOUT accounting. The
+// identity read is the last fallible step and happens after the credential was
+// confirmed correct, so lc.Failed() counts the denial exactly as a wrong
+// credential would be counted, and lc.Succeeded() is the ONLY place a delivered
+// login clears the counter. lc may be nil for a flow with no per-account
+// lockout stake (the setup-token consume path) — both methods are nil-safe.
 func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User, lc *core.LoginCompletion) (loginResponseBody, error) {
 	resp, err := h.buildLoginResponse(r.Context(), session, user)
 	if err != nil {
@@ -321,6 +329,32 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, sess
 	h.setSessionCookies(w, session)
 	lc.Succeeded(r.Context())
 	return resp, nil
+}
+
+// completeLoginWithIdentity is completeLogin for a caller that already holds the
+// resolved identity, so no read can fail here and no session ever needs
+// revoking (#2841).
+//
+// It exists because completeLogin's revoke-on-failure path was only ever HALF a
+// compensation: core's WebAuthn login paths mint a session AND an ambient
+// MFAStepUpGrant, and completeLogin revoked only the session. A grant therefore
+// outlived a login the caller was told had failed, satisfying the
+// restricted-secret MFA gate for the rest of the step-up window on a later
+// session the user never proved a second factor for. The fix is ordering, not a
+// second compensation: core resolves the identity before its first write (see
+// core.resolveLoginIdentityBeforeMint) and returns it, and the handler uses THIS
+// function rather than re-reading it — re-reading would reopen the same window
+// one layer up.
+//
+// #2894: nothing fallible remains, so this is where the delivered login commits
+// its lockout accounting (lc.Succeeded clears the counter). The post-verdict
+// failures that used to reach completeLogin's error branch now happen inside
+// core, before the mint, and are already counted there.
+func (h *AuthHandler) completeLoginWithIdentity(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User, identity core.UserIdentity, lc *core.LoginCompletion) loginResponseBody {
+	resp := h.loginResponseFromIdentity(session, user, identity)
+	h.setSessionCookies(w, session)
+	lc.Succeeded(r.Context())
+	return resp
 }
 
 // ── Setup-token endpoints (ADR-028) ─────────────────────────────────────────────

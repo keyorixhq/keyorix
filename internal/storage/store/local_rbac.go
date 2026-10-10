@@ -154,7 +154,15 @@ func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models
 	var role models.Role
 	if err := ls.db.WithContext(ctx).Where("name = ?", name).First(&role).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
+			// Wraps storage.ErrRoleNotFound so a caller can tell "this role does
+			// not exist" (a configuration fact) from "the lookup failed" (unknown
+			// state) with errors.Is, instead of string-matching a TRANSLATABLE
+			// message -- which silently stops working the moment the key is
+			// actually translated. GetRole's sibling path already does this; this
+			// one did not, and internal/core's SSO role reconciliation needs the
+			// distinction to decide whether to skip a role or refuse the login
+			// (#2839 item 1).
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), storage.ErrRoleNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

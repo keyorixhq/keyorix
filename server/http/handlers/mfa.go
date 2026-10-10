@@ -173,7 +173,12 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	// same way the CR3 finding did — see FinishWebAuthnLogin's identical sibling fix
 	// (webauthn.go) for the full reasoning; this is the same release-only-pre-verdict
 	// rule applied to VerifyMFA's own reservation.
-	session, user, lc, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
+	//
+	// #2841: the wrapper forwards the response identity core now resolves BEFORE
+	// the session/step-up-token writes, so there is exactly ONE call to
+	// VerifyMFALogin on this path — re-reading the identity in the handler would
+	// reopen the very window this fix closed.
+	session, user, identity, lc, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
 	if err != nil {
 		// FIX-1 (#2548) + #2740 review (option C), #2888 round 2: 503 "retry" and
 		// the reservation release are BOTH ONLY for ErrMFAVerificationUnavailable
@@ -203,17 +208,17 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 			username := user.Username
 			goSafe(func() { h.coreService.LogAuthError(context.Background(), username, ip, err) }) // #nosec G118
 		}
+		// #2841 + #2894: the identity read now happens inside core, before the
+		// session and the user-scoped step-up token are written, and a failure
+		// there is post-verdict (ErrLoginPostVerdict wrapping
+		// ErrLoginIdentityUnavailable): counted like a wrong code, audited above,
+		// and answered with the SAME 401 a wrong code gets — not the 500
+		// completeLogin used to send, which would confirm the code was right
+		// (#2888). The attempt reservation stays counted (#2880).
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, err := h.completeLogin(w, r, session, user, lc)
-	if err != nil {
-		// #2888: same byte-identical response as the wrong-code branch above --
-		// see completeLogin's doc comment.
-		goSafe(func() { h.coreService.LogAuthError(context.Background(), user.Username, ip, err) }) // #nosec G118
-		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
-		return
-	}
+	resp := h.completeLoginWithIdentity(w, r, session, user, identity, lc)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get("User-Agent"))
 	}) // #nosec G118
@@ -225,7 +230,14 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 // login-attempt slot and re-panicking unchanged if the call panics instead of
 // returning — see VerifyMFA's call-site comment, and FinishWebAuthnLogin's identical
 // sibling (webauthn.go), for why this exists.
-func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challenge, code, userAgent, ip string, reserved bool, attemptID uint) (session *models.Session, user *models.User, lc *core.LoginCompletion, err error) {
+//
+// #2841: it forwards all of VerifyMFALoginPending's results, including the
+// response identity core resolves before its session/step-up-token writes. The
+// wrapper is deliberately transparent: it adds the release-on-panic side effect
+// and changes nothing else. The recover() re-panics with the ORIGINAL value, so a
+// panic is never converted into a "success" and never swallowed — the slot is
+// released and the panic continues to the recovery middleware.
+func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challenge, code, userAgent, ip string, reserved bool, attemptID uint) (session *models.Session, user *models.User, identity core.UserIdentity, lc *core.LoginCompletion, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			if reserved {
@@ -234,8 +246,8 @@ func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challe
 			panic(rec)
 		}
 	}()
-	// Pending form: VerifyMFA's own completeLogin call commits the accounting
-	// (#2894). A panic here leaves the counter exactly as the code check found
+	// Pending form: VerifyMFA's own completeLoginWithIdentity call commits the
+	// accounting (#2894). A panic here leaves the counter exactly as the code check found
 	// it, which is the conservative end of the two.
 	return h.coreService.VerifyMFALoginPending(ctx, challenge, code, userAgent, ip)
 }

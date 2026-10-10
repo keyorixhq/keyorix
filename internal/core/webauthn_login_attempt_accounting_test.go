@@ -82,7 +82,7 @@ func TestFinishWebAuthnLogin_MintFailureAfterAssertion_StillCountsTheLoginAttemp
 
 	c.storage = &failCreateSessionStorage{Storage: c.storage}
 
-	session, _, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	session, _, _, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err, "a CreateSession failure must still refuse this login")
 	require.Nil(t, session)
 
@@ -122,7 +122,7 @@ func TestFinishWebAuthnLogin_PreVerdictFailureDoesNotCountTheLoginAttempt(t *tes
 
 	c.storage = &failConsumeWebAuthnSessionStorage{Storage: c.storage}
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrWebAuthnLoginNotEvaluated,
 		"a storage error consuming the ceremony session reached no verdict on the assertion, so it MUST "+

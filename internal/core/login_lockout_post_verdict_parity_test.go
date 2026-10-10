@@ -106,7 +106,7 @@ func TestFinishWebAuthnLogin_PostVerdictFaultCostsTheSameAsAFailedAssertion(t *t
 	require.NoError(t, err)
 	ctok, err := cc.storeWebAuthnSession(context.Background(), 1, "login", &webauthn.SessionData{Challenge: challenge, UserID: specWebAuthnID(1)})
 	require.NoError(t, err)
-	_, _, cerr := cc.FinishWebAuthnLogin(context.Background(), cch, ctok, "agent", "203.0.113.5", badParsed)
+	_, _, _, cerr := cc.FinishWebAuthnLogin(context.Background(), cch, ctok, "agent", "203.0.113.5", badParsed)
 	require.Error(t, cerr, "control: a tampered assertion must be refused")
 	control := readLockoutState(t, cdb, 1)
 
@@ -122,7 +122,7 @@ func TestFinishWebAuthnLogin_PostVerdictFaultCostsTheSameAsAFailedAssertion(t *t
 	require.NoError(t, err)
 	base := pc.storage
 	pc.storage = &failCreateSessionStorage{Storage: base}
-	_, _, perr := pc.FinishWebAuthnLogin(context.Background(), pch, ptok, "agent", "203.0.113.5", goodParsed)
+	_, _, _, perr := pc.FinishWebAuthnLogin(context.Background(), pch, ptok, "agent", "203.0.113.5", goodParsed)
 	pc.storage = base
 	require.Error(t, perr)
 	require.ErrorIs(t, perr, ErrLoginPostVerdict)
@@ -145,7 +145,7 @@ func TestFinishWebAuthnPasswordlessLogin_PostVerdictFaultCostsTheSameAsAFailedAs
 	badParsed.Response.Signature = []byte("not-the-real-signature")
 	ctok, err := cc.storeWebAuthnSession(context.Background(), 0, "passwordless", &webauthn.SessionData{Challenge: challenge})
 	require.NoError(t, err)
-	_, _, cerr := cc.FinishWebAuthnPasswordlessLogin(context.Background(), ctok, "agent", "203.0.113.5", badParsed)
+	_, _, _, cerr := cc.FinishWebAuthnPasswordlessLogin(context.Background(), ctok, "agent", "203.0.113.5", badParsed)
 	require.Error(t, cerr)
 	control := readLockoutState(t, cdb, 1)
 
@@ -166,7 +166,7 @@ func TestFinishWebAuthnPasswordlessLogin_PostVerdictFaultCostsTheSameAsAFailedAs
 	require.NoError(t, err)
 	base := pc.storage
 	pc.storage = &failCreateSessionStorage{Storage: base}
-	_, _, perr := pc.FinishWebAuthnPasswordlessLogin(context.Background(), ptok, "agent", "203.0.113.5", goodParsed)
+	_, _, _, perr := pc.FinishWebAuthnPasswordlessLogin(context.Background(), ptok, "agent", "203.0.113.5", goodParsed)
 	pc.storage = base
 	require.Error(t, perr)
 	require.ErrorIs(t, perr, ErrLoginPostVerdict)

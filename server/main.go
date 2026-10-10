@@ -357,6 +357,7 @@ const (
 	schedLockReadQuota         int64 = 0x4B455953_52445154 // "KEYSRDQT"
 	schedLockMFAGrantPrune     int64 = 0x4B455953_4D464147 // "KEYSMFAG"
 	schedLockRecoverAdminAlert int64 = 0x4B455953_52435652 // "KEYSRCVR"
+	schedLockBreakGlassReview  int64 = 0x4B455953_42475256 // "KEYSBGRV"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -897,6 +898,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		EmergencyRole: cfg.BreakGlass.EmergencyRole,
 		DefaultTTL:    cfg.BreakGlass.GetDefaultTTL(),
 		MaxTTL:        cfg.BreakGlass.GetMaxTTL(),
+		// #2461: GetReviewWindow had no non-test caller, so ADR-112's
+		// post-activation-review deviation was computed against nothing. Wired
+		// unconditionally, NOT behind cfg.BreakGlass.Enabled: an install that
+		// has since turned break-glass off can still hold unreviewed
+		// activations from when it was on, and those are exactly the ones that
+		// must not drop off the posture report.
+		ReviewWindow: cfg.BreakGlass.GetReviewWindow(),
 	})
 
 	// Wire N-of-M dual-control approval for access requests (1 = disabled).
@@ -1766,6 +1774,26 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 				log.Printf("Recover-admin alert: notified %d recover-admin use(s)", n)
 			}
 			return nil
+		})
+	})
+
+	// Warn about break-glass activations that have gone unreviewed past the
+	// configured review window (ADR-112 §3, item 4/5; #2461) — ALWAYS runs,
+	// deliberately not gated on cfg.BreakGlass.Enabled, for the same reason the
+	// recover-admin alert above isn't opt-in: an install that has since turned
+	// break-glass OFF can still be holding unreviewed activations from when it
+	// was on, and those are precisely the ones that must not quietly drop off
+	// the report. Runs once immediately on startup (the "startup warning" half)
+	// and every 6h thereafter. Single-replica-gated (ADR-039) so an HA
+	// deployment logs and audits this once per pass, not once per replica.
+	//
+	// Visibility only — see RunBreakGlassReviewReminder's own doc comment for
+	// why ADR-112's "enforced" is a posture deviation plus this warning, and
+	// explicitly NOT a lockout.
+	runScheduler(ctx, "break_glass_review_reminder", 6*time.Hour, func() middleware.SchedulerOutcome {
+		return lockedRun(ctx, coreService.Storage(), schedLockBreakGlassReview, "Break-glass review reminder", func() error {
+			_, rerr := coreService.RunBreakGlassReviewReminder(ctx)
+			return rerr
 		})
 	})
 
