@@ -134,6 +134,39 @@ func (s *UserGRPCService) CreateUser(ctx context.Context, req *pb.CreateUserRequ
 	return resp, nil
 }
 
+// ReissueOneTimePassword issues a new one-time password for an existing user
+// (REISSUE-1). Same gate as CreateUser with generate_one_time_password
+// (users.write at global scope); core adds the admin-rank ceiling and refuses the
+// caller's own account, SSO-only and suspended users. The password is returned once.
+func (s *UserGRPCService) ReissueOneTimePassword(ctx context.Context, req *pb.ReissueOneTimePasswordRequest) (*pb.ReissueOneTimePasswordResponse, error) {
+	actor, err := requireUser(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := authorizeGlobal(ctx, s.core, actor, "users.write"); err != nil {
+		return nil, err
+	}
+	if req.GetId() == 0 {
+		return nil, status.Error(codes.InvalidArgument, "id is required")
+	}
+	res, err := s.core.ReissueOneTimePassword(ctx, actor.UserID, uint(req.GetId()))
+	if err != nil {
+		switch {
+		case errors.Is(err, core.ErrCannotActOnSelf):
+			return nil, status.Error(codes.FailedPrecondition, "cannot reissue your own one-time password; use `keyorix-server admin recover-admin` to recover your own account")
+		case errors.Is(err, core.ErrReissueExternalIdentity), errors.Is(err, core.ErrReissueAccountBlocked):
+			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		}
+		return nil, mapUserError(err)
+	}
+	return &pb.ReissueOneTimePasswordResponse{
+		UserId:                   req.GetId(),
+		Email:                    res.Email,
+		OneTimePassword:          res.OTPValue,
+		OneTimePasswordExpiresAt: res.ExpiresAt.UTC().Format(time.RFC3339),
+	}, nil
+}
+
 // GetUser returns a user by ID.
 func (s *UserGRPCService) GetUser(ctx context.Context, req *pb.GetUserRequest) (*pb.User, error) {
 	actor, err := requireUser(ctx)
