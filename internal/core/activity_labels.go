@@ -11,6 +11,7 @@ import "strings"
 // generated wording is not good enough.
 var activityLabels = map[string]string{
 	"secret.read":                   "accessed secret",
+	"secret.versions_listed":        "listed versions of secret",
 	"secret.created":                "created secret",
 	"secret.updated":                "updated secret",
 	"secret.deleted":                "deleted secret",

@@ -389,6 +389,21 @@ describe('SecretDetailView history', () => {
         expect(screen.getByText('frozen for incident')).toBeInTheDocument();
     });
 
+    it('labels secret.versions_listed in the history panel', () => {
+        mockAuditTrail = [
+            {
+                id: 4,
+                event_type: 'secret.versions_listed',
+                timestamp: '2026-06-18T12:00:00Z',
+                actor_type: 'user',
+                description: '',
+                success: true,
+            },
+        ];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Versions listed')).toBeInTheDocument();
+    });
+
     it('omits the panel when there is no audit trail', () => {
         mockAuditTrail = [];
         render(<SecretDetailView secret={makeSecret()} />);

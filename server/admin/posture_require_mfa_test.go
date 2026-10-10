@@ -1,0 +1,89 @@
+package admin
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+)
+
+// collectRequireMFAPosture must read the same facts the server's boot does
+// (server/adr112_grace.go): on an upgraded deployment (users exist, no
+// config.ADR112RequireMFAEnforcedMarker) that never set require_mfa, the server
+// does NOT enforce MFA, so the posture report counts that as a deviation even
+// though config.Load resolved the field to true.
+func TestCollectRequireMFAPosture_ADR112Grace(t *testing.T) {
+	ctx := context.Background()
+	graceDeviation := func(r *postureReport) *postureDeviation {
+		for i := range r.deviations {
+			if r.deviations[i].category == "grace-period" && strings.Contains(r.deviations[i].detail, "require_mfa") {
+				return &r.deviations[i]
+			}
+		}
+		return nil
+	}
+	run := func(t *testing.T, cfg *config.Config, setup func(corestorage.Storage) error) (*postureReport, bool) {
+		t.Helper()
+		report := &postureReport{}
+		var inGrace bool
+		require.NoError(t, withUsableStorage(cfg, func(store corestorage.Storage) error {
+			if setup != nil {
+				if err := setup(store); err != nil {
+					return err
+				}
+			}
+			var err error
+			inGrace, err = collectRequireMFAPosture(ctx, cfg, store, report)
+			return err
+		}))
+		return report, inGrace
+	}
+	addUser := func(store corestorage.Storage) error {
+		_, err := store.CreateUser(ctx, &models.User{
+			Username: "root", UsernameFolded: "root", Email: "root@x.io", EmailFolded: "root@x.io",
+			IsActive: true, AccountState: core.AccountActive,
+		})
+		return err
+	}
+
+	t.Run("upgrade without marker is a grace-period deviation", func(t *testing.T) {
+		cfg := writeSecureBaselineConfig(t) // never sets require_mfa
+		require.True(t, cfg.Security.RequireMFA && cfg.Security.RequireMFAImplicitDefault, "premise: implicit default")
+		report, inGrace := run(t, cfg, addUser)
+		require.True(t, inGrace)
+		d := graceDeviation(report)
+		require.NotNil(t, d, "an upgrade in the require_mfa grace period must be a deviation: %+v", report.deviations)
+		require.Equal(t, originShippedDefault, d.origin)
+		require.Contains(t, d.detail, "does NOT enforce MFA")
+	})
+	t.Run("marker present: enforced, no deviation", func(t *testing.T) {
+		cfg := writeSecureBaselineConfig(t)
+		report, inGrace := run(t, cfg, func(store corestorage.Storage) error {
+			if err := addUser(store); err != nil {
+				return err
+			}
+			return store.SetSystemMetadata(ctx, config.ADR112RequireMFAEnforcedMarker, "2026-10-10T00:00:00Z")
+		})
+		require.False(t, inGrace)
+		require.Nil(t, graceDeviation(report))
+	})
+	t.Run("fresh install (no users): enforced, no deviation", func(t *testing.T) {
+		cfg := writeSecureBaselineConfig(t)
+		report, inGrace := run(t, cfg, nil)
+		require.False(t, inGrace)
+		require.Empty(t, report.deviations)
+	})
+	t.Run("explicit false is a deviation", func(t *testing.T) {
+		cfg := writeSecureBaselineConfig(t)
+		cfg.Security.RequireMFA, cfg.Security.RequireMFAImplicitDefault = false, false
+		report, _ := run(t, cfg, nil)
+		require.Len(t, report.deviations, 1)
+		require.Contains(t, report.deviations[0].detail, "security.require_mfa is false")
+	})
+}

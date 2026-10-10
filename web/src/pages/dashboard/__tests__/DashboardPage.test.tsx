@@ -465,6 +465,24 @@ describe('DashboardPage — recent activity edge cases', () => {
         expect(screen.getByText('carol')).toBeInTheDocument();
         expect(screen.getByText('custom_event')).toBeInTheDocument();
     });
+
+    it('renders a versions_listed activity as a listing, not the raw type or an access', () => {
+        mockHooks({
+            activity: [
+                {
+                    id: 1,
+                    type: 'versions_listed',
+                    actor: 'dave',
+                    secretName: 'db-pass',
+                    timestamp: '2026-01-01T10:00:00Z',
+                },
+            ],
+        });
+        render(<DashboardPage />);
+        expect(screen.queryByText(/versions_listed/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/accessed secret/)).not.toBeInTheDocument();
+        expect(screen.getByText(/listed versions of secret/)).toHaveTextContent('listed versions of secret "db-pass"');
+    });
 });
 
 describe('DashboardPage — readable labels for server-labelled events (#2951)', () => {

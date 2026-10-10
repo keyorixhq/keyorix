@@ -27,6 +27,8 @@ func TestMapAuditEventToActivity_ReadableLabelAndRawTypeKept(t *testing.T) {
 	}
 	assert.Equal(t, "revoked break-glass access", ActivityLabel("break_glass.revoked"))
 	assert.Equal(t, "some future event type", ActivityLabel("some.future_event_type"))
+	// A version-history listing is not a value read (#2970): it gets its own phrase.
+	assert.Equal(t, "listed versions of secret", ActivityLabel(EventSecretVersionsListed))
 }
 
 func TestGetActivityFeed_ResolvesSubjectSecretAndEventActor(t *testing.T) {

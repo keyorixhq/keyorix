@@ -186,7 +186,7 @@ export interface DashboardStats {
 
 export interface ActivityItem {
     id: number;
-    type: 'created' | 'updated' | 'shared' | 'accessed' | (string & {});
+    type: 'created' | 'updated' | 'shared' | 'accessed' | 'versions_listed' | (string & {});
     secretName: string;
     timestamp: string;
     actor: string;
