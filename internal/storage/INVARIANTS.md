@@ -211,6 +211,24 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   it means a future caller that leaks a transaction on a background context would wedge every
   write in the process permanently where it previously degraded to `busy_timeout` retries.
 
+  The gate is held across `BeginTx`'s wait for a free pool connection, bounded only by the
+  caller's ctx (an HTTP request ctx often has no deadline). The pool defaults to 8 connections
+  (`DefaultSQLiteMaxOpenConns` in `factory.go`, shared with readers), so a writer that cannot get a connection — all 8
+  held by readers or by a stuck query — blocks every other writer behind the gate until its ctx
+  ends. This is an ACCEPTED tradeoff, not an oversight: bounding the connection wait would
+  need a derived ctx, and `database/sql` rolls a transaction back when the ctx passed to
+  `BeginTx` is cancelled, so a timeout ctx would end the transaction it just opened. Before
+  the gate those writers each waited inside SQLite's busy handler for the same starved
+  connections, so the failure mode is unchanged in kind (writes stall until the client
+  timeout); it is only now visible as one queue. Recorded for the coordinator to accept or
+  reject (#2637 review, Finding 2).
+
+  A gate wait that ends on the caller's ctx deadline (auditWriteTimeout, the gate bound and
+  `busy_timeout` are all 10s and the ctx starts first) returns a wrapped `ctx.Err()` rather
+  than the sentinel, so `isBatchGlobalContentionErr` also treats `context.DeadlineExceeded` /
+  `context.Canceled` as batch-global; matching only the sentinel left the audit path's real
+  error bisecting.
+
   The read-only bypass has no non-test caller today. It is correct as implemented (modernc
   `tx.go` only applies `beginMode` when `!opts.ReadOnly`, so a read-only tx takes a plain
   DEFERRED `BEGIN` and cannot hold the write lock), but SQLite does not ENFORCE read-only at

@@ -53,8 +53,9 @@ func writeGateMaxWait() time.Duration {
 // FIFO queue before they reach SQLite.
 //
 // Why: SQLite allows one writer at a time. With every transaction BEGIN IMMEDIATE
-// (sqliteDSN's _txlock=immediate) and a 25-connection pool, up to 25 goroutines at a
-// time waited for that one lock inside SQLite's busy handler, which polls: each
+// (sqliteDSN's _txlock=immediate) and a pool of up to 25 connections (the pool this
+// was measured on; the default is now DefaultSQLiteMaxOpenConns = 8), that many
+// goroutines at a time waited for that one lock inside SQLite's busy handler, which polls: each
 // waiter sleeps 1, 2, 5, 10, ... up to 100ms between attempts and has no queue
 // position. A lock released after 1ms of work sat idle until some sleeper happened
 // to wake, the newest arrivals (still on 1–2ms sleeps) overtook waiters already

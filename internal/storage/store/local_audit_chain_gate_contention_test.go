@@ -218,3 +218,83 @@ func TestCommitAuditBatch_StillBisectsAPoisonedItemUnderContentionsSibling(t *te
 				"property, and the contention carve-out must not weaken it", i)
 	}
 }
+
+// TestCommitAuditBatch_GateWaitEndedByCtxDeadlineIsAlsoBatchGlobal is the
+// coordinator's Finding 1 on #2637 (Opus pass): auditWriteTimeout (10s) ==
+// sqliteWriteGateMaxWait == sqliteBusyTimeoutMillis (10s), and the caller's ctx
+// deadline starts BEFORE the gate's own timer, so the gate's 3-way select can
+// return a wrapped ctx.Err() ("sqlite write gate: context deadline exceeded")
+// instead of ErrSQLiteWriteContention. That error matched neither classifier, so
+// the bisection the sibling test pins shut was still reachable on the audit path.
+//
+// RED before the fix: 9 flushes for a 5-item batch. GREEN: 1.
+func TestCommitAuditBatch_GateWaitEndedByCtxDeadlineIsAlsoBatchGlobal(t *testing.T) {
+	ls := newAuditChainTestStore(t)
+
+	// Exactly the shape sqliteWriteGate.acquire returns when ctx ends first.
+	gateCtxErr := fmt.Errorf("begin write transaction: %w",
+		fmt.Errorf("sqlite write gate: %w", context.DeadlineExceeded))
+	require.NoError(t, ls.db.Callback().Create().Before("gorm:before_create").Register(
+		"test:gate_ctx_deadline_every_attempt",
+		func(tx *gorm.DB) {
+			if _, ok := tx.Statement.Dest.(*models.AuditEvent); ok {
+				_ = tx.AddError(gateCtxErr)
+			}
+		},
+	))
+	t.Cleanup(func() {
+		_ = ls.db.Callback().Create().Remove("test:gate_ctx_deadline_every_attempt")
+	})
+
+	base := time.Now().UTC()
+	const n = 5
+	batch := make([]*auditBatchItem, n)
+	for i := 0; i < n; i++ {
+		tr := true
+		itemCtx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Minute))
+		t.Cleanup(cancel)
+		batch[i] = &auditBatchItem{
+			event: &models.AuditEvent{
+				EventType: "secret.read", Description: "ok", Success: &tr,
+				EventTime: base.Add(time.Duration(i) * time.Second), ActorType: "user",
+			},
+			ctx:  itemCtx,
+			done: make(chan error, 1),
+		}
+	}
+
+	before := testutil.ToFloat64(auditFlushesTotal)
+	errs := ls.commitAuditBatch(batch)
+	flushes := testutil.ToFloat64(auditFlushesTotal) - before
+
+	require.Len(t, errs, n)
+	for i, err := range errs {
+		require.Error(t, err, "item %d must still be told the batch failed", i)
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	}
+	assert.Equal(t, float64(1), flushes,
+		"a gate wait that ended on the ctx deadline was bisected: %v flushes for a %d-item batch (#2637 Finding 1)", flushes, n)
+}
+
+// The predicate's own table, so the narrowness is pinned in both directions: ctx
+// expiry and the sentinel are batch-global; an item-specific error is not.
+func TestIsBatchGlobalContentionErr_Table(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		err  error
+		want bool
+	}{
+		"sentinel":                {corestorage.ErrSQLiteWriteContention, true},
+		"wrapped sentinel":        {fmt.Errorf("x: %w", corestorage.ErrSQLiteWriteContention), true},
+		"ctx deadline":            {context.DeadlineExceeded, true},
+		"gate-wrapped ctx expiry": {fmt.Errorf("sqlite write gate: %w", context.DeadlineExceeded), true},
+		"ctx canceled":            {context.Canceled, true},
+		"item-specific":           {errors.New("UNIQUE constraint failed: audit_events.id"), false},
+		"plain SQLITE_BUSY":       {errors.New("SQLITE_BUSY"), false},
+		"nil":                     {nil, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			assert.Equal(t, tc.want, isBatchGlobalContentionErr(tc.err))
+		})
+	}
+}

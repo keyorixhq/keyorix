@@ -138,8 +138,18 @@ func isSQLiteBusyErr(err error) bool {
 // isBatchGlobalContentionErr reports whether err is a contention failure that
 // applies to the BATCH rather than to any item in it, so bisecting to find a
 // poisoned item is not just useless but actively harmful. See commitAuditBatch.
+//
+// That includes a write-gate wait that ended on the caller's ctx instead of on the
+// gate's own timer. auditWriteTimeout, sqliteWriteGateMaxWait and the DSN's
+// busy_timeout are all 10s and the ctx deadline starts first, so the gate's
+// select can legitimately return a wrapped ctx.Err() rather than
+// ErrSQLiteWriteContention (#2637 review, Finding 1). Every item of a batch
+// shares one fixed deadline shape, so an expired/cancelled ctx is likewise a
+// property of the batch, not of an item.
 func isBatchGlobalContentionErr(err error) bool {
-	return errors.Is(err, storage.ErrSQLiteWriteContention)
+	return errors.Is(err, storage.ErrSQLiteWriteContention) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled)
 }
 
 // computeAuditEntryHash hashes an event's semantically meaningful fields plus
