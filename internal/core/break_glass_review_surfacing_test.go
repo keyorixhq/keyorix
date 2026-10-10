@@ -210,6 +210,16 @@ func (s *reviewReminderNotifySpy) ListProjectMembers(_ context.Context, projectI
 	return s.membersByID[projectID], nil
 }
 
+// The #2955 install-wide-admin lookup: this spy models an install with none, so
+// the project-member behaviour under test is unchanged.
+func (s *reviewReminderNotifySpy) ListAdminBypassRoleIDs(_ context.Context) ([]uint, error) {
+	return nil, nil
+}
+
+func (s *reviewReminderNotifySpy) ListGlobalAdminAssignmentsForUpdate(_ context.Context, _ []uint) ([]storage.RoleAssignment, error) {
+	return nil, nil
+}
+
 func (s *reviewReminderNotifySpy) CreateNotification(_ context.Context, n *models.Notification) (*models.Notification, error) {
 	s.notified = append(s.notified, n.UserID)
 	s.notifiedPID = append(s.notifiedPID, n.ProjectID)

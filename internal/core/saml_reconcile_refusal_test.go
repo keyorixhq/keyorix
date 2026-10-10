@@ -39,6 +39,23 @@ type reconcileFaultStorage struct {
 	failRemoveGroup map[uint]bool
 	failRemoveRole  map[uint]bool
 	failListGroups  bool
+	// #2910 fuzzer finding: the escalation guard's own lookups.
+	failGetGroupRoles      bool
+	failGetRolePermissions bool
+}
+
+func (s *reconcileFaultStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {
+	if s.failGetGroupRoles {
+		return nil, errors.New("injected fault: GetGroupRoles")
+	}
+	return s.Storage.GetGroupRoles(ctx, groupID)
+}
+
+func (s *reconcileFaultStorage) GetRolePermissions(ctx context.Context, roleID uint) ([]*models.Permission, error) {
+	if s.failGetRolePermissions {
+		return nil, errors.New("injected fault: GetRolePermissions")
+	}
+	return s.Storage.GetRolePermissions(ctx, roleID)
 }
 
 func (s *reconcileFaultStorage) RemoveUserFromGroup(ctx context.Context, userID, groupID, projectID uint) error {
@@ -64,7 +81,9 @@ func (s *reconcileFaultStorage) ListGroups(ctx context.Context) ([]*models.Group
 
 func (s *reconcileFaultStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
 	return s.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		return fn(&reconcileFaultStorage{Storage: tx, failRemoveGroup: s.failRemoveGroup, failRemoveRole: s.failRemoveRole, failListGroups: s.failListGroups})
+		inner := *s
+		inner.Storage = tx
+		return fn(&inner)
 	})
 }
 

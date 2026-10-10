@@ -366,10 +366,12 @@ func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
 
 	for _, label := range c.underspecified {
 		if !toleranceStalenessUndrivable[label] {
-			t.Errorf("knownOpenTolerance %q is not fully specified (blank method and/or nth==0) so this "+
-				"staleness check cannot drive it, and it is not listed in "+
-				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is "+
-				"visible rather than silent", label)
+			t.Errorf("knownOpenTolerance %q wildcards at least one of method/kind/nth, so there is no single "+
+				"fault for this staleness check to arm and it cannot be driven — and it is not listed in "+
+				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is visible "+
+				"rather than silent. (A wildcard row is still constrained by its mandatory non-empty "+
+				"tables, enforced by TestKnownOpenTolerances_CarryIssueAndExpiry; what it is NOT covered by "+
+				"is this staleness check.)", label)
 		}
 	}
 
@@ -468,7 +470,12 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 	var c toleranceStaleness
 	for _, k := range knownOpenTolerances {
 		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
-		if k.method == "" || k.nth == 0 {
+		// A row wildcarded in ANY dimension cannot be driven: there is no
+		// single (method, nth, kind) to arm. Derived from the one shared
+		// definition of "wildcarded" (#2844) rather than re-spelled here, so
+		// this check and matchingKnownOpen's matching cannot disagree about
+		// which rows those are.
+		if len(toleranceWildcardedDimensions(k)) > 0 {
 			c.underspecified = append(c.underspecified, label)
 			continue
 		}
