@@ -121,7 +121,8 @@ alice (recipient ID 2) with `read` permission.
 the reason: you, or alice, are not a member of the secret's project.)
 
 A share can also lift a member's access on that one secret: share with
-`--permission write` and alice, a `project_viewer`, can `secret update --id 1`;
+`--permission write` and alice, a `project_viewer`, can `secret update --id 1`
+(value, metadata, rotate; not suspend, move or anything else a role would grant);
 `share revoke` takes exactly that away again while her role's read stays.
 
 ## 5. Give an app access, then revoke it (2 min)
