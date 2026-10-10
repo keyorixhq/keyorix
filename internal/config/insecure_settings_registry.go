@@ -323,7 +323,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "security.insecure_allow_cleartext_transport",
 		SourcePaths: []string{"security.require_transport_tls"},
-		Describe:    "NEEDS ANDREI (polarity-inverted rename of security.require_transport_tls, a load-bearing flag item 1 also touches) -- allows bearer tokens/secret values over cleartext HTTP/gRPC",
+		Describe:    "allows bearer tokens/secret values over cleartext HTTP/gRPC",
 		InEffect:    func(c *Config) bool { return !c.Security.RequireTransportTLS },
 		Value:       func(c *Config) string { return boolStr(!c.Security.RequireTransportTLS) },
 	},
@@ -339,7 +339,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		Name:          "security.insecure_skip_startup_validation",
 		SourcePaths:   []string{"security.enable_file_permission_check"},
 		DerivedInputs: []string{"security.EnableFilePermissionCheckImplicitDefault", "security.EnableFilePermissionCheckUpgradeGrace"},
-		Describe:      "NEEDS ANDREI (polarity-inverted rename of security.enable_file_permission_check, which item 1 just gave ADR-112 default-flip + grace-period machinery under its current name) -- the file-permission/DEK-salt-size/database-reachability startup checks are skipped (off) or, in the ADR-112 upgrade grace period (grace-warn-only), only warn instead of refusing to start",
+		Describe:      "the file-permission/DEK-salt-size/database-reachability startup checks are skipped (off) or, in the ADR-112 upgrade grace period (grace-warn-only), only warn instead of refusing to start",
 		InEffect:      func(c *Config) bool { return c.Security.StartupValidationState().Weakened() },
 		Value:         func(c *Config) string { return string(c.Security.StartupValidationState()) },
 	},
@@ -360,7 +360,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "storage.encryption.key_provider.insecure_omit_shamir_commitment_check",
 		SourcePaths: []string{"storage.encryption.key_provider.shamir_commitment"},
-		Describe:    "NEEDS ANDREI (not a boolean today -- an empty storage.encryption.key_provider.shamir_commitment string) -- Shamir KEK reconstruction falls back to a forgeable magic-byte check only",
+		Describe:    "Shamir KEK reconstruction falls back to a forgeable magic-byte check only",
 		InEffect: func(c *Config) bool {
 			return anyKeyProviderInEffect(c, func(kp KeyProviderConfig) bool { return kp.Type == "shamir" && kp.ShamirCommitment == "" })
 		},
@@ -371,21 +371,21 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "storage.encryption.insecure_disable_encryption_at_rest",
 		SourcePaths: []string{"storage.encryption.enabled"},
-		Describe:    "NEEDS ANDREI (polarity-inverted rename of storage.encryption.enabled, a high-blast-radius architectural flag, not purely a weakening toggle) -- secrets stored unencrypted at rest",
+		Describe:    "secrets stored unencrypted at rest",
 		InEffect:    func(c *Config) bool { return !c.Storage.Encryption.Enabled },
 		Value:       func(c *Config) string { return boolStr(!c.Storage.Encryption.Enabled) },
 	},
 	{
 		Name:        "membership.insecure_skip_membership_review",
 		SourcePaths: []string{"membership.validation_mode"},
-		Describe:    "NEEDS ANDREI (not a boolean today -- membership.validation_mode is a 2-value enum, \"allowlist\"/\"open\") -- new members become active immediately, skipping admin review",
+		Describe:    "new members become active immediately, skipping admin review",
 		InEffect:    func(c *Config) bool { return c.Membership.ValidationMode == "open" },
 		Value:       func(c *Config) string { return boolStr(c.Membership.ValidationMode == "open") },
 	},
 	{
 		Name:        "sso.providers.insecure_auto_provision_sso_users",
 		SourcePaths: []string{"sso.providers.auto_provision"},
-		Describe:    "NEEDS ANDREI (the gap check itself flags this as borderline -- a legitimate feature flag as much as a weakening) -- JIT-creates an SSO account with no admin step",
+		Describe:    "JIT-creates an SSO account with no admin step",
 		InEffect: func(c *Config) bool {
 			return anySSOProviderInEffect(c, func(p SSOProviderConfig) bool { return p.AutoProvision })
 		},
@@ -396,7 +396,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "sso.providers.insecure_auto_sync_sso_groups",
 		SourcePaths: []string{"sso.providers.group_sync"},
-		Describe:    "NEEDS ANDREI (the gap check itself flags this as borderline -- delegated trust, not a pure weakening) -- IdP group claims silently change native role membership every login",
+		Describe:    "IdP group claims silently change native role membership every login",
 		InEffect: func(c *Config) bool {
 			return anySSOProviderInEffect(c, func(p SSOProviderConfig) bool { return p.GroupSync })
 		},
@@ -407,7 +407,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "server.insecure_allow_unauthenticated_metrics",
 		SourcePaths: []string{"server.http.metrics_token", "server.grpc.metrics_token"},
-		Describe:    "NEEDS ANDREI (not a boolean today -- an empty server.http/grpc.metrics_token string) -- /metrics served fully unauthenticated",
+		Describe:    "/metrics served fully unauthenticated",
 		InEffect:    func(c *Config) bool { return c.Server.HTTP.MetricsToken == "" || c.Server.GRPC.MetricsToken == "" },
 		Value: func(c *Config) string {
 			return boolStr(c.Server.HTTP.MetricsToken == "" || c.Server.GRPC.MetricsToken == "")
@@ -416,7 +416,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "server.insecure_disable_max_request_body_cap",
 		SourcePaths: []string{"server.http.max_request_body_bytes", "server.grpc.max_request_body_bytes"},
-		Describe:    "NEEDS ANDREI (not a boolean today -- a negative server.http/grpc.max_request_body_bytes) -- removes the request-body size cap entirely (DoS)",
+		Describe:    "removes the request-body size cap entirely (DoS)",
 		InEffect: func(c *Config) bool {
 			return c.Server.HTTP.MaxRequestBodyBytes < 0 || c.Server.GRPC.MaxRequestBodyBytes < 0
 		},
@@ -427,14 +427,14 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "storage.database.insecure_disable_database_tls",
 		SourcePaths: []string{"storage.database.ssl_mode"},
-		Describe:    "NEEDS ANDREI (not a boolean today -- storage.database.ssl_mode is a 3-value enum) -- Postgres connection unencrypted",
+		Describe:    "Postgres connection unencrypted",
 		InEffect:    func(c *Config) bool { return c.Storage.Database.SSLMode == "disable" },
 		Value:       func(c *Config) string { return boolStr(c.Storage.Database.SSLMode == "disable") },
 	},
 	{
 		Name:        "server.insecure_disable_api_ratelimit",
 		SourcePaths: []string{"server.http.ratelimit.enabled", "server.grpc.ratelimit.enabled"},
-		Describe:    "NEEDS ANDREI (polarity-inverted rename, AND already ships disabled by default -- the same inverted-default shape item 1 fixed for two other settings; this one needs the same product decision) -- removes per-principal API rate limiting",
+		Describe:    "removes per-principal API rate limiting",
 		InEffect:    func(c *Config) bool { return !c.Server.HTTP.RateLimit.Enabled || !c.Server.GRPC.RateLimit.Enabled },
 		Value: func(c *Config) string {
 			return boolStr(!c.Server.HTTP.RateLimit.Enabled || !c.Server.GRPC.RateLimit.Enabled)
@@ -443,14 +443,14 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	{
 		Name:        "credential_delivery.insecure_allow_log_delivery",
 		SourcePaths: []string{"credential_delivery.mode"},
-		Describe:    "NEEDS ANDREI (not a boolean today -- credential_delivery.mode is a 4-value enum, already double-gated by KEYORIX_ALLOW_INSECURE_LOG_DELIVERY) -- writes a usable account-setup link to the application log",
+		Describe:    "writes a usable account-setup link to the application log",
 		InEffect:    func(c *Config) bool { return c.CredentialDelivery.Mode == "log" },
 		Value:       func(c *Config) string { return boolStr(c.CredentialDelivery.Mode == "log") },
 	},
 	{
 		Name:        "credential_delivery.insecure_allow_plaintext_smtp",
 		SourcePaths: []string{"credential_delivery.smtp.tls", "notifications.email.tls"},
-		Describe:    "NEEDS ANDREI (not a boolean today -- credential_delivery.smtp.tls / notifications.email.tls are 3-value enums, already double-gated by KEYORIX_ALLOW_INSECURE_SMTP) -- sends setup/notification mail over cleartext SMTP",
+		Describe:    "sends setup/notification mail over cleartext SMTP",
 		InEffect: func(c *Config) bool {
 			return c.CredentialDelivery.SMTP.TLS == "none" || c.Notifications.Email.TLS == "none"
 		},

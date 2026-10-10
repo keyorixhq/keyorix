@@ -6,10 +6,14 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/keyorixhq/keyorix/configs"
 	"github.com/keyorixhq/keyorix/internal/config"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 )
@@ -55,6 +59,63 @@ func TestSecurityPostureSnapshot_CoversEveryRegistryEntryExactlyOnce(t *testing.
 		}
 		if want := s.Value(cfg); val != want {
 			t.Errorf("snapshot[%q] = %q, want %q", s.Name, val, want)
+		}
+	}
+}
+
+// internalMarker matches text that is meant for the maintainers' working
+// notes, not for an operator reading the boot log (#2979: "NEEDS ANDREI",
+// "item 1", "polarity-inverted rename", "not a boolean today", issue numbers).
+var internalMarker = regexp.MustCompile(`(?i)needs andrei|andrei|polarity|\bitem [0-9]|not a boolean today|known exception|#[0-9]{3,}`)
+
+// Every start-up warning the registry loop can print must read as operator
+// text. The zero-value config has several entries in effect (empty
+// metrics_token, rate limiting off, TLS off, ...), so its boot log is the
+// worst case for the "WARNING: ... is in effect" lines the demo showed.
+func TestWarnInsecureSettingsInEffect_NoInternalMarkersInBootLog(t *testing.T) {
+	out := captureLogs(func() { warnInsecureSettingsInEffect(&config.Config{}) })
+	if !strings.Contains(out, "is in effect") {
+		t.Fatalf("test premise broken: the zero-value config should have warnings in effect, got %q", out)
+	}
+	if m := internalMarker.FindString(out); m != "" {
+		t.Errorf("boot log leaks an internal marker %q:\n%s", m, out)
+	}
+}
+
+// The same check for every registry entry's description, in effect or not,
+// so a setting nobody has in effect today cannot reintroduce a marker.
+func TestInsecureSettingsRegistry_DescribeIsOperatorText(t *testing.T) {
+	for _, s := range config.InsecureSettingsRegistry {
+		if m := internalMarker.FindString(s.Describe); m != "" {
+			t.Errorf("%s: Describe leaks an internal marker %q: %q", s.Name, m, s.Describe)
+		}
+	}
+}
+
+// The config `keyorix-server admin init` writes is what every new install
+// boots with, so its boot log is the first thing an operator reads (#2979).
+// Assert it is free of internal notes and of the "protocol_versions is set but
+// NOT honored" warning the template itself used to trigger on every boot.
+// The real security warnings (cleartext listener, insecure settings in effect)
+// must still be there: this is about wording and noise, not about hiding state.
+func TestDefaultConfigTemplate_BootLogIsOperatorText(t *testing.T) {
+	var cfg config.Config
+	if err := yaml.Unmarshal(configs.DefaultConfigTemplate, &cfg); err != nil {
+		t.Fatalf("default config template does not parse: %v", err)
+	}
+	out := captureLogs(func() {
+		warnInsecureSettingsInEffect(&cfg)
+		_ = checkTransportTLSPosture(&cfg)
+	})
+	if m := internalMarker.FindString(out); m != "" {
+		t.Errorf("default-config boot log leaks an internal marker %q:\n%s", m, out)
+	}
+	if strings.Contains(out, "NOT honored") {
+		t.Errorf("the shipped template sets a field the server warns it ignores on every boot:\n%s", out)
+	}
+	for _, want := range []string{"is in effect", "CLEARTEXT"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("real security warning %q went missing from the default-config boot log:\n%s", want, out)
 		}
 	}
 }
