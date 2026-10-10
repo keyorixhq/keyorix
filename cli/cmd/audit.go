@@ -487,26 +487,50 @@ func runAuditLogs(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// auditEventColMax caps the EVENT column; the column is otherwise as wide as the
+// longest event type shown, so names such as "secret.auto_rotate_completed" are
+// never cut mid-word (#2942).
+const auditEventColMax = 40
+
 func printAuditLogTable(logs []logEntry, total int64) {
-	fmt.Printf("%-6s %-20s %-16s %-9s %-22s %s\n", "ID", "TIME", "ACTOR", "KIND", "EVENT", "DESCRIPTION")
+	evW := len("EVENT")
+	for _, e := range logs {
+		if n := len(e.EventType); n > evW {
+			evW = n
+		}
+	}
+	if evW > auditEventColMax {
+		evW = auditEventColMax
+	}
+	// Times are always UTC, labelled as such: other commands used to print local
+	// time, and the two disagreed by the local offset on stage (#2942).
+	fmt.Printf("%-6s %-20s %-16s %-9s %-*s %s\n", "ID", "TIME (UTC)", "ACTOR", "KIND", evW, "EVENT", "DESCRIPTION")
 	for _, e := range logs {
 		actor := e.Actor
 		if e.Impersonation && e.ImpersonatedBy != "" {
 			actor = e.ImpersonatedBy + "→" + e.Actor
 		}
-		fmt.Printf("%-6d %-20s %-16s %-9s %-22s %s\n",
+		fmt.Printf("%-6d %-20s %-16s %-9s %-*s %s\n",
 			e.ID, shortTime(e.Timestamp), auditTruncate(cliout.SanitizeForTerminal(actor), 16), e.ActorType,
-			auditTruncate(cliout.SanitizeForTerminal(e.EventType), 22), cliout.SanitizeForTerminal(e.Description))
+			evW, auditTruncate(cliout.SanitizeForTerminal(e.EventType), evW), cliout.SanitizeForTerminal(e.Description))
 	}
 	fmt.Printf("\nShowing %d of %d total event(s).\n", len(logs), total)
 }
 
 func shortTime(s string) string {
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
-		return t.UTC().Format("2006-01-02 15:04:05")
+		return utcTime(t)
 	}
 	return s
 }
+
+// utcTime is the one human-readable timestamp format of the CLI: UTC, no zone
+// suffix (for table columns headed "(UTC)"). utcTimeLabelled is the same with the
+// zone spelled out, for "Created: ..." style lines. Commands used to mix local
+// time, RFC3339 with an offset and raw "...Z" strings (#2942).
+func utcTime(t time.Time) string { return t.UTC().Format("2006-01-02 15:04:05") }
+
+func utcTimeLabelled(t time.Time) string { return utcTime(t) + " UTC" }
 
 func auditTruncate(s string, n int) string {
 	if len(s) <= n {
@@ -557,18 +581,14 @@ func init() {
 	auditSearchCmd.Flags().IntVar(&auditSearchOffset, "offset", 0, "Pagination offset")
 }
 
-type searchEvent struct {
-	ID          uint   `json:"id"`
-	EventType   string `json:"event_type"`
-	Description string `json:"description"`
-	EventTime   string `json:"event_time"`
-	IPAddress   string `json:"ip_address"`
-	ActorType   string `json:"actor_type"`
-}
-
+// searchPage is the GET /api/v1/audit/search envelope. Its events are the same
+// redacted AuditLogEntry rows as `audit logs` (timestamp, actor, actor_type, ...):
+// the server never sends event_time or ip_address there (audit.go: "no
+// IPAddress"), which is why the old search table printed blank TIME and IP
+// columns (#2942).
 type searchPage struct {
-	Events []searchEvent `json:"events"`
-	Total  int64         `json:"total"`
+	Events []logEntry `json:"events"`
+	Total  int64      `json:"total"`
 }
 
 func runAuditSearch(_ *cobra.Command, _ []string) error {
@@ -648,16 +668,6 @@ func runAuditSearch(_ *cobra.Command, _ []string) error {
 		fmt.Println("No audit events match.")
 		return nil
 	}
-	printAuditSearchTable(page.Events, page.Total)
+	printAuditLogTable(page.Events, page.Total)
 	return nil
-}
-
-func printAuditSearchTable(events []searchEvent, total int64) {
-	fmt.Printf("%-6s %-20s %-9s %-22s %-15s %s\n", "ID", "TIME", "KIND", "EVENT", "IP", "DESCRIPTION")
-	for _, e := range events {
-		fmt.Printf("%-6d %-20s %-9s %-22s %-15s %s\n",
-			e.ID, shortTime(e.EventTime), auditTruncate(e.ActorType, 9),
-			auditTruncate(cliout.SanitizeForTerminal(e.EventType), 22), auditTruncate(cliout.SanitizeForTerminal(e.IPAddress), 15), cliout.SanitizeForTerminal(e.Description))
-	}
-	fmt.Printf("\nShowing %d of %d total event(s).\n", len(events), total)
 }
