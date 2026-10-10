@@ -6,6 +6,25 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **The bundled Caddy (`tls` compose profile) no longer runs as root.** It runs as
+  uid:gid 65532 with only `NET_BIND_SERVICE`. A one-shot `caddy-init` service
+  chowns the existing `caddy_data` / `caddy_config` volumes first, so upgrading
+  an install whose Caddy volumes are root-owned needs no manual step and keeps
+  its certificates. See `docs/SELF_HOSTING.md` §7.
+- **The shipped compose stack and Helm chart no longer put credentials in any
+  container's environment.** Compose uses Docker secrets files under `./secrets`
+  (created by `scripts/selfhost/init-secrets.sh`, which also migrates an existing
+  `.env` with `--from-env`); the chart mounts its Secret as a read-only 0440
+  volume and sets `*_FILE` variables. Requires a server image with `*_FILE`
+  support. **Upgrade notes in `docs/UPGRADING.md` §5.**
+- **Every secret the server reads from the environment now also accepts
+  `<NAME>_FILE`** (Docker secrets, Kubernetes Secret volumes): the master
+  password, DB password, bootstrap token, SMTP/SIEM/SCIM/webhook/SSO secrets and
+  the operator-named KEK, Shamir-share, rotation-DSN and Vault-token variables.
+  Setting both `X` and `X_FILE`, or pointing `X_FILE` at an unreadable or empty
+  file, stops the server at startup; the value and the file contents are never
+  logged; the file-permission check refuses a secret file that is accessible to
+  other users or writable by its group. See `docs/CONFIGURATION.md`.
 - **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
   baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
   1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD

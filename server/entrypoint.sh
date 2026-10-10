@@ -3,6 +3,50 @@ set -e
 
 echo "Starting Keyorix server..."
 
+# --- BEGIN secret-file resolution (tested by deploy/hardening/entrypoint_secret_file_test.go) ---
+# The two secrets this script reads itself for the first-boot admin bootstrap may be
+# supplied as KEYORIX_ADMIN_PASSWORD_FILE / KEYORIX_BOOTSTRAP_TOKEN_FILE (Docker
+# secrets, a Kubernetes Secret volume) instead of the environment. Same rules as the
+# server applies to its own secrets (internal/secretenv): the file is read with ONE
+# trailing newline stripped; both X and X_FILE set, or an unreadable/empty file, is
+# fatal (no silent precedence, no fall-through); no value is ever printed. The result
+# is a plain shell variable and is deliberately NOT exported, so the server started
+# below does not get it in its environment.
+resolve_file_secret() {
+    _name="$1"
+    eval "_direct=\${$_name:-}"
+    eval "_path=\${${_name}_FILE:-}"
+    if [ -n "$_direct" ] && [ -n "$_path" ]; then
+        echo "FATAL: both ${_name} and ${_name}_FILE are set; set exactly one" >&2
+        return 1
+    fi
+    if [ -z "$_path" ]; then
+        return 0
+    fi
+    if [ ! -f "$_path" ] || [ ! -r "$_path" ]; then
+        echo "FATAL: ${_name}_FILE=${_path} is not a readable regular file" >&2
+        return 1
+    fi
+    # The trailing "x" keeps command substitution from eating every trailing newline.
+    _val=$(cat "$_path"; printf x)
+    _val=${_val%x}
+    _nl='
+'
+    _cr=$(printf '\r')
+    case $_val in
+        *"$_cr$_nl") _val=${_val%"$_cr$_nl"} ;;
+        *"$_nl") _val=${_val%"$_nl"} ;;
+    esac
+    if [ -z "$_val" ]; then
+        echo "FATAL: ${_name}_FILE=${_path} is empty" >&2
+        return 1
+    fi
+    eval "$_name=\$_val"
+}
+resolve_file_secret KEYORIX_ADMIN_PASSWORD || exit 1
+resolve_file_secret KEYORIX_BOOTSTRAP_TOKEN || exit 1
+# --- END secret-file resolution ---
+
 # Run the server in the background so we can perform an optional first-boot admin
 # bootstrap once it is healthy, then hand the process the foreground.
 ./keyorix-server &
