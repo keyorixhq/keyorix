@@ -482,11 +482,12 @@ var (
 	secretDeleteProject int
 	secretDeleteEnv     int
 	secretDeleteForce   bool
+	secretDeleteFormat  string
 )
 
 var secretDeleteCmd = &cobra.Command{
 	Use:   "delete",
-	Short: "Delete a secret",
+	Short: "Delete a secret (soft-delete; restorable with 'secret restore')",
 	RunE:  runSecretDelete,
 }
 
@@ -495,7 +496,8 @@ func init() {
 	secretDeleteCmd.Flags().StringVar(&secretDeleteName, "name", "", "Secret name")
 	secretDeleteCmd.Flags().IntVar(&secretDeleteProject, "project", 1, "Project ID (required with --name)")
 	secretDeleteCmd.Flags().IntVar(&secretDeleteEnv, "environment", 1, "Environment ID (required with --name)")
-	secretDeleteCmd.Flags().BoolVar(&secretDeleteForce, "force", false, "Skip confirmation prompt")
+	secretDeleteCmd.Flags().BoolVar(&secretDeleteForce, "force", false, "Skip confirmation prompt, and delete even if other secrets depend on this one")
+	secretDeleteCmd.Flags().StringVar(&secretDeleteFormat, "format", "text", "Output format: text or json (json is non-interactive and requires --force)")
 	SecretCmd.AddCommand(secretDeleteCmd)
 }
 
@@ -527,9 +529,13 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 		secretID, secretName = id, name
 	}
 
-	fmt.Println("About to delete secret:")
-	fmt.Printf("ID: %d\n", secretID)
-	fmt.Printf("Name: %s\n", secretName)
+	jsonOut := secretDeleteFormat == "json"
+	if secretDeleteFormat != "json" && secretDeleteFormat != "text" {
+		return fmt.Errorf("unsupported format: %s (use 'text' or 'json')", secretDeleteFormat)
+	}
+	if jsonOut && !secretDeleteForce {
+		return fmt.Errorf("--format json is non-interactive: pass --force to confirm the deletion")
+	}
 
 	vresp, err := client.GetSecretVersionsWithResponse(ctx, secretID)
 	if err != nil {
@@ -539,13 +545,46 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 	if vresp.JSON200 != nil && vresp.JSON200.Data != nil {
 		versionCount = len(derefSecretVersionSlice(vresp.JSON200.Data.Versions))
 	}
-	fmt.Printf("Versions: %d\n", versionCount)
+
+	// Dependents (ADR-052): other secrets that declared a dependency on this
+	// one. Fail closed -- if the check itself fails, --force is required.
+	var dependents []apiclient.SecretDependencyEdge
+	depResp, derr := client.ListSecretDependenciesWithResponse(ctx, secretID)
+	switch {
+	case derr == nil && depResp.JSON200 != nil && depResp.JSON200.Data != nil:
+		dependents = derefSecretDependencyEdgeSlice(depResp.JSON200.Data.Dependents)
+	case secretDeleteForce:
+		fmt.Fprintf(os.Stderr, "warning: could not check dependents of secret %d; continuing because --force was given\n", secretID)
+	case derr != nil:
+		return fmt.Errorf("could not check what depends on secret %d (use --force to delete anyway): %w", secretID, derr)
+	default:
+		return fmt.Errorf("could not check what depends on secret %d (use --force to delete anyway): HTTP %d", secretID, depResp.StatusCode())
+	}
+
+	if len(dependents) > 0 && !secretDeleteForce {
+		// Unreachable in json mode (json requires --force), so text only.
+		fmt.Printf("Secret '%s' (ID: %d) has %d dependent secret(s):\n", secretName, secretID, len(dependents))
+		printDeleteDependents(dependents)
+		return fmt.Errorf("refusing to delete secret %d: %d secret(s) depend on it -- re-run with --force to delete anyway", secretID, len(dependents))
+	}
+
+	if !jsonOut {
+		fmt.Println("About to delete secret:")
+		fmt.Printf("ID: %d\n", secretID)
+		fmt.Printf("Name: %s\n", secretName)
+		fmt.Printf("Versions: %d\n", versionCount)
+		if len(dependents) > 0 {
+			fmt.Printf("WARNING: %d secret(s) depend on this one (--force given):\n", len(dependents))
+			printDeleteDependents(dependents)
+		}
+	}
 
 	if !secretDeleteForce {
 		fmt.Println()
 		fmt.Println("This soft-deletes the secret and all its versions -- it stops appearing in")
-		fmt.Println("normal listings immediately, and can be restored with 'keyorix secret restore'")
-		fmt.Println("until the retention window configured for this server expires.")
+		fmt.Println("normal listings immediately, and can be restored with")
+		fmt.Printf("'keyorix secret restore --id %d' until the server's soft-delete retention\n", secretID)
+		fmt.Println("window expires (default 30 days; set by the server operator).")
 		fmt.Println()
 		if !confirmSecretDeletion(secretName) {
 			fmt.Println("Deletion cancelled")
@@ -560,9 +599,53 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 	if dresp.StatusCode() != 204 {
 		return httpStatusError("failed to delete secret", dresp.StatusCode(), dresp.Body)
 	}
-	fmt.Printf("Secret '%s' (ID: %d) deleted successfully\n", secretName, secretID)
-	fmt.Printf("%d version(s) were also deleted\n", versionCount)
+	if jsonOut {
+		return writeSecretDeleteJSON(secretDeleteResult{
+			ID: secretID, Name: secretName, Deleted: true, SoftDeleted: true, Versions: versionCount,
+			RestoreCommand: fmt.Sprintf("keyorix secret restore --id %d", secretID),
+			Dependents:     toDeleteDependents(dependents),
+		})
+	}
+	fmt.Printf("Secret '%s' (ID: %d) deleted (soft-delete)\n", secretName, secretID)
+	fmt.Printf("Its %d version(s) are kept, not destroyed; restore with: keyorix secret restore --id %d\n", versionCount, secretID)
+	fmt.Println("Restorable until the server's soft-delete retention window expires (default 30 days).")
 	return nil
+}
+
+// secretDeleteResult is the --format json shape of 'secret delete'.
+type secretDeleteResult struct {
+	ID             int                     `json:"id"`
+	Name           string                  `json:"name"`
+	Deleted        bool                    `json:"deleted"`
+	SoftDeleted    bool                    `json:"soft_deleted"`
+	Versions       int                     `json:"versions"`
+	RestoreCommand string                  `json:"restore_command,omitempty"`
+	Dependents     []secretDeleteDependent `json:"dependents"`
+}
+
+type secretDeleteDependent struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+func toDeleteDependents(edges []apiclient.SecretDependencyEdge) []secretDeleteDependent {
+	out := make([]secretDeleteDependent, 0, len(edges))
+	for _, e := range edges {
+		out = append(out, secretDeleteDependent{ID: derefSecretInt(e.SecretId), Name: derefStr(e.SecretName)})
+	}
+	return out
+}
+
+func printDeleteDependents(edges []apiclient.SecretDependencyEdge) {
+	for _, e := range edges {
+		fmt.Printf("  - %s (ID: %d)\n", derefStr(e.SecretName), derefSecretInt(e.SecretId))
+	}
+}
+
+func writeSecretDeleteJSON(r secretDeleteResult) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(r)
 }
 
 // findRemoteSecretByName resolves a secret name to its (ID, name) via the
