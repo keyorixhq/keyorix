@@ -112,7 +112,7 @@ func (c *KeyorixCore) ReleaseLoginAttempt(ctx context.Context, id uint) {
 		return
 	}
 	besteffort.Run(ctx, "rate_limit.ReleaseLoginAttempt", func() error {
-		return c.budgetReleaseStored(ctx, id)
+		return c.budgetReleaseStored(ctx, loginBudget, id)
 	})
 }
 

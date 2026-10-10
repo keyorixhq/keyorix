@@ -35,13 +35,22 @@
 //     rotating) addresses evict each other rather than exhaust memory, and
 //     cannot evict another budget's entries (an account's in-memory lock is
 //     not displaced by an IP flood).
-//   - consulted IN ADDITION to the stored count: memory only ever holds
-//     attempts whose stored write failed, so adding it never double-counts,
+//   - consulted IN ADDITION to the stored count: the attempts added to it are
+//     those whose stored write failed, so adding them never double-counts,
 //     and leftover entries age out with the window after storage recovers. The
 //     counts are never merged into storage.
+//   - mirrored while degraded (#3032 review): a write that SUCCEEDS while the
+//     budget is on its fallback is also noted in memory, flagged as mirrored.
+//     A COUNT that fails is then judged on memory including the mirrored
+//     attempts, so a budget whose count query fails while its inserts succeed
+//     still binds (it used to fail open: memory stayed empty). A count that
+//     works ignores mirrored attempts: they are in the stored count already.
 //   - releasable (login only): a reservation taken here gets an id with
 //     authFallbackIDBit set, which no stored row id can carry, so
-//     ReleaseLoginAttempt (a delivered login, #2936) refunds it here.
+//     ReleaseLoginAttempt (a delivered login, #2936) refunds it here. Such an
+//     id is meaningful only inside this process: it is never persisted to a
+//     row other replicas read (sharedLoginSlot), so a fallback slot held by an
+//     MFA challenge or a WebAuthn ceremony stays counted until it ages out.
 //   - for account_lockout, no exponential cooldown: an account is locked while
 //     MaxAttempts in-memory failures fall inside Window, and unlocks as they
 //     age out. A delivered login and an admin unlock clear the entry, as they
@@ -184,16 +193,21 @@ func (c *KeyorixCore) budgetDegraded(b authBudget) bool {
 // budgetLimited reports whether key has spent b within its window: the stored
 // count plus the fallback's against the normal limit, or the fallback's alone
 // against the fallback limit. A stored count that cannot be read counts as 0.
+//
+// When the count fails, the fallback decides on everything it holds for key,
+// mirrored attempts included (#3032 review): the inserts may still be
+// succeeding, and without the mirror nothing would ever reach memory.
 func (c *KeyorixCore) budgetLimited(ctx context.Context, b authBudget, key string) bool {
 	since := c.now().Add(-b.window)
-	mem := int64(c.authBudgetFallback(b).count(key, since))
+	f := c.authBudgetFallback(b)
+	mem := int64(f.count(key, since, false))
 	if mem >= int64(c.fallbackLimit(b)) {
 		return true
 	}
 	n, err := c.storage.CountRecentLoginAttempts(ctx, b.prefix+key, since)
 	if err != nil {
 		c.noteAuthBudgetFallback(ctx, b, "check", key, nil, err)
-		return false
+		return int64(f.count(key, since, true)) >= int64(c.fallbackLimit(b))
 	}
 	return n+mem >= int64(b.limit)
 }
@@ -202,7 +216,9 @@ func (c *KeyorixCore) budgetLimited(ctx context.Context, b authBudget, key strin
 func (c *KeyorixCore) budgetRecord(ctx context.Context, b authBudget, key string) {
 	if err := c.storage.RecordLoginAttempt(ctx, b.prefix+key, c.now()); err != nil {
 		c.budgetRecordFallback(ctx, b, key, nil, err)
+		return
 	}
+	c.budgetMirrorIfDegraded(b, key, 0)
 }
 
 // budgetReserve is budgetRecord returning a handle budgetRelease can refund.
@@ -212,13 +228,46 @@ func (c *KeyorixCore) budgetReserve(ctx context.Context, b authBudget, key strin
 		c.noteAuthBudgetFallback(ctx, b, "reserve", key, nil, err)
 		return c.authBudgetFallback(b).reserve(key, c.now(), b.window, 4*b.limit)
 	}
+	c.budgetMirrorIfDegraded(b, key, id)
 	return id
 }
 
-// budgetReleaseStored refunds a stored reservation. A fallback id goes to
-// budgetReleaseFallback instead (see ReleaseLoginAttempt).
-func (c *KeyorixCore) budgetReleaseStored(ctx context.Context, id uint) error {
-	return c.storage.ReleaseLoginAttempt(ctx, id)
+// budgetMirrorIfDegraded notes a SUCCESSFUL stored write in memory too while
+// b is on its fallback, so a count that fails can still be judged (see
+// budgetLimited). storedID, when non-zero, is the stored reservation the
+// mirror belongs to: releasing it releases the mirror as well.
+func (c *KeyorixCore) budgetMirrorIfDegraded(b authBudget, key string, storedID uint) {
+	if !c.budgetDegraded(b) {
+		return
+	}
+	c.authBudgetFallback(b).mirror(key, c.now(), b.window, 4*b.limit, storedID)
+}
+
+// budgetReleaseStored refunds a stored reservation, and its mirror if it has
+// one (the mirror goes only once the stored row is gone, so a failed release
+// leaves both counted). A fallback id goes to budgetReleaseFallback instead
+// (see ReleaseLoginAttempt).
+func (c *KeyorixCore) budgetReleaseStored(ctx context.Context, b authBudget, id uint) error {
+	if err := c.storage.ReleaseLoginAttempt(ctx, id); err != nil {
+		return err
+	}
+	c.authBudgetFallback(b).releaseMirror(id)
+	return nil
+}
+
+// sharedLoginSlot is slotID as it may be persisted on a row every replica
+// reads and that outlives this process (mfa_challenges / web_authn_sessions
+// login_attempt_id): a stored reservation id as is, a fallback id never
+// (#3032 review). A fallback id names a per-process counter value: another
+// replica, or this one after a restart, releasing it would refund an unrelated
+// reservation of its own, and it does not fit a signed 64-bit column. The
+// fallback reservation then simply stays counted until it ages out of the
+// window: the strict side.
+func sharedLoginSlot(slotID *uint) *uint {
+	if slotID == nil || *slotID&authFallbackIDBit != 0 {
+		return nil
+	}
+	return slotID
 }
 
 // budgetReleaseFallback refunds a reservation the fallback took.
@@ -238,7 +287,7 @@ func (c *KeyorixCore) budgetRecordFallback(ctx context.Context, b authBudget, ke
 // budgetFallbackLimited reports whether the fallback alone has key at b's
 // fallback limit.
 func (c *KeyorixCore) budgetFallbackLimited(b authBudget, key string) bool {
-	return b.limit > 0 && c.authBudgetFallback(b).count(key, c.now().Add(-b.window)) >= c.fallbackLimit(b)
+	return b.limit > 0 && c.authBudgetFallback(b).count(key, c.now().Add(-b.window), true) >= c.fallbackLimit(b)
 }
 
 // budgetFallbackTryReserve counts one attempt for key in memory if key is
@@ -299,6 +348,12 @@ type authFallbackMark struct {
 type authFallbackAttempt struct {
 	id uint
 	at time.Time
+	// mirrored marks an attempt whose stored write succeeded: counted only
+	// when the stored count cannot be read (budgetLimited).
+	mirrored bool
+	// storedID is the stored reservation a mirrored attempt belongs to (0 if
+	// none), so releasing that reservation releases the mirror.
+	storedID uint
 }
 
 type authFallbackEntry struct {
@@ -314,15 +369,18 @@ type authFallbackLimiter struct {
 	lru     *list.List               // front = most recently used; values *authFallbackEntry
 	byKey   map[string]*list.Element // key -> element in lru
 	byID    map[uint]string          // reservation id -> key, for release
-	nextID  uint
+	// byStored maps a mirrored attempt's stored reservation id to its own id.
+	byStored map[uint]uint
+	nextID   uint
 }
 
 func newAuthFallbackLimiter(maxKeys int) *authFallbackLimiter {
 	return &authFallbackLimiter{
-		maxKeys: maxKeys,
-		lru:     list.New(),
-		byKey:   map[string]*list.Element{},
-		byID:    map[uint]string{},
+		maxKeys:  maxKeys,
+		lru:      list.New(),
+		byKey:    map[string]*list.Element{},
+		byID:     map[uint]string{},
+		byStored: map[uint]uint{},
 	}
 }
 
@@ -335,6 +393,22 @@ func (f *authFallbackLimiter) reserve(key string, now time.Time, window time.Dur
 	f.prune(e, now.Add(-window))
 	f.add(e, now, maxPerKey)
 	return e.attempts[len(e.attempts)-1].id
+}
+
+// mirror records one mirrored attempt for key at now (see
+// authFallbackAttempt.mirrored), bound to storedID when non-zero.
+func (f *authFallbackLimiter) mirror(key string, now time.Time, window time.Duration, maxPerKey int, storedID uint) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e := f.touch(key)
+	f.prune(e, now.Add(-window))
+	f.add(e, now, maxPerKey)
+	last := &e.attempts[len(e.attempts)-1]
+	last.mirrored = true
+	if storedID != 0 {
+		last.storedID = storedID
+		f.byStored[storedID] = last.id
+	}
 }
 
 // tryReserve is reserve, but only while key has fewer than limit attempts
@@ -362,13 +436,22 @@ func (f *authFallbackLimiter) add(e *authFallbackEntry, now time.Time, maxPerKey
 	e.attempts = append(e.attempts, authFallbackAttempt{id: id, at: now})
 	f.byID[id] = e.key
 	if len(e.attempts) > maxPerKey {
-		delete(f.byID, e.attempts[0].id)
+		f.forget(e.attempts[0])
 		e.attempts = e.attempts[1:]
 	}
 }
 
-// count returns how many attempts key has at or after since.
-func (f *authFallbackLimiter) count(key string, since time.Time) int {
+// forget drops a's index entries. Caller holds f.mu.
+func (f *authFallbackLimiter) forget(a authFallbackAttempt) {
+	delete(f.byID, a.id)
+	if a.storedID != 0 {
+		delete(f.byStored, a.storedID)
+	}
+}
+
+// count returns how many attempts key has at or after since, mirrored ones
+// only when withMirrored is set.
+func (f *authFallbackLimiter) count(key string, since time.Time, withMirrored bool) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	el, ok := f.byKey[key]
@@ -377,7 +460,13 @@ func (f *authFallbackLimiter) count(key string, since time.Time) int {
 	}
 	e := el.Value.(*authFallbackEntry)
 	f.prune(e, since)
-	return len(e.attempts)
+	n := 0
+	for _, a := range e.attempts {
+		if withMirrored || !a.mirrored {
+			n++
+		}
+	}
+	return n
 }
 
 // release removes the reservation id, if this limiter still holds it.
@@ -396,9 +485,21 @@ func (f *authFallbackLimiter) release(id uint) {
 	e := el.Value.(*authFallbackEntry)
 	for i, a := range e.attempts {
 		if a.id == id {
+			f.forget(a)
 			e.attempts = append(e.attempts[:i], e.attempts[i+1:]...)
 			break
 		}
+	}
+}
+
+// releaseMirror removes the mirrored attempt bound to the stored reservation
+// storedID, if this limiter holds one.
+func (f *authFallbackLimiter) releaseMirror(storedID uint) {
+	f.mu.Lock()
+	id, ok := f.byStored[storedID]
+	f.mu.Unlock()
+	if ok {
+		f.release(id)
 	}
 }
 
@@ -411,7 +512,7 @@ func (f *authFallbackLimiter) clear(key string) {
 		return
 	}
 	for _, a := range el.Value.(*authFallbackEntry).attempts {
-		delete(f.byID, a.id)
+		f.forget(a)
 	}
 	delete(f.byKey, key)
 	f.lru.Remove(el)
@@ -435,7 +536,7 @@ func (f *authFallbackLimiter) touch(key string) *authFallbackEntry {
 		oldest := f.lru.Back()
 		oe := oldest.Value.(*authFallbackEntry)
 		for _, a := range oe.attempts {
-			delete(f.byID, a.id)
+			f.forget(a)
 		}
 		delete(f.byKey, oe.key)
 		f.lru.Remove(oldest)
@@ -450,7 +551,7 @@ func (f *authFallbackLimiter) prune(e *authFallbackEntry, since time.Time) {
 	keep := e.attempts[:0]
 	for _, a := range e.attempts {
 		if a.at.Before(since) {
-			delete(f.byID, a.id)
+			f.forget(a)
 			continue
 		}
 		keep = append(keep, a)

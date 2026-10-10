@@ -193,7 +193,7 @@ func TestLoginBudgetFallback_BoundedUnderManyDistinctIPs(t *testing.T) {
 	for i := 0; i < LoginMaxAttempts; i++ {
 		f.reserve("192.0.2.200", now, LoginWindow, 4*LoginMaxAttempts)
 	}
-	assert.GreaterOrEqual(t, f.count("192.0.2.200", now.Add(-LoginWindow)), LoginMaxAttempts)
+	assert.GreaterOrEqual(t, f.count("192.0.2.200", now.Add(-LoginWindow), true), LoginMaxAttempts)
 }
 
 func auditEventsOfType(t *testing.T, db *gorm.DB, typ string) int64 {
