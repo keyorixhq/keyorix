@@ -52,7 +52,32 @@ var (
 	serverBinary string
 	cliBinary    string
 	buildErr     error
+	buildDir     string
 )
+
+// RunMain is the body every e2e test package's TestMain must be:
+//
+//	func TestMain(m *testing.M) { os.Exit(harness.RunMain(m)) }
+//
+// BuildBinaries compiles into a directory under os.TempDir() (so $TMPDIR is
+// honoured) that is shared by every test in the package and therefore cannot
+// be removed by any one test's t.Cleanup; RunMain removes it once the whole
+// package has finished. Without it each `go test` run leaked ~113 MB of
+// keyorix-e2e-bin-* into the temp dir (#3039), enough to fill a small tmpfs.
+func RunMain(m *testing.M) int {
+	code := m.Run()
+	CleanupBinaries()
+	return code
+}
+
+// CleanupBinaries removes the directory BuildBinaries compiled into. Safe to
+// call when nothing was built.
+func CleanupBinaries() {
+	if buildDir != "" {
+		_ = os.RemoveAll(buildDir)
+		buildDir = ""
+	}
+}
 
 // RepoRoot walks up from this file's own directory to find go.mod, so the
 // build works regardless of how `go test` was invoked (cwd-independent, same
@@ -88,6 +113,7 @@ func BuildBinaries(t *testing.T) (server, cli string) {
 			buildErr = fmt.Errorf("create build tmpdir: %w", err)
 			return
 		}
+		buildDir = dir // removed by RunMain, also when a build below fails
 
 		serverPath := filepath.Join(dir, "keyorix-server")
 		cmd := exec.Command("go", "build", "-o", serverPath, "./server") // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- runs the keyorix binary this e2e harness itself built or downloaded, with the harness's own fixed arguments; no external input reaches it

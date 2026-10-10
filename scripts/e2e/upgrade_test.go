@@ -58,10 +58,7 @@ func downloadReleaseBinary(t *testing.T, tag string) string {
 			url, resp.StatusCode, tag)
 	}
 
-	dir, err := os.MkdirTemp("", "keyorix-e2e-upgrade-bin-*")
-	if err != nil {
-		t.Fatalf("create download tmpdir: %v", err)
-	}
+	dir := t.TempDir() // under $TMPDIR, removed when the test ends
 	binPath := filepath.Join(dir, "keyorix-server-old")
 	out, err := os.Create(binPath) // #nosec G304 -- fixed tmpdir path this function itself created
 	if err != nil {
