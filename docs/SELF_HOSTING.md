@@ -437,6 +437,38 @@ dropping or failing audit events is a compliance gap.
 | Login returns 404 | Reverse proxy not forwarding `/auth/` — Keyorix serves login at the root path, not under `/api/`. The bundled `web` image already handles this. |
 | Server refuses to start: `database schema epoch N is newer than this binary's schema epoch M` (multi-replica deployments only — see [ADR-039](adr-039-ha-deployment.md); the bundled Helm chart is pinned to 1 replica and cannot hit this) | Two possible causes, and the message can't tell them apart on its own — check the "recorded at ... ago" timestamp in the log line against your own rollout: **(a) rolling upgrade in progress** — a sibling replica already migrated to the new schema epoch, and this pod is still running the old binary. Expected and self-resolving: this pod will be replaced by the new image (or crash-loop briefly) until the rollout completes, then it stops recurring. This repo does not orchestrate that rollout for you (see ADR-039). **(b) genuine downgrade** — this binary was rolled back against a schema a newer version already migrated. Upgrade this binary to match, or restore a backup taken before the newer version ran. The server deliberately refuses to start rather than guess which case applies — see [ADR-097](adr-097-schema-epoch-downgrade-guard.md) and [ADR-101](adr-101-schema-epoch-compatibility-floor.md). |
 
+### SQLite write contention (`503` + `Retry-After`)
+
+SQLite allows one writer at a time, so a single Keyorix process queues its write
+transactions behind an in-process gate (first come, first served). A write waits
+up to **10 seconds** for its turn. If it does not get one, the request fails fast
+with **`503 Service Unavailable`** and a `Retry-After: 5` header (gRPC:
+`UNAVAILABLE` with a `retry-after` trailer) instead of stalling or returning a
+generic `500`. The response body is fixed and carries no storage detail; the
+server logs one `write gate contention: <method> <path> answered 503` line per
+affected request.
+
+What to do when you see it:
+
+- **Occasional, during a burst** (bulk import, a rotation job, a CI fleet
+  starting at once): expected back-pressure. Clients should honour `Retry-After`
+  and retry; idempotent requests can be retried blindly, others should check
+  state first, because a request that runs several write transactions may have
+  committed an earlier one.
+- **Sustained** (a steady stream of `write gate contention` lines): the instance
+  is write-saturated. Reduce concurrent writers (stagger jobs, lower client
+  parallelism), make sure the database file is on local SSD rather than network
+  storage, and check that nothing else holds the file open for writing (a backup
+  or admin CLI command running beside the server holds the lock too). If the
+  workload is genuinely write-heavy or multi-replica, move to Postgres (see
+  "Moving from SQLite to Postgres" in section 5): the gate exists only for SQLite.
+- Raising `storage.database.max_open_conns` does **not** help: writes are
+  serialized regardless of pool size, and a bigger pool only adds readers.
+
+The login and MFA endpoints (`/auth/...`) are deliberately exempt from the
+`503`: a storage failure there after a credential matched is reported exactly as a
+wrong credential, so the response cannot be used to confirm a guess.
+
 ## 10. Single-binary / air-gapped deployment
 
 For environments where Docker isn't available, `keyorix-server` is a single Go

@@ -42,6 +42,13 @@ func TestPostCommitDiscardedWritePanic_IsNotReportedAsFailure(t *testing.T) {
 		{op: "REST POST /api/v1/auth/change-password", method: "PrunePasswordHistory", fullOracle: true},
 		{op: "REST POST /api/v1/auth/change-password", method: "AddPasswordHistory", fullOracle: true},
 		{op: "REST POST /auth/saml/{provider}/acs", method: "UpdateLastLogin"},
+		// #2844 sweep: resolveKeepSession's GetSession runs after the MFA
+		// change has committed; its panic escaped, reported the change as
+		// failed and skipped the session purge that must follow it.
+		// (change-password's GetSession#1 is the auth middleware's, before
+		// anything commits, so it is correctly a failure and not listed.)
+		{op: "REST POST /api/v1/auth/mfa/activate", method: "GetSession", fullOracle: true},
+		{op: "REST POST /api/v1/auth/mfa/disable", method: "GetSession", fullOracle: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.op+"/"+tc.method, func(t *testing.T) {

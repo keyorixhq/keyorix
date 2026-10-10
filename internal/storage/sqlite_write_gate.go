@@ -49,6 +49,17 @@ func writeGateMaxWait() time.Duration {
 	return time.Duration(sqliteWriteGateMaxWait.Load())
 }
 
+// SetWriteGateMaxWaitForTest shortens the gate's wait bound so a test that
+// saturates the gate (holds one write transaction open) sees
+// ErrSQLiteWriteContention in milliseconds instead of after the production 10s.
+// It returns the function that restores the previous bound. Test-only: nothing
+// in production calls it, and it lives here (not in a _test.go file) because
+// the HTTP/gRPC contention tests that need it are in other packages.
+func SetWriteGateMaxWaitForTest(d time.Duration) (restore func()) {
+	prev := sqliteWriteGateMaxWait.Swap(int64(d))
+	return func() { sqliteWriteGateMaxWait.Store(prev) }
+}
+
 // sqliteWriteGate serializes this process's SQLite write transactions through a
 // FIFO queue before they reach SQLite.
 //
@@ -101,6 +112,7 @@ func (g *sqliteWriteGate) acquire(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("sqlite write gate: %w", ctx.Err())
 	case <-timer.C:
+		corestorage.NoteWriteContention(ctx)
 		return ErrSQLiteWriteContention
 	}
 }

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent } from '../../../test/test-utils';
 import { SecretTableRow } from '../SecretTableRow';
 import { Secret } from '../../../types';
@@ -54,6 +54,16 @@ const renderRow = (props: Partial<React.ComponentProps<typeof SecretTableRow>> =
         props: merged,
     };
 };
+
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+});
 
 describe('SecretTableRow', () => {
     afterEach(() => {
@@ -311,5 +321,33 @@ describe('SecretTableRow', () => {
             const { container } = renderRow({ secret: { ...baseSecret, tags: [payload] } });
             assertPayloadRenderedSafely(payload, container);
         });
+    });
+});
+
+describe('SecretTableRow permission-aware actions (DEMO-UI-1)', () => {
+    it('a read-only user sees View and Copy, and none of Edit / Rotate / Share / Delete', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        renderRow();
+        const row = screen.getByRole('row');
+        expect(within(row).getByTitle('View')).toBeInTheDocument();
+        expect(within(row).getByTitle('Copy value')).toBeInTheDocument();
+        for (const title of ['Edit', 'Rotate', 'Share', 'Delete']) {
+            expect(within(row).queryByTitle(title), title).not.toBeInTheDocument();
+        }
+    });
+
+    it('a writer who cannot delete keeps Edit / Rotate / Share but loses Delete', () => {
+        canState.value = { ...canState.value, admin: false, deleteSecrets: false };
+        renderRow();
+        const row = screen.getByRole('row');
+        for (const title of ['Edit', 'Rotate', 'Share']) expect(within(row).getByTitle(title)).toBeInTheDocument();
+        expect(within(row).queryByTitle('Delete')).not.toBeInTheDocument();
     });
 });
