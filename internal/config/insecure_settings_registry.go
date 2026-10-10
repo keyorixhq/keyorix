@@ -290,6 +290,15 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		InEffect:    func(c *Config) bool { return c.Notifications.Webhook.InsecureSkipVerify },
 		Value:       func(c *Config) string { return boolStr(c.Notifications.Webhook.InsecureSkipVerify) },
 	},
+	{
+		// ADR-112 Amendment 1 (fast audit mode), landed on main after this
+		// registry was written. Postgres-only; a SQLite backend refuses it.
+		Name:        "storage.database.insecure_audit_skip_durable_sync",
+		SourcePaths: []string{"storage.database.insecure_audit_skip_durable_sync"},
+		Describe:    "audit writes no longer wait for the disk sync: an OS or database crash can lose a tail of audit entries (~600ms)",
+		InEffect:    func(c *Config) bool { return c.Storage.Database.InsecureAuditSkipDurableSync },
+		Value:       func(c *Config) string { return boolStr(c.Storage.Database.InsecureAuditSkipDurableSync) },
+	},
 
 	// -- The thirteen KNOWN EXCEPTIONS (#2895 rows 1-13; its row 14,
 	//    trust_asserted_email, is renameable and registered above). Each

@@ -219,6 +219,7 @@ server.grpc.tls.cert_file
 server.grpc.tls.domains
 server.grpc.tls.enabled
 server.grpc.tls.key_file
+server.grpc.tls_mode
 server.grpc.trusted_proxies
 server.grpc.web_assets_path
 server.http.allowed_origins
@@ -246,6 +247,7 @@ server.http.tls.cert_file
 server.http.tls.domains
 server.http.tls.enabled
 server.http.tls.key_file
+server.http.tls_mode
 server.http.trusted_proxies
 server.http.web_assets_path
 session.absolute_ttl
@@ -274,15 +276,18 @@ sso.providers.saml.sp_entity_id
 sso.providers.scopes
 sso.providers.trust_asserted_email
 sso.providers.type
+storage.database.audit_flusher_linger_window
 storage.database.conn_max_lifetime_minutes
 storage.database.dsn
 storage.database.host
+storage.database.insecure_audit_skip_durable_sync
 storage.database.max_idle_conns
 storage.database.max_open_conns
 storage.database.name
 storage.database.password
 storage.database.path
 storage.database.port
+storage.database.require_existing_path
 storage.database.ssl_mode
 storage.database.user
 storage.encryption.dek_path

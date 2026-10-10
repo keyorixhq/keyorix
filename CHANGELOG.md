@@ -67,7 +67,7 @@ All notable changes to Keyorix are documented here. This project follows
 - **Every security-weakening setting is now registered, warned about and
   audited** (ADR-112, secure-by-default baseline, item 2 — the opt-out rule).
   `internal/config.InsecureSettingsRegistry` is the single enumeration of all
-  32 of them; three things read it, so nothing has to be wired up per setting:
+  33 of them (32 plus the fast-audit opt-out from ADR-112 Amendment 1); three things read it, so nothing has to be wired up per setting:
   a start-up **warning** for every one currently in effect, a start-to-start
   **settings diff** that writes an audit event (old value → new value) for any
   of them that changed between two starts of the same deployment, and the
