@@ -157,6 +157,24 @@ works, on both backends (was #2604); see `docs/AIRGAP_RUNBOOK.md` for that
 full drill rather than live here, since it needs a second volume and isn't
 worth the extra live-demo fragility for 10 minutes on stage.
 
+## Optional: emergency access (break-glass) (~1 min)
+
+Break-glass is **off by default** (secure default). `scripts/demo/up.sh` turns it
+on explicitly in the demo's `keyorix.yaml` (`break_glass.enabled: true`,
+emergency role `project_developer`); on any other install add that block yourself
+(see `docs/CONFIGURATION.md#break_glass`) and restart. A user must be a **member
+of the project** (a role scoped to it, e.g. `project_viewer`) to activate; it then
+lifts them to the emergency role for a limited time:
+
+```bash
+keyorix break-glass activate --project-id 1 --justification "prod incident INC-123" --ttl 1h
+keyorix break-glass list --project-id 1
+keyorix break-glass revoke --project-id 1 --activation-id <id>
+```
+
+If it is not enabled the command now says so (`break-glass is not enabled on this
+server; set break_glass.enabled`) instead of a bare `permission denied`.
+
 ## 8. Footprint (~30 sec) — close on the koi-pond pitch
 
 Measured 2026-10-05, one Docker build, arm64, indicative (not a repeated

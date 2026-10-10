@@ -120,6 +120,9 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
         /app/keyorix-server admin init --config keyorix.yaml
         /app/keyorix-server admin encryption init --config keyorix.yaml
         /app/keyorix-server admin migrate --config keyorix.yaml
+        # Break-glass is off by default (secure default); the demo turns it on
+        # explicitly so `keyorix break-glass activate` works (#2943).
+        printf "\nbreak_glass:\n  enabled: true\n  emergency_role: project_developer\n  default_ttl: 4h\n  max_ttl: 24h\n" >> keyorix.yaml
       fi
       exec /app/keyorix-server
     ' >/dev/null

@@ -200,6 +200,17 @@ audit:
     # Skip TLS verification for self-signed SIEM endpoints (not recommended).
     insecure_skip_verify: false
 
+# Self-service emergency access ("break-glass"). OFF by default: until you enable
+# it, `keyorix break-glass activate` is refused with "break-glass is not enabled".
+# When on, a member of a project (a role scoped to that project) can grant
+# themselves emergency_role there for a limited time, with a justification; every
+# use is audited. See docs/CONFIGURATION.md#break_glass.
+# break_glass:
+#   enabled: true
+#   emergency_role: "project_developer"
+#   default_ttl: "4h"
+#   max_ttl: "24h"
+
 membership:
   # Project membership onboarding (ADR-022). validation_mode controls how a new
   # invite onboards into a project:

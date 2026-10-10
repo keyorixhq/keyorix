@@ -1009,18 +1009,27 @@ jit_access_expiry:
 
 ## break_glass
 
-Opt-in **self-service emergency access** (incident response — NIS2/DORA). When
-enabled, any authenticated user can `POST /api/v1/projects/{id}/break-glass` (or run
-`keyorix break-glass activate`) to **immediately** self-grant the configured
-emergency role at that project — no approval. The activation is **time-bound** (it
+Opt-in **self-service emergency access** (incident response — NIS2/DORA). **Disabled
+by default** (a deliberate secure default): until `break_glass.enabled: true` is set
+and the server restarted, every activation attempt is refused with
+`permission denied: break-glass is not enabled on this server; set
+break_glass.enabled: true in keyorix.yaml and restart`. When enabled, any
+**member of the project** (a user, or a user's group, holding a role scoped to that
+project — a global role such as the install-wide viewer does not count) can
+`POST /api/v1/projects/{id}/break-glass` (or run `keyorix break-glass activate`)
+to **immediately** self-grant the configured emergency role at that project — no
+approval. Non-members get `permission denied: break-glass is available only to
+members of the project`, so in practice it elevates a lower project role (for
+example `project_viewer`) to the emergency role. The activation is **time-bound** (it
 auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
 **written justification**, is **loudly audited** (`break_glass.activated`), and
 **alerts the project's admins**. Each activation is a queryable record for post-hoc
 review (`GET …/break-glass`, `keyorix break-glass list`).
 
-Deliberately not RBAC-gated — the point is access the caller does *not* have — so
-the controls are: it must be enabled here, every use is justified + audited +
-alerted, the grant expires, and an admin can revoke it early.
+Deliberately not RBAC-gated on the *emergency* permissions — the point is access the
+caller does *not* have — but gated on project membership, so the controls are: it
+must be enabled here, the caller must belong to the project, every use is
+justified + audited + alerted, the grant expires, and an admin can revoke it early.
 
 ```yaml
 break_glass:

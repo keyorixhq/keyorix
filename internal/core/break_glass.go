@@ -43,6 +43,10 @@ const (
 	EventBreakGlassNotifyPanicked = "break_glass.notify_panicked" // #nosec G101 -- audit event type, not a credential
 )
 
+// errBreakGlassDisabled is the reason ActivateBreakGlass gives while
+// break_glass.enabled is false (the default).
+const errBreakGlassDisabled = "break-glass is not enabled on this server; set break_glass.enabled: true in keyorix.yaml and restart"
+
 // BreakGlassPolicy is the deployment configuration for emergency access, wired from
 // config at startup via SetBreakGlassPolicy.
 type BreakGlassPolicy struct {
@@ -63,7 +67,11 @@ func (c *KeyorixCore) SetBreakGlassPolicy(p BreakGlassPolicy) {
 // userID is the activating (self) user; ttlOverride is an optional Go duration.
 func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID uint, justification, ttlOverride string) (*models.BreakGlassActivation, error) { // NOSONAR -- cognitive complexity 28, suppress go:S3776
 	if !c.breakGlassPolicy.Enabled {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
+		// Disabled is the secure default, but "permission denied" alone looks like
+		// a role problem. Say it is off and which key turns it on (#2943). The
+		// "permission denied" prefix keeps the HTTP mapping (403) in
+		// server/http/handlers/break_glass.go.
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), errBreakGlassDisabled)
 	}
 	if projectID == 0 || userID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and user are required")
