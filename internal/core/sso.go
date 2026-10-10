@@ -958,6 +958,12 @@ func (c *KeyorixCore) applySSOGroupReconcile(ctx context.Context, userID uint, a
 // A blocked escalation is NOT an error: refusing to add an admin-conferring group
 // is the fail-closed direction and the privilege is not granted, so the login can
 // proceed -- the refusal is recorded in the aggregate audit event instead.
+//
+// A guard that could not DECIDE is an error, though (#2910 fault sweep). When
+// the escalation lookup fails, the group is still not added, but the failure is
+// recorded as a failed step and the login is refused. It used to be counted as
+// a blocked escalation: the session was minted short of a group the IdP
+// asserted, and the audit claimed a refusal nobody had decided.
 func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uint, desired, currentSet map[uint]bool, names map[uint]string, r *ssoReconcileReport) {
 	for id := range desired {
 		if currentSet[id] {
@@ -966,7 +972,12 @@ func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uin
 		// Refuse to ESCALATE into an admin-conferring group via an IdP group assertion —
 		// the same guard SCIM applies (scimGroupConfersAdmin; the predicate is not
 		// SCIM-specific). scimGroupConfersAdmin fails CLOSED on a lookup error.
-		if c.scimGroupConfersAdmin(ctx, id) {
+		confers, gerr := c.idpGroupConfersAdminVerdict(ctx, id)
+		if gerr != nil {
+			r.fail(fmt.Sprintf("check whether group %d %q confers admin", id, names[id]), false, gerr)
+			continue
+		}
+		if confers {
 			r.blocked++
 			continue
 		}
@@ -1152,7 +1163,14 @@ func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *m
 		// the SAME backstop the SCIM group-membership path uses (scimGroupConfersAdmin) — the
 		// two were inconsistent before (name vs bypass-flag) and both missed the roles.assign
 		// case. See idpAutoGrantOfRoleIsEscalation (authz.go).
-		if c.idpAutoGrantOfRoleIsEscalation(ctx, r.ID, role) {
+		// A lookup failure in the guard is a failed step, not a block -- see
+		// reconcileSSOGroupAdditions (#2910).
+		escalation, eerr := c.idpAutoGrantEscalationVerdict(ctx, r.ID, role)
+		if eerr != nil {
+			rep.fail(fmt.Sprintf("check whether role %q is an admin-tier grant", role), false, eerr)
+			return
+		}
+		if escalation {
 			rep.blocked++
 			return
 		}

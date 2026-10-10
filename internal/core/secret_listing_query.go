@@ -25,17 +25,64 @@ func (c *KeyorixCore) ListSecretsInScope(ctx context.Context, filter *models.Sec
 	if filter == nil {
 		filter = &models.SecretListFilter{}
 	}
-	storageFilter := c.convertToStorageFilter(filter)
-	secrets, _, err := c.storage.ListSecrets(ctx, storageFilter)
+	rows, clamped, err := c.listSecretsInScopeRows(ctx, filter)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, err
 	}
+	// No sharing metadata on this path, so the sharing-dependent filters cannot be
+	// evaluated and are deliberately not applied here -- see
+	// secretPassesSharingFilters. The one external caller is the machine-identity
+	// branch (secrets_list.go), where ownership and shares do not apply to the
+	// principal at all; ListSecretsInScopeWithSharingInfo is the path that has the
+	// metadata and does apply them.
+	return c.pageScopedSecrets(ctx, rows, filter, clamped), nil
+}
+
+// listSecretsInScopeRows is the shared, UNPAGINATED body of ListSecretsInScope and
+// ListSecretsInScopeWithSharingInfo: the storage fetch plus every filter that can
+// be decided from the secret row alone.
+//
+// Split out so the sharing-info variant can attach its metadata and apply the
+// sharing-dependent filters BEFORE pagination. Doing it after would reproduce
+// #251 one layer up -- Total and TotalPages would describe the pre-filter set
+// while Secrets carried the post-filter one, which is exactly what this file's
+// own convertToStorageFilter comment exists to prevent.
+//
+// clamped reports that the storage bound (secretListingMaxRows) cut the row set
+// short, so the eventual Total is a floor rather than a count.
+func (c *KeyorixCore) listSecretsInScopeRows(ctx context.Context, filter *models.SecretListFilter) (rows []*models.SecretWithSharingInfo, clamped bool, err error) {
+	storageFilter := c.convertToStorageFilter(filter)
+	// storageTotal is the PRE-LIMIT COUNT(*) from the storage layer, and it is the
+	// only place the secretListingMaxRows clamp is observable. It used to be
+	// discarded into `_`, and that single character was what made every truncation
+	// signal in this package inert: Total is derived from the length of the
+	// ALREADY-CLAMPED set, so len(resp.Secrets) == resp.Total always held and
+	// nothing downstream could ever detect a short count. A scope holding more than
+	// secretListingMaxRows secrets returned exactly that many with Truncated=false
+	// -- a confidently-wrong floor presented as a count, which is the defect class
+	// #2780 exists to remove. Found by the coordinator's review of #2874 (F1).
+	secrets, storageTotal, err := c.storage.ListSecrets(ctx, storageFilter)
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	// Compared against the ROW COUNT, not against the post-filter total: the
+	// in-memory filters below legitimately shrink the set further, so a smaller
+	// total is normal and is not truncation. Only the storage clamp is, and it
+	// shows up as storage having more matching rows than it handed back.
+	clamped = storageTotal > int64(len(secrets))
 
 	all := make([]*models.SecretWithSharingInfo, 0, len(secrets))
 	for _, secret := range secrets {
 		all = append(all, &models.SecretWithSharingInfo{SecretNode: secret})
 	}
-	all = c.applySecretFilters(ctx, all, filter)
+	return c.applySecretFilters(ctx, all, filter), clamped, nil
+}
+
+// pageScopedSecrets sorts, pages and annotates a scoped listing result. Shared by
+// both scoped list entry points so the truncation signal cannot be set on one and
+// forgotten on the other.
+func (c *KeyorixCore) pageScopedSecrets(ctx context.Context, all []*models.SecretWithSharingInfo, filter *models.SecretListFilter, clamped bool) *models.SecretListResponse {
+	_ = ctx
 	c.sortSecrets(all, filter.SortBy, filter.SortOrder)
 
 	total := int64(len(all))
@@ -60,13 +107,24 @@ func (c *KeyorixCore) ListSecretsInScope(ctx context.Context, filter *models.Sec
 	if totalPages == 0 {
 		totalPages = 1
 	}
-	return &models.SecretListResponse{
+	resp := &models.SecretListResponse{
 		Secrets:    all[start:end],
 		Total:      total,
 		Page:       page,
 		PageSize:   pageSize,
 		TotalPages: totalPages,
-	}, nil
+	}
+	// Set HERE rather than in each caller, so every path through a scoped listing
+	// is covered by construction: ListReadableSecrets' tier 1 (global reader, no
+	// scope filter), its tier 2 union (per scope), and the machine branch all land
+	// on this one function. Tier 1 previously had no truncation check at all.
+	if clamped {
+		resp.Truncated = true
+		resp.TruncatedReason = fmt.Sprintf(
+			"the secret listing is bounded at %d rows per query and this scope matches more; "+
+				"the total shown is a floor, not a count", c.listingMaxRows())
+	}
+	return resp
 }
 
 // ListSecretsInScopeWithSharingInfo lists every secret in the filter's
@@ -84,12 +142,19 @@ func (c *KeyorixCore) ListSecretsInScope(ctx context.Context, filter *models.Sec
 // discover it via listing, since the list path checked ownership/ACL/shares
 // only and ignored the role entirely.
 func (c *KeyorixCore) ListSecretsInScopeWithSharingInfo(ctx context.Context, userID uint, filter *models.SecretListFilter) (*models.SecretListResponse, error) {
-	resp, err := c.ListSecretsInScope(ctx, filter)
+	if filter == nil {
+		filter = &models.SecretListFilter{}
+	}
+	// Rows, not a paged response: the sharing metadata is attached and the
+	// sharing-dependent filters applied BEFORE pagination below. This used to call
+	// ListSecretsInScope, i.e. it paged first and never applied those filters at
+	// all -- see secretPassesSharingFilters for what that cost.
+	rows, clamped, err := c.listSecretsInScopeRows(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
-	if len(resp.Secrets) == 0 {
-		return resp, nil
+	if len(rows) == 0 {
+		return c.pageScopedSecrets(ctx, rows, filter, clamped), nil
 	}
 
 	// Sharing-info lookup, built from the same three sources
@@ -129,7 +194,7 @@ func (c *KeyorixCore) ListSecretsInScopeWithSharingInfo(ctx context.Context, use
 		byID[s.ID] = s
 	}
 
-	for _, s := range resp.Secrets {
+	for _, s := range rows {
 		info, ok := byID[s.ID]
 		if !ok {
 			continue // visible via role only -- no owned/shared/ACL relationship
@@ -143,7 +208,62 @@ func (c *KeyorixCore) ListSecretsInScopeWithSharingInfo(ctx context.Context, use
 		s.SharedBy = info.SharedBy
 		s.SharingIndicators = info.SharingIndicators
 	}
+
+	// Only now, with IsShared/IsOwnedByUser populated, can the sharing-dependent
+	// filters be evaluated -- and before pagination, so Total describes the set
+	// actually returned.
+	filtered := make([]*models.SecretWithSharingInfo, 0, len(rows))
+	for _, s := range rows {
+		if secretPassesSharingFilters(s, filter) {
+			filtered = append(filtered, s)
+		}
+	}
+	// F3 (coordinator review of #2874): the aggregate counts are wire fields the UI
+	// renders, and they were populated only by ListSecretsWithSharingInfo -- so
+	// every caller routed here (which, since this PR, is every global and
+	// scope-granted reader) got three zeroes. Computed from the same attached
+	// metadata, over the WHOLE filtered set rather than the current page, matching
+	// Total's own scope.
+	resp := c.pageScopedSecrets(ctx, filtered, filter, clamped)
+	for _, s := range filtered {
+		switch {
+		case s.IsOwnedByUser:
+			resp.OwnedCount++
+		case s.IsShared:
+			resp.SharedCount++
+		case s.UserPermission != "":
+			resp.ACLGrantedCount++
+		}
+	}
 	return resp, nil
+}
+
+// secretPassesSharingFilters evaluates the two list filters that depend on
+// per-secret SHARING metadata (IsShared / IsOwnedByUser), separately from
+// secretPassesFilters, which may run before that metadata is attached.
+//
+// Splitting them is the F2 fix from the coordinator's review of #2874. The
+// sharing-only predicate used to live in secretPassesFilters, which
+// listSecretsInScopeRows runs over bare &SecretWithSharingInfo{SecretNode: ...}
+// values -- so `filter.ShowSharedOnly && !s.IsShared` was evaluated against the
+// ZERO value and dropped everything: ?show_shared_only=true returned total: 0 for
+// a global reader who did have shared secrets. And ShowOwnedOnly was not checked
+// anywhere at all, so ?show_owned_only=true returned the whole deployment. Both
+// params are parsed in secrets_list.go and documented in openapi.yaml, and both
+// were honoured by the ListSecretsWithSharingInfo path this PR's tier 1 replaced.
+//
+// Defined as a free function, not a method: it reads only the two attached
+// booleans, so a reviewer can see at a glance that it cannot query anything and
+// therefore cannot be correct-looking-but-unpopulated the way the old call site
+// was.
+func secretPassesSharingFilters(s *models.SecretWithSharingInfo, filter *models.SecretListFilter) bool {
+	if filter.ShowSharedOnly && !s.IsShared {
+		return false
+	}
+	if filter.ShowOwnedOnly && !s.IsOwnedByUser {
+		return false
+	}
+	return true
 }
 
 // ListSecretsWithSharingInfo lists secrets with sharing information for a specific user.
@@ -211,6 +331,20 @@ func (c *KeyorixCore) ListSecretsWithSharingInfo(ctx context.Context, userID uin
 
 	// Apply post-fetch filters (search, type, shared-only)
 	all = c.applySecretFilters(ctx, all, filter)
+	// The sharing-dependent filters, applied here too. They used to be folded into
+	// applySecretFilters, where this path's populated metadata made them work and
+	// the scoped path's unpopulated metadata made them wrong (F2). Keeping them for
+	// THIS caller is not redundant with its own fetch gating above: with
+	// ShowSharedOnly set it skips the owned fetch but still fetches ACL-granted
+	// secrets, which are not shared -- so without this pass ?show_shared_only=true
+	// would start returning ACL grants, a behaviour change this fix must not make.
+	sharingFiltered := make([]*models.SecretWithSharingInfo, 0, len(all))
+	for _, sec := range all {
+		if secretPassesSharingFilters(sec, filter) {
+			sharingFiltered = append(sharingFiltered, sec)
+		}
+	}
+	all = sharingFiltered
 
 	// Sort
 	c.sortSecrets(all, filter.SortBy, filter.SortOrder)
@@ -337,11 +471,14 @@ func (c *KeyorixCore) applySecretFilters(ctx context.Context, secrets []*models.
 	return out
 }
 
-// secretPassesFilters reports whether a secret satisfies all active list filters.
+// secretPassesFilters reports whether a secret satisfies every list filter that
+// can be decided from the secret ROW alone.
+//
+// ShowSharedOnly/ShowOwnedOnly are deliberately NOT here: they depend on sharing
+// metadata that is attached later, and evaluating ShowSharedOnly here against an
+// unpopulated IsShared is precisely the F2 defect. They live in
+// secretPassesSharingFilters, which only runs where the metadata exists.
 func (c *KeyorixCore) secretPassesFilters(ctx context.Context, s *models.SecretWithSharingInfo, filter *models.SecretListFilter, want []string) bool {
-	if filter.ShowSharedOnly && !s.IsShared {
-		return false
-	}
 	if len(want) > 0 && !c.secretHasAllTags(ctx, s.ID, want) {
 		return false
 	}
@@ -488,6 +625,18 @@ func (c *KeyorixCore) sortSecrets(secrets []*models.SecretWithSharingInfo, sortB
 // filtering the full set.
 const secretListingMaxRows = 10000
 
+// listingMaxRows is the storage row bound actually in force. It is injectable for
+// the same reason unionPageSize is: a bound that can only be exercised by seeding
+// 10001 secrets is a bound nobody has watched behave, and this one had never been
+// watched at all — it silently shadowed the union bound every truncation test
+// thought it was driving (coordinator review of #2874, F1).
+func (c *KeyorixCore) listingMaxRows() int {
+	if c.listingMaxRowsOverride > 0 {
+		return c.listingMaxRowsOverride
+	}
+	return secretListingMaxRows
+}
+
 // convertToStorageFilter converts SecretListFilter to storage.SecretFilter. It
 // deliberately ignores the caller's Page/PageSize — see secretListingMaxRows.
 // Search is intentionally NOT forwarded: the storage layer's LIKE filter only
@@ -497,7 +646,7 @@ const secretListingMaxRows = 10000
 func (c *KeyorixCore) convertToStorageFilter(filter *models.SecretListFilter) *storage.SecretFilter {
 	return &storage.SecretFilter{
 		Page:           1,
-		PageSize:       secretListingMaxRows,
+		PageSize:       c.listingMaxRows(),
 		Type:           filter.Type,
 		Classification: filter.Classification,
 		CreatedBy:      filter.CreatedBy,
