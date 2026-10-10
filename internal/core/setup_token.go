@@ -203,7 +203,7 @@ func (c *KeyorixCore) auditSetupTokenIssued(ctx context.Context, req IssueSetupT
 	actor := actorOrSubject(req.CreatedBy, req.SubjectUserID)
 	c.writeAuditEventFull(ctx, "setup_token.issued", actor, nil, nil, "",
 		fmt.Sprintf("setup token issued (purpose=%s, subject=%s, expires=%s)",
-			req.Purpose, tok.SubjectEmail, tok.ExpiresAt.Format(time.RFC3339)))
+			req.Purpose, tok.SubjectEmail, tok.ExpiresAt.UTC().Format(time.RFC3339)))
 }
 
 // ValidateSetupToken resolves a raw token to its record for the expected purpose,
