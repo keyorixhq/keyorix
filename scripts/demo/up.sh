@@ -129,8 +129,10 @@ discard_unfinished_seed() {
   rm -f "$STATE_FILE"
   rm -rf "$REPO_ROOT/.demo-2-cli-home"
 }
+SEED_DIR=""
 on_exit() {
   local rc=$?
+  [ -z "$SEED_DIR" ] || rm -rf "$SEED_DIR"
   if [ "$rc" -ne 0 ] && [ "$SEED_IN_PROGRESS" = true ]; then
     echo >&2
     echo "Demo setup failed (exit $rc). Removing the unfinished container and data volume so nothing half-seeded is left behind; fix the error above and re-run scripts/demo/up.sh." >&2
@@ -156,12 +158,16 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
     docker rm -f "$CONTAINER_NAME" >/dev/null
   fi
   step "Starting the air-gapped container (network enabled for the demo itself; see docs/demo/GOLDEN-PATH.md for the offline proof with --network none)"
+  # The master password and bootstrap token reach the container by name only
+  # (-e NAME copies the value from this process's environment), so they never
+  # appear in the docker client's argv / `ps`.
+  KEYORIX_MASTER_PASSWORD="$MASTER_PASSWORD" KEYORIX_BOOTSTRAP_TOKEN="$BOOTSTRAP_TOKEN" \
   docker run -d --name "$CONTAINER_NAME" \
     -p "${PORT}:8080" \
     -v "$VOLUME_NAME:/app/data" \
     -w /app/data \
-    -e KEYORIX_MASTER_PASSWORD="$MASTER_PASSWORD" \
-    -e KEYORIX_BOOTSTRAP_TOKEN="$BOOTSTRAP_TOKEN" \
+    -e KEYORIX_MASTER_PASSWORD \
+    -e KEYORIX_BOOTSTRAP_TOKEN \
     -e KEYORIX_CONFIG_PATH=keyorix.yaml \
     --entrypoint /bin/sh \
     "$IMAGE_TAG" \
@@ -206,10 +212,12 @@ rm -f "$HOME/.keyorix/cli.yaml" 2>/dev/null || true
 SERVER_URL="http://localhost:${PORT}"
 
 step "Bootstrapping the admin account (public API, via 'keyorix system init')"
-"$CLI_BIN" system init --server "$SERVER_URL" \
-  --admin-username "$ADMIN_USER" --admin-email "$ADMIN_EMAIL" \
-  --admin-password "$ADMIN_PASSWORD" --bootstrap-token "$BOOTSTRAP_TOKEN" >/dev/null
-"$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" --password "$ADMIN_PASSWORD" >/dev/null
+# Secrets travel by environment variable / stdin, never as arguments (argv is
+# visible to other local users via ps and lands in shell history).
+KEYORIX_ADMIN_PASSWORD="$ADMIN_PASSWORD" KEYORIX_BOOTSTRAP_TOKEN="$BOOTSTRAP_TOKEN" \
+  "$CLI_BIN" system init --server "$SERVER_URL" \
+  --admin-username "$ADMIN_USER" --admin-email "$ADMIN_EMAIL" >/dev/null
+printf '%s\n' "$ADMIN_PASSWORD" | "$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" >/dev/null
 ok "Admin bootstrapped and logged in"
 
 # security.require_mfa is ON (the secure default, kept for the demo): until the
@@ -223,7 +231,9 @@ if [ -z "$MFA_SECRET" ] || [ -z "$MFA_URI" ]; then
   echo "$ENROLL_OUT" >&2
   exit 1
 fi
-ACTIVATE_OUT="$("$CLI_BIN" mfa activate --code "$("$TOTPGEN_BIN" "$MFA_SECRET")" --password "$ADMIN_PASSWORD" 2> >(grep -v '^Warning: --code' >&2))"
+# The password goes on stdin; the single-use, 30 s TOTP code stays a flag because
+# a second stdin prompt would be swallowed by the first one's buffered reader.
+ACTIVATE_OUT="$(printf '%s\n' "$ADMIN_PASSWORD" | "$CLI_BIN" mfa activate --code "$("$TOTPGEN_BIN" "$MFA_SECRET")" 2> >(grep -v '^Warning: --code' >&2))"
 RECOVERY_CODES="$(echo "$ACTIVATE_OUT" | grep -E '^  [A-Za-z0-9-]+$' | tr -d ' ' | paste -sd' ' - || true)"
 
 echo
@@ -240,7 +250,7 @@ echo
 
 # Activation invalidates the pre-MFA session and consumes the current 30 s TOTP
 # step (anti-replay), so log in again with the NEXT step's code (+30 s).
-"$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" --password "$ADMIN_PASSWORD" \
+printf '%s\n' "$ADMIN_PASSWORD" | "$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" \
   --mfa-code "$("$TOTPGEN_BIN" "$MFA_SECRET" 30)" >/dev/null
 ok "Admin MFA enrolled (TOTP) and logged in with a code"
 
@@ -252,14 +262,22 @@ step "Seeding org structure: 2 projects, 2 groups"
 ok "3 projects (default, backend-api, mobile-app), 2 groups"
 
 step "Seeding a least-privilege user"
-"$CLI_BIN" user create --username alice --email alice@keyorix.demo --password "$ALICE_PASSWORD" >/dev/null
+KEYORIX_INITIAL_PASSWORD="$ALICE_PASSWORD" "$CLI_BIN" user create --username alice --email alice@keyorix.demo >/dev/null
 "$CLI_BIN" rbac assign-role --user alice@keyorix.demo --role project_viewer --project backend-api >/dev/null
 ok "alice: project_viewer on backend-api only"
 
 step "Seeding secrets with versions"
-"$CLI_BIN" secret create --name "stripe-api-key" --value "sk_test_demo_seed_v1" --project 1 --environment 1 >/dev/null
-"$CLI_BIN" secret rotate --id 1 --value "sk_test_demo_seed_v2" >/dev/null
-"$CLI_BIN" secret create --name "db-password" --value "demo-db-pass-v1" --project 2 --environment 4 >/dev/null
+# --from-file only accepts a relative, non-symlink path, so write each value to a
+# private file in a scratch dir and run the CLI from there; rotate reads its value
+# from stdin when it is not a terminal.
+SEED_DIR="$(mktemp -d)"
+seed_secret() { # <name> <value> <project> <environment>
+  ( cd "$SEED_DIR" && umask 077 && printf '%s' "$2" > ./value \
+    && "$CLI_BIN" secret create --name "$1" --from-file ./value --project "$3" --environment "$4" >/dev/null )
+}
+seed_secret "stripe-api-key" "sk_test_demo_seed_v1" 1 1
+printf '%s\n' "sk_test_demo_seed_v2" | "$CLI_BIN" secret rotate --id 1 >/dev/null
+seed_secret "db-password" "demo-db-pass-v1" 2 4
 ok "2 secrets, one with 2 versions"
 
 step "Seeding a machine identity"

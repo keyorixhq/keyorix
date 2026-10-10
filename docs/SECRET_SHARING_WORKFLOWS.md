@@ -211,18 +211,28 @@ keyorix audit logs \
 #!/bin/bash
 # Infrastructure secret rotation script
 
-# List of infrastructure secrets to rotate
-SECRETS=("AWS Root Key" "Database Master Password" "SSL Certificates")
+# Infrastructure secrets to rotate, as "<secret id>:<name>"
+SECRETS=("11:AWS Root Key" "12:Database Master Password" "13:SSL Certificates")
 INFRA_TEAM="infrastructure-team"
 
-for secret in "${SECRETS[@]}"; do
+# The new value goes through a private file, never onto the command line
+# (arguments are visible via ps/proc and saved in shell history).
+# --from-file takes a relative, non-symlink path, so keep the file in the
+# current directory and remove it when done.
+umask 077
+VALUE_FILE=./.new-secret-value
+trap 'rm -f "$VALUE_FILE"' EXIT
+
+for entry in "${SECRETS[@]}"; do
+  id="${entry%%:*}"
+  secret="${entry#*:}"
   echo "Rotating: $secret"
   
   # Generate new secret value
-  NEW_VALUE=$(openssl rand -base64 32)
+  openssl rand -base64 32 | tr -d '\n' > "$VALUE_FILE"
   
   # Update secret
-  keyorix secret update --name "$secret" --value "$NEW_VALUE"
+  keyorix secret update --id "$id" --from-file "$VALUE_FILE"
   
   # Ensure infrastructure team has access
   keyorix secret share \

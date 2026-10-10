@@ -45,7 +45,9 @@ the log shows `Bootstrap call failed ... — continuing`, the container is
 healthy, and logging in returns `HTTP 401` (tracked in #3025). Look for
 `Server is ready` followed by `Bootstrapping admin user` in
 `docker compose logs backend`; if it is missing, create the admin by hand with
-`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local --bootstrap-token <KEYORIX_BOOTSTRAP_TOKEN>`.
+`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local`
+with `KEYORIX_BOOTSTRAP_TOKEN` exported in your shell (the CLI reads the token
+and prompts for the admin password; neither goes on the command line).
 `docker compose ps` shows `web` as `(unhealthy)` on current images although it
 serves traffic (#3026).
 

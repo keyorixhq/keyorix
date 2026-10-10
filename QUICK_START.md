@@ -216,7 +216,7 @@ created right away:
 
 ```bash
 ./bin/keyorix secret create --name "stripe-api-key" --interactive   # value typed at a hidden prompt
-./bin/keyorix secret create --name "deploy-key" --from-file ~/.ssh/id_ed25519
+./bin/keyorix secret create --name "deploy-key" --from-file ./deploy_key   # relative path; absolute paths and symlinks are refused
 ./bin/keyorix secret list
 ./bin/keyorix secret get --id 1               # metadata only
 ./bin/keyorix secret get --id 1 --show-value  # decrypted value

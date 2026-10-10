@@ -170,7 +170,7 @@ Checked directly, not assumed:
 
 ## Alternatives considered
 
-- **A `--passphrase <value>` flag.** Rejected outright: a value on the
+- **A `--passphrase <value>` flag.** <!-- docs-secrets:allow (the rejected design, shown on purpose) --> Rejected outright: a value on the
   command line is visible to any other process on the host via `ps` and is
   written to shell history — strictly worse than the environment variable
   it would be replacing, not an improvement.
