@@ -31,58 +31,21 @@ var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a CLI setting (key: ca_file)",
 	Args:  cobra.ExactArgs(2),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := requireConfigKey(args[0]); err != nil {
-			return err
-		}
-		abs, err := filepath.Abs(args[1])
-		if err != nil {
-			return fmt.Errorf("resolve %s: %w", args[1], err)
-		}
-		// Validate now, not on the next command: a wrong file should fail here.
-		if _, err := apiclient.LoadCAPool(abs); err != nil {
-			return err
-		}
-		if err := updateStoredCredentials(func(c *credstore.Credentials) { c.CAFile = abs }); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "ca_file set to %s\n", abs)
-		return nil
-	},
+	RunE:  runConfigSet,
 }
 
 var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
 	Short: "Show the effective value of a CLI setting and where it comes from (key: ca_file)",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := requireConfigKey(args[0]); err != nil {
-			return err
-		}
-		path, source := resolveCAFile()
-		if path == "" {
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), "ca_file is not set (the system roots are trusted)")
-			return nil
-		}
-		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (from %s)\n", path, source)
-		return nil
-	},
+	RunE:  runConfigGet,
 }
 
 var configUnsetCmd = &cobra.Command{
 	Use:   "unset <key>",
 	Short: "Remove a stored CLI setting (key: ca_file)",
 	Args:  cobra.ExactArgs(1),
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := requireConfigKey(args[0]); err != nil {
-			return err
-		}
-		if err := updateStoredCredentials(func(c *credstore.Credentials) { c.CAFile = "" }); err != nil {
-			return err
-		}
-		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "ca_file unset")
-		return nil
-	},
+	RunE:  runConfigUnset,
 }
 
 func init() {
@@ -113,5 +76,48 @@ func updateStoredCredentials(change func(*credstore.Credentials)) error {
 	if err := store.Save(creds); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
+	return nil
+}
+
+func runConfigSet(cmd *cobra.Command, args []string) error {
+	if err := requireConfigKey(args[0]); err != nil {
+		return err
+	}
+	abs, err := filepath.Abs(args[1])
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", args[1], err)
+	}
+	// Validate now, not on the next command: a wrong file should fail here.
+	if _, err := apiclient.LoadCAPool(abs); err != nil {
+		return err
+	}
+	if err := updateStoredCredentials(func(c *credstore.Credentials) { c.CAFile = abs }); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "ca_file set to %s\n", abs)
+	return nil
+}
+
+func runConfigGet(cmd *cobra.Command, args []string) error {
+	if err := requireConfigKey(args[0]); err != nil {
+		return err
+	}
+	path, source := resolveCAFile()
+	if path == "" {
+		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "ca_file is not set (the system roots are trusted)")
+		return nil
+	}
+	_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%s (from %s)\n", path, source)
+	return nil
+}
+
+func runConfigUnset(cmd *cobra.Command, args []string) error {
+	if err := requireConfigKey(args[0]); err != nil {
+		return err
+	}
+	if err := updateStoredCredentials(func(c *credstore.Credentials) { c.CAFile = "" }); err != nil {
+		return err
+	}
+	_, _ = fmt.Fprintln(cmd.OutOrStdout(), "ca_file unset")
 	return nil
 }
