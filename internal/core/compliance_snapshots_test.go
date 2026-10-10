@@ -25,16 +25,10 @@ func newSnapshotCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	dsn := fmt.Sprintf("file:kx_snap_core_%d?mode=memory&cache=shared&_timeout=30000", complianceSnapDBSeq.Add(1))
 	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.Project{},
-		&models.Environment{},
-		&models.SecretNode{},
-		&models.AuditEvent{},
-		&models.CompliancePostureSnapshot{},
-		&models.RotationPolicy{},
-		&models.User{},
-		&models.Role{},
-	))
+	// Full schema: a posture sub-rollup that cannot be read (e.g. a missing table)
+	// degrades the posture, and a degraded posture is never snapshotted (#2834).
+	// The success path needs every rollup readable.
+	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 

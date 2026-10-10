@@ -1121,34 +1121,9 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"LoginAttempt"},
 		findingDoc: "#2837",
 	},
-	// Also found by the same live run while working #2549, also confirmed
-	// PRE-EXISTING by byte-for-byte replay against unmodified origin/main, also
-	// not caused by #2549's change. Filed as #2834 (no prior issue found).
-	//
-	// buildClassificationPosture (internal/core/compliance_posture.go:714)
-	// degrades rather than fails when a sub-count read errors: the snapshot is
-	// PERSISTED with partial counts and the request reports success. The
-	// degradation is recorded (cp.degrade sets Degraded/DegradedReasons, and the
-	// persisted row carries DegradedControls), which is the same deliberate
-	// partial-snapshot-with-a-durable-marker shape OpenAccessReviewCampaign uses
-	// (#483) -- so this is PROBABLY acceptable-by-design and belongs in
-	// opScopedBestEffortTables with requireLogSubstring pinned to the degrade
-	// line. #2834 asks the compliance-posture owner to decide that; classifying
-	// another subsystem's behaviour as by-design without its owner is exactly the
-	// claim #2549 was filed about, so it is tolerated here rather than
-	// reclassified.
-	//
-	// method is NOT wildcarded even though the three sibling counts share the
-	// root cause: a wildcard would hide a future, genuinely different divergence
-	// on this op. tables is the one table, so anything else still fails. Remove
-	// when #2834 is resolved either way.
-	{
-		op: "REST POST /api/v1/compliance/snapshots", method: "CountDynamicSecretConfigsByClassification",
-		kind: faultstorage.KindError,
-		nth:  1, oracle: "a", issue: "#2834", expires: "2026-11-07",
-		tables:     []string{"CompliancePostureSnapshot"},
-		findingDoc: "#2834",
-	},
+	// (#2834 -- compliance snapshot persisting partial counts -- is FIXED: its two
+	// tolerances are gone. POST /api/v1/compliance/snapshots now fails closed on any
+	// degraded sub-rollup; guarded by compliance_snapshot_fail_closed_test.go.)
 	// (The third pre-existing finding from the same live runs — #2841, op="REST
 	// POST /auth/webauthn/login/finish", method=GetUserRoles, kind=error, nth 1,
 	// [AuditEvent LoginAttempt MFAStepUpGrant] — was tolerated here and is now
