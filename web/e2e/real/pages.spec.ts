@@ -106,6 +106,9 @@ function watchPage(page: Page) {
 }
 
 test('logs in successfully and lands on the real dashboard', async () => {
+    // Waiting for the next unspent 30 s TOTP step can take most of the default
+    // 30 s test timeout on its own.
+    if (ADMIN_TOTP_SECRET) test.setTimeout(120_000);
     const page = shared;
     await page.goto('/login');
     watchPage(page); // still wired up so a genuinely new failure mode shows up in a trace/screenshot, just not asserted below -- see the two known, non-blocking races this comment documents.
