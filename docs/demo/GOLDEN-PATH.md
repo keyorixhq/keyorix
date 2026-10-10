@@ -14,6 +14,22 @@ command, and most of DEMO-1's findings are fixed (MFA, least-privilege CLI
 access, live backup, fresh-volume restore). What's left open is smaller and
 listed below.
 
+## Before you're on stage: run the readiness check (~5 min)
+
+`make demo-check` (or `./scripts/demo/check.sh`) walks this exact script end
+to end through the public API/CLI only — health, both logins, least
+privilege, create/read/rotate/version-history, ACL, the machine-identity
+read, MFA, audit + chain verify, the posture report, secret-read p50 latency,
+and (if Playwright is installed) a real-backend UI walk of login/projects/
+secrets/audit — printing one ✅/❌ line per step and a final `DEMO READY` /
+`NOT READY: N problems`. Run it with no arguments the morning of a demo: it
+brings up its own fresh SQLite instance, checks it, and tears it down. Pass
+`--keep` to leave that instance running for the actual demo instead of
+bringing up a second one by hand; `--postgres` checks the Postgres backend
+instead; `--ui`/`--offline` force the Playwright walk / the airgap-e2e
+offline-guarantee leg on. Anything red here is a demo blocker — fix it (or
+pick a different flow) before you're in front of a customer, not during.
+
 ## 0. Before you're on stage (~1 min)
 
 ```sh
