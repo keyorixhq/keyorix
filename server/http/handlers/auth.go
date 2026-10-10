@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -781,7 +782,9 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.coreService.RequestPasswordReset(r.Context(), body.Email)
+	besteffort.Run(r.Context(), "http.AuthHandler.PasswordReset.RequestPasswordReset", func() error {
+		return h.coreService.RequestPasswordReset(r.Context(), body.Email)
+	})
 	sendSuccess(w, nil, "If that email is registered, a reset link has been sent")
 }
 

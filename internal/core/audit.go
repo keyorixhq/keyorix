@@ -302,7 +302,9 @@ func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string,
 }
 
 // writeAuditEventFullOn is writeAuditEventFull against an explicit audit target
-// (audit_target.go). ONE body, two entry points.
+// (audit_target.go). ONE body, two entry points. A pure one-line delegation --
+// writeAuditEventDiffOn (below) is where the actual construction/panic risk
+// lives and where the #2561 recover is, so this needs none of its own.
 func (c *KeyorixCore) writeAuditEventFullOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) bool {
 	return c.writeAuditEventDiffOn(ctx, tgt, eventType, userID, secretID, projectID, ip, description, "")
 }
@@ -317,7 +319,28 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 
 // writeAuditEventDiffOn is writeAuditEventDiff against an explicit audit target
 // (audit_target.go). ONE body, two entry points.
-func (c *KeyorixCore) writeAuditEventDiffOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) bool { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+//
+// Recovers its own panic (#2561). emitAuditOn already does, but its recover
+// only begins once control REACHES it: this function BUILDS the AuditEvent
+// (sanitizeAuditText, withClientOriginNote, actorTypeFromContext,
+// impersonatorFromContext) before calling emitAuditOn, so a panic in any of
+// those -- or in this wrapper's own frame -- would still escape to a caller
+// that has already committed its write, which is exactly the "panic masks an
+// already-committed write" class QA-1 found 12+ times. 42 post-commit call
+// sites in this package discard this function's bool (via writeAuditEventFull/
+// writeAuditEventDiff), so the window was real, if narrow. Closing it here
+// (rather than recording it as a reviewed exemption in
+// docs/besteffort-exempt.tsv) makes the safety DERIVABLE by
+// internal/besteffortguard's panicSafetyIndex, which reads this defer out of
+// the source -- and a derived fact goes red if someone deletes it, where an
+// exemption row would have kept pardoning the call sites.
+func (c *KeyorixCore) writeAuditEventDiffOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) (persisted bool) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: writeAuditEventDiffOn panicked building/emitting audit event %q (best-effort, primary operation already succeeded): %v", eventType, r)
+			persisted = false
+		}
+	}()
 	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
