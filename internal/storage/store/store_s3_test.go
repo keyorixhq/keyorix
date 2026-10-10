@@ -8,11 +8,11 @@ package store
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -25,17 +25,11 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-// storeS3DBSeq makes each in-memory DB unique within the process, even
-// across repeated invocations of the same test (e.g. `go test -count=N`).
-var storeS3DBSeq atomic.Int64
-
 // newStoreS3 returns a LocalStorage over a unique in-memory SQLite database,
 // auto-migrated for a given set of GORM models.
 func newStoreS3(t *testing.T, name string, migrateModels ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:store_s3_%s_%d?mode=memory&cache=shared", name, storeS3DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores3_", sqlite.Open, &gorm.Config{})
 	if len(migrateModels) > 0 {
 		require.NoError(t, db.AutoMigrate(migrateModels...))
 	}
