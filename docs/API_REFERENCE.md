@@ -244,7 +244,11 @@ dependency edge (it is restored with the secret) and get a
 
 To see how often a secret was actually read, use the audit trail: `secret.read`
 events (`GET /api/v1/audit/search?action=secret.read`) or the per-secret access
-log (`keyorix secret access-log`). A true per-version read total is not recorded
+log (`keyorix secret access-log`). `secret.read` means a secret's **value** was
+disclosed. Metadata-only calls are separate events and never count as reads:
+`GET /secrets/{id}/versions` writes `secret.versions_listed` (access-log action
+`versions_list`) and `GET /secrets/by-name` writes `secret.metadata_read` (access-log
+action `metadata_read`). A true per-version read total is not recorded
 today (access-log rows do not carry the version read).
 
 ## 🤝 **Secret Sharing API**

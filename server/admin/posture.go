@@ -78,7 +78,9 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 	if err != nil {
 		return fmt.Errorf("posture check could not read the config file: %w", err)
 	}
-	collectInsecureSettingsPosture(cfg, explicit, report)
+	// ValidateStartup (inside collectFilePermissionPosture) runs BEFORE
+	// withUsableStorage below opens -- and may create -- the database, so a
+	// missing database file is still reported as the problem it is.
 	collectFilePermissionPosture(cfg, configPath, report)
 	collectKeyFileSetPosture(cfg, report)
 	collectTLSPosture(cfg, report)
@@ -89,9 +91,20 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 	// discarding it would leave the operator with one error line instead of the
 	// report (withUsableStorage's contract is to report the database distinctly,
 	// not to fail the whole command over it). The command still fails.
+	var fileGraceKnown bool
+	var fileEnforcedSince string
 	dbErr := withUsableStorage(cfg, func(store corestorage.Storage) error {
 		coreService := core.NewKeyorixCore(store)
 		ctx := context.Background()
+		// #2908: decide the enable_file_permission_check grace period from the
+		// same database facts the server's boot does, BEFORE the registry is
+		// read below -- its insecure_skip_startup_validation entry reads the
+		// grace flag this sets.
+		var err error
+		if fileEnforcedSince, err = resolveFilePermissionUpgradeGrace(ctx, cfg, store); err != nil {
+			return err
+		}
+		fileGraceKnown = true
 		// TODO(#2461): add collectBreakGlassReviewPosture here -- see its
 		// comment below for the two findings Andrei decided on and why they
 		// cannot be implemented until that PR's API lands.
@@ -102,8 +115,10 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 		return collectAdminMFAPosture(ctx, inGrace, coreService, report)
 	})
 	if dbErr != nil {
-		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the admin-MFA check was NOT evaluated: %v", dbErr))
+		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the admin-MFA check and the enable_file_permission_check grace-period check were NOT evaluated: %v", dbErr))
 	}
+	collectInsecureSettingsPosture(cfg, explicit, report)
+	collectStartupValidationStatePosture(cfg, fileGraceKnown, fileEnforcedSince, report)
 
 	printPostureReport(report)
 
@@ -159,7 +174,9 @@ func collectInsecureSettingsPosture(cfg *config.Config, explicit map[string]bool
 		if !s.InEffect(cfg) {
 			continue
 		}
-		detail := fmt.Sprintf("%s is in effect — %s", s.Name, s.Describe)
+		// The value says WHICH weak state, where an entry has more than one
+		// (#2908: insecure_skip_startup_validation is "off" or "grace-warn-only").
+		detail := fmt.Sprintf("%s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
 		// Origin is a fact about the config FILE: explicit when it writes one
 		// of the paths this entry reads, shipped-default when it is silent and
 		// the weak state is what Load resolves the absent key to. Not keyed on
@@ -201,10 +218,11 @@ func collectFilePermissionPosture(cfg *config.Config, configPath string, report 
 	// encryption and database checks do not depend on it, and an install with
 	// the permission check switched off is the one most likely to have a real
 	// problem -- it must not get the thinnest report.
+	// The implicit-default states (grace-warn-only / enforcing-implicit) need
+	// the database to tell apart; collectStartupValidationStatePosture reports
+	// them once it has been read.
 	if !cfg.Security.EnableFilePermissionCheck {
 		report.deviate("file-permissions", "security.enable_file_permission_check is disabled (ADR-112 requires it enabled by default)")
-	} else if cfg.Security.EnableFilePermissionCheckImplicitDefault {
-		report.info("security.enable_file_permission_check is enforcing via its new secure-by-default value (grace period) — relies on the implicit default, never set explicitly")
 	}
 
 	// configPath, not ResolvedPath(""): --config must be the file validated
@@ -248,6 +266,74 @@ func collectFilePermissionPosture(cfg *config.Config, configPath string, report 
 	if result.PermissionsIssue != "" && cfg.Security.EnableFilePermissionCheckImplicitDefault {
 		report.deviate("grace-period", "security.enable_file_permission_check's grace period is not yet complied with — the file-permissions deviation above would hard-fail startup once the setting is reviewed and set explicitly")
 	}
+}
+
+// collectStartupValidationStatePosture reports where
+// security.enable_file_permission_check stands when the config file never set
+// it (#2908). The registry entry (security.insecure_skip_startup_validation)
+// already counts the grace-warn-only state; this adds the operator-facing
+// explanation and the way out, the same pairing the explicit-false case gets
+// (a registry deviation plus collectFilePermissionPosture's own line).
+//
+// graceKnown is false when the database could not be read: then the report
+// cannot tell an upgrade in the grace period (the server only warns) from an
+// enforced deployment, and it counts that as a deviation rather than vouching
+// for enforcement it did not verify.
+func collectStartupValidationStatePosture(cfg *config.Config, graceKnown bool, enforcedSince string, report *postureReport) {
+	sec := cfg.Security
+	if !sec.EnableFilePermissionCheck || !sec.EnableFilePermissionCheckImplicitDefault {
+		return // off is reported by collectFilePermissionPosture; explicit true needs no line
+	}
+	switch {
+	case !graceKnown:
+		report.deviateShippedDefault("grace-period", "security.enable_file_permission_check is on its ADR-112 implicit default and the database could not be read, so whether this deployment is in the upgrade grace period (a failed startup check only WARNS) is unknown — counted until it can be checked")
+	case sec.StartupValidationState() == config.StartupValidationGraceWarnOnly:
+		report.deviateShippedDefault("grace-period", "security.enable_file_permission_check is in its ADR-112 upgrade grace period: this upgraded deployment never set it, so a failed startup check only WARNS and the server starts anyway. Fix anything the startup checks report; the first clean boot then ends the grace period for good (adr112.file_permission_check.enforced), or set security.enable_file_permission_check: true explicitly")
+	case enforcedSince != "":
+		report.info("security.enable_file_permission_check is enforcing on its ADR-112 secure-by-default value (never set explicitly; enforced since " + enforcedSince + ")")
+	default:
+		report.info("security.enable_file_permission_check is enforcing on its ADR-112 secure-by-default value (never set explicitly; fresh install)")
+	}
+}
+
+// resolveFilePermissionUpgradeGrace sets
+// cfg.Security.EnableFilePermissionCheckUpgradeGrace from the database, exactly
+// as server/adr112_grace.go's applyADR112UpgradeGrace does at boot: the key is
+// absent, users exist, and no config.ADR112FilePermEnforcedMarker row. Returns
+// the marker's value when one is recorded.
+func resolveFilePermissionUpgradeGrace(ctx context.Context, cfg *config.Config, store corestorage.Storage) (enforcedSince string, err error) {
+	sec := &cfg.Security
+	if !sec.EnableFilePermissionCheck || !sec.EnableFilePermissionCheckImplicitDefault {
+		return "", nil
+	}
+	inGrace, since, err := adr112UpgradeGraceFromStore(ctx, store, config.ADR112FilePermEnforcedMarker, "enable_file_permission_check")
+	if err != nil {
+		return "", err
+	}
+	sec.EnableFilePermissionCheckUpgradeGrace = inGrace
+	return since, nil
+}
+
+// adr112UpgradeGraceFromStore reads the facts server/adr112_grace.go decides
+// an ADR-112 upgrade grace period from: a deployment with users and no
+// enforcement marker is an upgrade in the grace period; no users is a fresh
+// install (enforced); a marker means already enforced (since its value).
+func adr112UpgradeGraceFromStore(ctx context.Context, store corestorage.Storage, marker, key string) (inGrace bool, enforcedSince string, err error) {
+	_, users, err := store.ListUsers(ctx, &corestorage.UserFilter{IncludeDeleted: true, PageSize: 1})
+	if err != nil {
+		return false, "", fmt.Errorf("failed to count users for the %s grace check: %w", key, err)
+	}
+	if users == 0 {
+		return false, "", nil
+	}
+	since, found, err := store.GetSystemMetadata(ctx, marker)
+	if err != nil {
+		return false, "", fmt.Errorf("failed to read the %s enforcement marker: %w", key, err)
+	}
+	if found {
+		return false, since, nil
+	}
+	return true, "", nil
 }
 
 // collectKeyFileSetPosture reports item 6's boot-time key-file-set
@@ -353,20 +439,16 @@ func collectRequireMFAPosture(ctx context.Context, cfg *config.Config, store cor
 	if !sec.RequireMFAImplicitDefault {
 		return false, nil
 	}
-	_, users, err := store.ListUsers(ctx, &corestorage.UserFilter{IncludeDeleted: true, PageSize: 1})
+	inGrace, since, err := adr112UpgradeGraceFromStore(ctx, store, config.ADR112RequireMFAEnforcedMarker, "require_mfa")
 	if err != nil {
-		return false, fmt.Errorf("failed to count users for the require_mfa grace check: %w", err)
+		return false, err
 	}
-	if users == 0 {
-		return false, nil // fresh install: the server enforces require_mfa from its first start
-	}
-	since, found, err := store.GetSystemMetadata(ctx, config.ADR112RequireMFAEnforcedMarker)
-	if err != nil {
-		return false, fmt.Errorf("failed to read the require_mfa enforcement marker: %w", err)
-	}
-	if found {
+	if since != "" {
 		report.info("security.require_mfa is enforcing on its ADR-112 default (enforced since " + since + ")")
 		return false, nil
+	}
+	if !inGrace {
+		return false, nil // fresh install: the server enforces require_mfa from its first start
 	}
 	report.deviateShippedDefault("grace-period", "security.require_mfa is in its ADR-112 upgrade grace period: this upgraded deployment never set it, so the server does NOT enforce MFA yet. Have every interactive admin enrol, then set security.require_mfa: true explicitly (#2923 tracks an automatic end condition)")
 	return true, nil

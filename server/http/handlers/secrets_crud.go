@@ -390,12 +390,13 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 
 	// Metadata-only response (no value disclosed below) — stays fire-and-forget,
 	// unlike the value-disclosing read paths in this file. Still logged, not
-	// silently discarded.
+	// silently discarded, but as secret.metadata_read, not secret.read: secret.read
+	// means a value disclosure (AUDIT-UX-3).
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
 	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
-		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
+		if auditErr := h.coreService.LogSecretMetadataRead(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
 			log.Printf("SECURITY: audit write failed for secret-by-name read (secret=%d): %v", sID, auditErr)
 		}
 	}) // #nosec G118
