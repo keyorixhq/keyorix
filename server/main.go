@@ -2204,6 +2204,15 @@ func enforceSecretFilePermissions(cfg *config.Config) error {
 	}
 	msg := strings.Join(problems, "; ")
 	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
+		// A secret file is key material: strict on the implicit ADR-112 default as
+		// well (only orchestrator-mounted config/TLS files are softened there). The
+		// one exception is the upgrade grace period, same as for the key files in
+		// enforceKeyFilePermissions: warn, and record that this boot was softened.
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: %s -- this now fails closed by default (ADR-112); fix the file mode (chmod 0400/0440, or defaultMode 0440 on a Kubernetes Secret volume) and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+			return nil
+		}
 		return fmt.Errorf("%s -- refusing to start (or set security.allow_unsafe_file_permissions to override)", msg)
 	}
 	log.Printf("WARNING: %s. Set security.enable_file_permission_check to fail closed instead of warning.", msg)

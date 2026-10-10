@@ -126,3 +126,41 @@ func TestEnforceSecretFilePermissions(t *testing.T) {
 		require.Error(t, enforceSecretFilePermissions(strict()))
 	})
 }
+
+// ADR-112 (#2446) integration: a secret file is key material, so it is STRICT on the
+// implicit default too (unlike an orchestrator-mounted config/TLS file), but an
+// upgraded deployment inside the grace period gets a warning instead of a refusal and
+// the grace is recorded as softened (so the "enforced" marker is not written).
+func TestEnforceSecretFilePermissions_ADR112(t *testing.T) {
+	t.Cleanup(func() { adr112GraceSoftened.Store(false) })
+	bad := func(t *testing.T) { t.Setenv("KEYORIX_DB_PASSWORD_FILE", secretFileMode(t, 0o644)) }
+
+	t.Run("fresh install, implicit default: refuses", func(t *testing.T) {
+		bad(t)
+		cfg := &config.Config{Security: config.SecurityConfig{
+			EnableFilePermissionCheck: true, EnableFilePermissionCheckImplicitDefault: true}}
+		require.Error(t, enforceSecretFilePermissions(cfg))
+	})
+	t.Run("explicit true: refuses", func(t *testing.T) {
+		bad(t)
+		require.Error(t, enforceSecretFilePermissions(&config.Config{Security: config.SecurityConfig{EnableFilePermissionCheck: true}}))
+	})
+	t.Run("upgrade grace: warns, and records the softening", func(t *testing.T) {
+		adr112GraceSoftened.Store(false)
+		bad(t)
+		cfg := &config.Config{Security: config.SecurityConfig{
+			EnableFilePermissionCheck: true, EnableFilePermissionCheckImplicitDefault: true,
+			EnableFilePermissionCheckUpgradeGrace: true}}
+		require.NoError(t, enforceSecretFilePermissions(cfg))
+		assert.True(t, adr112GraceSoftened.Load(), "a softened boot must not ratchet the grace period closed")
+	})
+	t.Run("grace does not hide a compliant file", func(t *testing.T) {
+		adr112GraceSoftened.Store(false)
+		t.Setenv("KEYORIX_DB_PASSWORD_FILE", secretFileMode(t, 0o440))
+		cfg := &config.Config{Security: config.SecurityConfig{
+			EnableFilePermissionCheck: true, EnableFilePermissionCheckImplicitDefault: true,
+			EnableFilePermissionCheckUpgradeGrace: true}}
+		require.NoError(t, enforceSecretFilePermissions(cfg))
+		assert.False(t, adr112GraceSoftened.Load())
+	})
+}
