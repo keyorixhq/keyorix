@@ -240,3 +240,9 @@ certs/
 # credential store) -- never shipped, written fresh per host.
 /.demo-2-state
 /.demo-2-cli-home/
+
+# scripts/demo/check.sh's own local state (Postgres-path machine token, MFA
+# TOTP secret for its throwaway mfa-demo account) -- never shipped, written
+# fresh per host.
+/.demo-2-pg-state
+/.demo-2-check-state/

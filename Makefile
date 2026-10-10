@@ -53,7 +53,7 @@ CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 MIGRATE_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/migrate/internal/migrateversion.Version=$(VERSION)
 MIGRATE_RELEASE_LDFLAGS=-ldflags "-s -w $(MIGRATE_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e k8s-e2e
+.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e k8s-e2e demo-check
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -284,6 +284,14 @@ smoke: build-cli build-server
 # isn't a substitute for it.
 airgap-e2e:
 	@./scripts/airgap-e2e.sh
+
+# demo-check: "will the demo work?" in about 5 minutes -- brings up (or
+# checks, with DEMO_CHECK_ARGS="--url ...") the demo golden path
+# (docs/demo/GOLDEN-PATH.md) end to end through the public API/CLI only, one
+# ✅/❌ line per step. See scripts/demo/check.sh's own header for every flag
+# (--sqlite/--postgres, --keep, --ui, --offline).
+demo-check:
+	@./scripts/demo/check.sh $(DEMO_CHECK_ARGS)
 
 # e2e-smoke: SESSION-I's fresh-install FEATURE smoke, distinct from `smoke`
 # above -- that target proves the QUICK_START.md happy path (project/secret/
