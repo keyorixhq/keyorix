@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
@@ -773,6 +774,70 @@ func (c *KeyorixCore) SessionLiveForToken(ctx context.Context, sessionID uint, t
 		return false, nil
 	}
 	return true, nil
+}
+
+// SessionAuthFacts is what a transport needs from the authenticating session's
+// own row once ValidateSessionToken has accepted the token: which row it is (for
+// the per-request liveness re-check, #G18), whether it is a setup-only session
+// (#3024), who is impersonating through it, and when it expires (F-TOK-1).
+type SessionAuthFacts struct {
+	SessionID       uint
+	SetupOnly       bool
+	ImpersonatedBy  *uint
+	EffectiveExpiry *time.Time
+}
+
+// EventSessionFactsUnavailable audits a request refused because its session row
+// could not be re-read after the token validated (ResolveSessionAuthFacts).
+const EventSessionFactsUnavailable = "auth.session_facts_unavailable" // #nosec G101 -- audit event type, not a credential
+
+// ErrSessionFactsUnavailable is ResolveSessionAuthFacts' error: the transports
+// refuse the request with their generic "temporarily unavailable" answer.
+var ErrSessionFactsUnavailable = errors.New("session facts unavailable")
+
+// ResolveSessionAuthFacts reads the session behind an already-validated session
+// token ONCE and returns every per-session fact the HTTP middleware and the gRPC
+// interceptor act on. An error is the fail-closed side: each of these facts
+// restricts the caller (setup-only confinement, impersonation guards, the
+// session-liveness re-check, the cache-lifetime clamp), so a request whose
+// facts could not be read must be refused, never served with them defaulted to
+// "no restriction" (#3041 review: a failed read used to leave SetupOnly false
+// and cache it, so a setup-only session racing its own revocation got full
+// access). The refusal is logged and audited under userID; transport names the
+// caller ("http"/"grpc"). A revoked session (not found) takes this path too: the
+// retry then fails validation with an ordinary 401.
+func (c *KeyorixCore) ResolveSessionAuthFacts(ctx context.Context, userID uint, token, transport string) (*SessionAuthFacts, error) {
+	session, err := c.getSessionRecovering(ctx, token)
+	if err == nil && session == nil {
+		err = errors.New("no session row")
+	}
+	if err == nil && session.UserID != userID {
+		err = fmt.Errorf("session belongs to user %d", session.UserID)
+	}
+	if err != nil {
+		log.Printf("SECURITY: %s request by user %d refused: its session could not be re-read after validation (%v)", transport, userID, err)
+		c.writeAuditEventFull(ctx, EventSessionFactsUnavailable, &userID, nil, nil, "",
+			fmt.Sprintf("a %s request by user %d was refused: its session could not be re-read after the token validated (%v), so its restrictions could not be applied", transport, userID, err))
+		return nil, ErrSessionFactsUnavailable
+	}
+	facts := &SessionAuthFacts{SessionID: session.ID, SetupOnly: session.SetupOnly, ImpersonatedBy: session.ImpersonatedBy}
+	for _, t := range []*time.Time{session.ExpiresAt, session.AbsoluteExpiresAt} {
+		if t != nil && (facts.EffectiveExpiry == nil || t.Before(*facts.EffectiveExpiry)) {
+			facts.EffectiveExpiry = t
+		}
+	}
+	return facts, nil
+}
+
+// getSessionRecovering is storage.GetSession with a panic turned into an error,
+// so ResolveSessionAuthFacts refuses rather than crashing the request.
+func (c *KeyorixCore) getSessionRecovering(ctx context.Context, token string) (s *models.Session, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s, err = nil, fmt.Errorf("session lookup panicked: %v", r)
+		}
+	}()
+	return c.storage.GetSession(ctx, token)
 }
 
 // SessionEffectiveExpiry returns the earliest of a session's idle-expiry (ExpiresAt)
