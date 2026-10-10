@@ -213,6 +213,18 @@ func TestConfigSurface_RegistrySourcePathsAllExist(t *testing.T) {
 					"sweep cannot tell whether the setting it describes still exists", e.Name)
 			}
 			for _, p := range e.SourcePaths {
+				// The walk stops at a recursive type, so it never lists the
+				// fallbacks[] copies of KeyProviderConfig's leaves. Such a path is
+				// real iff its primary spelling is and KeyProviderConfig really
+				// carries a Fallbacks []KeyProviderConfig (one level, as
+				// keyProviderChain reads it).
+				if primary, ok := strings.CutPrefix(p, "storage.encryption.key_provider.fallbacks."); ok {
+					sf, found := reflect.TypeOf(KeyProviderConfig{}).FieldByName("Fallbacks")
+					if !found || sf.Type != reflect.TypeOf([]KeyProviderConfig(nil)) || !strings.HasPrefix(sf.Tag.Get("yaml"), "fallbacks") {
+						t.Errorf("SourcePaths entry %q needs KeyProviderConfig.Fallbacks []KeyProviderConfig under yaml key fallbacks", p)
+					}
+					p = "storage.encryption.key_provider." + primary
+				}
 				if !real[p] {
 					t.Errorf("SourcePaths entry %q does not exist on Config's YAML surface (renamed? removed? "+
 						"typo?) — fix the path, or drop the entry if the setting is gone", p)
@@ -384,6 +396,9 @@ var derivedFieldExemptions = map[string]string{
 		"(#2986); its implicit/grace states are reported by server/admin's collectRequireMFAPosture and " +
 		"server/main.go's logWarnOnImplicitRequireMFADefault, NOT by the registry. Remove when #2986 is fixed.",
 	"security.RequireMFAUpgradeGrace": "see security.RequireMFAImplicitDefault (#2986). Remove when #2986 is fixed.",
+	"DeprecatedSettingWarnings": "text only: the start-up warnings resolveDeprecatedAliases collected for old keys " +
+		"it already translated to the current insecure_ key before decoding. It changes no setting's value or " +
+		"effect, so no InEffect/Value could depend on it (server/main.go warnDeprecatedSettingAliases only logs it).",
 }
 
 // configDerivedFields returns every yaml:"-" field reachable from Config, as

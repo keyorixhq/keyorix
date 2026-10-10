@@ -1015,10 +1015,10 @@ const (
 type SecurityConfig struct {
 	// EnableFilePermissionCheck gates the file-permission/DEK-salt-size/database-
 	// reachability startup checks (internal/startup.ValidateStartup) and whether
-	// enforceKeyFilePermissions fails closed instead of warning. An ABSENT key
-	// is false: the ADR-112 secure-by-default flip is decided in its own PR
-	// (see Load), and until it lands nothing sets the ImplicitDefault marker
-	// below.
+	// enforceKeyFilePermissions fails closed instead of warning. ADR-112: secure
+	// by default -- Load() resolves an ABSENT key to true (and records that in
+	// EnableFilePermissionCheckImplicitDefault below), not Go's bool zero value,
+	// so a fresh install enforces from its first start without anyone setting this.
 	EnableFilePermissionCheck bool `yaml:"enable_file_permission_check"`
 	// EnableFilePermissionCheckImplicitDefault records whether Load() set
 	// EnableFilePermissionCheck to true itself (the key was absent from the
@@ -1055,8 +1055,8 @@ type SecurityConfig struct {
 	// RequireMFA mandates TOTP MFA for interactive login: a session-authenticated
 	// user without MFA enabled is confined to the MFA-enrolment endpoints until
 	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.
-	// An ABSENT key is false until the ADR-112 secure-by-default flip lands in
-	// its own PR (see Load).
+	// ADR-112: secure by default -- Load() resolves an ABSENT key to true (see
+	// RequireMFAImplicitDefault below), not Go's bool zero value.
 	RequireMFA bool `yaml:"require_mfa"`
 	// RequireMFAImplicitDefault is RequireMFA's counterpart to
 	// EnableFilePermissionCheckImplicitDefault above: true only when Load() set

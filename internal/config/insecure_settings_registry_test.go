@@ -189,3 +189,35 @@ func TestInsecureSettingsRegistry_EveryIssue2895RowIsRegistered(t *testing.T) {
 		t.Errorf("calibration: dropping the trust_asserted_email entry must be reported; got %v", got)
 	}
 }
+
+// Review point 3 (MERGE-MASTER, #2899): a setting that lives on KeyProviderConfig
+// can be set on a fallbacks[] entry as well as on the primary, and the alias table
+// carries a row for each. The registry entry's SourcePaths must name EVERY current
+// spelling the alias table can produce (flattened, as explicitlySetPathsIn spells
+// it), or the posture report labels a fallback-only weakening "shipped default"
+// although the operator wrote it.
+func TestInsecureSettingsRegistry_SourcePathsCoverEveryAliasRowNewPath(t *testing.T) {
+	byAlias := map[string]InsecureSetting{}
+	for _, e := range InsecureSettingsRegistry {
+		if e.DeprecatedAlias != "" {
+			byAlias[e.DeprecatedAlias] = e
+		}
+	}
+	for _, a := range deprecatedSettingAliases {
+		// A fallbacks[] row has the same setting as the primary's row.
+		e, ok := byAlias[strings.Replace(a.OldPath, "fallbacks[].", "", 1)]
+		if !ok {
+			continue // not a registry-backed setting (nothing to label)
+		}
+		want := flattenSequencePath(a.NewPath)
+		found := false
+		for _, p := range e.SourcePaths {
+			if p == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("registry entry %q: SourcePaths %v omit %q, the current spelling of alias row %q", e.Name, e.SourcePaths, want, a.OldPath)
+		}
+	}
+}

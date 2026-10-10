@@ -239,7 +239,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	},
 	{
 		Name:            "storage.encryption.key_provider.insecure_allow_kms_context_fallback",
-		SourcePaths:     []string{"storage.encryption.key_provider.insecure_allow_kms_context_fallback"},
+		SourcePaths:     []string{"storage.encryption.key_provider.insecure_allow_kms_context_fallback", "storage.encryption.key_provider.fallbacks.insecure_allow_kms_context_fallback"},
 		DeprecatedAlias: "storage.encryption.key_provider.kms_allow_context_fallback",
 		Describe:        "lets a context-bound KMS-wrapped KEK fall back to decrypting with no context",
 		InEffect: func(c *Config) bool {
@@ -251,7 +251,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 	},
 	{
 		Name:            "storage.encryption.key_provider.insecure_allow_weaker_kek_fallback",
-		SourcePaths:     []string{"storage.encryption.key_provider.insecure_allow_weaker_kek_fallback"},
+		SourcePaths:     []string{"storage.encryption.key_provider.insecure_allow_weaker_kek_fallback", "storage.encryption.key_provider.fallbacks.insecure_allow_weaker_kek_fallback"},
 		DeprecatedAlias: "storage.encryption.key_provider.allow_weaker_fallback",
 		Describe:        "permits a key-provider fallback chain that silently downgrades KEK-sourcing strength",
 		InEffect: func(c *Config) bool {
