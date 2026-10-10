@@ -1904,6 +1904,25 @@ type BreakGlassConfig struct {
 	EmergencyRole string `yaml:"emergency_role"` // role granted on activation (e.g. "project_developer" — must be contained: no roles.assign, so use a role like project_developer, NOT project_admin)
 	DefaultTTL    string `yaml:"default_ttl"`    // grant lifetime when none requested (e.g. "4h")
 	MaxTTL        string `yaml:"max_ttl"`        // ceiling on a requested TTL (e.g. "24h")
+	// ReviewWindow (ADR-112 §3, break-glass review item 5) is how long an
+	// activation may go unreviewed before the posture report (item 4) lists it
+	// as a deviation. Default 72h when unset or unparseable — long enough that
+	// a reviewer out for a long weekend isn't itself a false alarm, short
+	// enough that a genuinely-forgotten review surfaces within a normal work
+	// week. Purely a reporting threshold: it never blocks or expires anything,
+	// and never governs whether a review can still be submitted late.
+	ReviewWindow string `yaml:"review_window"`
+}
+
+// GetReviewWindow returns how long an activation may go unreviewed before the
+// posture report flags it; defaults to 72h.
+func (c BreakGlassConfig) GetReviewWindow() time.Duration {
+	if c.ReviewWindow != "" {
+		if d, err := time.ParseDuration(c.ReviewWindow); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 72 * time.Hour
 }
 
 // GetDefaultTTL returns the default emergency-grant lifetime; defaults to 4h.

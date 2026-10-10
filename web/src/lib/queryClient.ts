@@ -3,8 +3,11 @@ import { secretsApi } from '../services/secrets';
 import { usersApi } from '../services/users';
 import { groupsApi } from '../services/groups';
 
-// Default query options
-const defaultOptions: DefaultOptions = {
+// queryClientDefaultOptions is exported so a test can build a throwaway QueryClient that
+// provably carries the SAME policy the app runs with, instead of hand-copying it.
+// #2738's reproduction depends on the mutation retry policy below, and a test that
+// re-declared it locally would have gone green against a broken app.
+export const queryClientDefaultOptions: DefaultOptions = {
     queries: {
         // Stale time: 5 minutes
         staleTime: 5 * 60 * 1000,
@@ -28,15 +31,38 @@ const defaultOptions: DefaultOptions = {
         refetchOnMount: true,
     },
     mutations: {
-        // Retry mutations once
-        retry: 1,
+        // #2738: never retry a mutation the server has already reached a verdict on.
+        // A 4xx is an answer, not a transient failure, and re-sending it has two
+        // concrete costs:
+        //
+        //  1. It re-sends a non-idempotent POST. For the MFA re-auth endpoints
+        //     (/auth/mfa/disable, /auth/mfa/activate, /auth/mfa/recovery-codes/
+        //     regenerate -- all gated by internal/core's requireReauth, which calls
+        //     recordFailedLogin on every rejection) ONE user click burned TWO
+        //     per-account lockout slots, silently halving how many attempts an
+        //     operator gets before the account locks.
+        //  2. A retry is PAUSED whenever react-query's onlineManager reports
+        //     offline (the default networkMode: 'online'), and a paused mutation's
+        //     promise never settles: isPending stays true forever, no onError ever
+        //     fires, and no request is ever sent. That is exactly the permanently
+        //     stuck Disable-2FA dialog of #2738 -- spinner up, no error text, no
+        //     further request, and (because the mutation object outlives the
+        //     dialog) not cleared by closing and reopening it.
+        //
+        // Mirrors the queries policy above, which has always excluded 4xx.
+        retry: (failureCount, error: any) => {
+            if (error?.response?.status >= 400 && error?.response?.status < 500) {
+                return false;
+            }
+            return failureCount < 1;
+        },
         retryDelay: 1000,
     },
 };
 
 // Create query client with custom configuration
 export const queryClient = new QueryClient({
-    defaultOptions,
+    defaultOptions: queryClientDefaultOptions,
 });
 
 // Sensitive-data convention (G28 — secret plaintext lingers client-side with no

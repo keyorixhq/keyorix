@@ -608,6 +608,19 @@ func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revoke
 	return args.Error(0)
 }
 
+func (m *MockStorage) ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error {
+	args := m.Called(ctx, id, reviewerID, note, reviewedAt)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	args := m.Called(ctx, cutoff)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.BreakGlassActivation), args.Error(1)
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
@@ -663,6 +676,11 @@ func (m *MockStorage) UpdateSecret(ctx context.Context, secret *models.SecretNod
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*models.SecretNode), args.Error(1)
+}
+
+func (m *MockStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+	args := m.Called(ctx, id, f)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {

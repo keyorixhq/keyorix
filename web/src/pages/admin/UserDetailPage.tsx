@@ -385,6 +385,14 @@ const ProjectAssignmentsTable: React.FC<ProjectAssignmentsTableProps> = ({ membe
                             >
                                 <td className="px-4 py-2" style={{ color: 'var(--text-primary)' }}>
                                     {m.project_name || `#${m.project_id}`}
+                                    {m.project_deleted && (
+                                        // The grant survives a soft-delete and a restore brings it
+                                        // back, so the row is shown — but a reviewer must be able to
+                                        // tell it apart from a membership of a live project.
+                                        <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                                            deleted
+                                        </span>
+                                    )}
                                 </td>
                                 <td className="px-4 py-2" style={{ color: 'var(--text-secondary)' }}>
                                     {(m.roles?.length ? m.roles.join(', ') : m.role) || '—'}

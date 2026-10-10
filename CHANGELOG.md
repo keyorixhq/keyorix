@@ -15,6 +15,42 @@ All notable changes to Keyorix are documented here. This project follows
   the opt-in upgrade for a deployment that can require 1.3-only clients.
   `tls.allowed_ciphers` has no effect under strict mode (TLS 1.3 negotiates
   its own suite set) and now warns if both are set.
+- **Every break-glass activation must now be reviewed after the fact**
+  (ADR-112, secure-by-default baseline, break-glass review item 5):
+  `POST /api/v1/projects/{id}/break-glass/{activationId}/review` records who
+  reviewed an activation, when, and a note — exactly once (a second attempt
+  is refused, not a silent overwrite). The reviewer must be **someone other
+  than the user who activated it**, and must be an attributable human (a
+  machine identity cannot review), and the activation must have **concluded**
+  first — a still-active grant has to be revoked or allowed to expire before
+  it can be reviewed, since a reviewer cannot assess access that is still in
+  use. Activation itself remains single-person, by design (an emergency path
+  that needs a second person fails exactly when it's needed) — review is the
+  separate, after-the-fact check that makes that safe, not a second approver.
+
+  `break_glass.review_window` (default 72h) is how long an activation may go
+  unreviewed before it is reported. Past that, it is counted as a deviation
+  in the compliance posture report (`emergency_access.unreviewed_activations`,
+  with the age of the worst outstanding one), and a recurring check logs a
+  `SECURITY:` warning and writes a `break_glass.review_overdue` audit event
+  — on startup and every 6h. That visibility is the whole of the
+  enforcement: nothing is locked out, no grant is cut short, and no user is
+  blocked, because an emergency path that can be disabled by unfiled
+  paperwork fails exactly when it is needed.
+
+  **Upgrade note:** break-glass activations recorded before this release have
+  no review on file (`reviewed_at` is NULL), so immediately after upgrading
+  every one of them older than `break_glass.review_window` is counted as
+  unreviewed — the posture report's `emergency_access.unreviewed_activations`
+  will jump, the "emergency-access" control will show a Gap, and the 6-hourly
+  reminder will log and audit them until each one is reviewed. Retention will
+  not clear the backlog for you — an unreviewed activation is never purged, no
+  matter how old, deliberately, so retention cannot silently erase the
+  deviation. They are also NOT backfilled as "pre-review-era": a synthetic
+  review record would assert a second pair of eyes that never looked, which is
+  exactly the claim this change exists to make true. Review the pre-upgrade
+  activations (any user other than the activator with `roles.assign` at the
+  project can) to clear the report. (#2461)
 - **The server now refuses to start on an incomplete key-file set** (ADR-112,
   follow-up from #2400). #2400 made a single restore operation atomic (every
   file in a key-material set is either all written or none are); this adds the
@@ -108,6 +144,31 @@ All notable changes to Keyorix are documented here. This project follows
   a non-boolean field restructured into a real boolean — are recorded as known
   exceptions with an owning tracking issue, and are covered by the warning,
   the audit diff and the posture report under their current names meanwhile.
+- **New `keyorix-server admin validate --posture` command** (ADR-112,
+  secure-by-default baseline, item 4) reports every secure-baseline deviation
+  in one place and exits non-zero if any is found. **Every security-weakening
+  setting in effect counts**, whatever stage its `insecure_` naming is at:
+  encryption-at-rest disabled, database TLS disabled, unauthenticated
+  `/metrics`, log-delivered setup links and the rest are deviations because of
+  what they do, not because of what they are called. The report also covers
+  `security.enable_file_permission_check` disabled outright, a real
+  file-permission / encryption / database problem, an incomplete key-file set
+  (item 6), an enabled listener with no TLS while
+  `security.require_transport_tls` is set, and an admin-tier holder with
+  neither TOTP MFA nor a passkey enrolled. `security.require_mfa: false` is a
+  deviation, and so is an upgraded deployment still in `require_mfa`'s ADR-112
+  grace period (the server does not enforce MFA there yet, even with every
+  admin enrolled). A grace-period setting (item 1)
+  still enforcing only via its new secure-by-default value, with the underlying
+  condition it covers still non-compliant, is reported as its own deviation
+  referencing the detail above it. Each deviation is labelled with whether it
+  comes from a **shipped default** or an **explicit** config choice (whether
+  the config file literally writes the key), so an
+  operator can tell "this install has not been hardened yet" from "someone
+  turned this off" — but both count toward the exit code. Only genuinely
+  non-judgemental facts are informational: TLS mode, and the KEK salt file's
+  age (no rotation-age threshold is defined anywhere in this codebase, so a
+  number here would be a guess).
 
 ## v0.95.3 — 2026-10-01
 

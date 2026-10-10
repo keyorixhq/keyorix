@@ -234,8 +234,8 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	}
 	testCore.SetWebAuthn(rp)
 
-	if err := wireSAMLProvider(testCore); err != nil {
-		t.Fatalf("wireSAMLProvider: %v", err)
+	if err := wireSSOProviders(testCore); err != nil {
+		t.Fatalf("wireSSOProviders: %v", err)
 	}
 
 	testCore.SetBootstrapToken("fault-fuzz-bootstrap")
