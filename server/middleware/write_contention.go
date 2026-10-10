@@ -1,7 +1,7 @@
 package middleware
 
 import (
-	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -21,6 +21,15 @@ const WriteContentionRetryAfterSeconds = 5
 // lock, or storage vocabulary, so a 503 cannot be used to fingerprint the
 // backend.
 const writeContentionMessage = "The service is temporarily busy. Please retry shortly."
+
+// writeContentionBody is the whole 503 body, a compile-time constant: it holds
+// no value of any kind, so it cannot carry a timestamp. The API's UTC rule
+// (server/http/handlers utcTimes, TestUTCStructural_NonHandlerJSONWritersAreTimeFree)
+// only allows a JSON writer outside the handlers package if it is a fixed,
+// time-free envelope. Keeping this a constant, rather than encoding a map, means
+// there is no encoder call for that guard to register and nothing that could
+// later grow a time field without changing a string literal.
+const writeContentionBody = `{"success":false,"error":"ServiceUnavailable","message":"` + writeContentionMessage + `","code":503}` + "\n"
 
 // credentialPathPrefix marks the credential surface (login, MFA, WebAuthn login,
 // setup/consume, SSO/SAML callbacks, password change). A storage failure there
@@ -83,12 +92,7 @@ func (w *contentionWriter) WriteHeader(code int) {
 	h.Set(hdrContentType, mimeJSON)
 	h.Set("Retry-After", strconv.Itoa(WriteContentionRetryAfterSeconds))
 	w.ResponseWriter.WriteHeader(http.StatusServiceUnavailable)
-	_ = json.NewEncoder(w.ResponseWriter).Encode(map[string]interface{}{
-		"success": false,
-		"error":   "ServiceUnavailable",
-		"message": writeContentionMessage,
-		"code":    http.StatusServiceUnavailable,
-	})
+	_, _ = io.WriteString(w.ResponseWriter, writeContentionBody)
 }
 
 func (w *contentionWriter) Write(p []byte) (int, error) {
