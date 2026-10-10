@@ -425,7 +425,14 @@ MFA or a passkey.
 Each deviation says whether it comes from a **shipped default** or an
 **explicit** config choice, so "this install has not been hardened yet" is
 distinguishable from "someone turned this off" — both count toward the exit
-code. A grace-period setting merely relying on its new implicit default, with a
+code. *Explicit* means the config file literally writes the setting's key (even
+to its default value — `server/config/production.yaml` writes
+`require_transport_tls: false`, so there it is explicit); *shipped default*
+means the file is silent and the weak state is what an absent key resolves to.
+A key that arrives only through a YAML merge key (`<<:`) reads as not written.
+Startup checks are reported only if they ran: validation stops at the first
+failed check, and any check after it is listed as "not evaluated" rather than
+as a second failure. A grace-period setting merely relying on its new implicit default, with a
 real underlying problem, is its own deviation. Only TLS mode and the KEK salt
 file's age are informational: no rotation-age threshold is defined anywhere in
 this codebase, so a number there would be a guess.

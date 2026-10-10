@@ -64,7 +64,7 @@ func runAdminValidate(cmd *cobra.Command, args []string) error { // NOSONAR -- c
 	// a distinct report shape (named deviations + exit code), not an addition
 	// to the one above.
 	if postureFlag {
-		return runAdminValidatePosture(cfg)
+		return runAdminValidatePosture(cfg, configPath)
 	}
 
 	fmt.Println("Validating Keyorix System")

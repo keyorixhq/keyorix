@@ -26,6 +26,22 @@ type ValidationResult struct {
 	DatabaseOK    bool
 	Warnings      []string
 	Errors        []string
+
+	// Which checks actually RAN. validateStartup stops at its first hard
+	// failure, so a false *OK field alone cannot tell "ran and failed" from
+	// "never reached"; a caller reporting per-check outcomes (the posture
+	// report, server/admin/posture.go) needs both. A check that is switched
+	// off (file-permission check disabled, encryption disabled) did not run
+	// either, and its *OK is true by convention.
+	PermissionsChecked bool
+	EncryptionChecked  bool
+	DatabaseChecked    bool
+	// PermissionsIssue is what the file-permission check found, whether it
+	// then failed validation or was tolerated by
+	// security.allow_unsafe_file_permissions (in which case validation carries
+	// on and the issue is otherwise only in Warnings). "" when it found none or
+	// did not run.
+	PermissionsIssue string
 	// InsecureSettings is the STRUCTURED posture view of every ADR-112
 	// `insecure_` opt-out this validator knows about, alongside the
 	// human-readable Warnings above. Structured on purpose (Andrei's decision,
@@ -122,7 +138,9 @@ func validateStartup(configPath string, forceAutoFix bool, tolerateUnprovisioned
 	tolerateUnprovisionedKeys = tolerateUnprovisionedKeys && cfg.Security.EnableFilePermissionCheckImplicitDefault
 
 	if cfg.Security.EnableFilePermissionCheck {
+		result.PermissionsChecked = true
 		if err := validateFilePermissions(cfg, configPath, forceAutoFix, tolerateUnprovisionedKeys, result); err != nil {
+			result.PermissionsIssue = err.Error()
 			if !cfg.Security.AllowUnsafeFilePermissions {
 				return result, fmt.Errorf("file permission validation failed: %w", err)
 			}
@@ -136,6 +154,7 @@ func validateStartup(configPath string, forceAutoFix bool, tolerateUnprovisioned
 	}
 
 	if cfg.Storage.Encryption.Enabled {
+		result.EncryptionChecked = true
 		if err := validateEncryption(cfg, result, tolerateUnprovisionedKeys); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("Encryption validation failed: %v", err))
 			return result, fmt.Errorf("encryption validation failed: %w", err)
@@ -146,6 +165,7 @@ func validateStartup(configPath string, forceAutoFix bool, tolerateUnprovisioned
 		result.Warnings = append(result.Warnings, "Encryption is disabled")
 	}
 
+	result.DatabaseChecked = true
 	if err := validateDatabase(cfg, result); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("Database validation failed: %v", err))
 		return result, fmt.Errorf("database validation failed: %w", err)

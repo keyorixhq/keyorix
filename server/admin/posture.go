@@ -71,28 +71,41 @@ func (r *postureReport) info(line string) {
 	r.informational = append(r.informational, line)
 }
 
-func runAdminValidatePosture(cfg *config.Config) error {
+func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 	report := &postureReport{}
 
-	collectInsecureSettingsPosture(cfg, report)
-	collectFilePermissionPosture(cfg, report)
+	explicit, err := config.ExplicitlySetPaths(configPath)
+	if err != nil {
+		return fmt.Errorf("posture check could not read the config file: %w", err)
+	}
+	collectInsecureSettingsPosture(cfg, explicit, report)
+	collectFilePermissionPosture(cfg, configPath, report)
 	collectKeyFileSetPosture(cfg, report)
 	collectTLSPosture(cfg, report)
 	collectKEKAgePosture(cfg, report)
 
-	if err := withUsableStorage(cfg, func(store corestorage.Storage) error {
+	// A database that cannot be queried is reported as a deviation of its own
+	// and the report is still printed: everything collected above is real, and
+	// discarding it would leave the operator with one error line instead of the
+	// report (withUsableStorage's contract is to report the database distinctly,
+	// not to fail the whole command over it). The command still fails.
+	dbErr := withUsableStorage(cfg, func(store corestorage.Storage) error {
 		coreService := core.NewKeyorixCore(store)
 		ctx := context.Background()
 		// TODO(#2461): add collectBreakGlassReviewPosture here -- see its
 		// comment below for the two findings Andrei decided on and why they
 		// cannot be implemented until that PR's API lands.
 		return collectAdminMFAPosture(ctx, cfg, coreService, report)
-	}); err != nil {
-		return fmt.Errorf("posture check could not query the database: %w", err)
+	})
+	if dbErr != nil {
+		report.deviate("database", fmt.Sprintf("posture check could not query the database, so the admin-MFA check was NOT evaluated: %v", dbErr))
 	}
 
 	printPostureReport(report)
 
+	if dbErr != nil {
+		return fmt.Errorf("posture check could not query the database: %w", dbErr)
+	}
 	if len(report.deviations) > 0 {
 		return fmt.Errorf("%d secure-baseline deviation(s) found", len(report.deviations))
 	}
@@ -137,23 +150,35 @@ func runAdminValidatePosture(cfg *config.Config) error {
 // config template exits non-zero here, the install genuinely does not match
 // the secure baseline, and the fix is to change the default (which is what the
 // rest of ADR-112 is for) rather than to stop reporting it.
-func collectInsecureSettingsPosture(cfg *config.Config, report *postureReport) {
+func collectInsecureSettingsPosture(cfg *config.Config, explicit map[string]bool, report *postureReport) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if !s.InEffect(cfg) {
 			continue
 		}
 		detail := fmt.Sprintf("%s is in effect — %s", s.Name, s.Describe)
-		// An entry still awaiting its rename decision is, today, derived from a
-		// key whose weak state is what a config file that says nothing gets.
-		// That makes it a shipped default, not an explicit choice -- a real
-		// distinction worth showing, and the only thing the old marker was
-		// right about.
-		if s.DeprecatedAlias == "" && strings.Contains(s.Describe, "NEEDS ANDREI") {
+		// Origin is a fact about the config FILE: explicit when it writes one
+		// of the paths this entry reads, shipped-default when it is silent and
+		// the weak state is what Load resolves the absent key to. Not keyed on
+		// any Describe text (the first shape matched "NEEDS ANDREI", which
+		// labelled production.yaml's explicit require_transport_tls: false a
+		// shipped default).
+		if !writesAnyOf(explicit, s.SourcePaths) {
 			report.deviateShippedDefault("insecure-setting", detail)
 			continue
 		}
 		report.deviate("insecure-setting", detail)
 	}
+}
+
+// writesAnyOf reports whether the config file (explicit, from
+// config.ExplicitlySetPaths) writes any of paths.
+func writesAnyOf(explicit map[string]bool, paths []string) bool {
+	for _, p := range paths {
+		if explicit[p] {
+			return true
+		}
+	}
+	return false
 }
 
 // collectFilePermissionPosture reports the secure-baseline file-permission
@@ -167,69 +192,58 @@ func collectInsecureSettingsPosture(cfg *config.Config, report *postureReport) {
 // server/main.go's runStartupValidation/enforceKeyFilePermissions soften this
 // exact case from a boot-time failure into a warning, so this command, not
 // the boot path, is where it must surface as something that needs fixing.
-func collectFilePermissionPosture(cfg *config.Config, report *postureReport) {
+func collectFilePermissionPosture(cfg *config.Config, configPath string, report *postureReport) {
+	// No early return when the check is off (coordinator review #1): the
+	// encryption and database checks do not depend on it, and an install with
+	// the permission check switched off is the one most likely to have a real
+	// problem -- it must not get the thinnest report.
 	if !cfg.Security.EnableFilePermissionCheck {
 		report.deviate("file-permissions", "security.enable_file_permission_check is disabled (ADR-112 requires it enabled by default)")
-		return
-	}
-	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
+	} else if cfg.Security.EnableFilePermissionCheckImplicitDefault {
 		report.info("security.enable_file_permission_check is enforcing via its new secure-by-default value (grace period) — relies on the implicit default, never set explicitly")
 	}
 
-	configPath := config.ResolvedPath("")
-	result, err := startup.ValidateStartup(configPath, false)
-	if result == nil {
-		report.deviate("file-permissions", fmt.Sprintf("could not run startup validation: %v", err))
+	// configPath, not ResolvedPath(""): --config must be the file validated
+	// (coordinator review #3), same as the sibling admin commands.
+	result, err := startup.ValidateStartup(config.ResolvedPath(configPath), false)
+	if !result.ConfigValid {
+		report.deviate("startup-validation", fmt.Sprintf("configuration did not load/validate, so no other startup check ran: %v", err))
 		return
 	}
 
-	// All three checks are reported, with no early return between them
-	// (coordinator review, secondary finding). ValidateStartup stops at its
-	// FIRST failure, so a failed permission check leaves EncryptionOK and
-	// DatabaseOK false simply because they were never evaluated -- and the old
-	// shape returned after the first one, so an install with a permission
-	// problem got a report that said nothing about its encryption or database
-	// at all. Reporting all three means a reader is never silently missing a
-	// section; validationDetail is what keeps an unevaluated check from being
-	// reported as a failure.
-	for _, c := range []struct {
-		ok       bool
-		category string
-		what     string
-	}{
-		{result.PermissionsOK, "file-permissions", "file permission validation"},
-		{result.EncryptionOK, "startup-validation", "encryption validation"},
-		{result.DatabaseOK, "startup-validation", "database validation"},
-	} {
-		if c.ok {
-			continue
+	// ValidateStartup stops at its FIRST hard failure. A check is a deviation
+	// only if it RAN and failed (coordinator review #2): one bad file
+	// permission used to read as three deviations, two of them for checks
+	// that never ran. A check that was reached by nobody is said to be
+	// unevaluated -- informational, because the check that stopped validation
+	// is already a counted deviation.
+	if result.PermissionsChecked && result.PermissionsIssue != "" {
+		detail := "file permission validation found: " + result.PermissionsIssue
+		if cfg.Security.AllowUnsafeFilePermissions {
+			detail += " (tolerated at boot only because security.allow_unsafe_file_permissions is set)"
 		}
-		report.deviate(c.category, fmt.Sprintf("%s did not pass: %s", c.what, validationDetail(result, err)))
+		report.deviate("file-permissions", detail)
+	}
+	for _, c := range []struct {
+		applies, checked, ok bool
+		what                 string
+	}{
+		{cfg.Storage.Encryption.Enabled, result.EncryptionChecked, result.EncryptionOK, "encryption validation"},
+		{true, result.DatabaseChecked, result.DatabaseOK, "database validation"},
+	} {
+		switch {
+		case !c.applies || (c.checked && c.ok):
+		case !c.checked:
+			report.info(c.what + " not evaluated: startup validation stopped at an earlier failed check (counted above)")
+		default:
+			// It ran and failed, so it is where validation stopped: err is its error.
+			report.deviate("startup-validation", fmt.Sprintf("%s did not pass: %v", c.what, err))
+		}
 	}
 
-	if !result.PermissionsOK && cfg.Security.EnableFilePermissionCheckImplicitDefault {
+	if result.PermissionsIssue != "" && cfg.Security.EnableFilePermissionCheckImplicitDefault {
 		report.deviate("grace-period", "security.enable_file_permission_check's grace period is not yet complied with — the file-permissions deviation above would hard-fail startup once the setting is reviewed and set explicitly")
 	}
-}
-
-// validationDetail renders what ValidateStartup actually reported, instead of
-// formatting its error with %v at every call site.
-//
-// Two reasons, both from the coordinator's review of this PR. First, err is
-// NIL whenever ValidateStartup stopped before reaching a check: printing it
-// gave "database validation failed: <nil>", which reads as a failure with no
-// cause when the truth is "not evaluated". Second, result.Errors carries the
-// per-check messages ValidateStartup collected, which are more specific than
-// the single wrapped error -- and are present even in the cases where err is
-// nil.
-func validationDetail(result *startup.ValidationResult, err error) string {
-	if len(result.Errors) > 0 {
-		return strings.Join(result.Errors, "; ")
-	}
-	if err != nil {
-		return err.Error()
-	}
-	return "not evaluated (startup validation stopped at an earlier check — see the deviations above)"
 }
 
 // collectKeyFileSetPosture reports item 6's boot-time key-file-set
@@ -274,7 +288,7 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 			report.deviate("tls", fmt.Sprintf("%s listener has no TLS but security.require_transport_tls is set", name))
 			return
 		}
-		report.info(fmt.Sprintf("%s listener is serving cleartext (no TLS) — acceptable only if a TLS-terminating reverse proxy fronts it; set security.require_transport_tls to fail closed if not", name))
+		report.info(fmt.Sprintf("%s listener is serving cleartext (no TLS) — counted above as security.insecure_allow_cleartext_transport; safe only if a TLS-terminating reverse proxy fronts it", name))
 	}
 	check("HTTP", cfg.Server.HTTP)
 	check("gRPC", cfg.Server.GRPC)

@@ -64,48 +64,45 @@ security:
 	return cfg
 }
 
-// TestShippedProductionTemplates_ReportOnlyKnownShippedDefaultDeviations runs
-// the config-only collectors over the REAL shipped templates
+// TestShippedProductionTemplates_ReportOnlyKnownDeviations runs the
+// config-only collectors over the REAL shipped templates
 // (server/config/production.yaml and web-enabled.yaml), not a synthetic
 // fixture built to match.
 //
-// Its assertion CHANGED with this PR's blocker fix, and the change is the
-// point. It used to require zero deviations, which is what made excluding a
-// whole class of settings from the count look necessary -- the exclusion
-// existed to keep this test green. But the templates genuinely do not match
-// the secure baseline: they ship TLS terminated by a fronting reverse proxy
-// (so security.require_transport_tls is false) and no metrics token (so
-// /metrics is unauthenticated). Hiding that to protect a green test is how the
-// report came to answer "no deviations found" for an install with encryption
-// at rest switched off.
+// The templates genuinely do not match the secure baseline -- they ship TLS
+// terminated by a fronting reverse proxy and no metrics token -- and the
+// report must say so rather than exclude those settings (the #2478 blocker).
+// What is asserted is the exact set of deviations each template produces, BY
+// ORIGIN, with origin derived from what the file literally writes
+// (config.ExplicitlySetPaths):
 //
-// So the property asserted is the one that is actually true and actually
-// worth guarding:
+//   - production.yaml WRITES `require_transport_tls: false` (its comment
+//     explains the proxy-fronted shape), so that one is EXPLICIT. An earlier
+//     version of this test asserted "no template ever explicitly asks for a
+//     weakening" and passed only because origin was keyed on Describe text,
+//     which labelled this line a shipped default (coordinator review #4).
+//     That claim is withdrawn: this template does ask, deliberately.
+//   - web-enabled.yaml is silent on it, so there it is a shipped default.
 //
-//  1. NO deviation from a shipped template may have origin "explicit" -- a
-//     template must never ASK for a weakening.
-//  2. Its shipped-default deviations are exactly a known, named list. A new
-//     one appearing means someone weakened a shipped template, which is a real
-//     finding and fails here; one disappearing means a default got hardened,
-//     which is this ADR's goal and fails here too so the list is updated.
+// A new deviation appearing means a template was weakened (or a new registry
+// entry covers something they leave open); one disappearing means a default
+// got hardened. Either fails here until the table is updated on purpose.
 //
-// Scoped to the config-only collectors (insecure-settings registry,
-// file-permission-check toggle, TLS): the others need disk-resident key
-// material these templates reference by absolute host paths that do not exist
-// on this machine, or a live database.
-func TestShippedProductionTemplates_ReportOnlyKnownShippedDefaultDeviations(t *testing.T) {
-	// The exact weakenings the shipped templates accept today, each a
-	// deliberate, documented choice -- and each still counted toward the exit
-	// code, because the fix for a weak DEFAULT is to change the default (the
-	// rest of ADR-112), not to stop reporting it.
-	knownShippedDefaults := []string{
-		// TLS terminated by a fronting reverse proxy.
-		"security.insecure_allow_cleartext_transport",
-		// No metrics token shipped; the templates document locking /metrics
-		// down at the network layer.
-		"server.insecure_allow_unauthenticated_metrics",
+// Scoped to the config-only collectors (insecure-settings registry, TLS): the
+// others need disk-resident key material these templates reference by
+// absolute host paths that do not exist on this machine, or a live database.
+func TestShippedProductionTemplates_ReportOnlyKnownDeviations(t *testing.T) {
+	known := map[string]map[string]deviationOrigin{
+		"../config/production.yaml": {
+			"security.insecure_allow_cleartext_transport":   originExplicit,
+			"server.insecure_allow_unauthenticated_metrics": originShippedDefault,
+		},
+		"../config/web-enabled.yaml": {
+			"security.insecure_allow_cleartext_transport":   originShippedDefault,
+			"server.insecure_allow_unauthenticated_metrics": originShippedDefault,
+		},
 	}
-	for _, path := range []string{"../config/production.yaml", "../config/web-enabled.yaml"} {
+	for path, want := range known {
 		t.Run(path, func(t *testing.T) {
 			// config.Load's traversal guard rejects a ".." path outright (it
 			// reads rooted at the application directory) -- copy the real
@@ -118,42 +115,22 @@ func TestShippedProductionTemplates_ReportOnlyKnownShippedDefaultDeviations(t *t
 			require.NoError(t, os.WriteFile(filepath.Join(dir, "keyorix.yaml"), raw, 0600))
 			cfg, err := config.Load("")
 			require.NoError(t, err)
+			explicit, err := config.ExplicitlySetPaths("")
+			require.NoError(t, err)
 
 			report := &postureReport{}
-			collectInsecureSettingsPosture(cfg, report)
+			collectInsecureSettingsPosture(cfg, explicit, report)
 			collectTLSPosture(cfg, report)
-			if !cfg.Security.EnableFilePermissionCheck {
-				report.deviate("file-permissions", "security.enable_file_permission_check is disabled")
-			}
 
-			var explicit, shipped []string
+			got := map[string]deviationOrigin{}
 			for _, d := range report.deviations {
-				if d.origin == originExplicit {
-					explicit = append(explicit, d.detail)
-					continue
-				}
-				shipped = append(shipped, d.detail)
+				name := strings.SplitN(d.detail, " ", 2)[0]
+				got[name] = d.origin
 			}
-			assert.Empty(t, explicit,
-				"%s must never EXPLICITLY ask for a weakening; a shipped template requesting one is a real finding, got: %v",
-				path, explicit)
-
-			for _, want := range knownShippedDefaults {
-				found := false
-				for _, got := range shipped {
-					if strings.Contains(got, want) {
-						found = true
-					}
-				}
-				assert.True(t, found,
-					"%s no longer reports %s as a shipped-default deviation. If the default was HARDENED, that is "+
-						"the goal — remove it from knownShippedDefaults. If it stopped being reported, that is the "+
-						"#2478 blocker coming back.", path, want)
-			}
-			assert.Len(t, shipped, len(knownShippedDefaults),
-				"%s reports a shipped-default deviation that is not in knownShippedDefaults — a shipped template "+
-					"was weakened, or a new registry entry covers something these templates leave open. Got: %v",
-				path, shipped)
+			assert.Equal(t, want, got,
+				"%s's deviations changed. A new one means a template was weakened; a missing one means a default "+
+					"was hardened (the goal -- update this table) or stopped being reported (the #2478 blocker "+
+					"coming back). Full report: %+v", path, report.deviations)
 		})
 	}
 }
@@ -169,36 +146,34 @@ func TestShippedProductionTemplates_ReportOnlyKnownShippedDefaultDeviations(t *t
 // shipped defaults. It only read as "zero" because the excluded class hid
 // exactly those four. Asserting zero again would mean re-adding the exclusion.
 //
-// So: no deviation may be EXPLICIT, and every deviation must be one of the
-// four the fixture knowingly accepts.
+// So: the deviations must be exactly the four the fixture knowingly accepts,
+// each with the origin the file's own text gives it.
 // TestCollectInsecureSettingsPosture_FullyHardenedConfigReportsZero below is
 // what proves zero is still reachable at all.
 func TestRunAdminValidatePosture_BaselineFixtureReportsOnlyKnownShippedDefaults(t *testing.T) {
 	cfg := writeSecureBaselineConfig(t)
+	explicit, err := config.ExplicitlySetPaths("")
+	require.NoError(t, err)
 
 	report := &postureReport{}
-	collectInsecureSettingsPosture(cfg, report)
+	collectInsecureSettingsPosture(cfg, explicit, report)
 
-	accepted := []string{
-		"security.insecure_allow_cleartext_transport",            // fixture sets require_transport_tls: false
-		"storage.encryption.insecure_disable_encryption_at_rest", // fixture disables encryption (no key material needed)
-		"server.insecure_allow_unauthenticated_metrics",          // no metrics token shipped
-		"server.insecure_disable_api_ratelimit",                  // rate limiting ships off
+	// Origin is what the fixture file literally writes: it WRITES
+	// require_transport_tls: false and storage.encryption.enabled: false, and
+	// is silent on the metrics token and rate limiting.
+	accepted := map[string]deviationOrigin{
+		"security.insecure_allow_cleartext_transport":            originExplicit,
+		"storage.encryption.insecure_disable_encryption_at_rest": originExplicit,
+		"server.insecure_allow_unauthenticated_metrics":          originShippedDefault,
+		"server.insecure_disable_api_ratelimit":                  originShippedDefault,
 	}
+	got := map[string]deviationOrigin{}
 	for _, d := range report.deviations {
-		assert.Equal(t, originShippedDefault, d.origin,
-			"the fixture must not EXPLICITLY ask for a weakening: %s", d.detail)
-		matched := false
-		for _, a := range accepted {
-			if strings.Contains(d.detail, a) {
-				matched = true
-			}
-		}
-		assert.True(t, matched, "unexpected deviation from the baseline fixture: %s", d.detail)
+		got[strings.SplitN(d.detail, " ", 2)[0]] = d.origin
 	}
-	assert.Len(t, report.deviations, len(accepted),
-		"a deviation the fixture knowingly accepts stopped being reported — that is the #2478 blocker returning. Got: %+v",
-		report.deviations)
+	assert.Equal(t, accepted, got,
+		"a deviation the fixture knowingly accepts stopped being reported (the #2478 blocker returning), or a new "+
+			"one appeared. Got: %+v", report.deviations)
 }
 
 // TestCollectInsecureSettingsPosture_FullyHardenedConfigReportsZero is the
@@ -229,7 +204,7 @@ func TestCollectInsecureSettingsPosture_FullyHardenedConfigReportsZero(t *testin
 	cfg.Notifications.Email.TLS = "starttls"
 
 	report := &postureReport{}
-	collectInsecureSettingsPosture(cfg, report)
+	collectInsecureSettingsPosture(cfg, nil, report)
 
 	assert.Empty(t, report.deviations,
 		"a fully hardened config must report zero — otherwise the exit code can never distinguish a hardened "+
@@ -260,7 +235,7 @@ func TestRunAdminValidatePosture_AdminWithoutMFAIsADeviationAndNonZeroExit(t *te
 	})
 	require.NoError(t, err)
 
-	err = runAdminValidatePosture(cfg)
+	err = runAdminValidatePosture(cfg, "")
 	require.Error(t, err, "an admin-tier holder with no MFA must be a counted deviation")
 }
 
@@ -270,7 +245,7 @@ func TestCollectInsecureSettingsPosture_InEffectSettingIsADeviation(t *testing.T
 	cfg.Security.EnableFilePermissionCheck = true
 
 	report := &postureReport{}
-	collectInsecureSettingsPosture(cfg, report)
+	collectInsecureSettingsPosture(cfg, map[string]bool{"security.allow_unsafe_file_permissions": true}, report)
 
 	// Asserts PRESENCE, not that this is the only deviation. A zero-value
 	// Config has several other weakenings in effect (encryption off, TLS not
@@ -310,7 +285,7 @@ func TestCollectInsecureSettingsPosture_EncryptionAtRestDisabledIsACountedDeviat
 	cfg.Storage.Encryption.Enabled = false // secrets stored unencrypted at rest
 
 	report := &postureReport{}
-	collectInsecureSettingsPosture(cfg, report)
+	collectInsecureSettingsPosture(cfg, nil, report)
 
 	var found *postureDeviation
 	for i := range report.deviations {
@@ -348,7 +323,7 @@ func TestCollectInsecureSettingsPosture_EveryPreviouslyExcludedEntryNowCounts(t 
 	cfg := &config.Config{}
 
 	report := &postureReport{}
-	collectInsecureSettingsPosture(cfg, report)
+	collectInsecureSettingsPosture(cfg, nil, report)
 
 	var expected []string
 	for _, s := range config.InsecureSettingsRegistry {
@@ -385,7 +360,7 @@ func TestCollectInsecureSettingsPosture_ShippedDefaultIsLabelledButStillCounted(
 	cfg.Security.RequireTransportTLS = false // production.yaml's deliberate proxy-fronted shape
 
 	report := &postureReport{}
-	collectInsecureSettingsPosture(cfg, report)
+	collectInsecureSettingsPosture(cfg, nil, report)
 
 	var found *postureDeviation
 	for i := range report.deviations {
@@ -399,13 +374,13 @@ func TestCollectInsecureSettingsPosture_ShippedDefaultIsLabelledButStillCounted(
 }
 
 func TestCollectFilePermissionPosture_ExplicitlyDisabledIsADeviation(t *testing.T) {
-	cfg := &config.Config{}
-	cfg.Security.EnableFilePermissionCheck = false
+	yaml := strings.Replace(postureFixtureYAML, "enable_file_permission_check: true", "enable_file_permission_check: false", 1)
+	cfgPath, cfg := writePostureFixture(t, yaml, 0600)
 
 	report := &postureReport{}
-	collectFilePermissionPosture(cfg, report)
+	collectFilePermissionPosture(cfg, cfgPath, report)
 
-	require.Len(t, report.deviations, 1)
+	require.Len(t, report.deviations, 1, "got %+v", report.deviations)
 	assert.Equal(t, "file-permissions", report.deviations[0].category)
 	assert.Contains(t, report.deviations[0].detail, "enable_file_permission_check is disabled")
 }

@@ -103,7 +103,8 @@ All notable changes to Keyorix are documented here. This project follows
   still enforcing only via its new secure-by-default value, with the underlying
   condition it covers still non-compliant, is reported as its own deviation
   referencing the detail above it. Each deviation is labelled with whether it
-  comes from a **shipped default** or an **explicit** config choice, so an
+  comes from a **shipped default** or an **explicit** config choice (whether
+  the config file literally writes the key), so an
   operator can tell "this install has not been hardened yet" from "someone
   turned this off" — but both count toward the exit code. Only genuinely
   non-judgemental facts are informational: TLS mode, and the KEK salt file's
