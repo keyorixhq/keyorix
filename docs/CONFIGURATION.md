@@ -367,8 +367,13 @@ File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 **Both `enable_file_permission_check` and `require_mfa` default to `true` when
 omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
 from its first start with no config changes needed: the first admin to log in is
-asked to enrol MFA (TOTP or passkey) before doing anything else, and a
-file-permission or key-material problem refuses to start.
+asked to enrol MFA (TOTP or passkey) before doing anything else, and a problem
+with the encryption key material or the database file (missing, undersized,
+readable beyond its owner) refuses to start. The config file and TLS cert/key —
+inputs an orchestrator usually mounts (a Kubernetes ConfigMap/Secret is
+root-owned 0644 by default) — only get a warning naming the file, the mismatch
+and the fix while the key is left at its default; set
+`enable_file_permission_check: true` explicitly to refuse on those too.
 
 **Upgrading an existing deployment** that never set
 `enable_file_permission_check`: the server tells a fresh install from an upgrade

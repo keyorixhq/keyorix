@@ -270,3 +270,53 @@ func TestLogWarnOnImplicitRequireMFADefault_WarnsOnlyForTheImplicitDefault(t *te
 		})
 	}
 }
+
+// ── enforceKeyFilePermissions: orchestrator-mounted TLS keys ─────────────────
+
+// On the implicit default a world-readable TLS private key (a Kubernetes Secret is
+// root-owned 0644 by default) warns, naming the file and the fix, while the same
+// install still refuses on world-readable encryption key material (Andrei,
+// 2026-10-10: "keys strict, mounts warn"). An explicit true refuses on both.
+func TestEnforceKeyFilePermissions_ImplicitDefault_TLSKeyWarnsKeyMaterialRefuses(t *testing.T) {
+	dir := t.TempDir()
+	tlsKey := filepath.Join(dir, "tls.key")
+	dek := filepath.Join(dir, "dek.key")
+	if err := os.WriteFile(tlsKey, []byte("k"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dek, make([]byte, 60), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := func(implicit bool) *config.Config {
+		c := &config.Config{Security: config.SecurityConfig{
+			EnableFilePermissionCheck:                true,
+			EnableFilePermissionCheckImplicitDefault: implicit,
+		}}
+		c.Storage.Encryption = config.EncryptionConfig{Enabled: true, DEKPath: dek}
+		c.Server.HTTP.TLS.Enabled = true
+		c.Server.HTTP.TLS.KeyFile = tlsKey
+		return c
+	}
+
+	logged := captureLogs(func() {
+		if err := enforceKeyFilePermissions(cfg(true)); err != nil {
+			t.Errorf("implicit default: a world-readable TLS key must warn, got %v", err)
+		}
+	})
+	for _, want := range []string{tlsKey, "chmod 600", "defaultMode 0400"} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("warning missing %q: %q", want, logged)
+		}
+	}
+
+	if err := enforceKeyFilePermissions(cfg(false)); err == nil {
+		t.Error("explicit true: a world-readable TLS key must still refuse to start")
+	}
+
+	if err := os.Chmod(dek, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := enforceKeyFilePermissions(cfg(true)); err == nil {
+		t.Error("implicit default, fresh install: world-readable key material must refuse to start")
+	}
+}

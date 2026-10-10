@@ -42,7 +42,10 @@ All notable changes to Keyorix are documented here. This project follows
   default to the secure state** (ADR-112, secure-by-default baseline, item 1).
   A fresh install enforces file-permission/DEK-salt-size/database-reachability
   startup checks and admin MFA from its very first start, with no config
-  changes needed; the first admin login asks for MFA enrolment.
+  changes needed; the first admin login asks for MFA enrolment. On the
+  default, the encryption key material and database file are checked strictly;
+  the config file and TLS cert/key (usually orchestrator-mounted) get a warning
+  naming the file and the fix, and an explicit `true` makes those strict too.
   **Upgrade note:** an existing deployment (its database already has users)
   that never set `enable_file_permission_check` keeps booting during a grace
   period: a real file-permission or startup-validation problem logs a loud

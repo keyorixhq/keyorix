@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
@@ -86,6 +87,12 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 // material exists" reported as the real problem it is, not silently
 // explained away as "first boot" — they are not mid-boot-sequence the moment
 // before auto-generation runs the way the server's own call is.
+//
+// It also applies only while the loaded config leaves enable_file_permission_check
+// to ADR-112's implicit default, and under that default an orchestrator-mounted
+// input (the config file, a TLS cert/key) with the wrong mode or owner is a
+// warning naming the file and the fix rather than an error (see
+// validateFilePermissions). Key material and the database stay strict.
 func ValidateStartupTolerant(configPath string, forceAutoFix bool) (*ValidationResult, error) {
 	return validateStartup(configPath, forceAutoFix, true)
 }
@@ -110,6 +117,9 @@ func validateStartup(configPath string, forceAutoFix bool, tolerateUnprovisioned
 		return result, fmt.Errorf("configuration validation failed: %w", err)
 	}
 	result.ConfigValid = true
+	// The tolerant variant's relaxations exist only for ADR-112's implicit default;
+	// a config that writes the key itself is audited strictly whoever the caller is.
+	tolerateUnprovisionedKeys = tolerateUnprovisionedKeys && cfg.Security.EnableFilePermissionCheckImplicitDefault
 
 	if cfg.Security.EnableFilePermissionCheck {
 		if err := validateFilePermissions(cfg, configPath, forceAutoFix, tolerateUnprovisionedKeys, result); err != nil {
@@ -235,14 +245,24 @@ func SafeFilePermPath(label, path string) (string, error) {
 	return keyfiles.SafePath(label, path)
 }
 
-// tolerateUnprovisioned (ValidateStartupTolerant only) leaves out of the audit the
-// files the server itself creates at 0600 later in the same first boot: the key
-// material when EVERY key file is absent (the same both-missing rule as
-// validateEncryption; a partial set is audited, and refused by the key-set
-// consistency check), and a local database file that does not exist yet. The
-// config file and TLS files are never left out: nothing generates them.
-func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix, tolerateUnprovisioned bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
+// implicitDefault (ValidateStartupTolerant only: security.enable_file_permission_check is
+// on through ADR-112's default, not written in the config) changes two things:
+//
+//   - It leaves out of the audit the files the server itself creates at 0600 later in
+//     the same first boot: the key material when EVERY key file is absent (the same
+//     both-missing rule as validateEncryption; a partial set is audited, and refused by
+//     the key-set consistency check), and a local database file that does not exist yet.
+//   - The config file and the TLS cert/key are inputs an orchestrator mounts (a
+//     Kubernetes ConfigMap/Secret is root-owned 0644 by default, a docker-compose bind
+//     mount keeps the host owner), so a mode/owner mismatch on them is a warning naming
+//     the file, the mismatch and the fix, not a refusal. Key material and the database
+//     stay strict. An explicit enable_file_permission_check: true audits everything
+//     strictly, as before ADR-112.
+func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix, implicitDefault bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	var files []securefiles.FilePermSpec
+	// mounted holds the orchestrator-mounted inputs (config file, TLS cert/key); they
+	// join files (strict) unless implicitDefault, see the doc comment above.
+	var mounted []mountedInput
 
 	// Check the config file that was actually loaded, not a hardcoded "keyorix.yaml":
 	// the loader resolves KEYORIX_CONFIG_PATH / an absolute path, so a fixed relative
@@ -252,7 +272,7 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files, securefiles.FilePermSpec{Path: clean, Mode: 0600})
+		mounted = append(mounted, mountedInput{"config file", securefiles.FilePermSpec{Path: clean, Mode: 0600}})
 	}
 
 	if cfg.Storage.Encryption.Enabled {
@@ -267,7 +287,7 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		if tolerateUnprovisioned && noneExist(specs) {
+		if implicitDefault && noneExist(specs) {
 			result.Warnings = append(result.Warnings, "Key material does not exist yet — treating as first boot; its permissions are checked once it is generated")
 		} else {
 			files = append(files, specs...)
@@ -288,7 +308,7 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 			if err != nil {
 				return err
 			}
-			if tolerateUnprovisioned && noneExist([]securefiles.FilePermSpec{{Path: dbPath}}) {
+			if implicitDefault && noneExist([]securefiles.FilePermSpec{{Path: dbPath}}) {
 				result.Warnings = append(result.Warnings, fmt.Sprintf("Database file %s does not exist yet — treating as first boot; it is created at 0600", dbPath))
 			} else {
 				files = append(files, securefiles.FilePermSpec{
@@ -308,9 +328,9 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files,
-			securefiles.FilePermSpec{Path: certPath, Mode: 0600},
-			securefiles.FilePermSpec{Path: keyPath, Mode: 0600},
+		mounted = append(mounted,
+			mountedInput{"HTTP TLS cert", securefiles.FilePermSpec{Path: certPath, Mode: 0600}},
+			mountedInput{"HTTP TLS key", securefiles.FilePermSpec{Path: keyPath, Mode: 0600}},
 		)
 	}
 	if cfg.Server.GRPC.TLS.Enabled {
@@ -322,13 +342,22 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files,
-			securefiles.FilePermSpec{Path: certPath, Mode: 0600},
-			securefiles.FilePermSpec{Path: keyPath, Mode: 0600},
+		mounted = append(mounted,
+			mountedInput{"gRPC TLS cert", securefiles.FilePermSpec{Path: certPath, Mode: 0600}},
+			mountedInput{"gRPC TLS key", securefiles.FilePermSpec{Path: keyPath, Mode: 0600}},
 		)
 	}
 
 	autoFix := cfg.Security.AutoFixFilePermissions || forceAutoFix
+	for _, m := range mounted {
+		if !implicitDefault {
+			files = append(files, m.spec)
+			continue
+		}
+		if err := securefiles.FixFilePerms([]securefiles.FilePermSpec{m.spec}, autoFix); err != nil {
+			result.Warnings = append(result.Warnings, describeMountedInputMismatch(m))
+		}
+	}
 	if err := securefiles.FixFilePerms(files, autoFix); err != nil {
 		return fmt.Errorf("file permission validation failed: %w", err)
 	}
@@ -338,6 +367,38 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 	}
 
 	return nil
+}
+
+// mountedInput is a file an orchestrator typically provides read-only (config, TLS).
+type mountedInput struct {
+	label string
+	spec  securefiles.FilePermSpec
+}
+
+// describeMountedInputMismatch is the warning for a mounted input that failed the
+// audit under the ADR-112 implicit default: the file, what is wrong with it, and how
+// to fix it.
+func describeMountedInputMismatch(m mountedInput) string {
+	var problems []string
+	info, err := os.Lstat(m.spec.Path)
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("cannot be inspected (%v)", err))
+	case info.Mode()&os.ModeSymlink != 0:
+		problems = append(problems, "is a symlink")
+	default:
+		if perm := info.Mode().Perm(); perm != m.spec.Mode {
+			problems = append(problems, fmt.Sprintf("has mode %04o, expected %04o", perm, m.spec.Mode))
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+			problems = append(problems, fmt.Sprintf("is owned by uid %d, expected the server's uid %d", st.Uid, os.Getuid()))
+		}
+	}
+	if len(problems) == 0 {
+		problems = append(problems, "failed the permission audit")
+	}
+	return fmt.Sprintf("ADR-112: %s %s %s. Fix: chmod %o and chown it to the server's user (Kubernetes: mount it with defaultMode 0400 and the pod's fsGroup, or copy it into an emptyDir in an initContainer running as the server's uid; docker-compose: chown/chmod the host file to match the container user). On the implicit security.enable_file_permission_check default this only warns; set the key to true explicitly to refuse to start on it.",
+		m.label, m.spec.Path, strings.Join(problems, " and "), m.spec.Mode)
 }
 
 // noneExist reports whether every spec's path is absent (os.ErrNotExist). Any

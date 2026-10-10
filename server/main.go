@@ -2069,6 +2069,13 @@ func runStartupValidation(cfg *config.Config) error {
 // security.enable_file_permission_check is set (and not overridden by
 // allow_unsafe_file_permissions); otherwise it warns. A not-yet-created key file (first
 // boot) is skipped — it is created at 0600.
+//
+// ADR-112 implicit default (the key absent from the config): the encryption key material,
+// which the server writes itself, fails closed (a fresh install) or warns (an upgrade in the
+// grace period). A TLS private key is an input the orchestrator mounts (a Kubernetes Secret
+// is root-owned 0644 by default), so under the implicit default it only warns, naming the
+// file, its mode and the fix; an explicit enable_file_permission_check: true refuses on it
+// as before.
 func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	resolve := func(p string) string {
 		if p == "" || filepath.IsAbs(p) {
@@ -2076,18 +2083,56 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 		}
 		return filepath.Join(".", p)
 	}
-	var paths []string
+	var keyPaths, tlsPaths []string
 	if cfg.Storage.Encryption.Enabled {
-		paths = append(paths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
+		keyPaths = append(keyPaths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
 	}
 	if cfg.Server.HTTP.TLS.Enabled {
-		paths = append(paths, cfg.Server.HTTP.TLS.KeyFile)
+		tlsPaths = append(tlsPaths, cfg.Server.HTTP.TLS.KeyFile)
 	}
 	if cfg.Server.GRPC.TLS.Enabled {
-		paths = append(paths, cfg.Server.GRPC.TLS.KeyFile)
+		tlsPaths = append(tlsPaths, cfg.Server.GRPC.TLS.KeyFile)
 	}
 
-	var insecure []string
+	insecureKeys := groupOrOtherReadable(keyPaths)
+	insecureTLS := groupOrOtherReadable(tlsPaths)
+	if len(insecureKeys)+len(insecureTLS) == 0 {
+		return nil
+	}
+	sec := cfg.Security
+	if !sec.EnableFilePermissionCheck || sec.AllowUnsafeFilePermissions {
+		msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(append(insecureKeys, insecureTLS...), ", "))
+		log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+		return nil
+	}
+	if sec.EnableFilePermissionCheckImplicitDefault {
+		for _, f := range insecureTLS {
+			log.Printf("WARNING: TLS private key %s is readable beyond its owner — chmod 600 it (Kubernetes: mount the Secret with defaultMode 0400), or set security.enable_file_permission_check: true explicitly to refuse to start on this (ADR-112: on the implicit default an orchestrator-mounted TLS key only warns).", f)
+		}
+		insecureTLS = nil
+		if len(insecureKeys) == 0 {
+			return nil
+		}
+	}
+	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(append(insecureKeys, insecureTLS...), ", "))
+	if sec.EnableFilePermissionCheckUpgradeGrace {
+		// ADR-112 grace period: an upgraded deployment that never explicitly opted into
+		// the check — it's failing closed only because of the new secure default. Don't
+		// turn a pre-existing bad-permission file (present before this upgrade, previously
+		// only warned about) into a boot-blocking regression. Warn loudly instead, naming
+		// exactly how to comply. A fresh install never gets here (see
+		// adr112UpgradeGraceEligible).
+		adr112GraceSoftened.Store(true)
+		log.Printf("WARNING: %s — this now fails closed by default (ADR-112); set to warn-only, which is what the pre-upgrade behavior was, with security.allow_unsafe_file_permissions, or (preferred) chmod the files to 0600 and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+		return nil
+	}
+	return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
+}
+
+// groupOrOtherReadable returns "path (mode NNN)" for every existing path whose mode grants
+// any group or other bit. Empty and absent paths are skipped.
+func groupOrOtherReadable(paths []string) []string {
+	var out []string
 	for _, p := range paths {
 		if p == "" {
 			continue
@@ -2097,29 +2142,10 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 			continue // absent (e.g. created at 0600 on first boot) — nothing to check yet
 		}
 		if info.Mode().Perm()&0o077 != 0 {
-			insecure = append(insecure, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
+			out = append(out, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
 		}
 	}
-	if len(insecure) == 0 {
-		return nil
-	}
-	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(insecure, ", "))
-	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
-		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
-			// ADR-112 grace period: an upgraded deployment that never explicitly opted into
-			// the check — it's failing closed only because of the new secure default. Don't
-			// turn a pre-existing bad-permission file (present before this upgrade, previously
-			// only warned about) into a boot-blocking regression. Warn loudly instead, naming
-			// exactly how to comply. A fresh install never gets here (see
-			// adr112UpgradeGraceEligible).
-			adr112GraceSoftened.Store(true)
-			log.Printf("WARNING: %s — this now fails closed by default (ADR-112); set to warn-only, which is what the pre-upgrade behavior was, with security.allow_unsafe_file_permissions, or (preferred) chmod the files to 0600 and set security.enable_file_permission_check: true explicitly once compliant.", msg)
-			return nil
-		}
-		return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
-	}
-	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
-	return nil
+	return out
 }
 
 // verifyKeyFileSetConsistency is the boot-time key-file-set consistency check

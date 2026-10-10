@@ -3,6 +3,7 @@ package startup
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -63,13 +64,61 @@ func TestValidateStartupTolerant_PresentKeyFile_StillAudited(t *testing.T) {
 	}
 }
 
-// The config file itself is never tolerated: nothing generates it.
-func TestValidateStartupTolerant_WorldReadableConfig_StillFails(t *testing.T) {
+// The config file is an orchestrator-mounted input (Kubernetes ConfigMap: root-owned
+// 0644; docker-compose bind mount: the host owner). On the implicit default a
+// mismatch warns, naming the file, the mismatch and the fix (Andrei, 2026-10-10:
+// "keys strict, mounts warn"); the strict audit stays for an explicit true.
+func TestValidateStartupTolerant_WorldReadableConfig_WarnsWithFileMismatchAndFix(t *testing.T) {
 	configPath, _, _, _ := adr112FirstBootConfig(t)
 	if err := os.Chmod(configPath, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	result, err := ValidateStartupTolerant(configPath, false)
+	if err != nil {
+		t.Fatalf("expected a world-readable config file to warn on the implicit default, got %v", err)
+	}
+	var found string
+	for _, w := range result.Warnings {
+		if strings.Contains(w, configPath) {
+			found = w
+		}
+	}
+	for _, want := range []string{"config file", configPath, "mode 0644, expected 0600", "Fix: chmod 600", "defaultMode 0400"} {
+		if !strings.Contains(found, want) {
+			t.Errorf("warning missing %q: %q", want, found)
+		}
+	}
+}
+
+func TestValidateStartup_ExplicitTrue_WorldReadableConfig_StillFails(t *testing.T) {
+	configPath, _, _, _ := adr112FirstBootConfig(t)
+	f, err := os.OpenFile(configPath, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString("security:\n  enable_file_permission_check: true\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(configPath, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Even through the tolerant entry point: the loaded config writes the key itself.
 	if _, err := ValidateStartupTolerant(configPath, false); err == nil {
-		t.Fatal("expected a world-readable config file to fail tolerant validation")
+		t.Fatal("expected an explicit enable_file_permission_check: true to refuse a world-readable config file")
+	}
+}
+
+// The database is the server's own file: a world-readable one stays a refusal on
+// the implicit default.
+func TestValidateStartupTolerant_WorldReadableDatabase_StillFails(t *testing.T) {
+	configPath, _, _, dbPath := adr112FirstBootConfig(t)
+	if err := os.WriteFile(dbPath, []byte("sqlite"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateStartupTolerant(configPath, false); err == nil {
+		t.Fatal("expected a world-readable database file to fail tolerant validation")
 	}
 }
