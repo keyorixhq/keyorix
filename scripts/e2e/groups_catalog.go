@@ -119,6 +119,7 @@ func groupProjectsAndEnvironments(ctx *smokeCtx) {
 	// c.callExpect -- still exercises the route and still fails on 5xx.
 	c.call("POST", "POST /api/v1/projects/{id}/restore", p+"/restore", nil)
 	c.call("POST", "POST /api/v1/projects/{id}/break-glass", p+"/break-glass", map[string]interface{}{"reason": "e2e smoke break-glass"})
+	c.call("POST", "POST /api/v1/projects/{id}/break-glass/{activationId}/review", p+"/break-glass/1/review", map[string]interface{}{"outcome": "approved"})
 	c.call("POST", "POST /api/v1/projects/{id}/break-glass/{activationId}/revoke", p+"/break-glass/1/revoke", nil)
 	c.call("POST", "POST /api/v1/projects/{id}/access-review/attest", p+"/access-review/attest", map[string]interface{}{})
 	c.call("POST", "POST /api/v1/projects/{id}/access-review/revoke", p+"/access-review/revoke", map[string]interface{}{})
