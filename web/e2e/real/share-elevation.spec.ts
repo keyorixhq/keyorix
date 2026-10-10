@@ -6,14 +6,24 @@
 // the owner must be a live project member to share (a global admin with no project role is
 // refused), and the refusal says what to do rather than a bare 403.
 //
-//   1. owner (project_admin, member) shares secret A with a project_viewer at `write`
-//      → the Share dialog reports success and the share shows up in Sharing Management.
+//   1. owner (project_admin of the project and NOTHING else: no global role) finds the
+//      viewer in the Share dialog's recipient search (project members only; a non-member
+//      is not offered) and shares secret A at `write` → the dialog shows "Shared!" and
+//      closes, and the share is listed for A.
 //   2. the viewer edits A in the UI (the value really changes) while B, which was NOT
 //      shared, stays read-only: the UI refuses the edit and the API answers 403.
-//   3. owner revokes the share in Sharing Management → the row disappears (UI and API) and
-//      the viewer's edit of A is refused again, the value unchanged.
+//   3. owner revokes the share → it is gone from A's share list and the viewer's edit of A
+//      is refused again in the UI (with the server's reason), the value unchanged.
 //   4. a global admin who OWNS a secret but holds no role in its project tries to share →
 //      the dialog shows the explanatory message and the API answers 403 with the same text.
+//
+// SHARE-2: the owner used to need the global system_auditor role, because the dialog's
+// recipient search was GET /api/v1/users (global users.read). It now searches
+// GET /api/v1/projects/{id}/share-recipients, so the owner is project-only. The Sharing
+// Management page still loads GET /api/v1/shares (global secrets.read), so a project-only
+// owner can't open it; this spec revokes with DELETE /api/v1/shares/{id}, the same call
+// that page makes (secret-scoped, the owner may), and checks the result on A's own share
+// list. NEEDS ANDREI (SESSION-SHARE-2 report): a project-scoped "my shares" list.
 //
 // Login budget: server/http/handlers/auth.go allows 10 login attempts per IP per 15 min and
 // web-real-smoke.sh gives every spec file its own fresh server. This file uses 3 API logins
@@ -62,7 +72,9 @@ let viewer: Persona;
 let secretA: number;
 let secretB: number;
 let secretC: number;
+let outsider: Persona;
 let adminToken: string;
+let ownerToken: string;
 let viewerToken: string;
 let ownerPage: Page;
 let viewerPage: Page;
@@ -203,14 +215,12 @@ test.beforeAll(async ({ browser }) => {
     const envId = envs.data.environments[0].id as number;
     envName = envs.data.environments[0].name as string;
 
-    // owner: project_admin in the project, plus the global read-only system_auditor role. The
-    // global role is only here because the Share dialog's recipient search (GET /api/v1/users,
-    // users.read) and the Sharing Management page (GET /api/v1/shares, global secrets.read) are
-    // GLOBAL-permission gates: a project-only member can open the dialog but finds nobody to
-    // pick. That is a product gap, recorded in the PR; it is not what this spec is about.
-    // viewer: project_viewer only, no global role.
-    owner = await createUser('shareowner', 'Share Owner', 'system_auditor');
+    // owner: project_admin in the project and nothing else (SHARE-2 dropped the global
+    // system_auditor workaround). viewer: project_viewer only. outsider: no role in the
+    // project, so the owner's recipient search must not offer them (no login: costs nothing).
+    owner = await createUser('shareowner', 'Share Owner');
     viewer = await createUser('shareviewer', 'Share Viewer');
+    outsider = await createUser('shareoutsider', 'Share Outsider');
     await mustBearer(adminToken, 'POST', `/api/v1/projects/${projectId}/members`, {
         user_id: owner.id,
         role: 'project_admin',
@@ -220,7 +230,7 @@ test.beforeAll(async ({ browser }) => {
         role: 'project_viewer',
     });
 
-    const ownerToken = await apiLogin(owner.username, owner.password);
+    ownerToken = await apiLogin(owner.username, owner.password);
     const mk = async (token: string, name: string, value: string) =>
         (
             await mustBearer(token, 'POST', '/api/v1/secrets', {
@@ -274,28 +284,52 @@ test('fixture sanity: the viewer starts read-only on both secrets', async () => 
     expect(read.status).toBe(200);
 });
 
+test('the project-only owner finds only project members as recipients', async () => {
+    // The owner holds no global role, so GET /api/v1/users is closed to them…
+    const globalList = await bearer(ownerToken, 'GET', '/api/v1/users?search=share');
+    expect(globalList.status, 'GET /users stays a global users.read route').toBe(403);
+
+    // …and the dialog searches the secret's project instead (SHARE-2).
+    await openShareDialog(ownerPage, secretAName);
+    const dialog = ownerPage.getByRole('dialog');
+    const searched = ownerPage.waitForResponse((r) =>
+        new URL(r.url()).pathname.endsWith(`/api/v1/projects/${projectId}/share-recipients`)
+    );
+    await dialog.locator('#recipient-input').fill(viewer.username);
+    expect((await searched).status(), 'the project-scoped search is open to a project-only admin').toBe(200);
+    await expect(dialog.getByRole('button', { name: new RegExp(`@${viewer.username}`) })).toBeVisible();
+
+    // A user with no role in the project is not offered (UI and API agree).
+    await dialog.locator('#recipient-input').fill(outsider.username);
+    await expect(dialog).toContainText('No project members found', { timeout: 10_000 });
+    const api = await bearer(ownerToken, 'GET', `/api/v1/projects/${projectId}/share-recipients?q=share`);
+    expect(api.status).toBe(200);
+    const names = (api.body.data.recipients as Array<{ username: string }>).map((r) => r.username);
+    expect(names).toContain(viewer.username);
+    expect(names).not.toContain(outsider.username);
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+    await expect(dialog).toBeHidden();
+});
+
 test('owner shares secret A with the project_viewer at write', async () => {
     await openShareDialog(ownerPage, secretAName);
     const shareStatus = await fillShare(ownerPage, viewer, 'write');
     expect(shareStatus, 'POST /secrets/A/share at write').toBeLessThan(300);
-    // ProjectSecretsTab closes the dialog the moment the share succeeds (its onSuccess), so the
-    // dialog's own "Shared!" banner never gets to render here: the visible outcome is the dialog
-    // closing and the row's Sharing column counting the new share.
+    // SHARE-2: the dialog shows its confirmation, then closes itself (the page used to close
+    // it at once, so "Shared!" never rendered).
+    await expect(ownerPage.getByRole('dialog')).toContainText('Shared!');
     await expect(ownerPage.getByRole('dialog')).toBeHidden({ timeout: 10_000 });
     await expect(secretRow(ownerPage, secretAName)).toContainText('1 shares', { timeout: 10_000 });
     await expect(secretRow(ownerPage, secretBName)).not.toContainText('shares');
 
-    // The Sharing Management page lists it: Secret #A, viewer, "Read & Write".
-    await ownerPage.goto('/sharing');
-    await settle(ownerPage);
-    const row = ownerPage.getByRole('row').filter({ hasText: `Secret #${secretA}` });
-    await expect(row).toHaveCount(1, { timeout: 15_000 });
-    await expect(row).toContainText('Read & Write');
-    await expect(row, 'the recipient is the viewer (shown by display name or username)').toContainText(
-        new RegExp(`Share Viewer ${stamp}|${viewer.username}`)
-    );
+    // A's own share list (secret-scoped, open to the owner) names the viewer at write.
+    const shares = await bearer(ownerToken, 'GET', `/api/v1/secrets/${secretA}/shares`);
+    expect(shares.status).toBe(200);
+    const list = shares.body.data.shares as Array<{ recipient_id: number; permission: string }>;
+    expect(list.filter((sh) => sh.recipient_id === viewer.id).map((sh) => sh.permission)).toEqual(['write']);
     // Secret B was not shared.
-    await expect(ownerPage.getByRole('row').filter({ hasText: `Secret #${secretB}` })).toHaveCount(0);
+    const sharesB = await bearer(ownerToken, 'GET', `/api/v1/secrets/${secretB}/shares`);
+    expect(sharesB.body.data.shares ?? []).toHaveLength(0);
 });
 
 test('the viewer can update the shared secret A in the UI, and B stays read-only', async () => {
@@ -315,6 +349,10 @@ test('the viewer can update the shared secret A in the UI, and B stays read-only
     );
     const viaApi = await bearer(viewerToken, 'PUT', `/api/v1/secrets/${secretB}`, { value: valueB1 });
     expect(viaApi.status).toBe(403);
+    // SHARE-2: the dialog shows the server's reason, not axios's status text.
+    expect(typeof viaApi.body?.message).toBe('string');
+    await expect(dialog).toContainText(viaApi.body.message);
+    await expect(dialog).not.toContainText('Request failed with status code');
     await dialog.getByRole('button', { name: 'Cancel' }).click();
     // The owner still sees B's original value.
     expect(await readValue(ownerPage, secretB)).toBe(valueB0);
@@ -326,31 +364,31 @@ test('the viewer can update the shared secret A in the UI, and B stays read-only
 });
 
 test('owner revokes the share: it leaves the list and the viewer is refused again', async () => {
-    await ownerPage.goto('/sharing');
-    await settle(ownerPage);
-    const row = ownerPage.getByRole('row').filter({ hasText: `Secret #${secretA}` });
-    await expect(row).toHaveCount(1, { timeout: 15_000 });
-    await row.getByTitle('Revoke access').click();
-    await expect(ownerPage.getByRole('dialog')).toContainText('revoke access for');
-    const revoked = ownerPage.waitForResponse(
-        (r) => /\/api\/v1\/shares\/\d+$/.test(new URL(r.url()).pathname) && r.request().method() === 'DELETE'
+    // The project-only owner can't open Sharing Management (GET /api/v1/shares is a global
+    // secrets.read gate, see the header), so revoke with the call that page makes:
+    // DELETE /api/v1/shares/{id}, scoped to the shared secret, as the owner's own browser session.
+    const before = await bearer(ownerToken, 'GET', `/api/v1/secrets/${secretA}/shares`);
+    const share = (before.body.data.shares as Array<{ id: number; recipient_id: number }>).find(
+        (sh) => sh.recipient_id === viewer.id
     );
-    await ownerPage.getByRole('dialog').getByRole('button', { name: 'Revoke', exact: true }).click();
-    expect((await revoked).status(), 'DELETE /shares/{id}').toBeLessThan(300);
+    expect(share, 'the share from the previous test').toBeTruthy();
+    const revoked = await ownerPage.evaluate(async (id) => {
+        const csrf = document.cookie.match(/(?:^|; )csrf_token=([^;]+)/)?.[1] ?? '';
+        const res = await fetch(`/api/v1/shares/${id}`, {
+            method: 'DELETE',
+            credentials: 'include',
+            headers: { 'X-CSRF-Token': decodeURIComponent(csrf) },
+        });
+        return res.status;
+    }, share!.id);
+    expect(revoked, 'DELETE /shares/{id} as the project-only owner').toBeLessThan(300);
 
-    // Gone from the list in the UI (after a reload, so it is the server's answer, not a cache)…
-    await ownerPage.reload();
-    await settle(ownerPage);
-    await expect(ownerPage.getByRole('row').filter({ hasText: `Secret #${secretA}` })).toHaveCount(0, {
-        timeout: 15_000,
-    });
-    // …and from the API's.
-    const shares = await ownerPage.evaluate(async (id) => {
-        const res = await fetch(`/api/v1/secrets/${id}/shares`, { credentials: 'include' });
-        return { status: res.status, text: await res.text() };
-    }, secretA);
+    // Gone from A's share list (the server's answer, not a cache).
+    const shares = await bearer(ownerToken, 'GET', `/api/v1/secrets/${secretA}/shares`);
     expect(shares.status).toBe(200);
-    expect(shares.text).not.toContain(viewer.username);
+    expect(JSON.stringify(shares.body)).not.toContain(`"recipient_id":${viewer.id}`);
+    await openProjectSecrets(ownerPage);
+    await expect(secretRow(ownerPage, secretAName)).not.toContainText('shares', { timeout: 10_000 });
 
     // The viewer's next update of A is refused, in the UI and at the API, value unchanged.
     const status = await editSecretValue(viewerPage, secretAName, valueA2);
@@ -359,6 +397,9 @@ test('owner revokes the share: it leaves the list and the viewer is refused agai
     const viaApi = await bearer(viewerToken, 'PUT', `/api/v1/secrets/${secretA}`, { value: valueA2 });
     expect(viaApi.status).toBe(403);
     expect(typeof viaApi.body?.message === 'string' && viaApi.body.message.length > 0, 'a reason is given').toBe(true);
+    // SHARE-2: and the dialog shows that reason, not axios's status text.
+    await expect(viewerPage.getByRole('dialog')).toContainText(viaApi.body.message);
+    await expect(viewerPage.getByRole('dialog')).not.toContainText('Request failed with status code');
     await viewerPage.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
     expect(
         await readValue(ownerPage, secretA),
