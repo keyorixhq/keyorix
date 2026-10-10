@@ -19,4 +19,13 @@
   `credential_owner_liveness_guard_test.go` `TestCredentialInsertsRecheckOwnerLiveness`
   (structural, with its population derivation written in) and `internal/core`
   `TestCTAReview_CreatePAT_vs_SuspendUser_CrossReplicaPostgres` /
-  `TestCTAReview_CreateSession_vs_SuspendUser_CrossReplicaPostgres` (pg-gated).
+  `TestCTAReview_CreateSession_vs_SuspendUser_CrossReplicaPostgres` /
+  `TestCTAReview_CreatePAT_vs_DeleteUser_CrossReplicaPostgres` (pg-gated); the same
+  interleavings on SQLite with the production DSN, `TestCredentialUnderSuspend_*_CrossReplicaSQLite`
+  (default-ci); and `credential_owner_refusal_test.go`
+  `TestCredentialInsertRefusedForUnusableOwner` (default-ci: every unusable owner state x
+  all three inserts refuses and leaves no row, every login-capable state still mints).
+  Consequence for fixtures: a test that mints a session or PAT needs a real, login-capable
+  owner row; seed it per test (`seedCredentialOwners` here,
+  `freshCoreS12WithCredentialOwners` in `server/http/handlers`), never inside a shared
+  fixture that other tests count users against.

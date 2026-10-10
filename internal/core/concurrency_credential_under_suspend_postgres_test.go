@@ -77,3 +77,28 @@ func TestCTAReview_CreateSession_vs_SuspendUser_CrossReplicaPostgres(t *testing.
 			"session becomes usable again the moment the account is reactivated, up to its own expiry "+
 			"(login err: %v)", loginErr)
 }
+
+// DeleteUser is the sweep a weaker "fail only if the owner exists and is
+// blocked" re-check would silently stop covering: a soft-deleted user reads as
+// absent under GORM's default scoping. delete → restore → reactivate is the
+// revival path here.
+func TestCTAReview_CreatePAT_vs_DeleteUser_CrossReplicaPostgres(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	u := f.user("patdel2701", "")
+
+	var deleteErr error
+	fired := f.beforeA("create", "personal_access_tokens", func() {
+		deleteErr = f.coreB.DeleteUser(f.ctx, f.adminID, u.ID)
+	})
+
+	_, patErr := f.coreA.CreateOwnPAT(f.ctx, u.ID, "ci", nil, nil, 0, 0, nil)
+
+	require.True(t, fired(), "replica A never reached its PAT INSERT — the interleaving under test never happened")
+	require.NoError(t, deleteErr, "replica B's delete must report success; the whole point is that it did")
+
+	assert.Zero(t, f.countLive(&models.PersonalAccessToken{}, "user_id = ? AND revoked = ?", u.ID, false),
+		"a delete that revoked all PATs and returned success must leave none unrevoked — otherwise "+
+			"delete → restore → reactivate restores a credential the sweep was audited as having removed "+
+			"(create err: %v)", patErr)
+}
