@@ -1,8 +1,10 @@
 // rate_limit.go — cluster-wide login brute-force rate limiting (ADR-040). A
 // windowed count of failed attempts per IP, persisted in the DB so the limit holds
 // across HA replicas (the old limiter was a per-process in-memory map). Rate
-// limiting is a backstop on top of the real password/passkey checks, so a storage
-// error fails OPEN (allow) rather than locking everyone out on a DB hiccup.
+// limiting is a backstop on top of the real password/passkey checks. Every budget
+// here goes through the shared limiter (auth_budget.go): a storage error neither
+// fails open nor closed, it falls back to a bounded in-memory limiter with the
+// same limit and window.
 package core
 
 import (
@@ -13,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
@@ -52,26 +55,26 @@ const (
 )
 
 // IsLoginRateLimited reports whether an IP has reached the failed-login budget
-// within the window. Fails open (false) on an empty IP or a storage error.
+// within the window. An empty IP is never limited. On a storage error the
+// in-memory fallback decides (auth_budget.go): it neither fails open nor
+// closed. Attempts the fallback recorded while storage writes were failing
+// count in addition to the stored ones, so they still bind after a partial
+// recovery, until they age out of the window.
 func (c *KeyorixCore) IsLoginRateLimited(ctx context.Context, ip string) bool {
 	if ip == "" {
 		return false
 	}
-	ip = CanonicalIP(ip)
-	n, err := c.storage.CountRecentLoginAttempts(ctx, ip, c.now().Add(-LoginWindow))
-	if err != nil {
-		return false
-	}
-	return n >= LoginMaxAttempts
+	return c.budgetLimited(ctx, loginBudget, CanonicalIP(ip))
 }
 
-// RecordFailedLogin records a failed authentication attempt from an IP.
-// Best-effort: a storage error does not block the response path.
+// RecordFailedLogin records a failed authentication attempt from an IP. A
+// storage error does not block the response path; the attempt is recorded in
+// the in-memory fallback instead, so it still counts.
 func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 	if ip == "" {
 		return
 	}
-	_ = c.storage.RecordLoginAttempt(ctx, CanonicalIP(ip), c.now())
+	c.budgetRecord(ctx, loginBudget, CanonicalIP(ip))
 }
 
 // ReserveLoginAttempt is RecordFailedLogin's releasable counterpart: it
@@ -79,27 +82,38 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 // documents on reserveLoginAttempt — before the slow credential check runs,
 // not after), but returns a handle the caller can use to undo the write via
 // ReleaseLoginAttempt if that check turns out to be a storage/internal error
-// rather than a confirmed result. Returns ok=false (no handle) on an empty IP
-// or a storage error — same fail-open posture as every sibling limiter in
-// this file; a caller that gets ok=false has nothing to release and should
-// not call ReleaseLoginAttempt.
+// rather than a confirmed result. Returns ok=false (no handle) only on an
+// empty IP; a caller that gets ok=false has nothing to release and should not
+// call ReleaseLoginAttempt. On a storage error the reservation is taken in the
+// in-memory fallback instead and its id is returned as usual, so the budget
+// still binds and a delivered login can still hand it back.
 func (c *KeyorixCore) ReserveLoginAttempt(ctx context.Context, ip string) (id uint, ok bool) {
 	if ip == "" {
 		return 0, false
 	}
-	id, err := c.storage.ReserveLoginAttempt(ctx, CanonicalIP(ip), c.now())
-	if err != nil {
-		return 0, false
-	}
-	return id, true
+	return c.budgetReserve(ctx, loginBudget, CanonicalIP(ip)), true
 }
 
 // ReleaseLoginAttempt undoes a ReserveLoginAttempt reservation. Best-effort,
 // mirroring RecordFailedLogin: a storage error here does not surface to the
 // caller, it just leaves the reservation counted as if release had never been
 // attempted.
+//
+// Through besteffort.Run, which also recovers a PANIC: since #2936 this runs
+// on the SUCCESS path of every login-family handler (a delivered session
+// returns its slot), after the session is already minted, so an escaping
+// panic would report a completed login as a 500 -- the post-commit
+// best-effort class besteffort exists for. A recovered panic leaves the slot
+// counted, the same strict-side outcome as a returned error.
 func (c *KeyorixCore) ReleaseLoginAttempt(ctx context.Context, id uint) {
-	_ = c.storage.ReleaseLoginAttempt(ctx, id)
+	if id&authFallbackIDBit != 0 {
+		// Taken by the in-memory fallback while storage was failing.
+		c.budgetReleaseFallback(loginBudget, id)
+		return
+	}
+	besteffort.Run(ctx, "rate_limit.ReleaseLoginAttempt", func() error {
+		return c.budgetReleaseStored(ctx, id)
+	})
 }
 
 // ErrInvalidLoginAttemptKey is returned by RecordLoginAttemptRelay when the
@@ -245,18 +259,15 @@ const (
 )
 
 // IsPasswordResetRateLimited reports whether an IP has reached the
-// password-reset request budget within the window. Fails open (false) on an
-// empty IP or a storage error — this is a defense-in-depth backstop on top of
-// the per-email checkResendThrottle (ADR-028), not the sole abuse control.
+// password-reset request budget within the window. An empty IP is never
+// limited. On a storage error the shared limiter's in-memory fallback decides
+// (auth_budget.go): it no longer fails open. A defense-in-depth backstop on top
+// of the per-email checkResendThrottle (ADR-028), not the sole abuse control.
 func (c *KeyorixCore) IsPasswordResetRateLimited(ctx context.Context, ip string) bool {
 	if ip == "" {
 		return false
 	}
-	n, err := c.storage.CountRecentLoginAttempts(ctx, passwordResetRateLimitPrefix+CanonicalIP(ip), c.now().Add(-PasswordResetWindow))
-	if err != nil {
-		return false
-	}
-	return n >= PasswordResetMaxAttempts
+	return c.budgetLimited(ctx, passwordResetBudget, CanonicalIP(ip))
 }
 
 // RecordPasswordResetAttempt records a password-reset request from an IP.
@@ -264,12 +275,13 @@ func (c *KeyorixCore) IsPasswordResetRateLimited(ctx context.Context, ip string)
 // recorded on EVERY request regardless of outcome: the endpoint always returns
 // success (enumeration-safe) and never signals which email is registered, so
 // the request itself — not a distinguishable "failure" — is the abuse signal
-// to budget against. Best-effort: a storage error does not block the response.
+// to budget against. A storage error does not block the response; the attempt
+// is counted in the in-memory fallback instead.
 func (c *KeyorixCore) RecordPasswordResetAttempt(ctx context.Context, ip string) {
 	if ip == "" {
 		return
 	}
-	_ = c.storage.RecordLoginAttempt(ctx, passwordResetRateLimitPrefix+CanonicalIP(ip), c.now())
+	c.budgetRecord(ctx, passwordResetBudget, CanonicalIP(ip))
 }
 
 // ssoRateLimitPrefix namespaces SSO/SAML login-initiation attempts within the
@@ -289,27 +301,23 @@ const SSOBeginMaxAttempts = 20
 const SSOBeginWindow = 15 * time.Minute
 
 // IsSSOBeginRateLimited reports whether an IP has reached the SSO/SAML
-// login-initiation budget within the window. Fails open (false) on an empty
-// IP or a storage error, matching the login/password-reset limiters' backstop
-// (not the sole abuse control) design.
+// login-initiation budget within the window. An empty IP is never limited. On
+// a storage error the shared limiter's in-memory fallback decides
+// (auth_budget.go): it no longer fails open.
 func (c *KeyorixCore) IsSSOBeginRateLimited(ctx context.Context, ip string) bool {
 	if ip == "" {
 		return false
 	}
-	n, err := c.storage.CountRecentLoginAttempts(ctx, ssoRateLimitPrefix+CanonicalIP(ip), c.now().Add(-SSOBeginWindow))
-	if err != nil {
-		return false
-	}
-	return n >= SSOBeginMaxAttempts
+	return c.budgetLimited(ctx, ssoBeginBudget, CanonicalIP(ip))
 }
 
 // RecordSSOBeginAttempt records an SSO/SAML login-initiation request from an
 // IP. Recorded on every call regardless of outcome (unknown-provider or
-// success) — the request itself is the abuse signal. Best-effort: a storage
-// error does not block the response.
+// success) — the request itself is the abuse signal. A storage error does not
+// block the response; the attempt is counted in the in-memory fallback instead.
 func (c *KeyorixCore) RecordSSOBeginAttempt(ctx context.Context, ip string) {
 	if ip == "" {
 		return
 	}
-	_ = c.storage.RecordLoginAttempt(ctx, ssoRateLimitPrefix+CanonicalIP(ip), c.now())
+	c.budgetRecord(ctx, ssoBeginBudget, CanonicalIP(ip))
 }
