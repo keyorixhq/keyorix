@@ -1082,6 +1082,35 @@ type SecurityConfig struct {
 	// RecoverAdmin configures `keyorix-server admin recover-admin`
 	// (docs/design-b2-recover-admin.md §5).
 	RecoverAdmin RecoverAdminConfig `yaml:"recover_admin"`
+	// RecoveryOneTimePasswordTTL is how long the one-time password printed by
+	// `keyorix-server admin recover-admin` stays valid, as a Go duration (e.g.
+	// "24h", "90m"). Empty, unparseable or non-positive means the 24h default;
+	// there is no way to configure "never expires" (OTP-EXPIRY-1).
+	RecoveryOneTimePasswordTTL string `yaml:"recovery_one_time_password_ttl"`
+	// OneTimePasswordTTL is the same for admin-created one-time passwords
+	// (`keyorix user create --one-time-password`). Empty, unparseable or
+	// non-positive means the 72h default.
+	OneTimePasswordTTL string `yaml:"one_time_password_ttl"`
+}
+
+// Defaults for the one-time-password lifetimes (see SecurityConfig). They mirror
+// core.DefaultRecoveryOneTimePasswordTTL / core.DefaultOneTimePasswordTTL, which
+// internal/config cannot import; config_test.go keeps the two in step.
+const (
+	DefaultRecoveryOneTimePasswordTTL = 24 * time.Hour
+	DefaultOneTimePasswordTTL         = 72 * time.Hour
+)
+
+// GetRecoveryOneTimePasswordTTL returns the validity of a recover-admin one-time
+// password, falling back to the default for an empty or invalid value.
+func (s *SecurityConfig) GetRecoveryOneTimePasswordTTL() time.Duration {
+	return parseDurationDefault(s.RecoveryOneTimePasswordTTL, DefaultRecoveryOneTimePasswordTTL)
+}
+
+// GetOneTimePasswordTTL returns the validity of an admin-created one-time
+// password, falling back to the default for an empty or invalid value.
+func (s *SecurityConfig) GetOneTimePasswordTTL() time.Duration {
+	return parseDurationDefault(s.OneTimePasswordTTL, DefaultOneTimePasswordTTL)
 }
 
 // RecoverAdminConfig configures `keyorix-server admin recover-admin`
