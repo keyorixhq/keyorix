@@ -47,7 +47,24 @@ All notable changes to Keyorix are documented here. This project follows
   nothing at all. Visible effects: a login denied by a transient storage fault
   now counts toward the per-account lockout, so a sustained database problem can
   lock accounts whose owners typed the right password; and the counter is reset a
-  few milliseconds later in the request than before. (#2894, #2888)
+  few milliseconds later in the request than before. A fault reading the
+  account's roles after the password matched now also answers `401 Invalid
+  credentials` instead of a distinguishable `500`. (#2894, #2888)
+- **The shipped compose stack and Helm chart run with
+  `security.enable_file_permission_check` on** (ADR-112 default): key material and
+  the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
+  file only warns. Both configs omit the key on purpose, because an explicit `true`
+  would also audit that root/host-owned file strictly. A secret file now follows the
+  same upgrade grace period as the key files. Guarded by
+  `deploy/hardening` `TestShipped{Compose,Helm}Config_FilePermissionCheckIsOn`.
+- **Every secret the server reads from the environment now also accepts
+  `<NAME>_FILE`** (Docker secrets, Kubernetes Secret volumes): the master
+  password, DB password, bootstrap token, SMTP/SIEM/SCIM/webhook/SSO secrets and
+  the operator-named KEK, Shamir-share, rotation-DSN and Vault-token variables.
+  Setting both `X` and `X_FILE`, or pointing `X_FILE` at an unreadable or empty
+  file, stops the server at startup; the value and the file contents are never
+  logged; the file-permission check refuses a secret file that is accessible to
+  other users or writable by its group. See `docs/CONFIGURATION.md`.
 - **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
   baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
   1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD

@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -62,19 +63,16 @@ func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (in
 		if projectID == 0 || (ct.expired == 0 && ct.soon == 0) {
 			continue
 		}
-		members, err := c.storage.ListProjectMembers(ctx, projectID)
-		if err != nil {
-			continue
+		recipients, rerr := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+		if rerr != nil {
+			log.Printf("SECURITY: SendExpiryReminders: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", projectID, len(recipients), rerr)
 		}
 		pid := projectID
 		title := "Secrets expiring"
 		msg := expiryReminderMessage(c.projectLabel(ctx, projectID), ct.expired, ct.soon)
 		severity := expirySeverity(ct.expired)
-		for _, mbr := range members {
-			if !isApproverRole(mbr.RoleName) {
-				continue
-			}
-			if existing := c.unreadExpiryReminder(ctx, mbr.UserID, projectID); existing != nil {
+		for _, uid := range recipients {
+			if existing := c.unreadExpiryReminder(ctx, uid, projectID); existing != nil {
 				if severity <= existing.Severity {
 					continue // no worse than what's already standing — don't pile up
 				}
@@ -83,7 +81,7 @@ func (c *KeyorixCore) SendExpiryReminders(ctx context.Context, leadDays int) (in
 				}
 				continue
 			}
-			c.notifyWithSeverity(ctx, mbr.UserID, NotificationExpiryReminder, title, msg, &pid, "/secrets/expiry", severity)
+			c.notifyWithSeverity(ctx, uid, NotificationExpiryReminder, title, msg, &pid, "/secrets/expiry", severity)
 			sent++
 		}
 	}

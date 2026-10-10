@@ -2,12 +2,11 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -15,17 +14,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// usageDBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var usageDBSeq atomic.Int64
-
 // newUsageStore opens a unique named in-memory SQLite DB, migrates the
 // tables needed for GetProjectUsageStats, and returns a LocalStorage.
 func newUsageStore(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_usage_%d?mode=memory&cache=shared", t.Name(), usageDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localusage_", sqlite.Open, &gorm.Config{})
 
 	sqlDB, err := db.DB()
 	require.NoError(t, err)

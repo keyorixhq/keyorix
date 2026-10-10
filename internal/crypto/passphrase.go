@@ -9,6 +9,8 @@ import (
 	"syscall"
 
 	"golang.org/x/term"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // PassphraseSource selects where the master passphrase is read from. Exactly
@@ -74,9 +76,15 @@ func ResolvePassphrase(src PassphraseSource, envVarName string) ([]byte, error) 
 	case src.Stdin:
 		return readPassphraseStdin()
 	}
-	v := strings.TrimSpace(os.Getenv(envVarName))
-	if v == "" {
-		return nil, fmt.Errorf("%s is not set (and no --passphrase-fd/--passphrase-file/--passphrase-stdin was given)", envVarName)
+	// The environment fallback also accepts <envVarName>_FILE (a mounted secret
+	// file); setting both, or an unreadable file, is an error, not a precedence.
+	raw, found, err := secretenv.Lookup(envVarName)
+	if err != nil {
+		return nil, err
+	}
+	v := strings.TrimSpace(raw)
+	if !found || v == "" {
+		return nil, fmt.Errorf("%s is not set (and no --passphrase-fd/--passphrase-file/--passphrase-stdin was given; %s%s works too)", envVarName, envVarName, secretenv.FileSuffix)
 	}
 	return []byte(v), nil
 }

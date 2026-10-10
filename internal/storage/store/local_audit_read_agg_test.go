@@ -3,14 +3,13 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
@@ -19,16 +18,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-var readAggTestCounter atomic.Int64
-
 // newReadAggStore opens a uniquely-named in-memory SQLite DB with the tables
 // needed by GetSecretReadCounts (audit_events + users for the JOIN).
 func newReadAggStore(t *testing.T) (*LocalStorage, *gorm.DB) {
 	t.Helper()
-	n := readAggTestCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxreadagg_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localauditreadagg_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},

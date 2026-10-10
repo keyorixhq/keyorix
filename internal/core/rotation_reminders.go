@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -61,19 +62,16 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) { 
 		if ct.overdue == 0 && ct.approaching == 0 {
 			continue
 		}
-		members, err := c.storage.ListProjectMembers(ctx, projectID)
-		if err != nil {
-			continue
+		recipients, rerr := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+		if rerr != nil {
+			log.Printf("SECURITY: SendRotationReminders: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", projectID, len(recipients), rerr)
 		}
 		pid := projectID
 		title := "Secrets due for rotation"
 		msg := rotationReminderMessage(c.projectLabel(ctx, projectID), ct.overdue, ct.approaching)
 		severity := rotationSeverity(ct.overdue)
-		for _, mbr := range members {
-			if !isApproverRole(mbr.RoleName) {
-				continue
-			}
-			if existing := c.unreadRotationReminder(ctx, mbr.UserID, projectID); existing != nil {
+		for _, uid := range recipients {
+			if existing := c.unreadRotationReminder(ctx, uid, projectID); existing != nil {
 				if severity <= existing.Severity {
 					continue // no worse than what's already standing — don't pile up
 				}
@@ -82,7 +80,7 @@ func (c *KeyorixCore) SendRotationReminders(ctx context.Context) (int, error) { 
 				}
 				continue
 			}
-			c.notifyWithSeverity(ctx, mbr.UserID, NotificationRotationDue, title, msg, &pid, "/rotation-policies", severity)
+			c.notifyWithSeverity(ctx, uid, NotificationRotationDue, title, msg, &pid, "/rotation-policies", severity)
 			sent++
 		}
 	}
