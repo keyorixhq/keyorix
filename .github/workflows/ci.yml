@@ -318,7 +318,9 @@ jobs:
           fi
           if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
             echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
-          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(web/|server/http/)'; then
+          # scripts/e2e/web-real-smoke.sh IS the harness this job runs (#2738): a change
+          # confined to it previously skipped the one job that would exercise it.
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(web/|server/http/|scripts/e2e/web-real-smoke\.sh$)'; then
             echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "web_e2e_relevant=false" >> "$GITHUB_OUTPUT"
@@ -1328,20 +1330,23 @@ jobs:
   # re-run of the identical SQLite-only check the PR already passed adds
   # cost without adding confidence.
   #
-  # Runtime budget: measured live at ~25s end to end (go build ~11s +
-  # web-real-smoke.sh ~25s including pnpm/playwright) against today's 2 spec
-  # files/1 budget group (scripts/e2e/web-real-smoke.sh's own
-  # MAX_SPECS_PER_GROUP=2 grouping, SESSION-WEB-E2E) -- comfortably inside
-  # the ~10 minute target with real margin for CI-environment overhead
-  # (checkout, dependency install, Playwright browser setup) this local
-  # measurement doesn't include. Each additional group adds roughly another
-  # 20-30s sequentially (this job runs every group in one step, matching how
-  # the nightly e2e-web-smoke job already invokes the same script) -- if the
-  # spec count grows enough to approach the budget (rough rule of thumb:
-  # more than ~15-20 groups), split this into a matrix over groups instead
-  # of adding more sequential time to one job; not done here because it
-  # isn't needed yet and a speculative matrix split today would be
-  # unverifiable complexity against a problem that doesn't exist.
+  # Runtime budget, re-measured 2026-10-05 (#2738) after
+  # scripts/e2e/web-real-smoke.sh moved to MAX_SPECS_PER_GROUP=1 (one spec
+  # file per freshly-booted server, so no group's login budget is ever a sum
+  # of per-file counts -- see that script's own comment for the live-confirmed
+  # collisions this replaced). 6 spec files => 6 groups, measured locally at
+  # 3m59s for the whole script, measured with `time` (each group: boot + bootstrap + seed +
+  # Playwright, 15-45s depending on the file; the two MFA files are the slow
+  # ones because they must wait out real 30-second TOTP steps). Still inside
+  # the 10-minute timeout, but the margin is now minutes rather than the
+  # previous ~25s, and CI-environment overhead (checkout, dependency install,
+  # Playwright browser setup) is on top of that and is NOT in the local
+  # figure. Each additional spec file now adds its own group, so ~20-45s each
+  # -- at roughly 10-12 spec files this job wants splitting into a matrix over
+  # groups rather than more sequential time. Not done here: a speculative
+  # matrix split would be unverifiable complexity today, but the headroom is
+  # materially smaller than it was, so the next person adding spec files
+  # should check this number rather than assume it.
   web-e2e-real-smoke:
     needs: [changes]
     if: github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.web_e2e_relevant == 'true'
