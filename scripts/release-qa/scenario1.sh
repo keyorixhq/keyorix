@@ -12,6 +12,7 @@
 # Usage: scenario1.sh <server-bin> <cli-bin> [work-dir]
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVER_BIN="$1"
 CLI_BIN="$2"
 WORK_DIR="${3:-$(mktemp -d)}"
@@ -30,6 +31,7 @@ SERVER_PID=""
 cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
+REAL_HOME="$HOME"
 export HOME="$WORK_DIR"
 export KEYORIX_MASTER_PASSWORD="qa-master-password-$$-${RANDOM}"
 BOOTSTRAP_TOKEN="qa-bootstrap-token-$$-${RANDOM}"
@@ -88,6 +90,27 @@ pass "keyorix system init --server (bootstrap admin)"
 pass "keyorix login"
 "$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
     || fail "login exited non-zero"
+
+# ADR-112 item 1: security.require_mfa defaults on -- enrol for real (see
+# scripts/smoke.sh's identical block for the full rationale), then log in
+# again since ActivateMFA invalidates the pre-enrolment session.
+pass "keyorix mfa enroll"
+ENROLL_OUT="$("$CLI_BIN" mfa enroll)" || fail "mfa enroll exited non-zero"
+MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]')"
+[ -n "$MFA_SECRET" ] || fail "could not parse MFA secret from:
+$ENROLL_OUT"
+
+pass "keyorix mfa activate"
+MFA_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET")" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" mfa activate --code "$MFA_CODE" --password "$ADMIN_PASSWORD" \
+    || fail "mfa activate exited non-zero"
+
+pass "keyorix login (again, now MFA-enabled)"
+MFA_LOGIN_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET" 30)" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
+    --mfa-code "$MFA_LOGIN_CODE" || fail "login (MFA-enabled) exited non-zero"
 
 pass "keyorix project create"
 "$CLI_BIN" project create --name qa-project || fail "project create exited non-zero"
