@@ -137,7 +137,10 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
 		return nil, nil, err
 	}
-	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)
+	// #3024: an account that owes both setup steps (restricted AND no second factor
+	// under security.require_mfa) gets a setup-only session: short-lived, confined to
+	// the setup steps, revoked once they are done (account_setup.go).
+	created, err := c.mintSessionWith(ctx, user.ID, req.UserAgent, req.IPAddress, c.needsSetupSession(user))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -151,6 +154,13 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 // Shared by Login and the setup-token consume flow (auto-login) so session
 // issuance — token generation, expiry, and the captured device fields — stays uniform.
 func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, ip string) (*models.Session, error) {
+	return c.mintSessionWith(ctx, userID, userAgent, ip, false)
+}
+
+// mintSessionWith is mintSession with the setup-only flag (#3024): a setup-only
+// session's whole life is capped at SetupSessionTTL from now, whatever the
+// configured access/absolute TTLs, and the cap is carried through every refresh.
+func (c *KeyorixCore) mintSessionWith(ctx context.Context, userID uint, userAgent, ip string, setupOnly bool) (*models.Session, error) {
 	token, err := generateSecureToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session token: %w", err)
@@ -182,6 +192,9 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 		}
 		session.AbsoluteExpiresAt = &absolute
 	}
+	if setupOnly {
+		capSetupSession(session, now)
+	}
 	created, err := c.storage.CreateSession(ctx, session)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
@@ -198,6 +211,20 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 		return c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
 	})
 	return created, nil
+}
+
+// capSetupSession clamps a setup-only session's access window and absolute
+// ceiling to SetupSessionTTL from now, never lengthening an earlier ceiling.
+func capSetupSession(session *models.Session, now time.Time) {
+	ceiling := now.Add(SetupSessionTTL)
+	if session.AbsoluteExpiresAt == nil || session.AbsoluteExpiresAt.After(ceiling) {
+		session.AbsoluteExpiresAt = &ceiling
+	}
+	if session.ExpiresAt == nil || session.ExpiresAt.After(*session.AbsoluteExpiresAt) {
+		exp := *session.AbsoluteExpiresAt
+		session.ExpiresAt = &exp
+	}
+	session.SetupOnly = true
 }
 
 // maxSessionsPerUser caps a user's concurrent sessions; the oldest beyond this are
@@ -343,6 +370,15 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		LastSeenAt:        &now,
 		ExpiresAt:         &expiresAt,
 		AbsoluteExpiresAt: old.AbsoluteExpiresAt,
+		// #3024: a setup-only session stays one through every rotation, or a refresh
+		// would launder it into a full session. A session whose account has since come
+		// to owe both setup steps (e.g. an admin forced a reset on a factor-less user
+		// while it was live) becomes one here, capped from now — the setup gate sends
+		// such a session through refresh/re-login instead of serving it.
+		SetupOnly: old.SetupOnly || c.needsSetupSession(user),
+	}
+	if session.SetupOnly && !old.SetupOnly {
+		capSetupSession(session, now)
 	}
 	created, won, err := c.storage.RotateSession(ctx, old.ID, session, now)
 	if err != nil {
@@ -746,7 +782,7 @@ func (c *KeyorixCore) AccountStillUsable(ctx context.Context, userID uint) (bool
 // passed (the account isn't blocked) but the CACHED UserContext's
 // AccountState/Restricted — fixed at the slow path's last fill — stayed
 // whatever it was then. A transition into a restricted-but-not-blocked state
-// was invisible to EnforceAccountRestriction on a cache hit until the entry's
+// was invisible to EnforceAccountSetup on a cache hit until the entry's
 // own eviction (whether via that state-change's own invalidateTokenCache call,
 // or the TTL) actually landed — the same race SHAPE as the session-liveness
 // bug this PR fixes elsewhere, not merely a bounded 30s lag: a request served
