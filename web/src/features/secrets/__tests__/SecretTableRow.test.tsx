@@ -72,6 +72,20 @@ describe('SecretTableRow', () => {
         expect(within(row).getByText('by alice')).toBeInTheDocument();
     });
 
+    // The list and project tables both put these headers over this row's
+    // cells; if the cells move, both headers must move with them (#2977).
+    it('renders its cells in header order: select, name, type, classification, environment, sharing, modified, actions', () => {
+        renderRow({ secret: { ...baseSecret, classification: 'confidential' } });
+        const cells = within(screen.getByRole('row')).getAllByRole('cell');
+        expect(cells).toHaveLength(8);
+        expect(cells[1]).toHaveTextContent('db-password');
+        expect(cells[2]).toHaveTextContent('password');
+        expect(cells[3]).toHaveTextContent('Confidential');
+        expect(cells[4]).toHaveTextContent('production');
+        expect(cells[5]).toHaveTextContent('Private');
+        expect(cells[6]).toHaveTextContent('by alice');
+    });
+
     it('defaults the environment cell to "production" when environment is empty', () => {
         renderRow({ secret: { ...baseSecret, environment: '' } });
         const row = screen.getByRole('row');

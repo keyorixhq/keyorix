@@ -38,8 +38,9 @@ var mfaActivateCmd = &cobra.Command{
 	Long: `activate verifies a TOTP code (from the authenticator app you enrolled with
 "keyorix mfa enroll") against the pending secret, together with your account
 password, and enables MFA. On success it prints one-time-shown recovery codes --
-save them now, they will not be shown again. Activation ends the current session:
-log in again with "keyorix login" (it asks for a code).`,
+save them now, they will not be shown again. Activation keeps the current session
+signed in (you just proved the password and a code) and signs out every other
+session for the account; your next "keyorix login" asks for a code.`,
 	RunE: runMFAActivate,
 }
 
@@ -150,7 +151,7 @@ func runMFAActivate(cmd *cobra.Command, args []string) error {
 		return httpStatusError("MFA activation failed", resp.StatusCode(), resp.Body)
 	}
 
-	fmt.Println("MFA enabled. Log in again with \"keyorix login\" (it asks for a code).")
+	fmt.Println("MFA enabled. This session stays signed in; other sessions were signed out, and your next \"keyorix login\" asks for a code.")
 	if codes := resp.JSON200.Data.RecoveryCodes; len(codes) > 0 {
 		fmt.Println()
 		fmt.Println("Save these recovery codes now -- they will not be shown again:")
