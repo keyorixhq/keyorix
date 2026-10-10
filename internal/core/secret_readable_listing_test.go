@@ -119,23 +119,43 @@ func TestListReadableSecrets_MergedResultIsSorted(t *testing.T) {
 		"the MERGED set must be sorted, not each scope separately then concatenated")
 }
 
-// TestListReadableSecrets_GlobalReaderUnchanged pins tier 1: a global secrets.read
-// holder goes through ListSecretsWithSharingInfo, the original behaviour.
-func TestListReadableSecrets_GlobalReaderUnchanged(t *testing.T) {
+// TestListReadableSecrets_GlobalReaderSeesEveryScopeWithoutDoubleCounting replaces
+// TestListReadableSecrets_GlobalReaderUnchanged.
+//
+// That test asserted `Total <= 4` with the comment "global readers take tier 1, which
+// is unchanged" — and its premise was the bug. Tier 1 delegated to
+// ListSecretsWithSharingInfo (owned ∪ shared ∪ ACL-granted), so a global reader who
+// owned nothing saw ZERO, and `<= 4` passed on a 0 just as happily as on a 4. The
+// assertion could not distinguish "sees everything it may read" from "sees nothing".
+// See secret_readable_listing_global_test.go for the dedicated regression.
+//
+// What is asserted here instead is the property that test's fixture was actually
+// positioned to check and did not: a caller holding BOTH a global grant and a
+// project-scoped grant on the same project — realistic, since an admin can also be a
+// project member — gets each secret exactly once.
+func TestListReadableSecrets_GlobalReaderSeesEveryScopeWithoutDoubleCounting(t *testing.T) {
 	t.Parallel()
 	c, db := readableListingFixture(t)
 	ctx := context.Background()
-	seedReadableProject(t, db, 1, "alpha", "a", 4)
-	// A global grant on top. The per-project grant seeded above stays, which is
-	// realistic (an admin can also be a project member) and must not double-count.
+	seedReadableProject(t, db, 1, "alpha", "a", 4) // also grants project-scoped read
+	seedReadableProject(t, db, 2, "beta", "b", 3)
+	// The global grant on top of the per-project ones seeded above.
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
 
 	resp, err := c.ListReadableSecrets(ctx, 1, 1, &models.SecretListFilter{Page: 1, PageSize: 50})
 	require.NoError(t, err)
-	// Tier 1 returns owned/shared/ACL-granted secrets for the user, which is the
-	// pre-existing global-reader semantics — user 1 owns none of these, so the
-	// assertion is about the tier taken, not the row count.
-	assert.LessOrEqual(t, resp.Total, int64(4), "global readers take tier 1, which is unchanged")
+	assert.Equal(t, int64(7), resp.Total,
+		"every secret across both projects, exactly once — a global grant stacked on project grants "+
+			"must not double-count, and must not fall back to the owned-only set either")
+	require.Len(t, resp.Secrets, 7)
+
+	seen := map[string]int{}
+	for _, s := range resp.Secrets {
+		seen[s.Name]++
+	}
+	for name, n := range seen {
+		assert.Equal(t, 1, n, "secret %q appears exactly once", name)
+	}
 }
 
 // TestListReadableSecrets_NoGrantsIsEmptyNotAnError pins tier 3's fail-open-to-empty
@@ -169,8 +189,9 @@ func TestCountReadableSecrets_MatchesTheListing(t *testing.T) {
 
 	listed, err := c.ListReadableSecrets(ctx, 1, 1, &models.SecretListFilter{Page: 1, PageSize: 1})
 	require.NoError(t, err)
-	counted, err := c.CountReadableSecrets(ctx, 1, 1)
+	counted, exact, err := c.CountReadableSecrets(ctx, 1, 1)
 	require.NoError(t, err)
+	require.True(t, exact, "the fixture is well under the union bound, so the count must be exact")
 
 	assert.Equal(t, int64(12), counted, "every readable secret across both scopes")
 	assert.Equal(t, listed.Total, counted,
