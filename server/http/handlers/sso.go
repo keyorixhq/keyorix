@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/keyorixhq/keyorix/internal/core"
 )
 
 // oauthErrorAllowlist is the fixed set of error codes defined by RFC 6749 §4.1.2.1 and
@@ -62,6 +64,14 @@ func isSafeSSOError(msg string) bool {
 		"no Keyorix account matches this SSO identity",
 		"the IdP returned no email; cannot auto-provision an account",
 		errDomainNotAllowed,
+		// #2903: a login refused because the IdP's group/role assertion could
+		// not be fully applied. Safe because core returns these as the WHOLE
+		// Error() of its refusal (ssoLoginRefusedError), with the storage cause
+		// kept only in the Unwrap chain -- a substring match on a message that
+		// had the cause appended would reflect that cause too.
+		core.SSOMsgGroupReconcileRefused,
+		core.SSOMsgRoleReconcileRefused,
+		core.SSOMsgLastAdminRemovalRefused,
 	} {
 		if strings.Contains(msg, safe) {
 			return true

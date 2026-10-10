@@ -581,7 +581,12 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	if err := c.enforcePasswordExpiryGate(ctx, wu.user); err != nil {
 		return nil, nil, UserIdentity{}, err
 	}
-	// #2841: the LAST fallible read, done BEFORE the first write. See
+	// #2841: the LAST fallible-and-reported read, done BEFORE the
+	// session/grant/step-up-token writes. Not "before the first write" — the
+	// challenge consume, persistUpdatedCredential's sign-counter update, the
+	// lockout-counter clear and the password-expiry gate all write earlier; what
+	// matters is that nothing fallible-and-reported runs AFTER the writes that
+	// would outlive a login reported as failed. See
 	// resolveLoginIdentityBeforeMint's doc comment for what used to survive a
 	// login this read failed on.
 	identity, err := c.resolveLoginIdentityBeforeMint(ctx, ch.UserID)
@@ -706,7 +711,12 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 	if err := c.enforcePasswordExpiryGate(ctx, resolved); err != nil {
 		return nil, nil, UserIdentity{}, err
 	}
-	// #2841: the LAST fallible read, done BEFORE the first write. See
+	// #2841: the LAST fallible-and-reported read, done BEFORE the
+	// session/grant/step-up-token writes. Not "before the first write" — the
+	// challenge consume, persistUpdatedCredential's sign-counter update, the
+	// lockout-counter clear and the password-expiry gate all write earlier; what
+	// matters is that nothing fallible-and-reported runs AFTER the writes that
+	// would outlive a login reported as failed. See
 	// resolveLoginIdentityBeforeMint's doc comment.
 	identity, err := c.resolveLoginIdentityBeforeMint(ctx, resolved.ID)
 	if err != nil {

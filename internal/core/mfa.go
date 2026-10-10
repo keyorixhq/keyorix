@@ -44,12 +44,16 @@ var ErrMFARequired = errors.New("mfa required")
 // found by the fuzzer (CI on PR #2392, seed 877139548d2805a6) via the
 // handler's reservation landing before the GetUser call below even runs.
 //
-// Deliberately NOT applied to ConsumeMFAChallenge's error (see that call
-// site): an unknown/expired/already-consumed challenge is that call's
-// expected, common negative result, not a storage ambiguity, and must stay
-// counted toward the IP throttle — confirmed by FuzzLoginThrottleConcurrency
+// Applied to ConsumeMFAChallenge's error only when that error is NOT the
+// storage.ErrMFAChallengeInvalid sentinel (see that call site): an
+// unknown/expired/already-consumed challenge is that call's expected, common
+// negative result, not a storage ambiguity, and must stay counted toward the
+// IP throttle — confirmed by FuzzLoginThrottleConcurrency
 // (server/http/handlers/login_throttle_fuzz_test.go), whose oracle (a) failed
-// when that branch was tagged too.
+// when the whole branch was tagged. A genuine storage failure on that same
+// call IS tagged: it is the earliest pre-verdict position on this path, so
+// spending an IP slot on it would charge the caller for a request whose code
+// was never looked at.
 var ErrMFAVerificationStorageFailure = errors.New("mfa verification storage failure")
 
 // ErrMFAEnrollmentChanged is returned (wrapped) by ActivateMFA when the pending
@@ -213,14 +217,7 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	// recovery-codes-status query refetch, triggered by this call's own success,
 	// would otherwise race this purge and force a global logout before the user ever
 	// sees them). Best-effort: enrolment must not fail on a session-cleanup error.
-	var keepID uint
-	var keepHash string
-	if keepSessionToken != "" {
-		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
-			keepID = s.ID
-			keepHash = s.SessionToken
-		}
-	}
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "activate_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.activated", &uid, nil, nil, "", fmt.Sprintf("user %s activated MFA", user.Username))
@@ -260,14 +257,7 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	// too only forces an immediate, surprising logout of the very request that just
 	// disabled MFA, with no security benefit over letting it continue normally.
 	// Best-effort: disable must not fail on a cleanup error.
-	var keepID uint
-	var keepHash string
-	if keepSessionToken != "" {
-		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
-			keepID = s.ID
-			keepHash = s.SessionToken
-		}
-	}
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "disable_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", fmt.Sprintf("user %s disabled MFA", user.Username))
@@ -373,13 +363,34 @@ func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (stri
 func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code string) (*models.User, bool, *int64, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	ch, err := c.storage.ConsumeMFAChallenge(ctx, sha256Hex(challenge), c.now())
 	if err != nil {
-		// Deliberately NOT tagged with ErrMFAVerificationStorageFailure, unlike the
-		// GetUser/storageErr branches below: a missing/expired/already-consumed
-		// challenge is ConsumeMFAChallenge's expected, common negative result (a
-		// stale or guessed challenge token), not a storage-layer ambiguity, and
-		// legitimately belongs in the per-IP throttle's count — confirmed by
-		// FuzzLoginThrottleConcurrency's oracle (a) (login_throttle_fuzz_test.go),
-		// which failed when this branch was tagged too.
+		// A missing/expired/already-consumed challenge is ConsumeMFAChallenge's
+		// expected, common negative result (a stale or guessed challenge token),
+		// reported with the storage.ErrMFAChallengeInvalid sentinel. It is NOT a
+		// storage-layer ambiguity and legitimately belongs in the per-IP
+		// throttle's count — confirmed by FuzzLoginThrottleConcurrency's oracle
+		// (a) (login_throttle_fuzz_test.go), which failed when this whole branch
+		// was tagged with ErrMFAVerificationStorageFailure.
+		//
+		// Anything ELSE this call returns is a genuine storage failure, and it
+		// lands BEFORE the submitted code has been looked at at all — the
+		// earliest pre-verdict position on this path. It must therefore be
+		// treated exactly like the GetUser branch directly below rather than
+		// like a guessed challenge: the IP's login-attempt budget slot the
+		// handler reserved before calling us (server/http/handlers/mfa.go's
+		// VerifyMFA) is released on ErrMFAVerificationStorageFailure, and
+		// ErrMFAVerificationUnavailable turns the response into a 503 "retry"
+		// rather than a 401 that would claim a credential we never checked was
+		// wrong. Without the split, a storage blip here silently spent one of
+		// the IP's slots for a request that reached no verdict.
+		//
+		// This is the same sentinel-driven split FinishWebAuthnLogin
+		// (internal/core/webauthn.go) already applies to its own
+		// ConsumeMFAChallenge call via ErrWebAuthnLoginNotEvaluated — the MFA
+		// path was the one login flow still missing it.
+		if !errors.Is(err, storage.ErrMFAChallengeInvalid) {
+			return nil, false, nil, fmt.Errorf("%w: %w: consuming login challenge: %w",
+				ErrMFAVerificationStorageFailure, ErrMFAVerificationUnavailable, err)
+		}
 		return nil, false, nil, fmt.Errorf("invalid or expired challenge")
 	}
 	user, err := c.storage.GetUser(ctx, ch.UserID)
@@ -476,15 +487,15 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 // and on success mints and returns the session (the second login step) together
 // with the response identity.
 //
-// The identity is resolved here, BEFORE the session is minted, and returned so
-// the handler does not re-read it — see resolveLoginIdentityBeforeMint (#2841).
-// This path is the TOTP sibling of the two WebAuthn login paths: it mints no
-// MFAStepUpGrant, but it DOES write a user-scoped MFAStepupToken, which
-// HasActiveMFAStepup reads per-user rather than per-session. A login reported as
-// failed because the handler's identity read failed used to leave that token
-// behind (completeLogin revoked only the session), so the restricted-secret
-// MFA gate stayed satisfied for the rest of the window on a later session the
-// user never completed a second factor for.
+// The identity is resolved here, BEFORE the session/step-up-token writes, and
+// returned so the handler does not re-read it — see
+// resolveLoginIdentityBeforeMint (#2841). This path is the TOTP sibling of the
+// two WebAuthn login paths: it mints no MFAStepUpGrant, but it DOES write a
+// user-scoped MFAStepupToken, which HasActiveMFAStepup reads per-user rather
+// than per-session. A login reported as failed because the handler's identity
+// read failed used to leave that token behind (completeLogin revoked only the
+// session), so the restricted-secret MFA gate stayed satisfied for the rest of
+// the window on a later session the user never completed a second factor for.
 func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userAgent, ip string) (*models.Session, *models.User, UserIdentity, error) {
 	user, usedRecovery, consumedTOTPStep, err := c.VerifyMFACredentials(ctx, challenge, code)
 	if err != nil {
@@ -496,7 +507,11 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
 		return nil, nil, UserIdentity{}, err
 	}
-	// #2841: the LAST fallible read, done BEFORE the first write.
+	// #2841: the LAST fallible-and-reported read, done BEFORE the session and
+	// step-up-token writes. Not "before the first write" — the TOTP step mark,
+	// the lockout-counter clear and the password-expiry gate all write earlier;
+	// what matters is that nothing fallible runs AFTER the writes that outlive a
+	// login reported as failed.
 	identity, err := c.resolveLoginIdentityBeforeMint(ctx, user.ID)
 	if err != nil {
 		return nil, nil, UserIdentity{}, err

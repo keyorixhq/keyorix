@@ -275,6 +275,11 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	// deliberately NOT covered by this recover — the assertion was already evaluated by
 	// then, so the slot must stay counted exactly like a successful or failed evaluation
 	// would (same release-only-pre-verdict rule #2619 established for the error path).
+	//
+	// #2841: the wrapper forwards the response identity core now resolves BEFORE
+	// the session/grant/step-up-token writes, so there is exactly ONE call to
+	// FinishWebAuthnLogin on this path — re-reading the identity in the handler
+	// would reopen the very window this fix closed.
 	session, user, identity, err := h.finishWebAuthnLoginReleasingOnPanic(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed, reserved, attemptID)
 	if err != nil {
 		if errors.Is(err, core.ErrWebAuthnLoginNotEvaluated) {
@@ -290,7 +295,12 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
 			return
 		}
-		// #2841: the identity read now happens inside core, before any write.
+		// #2841: the identity read now happens inside core, before the
+		// session/grant/step-up-token writes (not before the FIRST write — the
+		// challenge consume, the credential sign-counter update and the
+		// lockout-counter clear all land earlier; what matters is that nothing
+		// fallible-and-reported runs after the writes that would outlive a login
+		// reported as failed).
 		// Keep its caller-visible shape identical to the 500 completeLogin used
 		// to produce for the same failure — a transient authz-resolution error
 		// is not an assertion failure and must not be reported as one (and
@@ -318,6 +328,14 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 // finishWebAuthnLoginReleasingOnPanic calls core.FinishWebAuthnLogin, releasing the
 // reserved login-attempt slot and re-panicking unchanged if the call panics instead of
 // returning — see FinishWebAuthnLogin's call-site comment for why this exists.
+//
+// #2841: it forwards all FOUR of FinishWebAuthnLogin's results, including the
+// response identity core resolves before its session/grant/step-up-token writes.
+// The wrapper is deliberately transparent: it adds the release-on-panic side
+// effect and changes nothing else. The recover() re-panics with the ORIGINAL
+// value, so a panic is never converted into a (nil, nil, zero, nil) "success"
+// and never swallowed — the slot is released and the panic continues to the
+// Recovery middleware.
 func (h *AuthHandler) finishWebAuthnLoginReleasingOnPanic(ctx context.Context, challenge, webAuthnSession, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData, reserved bool, attemptID uint) (session *models.Session, user *models.User, identity core.UserIdentity, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {

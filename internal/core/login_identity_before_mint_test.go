@@ -105,6 +105,53 @@ func TestFinishWebAuthnLogin_IdentityReadFailureLeavesNoSessionOrGrant(t *testin
 	assert.Zero(t, tokens, "a login reported as FAILED must leave no MFA step-up token")
 }
 
+// failGetUserPermissionsStorage fails the OTHER half of the identity read.
+// GetUserIdentity reads roles, then permissions; a fault on either one must
+// leave the same nothing-written state, and each is pinned separately in
+// server/faultops' oracleAByDesignErrors.
+type failGetUserPermissionsStorage struct {
+	storage.Storage
+}
+
+func (s *failGetUserPermissionsStorage) GetUserPermissions(ctx context.Context, userID uint) ([]*storage.Permission, error) {
+	return nil, errors.New("injected fault: GetUserPermissions")
+}
+
+// TestFinishWebAuthnLogin_PermissionsReadFailureLeavesNoSessionOrGrant is the
+// GetUserPermissions sibling of the test above: same sentinel, same
+// attempt-stays-counted rule, same nothing-written effect. It is the proving
+// test for the GetUserPermissions row in oracleAByDesignErrors (QUEUE-FIX-1;
+// the fuzzer found that tuple on #2764's CI, pre-existing on main).
+func TestFinishWebAuthnLogin_PermissionsReadFailureLeavesNoSessionOrGrant(t *testing.T) {
+	t.Parallel()
+	c, db := newWebAuthnSpecTestCore(t)
+	ctx := context.Background()
+	seedSpecCredential(t, c, db, 1)
+	c.classificationRestrictedRequiresMFAStepUp = true
+
+	ch, err := c.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	parsed, challenge := specLoginAssertion(t)
+	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: challenge, UserID: specWebAuthnID(1)})
+	require.NoError(t, err)
+
+	c.storage = &failGetUserPermissionsStorage{Storage: c.storage}
+
+	session, user, identity, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrLoginIdentityUnavailable)
+	require.NotErrorIs(t, err, ErrWebAuthnLoginNotEvaluated,
+		"the assertion was evaluated and passed, so this must NOT release the per-IP login-attempt slot")
+	require.Nil(t, session)
+	require.Nil(t, user)
+	assert.Equal(t, UserIdentity{}, identity)
+
+	sessions, grants, tokens := countLoginArtifacts(t, db)
+	assert.Zero(t, grants, "a login reported as FAILED must leave no MFAStepUpGrant (#2841)")
+	assert.Zero(t, sessions, "a login reported as FAILED must leave no session")
+	assert.Zero(t, tokens, "a login reported as FAILED must leave no MFA step-up token")
+}
+
 // TestFinishWebAuthnPasswordlessLogin_IdentityReadFailureLeavesNoSessionOrGrant
 // mirrors the above for the passwordless path, which has the identical
 // mint-session-then-mint-grant tail.

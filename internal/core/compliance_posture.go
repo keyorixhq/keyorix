@@ -62,6 +62,49 @@ type IdentityPosture struct {
 type EmergencyAccessPosture struct {
 	ActiveActivations int `json:"active_activations"`
 	TotalActivations  int `json:"total_activations"`
+	// UnreviewedActivations is ADR-112's break-glass posture deviation (§3,
+	// item 4): activations with no recorded review that are already older than
+	// break_glass.review_window. This is what "every activation must be
+	// reviewed afterwards" is ENFORCED by -- the ADR's own words are "an open
+	// activation without a recorded review shows as a posture deviation". A
+	// pending review never blocks break-glass ACTIVATION itself
+	// (INV-CORE-break-glass-unreviewed-reported-never-blocks-activation,
+	// narrowed #2461 round 2) -- escalation here is the "emergency-access"
+	// control going to Gap (EvaluateControls), a recurring SECURITY: log line,
+	// a repeating admin notification, and an audit event (see
+	// RunBreakGlassReviewReminder), not a lockout on the activation path.
+	//
+	// Counted from the activations this snapshot already fetched per project,
+	// not from a second global query: ListUnreviewedBreakGlassActivationsBefore
+	// exists for the periodic reminder, which has no project list to work from,
+	// but re-running it here would read the same rows twice and could disagree
+	// with TotalActivations/ActiveActivations above if a row changed in between.
+	UnreviewedActivations int `json:"unreviewed_activations"`
+	// OldestUnreviewedAgeHours is the age of the longest-outstanding unreviewed
+	// activation, 0 when there are none. A bare count cannot distinguish "one
+	// review is a day late" from "one has been ignored for a year", and the
+	// second is the one an auditor cares about.
+	OldestUnreviewedAgeHours int `json:"oldest_unreviewed_age_hours"`
+	// ReviewWindowHours is the threshold the two fields above were computed
+	// against, so a report is interpretable without also knowing the
+	// deployment's config.
+	ReviewWindowHours int `json:"review_window_hours"`
+	// IndependentReviewImpossible is
+	// INV-CORE-break-glass-independent-review-impossible-is-visible (#2461
+	// round 2, Andrei's decision item (c)): true when the deployment has at
+	// most one active
+	// global admin-tier holder, so no human OTHER than a break-glass activator
+	// could ever satisfy ReviewBreakGlass's self-review refusal for an
+	// activation they performed -- independent review is structurally
+	// impossible, not merely currently unperformed. Approximated the same way
+	// guardLastGlobalAdmin* approximates "another administrator exists"
+	// elsewhere: active global admin-tier holder count, not a precise count of
+	// who holds roles.assign at every project (which would need scanning every
+	// project's grants and is out of scope here). Self-review stays refused
+	// regardless of this flag; it exists to make the structural gap VISIBLE,
+	// never to silently read identical to "reviewed" or to an ordinary
+	// unreviewed backlog.
+	IndependentReviewImpossible bool `json:"independent_review_impossible"`
 }
 
 // AccessRequestPosture summarises the dual-control access-request/approval workflow
@@ -773,9 +816,51 @@ func (c *KeyorixCore) accessGovernancePostureFromSnapshot(ctx context.Context, p
 		pid := proj.ID
 		accumulateCampaignPosture(p, pid, recertCutoff, snap)
 		p.AccessGovernance.DormantRoleGrants += c.countDormantRoleGrants(ctx, pid, p, sharedPermsByRole, sharedDegradedRoles)
-		accumulateBreakGlassPosture(p, pid, snap)
+		c.accumulateBreakGlassPosture(p, pid, snap)
 		accumulateAccessRequestPosture(p, pid, snap)
 	}
+	// Deployment-wide, not per-project -- computed once rather than inside the
+	// loop above (#2461 round 2,
+	// INV-CORE-break-glass-independent-review-impossible-is-visible).
+	if impossible, err := c.independentBreakGlassReviewImpossible(ctx); err == nil {
+		p.EmergencyAccess.IndependentReviewImpossible = impossible
+	} else {
+		p.degrade("emergency_access:independent_reviewer", err)
+	}
+}
+
+// independentBreakGlassReviewImpossible reports whether this deployment has at
+// most one active global admin-tier holder -- i.e. whether a break-glass
+// activator could ever find an independent reviewer at all
+// (INV-CORE-break-glass-independent-review-impossible-is-visible,
+// #2461 round 2, Andrei's decision item (c)). Approximated the same way
+// guardLastGlobalAdmin* approximates "another administrator exists" elsewhere
+// in this file: active global admin-tier holder count, not a precise count of
+// who holds roles.assign at every project scope (scanning every project's
+// grants to answer that exactly is out of scope for a posture signal).
+//
+// No install-admin role seeded at all (adminIDs empty) returns false, not
+// true: this proxy has nothing to count in that configuration, and guessing
+// "impossible" from an absent signal would be worse than leaving the
+// question to the one check that genuinely answers it per-activation
+// (ReviewBreakGlass's own self-review refusal).
+func (c *KeyorixCore) independentBreakGlassReviewImpossible(ctx context.Context) (bool, error) {
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return false, err // #2496: fail closed -- "can't tell" must not read as "fine"
+	}
+	if len(adminIDs) == 0 {
+		return false, nil
+	}
+	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve global role assignments: %w", err)
+	}
+	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, nil, nil)
+	if err != nil {
+		return false, err
+	}
+	return len(holders) <= 1, nil
 }
 
 func accumulateCampaignPosture(p *CompliancePosture, pid uint, recertCutoff time.Time, snap *complianceSnapshot) {
@@ -808,16 +893,32 @@ func accumulateCampaignPosture(p *CompliancePosture, pid uint, recertCutoff time
 	}
 }
 
-func accumulateBreakGlassPosture(p *CompliancePosture, pid uint, snap *complianceSnapshot) {
+func (c *KeyorixCore) accumulateBreakGlassPosture(p *CompliancePosture, pid uint, snap *complianceSnapshot) {
 	acts, err := snap.breakGlassByProject[pid], snap.breakGlassErrByProject[pid]
 	if err != nil {
 		p.degrade(fmt.Sprintf("emergency_access:project=%d", pid), err)
 		return
 	}
+	// ADR-112 §3 item 4 (#2461): an activation with no recorded review, already
+	// older than the review window, IS the posture deviation the ADR requires.
+	// Reported for a still-active activation too, not only a concluded one --
+	// the ADR's wording is "an OPEN activation without a recorded review", and
+	// ReviewBreakGlass deliberately refuses to review one that is still active,
+	// so excluding those here would hide exactly the activations that cannot be
+	// closed out yet.
+	window := c.breakGlassReviewWindow()
+	p.EmergencyAccess.ReviewWindowHours = int(window.Hours())
+	cutoff := c.now().Add(-window)
 	p.EmergencyAccess.TotalActivations += len(acts)
 	for _, a := range acts {
 		if a.State == BreakGlassActive {
 			p.EmergencyAccess.ActiveActivations++
+		}
+		if a.ReviewedAt == nil && !a.CreatedAt.After(cutoff) {
+			p.EmergencyAccess.UnreviewedActivations++
+			if ageHours := int(c.now().Sub(a.CreatedAt).Hours()); ageHours > p.EmergencyAccess.OldestUnreviewedAgeHours {
+				p.EmergencyAccess.OldestUnreviewedAgeHours = ageHours
+			}
 		}
 	}
 }

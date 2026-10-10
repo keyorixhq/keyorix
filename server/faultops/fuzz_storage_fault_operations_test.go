@@ -118,7 +118,25 @@ type nonLoadBearingException struct {
 	nth        int
 }
 
-var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{}
+// REST PUT /api/v1/auth/profile, GetUserPermissions, NthCall=1 (#2839): UpdateProfile
+// is a self-service route gated ONLY by session identity (router.go's own comment:
+// "Authenticated but not permission-gated — every user manages their own profile...
+// ADR-021 / ADR-027") -- no RequireScopedPermission or any RBAC check is attached.
+// The handler authorizes via middleware.GetUserFromContext + UpdateOwnProfile (self-
+// scoped), and only calls GetUserPermissions (via userIdentity -> GetUserIdentity)
+// AFTER the update has already succeeded, purely to decorate the response with the
+// caller's own roles/permissions. UserIdentity's own doc comment states this
+// directly: "The backend still enforces real, scope-aware checks on every request
+// via Authorize — this summary is for UI convenience, not a security boundary."
+// userIdentity's own doc comment: "Best-effort: on error it returns an empty
+// identity so the profile still renders" -- the empty permissions/roles the fuzzer
+// observed is this designed fallback, not a bypass artefact. Found live by the
+// ORACLE-A-1 derived sweep (session ORACLE-A-1, item 4) as the sweep's only oracle
+// (c) hit; confirmed by tracing router.go's route registration and UpdateProfile's
+// own authorization path rather than from the diff shape alone.
+var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{
+	{op: "REST PUT /api/v1/auth/profile", method: "GetUserPermissions", nth: 1},
+}
 
 // multiStepAmbiguousCommitExceptions narrowly flags a traced instance of
 // oracle (d) firing on the FIRST storage call of a multi-step create, NOT
@@ -275,7 +293,55 @@ var opScopedBestEffortTables = []struct {
 	// since DeleteSessionsForUserExcept IS load-bearing at other call sites
 	// (RevokeUserSessions propagates its error as "failed to revoke
 	// sessions").
-	{op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteSessionsForUserExcept", tables: []string{"Session"}},
+	//
+	// #2835: AuditEvent joined this entry's tables, and requireLogSubstring was
+	// added, when the purge failure stopped being silent. A plain (non-panic)
+	// error from DeleteSessionsForUserExcept now writes EventSessionRevocationFailed
+	// (account.go's deleteSessionsForUserAndEvict, the ONE choke point all 8
+	// call sites share) instead of vanishing the instant this op's own `_ =
+	// c.deleteSessionsForUserAndEvict(...)` discards it. The purge failure
+	// itself is still correctly non-fatal to the MFA disable; only its
+	// silence was the defect.
+	{
+		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteSessionsForUserExcept", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "deleteSessionsForUserAndEvict failed to purge sessions for user",
+	},
+	// REST POST /api/v1/auth/webauthn/register/finish, DeleteSessionsForUserExcept:
+	// the "Related" finding from the same #2835 sweep — the purge itself
+	// failing (not the keep-session lookup widening scope) at a DIFFERENT op
+	// reaching the identical deleteSessionsForUserAndEvict choke point
+	// (webauthn.go's own post-registration session purge). Same tradeoff,
+	// same fix, different op string — scoped per-op like its mfa/disable
+	// sibling above, not a blanket bestEffortTables entry, for the same
+	// reason (DeleteSessionsForUserExcept is load-bearing elsewhere).
+	{
+		op: "REST POST /api/v1/auth/webauthn/register/finish", method: "DeleteSessionsForUserExcept", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "deleteSessionsForUserAndEvict failed to purge sessions for user",
+	},
+	// REST POST /api/v1/auth/mfa/activate, /mfa/disable, /change-password, GetSession:
+	// ActivateMFA, DisableMFA, and ChangePassword each resolve the caller's own
+	// session (via keepSessionToken) so their post-change session purge can spare
+	// it. #2835: when that lookup fails, the purge deliberately still widens to
+	// include the caller's own session (the correct fail-closed fallback — we
+	// cannot prove which session is the caller's, so revoking all of them is
+	// safer than guessing; see resolveKeepSession's doc comment, account.go) —
+	// unchanged by this fix. What changed is that the widening now writes
+	// EventKeepSessionLookupFailed instead of vanishing silently, so AuditEvent
+	// joins the pre-existing Session-only diff. requireLogSubstring ties this to
+	// evidence the reviewed fallback actually fired, not to the diff shape alone
+	// (same discipline as the WithTransaction entry below).
+	{
+		op: "REST POST /api/v1/auth/mfa/activate", method: "GetSession", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "could not resolve the caller's own session",
+	},
+	{
+		op: "REST POST /api/v1/auth/mfa/disable", method: "GetSession", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "could not resolve the caller's own session",
+	},
+	{
+		op: "REST POST /api/v1/auth/change-password", method: "GetSession", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "could not resolve the caller's own session",
+	},
 	{
 		op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"},
 		minNthCall:          2,
@@ -444,6 +510,23 @@ func multiStepFirstCallAmbiguousCommit(op, method string, nth int) bool {
 	return false
 }
 
+// TestNonLoadBearingAuthzRead_ProfileUpdateGetUserPermissions (#2839) proves the
+// new entry matches exactly the traced triple and nothing else — an authz-read
+// exception is scoped per (op, method, nth) precisely so it cannot silently widen
+// to mask a fail-open bug on an unrelated op, method, or call number.
+func TestNonLoadBearingAuthzRead_ProfileUpdateGetUserPermissions(t *testing.T) {
+	const op = "REST PUT /api/v1/auth/profile"
+	const method = "GetUserPermissions"
+	assert.True(t, nonLoadBearingAuthzRead(op, method, 1),
+		"the traced (op, method, NthCall=1) triple must be exempted")
+	assert.False(t, nonLoadBearingAuthzRead(op, method, 2),
+		"a DIFFERENT call number must not be exempted -- GetUserIdentity calls GetUserPermissions exactly once per request, so a second call is unexplained and must stay a violation")
+	assert.False(t, nonLoadBearingAuthzRead(op, "GetUserRolesByID", 1),
+		"a DIFFERENT method on the same op must not be exempted")
+	assert.False(t, nonLoadBearingAuthzRead("REST GET /api/v1/auth/profile", method, 1),
+		"a DIFFERENT op must not be exempted -- this entry's trace is specific to UpdateProfile's post-success decoration, not the GET profile route")
+}
+
 func nonLoadBearingAuthzRead(op, method string, nth int) bool {
 	for _, e := range nonLoadBearingAuthzReadExceptions {
 		if e.op == op && e.method == method && e.nth == nth {
@@ -549,6 +632,20 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	// and AuditEvent rows -- oracle (a) violation (REPLAY_HEX=58e803). Same
 	// class as F3 above but on the create path, not update.
 	if s := seedFor("GRPC keyorix.v1.RoleService.CreateRole", "GetRole", 1, 0); s != nil {
+		f.Add(s)
+	}
+	// Harness completeness regression (REPLAY_HEX=c900cb0000): DynamicSecretLease.LeaseID
+	// is a random token (see snapshot_test.go's typeScopedPresenceOnlyFields entry, scoped to
+	// DynamicSecretLease so the exemption can never leak onto BreakGlassActivation.RoleName or
+	// AccessReviewItem.RoleName) that was missing
+	// from the snapshot comparison's presence-only list, so two independently-bootstrapped
+	// worlds' DynamicSecretLease rows (and RevokeLease's AuditEvent.Description, which
+	// embeds the same LeaseID verbatim) never matched regardless of any fault. This fault
+	// (GetUser#1/error) only ever lands in the auth middleware's cache-hit account-state
+	// recheck, which already degrades to the cached snapshot on a storage error by design
+	// (serveAuthCacheHit) -- RevokeLease's own write path is never faulted. Not a real
+	// bug; kept as a regression seed for the snapshot comparison gap itself.
+	if s := seedFor("REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke", "GetUser", 1, 0); s != nil {
 		f.Add(s)
 	}
 	// Per-worker world reuse (M5): each `go test -fuzz` worker is a separate
@@ -904,24 +1001,14 @@ func diffSubsetOf(diff, allowed []string) bool {
 // which asserts the EFFECT ("a reported failure must leave ZERO new audit
 // rows") and does go red against that same pre-fix file.
 var knownOpenTolerances = []knownOpenTolerance{
-	// #2807 (filed 2026-10-05 from THIS PR's own fuzz-changed run, shard 0,
-	// minimized input committed by the fuzzer as
-	// testdata/fuzz/FuzzStorageFaultOperations/cc44f6cd6ac24cd8; pre-minimization
-	// REPLAY_HEX=d820633230): a GetUserRoles error AFTER the passkey assertion
-	// already verified leaves the reserved LoginAttempt consumed and an
-	// MFAStepUpGrant committed, while completeLogin reports a 500 and revokes
-	// only the Session (#2412). Confirmed PRE-EXISTING on origin/main @ cbb9863e
-	// by replaying the same input directly against it -- this PR touches no
-	// production code (it removes a dead tolerance and adds two seedIntent
-	// entries), so the finding is not ours. Scoped to this one tuple and this one
-	// table set, per COMMON-RULES: not table-wide, not method-wide.
-	// Remove this entry in the PR that fixes #2807.
-	{
-		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2807", expires: "2026-10-19",
-		tables:     []string{"MFAStepUpGrant", "LoginAttempt", "AuditEvent"},
-		findingDoc: "#2807",
-	},
+	// (#2807's entry — REST POST /auth/webauthn/login/finish, GetUserRoles#1/error,
+	// [MFAStepUpGrant LoginAttempt AuditEvent] — is gone: it was the same finding
+	// as #2841, tolerated twice under two issue numbers, and #2841's fix resolves
+	// the identity before minting anything, so the MFAStepUpGrant and AuditEvent
+	// halves no longer occur. The [LoginAttempt] residue is #2880's by-design
+	// post-verdict accounting and is pinned in oracleAByDesignErrors
+	// (oracle_a_by_design_test.go). TestKnownOpenTolerances_AreLoadBearing
+	// reported this row dead once that pin existed.)
 	// FOUR entries citing #2549 for the bulk access-request ops
 	// (bulk-reject/GetAccessRequest#1, and bulk-approve/GetAccessRequest#1,
 	// /RoleSetBypassesPermissionChecks#4, /GetRolePermissions#1) were DELETED
@@ -942,75 +1029,35 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// TestKnownOpenTolerances_AreLoadBearing drives every fully-specified entry
 	// in this list and fails on any that no longer tolerates anything.
 	//
-	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
-	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
-	// GetMFASecret error is checked with `err == nil` as the gate to even
-	// attempt TOTP validation; on error the whole branch is skipped,
-	// collapsing into the SAME path a genuine wrong code takes --
-	// audited as mfa.failed AND counted toward the account lockout, for a
-	// correct code that was never actually checked. Filed as #2548. Fix is PR
-	// #2398, not yet merged -- keep tolerating until it lands. Reproduced
-	// directly against this PR's rebased opCatalog: op="REST POST
-	// /auth/mfa/verify" fault=(method=GetMFASecret, NthCall=1, kind=error) --
-	// oracle (a) VIOLATION, differing tables: [AuditEvent LoginAttempt].
-	{
-		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
-		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
-	},
-	// Second trigger for the same finding (#2548), reached through a
-	// structurally different call site: VerifyMFACredentials' OWN GetUser
-	// call fails closed correctly -- it returns before ever reaching
-	// loadTOTPSecret/recordFailedLogin -- but the HANDLER
-	// (server/http/handlers/mfa.go's VerifyMFA) already called
-	// reserveLoginAttempt (RecordFailedLogin by IP) UNCONDITIONALLY, before
-	// VerifyMFALogin even runs, as its own rate-limiting bookkeeping (F2,
-	// 2026-09-20). That write is structural to this op's wiring, not tied to
-	// GetMFASecret specifically: ANY storage-error fault that makes this op
-	// report failure will show the identical LoginAttempt-only diff, since
-	// reserveLoginAttempt's write already landed before the fault-affected
-	// call runs. method is deliberately left blank (wildcard) for this
-	// reason, and tables is scoped to LoginAttempt alone -- unlike the
-	// GetMFASecret entry above (whose diff also legitimately includes
-	// AuditEvent from auditMFAFailed, a different code path entirely), a
-	// GetUser-stage failure never reaches auditMFAFailed at all, so AuditEvent
-	// never appears in ITS diff. A diff that included anything beyond
-	// LoginAttempt would be a different, unexplained issue and must still
-	// fail. Fix is PR #2398 (second commit), not yet merged -- keep
-	// tolerating until it lands; #2398's own body says to remove this entry
-	// once both it and #2392 have merged. Reproduced directly against this
-	// PR's rebased opCatalog (the originally-committed seed, 877139548d2805a6,
-	// now decodes to an unrelated op post-rebase -- see
-	// mfa-verify-getuser-loginattempt-2548 below): op="REST POST
-	// /auth/mfa/verify" fault=(method=GetUser, NthCall=1, kind=error) --
-	// oracle (a) VIOLATION, differing tables: [LoginAttempt].
+	// #2548's three rows on this op were triaged by LOGIN-ACCT-1 (verdicts in
+	// SESSION-LOGIN-ACCT-1.md and #2548#issuecomment-6090942175) and settled by
+	// TOL-1 (QUEUE-FIX-1), each re-verified by driving every storage method on
+	// this op at nth 1, error and panic, against origin/main @ ff1c2439:
 	//
-	// kind is wildcarded too, as of #2844 (a) — this ONE row replaces the
-	// KindError/KindPanic pair that used to sit here. That pair was identical
-	// in every field but `kind`, and the previous author left a note asking the
-	// coordinator for exactly this mechanism: "the existing entries wildcard
-	// `method` precisely so the next storage call CI finds is not a fresh red
-	// build — but `kind` has no wildcard, so every such entry needs its panic
-	// twin added by hand, and CI's randomized fuzz-changed will keep producing
-	// them one at a time." Both arms were separately confirmed pre-existing by
-	// byte-for-byte replay against unmodified origin/main
-	// (GetMFASecret#1/error and GetMFASecret#1/panic, oracle (a), differing
-	// tables [LoginAttempt] in both). Collapsing them is not a widening of what
-	// is tolerated: the root cause is kind-independent by construction (the
-	// write lands before the faulted call runs at all), tables is unchanged at
-	// [LoginAttempt], and a diff with anything else still fails loudly.
-	//
-	// nth stays PINNED at 1 deliberately. The same root-cause argument would
-	// justify wildcarding it, but no other ordinal has been observed producing
-	// this diff, and widening on an argument rather than an observation is how
-	// a narrow row becomes a blanket one. If an nth twin does show up, that is
-	// a one-line change then.
+	//   (a) method GetMFASecret, error: DELETED. Dead -- its diff is
+	//       [AuditEvent] only, accepted by onlyOutcomeLogTables before
+	//       matchingKnownOpen is consulted. Its toleranceDeadPendingTriage
+	//       baseline entry is gone with it.
+	//   (c) blank method, PANIC, [LoginAttempt]: DELETED. Dead -- no panic tuple
+	//       on this op yields a LoginAttempt-only diff since
+	//       verifyMFALoginReleasingOnPanic (#2805) releases the reservation on a
+	//       panic too.
+	//   (b) blank method, error, [LoginAttempt]: KEPT, but no longer #2548's
+	//       and no longer a wildcard. Its ConsumeMFAChallenge trigger was a real
+	//       residual bug, fixed by #2912 (no longer consults any row). The one
+	//       remaining trigger is ReserveLoginAttempt#1/error: the IP-budget
+	//       reservation write itself fails, the handler proceeds best-effort,
+	//       the login SUCCEEDS, and the run differs from the fault-free
+	//       reference only by the missing LoginAttempt row. That is #2837's
+	//       question (an op-scoped best-effort exemption for the reservation
+	//       write; see also #2921's proposal to bind such rows to the
+	//       atomicity ledger instead), so the row is re-pointed there and
+	//       pinned to that one method. Expiry deliberately NOT moved.
 	{
-		op: "REST POST /auth/mfa/verify",
-		// method, kind: both wildcard. nth pinned. tables mandatory (#2844).
-		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
+		op: "REST POST /auth/mfa/verify", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
-		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
+		findingDoc: "#2837",
 	},
 	// The fifth #2549 entry (op="REST POST /api/v1/auth/mfa/stepup",
 	// method=CreateMFAStepUpGrant#1, tables=[MFASecret]) MOVED to
@@ -1033,90 +1080,29 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// a PANIC in CreateSecretAccessLog, not just a returned error. Same three
 	// signals as the deletions at the end of this list: issue CLOSED, the
 	// recover() present in the tree, and the row reported dead.)
-	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
-	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase
-	// (ListWebAuthnCredentials#1/error), then CI's own fuzz-changed shard
-	// independently found a SECOND call site of the identical root cause
-	// (ConsumeMFAChallenge#1/error) during this PR's own CI run. Same
-	// root-cause family as #2548's second (wildcard) entry above: the
-	// WebAuthn login/finish handler (server/http/handlers/webauthn.go) calls
-	// reserveLoginAttempt UNCONDITIONALLY, before the real assertion
-	// verification runs, so a storage error on ANY call the verification path
-	// makes fails closed correctly but still leaves a LoginAttempt row
-	// behind -- structural to the op itself, not tied to one storage method,
-	// same reasoning as #2548's own wildcard entry. method is deliberately
-	// left blank for this reason (narrowed back to a single method would just
-	// mean the NEXT call site CI's randomized fuzz-changed finds becomes a
-	// fresh red build instead of this same already-tracked finding). Filed as
-	// #2565 (cross-links #2548 and #2398's own "CR3" note, since the root
-	// cause is shared across every reserveLoginAttempt call site, not
-	// MFA-specific). A THIRD trigger (ConsumeWebAuthnSession#1/error, cited
-	// by the coordinator as #2603) already matches this same wildcard entry
-	// -- same op, same kind, same LoginAttempt-only diff -- confirmed by
-	// direct replay; no separate tolerance entry needed for it. #2603 and
-	// #2565 look like the same tracked finding under two issue numbers.
+	// #2565's two wildcard rows on REST POST /auth/webauthn/login/finish
+	// (blank method, error and panic, [LoginAttempt]) are settled by TOL-1
+	// (QUEUE-FIX-1), re-verified by driving every storage method on the op at
+	// nth 1, error and panic, against origin/main @ ff1c2439:
 	//
-	// kind is wildcarded too, as of #2844 (a) — this ONE row replaces the
-	// KindError/KindPanic pair that used to sit here, the second of the two
-	// pairs whose existence prompted the kind-wildcard request. Both arms were
-	// separately confirmed pre-existing by byte-for-byte replay against
-	// unmodified origin/main (ListWebAuthnCredentials#1/error and
-	// ListWebAuthnCredentials#1/panic, oracle (a), differing tables
-	// [LoginAttempt] in both). Not a widening of what is tolerated: the root
-	// cause is kind-independent by construction, tables is unchanged at
-	// [LoginAttempt], and a diff with anything else still fails loudly. nth
-	// stays pinned at 1 for the same reason as #2548's row above.
-	//
-	// No corpus seed committed for this deliberately: this harness's input bytes
-	// encode the op as a raw opCatalog INDEX, so a committed seed decodes to a
-	// different op after any rebase that reorders the catalog (a hazard this
-	// repo has already been bitten by). The tolerance is keyed on
-	// (op, kind, nth, tables), which is rebase-stable; the seed would not be.
-	// RE-ATTRIBUTED, 2026-10-06. #2565 is CLOSED (completed), and its fix
-	// works: every KindError fault on a not-evaluated call
-	// (ConsumeMFAChallenge, ConsumeWebAuthnSession, GetUser,
-	// ListWebAuthnCredentials) now leaves NOTHING behind — measured directly,
-	// diff == []. The row that used to sit here still matched anyway, which is
-	// how #2844 (b)'s new closed-issue gate found it on its first live run:
-	// one row was covering two unrelated things under a fixed bug's number.
-	// Split into the two rows below, one per real cause.
-	//
-	// Cause 1 (#2879, a real unfixed bug): the handler releases the per-IP
-	// reservation on its normal error path only, so a PANIC unwinds past
-	// ReleaseLoginAttempt to the Recovery middleware and the slot stays
-	// counted for a request that reached no verdict at all. Measured: every
-	// method above, kind=panic, leaves [LoginAttempt]. method is wildcarded
-	// because the root cause is the missing defer, not any one call.
+	//   - The pre-verdict triggers #2565 was filed for (ListWebAuthnCredentials,
+	//     ConsumeMFAChallenge, ConsumeWebAuthnSession, GetUser) no longer consult
+	//     any row: ErrWebAuthnLoginNotEvaluated releases the reservation.
+	//   - PANIC row: DELETED, dead (no panic tuple yields a LoginAttempt-only
+	//     diff).
+	//   - CreateSession#1/error, [LoginAttempt]: post-verdict, by design (#2880)
+	//     -- MOVED to oracleAByDesignErrors, pinned (oracle_a_by_design_test.go).
+	//     Its GetUserRoles sibling is pinned there by #2876, the PR that makes
+	//     that tuple's diff [LoginAttempt]; on main it is still #2807's bug shape.
+	//   - ReserveLoginAttempt#1/error: the same #2837 shape as /auth/mfa/verify's
+	//     row above (reservation write fails, login succeeds best-effort, run
+	//     lacks only the LoginAttempt row). Kept, re-pointed to #2837, pinned to
+	//     that method. Expiry deliberately NOT moved.
 	{
-		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindPanic,
-		// method wildcard. kind PINNED here — cause 2 below owns KindError,
-		// and collapsing them again would re-create the conflation this split
-		// just undid.
-		nth: 1, oracle: "a", issue: "#2879", expires: "2026-11-07",
+		op: "REST POST /auth/webauthn/login/finish", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2879",
-	},
-	// Cause 2 (#2880, awaiting the auth owner's call): a KindError fault that
-	// lands AFTER the assertion has been evaluated and passed (GetUserRoles,
-	// CreateSession) does not wrap ErrWebAuthnLoginNotEvaluated, so nothing
-	// releases the slot. That is arguably correct — the handler's own rule is
-	// that an evaluated attempt stays counted, and ErrLoginIdentityUnavailable
-	// documents it for the GetUserRoles case — but "arguably correct" is not a
-	// design citation, and oracleAByDesignErrors requires a proving test per
-	// row that CreateSession does not yet have. Filed rather than declared.
-	//
-	// Kept as a tolerance (not moved to oracleAByDesignErrors) precisely
-	// because the question is open: a tolerance means "filed, not yet
-	// resolved", which is the honest label today. #2880 says what each answer
-	// implies for this row.
-	{
-		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindError,
-		// method wildcard: both observed methods share the one mechanism (no
-		// release after a successful evaluation). tables stays [LoginAttempt],
-		// so any other divergence still fails loudly.
-		nth: 1, oracle: "a", issue: "#2880", expires: "2026-11-07",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2880",
+		findingDoc: "#2837",
 	},
 	// Also found by the same live run while working #2549, also confirmed
 	// PRE-EXISTING by byte-for-byte replay against unmodified origin/main, also
@@ -1147,14 +1133,16 @@ var knownOpenTolerances = []knownOpenTolerance{
 		findingDoc: "#2834",
 	},
 	// (The third pre-existing finding from the same live runs — #2841, op="REST
-	// POST /auth/webauthn/login/finish", method=GetUserRoles — was tolerated here
-	// and is now FIXED, so its row is gone rather than expired. Both WebAuthn
-	// login paths resolve the response identity before minting the session and
-	// the ambient MFAStepUpGrant, so a login that reports failure persists
-	// neither; guarded by webauthn_login_no_partial_grant_test.go here and by
-	// internal/core/login_identity_before_mint_test.go at the core
-	// boundary. #2565's wildcard entry on this same op still stands and still
-	// covers only [LoginAttempt] — unchanged, not widened.)
+	// POST /auth/webauthn/login/finish", method=GetUserRoles, kind=error, nth 1,
+	// [AuditEvent LoginAttempt MFAStepUpGrant] — was tolerated here and is now
+	// FIXED, so its row is gone rather than expired. Both WebAuthn login paths
+	// resolve the response identity before minting the session and the ambient
+	// MFAStepUpGrant, so a login that reports failure persists neither; guarded
+	// by webauthn_login_no_partial_grant_test.go here and by
+	// internal/core/login_identity_before_mint_test.go at the core boundary.
+	// The remaining [LoginAttempt] diff is #2880's by-design post-verdict
+	// accounting, pinned for GetUserRoles only in oracleAByDesignErrors — not
+	// absorbed by #2565's wildcard entry, which is unchanged, not widened.)
 	//
 	// Fourth and LAST pre-existing finding tolerated from the same live runs,
 	// also confirmed by byte-for-byte replay against unmodified origin/main.
@@ -1168,19 +1156,10 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// inside #2549's PR. Expect CI's fuzz-changed to find a fifth; that is the
 	// documented, expected outcome, not a surprise.
 	//
-	// WebAuthn registration finishing is expected to invalidate the user's other
-	// sessions (an MFA/credential-enrollment change is one of the session-revoke
-	// events); when DeleteSessionsForUserExcept fails, the registration still
-	// reports SUCCESS, so the credential is enrolled and the other sessions
-	// survive. Whether that should fail closed or retry is the auth owner's call.
-	// Remove when #2844 is resolved.
-	{
-		op: "REST POST /api/v1/auth/webauthn/register/finish", method: "DeleteSessionsForUserExcept",
-		kind: faultstorage.KindError,
-		nth:  1, oracle: "a", issue: "#2844", expires: "2026-11-07",
-		tables:     []string{"Session"},
-		findingDoc: "#2844",
-	},
+	// (The WebAuthn register/finish DeleteSessionsForUserExcept tolerance that
+	// stood here is removed: #2897 makes that purge failure observable and it is
+	// now an op-scoped acceptable-by-design entry above, so the tolerance no
+	// longer tolerates anything.)
 	// Pre-existing, unrelated to this PR's own MFA-reauth changes (#2392 only
 	// newly wires /auth/mfa/verify into the fuzzer, it doesn't touch this code
 	// path) -- found by a live 2-minute FuzzStorageFaultOperations run during
@@ -1203,39 +1182,23 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// branch, so the hotspot file stays serialized through one PR rather than
 	// several concurrent ones touching the same lines.
 	//
-	// REST POST /api/v1/invitations, CountSetupTokensSince, error, nth 1,
-	// oracle a: checkResendThrottle's CountSetupTokensSince call is on the
-	// SUCCESS path (reported success, final state is [SetupToken AuditEvent]
-	// different from the fault-free reference) -- traces through
-	// provisionSetupLink/provisionSetupLinkThrottled -> InviteGlobalWithLink,
-	// the identical architectural tradeoff PR #2393's own body already
-	// documents as its deferred "#4" item (same shape as #2382's own bonus
-	// finding #1: two-separate-top-level-calls, "invitation created but setup
-	// link failed" still returns 201) -- not independently fixed here, same
-	// reasoning #2393 gives, pending that coordinator decision.
-	{
-		op: "REST POST /api/v1/invitations", method: "CountSetupTokensSince", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2599", expires: "2026-10-17",
-		tables:     []string{"SetupToken", "AuditEvent"},
-		findingDoc: "#2599",
-	},
-	// REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide,
-	// ListProjectRoleAssignments, error, nth 1, oracle a: a ListProjectRoleAssignments
-	// storage error reports failure but AccessReviewItem's decision state
-	// still committed. Entirely unrelated to MFA/auth -- same finding this
-	// session already surfaced and filed as #2570 during the #2392 rebase's
-	// own live fuzzing (deliberately not tolerated there, per this file's
-	// "don't expand scope indefinitely" precedent); coordinator independently
-	// filed #2606 for the same symptom. Citing #2606 per the coordinator's
-	// explicit instruction -- #2570 is a duplicate worth closing in favor of
-	// this one.
-	{
-		op:     "REST POST /api/v1/projects/{id}/access-review/campaigns/{campaignId}/items/{itemId}/decide",
-		method: "ListProjectRoleAssignments", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2606", expires: "2026-10-17",
-		tables:     []string{"AccessReviewItem"},
-		findingDoc: "#2606",
-	},
+	// (#2599's row — REST POST /api/v1/invitations, CountSetupTokensSince,
+	// error, nth 1 — is GONE, not expired. The bug is fixed: a throttle count
+	// that cannot be read is now its own refusal
+	// (core.ErrResendThrottleUnverifiable, internal/core/invitations.go), so
+	// the invitation is no longer persisted while the request reports the
+	// failure. Confirmed on three independent signals before deleting: the
+	// issue is CLOSED, the fix's own sentinel is present in the tree, and
+	// TestKnownOpenTolerances_AreLoadBearing reports the row dead — the
+	// oracle no longer flags its case at all.)
+	//
+	// (#2606's row — .../items/{itemId}/decide, ListProjectRoleAssignments,
+	// error, nth 1 — is likewise GONE. Fixed by #2570: DecideAccessReviewItem's
+	// attest path runs its reads before the claim, so the item stays pending
+	// when the grant lookup errors. Same three signals: issue CLOSED, the
+	// proving test present in the tree
+	// (internal/core/TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending),
+	// and the row reported dead.)
 	// ---- SESSION ORACLE-A-1, item 1: unblock the merge queue --------------
 	// Two pre-existing oracle (a) error-branch findings landed on main unfixed
 	// (SESSION-STALE-PR-1: both were found on PRs that touched neither code
@@ -1277,32 +1240,29 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// docs/atomicity-exempt.tsv (consumeFirstAccountsForDiff,
 	// consume_first_oracle_test.go) instead of carrying it as an open finding
 	// against one named storage method.
-	// #2817: DisableMFA (internal/core/mfa.go) runs requireReauth -- itself a
-	// class-B row (atomicity-exempt.tsv:61) -- BEFORE the
-	// SetUserMFAEnabled+DeleteMFAForUser transaction. requireReauth's
-	// MarkTOTPStepUsed burns the matched TOTP time-step
-	// (MFASecret.LastUsedStep) and writes an "mfa.reauth_verified" AuditEvent
-	// on c.storage, outside that transaction, so a DeleteMFAForUser error
-	// rolls the disable back and correctly leaves the step burned.
-	{
-		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteMFAForUser", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2817", expires: "2026-10-17",
-		tables:     []string{"AuditEvent", "MFASecret"},
-		findingDoc: "#2817",
-	},
-	// #2814: CompleteSAML (internal/core/sso.go) is itself a class-B row
-	// (atomicity-exempt.tsv:76) -- ConsumeSSOLoginState burns the single-use
-	// RelayState row first, by design, because st.Nonce is what the
-	// InResponseTo check validates against and a replayable state row would
-	// let a captured (RelayState, SAMLResponse) pair re-drive user
-	// resolution/provisioning. A GetUserByUsername error inside
-	// resolveSSOUser therefore fails closed with the state correctly consumed.
-	{
-		op: "REST POST /auth/saml/{provider}/acs", method: "GetUserByUsername", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2814", expires: "2026-10-17",
-		tables:     []string{"SSOLoginState"},
-		findingDoc: "#2814",
-	},
+	// (#2817's row — REST POST /api/v1/auth/mfa/disable, DeleteMFAForUser,
+	// error, nth 1 — and #2814's — REST POST /auth/saml/{provider}/acs,
+	// GetUserByUsername, error, nth 1 — are GONE, finishing the deletion the
+	// two REMOVED notes directly above already describe. Both rows survived
+	// that PR as a merge artefact: the notes landed, the rows did not get
+	// dropped, so main carried a comment saying "REMOVED by this PR" sitting
+	// right on top of the row it claimed to have removed. This branch's new
+	// staleness guard is what surfaced it — TestKnownOpenTolerances_AreLoadBearing
+	// reported both rows dead with "their fault fired, but the oracle did not
+	// report a violation for them".
+	//
+	// Deleted rather than baselined into toleranceDeadPendingTriage, on the
+	// measured reason each went quiet: the harness log shows both now accepted
+	// by consumeFirstAccountsForDiff, i.e. "ACCEPTABLE-BY-DESIGN (consume-first,
+	// docs/atomicity-exempt.tsv class B, (*KeyorixCore).requireReauth /
+	// (*KeyorixCore).CompleteSAML)". That is a design-cited exemption derived
+	// from the class-B ledger and enforced against it
+	// (TestConsumeFirstExemptions_MatchAtomicityLedger), and it is STRICTLY
+	// NARROWER than the rows it replaces: it requires every table and column
+	// outside the op's declared single-use consumption to be byte-for-byte
+	// identical to the pre-fault state, where the rows allowlisted a fixed table
+	// set and nothing else. So this removes two blanket carve-outs and keeps the
+	// derived one — the tolerance list shrinks, the guard does not.)
 	// #2842 (ORACLE-A-1). Surfaced by CI's fuzz shard 0 + fuzz-changed on
 	// #2821, whose entire diff was the two auth/MFA/SAML rows directly above
 	// -- nothing in the secrets path. Confirmed to reproduce on pristine
@@ -1340,28 +1300,11 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// wildcard needed, and no #2549-style treadmill of one new row per red
 	// build expected on this op.
 	{
-		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecret", kind: faultstorage.KindError,
+		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecretFields", kind: faultstorage.KindError,
 		nth: 1, oracle: "a", issue: "#2842", expires: "2026-10-17",
 		tables:     []string{"SecretVersion"},
 		findingDoc: "#2842",
 	},
-	// (#2599's row — REST POST /api/v1/invitations, CountSetupTokensSince,
-	// error, nth 1 — is GONE, not expired. The bug is fixed: a throttle count
-	// that cannot be read is now its own refusal
-	// (core.ErrResendThrottleUnverifiable, internal/core/invitations.go), so
-	// the invitation is no longer persisted while the request reports the
-	// failure. Confirmed on three independent signals before deleting: the
-	// issue is CLOSED, the fix's own sentinel is present in the tree, and
-	// TestKnownOpenTolerances_AreLoadBearing reports the row dead — the
-	// oracle no longer flags its case at all.)
-	//
-	// (#2606's row — .../items/{itemId}/decide, ListProjectRoleAssignments,
-	// error, nth 1 — is likewise GONE. Fixed by #2570: DecideAccessReviewItem's
-	// attest path runs its reads before the claim, so the item stays pending
-	// when the grant lookup errors. Same three signals: issue CLOSED, the
-	// proving test present in the tree
-	// (internal/core/TestDecideAccessReviewItem_AttestGrantLookupErrorLeavesItemPending),
-	// and the row reported dead.)
 }
 
 // observeKnownOpenMatch, when non-nil, is called with every tolerance
@@ -1742,15 +1685,16 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 					e.fn, label, diff, e.why)
 				return
 			}
-			// #2549: the error-reporting branch's own business-state exemption.
-			// The three layers above all describe a side effect the code is
-			// willing to LOSE (best-effort) or a log of the reported outcome.
-			// Neither covers the opposite shape: a mutation the code
-			// deliberately KEEPS while reporting failure, where the mutation IS
-			// the security behaviour (VerifyMFAStepUp advancing the TOTP replay
-			// window before failing closed). Each row is reviewed, names the
-			// production comment and the test that establish the design, and
-			// allowlists an EXACT table set — see oracle_a_by_design_test.go.
+			// Fifth layer, #2549: the error-reporting branch's own business-state
+			// exemption. The layers above all describe a side effect the code is
+			// willing to LOSE (best-effort), a log of the reported outcome, or a
+			// declared single-use consumption. None covers the opposite shape: a
+			// mutation the code deliberately KEEPS while reporting failure, where
+			// the mutation IS the security behaviour (VerifyMFAStepUp advancing
+			// the TOTP replay window before failing closed). Each row is
+			// reviewed, names the production comment and the test that establish
+			// the design, and allowlists an EXACT table set — see
+			// oracle_a_by_design_test.go.
 			if e := oracleAErrorByDesign(in.op, in.method, in.kind, in.nth, diff); e != nil {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"deliberately keeps while reporting failure — %s (proving test: %s)",
@@ -1994,6 +1938,48 @@ func TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo(t 
 func TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall(t *testing.T) {
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}, ""))
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}, ""))
+}
+
+// TestOpScopedAcceptableByDesign_KeepSessionLookupFailure_RequiresLogEvidence
+// (#2835) proves the 3 GetSession entries (mfa/activate, mfa/disable,
+// change-password) and the 2 DeleteSessionsForUserExcept entries (mfa/disable,
+// webauthn/register/finish) all require their new log evidence, exactly like
+// the WithTransaction entry above -- a [Session, AuditEvent] diff alone must
+// not be waved through without proof the REVIEWED fallback (not some other,
+// unreviewed cause) actually produced it. Red without requireLogSubstring:
+// every "no log"/"unrelated log" case below would wrongly return true.
+func TestOpScopedAcceptableByDesign_KeepSessionLookupFailure_RequiresLogEvidence(t *testing.T) {
+	const keepSessionLog = "2026/10/09 17:00:00 SECURITY: change_password: could not resolve the caller's own session (fault-fuzz injected failure) -- purging ALL sessions for user 1 instead of sparing the caller's\n"
+	const purgeFailureLog = "2026/10/09 17:00:00 SECURITY: deleteSessionsForUserAndEvict failed to purge sessions for user 1 (best-effort, primary operation already succeeded): fault-fuzz injected failure\n"
+
+	keepSessionOps := []string{
+		"REST POST /api/v1/auth/mfa/activate",
+		"REST POST /api/v1/auth/mfa/disable",
+		"REST POST /api/v1/auth/change-password",
+	}
+	for _, op := range keepSessionOps {
+		assert.True(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent"}, keepSessionLog),
+			"%s: a Session+AuditEvent diff WITH the resolve-failure log must be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent"}, ""),
+			"%s: EVIDENCE REQUIRED -- no captured log output must NOT be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent"}, "some unrelated log line\n"),
+			"%s: EVIDENCE REQUIRED -- log present but missing the specific substring must NOT be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent", "User"}, keepSessionLog),
+			"%s: a diff touching a table OUTSIDE the allowed set must never be exempted, regardless of log evidence", op)
+	}
+	assert.False(t, opScopedAcceptableByDesign("REST POST /api/v1/some/other/op", "GetSession", 1, []string{"Session", "AuditEvent"}, keepSessionLog),
+		"an unrelated op must never match these op-scoped entries")
+
+	purgeFailureOps := []string{
+		"REST POST /api/v1/auth/mfa/disable",
+		"REST POST /api/v1/auth/webauthn/register/finish",
+	}
+	for _, op := range purgeFailureOps {
+		assert.True(t, opScopedAcceptableByDesign(op, "DeleteSessionsForUserExcept", 1, []string{"Session", "AuditEvent"}, purgeFailureLog),
+			"%s: a Session+AuditEvent diff WITH the purge-failure log must be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "DeleteSessionsForUserExcept", 1, []string{"Session", "AuditEvent"}, ""),
+			"%s: EVIDENCE REQUIRED -- no captured log output must NOT be exempted", op)
+	}
 }
 
 // TestHashExcludingColumns_ColumnScopedExclusion is #2410's direct proof:

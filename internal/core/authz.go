@@ -1256,7 +1256,11 @@ func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to remove user %d from group %d: they may be the install's last administrator via this group's role grant, and removing them would leave no install administrator at the global scope", userID, groupID)
+		// Wraps storage.ErrWouldStrandLastAdmin -- the sentinel the direct-grant
+		// guard (RemoveGlobalAdminRoleGuarded) already returns -- so a caller can
+		// tell THIS refusal from a storage failure by errors.Is. SSO reconcile
+		// does (#2903): it is what selects the last-admin audit event and message.
+		return fmt.Errorf("refusing to remove user %d from group %d: they may be the install's last administrator via this group's role grant, and removing them would leave no install administrator at the global scope: %w", userID, groupID, storage.ErrWouldStrandLastAdmin)
 	}
 	return nil
 }

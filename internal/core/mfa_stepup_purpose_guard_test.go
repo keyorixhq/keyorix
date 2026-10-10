@@ -123,11 +123,7 @@ var mfaStepUpPurposeAllowlist = map[string]mfaStepUpAllowEntry{
 	},
 	"internal/core/mfa.go:(*KeyorixCore).requireReauth:c.storage.ConsumeMFAStepUpGrant": {
 		expectedPurpose: "MFAStepUpPurposeReauth",
-		reason: "(Line shifted to :596 by #2841's VerifyMFALogin change, which resolves the response identity " +
-			"before minting the session and the user-scoped MFAStepupToken and so added lines earlier in this " +
-			"file; previously :580, shifted there in turn by main's #2465 doc-comment additions on " +
-			"requireReauth together with that PR's own CR3 fix -- same ConsumeMFAStepUpGrant call, same " +
-			"purpose, not a new site.) requireReauth's account-security-factor-change gate (DisableMFA, " +
+		reason: "requireReauth's account-security-factor-change gate (DisableMFA, " +
 			"RegenerateMFARecoveryCodes, ActivateMFA, WebAuthn credential register/delete, email change). " +
 			"Must reject the ambient MFAStepUpPurposeRestrictedSecretRead grant a plain login mints -- " +
 			"accepting it here is the exact confused-deputy shape this fix closed (a leaked bearer token " +

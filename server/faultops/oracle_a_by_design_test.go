@@ -138,6 +138,78 @@ var oracleAByDesignErrors = []oracleAByDesignError{
 			"mis-labelled intended behaviour as a filed-but-unfixed bug and so guaranteed " +
 			"perpetual re-filing at each expiry.",
 	},
+	// #2880 (auth owner's decision: a post-verdict storage fault keeps the
+	// per-IP login attempt counted), GetUserRoles half. Pinned, never a
+	// wildcard: only the one post-assertion read is covered, and only for the
+	// [LoginAttempt] residue. Before #2841's fix this same tuple also left an
+	// MFAStepUpGrant and a login AuditEvent behind (#2807/#2841, tolerated
+	// twice in knownOpenTolerances); those halves were the bug and are gone —
+	// a diff naming MFAStepUpGrant or Session again is not covered by this row
+	// and fails oracle (a) loudly.
+	{
+		op:     "REST POST /auth/webauthn/login/finish",
+		method: "GetUserRoles",
+		kind:   faultstorage.KindError,
+		nth:    1,
+		tables: []string{"LoginAttempt"},
+		designComment: "internal/core/webauthn.go: ErrLoginIdentityUnavailable (\"deliberately NOT " +
+			"ErrWebAuthnLoginNotEvaluated: the assertion WAS evaluated and passed, so the per-IP " +
+			"login-attempt reservation must stay counted\"); server/http/handlers/webauthn.go " +
+			"FinishWebAuthnLogin releases the reservation only on ErrWebAuthnLoginNotEvaluated",
+		provingTest: "internal/core/TestFinishWebAuthnLogin_IdentityReadFailureLeavesNoSessionOrGrant",
+		why: "The WebAuthn assertion has already been evaluated and passed when the response identity " +
+			"read fails, so the request is a genuine login attempt and keeps the IP slot it reserved. " +
+			"Releasing it would let an attacker drive unlimited post-verification failures against an " +
+			"IP without spending budget (#2880). The login itself is refused with no session, no step-up " +
+			"grant and no step-up token written (#2841), so the kept LoginAttempt row is the only state " +
+			"left, and it is the rate-limit enforcement, not a partial commit.",
+	},
+	// #2880 (auth owner's decision: a post-verdict storage fault keeps the
+	// per-IP login attempt counted), CreateSession half. Moved here by TOL-1
+	// from #2565's wildcard knownOpenTolerance, which absorbed it as if it were
+	// the pre-verdict bug #2565 was filed for. Pinned, never a wildcard. The
+	// GetUserRoles and GetUserPermissions halves are pinned alongside (#2876
+	// reduces those tuples' diffs to [LoginAttempt]).
+	{
+		op:     "REST POST /auth/webauthn/login/finish",
+		method: "CreateSession",
+		kind:   faultstorage.KindError,
+		nth:    1,
+		tables: []string{"LoginAttempt"},
+		designComment: "server/http/handlers/webauthn.go FinishWebAuthnLogin releases the per-IP reservation " +
+			"ONLY on core.ErrWebAuthnLoginNotEvaluated (\"An invalid/expired challenge or session, or a failed " +
+			"assertion, stays counted\"); internal/core/webauthn.go ErrWebAuthnLoginNotEvaluated is reserved for " +
+			"storage errors BEFORE any verdict on the assertion, and mintSession runs after it passed",
+		provingTest: "internal/core/TestFinishWebAuthnLogin_MintFailureAfterAssertion_StillCountsTheLoginAttempt " +
+			"(with its calibration TestFinishWebAuthnLogin_PreVerdictFailureDoesNotCountTheLoginAttempt)",
+		why: "The WebAuthn assertion was evaluated and passed before CreateSession failed, so the request is a " +
+			"genuine login attempt and keeps the IP slot it reserved. Releasing it would let an attacker drive " +
+			"unlimited post-verification failures against an IP without spending budget (#2880). No session is " +
+			"minted, so the kept LoginAttempt row is the rate-limit enforcement, not a partial commit.",
+	},
+	// Same #2880 decision, the other half of the identity read: GetUserIdentity
+	// reads roles, then permissions, and both resolve before anything is minted
+	// (#2841). Pinned separately -- one row per method, never a wildcard.
+	// Found by the fuzzer on #2764's CI (pre-existing on main, where it still
+	// leaves [AuditEvent LoginAttempt MFAStepUpGrant]); on this branch the diff
+	// is [LoginAttempt], which #2565's wildcard used to absorb.
+	{
+		op:     "REST POST /auth/webauthn/login/finish",
+		method: "GetUserPermissions",
+		kind:   faultstorage.KindError,
+		nth:    1,
+		tables: []string{"LoginAttempt"},
+		designComment: "internal/core/webauthn.go: ErrLoginIdentityUnavailable (\"deliberately NOT " +
+			"ErrWebAuthnLoginNotEvaluated: the assertion WAS evaluated and passed, so the per-IP " +
+			"login-attempt reservation must stay counted\"); server/http/handlers/webauthn.go " +
+			"FinishWebAuthnLogin releases the reservation only on ErrWebAuthnLoginNotEvaluated",
+		provingTest: "internal/core/TestFinishWebAuthnLogin_PermissionsReadFailureLeavesNoSessionOrGrant",
+		why: "Identical to the GetUserRoles row above: the assertion has passed when the permissions read " +
+			"fails, so the request keeps the IP slot it reserved (#2880) -- releasing it would make " +
+			"post-verification failures free -- and the login is refused before any session, step-up " +
+			"grant or step-up token is written (#2841). The kept LoginAttempt row is the rate-limit " +
+			"enforcement, not a partial commit.",
+	},
 }
 
 // oracleAErrorByDesign reports whether an error-reporting-branch oracle (a)
@@ -452,8 +524,8 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 }
 
 // TestKnownToleranceStaleness_DetectsDeadAndLiveRows is the calibration for
-// TestKnownOpenTolerances_AreLoadBearing: both directions, on the real list,
-// through the real classifier.
+// TestKnownOpenTolerances_AreLoadBearing: both directions, through the real
+// classifier.
 //
 // The thing that can silently break is the `consulted` signal — it comes from
 // observeKnownOpenMatch, a hook matchingKnownOpen calls. If that hook stops
@@ -464,30 +536,23 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 // reads as load-bearing and the check passes forever while verifying nothing.
 // That is the failure this test catches.
 //
-// It asserts that the classifier puts at least one real row in the live bucket
-// AND at least one in a not-live bucket. A stuck signal can satisfy only one of
-// those. Deliberately NOT asserted: which specific rows land where — that
-// changes every time a bug is fixed or a tolerance added, and pinning it would
-// make this test a second copy of the list.
+// Live direction: at least one REAL row must classify live. Not-live
+// direction: a PLANTED known-dead row must classify dead. A stuck signal can
+// satisfy only one of those.
+//
+// Why the not-live half is planted rather than read off the real list: it used
+// to require at least one real row in a not-live bucket, which only held while
+// some debt happened to be outstanding. TOL-1 cleared the last baselined dead
+// row (#2548's GetMFASecret), and a calibration that depends on a bug staying
+// unfixed is one cleanup away from vanishing — this file's own comment on the
+// #2606 precedent says as much. The planted row is that exact real shape:
+// GetMFASecret#1/error on /auth/mfa/verify fires, but its diff is [AuditEvent]
+// only, accepted by onlyOutcomeLogTables before matchingKnownOpen runs, so a
+// correct classifier must call it dead. Deliberately NOT asserted: which real
+// rows land where — that changes every time a bug is fixed or a tolerance
+// added, and pinning it would make this test a second copy of the list.
 func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 	c := classifyToleranceStaleness(t)
-
-	notLive := len(c.dead) + len(c.undrivable) + len(c.inconclusive)
-	for label := range toleranceDeadPendingTriage {
-		// A baselined row that stayed dead is in no reported bucket (it is the
-		// expected steady state), but it IS a not-live observation, which is
-		// what this calibration needs.
-		isRevived := false
-		for _, r := range c.revivedLive {
-			if r == label {
-				isRevived = true
-			}
-		}
-		if !isRevived {
-			notLive++
-		}
-	}
-
 	if len(c.live) == 0 {
 		t.Errorf("the staleness classifier found NO load-bearing tolerance among %d entries. Either every "+
 			"tolerance really is dead (then TestKnownOpenTolerances_AreLoadBearing is already failing and "+
@@ -497,18 +562,38 @@ func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v",
 			len(knownOpenTolerances), c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive)
 	}
-	if notLive == 0 {
-		t.Errorf("the staleness classifier found EVERY drivable tolerance load-bearing, with nothing dead, "+
-			"undrivable, inconclusive, or baselined-and-still-dead. That is the dangerous direction: a "+
-			"`consulted` signal stuck TRUE makes this check pass forever while verifying nothing. If the "+
-			"list genuinely has no debt left, delete toleranceDeadPendingTriage and replace this assertion "+
-			"with one that plants a known-dead row, rather than weakening it.\n"+
-			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v baseline=%d",
-			c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive, len(toleranceDeadPendingTriage))
+
+	planted := knownOpenTolerance{
+		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#calibration", expires: "2099-01-01",
+		findingDoc: "TestKnownToleranceStaleness_DetectsDeadAndLiveRows planted known-dead row",
 	}
-	t.Logf("staleness classifier discriminates: %d live, %d not-live (dead=%d undrivable=%d inconclusive=%d "+
-		"baselined=%d)", len(c.live), notLive, len(c.dead), len(c.undrivable), len(c.inconclusive),
-		len(toleranceDeadPendingTriage))
+	plantedLabel := fmt.Sprintf("%s/%s/%s#%d", planted.op, planted.method, planted.kind, planted.nth)
+	real := knownOpenTolerances
+	knownOpenTolerances = append(append([]knownOpenTolerance{}, real...), planted)
+	pc := classifyToleranceStaleness(t)
+	knownOpenTolerances = real
+
+	plantedDead := false
+	for _, l := range pc.dead {
+		if l == plantedLabel {
+			plantedDead = true
+		}
+	}
+	if !plantedDead {
+		t.Errorf("the planted known-dead row %q was NOT classified dead. Either the `consulted` signal is "+
+			"stuck TRUE — the dangerous direction: this check would pass forever while verifying nothing — "+
+			"or that tuple's behaviour changed so it is no longer dead (then pick another tuple whose fault "+
+			"fires and whose diff the oracle accepts before matchingKnownOpen; never drop this half).\n"+
+			"buckets with the plant: live=%v dead=%v undrivable=%v inconclusive=%v",
+			plantedLabel, pc.live, pc.dead, pc.undrivable, pc.inconclusive)
+	}
+	if len(pc.live) != len(c.live) {
+		t.Errorf("planting one dead row changed the real rows' live count (%d -> %d) — the classification "+
+			"is not independent per row", len(c.live), len(pc.live))
+	}
+	t.Logf("staleness classifier discriminates: %d real rows live, planted %q classified dead=%v",
+		len(c.live), plantedLabel, plantedDead)
 }
 
 // toleranceDeadPendingTriage is the ratchet baseline: knownOpenTolerances
@@ -539,32 +624,33 @@ func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 // the oracle starts consulting it again (it is live, not debt). The check's own
 // red/green calibration no longer depends on one of these rows happening to be
 // a fixed bug — see TestKnownOpenToleranceStaleness_DetectsDeadAndLiveRows.
-var toleranceDeadPendingTriage = map[string]string{
-	"REST PUT /api/v1/projects/{id}/access-requests/{requestId}/CreateAccessRequestApproval/error#1": "#2407",
-	"REST POST /auth/mfa/verify/GetMFASecret/error#1":                                                "#2548",
-}
+// (#2407's baseline entry — REST PUT
+// /api/v1/projects/{id}/access-requests/{requestId}, CreateAccessRequestApproval,
+// error, nth 1 — is GONE. Its knownOpenTolerance row no longer exists: #2415
+// fixed the bug (finalizeAccessRequestApproval now runs the grant, the approval
+// record and the request-state update inside one storage.WithTransaction) and
+// FIX-2 deleted the row, leaving this baseline pointing at nothing. The
+// stale-baseline half of the ratchet is what caught it: "found 1
+// toleranceDeadPendingTriage entr(y/ies) whose knownOpenTolerance is gone". A
+// baseline entry with no row behind it is pure noise — it can never go red
+// again, so it only hides the fact that the exemption it names is already
+// retired.)
+//
+// (#2548's GetMFASecret entry is GONE: TOL-1 deleted the dead row it baselined,
+// so the baseline went with it. The map is empty, not deleted -- the next row
+// found dead while its issue is still open belongs here.)
+var toleranceDeadPendingTriage = map[string]string{}
 
 // toleranceStalenessUndrivable names the knownOpenTolerances entries
 // TestKnownOpenTolerances_AreLoadBearing cannot drive, with why. Keeping the
 // list explicit is the point: an unlisted undrivable entry fails the test, so
 // the uncovered set cannot grow silently.
-// The `none` in these keys is FaultKind's zero value rendering — i.e. the
-// kind wildcard (#2844 (a)). Both of these were a KindError/KindPanic PAIR of
-// near-identical rows before that change; collapsing each pair into one
-// kind-wildcarded row is why there are two keys here now instead of four.
-var toleranceStalenessUndrivable = map[string]bool{
-	// method AND kind are both wildcards: the finding's root cause is
-	// reserveLoginAttempt's unconditional write before the faulted call runs,
-	// so ANY fault on this op, of any kind, shows the same LoginAttempt-only
-	// diff. There is no single (method, kind) to drive (#2548).
-	"REST POST /auth/mfa/verify//none#1": true,
-	// Same method wildcard, same LoginAttempt-only diff, different op and two
-	// distinct causes (the kind-split is deliberate, see those rows):
-	// #2879's panic arm (the release has no defer) and #2880's error arm (an
-	// evaluated assertion's later failure stays counted).
-	"REST POST /auth/webauthn/login/finish//panic#1": true,
-	"REST POST /auth/webauthn/login/finish//error#1": true,
-}
+//
+// (Empty since TOL-1: the four wildcard rows that used to be listed here --
+// /auth/mfa/verify and /auth/webauthn/login/finish, error and panic -- were
+// deleted as dead or pinned to ReserveLoginAttempt, so every remaining row is
+// fully specified and actually driven.)
+var toleranceStalenessUndrivable = map[string]bool{}
 
 // isOutcomeLogTable reports whether t is one of outcomeLogTables.
 func isOutcomeLogTable(t string) bool {

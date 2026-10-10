@@ -37,6 +37,12 @@ func TestDeleteRole_CascadesEveryRoleIDReference_Postgres(t *testing.T) {
 	db := pgOpen(t, dsn)
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
+		// SystemMetadata holds the role_permissions cache-invalidation generation
+		// (PERF-3 PR-2): DeleteRole's cascade bumps it in the same transaction as
+		// the role_permissions delete, so this list is incomplete without it —
+		// and the write correctly fails closed rather than cascading without
+		// invalidating. See role_permission_cache.go.
+		&models.SystemMetadata{},
 		&models.User{}, &models.UserRole{}, &models.Group{}, &models.GroupRole{},
 		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{},
 	))
