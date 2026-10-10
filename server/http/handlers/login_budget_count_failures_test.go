@@ -13,9 +13,11 @@
 //   - a request that DELIVERS a session (login, MFA verify, refresh) returns its
 //     own reserved slot. The slot is still reserved up front, so the race F2
 //     closed stays closed — only the outcome bookkeeping changes;
-//   - one login flow counts once: the password step of an MFA login keeps its
-//     slot (the flow is not finished), the MFA step that completes it returns
-//     its own — so an MFA login costs exactly one slot, not two;
+//   - a multi-request flow keeps its earlier steps' slots only until it
+//     finishes: the password step of an MFA login (and a WebAuthn Begin) bind
+//     their slots to the challenge / ceremony row, and the step that delivers
+//     the session returns them with its own — so a delivered MFA login costs
+//     no slot (#2936 item 4; login_budget_mfa_slot_release_test.go);
 //   - failures keep counting exactly as before, including post-verdict storage
 //     faults (#2880/#2894: those are charged like a wrong credential and are
 //     NOT a delivered session, so they never reach the release);
@@ -157,11 +159,14 @@ func TestLoginBudget_FailureCountSurvivesRestart(t *testing.T) {
 		"a restart must not reset the failure count: %s", w.Body.String())
 }
 
-// TestLoginBudget_MFALoginConsumesExactlyOneSlot: an MFA login is two requests
-// (/auth/login, then /auth/mfa/verify) but one login flow, so it costs one
-// slot: the password step keeps its slot (the flow is not finished), the
-// verify step that delivers the session returns its own.
-func TestLoginBudget_MFALoginConsumesExactlyOneSlot(t *testing.T) {
+// TestLoginBudget_DeliveredMFALoginConsumesNoSlot: an MFA login is two requests
+// (/auth/login, then /auth/mfa/verify). The password step keeps its slot while
+// the flow is unfinished (bound to the MFA challenge); the verify step that
+// delivers the session returns its own AND the password step's (#2936 item 4,
+// Andrei 2026-10-10: the budget counts failures only, so a delivered MFA login
+// costs nothing -- it used to cost one slot, which still locked an office IP
+// out after ten ordinary MFA logins).
+func TestLoginBudget_DeliveredMFALoginConsumesNoSlot(t *testing.T) {
 	env := newLockoutOracleEnvWithMFA(t)
 	before := loginAttemptsFor(t, env.db)
 
@@ -181,8 +186,8 @@ func TestLoginBudget_MFALoginConsumesExactlyOneSlot(t *testing.T) {
 	v := env.postVerify(t, resp.Data.MFAChallenge, code)
 	require.Equal(t, http.StatusOK, v.Code, "the MFA step must complete the login: %s", v.Body.String())
 
-	require.EqualValues(t, 1, loginAttemptsFor(t, env.db)-before,
-		"one MFA login flow (password + TOTP) must consume exactly ONE slot of the per-IP budget (#2936)")
+	require.EqualValues(t, 0, loginAttemptsFor(t, env.db)-before,
+		"a delivered MFA login flow (password + TOTP) must leave no slot of the per-IP budget counted (#2936 item 4)")
 }
 
 // TestLoginBudget_SuccessfulRefreshesDoNotConsumeTheBudget: /auth/refresh

@@ -71,7 +71,11 @@ func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, ip string) bool {
 // request and a post-verdict storage fault (#2880/#2894) all keep it, so the
 // failure budget is exactly what it was. The step of a multi-request flow that
 // does NOT finish it (the password step of an MFA login, a WebAuthn Begin)
-// keeps its slot too, so one login flow costs at most one slot.
+// keeps its slot while the flow is open, bound to the single-use row that
+// carries the flow forward (the MFA challenge, the ceremony session; see
+// loginSlot.heldID). Core's LoginCompletion.Succeeded hands those back when
+// the finishing step delivers a session (#2936 item 4), so a delivered login
+// flow costs nothing and a failed, expired or abandoned one keeps every slot.
 func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) loginSlot {
 	id, ok := h.coreService.ReserveLoginAttempt(ctx, ip)
 	return loginSlot{id: id, ok: ok}
@@ -83,6 +87,17 @@ func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) loginS
 type loginSlot struct {
 	id uint
 	ok bool
+}
+
+// heldID is the slot's id for binding it to a challenge or ceremony row that
+// carries it to the request that finishes the flow (#2936 item 4), or nil when
+// nothing was reserved.
+func (s loginSlot) heldID() *uint {
+	if !s.ok {
+		return nil
+	}
+	id := s.id
+	return &id
 }
 
 // returnLoginSlot hands a reserved slot back once its request has DELIVERED a
@@ -203,7 +218,10 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		// MFA-enabled account: the password was correct but a second factor is
 		// required. Issue a short-lived challenge instead of a session.
 		if errors.Is(err, core.ErrMFARequired) {
-			challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), user.ID)
+			// #2936 item 4: the password step keeps its slot, bound to the
+			// challenge; the second factor hands it back if (and only if) it
+			// delivers the session.
+			challenge, cerr := h.coreService.CreateMFAChallengeHoldingLoginSlot(r.Context(), user.ID, slot.heldID())
 			if cerr != nil {
 				// #2888 (#2740 option C): the password was ALREADY confirmed correct
 				// -- that's the only way ErrMFARequired is ever returned. A distinct
@@ -466,7 +484,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	// ErrMFARequired is checked before the generic err != nil block because
 	// CompleteSetup returns a valid result.User alongside this sentinel.
 	if errors.Is(err, core.ErrMFARequired) {
-		challenge, cerr := h.coreService.CreateMFAChallenge(r.Context(), result.User.ID)
+		challenge, cerr := h.coreService.CreateMFAChallengeHoldingLoginSlot(r.Context(), result.User.ID, slot.heldID())
 		if cerr != nil {
 			// #2888 (#2740 option C sibling of Login's own fix): the token was
 			// ALREADY consumed and the new password ALREADY set -- that's the

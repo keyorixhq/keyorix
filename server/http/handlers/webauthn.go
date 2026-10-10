@@ -221,18 +221,19 @@ func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request)
 	}
 	// F2 (2026-09-20): reserve before resolving the challenge — see
 	// reserveLoginAttempt's doc (reserved after decode, matching Login).
+	//
+	// #2936 / #2956 review: the slot is KEPT, bound to the ceremony row Begin
+	// writes. Begin does not consume the MFA challenge, so handing the slot back
+	// here let one valid challenge drive unlimited ceremony writes at no budget
+	// cost for its whole TTL. FinishWebAuthnLogin hands it back (with the
+	// password step's) only when it delivers a session; an unfinished Begin
+	// stays counted.
 	slot := h.reserveLoginAttempt(r.Context(), ip)
-	assertion, sessionToken, err := h.coreService.BeginWebAuthnLogin(r.Context(), body.Challenge)
+	assertion, sessionToken, err := h.coreService.BeginWebAuthnLoginHoldingLoginSlot(r.Context(), body.Challenge, slot.heldID())
 	if err != nil {
 		h.writeWebAuthnErr(w, err)
 		return
 	}
-	// #2936: a valid MFA challenge resolved -- this step guessed nothing (the
-	// challenge is the bearer token a correct password earned), and the flow's
-	// one counted slot is the password step's. Give this one back so a passkey
-	// second factor costs the same single slot a TOTP one does. A bad or expired
-	// challenge returned above and stays counted.
-	h.returnLoginSlot(r.Context(), slot)
 	sendSuccess(w, map[string]interface{}{
 		"publicKey":        assertion.Response,
 		"webauthn_session": sessionToken,
@@ -369,13 +370,14 @@ func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *h
 	// unlike BeginWebAuthnLogin it never contributed to the shared per-IP
 	// budget and could be called without limit.
 	//
-	// #2936: this slot is KEPT even on success, unlike BeginWebAuthnLogin's.
-	// Nothing here is earned by a credential -- anyone can call it cold, and it
-	// writes a WebAuthnSession row -- so returning the slot would reopen the
-	// unlimited-call surface G1 closed. It is the passwordless flow's one
-	// counted slot; the Finish step that delivers the session returns its own.
-	_ = h.reserveLoginAttempt(r.Context(), ip)
-	assertion, sessionToken, err := h.coreService.BeginWebAuthnPasswordlessLogin(r.Context())
+	// #2936: this slot is KEPT on success. Nothing here is earned by a
+	// credential -- anyone can call it cold, and it writes a WebAuthnSession
+	// row -- so returning the slot would reopen the unlimited-call surface G1
+	// closed. It is bound to the ceremony row instead, and only the Finish that
+	// consumes that row AND delivers a session hands it back; an unfinished
+	// Begin stays counted.
+	slot := h.reserveLoginAttempt(r.Context(), ip)
+	assertion, sessionToken, err := h.coreService.BeginWebAuthnPasswordlessLoginHoldingLoginSlot(r.Context(), slot.heldID())
 	if err != nil {
 		h.writeWebAuthnErr(w, err)
 		return

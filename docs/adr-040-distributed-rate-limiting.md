@@ -43,9 +43,12 @@ doing so started charging successful logins too, which locked whole offices and
 demo laptops out. The write still happens up front, but it is now a releasable
 reservation: a request that delivers a session (login, MFA verify, passkey finish,
 refresh, setup-link consume) deletes its own row, so in net only failures stay
-counted, as this ADR originally stated. The one exception is a step that does not
-finish its flow (the password step of an MFA login, a passwordless passkey
-`begin`), which keeps its row, so one login flow counts once. Host-side override:
+counted, as this ADR originally stated. A step that does not finish its flow (the
+password step of an MFA login, a passkey `begin`) keeps its row while the flow is
+open, with the row's id stored on the single-use MFA challenge or ceremony row
+that carries the flow forward; the step that delivers the session deletes those
+rows too, exactly once. A failed, expired or abandoned flow keeps every row it
+wrote. Host-side override:
 `keyorix-server admin clear-login-lockout --ip ADDR`.
 
 ## Why the write volume is acceptable
