@@ -184,6 +184,7 @@ secrets.chunking.max_chunks_per_secret
 secrets.limits.max_secret_size
 secrets.limits.max_secrets_per_user
 security.allow_unsafe_file_permissions
+security.auth_rate_limit_fallback.replicas
 security.auto_fix_file_permissions
 security.enable_file_permission_check
 security.login_lockout.base_cooldown

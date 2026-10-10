@@ -6,6 +6,54 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **No auth rate limit fails open on a database error any more.** The per-IP
+  login, password-reset and SSO/SAML-begin budgets, and the per-account lockout,
+  used to stop counting whenever their storage failed. While the database (or
+  just its rate-limit table) was failing, brute-force and email-bombing limits
+  were off. The per-account lockout is the only bound on MFA step-up and
+  recovery-code guessing. Now each budget falls back to a bounded in-memory
+  limiter with the same limits, per server process. Each fallback writes an
+  `auth.rate_limit_error` audit event and increments
+  `keyorix_auth_rate_limit_fallback_total{budget}`, so alert on that metric.
+  `/health` also reports `"auth_rate_limit": "degraded"` while a fallback is in use.
+  During the outage, password reset is tighter: half the per-IP limit, and a cap on
+  reset emails per account. In HA, set the new
+  `security.auth_rate_limit_fallback.replicas` to your replica count so each
+  replica enforces its share. Clients see the same responses as before.
+- **Successful logins no longer use up the per-IP login budget** (#2936). The
+  budget (10 attempts per 15 minutes per IP, shared by the password, TOTP,
+  passkey and token-refresh endpoints) was charged for every request, success
+  or not, so a few ordinary MFA logins from one demo laptop, booth or office
+  network locked everyone behind it out with a 429 for 15 minutes, and a
+  restart did not help. A request that delivers a session now returns its slot,
+  and so does every earlier step of the same login (the password step of an MFA
+  login, a passkey `begin`), so a successful MFA or passkey login costs nothing;
+  a failed, expired or abandoned one keeps every slot it took. Failures count
+  exactly as before, including storage faults after a correct credential
+  (#2880), and the slot is still reserved before the credential check, so a
+  concurrent burst cannot outrun the budget. The count still survives a
+  restart. New audited host-side command
+  `keyorix-server admin clear-login-lockout --ip ADDR | --user ID` clears an
+  IP's budget and/or an account's login lockout (docs/SELF_HOSTING.md).
+- **A database fault during login no longer reveals that the password, TOTP
+  code or passkey was correct.** Every login path (password, TOTP, WebAuthn
+  second factor, passwordless, re-authentication, MFA step-up) already answered
+  a storage failure *after* the credential matched with the same response a
+  wrong credential gets. The account's **lockout state** now matches too: the
+  failed-attempt counter is cleared only once the login has actually been
+  delivered, and a post-match failure counts as an attempt. Previously the
+  counter was reset on the way to the failure, so an attacker at one attempt
+  short of the lockout threshold could tell a correct password from a wrong one
+  by whether the account locked. Audit logging distinguishes the two for
+  operators — `auth.login_error` (the credential was right; a storage fault
+  denied the login) versus `auth.login_failed` (a wrong credential) — and
+  `/auth/mfa/verify` now writes `auth.login_error` for this case instead of
+  nothing at all. Visible effects: a login denied by a transient storage fault
+  now counts toward the per-account lockout, so a sustained database problem can
+  lock accounts whose owners typed the right password; and the counter is reset a
+  few milliseconds later in the request than before. A fault reading the
+  account's roles after the password matched now also answers `401 Invalid
+  credentials` instead of a distinguishable `500`. (#2894, #2888)
 - **The shipped compose stack and Helm chart run with
   `security.enable_file_permission_check` on** (ADR-112 default): key material and
   the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
