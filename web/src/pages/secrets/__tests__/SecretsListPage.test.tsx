@@ -226,6 +226,16 @@ beforeEach(() => {
     window.history.pushState({}, '', '/');
 });
 
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+});
+
 describe('SecretsListPage — loading / empty / error states', () => {
     it('shows a loading indicator while secrets are loading', () => {
         listState.isLoading = true;
@@ -1010,5 +1020,23 @@ describe('SecretsListPage — automated rotation', () => {
 
         fireEvent.click(screen.getByText('Auto-rotate db-pass'));
         expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    });
+});
+
+describe('SecretsListPage permission-aware controls (DEMO-UI-1)', () => {
+    it('offers no New Secret / Create Secret to a read-only user and says nothing here is visible', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        render(<SecretsListPage />);
+        expect(screen.queryByTestId('create-secret-button')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Create Secret' })).not.toBeInTheDocument();
+        expect(screen.getByText('No secrets found')).toBeInTheDocument();
+        expect(screen.queryByText('Get started by creating your first secret.')).not.toBeInTheDocument();
     });
 });

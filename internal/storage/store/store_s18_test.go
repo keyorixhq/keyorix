@@ -71,6 +71,9 @@ func closeS18DB(t *testing.T, ls *LocalStorage) {
 
 func TestCreatePersonalAccessToken_HappyPath(t *testing.T) {
 	ls := newS18Store(t, &models.PersonalAccessToken{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	tok, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{

@@ -76,8 +76,14 @@ const (
 
 func appGetsSecret(t *testing.T, s *harness.Server, cliBin, adminUser, adminPass string) appGetsSecretResult {
 	t.Helper()
+	return appGetsSecretAs(t, s, cliBin, adminLogin(t, s, adminUser, adminPass))
+}
+
+// appGetsSecretAs is appGetsSecret for a caller that already holds the admin session
+// token (e.g. an MFA-backed one from enrolTOTPAndLogin).
+func appGetsSecretAs(t *testing.T, s *harness.Server, cliBin, adminToken string) appGetsSecretResult {
+	t.Helper()
 	ctx := context.Background()
-	adminToken := adminLogin(t, s, adminUser, adminPass)
 	aEnv := adminEnv(s, adminToken)
 
 	// ── Admin (CLI): project, secret, machine identity + scoped token ──────

@@ -39,17 +39,24 @@ Open **http://localhost:8088** and log in with the admin credentials you set in
 > backend spends on first-boot migrations and key derivation.
 
 **First boot check.** With `KEYORIX_ADMIN_PASSWORD` + `KEYORIX_BOOTSTRAP_TOKEN` set
-the backend creates the admin by calling `/system/init` once the server answers,
-but it only waits about 30 s. If first boot is slower than that (a loaded host)
-the log shows `Bootstrap call failed ... — continuing`, the container is
-healthy, and logging in returns `HTTP 401` (tracked in #3025). Look for
-`Server is ready` followed by `Bootstrapping admin user` in
-`docker compose logs backend`; if it is missing, create the admin by hand with
+the backend creates the admin by calling `/system/init` as soon as the server
+answers `GET /health`. The entrypoint waits for that for up to
+`KEYORIX_READY_TIMEOUT` seconds (default 180, so a slow first boot on a loaded
+host is fine), then retries the bootstrap call up to `KEYORIX_BOOTSTRAP_ATTEMPTS`
+times (default 10, 3 s apart). It fails loudly: if the admin still cannot be
+created, the entrypoint logs `ERROR: admin bootstrap did not complete ...`, stops
+the server and exits non-zero, so the backend restarts instead of sitting
+"healthy" with no usable login. On success the log shows `Server is ready after
+Ns`, `Bootstrapping admin user` and `Admin bootstrap complete.` in
+`docker compose logs backend`. If you see the `ERROR:` lines instead, check that
+`KEYORIX_BOOTSTRAP_TOKEN` is set and matches, then fix `.env` and run
+`docker compose up -d` again (or create the admin by hand with
 `keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local`
-with `KEYORIX_BOOTSTRAP_TOKEN` exported in your shell (the CLI reads the token
+with `KEYORIX_BOOTSTRAP_TOKEN` exported in your shell: the CLI reads the token
 and prompts for the admin password; neither goes on the command line).
-`docker compose ps` shows `web` as `(unhealthy)` on current images although it
-serves traffic (#3026).
+`docker compose ps` shows `web` as `healthy`: its healthcheck probes
+`127.0.0.1` (busybox resolves `localhost` to IPv6 first and nginx listens on IPv4
+only).
 
 **Using the CLI against the stack.** The backend's port is not published; the
 CLI talks to it through the web container's proxy:
@@ -93,9 +100,17 @@ with `openssl rand -base64 32`.
 | `KEYORIX_DB_PASSWORD`     | ✅       | PostgreSQL password (shared by `postgres` and `backend`). |
 | `KEYORIX_MASTER_PASSWORD` | ✅       | Passphrase the encryption KEK is derived from. **See the warning below.** |
 | `KEYORIX_ADMIN_PASSWORD`  | optional | If set, the first admin is created on first boot (idempotent). Leave blank to run `keyorix-server admin init` manually on the server host. |
-| `KEYORIX_BOOTSTRAP_TOKEN` | required if `KEYORIX_ADMIN_PASSWORD` is set | `/system/init` always requires a matching bootstrap token. Setting `KEYORIX_ADMIN_PASSWORD` without this silently skips admin creation (a WARN is logged, but the container still reports healthy). |
+| `KEYORIX_BOOTSTRAP_TOKEN` | required if `KEYORIX_ADMIN_PASSWORD` is set | `/system/init` always requires a matching bootstrap token. Setting `KEYORIX_ADMIN_PASSWORD` without this makes the backend exit at startup with an `ERROR:` message (it no longer skips admin creation silently); set the token, or unset the password and run `keyorix system init` by hand. |
 | `KEYORIX_ADMIN_USERNAME`  | optional | Defaults to `admin`. |
 | `KEYORIX_ADMIN_EMAIL`     | optional | Defaults to `admin@keyorix.local`. |
+
+**Secrets as files.** The server also accepts each secret as a file instead of an
+environment variable: set `KEYORIX_DB_PASSWORD_FILE`, `KEYORIX_MASTER_PASSWORD_FILE`
+or `KEYORIX_BOOTSTRAP_TOKEN_FILE` to a path (Docker secrets mount under
+`/run/secrets/`, a Kubernetes Secret volume wherever you mount it). Setting both
+`X` and `X_FILE` is a startup error, not a precedence rule, and an unreadable or
+empty file stops the server. Details and the full list of supported variables:
+[CONFIGURATION.md](CONFIGURATION.md#secrets-from-files-name_file).
 
 Server configuration (storage, encryption paths, ports) lives in
 `keyorix.docker.yaml`, mounted read-only into the `backend` container. The full,
@@ -430,6 +445,38 @@ dropping or failing audit events is a compliance gap.
 | Backend can't decrypt secrets after a change | `KEYORIX_MASTER_PASSWORD` changed or the `keyorix_keys` volume was lost. Restore both from backup (section 5). |
 | Login returns 404 | Reverse proxy not forwarding `/auth/` — Keyorix serves login at the root path, not under `/api/`. The bundled `web` image already handles this. |
 | Server refuses to start: `database schema epoch N is newer than this binary's schema epoch M` (multi-replica deployments only — see [ADR-039](adr-039-ha-deployment.md); the bundled Helm chart is pinned to 1 replica and cannot hit this) | Two possible causes, and the message can't tell them apart on its own — check the "recorded at ... ago" timestamp in the log line against your own rollout: **(a) rolling upgrade in progress** — a sibling replica already migrated to the new schema epoch, and this pod is still running the old binary. Expected and self-resolving: this pod will be replaced by the new image (or crash-loop briefly) until the rollout completes, then it stops recurring. This repo does not orchestrate that rollout for you (see ADR-039). **(b) genuine downgrade** — this binary was rolled back against a schema a newer version already migrated. Upgrade this binary to match, or restore a backup taken before the newer version ran. The server deliberately refuses to start rather than guess which case applies — see [ADR-097](adr-097-schema-epoch-downgrade-guard.md) and [ADR-101](adr-101-schema-epoch-compatibility-floor.md). |
+
+### SQLite write contention (`503` + `Retry-After`)
+
+SQLite allows one writer at a time, so a single Keyorix process queues its write
+transactions behind an in-process gate (first come, first served). A write waits
+up to **10 seconds** for its turn. If it does not get one, the request fails fast
+with **`503 Service Unavailable`** and a `Retry-After: 5` header (gRPC:
+`UNAVAILABLE` with a `retry-after` trailer) instead of stalling or returning a
+generic `500`. The response body is fixed and carries no storage detail; the
+server logs one `write gate contention: <method> <path> answered 503` line per
+affected request.
+
+What to do when you see it:
+
+- **Occasional, during a burst** (bulk import, a rotation job, a CI fleet
+  starting at once): expected back-pressure. Clients should honour `Retry-After`
+  and retry; idempotent requests can be retried blindly, others should check
+  state first, because a request that runs several write transactions may have
+  committed an earlier one.
+- **Sustained** (a steady stream of `write gate contention` lines): the instance
+  is write-saturated. Reduce concurrent writers (stagger jobs, lower client
+  parallelism), make sure the database file is on local SSD rather than network
+  storage, and check that nothing else holds the file open for writing (a backup
+  or admin CLI command running beside the server holds the lock too). If the
+  workload is genuinely write-heavy or multi-replica, move to Postgres (see
+  "Moving from SQLite to Postgres" in section 5): the gate exists only for SQLite.
+- Raising `storage.database.max_open_conns` does **not** help: writes are
+  serialized regardless of pool size, and a bigger pool only adds readers.
+
+The login and MFA endpoints (`/auth/...`) are deliberately exempt from the
+`503`: a storage failure there after a credential matched is reported exactly as a
+wrong credential, so the response cannot be used to confirm a guess.
 
 ## 10. Single-binary / air-gapped deployment
 

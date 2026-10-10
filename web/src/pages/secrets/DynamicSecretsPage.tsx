@@ -157,8 +157,8 @@ const DynamicSecretsPage: React.FC = () => {
                 )}
             </div>
             <p className="text-sm mb-4" style={{ color: 'var(--text-muted)' }}>
-                On-demand database credentials (ADR-035) — short-lived leases minted from a registered target and
-                auto-revoked at expiry.
+                On-demand database credentials — short-lived leases minted from a registered target and auto-revoked at
+                expiry.
             </p>
 
             {/* Project / environment scope picker. */}

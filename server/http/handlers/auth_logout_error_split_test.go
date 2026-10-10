@@ -9,10 +9,8 @@ package handlers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -20,11 +18,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // failGetSessionStorageWrapper fails GetSession for exactly failToken with a plain error —
@@ -43,18 +40,13 @@ func (s *failGetSessionStorageWrapper) GetSession(ctx context.Context, token str
 	return s.Storage.GetSession(ctx, token)
 }
 
-var logoutErrorSplitDBCounter atomic.Int64
-
 // freshCoreWithFailingLogoutSession builds a fresh bootstrapped core (same shape as
 // freshCoreS8) whose storage fails GetSession for exactly one token, for driving Logout's
 // real-storage-failure path through the actual HTTP handler.
 func freshCoreWithFailingLogoutSession(t *testing.T) (*core.KeyorixCore, string) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := logoutErrorSplitDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxlogouterrsplit_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxlogouterrsplit_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
@@ -91,7 +83,7 @@ func freshCoreWithFailingLogoutSession(t *testing.T) (*core.KeyorixCore, string)
 	const bootToken = "logout-err-split-boot"
 	cs.SetBootstrapToken(bootToken)
 	ctx := context.Background()
-	_, err = cs.BootstrapSystem(ctx, &core.BootstrapRequest{
+	_, err := cs.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "logouterrsplit", Email: "logouterrsplit@example.com",
 		Password: "Kx#Vr9$Mn2!Zp4@Qw", Token: bootToken,
 	})

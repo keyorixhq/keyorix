@@ -10,6 +10,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 )
 
 // DefaultRecertificationCadenceDays is the review interval assumed when none is
@@ -160,20 +161,17 @@ func splitCampaigns(campaigns []*CampaignWithProgress) (open *CampaignWithProgre
 // remindRecertificationAdmins sends one standing reminder to each of the project's
 // admins, skipping any who already hold an unread one. Returns the number sent.
 func (c *KeyorixCore) remindRecertificationAdmins(ctx context.Context, projectID uint, msg string) int {
-	members, err := c.storage.ListProjectMembers(ctx, projectID)
-	if err != nil {
-		return 0
+	recipients, rerr := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+	if rerr != nil {
+		log.Printf("SECURITY: remindRecertificationAdmins: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", projectID, len(recipients), rerr)
 	}
 	pid := projectID
 	sent := 0
-	for _, mbr := range members {
-		if !isApproverRole(mbr.RoleName) {
+	for _, uid := range recipients {
+		if c.hasUnreadRecertificationReminder(ctx, uid, projectID) {
 			continue
 		}
-		if c.hasUnreadRecertificationReminder(ctx, mbr.UserID, projectID) {
-			continue
-		}
-		c.notify(ctx, mbr.UserID, NotificationRecertificationDue,
+		c.notify(ctx, uid, NotificationRecertificationDue,
 			"Access recertification", msg, &pid, "/projects")
 		sent++
 	}

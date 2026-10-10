@@ -21,23 +21,20 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
-
-var sDepCovCounter atomic.Int64
 
 // freshDepCovCore opens a uniquely-named in-memory SQLite DB with all models
 // migrated and returns (KeyorixCore, *gorm.DB). The DB is exposed so callers
@@ -45,10 +42,7 @@ var sDepCovCounter atomic.Int64
 func freshDepCovCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := sDepCovCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxdep_cov_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxdep_cov_")
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	// withUserCtx's UserID 1 is granted global admin: #G32's independent peer-secret
 	// authorization check would otherwise reject every Add/RemoveSecretDependency call
@@ -195,10 +189,7 @@ func TestGetSecretImpact_SuccessPath_DepCov(t *testing.T) {
 // store for the project's edges.
 func TestGetProjectRotationOrder_StorageError_DepCov(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	n := sDepCovCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxdep_cov_roterr_%d?mode=memory&cache=shared&_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxdep_cov_roterr_")
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
@@ -224,10 +215,7 @@ func TestGetProjectRotationOrder_StorageError_DepCov(t *testing.T) {
 // handler's error path returns 500.
 func TestGetProjectRotationPlan_StorageError_DepCov(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	n := sDepCovCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxdep_cov_planerr_%d?mode=memory&cache=shared&_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxdep_cov_planerr_")
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
@@ -252,10 +240,7 @@ func TestGetProjectRotationPlan_StorageError_DepCov(t *testing.T) {
 // ListProjects failure; handler returns 500.
 func TestGetDeploymentRotationPlan_StorageError_DepCov(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	n := sDepCovCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxdep_cov_deplerr_%d?mode=memory&cache=shared&_timeout=5000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxdep_cov_deplerr_")
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))

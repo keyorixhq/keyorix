@@ -1,3 +1,4 @@
+import { apiErrorMessage } from '../../services/client';
 import React, { useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router';
 import { Loading } from '../../components/ui/Loading';
@@ -1074,7 +1075,7 @@ const AuditTabPanel: React.FC<AuditTabPanelProps> = ({
             <Alert
                 type="error"
                 title="Failed to load audit log"
-                message="There was an error loading the audit log. Please try again."
+                message={apiErrorMessage(error, 'There was an error loading the audit log. Please try again.')}
             />
         )}
         <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">

@@ -1,6 +1,6 @@
 ADR-112 Secure Baseline Posture
 ===============================
 3 deviation(s) found (2 from shipped defaults, 1 explicitly configured) — all counted:
-  [insecure-setting/explicit] storage.encryption.insecure_disable_encryption_at_rest is in effect (true) — NEEDS ANDREI (polarity-inverted rename of storage.encryption.enabled, a high-blast-radius architectural flag, not purely a weakening toggle) -- secrets stored unencrypted at rest
-  [insecure-setting/shipped-default] server.insecure_allow_unauthenticated_metrics is in effect (true) — NEEDS ANDREI (not a boolean today -- an empty server.http/grpc.metrics_token string) -- /metrics served fully unauthenticated
-  [insecure-setting/shipped-default] server.insecure_disable_api_ratelimit is in effect (true) — NEEDS ANDREI (polarity-inverted rename, AND already ships disabled by default -- the same inverted-default shape item 1 fixed for two other settings; this one needs the same product decision) -- removes per-principal API rate limiting
+  [insecure-setting/explicit] storage.encryption.insecure_disable_encryption_at_rest is in effect (true) — secrets stored unencrypted at rest
+  [insecure-setting/shipped-default] server.insecure_allow_unauthenticated_metrics is in effect (true) — /metrics served fully unauthenticated
+  [insecure-setting/shipped-default] server.insecure_disable_api_ratelimit is in effect (true) — removes per-principal API rate limiting

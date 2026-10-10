@@ -70,11 +70,21 @@ type ctaReview struct {
 
 func newCTAReview(t *testing.T) *ctaReview {
 	t.Helper()
-	require.NoError(t, i18n.InitializeForTesting())
 	dsn := pgIsolatedSchemaDSN(t, pgTestDSN(t))
+	return newCTAReviewOn(t, func() *gorm.DB { return pgOpen(t, dsn) })
+}
+
+// newCTAReviewOn builds the fixture over any backend: open must return a NEW,
+// independent connection pool into the same database on every call (one for
+// setup, one per replica). newCTAReview is the Postgres instance;
+// newCTAReviewSQLite (concurrency_credential_under_suspend_sqlite_test.go) is
+// the shared-file SQLite one.
+func newCTAReviewOn(t *testing.T, open func() *gorm.DB) *ctaReview {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
 	ctx := context.Background()
 
-	setupDB := pgOpen(t, dsn)
+	setupDB := open()
 	require.NoError(t, setupDB.AutoMigrate(kxstorage.AllModels()...))
 
 	// One shared key set for every replica: replicas of one install share key
@@ -100,8 +110,8 @@ func newCTAReview(t *testing.T) *ctaReview {
 	env, err := setup.CreateEnvironment(ctx, proj.ID, "cta-review-env")
 	require.NoError(t, err)
 
-	dbA := pgOpen(t, dsn)
-	dbB := pgOpen(t, dsn)
+	dbA := open()
+	dbB := open()
 	return &ctaReview{
 		t: t, ctx: ctx, setupDB: setupDB, setup: setup,
 		dbA: dbA, coreA: newCore(dbA), dbB: dbB, coreB: newCore(dbB),
