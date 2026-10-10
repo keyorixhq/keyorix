@@ -58,7 +58,7 @@ func lookupSecretEnv(name string) (value string, found bool, err error) {
 }
 
 func readCheckedSecretFile(path string) (string, error) {
-	f, err := os.Open(path) // #nosec G304 -- the operator's own NAME_FILE setting
+	f, err := os.Open(path) // #nosec G304 G703 -- the operator's own NAME_FILE setting (process environment), opened read-only and then checked (regular file, mode, size) below
 	if err != nil {
 		return "", fmt.Errorf("cannot open secret file: %w", unwrapSecretPathError(err))
 	}
