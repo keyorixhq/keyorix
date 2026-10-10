@@ -82,6 +82,26 @@ func findSecretOnCommandLine(segment string, strict bool) string {
 	return ""
 }
 
+// docsSecretsAllowedElsewhere lists intentional "don't do this" examples in files
+// that must not carry the inline marker (ADRs are owner-reviewed records; touching
+// one only to silence a lint is not worth the sign-off). Keyed by repo-relative
+// path, the value is a substring of the offending line, so the entry survives line
+// shifts but only exempts that one example, not the whole file.
+var docsSecretsAllowedElsewhere = map[string][]string{
+	"docs/adr-099-master-passphrase-sourcing.md": {
+		"**A `--passphrase <value>` flag.**", // the rejected design, shown on purpose
+	},
+}
+
+func allowedElsewhere(rel, line string) bool {
+	for _, frag := range docsSecretsAllowedElsewhere[filepath.ToSlash(rel)] {
+		if strings.Contains(line, frag) {
+			return true
+		}
+	}
+	return false
+}
+
 type docsSecretHit struct {
 	line int
 	flag string
@@ -164,6 +184,9 @@ func TestDocsShowNoLiteralSecretOnCommandLine(t *testing.T) {
 		}
 		rel, _ := filepath.Rel(root, path)
 		for _, h := range hits {
+			if allowedElsewhere(rel, h.text) {
+				continue
+			}
 			t.Errorf("%s:%d shows a secret on the command line (%s): %s\n"+
 				"  use a hidden prompt, --interactive, --from-file, or a KEYORIX_* env var; "+
 				"for an intentional \"don't do this\" example add the marker %q to the line",
@@ -230,5 +253,25 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		if hits := scanTextForSecrets(ok); len(hits) != 0 {
 			t.Errorf("guard false positive on prose line %q -> %+v", ok, hits)
 		}
+	}
+}
+
+// TestDocsSecretsPathAllowlist: the ADR-099 exemption must (a) be needed -- the
+// line is a real hit for the scanner -- and (b) exempt only that example, in that
+// file, so it cannot become a general escape hatch.
+func TestDocsSecretsPathAllowlist(t *testing.T) {
+	adr := "docs/adr-099-master-passphrase-sourcing.md"
+	line := "- **A `--passphrase <value>` flag.** Rejected outright: a value on the"
+	if len(scanMarkdownForSecrets(line)) == 0 {
+		t.Fatal("scanner no longer flags the ADR-099 line; the allowlist entry is dead, remove it")
+	}
+	if !allowedElsewhere(adr, line) {
+		t.Error("ADR-099 rejected-design line should be allowlisted")
+	}
+	if allowedElsewhere(adr, "Run `keyorix login --password hunter2` now.") {
+		t.Error("allowlist must not exempt other lines in the same file")
+	}
+	if allowedElsewhere("docs/other.md", line) {
+		t.Error("allowlist must not exempt the same text in another file")
 	}
 }
