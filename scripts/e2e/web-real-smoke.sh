@@ -357,6 +357,19 @@ run_group() {
     [ -f "$config_path" ] || fail "admin init did not create $config_path"
     sed -i.bak -E "s/port: \"8080\"/port: \"$server_port\"/" "$config_path"
     rm -f "$config_path.bak"
+    # ADR-112 item 1: security.require_mfa defaults on, which confines a session
+    # without MFA to the enrolment endpoints. Every spec here logs in as the
+    # shared bootstrap admin, whose MFA state is deliberately never touched (see
+    # mfa-login.spec.ts's header: enabling MFA is one-way and would make every
+    # other spec's admin login order-dependent). MFA enrolment and MFA login are
+    # driven through the real UI by mfa-login.spec.ts on throwaway users, and the
+    # default's confinement by scripts/smoke.sh (CLI) and the server tests. Opt
+    # out visibly here, for this harness only, by flipping the explicit
+    # `require_mfa: true` admin init writes (configs/keyorix.yaml.tpl).
+    sed -i.bak -E 's/^  require_mfa: true$/  require_mfa: false/' "$config_path"
+    rm -f "$config_path.bak"
+    grep -q '^  require_mfa: false$' "$config_path" ||
+        fail "could not set security.require_mfa: false in $config_path (did configs/keyorix.yaml.tpl change?)"
 
     echo "==> [group $group_label] keyorix-server admin encryption init"
     (cd "$smoke_dir" && "$SERVER_BIN" admin encryption init --config "$config_rel") ||

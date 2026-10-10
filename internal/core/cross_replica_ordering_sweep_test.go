@@ -202,11 +202,9 @@ func g5EnumerateConflictPairs() []g5ConflictPair {
 // 6's cross-row-join check with the INV-CORE-44 one), so its two rows are
 // deleted here as well. #2884 promoted #2651's seed (its fix landed via
 // #2675), so its two rows are deleted here too.
-var g5KnownOrderingViolations = map[string]string{
-	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,A-act,B-check,B-act": "2806",
-	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,B-check,A-act,B-act": "2806",
-	"project-lifecycle/DeleteProject||SetDynamicSecretConfigEnabled(on):A-check,B-check,B-act,A-act": "2806",
-}
+// #2806's three rows are deleted by the PR that fixed it (the parent-liveness
+// check in SetDynamicSecretConfigEnabled), leaving the ledger empty.
+var g5KnownOrderingViolations = map[string]string{}
 
 // g5LedgerIssuesWithoutASeed documents every g5KnownOrderingViolations issue
 // that legitimately has no entry in pendingSeedFix, and why.
@@ -219,14 +217,11 @@ var g5KnownOrderingViolations = map[string]string{
 // silenced regression rather than a known bug. A blanket exception would
 // defeat that; an enumerated one with a reason per entry does not.
 var g5LedgerIssuesWithoutASeed = map[string]string{
-	// Found BY this sweep (serial ordering), so it never had a fuzzer seed to
-	// begin with — there is nothing for the pending-seed promotion gate to
-	// track. Its regression test is
-	// TestSetDynamicSecretConfigEnabled_RefusesUnderDeletedProject
-	// (dynamic_config_reenable_parent_liveness_test.go), which is SQLite and
-	// runs in the default CI path. Delete these rows in the PR that fixes
-	// #2806 and un-skips that test.
-	"2806": "found by the serial ordering in this sweep; no fuzzer seed exists, regression test is in dynamic_config_reenable_parent_liveness_test.go",
+	// Empty, and that is the correct steady state: every ledger row should be
+	// traceable to a pending fuzzer seed, so that promoting the seed forces
+	// the row to be deleted with it. #2806 lived here while its fix was
+	// pending (the sweep found it serially, so it never had a seed); the fix
+	// landed in the same PR as this deletion.
 }
 
 // --- the sweep ---------------------------------------------------------------

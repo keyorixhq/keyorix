@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -442,6 +443,7 @@ func computeTrend(prev, current float64) *StatTrend {
 // Type mapping — what the frontend receives:
 //
 //	secret.read     → "accessed"
+//	secret.versions_listed → "versions_listed" (a listing, not a value read)
 //	secret.created  → "created"
 //	secret.updated  → "updated"
 //	secret.deleted  → "deleted"
@@ -462,6 +464,9 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 	// Secret events — extract secret name from description
 	case "secret.read":
 		eventType = "accessed"
+		secretName = extractSecretName(e.Description)
+	case EventSecretVersionsListed:
+		eventType = "versions_listed"
 		secretName = extractSecretName(e.Description)
 	case "secret.created":
 		eventType = "created"
@@ -510,6 +515,11 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 // Returns empty string if the pattern is not found.
 func extractSecretName(description string) string {
 	const marker = " secret "
+	// A secret.deleted description ends in a soft-delete note (softDeleteNoteMarker)
+	// that is not part of the name, and may itself contain " secret ".
+	if i := strings.Index(description, softDeleteNoteMarker); i >= 0 {
+		description = description[:i]
+	}
 	if idx := lastIndex(description, marker); idx >= 0 {
 		return description[idx+len(marker):]
 	}
