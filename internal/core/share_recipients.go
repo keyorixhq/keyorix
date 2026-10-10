@@ -33,6 +33,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -107,8 +108,14 @@ func (c *KeyorixCore) SearchShareRecipients(ctx context.Context, req ShareRecipi
 	matches := make([]ShareRecipient, 0, len(candidates))
 	for _, id := range candidates {
 		u, err := c.storage.GetUser(ctx, id)
-		if err != nil || u == nil {
-			continue // soft-deleted or gone: not a recipient
+		if err != nil {
+			if errors.Is(err, storage.ErrUserNotFound) {
+				continue // soft-deleted or gone: not a recipient
+			}
+			return nil, fmt.Errorf("share recipient search: load user %d: %w", id, err)
+		}
+		if u == nil {
+			continue
 		}
 		if !shareRecipientActive(u) || !shareRecipientMatches(u, query, showEmail) {
 			continue

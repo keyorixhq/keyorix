@@ -390,12 +390,13 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 
 	// Metadata-only response (no value disclosed below) — stays fire-and-forget,
 	// unlike the value-disclosing read paths in this file. Still logged, not
-	// silently discarded.
+	// silently discarded, but as secret.metadata_read, not secret.read: secret.read
+	// means a value disclosure (AUDIT-UX-3).
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
 	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
-		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
+		if auditErr := h.coreService.LogSecretMetadataRead(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
 			log.Printf("SECURITY: audit write failed for secret-by-name read (secret=%d): %v", sID, auditErr)
 		}
 	}) // #nosec G118
@@ -686,6 +687,12 @@ func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) 
 	// InternalError branch).
 	if errors.Is(err, core.ErrSecretVersionContentionExhausted) {
 		h.sendError(w, "Conflict", "High write contention on this secret; retry the request", http.StatusConflict, nil)
+		return
+	}
+	// A write share covers the update but not its lifecycle change (expiry / read
+	// limit): say so, with core's fixed reason.
+	if msg, ok := core.ShareRefusalMessage(err); ok {
+		h.sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
 		return
 	}
 	if strings.Contains(err.Error(), "not found") {

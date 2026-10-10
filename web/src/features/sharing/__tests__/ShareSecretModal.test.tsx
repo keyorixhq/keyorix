@@ -429,6 +429,18 @@ describe('ShareSecretModal submission + lifecycle', () => {
         expect(optionLabels).toContain('Read & Write');
     });
 
+    it('says what a Read & Write share grants and what it does not (#3001 allowlist)', () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        expect(screen.getByText('The recipient can read this secret.')).toBeInTheDocument();
+        fireEvent.change(screen.getByDisplayValue('Read Only'), { target: { value: 'write' } });
+        const hint = screen.getByText(/update its value and metadata/);
+        expect(hint).toHaveTextContent('rotate it');
+        expect(hint).toHaveTextContent(
+            /Suspending, changing its expiry, moving, deleting, re-sharing or changing access still needs a project role/
+        );
+        expect(screen.getByDisplayValue('Read & Write')).toHaveAttribute('aria-describedby', hint.id);
+    });
+
     it('shows a success message, calls onSuccess, and auto-closes after a delay', async () => {
         mockMutate.mockImplementation((_vars: unknown, opts: { onSuccess: () => void }) => opts.onSuccess());
         const onSuccessCb = vi.fn();

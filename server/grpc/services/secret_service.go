@@ -223,7 +223,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite, core.SecretActionUpdate); err != nil {
 		return nil, err
 	}
 
@@ -323,7 +323,7 @@ func (s *SecretGRPCService) SetSecretAutoRotate(ctx context.Context, req *pb.Set
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite, core.SecretActionSetAutoRotate); err != nil {
 		return nil, err
 	}
 	if err := s.core.SetSecretAutoRotate(ctx, uint(req.GetId()), core.AutoRotateSpec{
@@ -586,12 +586,26 @@ func mapSecretACLError(err error) error {
 // and the #2941 share term) — not the role-only AuthorizePrincipal, which left a
 // share-elevated member or an ACL grantee allowed on HTTP and denied on gRPC.
 // share_authz_guard_test.go pins this.
-func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string) error {
+//
+// action (#3001 follow-up) names the secrets.write operation, as on HTTP: a write
+// share elevates only allowlisted actions, and a secrets.write call naming none gets
+// no elevation (share_authz_rpc_guard_test.go requires every one to name it). A
+// refusal for a caller whose share covers secrets.write but not this action says so;
+// that caller already knows the secret exists, so INV-GRPCSVC-02 is unaffected.
+func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string, action ...core.SecretAction) error {
+	var act core.SecretAction
+	if len(action) > 0 {
+		act = action[0]
+	}
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
-	if allowed, aerr := cs.AuthorizeSecretPrincipalForSecret(ctx, actor.ActorKind(), actor.PrincipalID(), secret, perm); aerr != nil || !allowed {
+	decision, aerr := cs.AuthorizeSecretPrincipalForSecretAction(ctx, actor.ActorKind(), actor.PrincipalID(), secret, perm, act)
+	if aerr == nil && decision.ShareNotElevated {
+		return status.Error(codes.PermissionDenied, core.ShareActionNotElevatedMessage)
+	}
+	if aerr != nil || !decision.Allowed {
 		return status.Error(codes.PermissionDenied, "insufficient permissions")
 	}
 	return enforceProjectMFA(ctx, cs, actor, secret.ProjectID)
@@ -618,6 +632,10 @@ func mapSecretError(err error) error {
 	// the HTTP side's 409, see secrets_crud.go's sendUpdateSecretError).
 	if errors.Is(err, core.ErrSecretVersionContentionExhausted) {
 		return status.Error(codes.Aborted, "high write contention on this secret; retry the request")
+	}
+	// A write share covers the update but not its lifecycle change: core's fixed reason.
+	if reason, ok := core.ShareRefusalMessage(err); ok {
+		return status.Error(codes.PermissionDenied, reason)
 	}
 	msg := err.Error()
 	switch {

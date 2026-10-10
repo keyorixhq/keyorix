@@ -99,11 +99,83 @@ func TestSecretGates_CallShareAwareCheck(t *testing.T) {
 	for _, fn := range []string{"handleScopedSecretPermissionRequest", "handleScopedSecretRefPermissionRequest"} {
 		calls := calledSelectors(f, fn)
 		require.NotNil(t, calls, "server/middleware/auth.go must declare %s", fn)
-		assert.True(t, calls["AuthorizeSecretPrincipalForSecret"],
-			"%s must authorize with core.AuthorizeSecretPrincipalForSecret (role + ACL + share term)", fn)
+		assert.True(t, calls["AuthorizeSecretPrincipalForSecret"] || calls["AuthorizeSecretPrincipalForSecretAction"],
+			"%s must authorize with core.AuthorizeSecretPrincipalForSecret[Action] (role + ACL + share term)", fn)
 		assert.False(t, calls["AuthorizePrincipal"],
 			"%s must not make a role-only AuthorizePrincipal decision: it ignores shares (#2941)", fn)
+		// #3001 follow-up: a share elevation is audited when the action is performed,
+		// so the gate must give the request a recorder and commit it after a 2xx.
+		assert.True(t, calls["WithShareElevationRecorder"], "%s must give the request a ShareElevationRecorder", fn)
+		assert.True(t, bareCalls(f, fn)["serveAndCommitShareElevations"],
+			"%s must serve through serveAndCommitShareElevations (audit on a performed action)", fn)
 	}
+	assert.True(t, calledSelectors(f, "handleScopedSecretPermissionRequest")["AuthorizeSecretPrincipalForSecretAction"],
+		"the per-secret gate must pass the route's SecretAction to core (write-share allowlist)")
+}
+
+// TestShareAwareWriteRoutes_NameTheirAction (#3001 follow-up): every
+// RequireScopedSecretPermission(permSecretsWrite, ...) in router.go must name its
+// core.SecretAction as the third argument — that is the route's explicit write-share
+// allowlist decision (core.secretActionShareElevates decides it; the middleware panics
+// on an unknown action). No other permission may name one.
+func TestShareAwareWriteRoutes_NameTheirAction(t *testing.T) {
+	root := permissionSweepRepoRoot(t)
+	path := filepath.Join(root, "server", "http", "router.go")
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, 0)
+	require.NoError(t, err)
+
+	writeGates := 0
+	ast.Inspect(f, func(n ast.Node) bool {
+		call, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		sel, ok := call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "RequireScopedSecretPermission" || len(call.Args) == 0 {
+			return true
+		}
+		perm, _ := call.Args[0].(*ast.Ident)
+		line := fset.Position(call.Pos()).Line
+		if perm == nil || perm.Name != "permSecretsWrite" {
+			assert.Len(t, call.Args, 2, "router.go:%d: only a secrets.write gate names a SecretAction", line)
+			return true
+		}
+		writeGates++
+		if !assert.Len(t, call.Args, 3, "router.go:%d: a secrets.write per-secret gate must name its core.SecretAction "+
+			"(the write-share allowlist decision for this route)", line) {
+			return true
+		}
+		act, ok := call.Args[2].(*ast.SelectorExpr)
+		var pkg *ast.Ident
+		if ok {
+			pkg, _ = act.X.(*ast.Ident)
+		}
+		assert.True(t, pkg != nil && pkg.Name == "core" && strings.HasPrefix(act.Sel.Name, "SecretAction"),
+			"router.go:%d: the third argument must be a core.SecretAction* constant", line)
+		return true
+	})
+	assert.Greater(t, writeGates, 10, "calibration: expected the per-secret secrets.write family")
+}
+
+// bareCalls returns the set of plain identifiers called (name(...)) in fn's body.
+func bareCalls(f *ast.File, fn string) map[string]bool {
+	out := map[string]bool{}
+	for _, d := range f.Decls {
+		fd, ok := d.(*ast.FuncDecl)
+		if !ok || fd.Recv != nil || fd.Name.Name != fn || fd.Body == nil {
+			continue
+		}
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if call, ok := n.(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok {
+					out[id.Name] = true
+				}
+			}
+			return true
+		})
+	}
+	return out
 }
 
 // calledSelectors returns the set of selector names (x.Name(...)) called inside the

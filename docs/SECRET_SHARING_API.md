@@ -71,8 +71,18 @@ Share a secret with a user or group.
 
 A share applies only to members of the secret's project. For them, the
 effective permission on the secret is the higher of their project role and the
-share (a `project_viewer` shared with `write` may update that secret); a share
-never grants delete, `secrets.manage` or re-sharing. See the
+share, with one limit: a `write` share elevates only three actions on that
+secret — `PUT /api/v1/secrets/{id}` (value and metadata; not a change to
+`expiration`, `clear_expiration` or `max_reads`), `PUT .../tags` and
+`PATCH .../description`, and `POST .../rotate` (gRPC: `UpdateSecret`). Every
+other `secrets.write` route (suspend, resume, move, rollback,
+transfer-ownership, classification, auto-rotate, dependencies, version
+comments, share, restore, `/shares/{id}`, project-level bulk routes) answers
+`403` for a share-only caller, with `message` "A share on this secret only lets
+you update its value and metadata or rotate it. ..." where the gate consulted
+the share. A share never grants delete, `secrets.manage` or re-sharing.
+Each elevated action is audited as `share_access_elevated` once it succeeds
+(action, secret, share id, actor); refusals and failures write nothing. See the
 [user guide](SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
 
 **Example:**
@@ -355,19 +365,6 @@ project exists:
 curl "https://api.keyorix.com/api/v1/projects/7/share-recipients?q=al&page_size=8" \
   -H "Authorization: Bearer your-token"
 ```
-
-### 9. Effective Access List of a Secret
-
-**Endpoint:** `GET /secrets/{id}/access` (CLI: `keyorix secret access --id N`)
-
-Every user who can read the secret, with their **effective** permission. For a
-project member, that is the higher of their role and any active share, so a share
-that elevates a role shows as the higher level. `source` names the grant that
-gives the permission (`owner`, `role`, `acl`, `direct_share` or
-`group_share:<group>`). `grants` lists every grant the user holds, for example
-`["role:read", "direct_share:write"]`. Expired shares, and shares to users who are
-no longer project members, grant nothing and are not listed. Holders of a global
-role (global admins) have implicit access and are not listed.
 
 ## Group Sharing
 

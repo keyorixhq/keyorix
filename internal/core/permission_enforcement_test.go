@@ -64,6 +64,7 @@ func TestCheckSecretPermission(t *testing.T) {
 		secretID           uint
 		userID             uint
 		requiredPermission PermissionLevel
+		action             SecretAction // set: EnforceSecretActionPermission (write) instead of CheckSecretPermission
 		setupMocks         func(*MockStorage)
 		expectedPermission PermissionLevel
 		expectedSource     string
@@ -146,6 +147,7 @@ func TestCheckSecretPermission(t *testing.T) {
 			secretID:           1,
 			userID:             3,
 			requiredPermission: PermissionWrite,
+			action:             SecretActionUpdate, // #3001 follow-up: a write share elevates only allowlisted actions
 			setupMocks: func(ms *MockStorage) {
 				secret := createTestSecret(1, 1, "test-secret")
 				groupShare := createTestShare(2, 1, 10, "write", true)
@@ -190,7 +192,13 @@ func TestCheckSecretPermission(t *testing.T) {
 			core := NewKeyorixCore(mockStorage)
 
 			ctx := context.Background()
-			permCtx, err := core.CheckSecretPermission(ctx, tt.secretID, tt.userID, tt.requiredPermission)
+			var permCtx *PermissionContext
+			var err error
+			if tt.action != "" {
+				permCtx, err = core.EnforceSecretActionPermission(ctx, tt.secretID, tt.userID, tt.action)
+			} else {
+				permCtx, err = core.CheckSecretPermission(ctx, tt.secretID, tt.userID, tt.requiredPermission)
+			}
 
 			if tt.expectError {
 				assert.Error(t, err)

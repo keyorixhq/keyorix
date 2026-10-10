@@ -71,6 +71,7 @@ const relativeFromNow = (d: string | Date): string => {
 const auditEventLabel = (eventType: string): string => {
     const KNOWN: Record<string, string> = {
         'secret.versions_listed': 'Versions listed',
+        'secret.metadata_read': 'Metadata read',
         'secret.created': 'Created',
         'secret.updated': 'Updated',
         'secret.rotated': 'Rotated',
@@ -208,9 +209,9 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
     suspendTogglePending,
     onDelete,
 }) => (
-    <div className="flex items-start justify-between">
-        <div className="flex-1">
-            <div className="flex items-center space-x-3">
+    <div data-testid="secret-header" className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">{secret.name}</h2>
                 <span
                     className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getTypeColor(secret.type)}`}
@@ -236,7 +237,10 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
                 )}
             </div>
 
-            <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
+            <div
+                data-testid="secret-meta"
+                className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400"
+            >
                 <div className="flex items-center">
                     <MapPinIcon className="h-4 w-4 mr-1" />
                     {secret.environment || 'No environment'}
@@ -276,7 +280,7 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
             </div>
         </div>
 
-        <div className="flex items-center space-x-2">
+        <div data-testid="secret-actions" className="flex flex-wrap items-center gap-2">
             <Button variant="outline" size="sm" onClick={() => onEdit?.(secret)}>
                 <PencilIcon className="h-4 w-4 mr-2" />
                 Edit
@@ -467,8 +471,7 @@ const AccessorsPanel: React.FC<AccessorsPanelProps> = ({ accessors }) => {
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Who can access</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                Users who can read this secret, at their effective level (the higher of their project role and any
-                share). Global admins are not listed.
+                Users who can read this secret (admins with a role grant are not listed).
             </p>
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
                 {accessors.map((a) => (
@@ -476,12 +479,7 @@ const AccessorsPanel: React.FC<AccessorsPanelProps> = ({ accessors }) => {
                         <div className="flex items-center gap-2">
                             <UserIcon className="h-4 w-4 text-gray-400" />
                             <span className="font-medium text-gray-900 dark:text-white">{a.username}</span>
-                            <span
-                                className="text-xs text-gray-500 dark:text-gray-400"
-                                title={a.grants && a.grants.length > 0 ? a.grants.join(', ') : undefined}
-                            >
-                                {a.grants && a.grants.length > 1 ? a.grants.join(' + ') : a.source}
-                            </span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">{a.source}</span>
                         </div>
                         <span
                             className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${getPermissionColor(a.permission)}`}
@@ -911,6 +909,12 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
     const [showRotate, setShowRotate] = useState(false);
     const [rotateValue, setRotateValue] = useState('');
 
+    // `secret` is the snapshot the list handed over when this view opened, so
+    // it never learns about a rotation or rollback done in here. Remember the
+    // moment locally so the header stops saying "Never rotated" (#2977).
+    const [rotatedHereAt, setRotatedHereAt] = useState<string | null>(null);
+    const headerSecret = rotatedHereAt ? { ...secret, lastRotatedAt: rotatedHereAt } : secret;
+
     const [classification, setClassification] = useState<string>(secret.classification ?? '');
     const [status, setStatus] = useState<string>(secret.status ?? 'active');
     const suspendMutation = useSuspendSecret(secret.id);
@@ -984,7 +988,12 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
 
     const handleRollback = (version: number) => {
         if (!window.confirm(`Roll back to version ${version}? Its value will be re-instated as a new version.`)) return;
-        rollbackMutation.mutate(version, { onSuccess: () => setShowValue(false) });
+        rollbackMutation.mutate(version, {
+            onSuccess: () => {
+                setShowValue(false);
+                setRotatedHereAt(new Date().toISOString());
+            },
+        });
     };
 
     // Optimistically reflect the new level; revert if the server rejects it.
@@ -1008,6 +1017,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
         rotateMutation.mutate(rotateValue, {
             onSuccess: () => {
                 setShowValue(false); // force a re-reveal so the new version is fetched
+                setRotatedHereAt(new Date().toISOString());
                 closeRotate();
             },
         });
@@ -1044,7 +1054,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
     return (
         <div className="space-y-6">
             <SecretDetailHeader
-                secret={secret}
+                secret={headerSecret}
                 classification={classification}
                 suspended={suspended}
                 classifyPending={classifyMutation.isPending}
