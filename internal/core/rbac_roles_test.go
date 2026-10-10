@@ -28,7 +28,10 @@ func newRoleCRUDTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	}))
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{},
+	// models.SystemMetadata holds the role_permissions cache-invalidation
+	// generation (PERF-3 PR-2) that every role_permissions write bumps in the
+	// same transaction — see role_permission_cache.go.
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.AuditEvent{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{},
 		// UserRole/GroupRole/MachineIdentity(Role)/ConnectRefGrant: DeleteRole's
 		// cascade (SESSION-AT AT1 row 2) deletes from every RoleID-referencing
 		// table, so any test exercising a real (non-404) DeleteRole needs all five.

@@ -44,12 +44,16 @@ var ErrMFARequired = errors.New("mfa required")
 // found by the fuzzer (CI on PR #2392, seed 877139548d2805a6) via the
 // handler's reservation landing before the GetUser call below even runs.
 //
-// Deliberately NOT applied to ConsumeMFAChallenge's error (see that call
-// site): an unknown/expired/already-consumed challenge is that call's
-// expected, common negative result, not a storage ambiguity, and must stay
-// counted toward the IP throttle — confirmed by FuzzLoginThrottleConcurrency
+// Applied to ConsumeMFAChallenge's error only when that error is NOT the
+// storage.ErrMFAChallengeInvalid sentinel (see that call site): an
+// unknown/expired/already-consumed challenge is that call's expected, common
+// negative result, not a storage ambiguity, and must stay counted toward the
+// IP throttle — confirmed by FuzzLoginThrottleConcurrency
 // (server/http/handlers/login_throttle_fuzz_test.go), whose oracle (a) failed
-// when that branch was tagged too.
+// when the whole branch was tagged. A genuine storage failure on that same
+// call IS tagged: it is the earliest pre-verdict position on this path, so
+// spending an IP slot on it would charge the caller for a request whose code
+// was never looked at.
 var ErrMFAVerificationStorageFailure = errors.New("mfa verification storage failure")
 
 // ErrMFAEnrollmentChanged is returned (wrapped) by ActivateMFA when the pending
@@ -373,13 +377,34 @@ func (c *KeyorixCore) CreateMFAChallenge(ctx context.Context, userID uint) (stri
 func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code string) (*models.User, bool, *int64, error) { // NOSONAR -- cognitive complexity 18, suppress go:S3776
 	ch, err := c.storage.ConsumeMFAChallenge(ctx, sha256Hex(challenge), c.now())
 	if err != nil {
-		// Deliberately NOT tagged with ErrMFAVerificationStorageFailure, unlike the
-		// GetUser/storageErr branches below: a missing/expired/already-consumed
-		// challenge is ConsumeMFAChallenge's expected, common negative result (a
-		// stale or guessed challenge token), not a storage-layer ambiguity, and
-		// legitimately belongs in the per-IP throttle's count — confirmed by
-		// FuzzLoginThrottleConcurrency's oracle (a) (login_throttle_fuzz_test.go),
-		// which failed when this branch was tagged too.
+		// A missing/expired/already-consumed challenge is ConsumeMFAChallenge's
+		// expected, common negative result (a stale or guessed challenge token),
+		// reported with the storage.ErrMFAChallengeInvalid sentinel. It is NOT a
+		// storage-layer ambiguity and legitimately belongs in the per-IP
+		// throttle's count — confirmed by FuzzLoginThrottleConcurrency's oracle
+		// (a) (login_throttle_fuzz_test.go), which failed when this whole branch
+		// was tagged with ErrMFAVerificationStorageFailure.
+		//
+		// Anything ELSE this call returns is a genuine storage failure, and it
+		// lands BEFORE the submitted code has been looked at at all — the
+		// earliest pre-verdict position on this path. It must therefore be
+		// treated exactly like the GetUser branch directly below rather than
+		// like a guessed challenge: the IP's login-attempt budget slot the
+		// handler reserved before calling us (server/http/handlers/mfa.go's
+		// VerifyMFA) is released on ErrMFAVerificationStorageFailure, and
+		// ErrMFAVerificationUnavailable turns the response into a 503 "retry"
+		// rather than a 401 that would claim a credential we never checked was
+		// wrong. Without the split, a storage blip here silently spent one of
+		// the IP's slots for a request that reached no verdict.
+		//
+		// This is the same sentinel-driven split FinishWebAuthnLogin
+		// (internal/core/webauthn.go) already applies to its own
+		// ConsumeMFAChallenge call via ErrWebAuthnLoginNotEvaluated — the MFA
+		// path was the one login flow still missing it.
+		if !errors.Is(err, storage.ErrMFAChallengeInvalid) {
+			return nil, false, nil, fmt.Errorf("%w: %w: consuming login challenge: %w",
+				ErrMFAVerificationStorageFailure, ErrMFAVerificationUnavailable, err)
+		}
 		return nil, false, nil, fmt.Errorf("invalid or expired challenge")
 	}
 	user, err := c.storage.GetUser(ctx, ch.UserID)

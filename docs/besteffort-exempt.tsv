@@ -1,0 +1,111 @@
+# Best-effort-after-commit guard exemption list — GUARD-1 (#2561 for the v2 format).
+#
+# internal/core/besteffort_guard_test.go,
+# server/http/handlers/besteffort_guard_test.go and
+# server/grpc/services/besteffort_guard_test.go each fail the build when a
+# non-test function in their package drops a call's result after a storage
+# write has already committed, without that call being panic-protected. The
+# scanner lives in internal/besteffortguard; read its package doc for what it
+# does and, more importantly, what it does NOT see.
+#
+# The bug class, found 12+ times one call site at a time by QA-1: a best-effort
+# post-commit step (evict a cache, notify an admin, emit an audit event) panics,
+# the panic escapes, and the caller reports FAILURE for an operation that
+# actually succeeded.
+#
+# ---------------------------------------------------------------------------
+# Format (5 tab-separated fields)
+#
+#   <package>:<function>#<callee>  <guard>  <reason>  <added_by>  <reviewed_by>
+#
+# <package>  the scanned root: internal/core, server/http/handlers, or
+#            server/grpc/services, so identically-named functions in different
+#            packages never collide.
+# <function> the ENCLOSING function, as the scanner labels it ("Name", or
+#            "(*Type).Name" for a method) — or "*" for a callee-level row,
+#            meaning "this callee is the thing being vouched for, at every call
+#            site." The callee may NEVER be "*".
+# <callee>   the function whose result is being dropped.
+# <guard>    how this row's own safety claim is VERIFIED, not merely asserted:
+#              callee-recovers           the callee's body defers a recover().
+#                                        (Rarely needed as a ROW: the scanner
+#                                        now DERIVES this case — see below.)
+#              callee-recovers-via:<fn>  the callee funnels into <fn>, which
+#                                        defers a recover(). Checked both ways:
+#                                        <fn> must really recover, AND <fn>
+#                                        must be reachable from the callee.
+#              site-reviewed             a human claim no derived check covers.
+#                                        The escape hatch — a row using it must
+#                                        say why neither of the above applies.
+# <reason>   prose, minimum 40 chars. A one-word reason is a suppression.
+# <added_by> / <reviewed_by>
+#            the session/PR that added the row, and a DIFFERENT one that
+#            checked its claim. Enforced by
+#            internal/core/exempt_ledger_review_test.go
+#            (TestExemptLedgers_EveryRowIndependentlyReviewed), which registers
+#            this ledger with addedByCol=3 / reviewedByCol=4. An author cannot
+#            vouch for their own exemption.
+#
+# ---------------------------------------------------------------------------
+# What changed in v2 (#2561 coordinator review)
+#
+# 1. Protection is now DERIVED where it can be, not exempted. The scanner's
+#    panicSafetyIndex asks whether the discarded callee's own body defers a
+#    recover(); if it does, the discard is not a finding at all. That retired
+#    the whole deleteSessionsForUserAndEvict family of rows (5 call sites), and
+#    it is strictly stronger than a row: an exemption keeps pardoning a call
+#    site even after someone deletes the recover() it was premised on, which is
+#    the exact shape of a guard certifying a real bug as correct. Derived, the
+#    same fact goes red the moment it stops being true.
+#
+#    The rule is deliberately NOT transitive. "Safe if it calls something that
+#    recovers" marked 365 of internal/core's 1430 functions safe, because
+#    almost everything eventually reaches an audit helper — and it is simply
+#    false: a recover() in a callee protects only that callee.
+#
+# 2. The key was the enclosing FUNCTION alone, which made every row a blanket
+#    pardon for that whole function body. Once "(*KeyorixCore).ActivateMFA" was
+#    exempt for discarding one self-recovering callee, a NEW unprotected
+#    discard of a DIFFERENT callee added to that same function was absorbed by
+#    the existing row and never flagged. The key now names the callee.
+#
+# 3. SEVEN of the twelve v1 rows pardoned ZERO hits — measured by running v1's
+#    own scanner, not inferred. The coordinator spotted evictUserSessionCache
+#    (the file's own comment admitted it was listed "for completeness of the
+#    corpus"); deleteSessionsForUserAndEvict, emitAudit,
+#    evictMachineIdentityCacheOrFlush, notifyBreakGlassAdmins,
+#    revokeProjectDynamicSecretLeases and seedProjectEnvironment were the same
+#    mistake — all six keyed as if they were enclosing functions when the claim
+#    was about them as CALLEES. StaleExemptions now fails the build on a pardon
+#    for nothing: such a row reads exactly like a load-bearing one, and one left
+#    behind after its hit was FIXED silently pre-approves the shape returning.
+#
+# 4. The scanner saw only `_ = f(...)`. A bare `f(...)` whose result is never
+#    assigned carries the identical panic-escape risk and was invisible. What
+#    that widening surfaced was 42 call sites discarding writeAuditEventFull /
+#    writeAuditEventDiff's bool -- fixed, not exempted; see "NO ROWS" below.
+#
+# 5. Nothing proved the guard could fail. internal/besteffortguard's
+#    testdata/planted/planted.go.txt is a fixture whose functions are NAMED for
+#    the verdict the scanner must reach, asserted in both directions.
+#
+# ---------------------------------------------------------------------------
+
+# NO ROWS.
+#
+# That is the intended steady state, not an oversight. Every post-write discard
+# in the three scanned packages is now either routed through
+# besteffort.Run/goSafe, or lands on a callee whose own body defers a recover()
+# -- which the scanner DERIVES (internal/besteffortguard's panicSafetyIndex)
+# rather than taking on trust from a row here.
+#
+# Two rows did exist in this change's first draft, for writeAuditEventFull and
+# writeAuditEventDiff (42 call sites between them). They were removed by FIXING
+# the thing they would have excused: both now recover their own panic, so the
+# protection is derivable. That was the better of the two options the review
+# offered ("fix the real ones or exempt them with a reason"), and it avoids an
+# exemption that would have kept pardoning those 42 sites even after someone
+# deleted the recover() it was premised on.
+#
+# A future row is still possible -- see the format above -- and will need an
+# independent reviewer in its reviewed_by column before CI will accept it.
