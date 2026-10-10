@@ -6,6 +6,13 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **The shipped compose stack and Helm chart run with
+  `security.enable_file_permission_check` on** (ADR-112 default): key material and
+  the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
+  file only warns. Both configs omit the key on purpose, because an explicit `true`
+  would also audit that root/host-owned file strictly. A secret file now follows the
+  same upgrade grace period as the key files. Guarded by
+  `deploy/hardening` `TestShipped{Compose,Helm}Config_FilePermissionCheckIsOn`.
 - **Every secret the server reads from the environment now also accepts
   `<NAME>_FILE`** (Docker secrets, Kubernetes Secret volumes): the master
   password, DB password, bootstrap token, SMTP/SIEM/SCIM/webhook/SSO secrets and

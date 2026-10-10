@@ -424,6 +424,17 @@ root-owned 0644 by default) — only get a warning naming the file, the mismatch
 and the fix while the key is left at its default; set
 `enable_file_permission_check: true` explicitly to refuse on those too.
 
+The files behind `KEYORIX_*_FILE` secret variables ([above](#secrets-from-files-name_file))
+count as key material: strict on the default as well (accessible to other users,
+or writable by the group, refuses to start), with the same upgrade grace period
+as the key files.
+
+The shipped `keyorix.docker.yaml` and Helm chart **omit this key on purpose**, so
+they run with the check on (the default) and the bind-mounted / ConfigMap-mounted
+config file only warns. Writing `enable_file_permission_check: true` into either
+would audit that orchestrator-owned file strictly and the container would refuse
+to start.
+
 **Upgrading an existing deployment** that never set
 `enable_file_permission_check`: the server tells a fresh install from an upgrade
 by its database (users already exist). An upgrade gets a grace period — a
