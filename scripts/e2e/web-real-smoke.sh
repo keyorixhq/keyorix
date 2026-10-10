@@ -76,7 +76,7 @@ if [ -n "${KEYORIX_E2E_SPECS:-}" ]; then
     # shellcheck disable=SC2206
     ALL_SPECS=(${KEYORIX_E2E_SPECS})
     echo "==> KEYORIX_E2E_SPECS is set: running only ${ALL_SPECS[*]}"
-if [ "$#" -gt 0 ]; then
+elif [ "$#" -gt 0 ]; then
     ALL_SPECS=("$@")
     for spec in "${ALL_SPECS[@]}"; do
         [ -f "$WEB_DIR/$spec" ] || { echo "no such spec file: $WEB_DIR/$spec" >&2; exit 1; }
