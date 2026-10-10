@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -61,12 +62,20 @@ func (c *KeyorixCore) SetSecretDescription(ctx context.Context, actorID, secretI
 	if secret.Description == desc {
 		return secret, nil // no-op
 	}
-	secret.Description = desc
-	secret.UpdatedAt = c.now()
-	updated, err := c.storage.UpdateSecret(ctx, secret)
+	// #2695: description + updated_at only — see ClassifySecret's comment.
+	now := c.now()
+	matched, err := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{
+		Description: &desc, UpdatedAt: &now,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	secret.Description = desc
+	secret.UpdatedAt = now
+	updated := secret
 	uid := actorID
 	sid := secretID
 	c.writeAuditEvent(ctx, "secret.description_updated", &uid, &sid,
