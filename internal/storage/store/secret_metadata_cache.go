@@ -75,6 +75,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
@@ -151,6 +152,7 @@ type versionsGeneration struct {
 type secretNodeCacheEntry struct {
 	generation nodeGeneration
 	node       *models.SecretNode
+	storedAt   time.Time
 }
 
 // secretVersionCacheEntry is its own entry, in its own map, rather than two
@@ -167,12 +169,14 @@ type secretVersionCacheEntry struct {
 	generation    versionsGeneration
 	hasVersion    bool
 	latestVersion *models.SecretVersion
+	storedAt      time.Time
 }
 
 type secretScheduleCacheEntry struct {
 	generation  scheduleGeneration
 	hasSchedule bool
 	schedule    *models.SecretAccessSchedule
+	storedAt    time.Time
 }
 
 // secretMetadataCache is the whole cache: three independently
@@ -193,13 +197,33 @@ type secretMetadataCache struct {
 	nodes     map[uint]secretNodeCacheEntry
 	versions  map[uint]secretVersionCacheEntry
 	schedules map[uint]secretScheduleCacheEntry
+
+	maxEntries int              // per map
+	ttl        time.Duration    // per entry, measured from its store
+	now        func() time.Time // injectable for tests
 }
+
+const (
+	// secretMetaCacheMaxEntries caps EACH of the three maps (review of #2764,
+	// modelled on server/middleware/auth.go's maxTokenCacheEntries). Keys are
+	// real secret IDs, so this is not about a flood; it bounds memory — and the
+	// resident ciphertext in the versions map, which must keep EncryptedValue
+	// because every GetLatestSecretVersion caller consumes it — against vault size.
+	secretMetaCacheMaxEntries = 10_000
+	// secretMetaCacheTTL bounds how long any entry (ciphertext included) can sit
+	// in process memory. It is a memory/exposure bound ONLY: correctness never
+	// depends on it, every hit is still validated against its live generation.
+	secretMetaCacheTTL = 5 * time.Minute
+)
 
 func newSecretMetadataCache() *secretMetadataCache {
 	return &secretMetadataCache{
-		nodes:     make(map[uint]secretNodeCacheEntry),
-		versions:  make(map[uint]secretVersionCacheEntry),
-		schedules: make(map[uint]secretScheduleCacheEntry),
+		nodes:      make(map[uint]secretNodeCacheEntry),
+		versions:   make(map[uint]secretVersionCacheEntry),
+		schedules:  make(map[uint]secretScheduleCacheEntry),
+		maxEntries: secretMetaCacheMaxEntries,
+		ttl:        secretMetaCacheTTL,
+		now:        time.Now,
 	}
 }
 
@@ -210,6 +234,10 @@ func (c *secretMetadataCache) getNode(id uint) (secretNodeCacheEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.nodes[id]
+	if ok && c.expired(e.storedAt) {
+		delete(c.nodes, id)
+		return secretNodeCacheEntry{}, false
+	}
 	return e, ok
 }
 
@@ -219,7 +247,10 @@ func (c *secretMetadataCache) setNode(id uint, generation nodeGeneration, node *
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.nodes[id] = secretNodeCacheEntry{generation: generation, node: node}
+	if _, exists := c.nodes[id]; !exists {
+		makeRoom(c.nodes, c.maxEntries)
+	}
+	c.nodes[id] = secretNodeCacheEntry{generation: generation, node: node, storedAt: c.now()}
 }
 
 // evictNode and evictSchedule tolerate a nil receiver on purpose. A
@@ -246,6 +277,10 @@ func (c *secretMetadataCache) getVersion(secretNodeID uint) (secretVersionCacheE
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.versions[secretNodeID]
+	if ok && c.expired(e.storedAt) {
+		delete(c.versions, secretNodeID) // drops the resident ciphertext too
+		return secretVersionCacheEntry{}, false
+	}
 	return e, ok
 }
 
@@ -255,7 +290,10 @@ func (c *secretMetadataCache) setVersion(secretNodeID uint, generation versionsG
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.versions[secretNodeID] = secretVersionCacheEntry{generation: generation, hasVersion: true, latestVersion: version}
+	if _, exists := c.versions[secretNodeID]; !exists {
+		makeRoom(c.versions, c.maxEntries)
+	}
+	c.versions[secretNodeID] = secretVersionCacheEntry{generation: generation, hasVersion: true, latestVersion: version, storedAt: c.now()}
 }
 
 func (c *secretMetadataCache) getSchedule(secretNodeID uint) (secretScheduleCacheEntry, bool) {
@@ -265,6 +303,10 @@ func (c *secretMetadataCache) getSchedule(secretNodeID uint) (secretScheduleCach
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	e, ok := c.schedules[secretNodeID]
+	if ok && c.expired(e.storedAt) {
+		delete(c.schedules, secretNodeID)
+		return secretScheduleCacheEntry{}, false
+	}
 	return e, ok
 }
 
@@ -274,7 +316,36 @@ func (c *secretMetadataCache) setSchedule(secretNodeID uint, e secretScheduleCac
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.schedules[secretNodeID]; !exists {
+		makeRoom(c.schedules, c.maxEntries)
+	}
+	e.storedAt = c.now()
 	c.schedules[secretNodeID] = e
+}
+
+// expired reports whether an entry stored at t is past the TTL. Caller holds
+// c.mu. An expired entry is a miss and is deleted by the reader. An entry nobody
+// reads again stays until the cap evicts it (see makeRoom), so the TTL bounds
+// how long an entry can be SERVED and the cap bounds how much can be resident.
+func (c *secretMetadataCache) expired(t time.Time) bool {
+	return c.now().Sub(t) >= c.ttl
+}
+
+// makeRoom evicts one arbitrary entry when m is at the cap, so the insert that
+// follows keeps len(m) <= max. Arbitrary (Go map iteration order) rather than
+// LRU: every hit is generation-validated, so which entry is dropped affects
+// only hit rate, never correctness, and O(1) eviction keeps the write path off
+// a scan. Caller holds c.mu and only calls it for a key not already present.
+func makeRoom[V any](m map[uint]V, max int) {
+	if max <= 0 {
+		max = 1
+	}
+	for len(m) >= max {
+		for k := range m {
+			delete(m, k)
+			break
+		}
+	}
 }
 
 func (c *secretMetadataCache) evictSchedule(secretNodeID uint) {
