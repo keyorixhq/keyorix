@@ -55,7 +55,10 @@ func TestJourney_DynamicSecretLifecycle(t *testing.T) {
 	s := startServerWithDynamicSecrets(t, serverBin)
 	t.Cleanup(s.Close)
 
-	adminToken := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	// Boots with the shipped config (security.require_mfa on, ADR-112): prove that,
+	// then enrol TOTP through the real API and work from the MFA-backed session.
+	requireMFAEnrolmentPremise(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	adminToken := enrolTOTPAndLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 	aEnv := adminEnv(s, adminToken)
 
 	runCLI(t, cliBin, aEnv, "project", "create", "--name", n7ProjectName)
