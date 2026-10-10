@@ -51,16 +51,20 @@ import (
 // has nothing to exercise yet. Left open, reported as such (not silently
 // dropped) per this repo's own "no silent caps" convention.
 func TestJourney_HATwoReplicas(t *testing.T) {
-	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
-	if dsn == "" {
+	base := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if base == "" {
 		t.Skip("KEYORIX_TEST_PG_DSN not set -- skipping the HA two-replica journey (Postgres only)")
 	}
 
 	serverBin, cliBin := harness.BuildBinaries(t)
 
+	// Own database per run: the admin enrols TOTP below, and that must not survive
+	// into the next run against the same server.
+	dsn := isolatedPGDatabase(t, base, "j15_ha")
+	pg := parsePGDSN(t, dsn)
 	dbPassword := os.Getenv("KEYORIX_TEST_PG_PASSWORD")
 	if dbPassword == "" {
-		dbPassword = parseLibpqDSNJ15(dsn)["password"]
+		dbPassword = pg.Password
 	}
 	if dbPassword == "" {
 		dbPassword = "keyorix-e2e-smoke"
@@ -68,7 +72,7 @@ func TestJourney_HATwoReplicas(t *testing.T) {
 	// anomaly_alerts.schedule: "2s" so the scheduler-singleton check below
 	// doesn't need to wait out the real 1h default interval to observe a tick.
 	configExtra := fmt.Sprintf("storage:\n  type: postgres\n  database:\n%s  encryption:\n    enabled: true\n    dek_path: keys/dek.key\n    salt_path: keys/kek.salt\nanomaly_alerts:\n  schedule: \"2s\"\n",
-		pgDatabaseYAMLJ15(dsn))
+		pg.yaml())
 	backend := harness.DBBackend{
 		Name:        "postgres",
 		ConfigExtra: configExtra,
@@ -94,7 +98,12 @@ func TestJourney_HATwoReplicas(t *testing.T) {
 	sB := startHAReplica(t, serverBin, backend, sA.Dir)
 	t.Cleanup(sB.Close)
 
-	adminToken := adminLogin(t, sA, "smoketestadmin", harness.BootstrapAdminPassword)
+	// Both replicas run the shipped config (security.require_mfa on): prove that on
+	// each, then enrol TOTP through replica A's API and work from the MFA-backed
+	// session (replica B reads the same shared MFA state from the database).
+	requireMFAEnrolmentPremise(t, sA, "smoketestadmin", harness.BootstrapAdminPassword)
+	requireMFAEnrolmentPremise(t, sB, "smoketestadmin", harness.BootstrapAdminPassword)
+	adminToken := enrolTOTPAndLogin(t, sA, "smoketestadmin", harness.BootstrapAdminPassword)
 	aEnvA := adminEnv(sA, adminToken)
 
 	const (
@@ -182,7 +191,7 @@ const schedLockAnomaly int64 = 0x4B455953414E4F4D
 // held, then releases it and confirms the job resumes on at least one replica.
 func testHoldsSchedulerLockOnBothReplicas(t *testing.T, dsn string, sA, sB *harness.Server) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, dsn)
@@ -200,12 +209,21 @@ func testHoldsSchedulerLockOnBothReplicas(t *testing.T, dsn string, sA, sB *harn
 	}
 
 	// anomaly_alerts.schedule is "2s" on both replicas (see TestJourney_HATwoReplicas's
-	// ConfigExtra): holding the lock for 6s guarantees each replica's own ticker
-	// fires at least twice while it's held.
-	time.Sleep(6 * time.Second)
-
-	skippedA := schedulerOutcomeCount(t, sA, "anomaly_detection", "skipped")
-	skippedB := schedulerOutcomeCount(t, sB, "anomaly_detection", "skipped")
+	// ConfigExtra), but each replica's FIRST pass is deferred by a jittered 1-5 minutes
+	// after startup (server/scheduler_run.go's anomalyFirstPassDelay, #2632) and there is
+	// no knob to shorten it. So poll, rather than sleep a fixed time, until both replicas
+	// have recorded a skipped tick; the lock stays held throughout, so a tick that is
+	// not skipped would show up as a success.
+	waitDeadline := time.Now().Add(6 * time.Minute)
+	var skippedA, skippedB int
+	for time.Now().Before(waitDeadline) {
+		skippedA = schedulerOutcomeCount(t, sA, "anomaly_detection", "skipped")
+		skippedB = schedulerOutcomeCount(t, sB, "anomaly_detection", "skipped")
+		if skippedA > 0 && skippedB > 0 {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
 	if skippedA == 0 {
 		t.Errorf("replica A recorded 0 skipped anomaly_detection ticks while the lock was externally held -- expected at least one")
 	}
@@ -276,15 +294,13 @@ func schedulerOutcomeCount(t *testing.T, s *harness.Server, scheduler, outcome s
 func startHAReplica(t *testing.T, serverBin string, backend harness.DBBackend, sourceDir string) *harness.Server {
 	t.Helper()
 	dir := t.TempDir()
-	env := append([]string{
-		"HOME=" + dir,
-		"PATH=" + os.Getenv("PATH"),
+	env := append(harness.BaseServerEnv(dir),
 		// Same derivation as harness.StartServer's own (backend.Name is "postgres"
 		// for both replicas, so this string is identical on both sides) -- the KEK
 		// is PBKDF2(master password, on-disk salt); replica B must derive the SAME
 		// KEK as replica A to unwrap the DEK it's about to copy.
-		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-" + backend.Name,
-	}, backend.ExtraEnv...)
+		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-"+backend.Name)
+	env = append(env, backend.ExtraEnv...)
 
 	configPath := "./keyorix.yaml"
 	run := func(args ...string) {
@@ -359,46 +375,4 @@ func applyConfigExtraJ15(t *testing.T, dir, configExtra string) {
 	if err := os.WriteFile(path, []byte(newText), 0o600); err != nil { // #nosec G703 -- dir is always t.TempDir()
 		t.Fatalf("rewrite config: %v", err)
 	}
-}
-
-// parseLibpqDSNJ15/pgDatabaseYAMLJ15 mirror scripts/e2e/audit_verify.go's
-// unexported parseLibpqDSN and api_smoke_test.go's pgDatabaseYAML exactly --
-// duplicated here rather than imported since this journey's package cannot
-// import scripts/e2e (and vice versa; both are separate `e2e`-tagged leaves).
-func parseLibpqDSNJ15(dsn string) map[string]string {
-	out := map[string]string{}
-	for _, field := range strings.Fields(dsn) {
-		kv := strings.SplitN(field, "=", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		out[kv[0]] = strings.Trim(kv[1], "'\"")
-	}
-	return out
-}
-
-func pgDatabaseYAMLJ15(dsn string) string {
-	fields := parseLibpqDSNJ15(dsn)
-	host := fields["host"]
-	if host == "" {
-		host = "localhost"
-	}
-	port := fields["port"]
-	if port == "" {
-		port = "5432"
-	}
-	name := fields["dbname"]
-	if name == "" {
-		name = "keyorix"
-	}
-	user := fields["user"]
-	if user == "" {
-		user = "keyorix"
-	}
-	sslMode := fields["sslmode"]
-	if sslMode == "" {
-		sslMode = "disable"
-	}
-	return fmt.Sprintf("    host: %s\n    port: \"%s\"\n    name: %s\n    user: %s\n    ssl_mode: %s\n",
-		host, port, name, user, sslMode)
 }

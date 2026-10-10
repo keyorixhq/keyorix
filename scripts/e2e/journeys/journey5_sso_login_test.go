@@ -97,7 +97,10 @@ func TestJourney_SSOLogin(t *testing.T) {
 	issuer := fmt.Sprintf("%s/realms/%s", kcAddr, n5Realm)
 	s := startServerWithSSO(t, serverBin, serverPort, issuer, redirectURL)
 	t.Cleanup(s.Close)
-	adminToken := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	// Boots with the shipped config (security.require_mfa on, ADR-112): prove that,
+	// then enrol TOTP through the real API and work from the MFA-backed session.
+	requireMFAEnrolmentPremise(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	adminToken := enrolTOTPAndLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 
 	// ── First login (JIT-provisioned), mapped role from its group ───────────
 
@@ -552,11 +555,8 @@ func assertCallbackRejectedNoSession(t *testing.T, s *harness.Server, jar *cooki
 func startServerWithSSO(t *testing.T, binary, port, issuer, redirectURL string) *harness.Server {
 	t.Helper()
 	dir := t.TempDir()
-	env := []string{
-		"HOME=" + dir,
-		"PATH=" + os.Getenv("PATH"),
-		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-sso",
-	}
+	env := append(harness.BaseServerEnv(dir),
+		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-sso")
 	configPath := "./keyorix.yaml"
 
 	run := func(args ...string) {
