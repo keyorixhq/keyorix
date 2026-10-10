@@ -162,19 +162,15 @@ func TestJourney_AuditTrail(t *testing.T) {
 		}
 	})
 
-	t.Run("viewer's reads are logged exactly 3 times, attributed correctly", func(t *testing.T) {
-		// 3, not 2, and this is correct, not a duplicate-logging bug: N2's
-		// viewer subtest makes two direct value reads (REST + CLI `secret get
-		// --ref`), but ALSO attempts a denied `secret delete` -- and
-		// cli/cmd/secret_crud.go's runSecretDelete fetches the secret's
-		// version list (to preview "Versions: N" before confirming) BEFORE
-		// the delete call itself, which is denied separately. GetSecretVersions
-		// (server/http/handlers/secrets_versions.go) unconditionally logs
-		// secret.read on every call ("fetching versions means the caller is
-		// accessing the secret value") -- the viewer legitimately holds
-		// secrets.read, so that preview call succeeds and is correctly
-		// audited as a read, even though the delete it was previewing for
-		// was then denied.
+	t.Run("viewer's reads are logged exactly 2 times and the delete preview's version listing once, attributed correctly", func(t *testing.T) {
+		// N2's viewer subtest makes two direct value reads (REST + CLI `secret
+		// get --ref`): exactly 2 secret.read. It ALSO attempts a denied `secret
+		// delete`, and cli/cmd/secret_crud.go's runSecretDelete fetches the
+		// secret's version list (to preview "Versions: N") BEFORE the delete
+		// call itself, which is denied separately. That listing exposes no value,
+		// so since AUDIT-UX-2 (#2951) GetSecretVersions audits it as
+		// secret.versions_listed, not secret.read: exactly 1 of those. (Until
+		// then this asserted 3 secret.read, the listing counted as a read.)
 		//
 		// Polls rather than trusting the single waitForAuditEventsToSettle
 		// call above at face value -- that call settles the AGGREGATE total,
@@ -182,25 +178,25 @@ func TestJourney_AuditTrail(t *testing.T) {
 		// count has ALSO reached its final value in the same instant (a
 		// defensive poll here is cheap and removes the dependency on that
 		// timing coincidence).
-		deadline := time.Now().Add(5 * time.Second)
-		var total int
-		for {
-			env := restExpect(t, s, adminToken, http.MethodGet,
-				"/api/v1/audit/search?action=secret.read&actor="+n2ViewerU, nil, http.StatusOK)
-			var data struct {
-				Total int `json:"total"`
+		for action, want := range map[string]int{"secret.read": 2, "secret.versions_listed": 1} {
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				env := restExpect(t, s, adminToken, http.MethodGet,
+					"/api/v1/audit/search?action="+action+"&actor="+n2ViewerU, nil, http.StatusOK)
+				var data struct {
+					Total int `json:"total"`
+				}
+				if err := json.Unmarshal(env.Data, &data); err != nil {
+					t.Fatalf("decode audit search for viewer's %s: %v\nraw: %s", action, err, env.Data)
+				}
+				if data.Total == want {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("viewer's %s events: want exactly %d, got %d after 5s poll", action, want, data.Total)
+				}
+				time.Sleep(200 * time.Millisecond)
 			}
-			if err := json.Unmarshal(env.Data, &data); err != nil {
-				t.Fatalf("decode audit search for viewer's reads: %v\nraw: %s", err, env.Data)
-			}
-			total = data.Total
-			if total == 3 {
-				return
-			}
-			if time.Now().After(deadline) {
-				t.Fatalf("viewer's secret.read events: want exactly 3, got %d after 5s poll", total)
-			}
-			time.Sleep(200 * time.Millisecond)
 		}
 	})
 

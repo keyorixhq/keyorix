@@ -464,7 +464,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permRolesRead)).Get("/connect/ref-grants", connectHandler.ListRefGrants)
 		r.With(customMiddleware.RequirePermission(permRolesWrite)).Post("/connect/ref-grants", connectHandler.CreateRefGrant)
 		r.With(customMiddleware.RequirePermission(permRolesWrite)).Delete("/connect/ref-grants/{id}", connectHandler.DeleteRefGrant)
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get(pathProjects, catalogHandler.ListProjects)
+		// ListProjects authorizes INSIDE the handler (no RequirePermission here) so a
+		// project-scoped reader receives the projects they can actually read instead of
+		// a blanket 403 — the same shape, and the same reasoning, as ListSecrets below.
+		// #2780: the global gate here made the UI's project switcher, /projects page and
+		// New Secret dialog come up empty for a persona that could read the project's
+		// secrets perfectly well. The handler's own doc comment carries the full
+		// argument, including why ?include_deleted=true keeps the global requirement.
+		r.Get(pathProjects, catalogHandler.ListProjects)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get(pathProjectsID, catalogHandler.GetProject)
 		r.With(customMiddleware.RequirePermission(permSecretsWrite)).Post(pathProjects, catalogHandler.CreateProject)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Put(pathProjectsID, catalogHandler.UpdateProject)
@@ -560,6 +567,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
 		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
+		// #2461 watchdog review (2026-10-09): blocked while impersonating, same
+		// reasoning as ActivateBreakGlass above. ReviewBreakGlass's self-review
+		// refusal compares actorID against activation.UserID -- an impersonating
+		// actor's context carries the IMPERSONATED user's ID, not the real
+		// admin's, so an activator who can impersonate any roles.assign holder
+		// could impersonate one and pass the self-review check, forging an
+		// independent "reviewed" record for their own activation. Blocking
+		// impersonation here outright is the same structural fix as the
+		// activation route: the whole point of ADR-112's independent review is
+		// defeated by a puppet identity, so no impersonated session may submit
+		// one, regardless of whose account it is impersonating.
+		r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/review", catalogHandler.ReviewBreakGlass)
 		// Machine identities (ADR-023): non-human members, segmented from humans.
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities/stale", catalogHandler.ListStaleMachineIdentities)
@@ -639,7 +658,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// (#161), not secrets.write — same shape as the project-restore fix above.
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, customMiddleware.ScopeFromProjectParam("projectId"))).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironment)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, customMiddleware.ScopeFromEnvParam("id"))).Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironment)
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/environments", catalogHandler.ListEnvironments)
+		// The cross-project environment list, same treatment as ListProjects above and
+		// for the same reason (#2780, fix-siblings): the web New Secret dialog's
+		// required Environment select is populated from HERE, so scoping the project
+		// list alone would leave that dialog unsatisfiable for a project-scoped reader.
+		r.Get("/environments", catalogHandler.ListEnvironments)
 
 		// Secrets endpoints. Per-secret routes resolve scope from the secret's
 		// own project/environment via RequireScopedSecretPermission, which ALSO

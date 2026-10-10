@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
+	"time"
 )
 
 func (ls *LocalStorage) CreateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error {
@@ -50,8 +52,27 @@ func (ls *LocalStorage) ListSecretTemplates(ctx context.Context) ([]*models.Secr
 	return templates, nil
 }
 
-func (ls *LocalStorage) UpdateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error {
-	return ls.db.WithContext(ctx).Save(t).Error
+// UpdateSecretTemplateFields persists ONLY the six editable columns (plus
+// updated_at) of an EXISTING template row — see the storage.Storage interface
+// doc for why the full-row UpdateSecretTemplate this replaced (a bare Save)
+// re-INSERTED a concurrently hard-deleted template with its old id (#2700).
+// SecretTemplate has no DeletedAt, so RowsAffected is the whole guarantee here:
+// an Updates against a missing row matches nothing, where Save would upsert.
+func (ls *LocalStorage) UpdateSecretTemplateFields(ctx context.Context, id uint, f storage.SecretTemplateFieldUpdate, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretTemplate{}).Where(sqlWhereID, id).
+		Updates(map[string]interface{}{
+			"name":                   f.Name,
+			"description":            f.Description,
+			"default_classification": f.DefaultClassification,
+			"default_tags":           f.DefaultTags,
+			"description_pattern":    f.DescriptionPattern,
+			"rotation_hint_days":     f.RotationHintDays,
+			"updated_at":             updatedAt,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 func (ls *LocalStorage) DeleteSecretTemplate(ctx context.Context, id uint) error {

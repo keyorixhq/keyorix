@@ -29,20 +29,7 @@ import (
 // closes it. Remove a row the moment its PR merges AND its seed has been
 // promoted out of testdata/fuzz-pending/<issue>/ into
 // testdata/fuzz/FuzzCrossReplicaInvariants/ — both in the same commit.
-var pendingSeedFix = map[string]int{
-	"2646": 2671, // ShareSecret vs DeleteSecret
-	"2647": 2671, // ShareSecretWithGroup vs DeleteSecret (same PR as #2646)
-	"2649": 2672, // GrantSecretACL vs DeleteSecret
-	"2650": 2668, // SetSecretAutoRotate vs DeleteSecret
-	"2651": 2675, // CreateDynamicSecretConfig vs DeleteProject
-	"2652": 2673, // IssueLease vs DeleteProject
-	"2653": 2664, // UpdateUser vs SuspendUser
-	"2654": 2664, // UpdateOwnProfile vs ChangePassword (same PR as #2653)
-	"2655": 2667, // ActivateMFA vs BeginMFAEnrollment
-	"2656": 2674, // RestoreEnvironment vs DeleteProject
-	"2657": 2669, // TransitionMembership activate vs revoke
-	"2659": 2669, // open-mode InviteMember vs revoke (same mechanism as #2657)
-}
+var pendingSeedFix = map[string]int{}
 
 func TestPendingSeedsPromotedAfterFix(t *testing.T) {
 	token := os.Getenv("GH_TOKEN")
@@ -51,7 +38,7 @@ func TestPendingSeedsPromotedAfterFix(t *testing.T) {
 	}
 
 	entries, err := os.ReadDir("testdata/fuzz-pending")
-	if err != nil {
+	if err != nil && !os.IsNotExist(err) {
 		t.Fatalf("reading testdata/fuzz-pending: %v", err)
 	}
 
@@ -65,6 +52,9 @@ func TestPendingSeedsPromotedAfterFix(t *testing.T) {
 		if !known {
 			t.Errorf("testdata/fuzz-pending/%s/ has no entry in pendingSeedFix — add one pointing at the PR that fixes #%s, or promote the seed if it's already fixed", issue, issue)
 			continue
+		}
+		if pr == 0 {
+			continue // reopened: no fix PR yet
 		}
 		merged, err := prIsMerged(client, token, pr)
 		if err != nil {

@@ -11,6 +11,7 @@ import (
 	"context"
 	"log"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -104,9 +105,9 @@ func TestResolveConnectorOwnership_RenameFailsBoot(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rename the project after the binding was recorded.
-	project.Name = "payments-renamed"
-	_, err = st.UpdateProject(ctx, project)
+	matched, err := st.UpdateProjectFields(ctx, project.ID, "payments-renamed", project.Description, nil, time.Now())
 	require.NoError(t, err)
+	require.True(t, matched)
 
 	_, err = resolveConnectorOwnership(ctx, st, []config.ConnectorConfig{
 		{Name: "aws", Scope: "project", Project: "payments"},

@@ -1,0 +1,125 @@
+package handlers
+
+// #2740 review (option C): a storage failure may only be reported as a
+// retryable 503 when it happened BEFORE any submitted code was evaluated. A
+// failure AFTER the code was found correct (MarkTOTPStepUsed) must produce a
+// response byte-for-byte identical to a wrong code, otherwise the 503 would
+// confirm a correct guess. These tests pin both sides on the login path
+// (/auth/mfa/verify) and the step-up path (/auth/mfa/stepup).
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/pquerna/otp/totp"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
+)
+
+func verifyMFARecorder(t *testing.T, h *AuthHandler, challenge, code string) *httptest.ResponseRecorder {
+	t.Helper()
+	body, err := json.Marshal(map[string]string{"mfa_challenge": challenge, "code": code})
+	require.NoError(t, err)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/auth/mfa/verify", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	h.VerifyMFA(w, r)
+	return w
+}
+
+func TestVerifyMFA_PostMatchStorageError_IndistinguishableFromWrongCode(t *testing.T) {
+	h, fs, _, fixed := setupMFAVerifyStorageErrorTest(t)
+	ctx := context.Background()
+
+	_, secret, err := h.coreService.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	actCode, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
+	require.NoError(t, err)
+	_, err = h.coreService.ActivateMFA(ctx, 1, actCode, mfaVerifyStorageErrorTestPassword, "")
+	require.NoError(t, err)
+	good, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	// Reference: a genuinely wrong code.
+	ch1, err := h.coreService.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	wrong := verifyMFARecorder(t, h, ch1, "000000")
+	require.Equal(t, http.StatusUnauthorized, wrong.Code, wrong.Body.String())
+
+	// The CORRECT code, with the post-match MarkTOTPStepUsed write failing.
+	ch2, err := h.coreService.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	fs.Arm(&faultstorage.FaultSpec{Method: "MarkTOTPStepUsed", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+	post := verifyMFARecorder(t, h, ch2, good)
+	require.True(t, fs.Fired(), "the armed MarkTOTPStepUsed fault must have fired")
+	fs.Arm(nil)
+
+	assert.Equal(t, wrong.Code, post.Code, "a post-match storage error must not be distinguishable from a wrong code by status")
+	assert.Equal(t, wrong.Body.String(), post.Body.String(), "a post-match storage error must not be distinguishable from a wrong code by body")
+
+	// Pre-evaluation failure (GetMFASecret) is the case that may say "retry".
+	ch3, err := h.coreService.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	fs.Arm(&faultstorage.FaultSpec{Method: "GetMFASecret", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+	pre := verifyMFARecorder(t, h, ch3, good)
+	require.True(t, fs.Fired(), "the armed GetMFASecret fault must have fired")
+	fs.Arm(nil)
+	assert.Equal(t, http.StatusServiceUnavailable, pre.Code, pre.Body.String())
+
+	// The code was never marked used by the failed attempt, so it still works.
+	ch4, err := h.coreService.CreateMFAChallenge(ctx, 1)
+	require.NoError(t, err)
+	ok := verifyMFARecorder(t, h, ch4, good)
+	assert.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+}
+
+func TestMFAStepUpHandler_PostMatchStorageError_IndistinguishableFromWrongCode(t *testing.T) {
+	require.NoError(t, i18n.Initialize(&config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}))
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(
+		&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{},
+		&models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
+		&models.MFAStepupToken{}, &models.MFAStepUpGrant{},
+	))
+	hash, err := bcrypt.GenerateFromPassword([]byte(stepUpTestPassword), bcrypt.MinCost)
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
+		PasswordHash: string(hash), AccountState: "active"}).Error)
+	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+	require.NoError(t, enc.Initialize("test-passphrase"))
+	fs := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
+	coreService := core.NewKeyorixCore(fs)
+	coreService.SetAuthEncryptor(enc)
+	h := NewAuthHandler(coreService, false)
+	secret, _ := activateMFAForStepUpTest(t, coreService)
+
+	wrong := httptest.NewRecorder()
+	h.MFAStepUp(wrong, postJSON("/api/v1/auth/mfa/stepup", map[string]string{"code": "000000"}, 1))
+	require.Equal(t, http.StatusUnauthorized, wrong.Code, wrong.Body.String())
+
+	code, err := totp.GenerateCode(secret, time.Now())
+	require.NoError(t, err)
+	fs.Arm(&faultstorage.FaultSpec{Method: "MarkTOTPStepUsed", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+	post := httptest.NewRecorder()
+	h.MFAStepUp(post, postJSON("/api/v1/auth/mfa/stepup", map[string]string{"code": code}, 1))
+	require.True(t, fs.Fired(), "the armed MarkTOTPStepUsed fault must have fired")
+
+	assert.Equal(t, wrong.Code, post.Code, "a post-match storage error must not be distinguishable from a wrong code by status")
+	assert.Equal(t, wrong.Body.String(), post.Body.String(), "a post-match storage error must not be distinguishable from a wrong code by body")
+}

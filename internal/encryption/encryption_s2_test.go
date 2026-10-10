@@ -783,7 +783,8 @@ func setupS2FullDB(t *testing.T) *gorm.DB {
 		&models.MFASecret{},
 		&models.DynamicSecretConfig{},
 		&models.DynamicSecretLease{},
-		&models.SystemMetadata{}, // DEK-rotation redo marker
+		&models.NotificationChannel{}, // #2433: now swept by SweepAllTables too
+		&models.SystemMetadata{},      // DEK-rotation redo marker
 	))
 	return db
 }

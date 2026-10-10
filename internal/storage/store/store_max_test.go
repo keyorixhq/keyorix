@@ -304,9 +304,11 @@ func TestUpdateGroup_Success(t *testing.T) {
 	ctx := context.Background()
 	g, err := ls.CreateGroup(ctx, &models.Group{Name: "g-upd", NameFolded: "g-upd"})
 	require.NoError(t, err)
-	g.Name = "g-upd-v2"
-	g.NameFolded = "g-upd-v2"
-	got, err := ls.UpdateGroup(ctx, g)
+	name, folded := "g-upd-v2", "g-upd-v2"
+	matched, err := ls.UpdateGroupFields(ctx, g.ID, &name, &folded, nil, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
+	got, err := ls.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "g-upd-v2", got.Name)
 }
@@ -407,8 +409,7 @@ func TestUpdateProject_DuplicateNameError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rename p1 to "proj-beta" — must hit the unique-name collision.
-	p1.Name = "proj-beta"
-	_, err = ls.UpdateProject(ctx, p1)
+	_, err = ls.UpdateProjectFields(ctx, p1.ID, "proj-beta", p1.Description, nil, time.Now())
 	require.Error(t, err)
 }
 
@@ -1146,6 +1147,10 @@ func newRBACStoreMax(t *testing.T) *LocalStorage {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.GroupRole{}, &models.User{}, &models.Group{}, &models.UserGroup{},
 		&models.Project{}, &models.Environment{},
+		// SystemMetadata: AssignPermissionToRole/RemovePermissionFromRole/
+		// DeleteRole bump the PERF-3 PR-2 role_permissions cache generation
+		// (a system_metadata row) in the same transaction as the real write.
+		&models.SystemMetadata{},
 	)
 }
 

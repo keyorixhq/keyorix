@@ -40,7 +40,17 @@ var s12DBCounter atomic.Int64
 
 // freshCoreS12 opens a uniquely-named in-memory SQLite DB with a broad set of
 // models migrated and returns a ready-to-use KeyorixCore.
+// freshCoreS12 is freshLocalStorageS12 wrapped in a KeyorixCore. Split so a
+// test that needs to decorate the storage layer (login_rate_limit_reserve_
+// interleaving_test.go parks one storage call to force an interleaving) can
+// reuse this exact schema instead of hand-rolling a second AutoMigrate list —
+// CLAUDE.md: hand-picked AutoMigrate lists hide schema divergence.
 func freshCoreS12(t *testing.T) *core.KeyorixCore {
+	t.Helper()
+	return core.NewKeyorixCore(freshLocalStorageS12(t))
+}
+
+func freshLocalStorageS12(t *testing.T) *store.LocalStorage {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	n := s12DBCounter.Add(1)
@@ -77,7 +87,7 @@ func freshCoreS12(t *testing.T) *core.KeyorixCore {
 		&models.RecoveryKeyRecord{},
 	)
 	require.NoError(t, err)
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	return store.NewLocalStorage(db)
 }
 
 // freshCoreS12WithAdmin returns a KeyorixCore plus the underlying DB. The

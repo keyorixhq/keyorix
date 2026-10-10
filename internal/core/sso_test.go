@@ -212,13 +212,17 @@ func TestResolveSSOUser(t *testing.T) {
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
 		// First link claims the account for this provider+subject (so a later provider
 		// can't re-link it).
-		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-			return u.ID == 9 && u.ExternalID == "sso:okta:okta|123"
-		})).Return(&models.User{ID: 9, ExternalID: "sso:okta:okta|123"}, nil)
+		// #2699: the claim is a column-scoped conditional write of external_id
+		// alone, and the caller then re-reads so its login gate acts on the
+		// COMMITTED row rather than the snapshot read above.
+		store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:okta:okta|123", mock.Anything).Return(true, nil)
+		store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, ExternalID: "sso:okta:okta|123", IsActive: true, AccountState: AccountActive}, nil)
 		u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(9), u.ID)
-		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		assert.Equal(t, "sso:okta:okta|123", u.ExternalID, "the re-read row, not the pre-claim snapshot, is what comes back")
+		store.AssertCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 
 	t.Run("unverified email does NOT match an existing account (no takeover)", func(t *testing.T) {
@@ -272,14 +276,14 @@ func TestResolveSSOUser(t *testing.T) {
 		c, store, _, _ := ssoTestCore(t)
 		// sub=="" so the externalId fast-path lookup must not even run.
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
-		store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-			return u.ID == 9 && u.ExternalID == "sso:okta:"
-		})).Return(&models.User{ID: 9, ExternalID: "sso:okta:"}, nil)
+		store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:okta:", mock.Anything).Return(true, nil)
+		store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, ExternalID: "sso:okta:", IsActive: true, AccountState: AccountActive}, nil)
 		u, err := c.resolveSSOUser(context.Background(), "okta", "", "ada@x.io", true)
 		require.NoError(t, err)
 		require.NotNil(t, u)
 		assert.Equal(t, uint(9), u.ID)
-		store.AssertCalled(t, "UpdateUser", mock.Anything, mock.Anything)
+		store.AssertCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "GetUserByExternalID", mock.Anything, mock.Anything)
 	})
 
@@ -376,7 +380,8 @@ func TestProvisionSSOUser(t *testing.T) {
 		assert.Equal(t, uint(99), u.ID, "must be the fresh account, not the victim (id 7)")
 		require.NotNil(t, created)
 		assert.Equal(t, "sso:okta:evil|999", created.ExternalID, "fresh account bound to the asserting provider+subject, not the victim")
-		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything) // victim not claimed/reused
+		store.AssertNotCalled(t, "ClaimUserExternalIDIfUnset", mock.Anything, mock.Anything, mock.Anything, mock.Anything) // victim not claimed/reused
+		store.AssertNotCalled(t, "UpdateUser", mock.Anything, mock.Anything)
 	})
 
 	t.Run("reuses an existing user instead of duplicating", func(t *testing.T) {
@@ -488,7 +493,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, assert.AnError)
 		store.On("ListGroupRoleAssignments", mock.Anything, uint(3)).Return(nil, nil)
 
-		c.syncSSOGroups(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
 
 		store.AssertCalled(t, "AddUserToGroup", mock.Anything, uint(7), uint(1), uint(0))
 		store.AssertCalled(t, "RemoveUserFromGroup", mock.Anything, uint(7), uint(3), uint(0))
@@ -504,7 +509,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		store.On("ListGroups", mock.Anything).Return([]*models.Group{{ID: 1, Name: "admins"}}, nil)
 		store.On("GetUserGroups", mock.Anything, uint(7)).Return([]*models.Group{}, nil)
 
-		c.syncSSOGroups(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
 		store.AssertNotCalled(t, "AddUserToGroup", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
@@ -513,7 +518,7 @@ func TestSyncSSOGroups(t *testing.T) {
 		p.GroupSync = true
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|123"}) // no groups claim
 
-		c.syncSSOGroups(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSOGroups(context.Background(), p, 7, raw))
 		// Returns before listing groups — so an IdP that omits groups in the id_token
 		// can't strip a user's memberships.
 		store.AssertNotCalled(t, "ListGroups", mock.Anything)
@@ -544,8 +549,13 @@ func TestReconcileSSOGroups_RefusesAdminGroupEscalation(t *testing.T) {
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 2}).Error) // group 1 confers admin
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 2, RoleID: 9}).Error) // group 2 is benign
 
-	// The IdP asserts BOTH group names.
-	c.reconcileSSOGroups(ctx, &SSOProvider{Name: "okta"}, 7, []string{"keyorix-admins", "engineers"})
+	// The IdP asserts BOTH group names. The reconcile must SUCCEED: the admin
+	// group is refused by the escalation guard, which is a counted "blocked", not
+	// an error -- the privilege simply is not granted, which is the fail-closed
+	// direction (#2839 item 1 made real failures an error; a blocked escalation
+	// deliberately is not one, or an install whose GroupRoleMap names an admin
+	// group could never log that user in).
+	require.NoError(t, c.reconcileSSOGroups(ctx, &SSOProvider{Name: "okta"}, 7, []string{"keyorix-admins", "engineers"}))
 
 	groups, err := ls.GetUserGroups(ctx, 7)
 	require.NoError(t, err)
@@ -589,7 +599,7 @@ func TestSyncSSORoles(t *testing.T) {
 		// evictUserSessionCache: evicts the removed-role user's cached sessions.
 		store.On("ListSessionTokenHashesForUser", mock.Anything, uint(7)).Return([]string{}, nil)
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 
 		store.AssertCalled(t, "AssignRole", mock.Anything, uint(7), uint(10), mock.Anything)    // secrets_writer granted
 		store.AssertCalled(t, "RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything)    // system_auditor revoked
@@ -610,7 +620,7 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("GetRoleByName", mock.Anything, "system_admin").Return(&models.Role{ID: 10, Name: "system_admin"}, nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
@@ -620,7 +630,7 @@ func TestSyncSSORoles(t *testing.T) {
 		p.GroupRoleMap = map[string]string{"keyorix-admins": "system_admin"}
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"sub": "okta|1"}) // no groups claim
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 		store.AssertNotCalled(t, "GetUserRoles", mock.Anything, mock.Anything)
 		store.AssertNotCalled(t, "RemoveRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
@@ -630,9 +640,12 @@ func TestSyncSSORoles(t *testing.T) {
 		p.GroupRoleMap = map[string]string{"keyorix-admins": "does_not_exist"}
 		raw := signToken(t, key, "kid-1", jwt.MapClaims{"groups": []string{"keyorix-admins"}})
 		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{}, nil)
-		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil), fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil)))
+		// Real GetRoleByName wraps storage.ErrRoleNotFound for a missing name
+		// (#2903); a bare message is a lookup FAILURE, which now refuses the login.
+		store.On("GetRoleByName", mock.Anything, "does_not_exist").Return((*models.Role)(nil),
+			fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrRoleNotFound))
 
-		c.syncSSORoles(context.Background(), p, 7, raw)
+		require.NoError(t, c.syncSSORoles(context.Background(), p, 7, raw))
 		store.AssertNotCalled(t, "AssignRole", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }
@@ -656,7 +669,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	p := &SSOProvider{Name: "okta", GroupRoleMap: map[string]string{"keyorix-auditors": "system_auditor"}}
 
 	// IdP asserts keyorix-auditors → system_auditor should be granted.
-	c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"})
+	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, []string{"keyorix-auditors"}))
 
 	entries, _, err := c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -673,7 +686,7 @@ func TestReconcileSSORoles_IsRBACAudited(t *testing.T) {
 	assert.Equal(t, uint(10), *assigned.RoleID)
 
 	// A later login with no group asserted must revoke system_admin, also audited.
-	c.reconcileSSORoles(ctx, p, 7, nil)
+	require.NoError(t, c.reconcileSSORoles(ctx, p, 7, nil))
 
 	entries, _, err = c.ListRBACAuditLogs(ctx, 1, 50)
 	require.NoError(t, err)
@@ -882,4 +895,19 @@ func TestSanitizeReturnTo(t *testing.T) {
 	assert.Equal(t, "", sanitizeReturnTo(`/ok/\evil.com`))
 	// A same-origin path with a subpath still passes.
 	assert.Equal(t, "/secrets/view", sanitizeReturnTo("/secrets/view"))
+}
+
+// #2778 review: a concurrent first login through ANOTHER provider claims the
+// account between this login's read and its conditional claim. The claim
+// returns false and the re-read shows the other provider's id: this login must
+// be refused, not completed onto an account bound elsewhere.
+func TestResolveSSOUser_LostClaimToOtherProviderIsRefused(t *testing.T) {
+	c, store, _, _ := ssoTestCore(t)
+	store.On("GetUserByExternalID", mock.Anything, "sso:okta:okta|123").Return((*models.User)(nil), fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), storage.ErrUserNotFound))
+	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, ExternalID: ""}, nil)
+	store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:okta:okta|123", mock.Anything).Return(false, nil)
+	store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, ExternalID: "sso:azure:azure|999", IsActive: true, AccountState: AccountActive}, nil)
+	u, err := c.resolveSSOUser(context.Background(), "okta", "okta|123", "ada@x.io", true)
+	require.Error(t, err)
+	assert.Nil(t, u)
 }

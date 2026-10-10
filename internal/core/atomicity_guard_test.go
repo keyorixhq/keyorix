@@ -44,7 +44,57 @@ import (
 	"testing"
 )
 
-var atomicityWriteVerbRe = regexp.MustCompile(`^(Create|Update|Delete|Assign|Unassign|Set|Remove|Add|Revoke|Insert|Upsert|Save|Mark|Record|Increment|Rotate|Restore|Purge|Archive|Grant|Link|Unlink|Replace|Put|Store|Clear|Reset|Enable|Disable|Lock|Unlock|Consume|Approve|Reject|Expire|Touch|Bump|Append|Move|Rename|Transfer|Finalize|Complete|Cancel|Provision|Deprovision|Patch|Activate|Deactivate|Issue|Open|Close|Withdraw)`)
+// atomicityWriteVerbRe decides which called method names count as writes. It is
+// an ENUMERATION, with an enumeration's failure mode: a write verb missing from
+// it makes the call invisible, and a function whose SECOND write uses such a
+// verb silently drops below this guard's 2-write threshold and is never flagged.
+//
+// HOW THE LIST WAS ESTABLISHED COMPLETE (ORACLE-A-1, 2026-10-05), rather than
+// extended one verb at a time: every distinct method name called as
+// `c.storage.X(...)` or `c.X(...)` anywhere in internal/core's non-test,
+// non-generated files was extracted (454 names), the names this regex already
+// matches were subtracted, read-shaped prefixes (Get/List/Count/Is/Has/Load/
+// Resolve/Require/Check/Verify/...) were subtracted, and the 23-name remainder
+// was read individually. Re-run that derivation rather than guessing if a new
+// write family appears.
+//
+// ADDED by that pass, each verified against a real mutator before being added
+// (not from the prefix reading like a write):
+//
+//	Suspend    -- SuspendUser -> setAccountState, which "persists a new account
+//	              state and writes an audit event". This was the live gap: it
+//	              made (*KeyorixCore).MigrateUserToMachine show only ONE write
+//	              (CreateMachineIdentity) instead of two, so it sat below the
+//	              threshold and was never flagged despite committing an identity
+//	              and then suspending a user in two separate transactions. That
+//	              function is now atomic (#2867), so it needs no ledger row and
+//	              this guard correctly does not flag it -- the verb is kept
+//	              because the next function to pair a Suspend with another write
+//	              should be caught, not invisible.
+//	Transition -- TransitionMachineIdentityState / TransitionSecretStatus /
+//	              TransitionProjectMembershipState / TransitionDynamicSecretConfigDisabled,
+//	              the conditional-UPDATE state-write primitives CLAUDE.md calls
+//	              load-bearing. No function trips it today; added so the first
+//	              one that pairs two of them outside a transaction is caught.
+//	Prune      -- PruneLoginAttempts / PruneMFAStepUpGrants / PrunePasswordHistory,
+//	              deletes on storage.Storage. Also trips nothing today.
+//
+// DELIBERATELY NOT ADDED, both confirmed read-only despite a write-shaped
+// prefix -- adding either would make this guard flag functions that write
+// nothing, which is a weakening by noise:
+//
+//	Reauthorize -- ReauthorizeImpersonation only calls GetUser and GetSession.
+//	Attest      -- AttestAccessReviewGrant's own doc: "It changes no state --
+//	               the access_review.attested event is the evidence". An
+//	               audit-only write is not business state, and audit ordering
+//	               has its own `AUDIT:` namespace in the ledger.
+//
+// STILL UNVERIFIED, left out on purpose so nothing here is unconfirmed: Reserve,
+// Release, Reconcile, Resume, Acknowledge, Copy, Migrate, BulkRevoke (and the
+// Generate* family, which may or may not persist). Each is plausibly a write,
+// none currently makes a function reach two, and the Reauthorize/Attest pair
+// above is why they are not added on the strength of the prefix alone.
+var atomicityWriteVerbRe = regexp.MustCompile(`^(Create|Update|Delete|Assign|Unassign|Set|Remove|Add|Revoke|Insert|Upsert|Save|Mark|Record|Increment|Rotate|Restore|Purge|Archive|Grant|Link|Unlink|Replace|Put|Store|Clear|Reset|Enable|Disable|Lock|Unlock|Consume|Approve|Reject|Expire|Touch|Bump|Append|Move|Rename|Transfer|Finalize|Complete|Cancel|Provision|Deprovision|Patch|Activate|Deactivate|Issue|Open|Close|Withdraw|Suspend|Transition|Prune)`)
 
 type atomicityHit struct {
 	fn     string // "(*KeyorixCore).Foo"
@@ -152,6 +202,19 @@ func loadAtomicityExemptions(t *testing.T, path string) map[string]bool {
 		fields := strings.Split(line, "\t")
 		if len(fields) < 3 {
 			t.Fatalf("atomicity guard: %s:%d: expected 3 tab-separated fields (function, class, reason), got %d: %q", path, i+1, len(fields), line)
+		}
+		// A duplicate key is rejected, not merged. Both readers of this ledger
+		// key on the function name and keep the LAST row, so a second plain row
+		// for an already-listed function silently RECLASSIFIES it -- and for a
+		// class-B function that breaks the oracle exemption resting on that class
+		// (server/faultops TestConsumeFirstExemptions_MatchAtomicityLedger
+		// requires B, and would start failing, or worse pass against the wrong
+		// row). A function needing a second, independent classification uses a
+		// key namespace instead ("AUDIT:", "JIT:" -- see the file's header).
+		if out[fields[0]] {
+			t.Fatalf("atomicity guard: %s:%d: duplicate entry for %q. Two rows for one function silently "+
+				"reclassify it in every reader of this ledger; give the second one its own key namespace "+
+				"(e.g. \"JIT:%s\") so it documents without shadowing", path, i+1, fields[0], fields[0])
 		}
 		out[fields[0]] = true
 	}

@@ -4,6 +4,17 @@
 **Component:** `internal/core/mfa_stepup.go` (`VerifyMFAStepUp`).
 **Status:** NOT a bug — a harness-oracle gap (same shape as the other
 NOTE in this directory, `2026-10-02-NOTE-bulk-access-request-ops-audit-content-diverges-on-item-failure.md`).
+**RESOLVED 2026-10-05 (#2549).** The harness gap is closed: oracle (a)'s
+error-reporting branch now has its own acceptable-by-design exemption
+(`oracleAByDesignErrors`, `server/faultops/oracle_a_by_design_test.go`) and this
+case is its first reviewed row. The row cites this document, the production doc
+comment quoted below, and `TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed`
+as its proving test; `TestOracleAByDesign_RowsAreLoadBearing` drives the case
+every run and fails if the row stops matching what the oracle actually
+produces. The `knownOpenTolerances` entry that used to carry it is DELETED — a
+tolerance means "a filed, not-yet-fixed bug", which is the opposite of what this
+document concludes, and an expiring bug tolerance over intended behaviour can
+only be re-filed forever.
 
 ## Summary
 

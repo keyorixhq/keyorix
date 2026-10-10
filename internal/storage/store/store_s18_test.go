@@ -572,8 +572,11 @@ func TestUpdateGroup_HappyPath(t *testing.T) {
 	g := &models.Group{Name: "engineers", Description: "engineering team"}
 	require.NoError(t, ls.db.Create(g).Error)
 
-	g.Description = "all engineers"
-	updated, err := ls.UpdateGroup(ctx, g)
+	desc := "all engineers"
+	matched, err := ls.UpdateGroupFields(ctx, g.ID, nil, nil, &desc, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
+	updated, err := ls.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	require.NotNil(t, updated)
 	assert.Equal(t, "all engineers", updated.Description)
@@ -587,7 +590,7 @@ func TestUpdateGroup_BrokenDB(t *testing.T) {
 	require.NoError(t, ls.db.Create(g).Error)
 	closeS18DB(t, ls)
 
-	g.Description = "all engineers"
-	_, err := ls.UpdateGroup(ctx, g)
+	desc := "all engineers"
+	_, err := ls.UpdateGroupFields(ctx, g.ID, nil, nil, &desc, time.Now())
 	require.Error(t, err)
 }

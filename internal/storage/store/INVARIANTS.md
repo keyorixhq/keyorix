@@ -72,16 +72,27 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
 ## State-machine transitions (atomic conditional UPDATE pattern)
 
 - **INV-STORE-14** `TransitionMachineIdentityState`/`TransitionSecretStatus` persist via a
-  conditional `WHERE id = ? AND state/status = ?` + `Select("*")` + `Updates(m)` — the full
-  mutated row is written in one statement, only when the row's current state still matches
-  `fromState`. Why: #388; mirrors `UpdateProjectInvitation`'s shape; "atomic security counters"
-  review-finding pattern applied to state machines. Guard:
+  conditional `WHERE id = ? AND state/status = ?` + `Updates(m)`, so the write lands only
+  when the row's current state still matches `fromState`. The COLUMN SCOPE differs between
+  the two, deliberately: `TransitionMachineIdentityState` uses `Select("*")` (it writes
+  `RevokedAt` and clears `Description`/`Classification` in the same statement, which a bare
+  struct `Updates` would skip as zero values); `TransitionSecretStatus` uses
+  `Select("Status", "UpdatedAt")` — narrowed from `Select("*")` by #2695, because its only
+  callers (`SuspendSecret`, `ResumeSecret`) set exactly those two, and writing the rest of
+  the caller's already-stale read reverted whatever a narrower concurrent writer had changed
+  (`read_count`, i.e. a spent `MaxReads` budget; `owner_id`, i.e. an offboarding clear;
+  classification; the rotation columns). Why: #388 for the CAS; mirrors
+  `UpdateProjectInvitation`'s shape; #2695 for the scope split. Guard, in three parts:
+  the stale-`fromState`-is-rejected half is
   `local_state_transition_cas_test.go:TestTransitionMachineIdentityState_StaleFromStateIsRejectedAndNoOp`
-  and `local_secrets_transition_status_test.go:TestTransitionSecretStatus_ClosesRace` (stale
-  `fromState` → matched=false, row untouched; full row persisted), plus
+  and `local_secrets_transition_status_test.go:TestTransitionSecretStatus_ClosesRace`, plus
   `concurrency_state_transition_cas_postgres_test.go:TestConcurrency_StateTransitionCAS_MultiInstancePostgres_ExactlyOneWinner`
-  (8 independent connections, bare conditional write, exactly one winner; pg-gated). Verified red by
-  dropping the `AND state/status = ?` predicate (8 winners; loser clobbers).
+  (8 independent connections, exactly one winner; pg-gated) — verified red by dropping the
+  `AND state/status = ?` predicate (8 winners; loser clobbers); the COLUMN-SCOPE half is
+  `state_transition_full_row_test.go` —
+  `TestTransitionMachineIdentityState_PersistsFullRowIncludingZeroValues` (inclusion) and
+  `TestTransitionSecretStatus_WritesOnlyStatusAndUpdatedAt` (exclusion, red when the
+  `Select` is widened back to `"*"`).
 - **INV-STORE-15** `LockMachineIdentityForUpdate` takes `SELECT ... FOR UPDATE` on Postgres
   only (SQLite has no row lock, relies on single-process + transaction) — the two dialects'
   serialization strategy stays matched to `TransitionMachineIdentityState`'s usage, and the
@@ -145,6 +156,9 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   row last). `_RestoreEnvironment_vs_DeleteProject_`, `_RestoreEnvironment_DeleteProjectAfterUpdate_`,
   and `_RestoreEnvironment_InsideDeleteProjectCascade_`, which runs A's whole restore between
   the cascade's environment sweep and its project UPDATE and fails without that up-front lock.
+  Configs (#2651, `CreateDynamicSecretConfig` vs `DeleteProject`'s #369 disable; the parent is
+  the project): `_CreateDynamicSecretConfig_DeleteProjectAfterInsert_` and
+  `local_dynamic_test.go:TestCreateDynamicSecretConfig_RefusesSoftDeletedProject` (default-ci).
 
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 

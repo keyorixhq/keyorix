@@ -52,12 +52,30 @@ export interface AdminUser {
     login_locked_until?: string | null;
 }
 
-// UserMembership is one row of a user's project-assignments view (ADR-025).
+// UserMembership is one row of a user's project-assignments view: one entry per
+// project the user holds a live project-scoped role grant in.
+//
+// #2781: the server used to answer this from the ADR-022 onboarding journal, which
+// nothing the UI writes, so this list was empty for every user and the detail page
+// read "Not a member of any project" while the project's own Members tab listed
+// them. It now answers from the role grants — the same definition
+// GET /api/v1/projects/{id}/members reports.
 export interface UserMembership {
     project_id: number;
     project_name: string;
+    // The highest-privilege role held at this project's scope; `roles` has all of
+    // them (a direct grant plus a group-inherited one can coexist).
     role: string;
+    roles: string[];
     state: string;
+    // True when the membership comes only from a group grant — the project's own
+    // Members tab has no row to remove for it.
+    via_group: boolean;
+    // True when the project has been soft-deleted. The grant survives a soft-delete
+    // (a restore reinstates it), so the row is shown rather than hidden — but it is
+    // not counted by the per-user project tallies on the admin Users list, and it
+    // used to come back with an empty project_name.
+    project_deleted: boolean;
 }
 
 // ProjectAssignment is one project-scoped role grant applied atomically at
@@ -166,16 +184,25 @@ export const usersApi = {
         return response.data?.data ?? response.data;
     },
 
-    // Per-user project assignments for the detail page (ADR-025).
+    // Per-user project assignments for the detail page. See UserMembership for what
+    // "membership" means here and why (#2781).
     async getMemberships(id: number): Promise<UserMembership[]> {
         const response = await apiClient.get(`/api/v1/users/${id}/memberships`);
         const rows = response.data.data?.memberships ?? response.data.memberships ?? [];
-        return rows.map((m: any) => ({
-            project_id: m.project_id ?? m.ProjectID ?? 0,
-            project_name: m.project_name ?? m.ProjectName ?? '',
-            role: m.role ?? m.Role ?? '',
-            state: m.state ?? m.State ?? '',
-        }));
+        return rows.map((m: any) => {
+            const role = m.role ?? m.Role ?? '';
+            return {
+                project_id: m.project_id ?? m.ProjectID ?? 0,
+                project_name: m.project_name ?? m.ProjectName ?? '',
+                role,
+                // Fall back to [role] rather than [] so a row always names at least
+                // the role it reports — an empty list would read as "no role".
+                roles: m.roles ?? m.Roles ?? (role ? [role] : []),
+                state: m.state ?? m.State ?? '',
+                via_group: m.via_group ?? m.ViaGroup ?? false,
+                project_deleted: m.project_deleted ?? m.ProjectDeleted ?? false,
+            };
+        });
     },
 
     // Accounts stuck in a restricted state past the window (ADR-025).

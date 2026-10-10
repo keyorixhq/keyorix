@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -122,14 +123,32 @@ type ActivityFeed struct {
 func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, username string, principalID uint) (*DashboardStats, error) {
 	stats := &DashboardStats{}
 
-	_, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
-		CreatedBy: &username,
-		Page:      1,
-		PageSize:  1,
-	})
-	if err != nil {
+	// TOTAL SECRETS is the number of secrets this caller CAN READ — the count of
+	// what GET /api/v1/secrets returns them, computed by the same function
+	// (CountReadableSecrets -> ListReadableSecrets, secret_readable_listing.go), so
+	// the tile and the list cannot disagree.
+	//
+	// #2780: this used to count secrets the caller had AUTHORED
+	// (SecretFilter{CreatedBy: &username}). A project member who had created nothing
+	// — the ordinary case for someone handed read access to one service — was shown
+	// "TOTAL SECRETS 0 … Create your first secret to get started" while reading five
+	// of them. That is worse than an error: it is confidently wrong, and it invites
+	// an action that will fail. Authorship is not readability and was never what this
+	// tile claimed to show.
+	//
+	// A caller with audit.read still gets the DEPLOYMENT-wide total instead, further
+	// down (fetchAdminDashboardStats) — unchanged.
+	total, exact, err := c.CountReadableSecrets(ctx, userID, principalID)
+	switch {
+	case err != nil:
 		total = 0
 		stats.degrade("total_secrets", err)
+	case !exact:
+		// The listing hit its per-scope bound, so `total` is a floor. Degrade rather
+		// than show it as a count: a number that is quietly short is the same defect
+		// this tile was fixed for, just smaller. Degraded is exactly the signal for
+		// "treat this as incomplete".
+		stats.degrade("total_secrets", errUnexactReadableSecretCount)
 	}
 
 	outgoing, err := c.storage.ListSharesByOwner(ctx, userID, c.shareEffectiveNow())
@@ -424,6 +443,7 @@ func computeTrend(prev, current float64) *StatTrend {
 // Type mapping — what the frontend receives:
 //
 //	secret.read     → "accessed"
+//	secret.versions_listed → "versions_listed" (a listing, not a value read)
 //	secret.created  → "created"
 //	secret.updated  → "updated"
 //	secret.deleted  → "deleted"
@@ -444,6 +464,9 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 	// Secret events — extract secret name from description
 	case "secret.read":
 		eventType = "accessed"
+		secretName = extractSecretName(e.Description)
+	case EventSecretVersionsListed:
+		eventType = "versions_listed"
 		secretName = extractSecretName(e.Description)
 	case "secret.created":
 		eventType = "created"
@@ -492,6 +515,11 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 // Returns empty string if the pattern is not found.
 func extractSecretName(description string) string {
 	const marker = " secret "
+	// A secret.deleted description ends in a soft-delete note (softDeleteNoteMarker)
+	// that is not part of the name, and may itself contain " secret ".
+	if i := strings.Index(description, softDeleteNoteMarker); i >= 0 {
+		description = description[:i]
+	}
 	if idx := lastIndex(description, marker); idx >= 0 {
 		return description[idx+len(marker):]
 	}

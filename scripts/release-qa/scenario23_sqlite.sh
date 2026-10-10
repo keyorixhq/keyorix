@@ -7,6 +7,7 @@
 # Usage: scenario23_sqlite.sh <server-bin> <cli-bin> [work-dir]
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVER_BIN="$1"
 CLI_BIN="$2"
 WORK_DIR="${3:-$(mktemp -d)}"
@@ -39,6 +40,7 @@ SERVER_PID=""
 cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; }
 trap cleanup EXIT
 
+REAL_HOME="$HOME"
 export HOME="$WORK_DIR"
 export KEYORIX_MASTER_PASSWORD="qa23-master-password-$$-${RANDOM}"
 BOOTSTRAP_TOKEN="qa23-bootstrap-token-$$-${RANDOM}"
@@ -60,6 +62,25 @@ KEYORIX_BOOTSTRAP_TOKEN="$BOOTSTRAP_TOKEN" start_server "boot1"
     --bootstrap-token "$BOOTSTRAP_TOKEN" || fail "system init --server exited non-zero"
 "$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
     || fail "login exited non-zero"
+
+# ADR-112 item 1: security.require_mfa defaults on -- enrol for real (see
+# scripts/smoke.sh's identical block for the full rationale), then log in
+# again since ActivateMFA invalidates the pre-enrolment session. Done once,
+# here, before everything else this scenario exercises (restart, backup,
+# wipe, restore all operate on an already-MFA-enabled admin from this point on).
+ENROLL_OUT="$("$CLI_BIN" mfa enroll)" || fail "mfa enroll exited non-zero"
+MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]')"
+[ -n "$MFA_SECRET" ] || fail "could not parse MFA secret from:
+$ENROLL_OUT"
+MFA_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET")" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" mfa activate --code "$MFA_CODE" --password "$ADMIN_PASSWORD" \
+    || fail "mfa activate exited non-zero"
+MFA_LOGIN_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET" 30)" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
+    --mfa-code "$MFA_LOGIN_CODE" || fail "login (MFA-enabled) exited non-zero"
+
 SECRET_VALUE="qa23-value-$$-${RANDOM}"
 "$CLI_BIN" secret create --name qa23-secret --value "$SECRET_VALUE" \
     --project 1 --environment 1 || fail "secret create exited non-zero"

@@ -257,7 +257,7 @@ func TestRemoveRoleFromGroup_LastGlobalAdminBlocked(t *testing.T) {
 
 	err = c.RemoveRoleFromGroup(ctx, bootstrapAdmin.ID, group.ID, adminRole.ID, Scope{})
 	require.Error(t, err, "removing the group's grant would leave the install with no global admin")
-	assert.Contains(t, err.Error(), "no super_admin/admin/system_admin")
+	assert.Contains(t, err.Error(), "no install administrator")
 }
 
 // #107: DeleteGroup must refuse to delete a group that is the install's last

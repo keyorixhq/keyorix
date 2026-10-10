@@ -275,6 +275,23 @@ func (w *FaultyStorage) CheckSharePermission(ctx context.Context, secretID uint,
 	return w.real.CheckSharePermission(ctx, secretID, userID, now)
 }
 
+func (w *FaultyStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, externalID string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("ClaimUserExternalIDIfUnset")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.ClaimUserExternalIDIfUnset(ctx, id, externalID, updatedAt)
+}
+
 func (w *FaultyStorage) CleanupExpiredSessions(ctx context.Context) error {
 	fire, kind, injected := w.check("CleanupExpiredSessions")
 	if fire {
@@ -2119,6 +2136,23 @@ func (w *FaultyStorage) DeleteWebAuthnCredential(ctx context.Context, userID uin
 	return w.real.DeleteWebAuthnCredential(ctx, userID, id)
 }
 
+func (w *FaultyStorage) DisableWebAuthnCredential(ctx context.Context, id uint) (bool, error) {
+	fire, kind, injected := w.check("DisableWebAuthnCredential")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.DisableWebAuthnCredential(ctx, id)
+			return rv1, injected
+		}
+	}
+	return w.real.DisableWebAuthnCredential(ctx, id)
+}
+
 func (w *FaultyStorage) EnforceSessionLimit(ctx context.Context, userID uint, keep int) error {
 	fire, kind, injected := w.check("EnforceSessionLimit")
 	if fire {
@@ -2133,6 +2167,23 @@ func (w *FaultyStorage) EnforceSessionLimit(ctx context.Context, userID uint, ke
 		}
 	}
 	return w.real.EnforceSessionLimit(ctx, userID, keep)
+}
+
+func (w *FaultyStorage) ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (bool, error) {
+	fire, kind, injected := w.check("ExtendDynamicSecretLeaseExpiry")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ExtendDynamicSecretLeaseExpiry(ctx, leaseID, newExpiry)
+			return rv1, injected
+		}
+	}
+	return w.real.ExtendDynamicSecretLeaseExpiry(ctx, leaseID, newExpiry)
 }
 
 func (w *FaultyStorage) GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error) {
@@ -3990,6 +4041,23 @@ func (w *FaultyStorage) ListActivePersonalAccessTokens(ctx context.Context) ([]*
 	return w.real.ListActivePersonalAccessTokens(ctx)
 }
 
+func (w *FaultyStorage) ListAdminBypassRoleIDs(ctx context.Context) ([]uint, error) {
+	fire, kind, injected := w.check("ListAdminBypassRoleIDs")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []uint
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListAdminBypassRoleIDs(ctx)
+			return rv1, injected
+		}
+	}
+	return w.real.ListAdminBypassRoleIDs(ctx)
+}
+
 func (w *FaultyStorage) ListAlertEscalationPolicies(ctx context.Context) ([]models.AlertEscalationPolicy, error) {
 	fire, kind, injected := w.check("ListAlertEscalationPolicies")
 	if fire {
@@ -5251,6 +5319,23 @@ func (w *FaultyStorage) ListUnalertedAnomalyAlerts(ctx context.Context) ([]model
 	return w.real.ListUnalertedAnomalyAlerts(ctx)
 }
 
+func (w *FaultyStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	fire, kind, injected := w.check("ListUnreviewedBreakGlassActivationsBefore")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []*models.BreakGlassActivation
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+			return rv1, injected
+		}
+	}
+	return w.real.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+}
+
 func (w *FaultyStorage) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
 	fire, kind, injected := w.check("ListUserProjectMemberships")
 	if fire {
@@ -5318,6 +5403,23 @@ func (w *FaultyStorage) ListWebAuthnCredentials(ctx context.Context, userID uint
 		}
 	}
 	return w.real.ListWebAuthnCredentials(ctx, userID)
+}
+
+func (w *FaultyStorage) LockLiveProject(ctx context.Context, projectID uint) (bool, error) {
+	fire, kind, injected := w.check("LockLiveProject")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.LockLiveProject(ctx, projectID)
+			return rv1, injected
+		}
+	}
+	return w.real.LockLiveProject(ctx, projectID)
 }
 
 func (w *FaultyStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
@@ -5703,6 +5805,23 @@ func (w *FaultyStorage) ReconcileExpiredBreakGlassActivation(ctx context.Context
 	return w.real.ReconcileExpiredBreakGlassActivation(ctx, projectID, userID)
 }
 
+func (w *FaultyStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID string, status string, revokeReason string, revokeError string, revokedAt *time.Time) (bool, error) {
+	fire, kind, injected := w.check("RecordDynamicSecretLeaseRevocation")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.RecordDynamicSecretLeaseRevocation(ctx, leaseID, status, revokeReason, revokeError, revokedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.RecordDynamicSecretLeaseRevocation(ctx, leaseID, status, revokeReason, revokeError, revokedAt)
+}
+
 func (w *FaultyStorage) RecordLoginAttempt(ctx context.Context, ip string, at time.Time) error {
 	fire, kind, injected := w.check("RecordLoginAttempt")
 	if fire {
@@ -5749,6 +5868,23 @@ func (w *FaultyStorage) ReleaseSchedulerLock(ctx context.Context, key int64, hol
 		}
 	}
 	return w.real.ReleaseSchedulerLock(ctx, key, holder)
+}
+
+func (w *FaultyStorage) ReleaseTOTPStepIfUnchanged(ctx context.Context, userID uint, step int64) (bool, error) {
+	fire, kind, injected := w.check("ReleaseTOTPStepIfUnchanged")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
+			return rv1, injected
+		}
+	}
+	return w.real.ReleaseTOTPStepIfUnchanged(ctx, userID, step)
 }
 
 func (w *FaultyStorage) RemoveAllProjectRoleGrants(ctx context.Context, userID uint, projectID uint) error {
@@ -5960,6 +6096,39 @@ func (w *FaultyStorage) RestoreUser(ctx context.Context, id uint) error {
 		}
 	}
 	return w.real.RestoreUser(ctx, id)
+}
+
+func (w *FaultyStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID uint, fromDecision string, actorID uint) (bool, error) {
+	fire, kind, injected := w.check("RevertAccessReviewItemClaim")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.RevertAccessReviewItemClaim(ctx, itemID, fromDecision, actorID)
+			return rv1, injected
+		}
+	}
+	return w.real.RevertAccessReviewItemClaim(ctx, itemID, fromDecision, actorID)
+}
+
+func (w *FaultyStorage) ReviewBreakGlassActivation(ctx context.Context, id uint, reviewerID uint, note string, reviewedAt time.Time) error {
+	fire, kind, injected := w.check("ReviewBreakGlassActivation")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.ReviewBreakGlassActivation(ctx, id, reviewerID, note, reviewedAt)
+			return injected
+		}
+	}
+	return w.real.ReviewBreakGlassActivation(ctx, id, reviewerID, note, reviewedAt)
 }
 
 func (w *FaultyStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
@@ -6209,6 +6378,39 @@ func (w *FaultyStorage) SetAccountStateIfMatches(ctx context.Context, id uint, f
 	return w.real.SetAccountStateIfMatches(ctx, id, fromState, toState, updatedAt)
 }
 
+func (w *FaultyStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc []byte, meta []byte) error {
+	fire, kind, injected := w.check("SetDynamicSecretConfigAdminDSN")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
+			return injected
+		}
+	}
+	return w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
+}
+
+func (w *FaultyStorage) SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification string, toClassification string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("SetDynamicSecretConfigClassification")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.SetDynamicSecretConfigClassification(ctx, id, fromClassification, toClassification, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.SetDynamicSecretConfigClassification(ctx, id, fromClassification, toClassification, updatedAt)
+}
+
 func (w *FaultyStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification string, toClassification string) (bool, error) {
 	fire, kind, injected := w.check("SetMachineIdentityCredentialClassification")
 	if fire {
@@ -6384,6 +6586,23 @@ func (w *FaultyStorage) SetUserWebAuthnEnabled(ctx context.Context, userID uint,
 		}
 	}
 	return w.real.SetUserWebAuthnEnabled(ctx, userID, enabled)
+}
+
+func (w *FaultyStorage) SetWebAuthnCredentialCounterState(ctx context.Context, id uint, blob []byte, lastUsedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("SetWebAuthnCredentialCounterState")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.SetWebAuthnCredentialCounterState(ctx, id, blob, lastUsedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.SetWebAuthnCredentialCounterState(ctx, id, blob, lastUsedAt)
 }
 
 func (w *FaultyStorage) SupersedeActiveSetupTokens(ctx context.Context, purpose string, email string, projectID *uint) error {
@@ -6717,21 +6936,21 @@ func (w *FaultyStorage) UpdateDynamicSecretLease(ctx context.Context, l *models.
 	return w.real.UpdateDynamicSecretLease(ctx, l)
 }
 
-func (w *FaultyStorage) UpdateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
-	fire, kind, injected := w.check("UpdateGroup")
+func (w *FaultyStorage) UpdateGroupFields(ctx context.Context, id uint, name *string, nameFolded *string, description *string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateGroupFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			var zero1 *models.Group
+			var zero1 bool
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.UpdateGroup(ctx, group)
+			rv1, _ := w.real.UpdateGroupFields(ctx, id, name, nameFolded, description, updatedAt)
 			return rv1, injected
 		}
 	}
-	return w.real.UpdateGroup(ctx, group)
+	return w.real.UpdateGroupFields(ctx, id, name, nameFolded, description, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateLastLogin(ctx context.Context, userID uint, loginAt time.Time) error {
@@ -6830,21 +7049,21 @@ func (w *FaultyStorage) UpdateNotificationRetryPolicy(ctx context.Context, chann
 	return w.real.UpdateNotificationRetryPolicy(ctx, channelID, maxRetries, backoffMs)
 }
 
-func (w *FaultyStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	fire, kind, injected := w.check("UpdateProject")
+func (w *FaultyStorage) UpdateProjectFields(ctx context.Context, id uint, name string, description string, requireMFA *bool, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateProjectFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			var zero1 *models.Project
+			var zero1 bool
 			return zero1, injected
 		case KindEffectThenError:
-			rv1, _ := w.real.UpdateProject(ctx, project)
+			rv1, _ := w.real.UpdateProjectFields(ctx, id, name, description, requireMFA, updatedAt)
 			return rv1, injected
 		}
 	}
-	return w.real.UpdateProject(ctx, project)
+	return w.real.UpdateProjectFields(ctx, id, name, description, requireMFA, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateProjectInvitation(ctx context.Context, inv *models.ProjectInvitation) (bool, error) {
@@ -6881,20 +7100,21 @@ func (w *FaultyStorage) UpdateRole(ctx context.Context, role *models.Role) (*mod
 	return w.real.UpdateRole(ctx, role)
 }
 
-func (w *FaultyStorage) UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error {
-	fire, kind, injected := w.check("UpdateRotationPolicy")
+func (w *FaultyStorage) UpdateRotationPolicyFields(ctx context.Context, id uint, f storage.RotationPolicyFieldUpdate, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateRotationPolicyFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			return injected
+			var zero1 bool
+			return zero1, injected
 		case KindEffectThenError:
-			_ = w.real.UpdateRotationPolicy(ctx, p)
-			return injected
+			rv1, _ := w.real.UpdateRotationPolicyFields(ctx, id, f, updatedAt)
+			return rv1, injected
 		}
 	}
-	return w.real.UpdateRotationPolicy(ctx, p)
+	return w.real.UpdateRotationPolicyFields(ctx, id, f, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateRotationState(ctx context.Context, policyID uint, state string, errMsg string) error {
@@ -6930,20 +7150,55 @@ func (w *FaultyStorage) UpdateSecret(ctx context.Context, secret *models.SecretN
 	return w.real.UpdateSecret(ctx, secret)
 }
 
-func (w *FaultyStorage) UpdateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error {
-	fire, kind, injected := w.check("UpdateSecretTemplate")
+func (w *FaultyStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+	fire, kind, injected := w.check("UpdateSecretFields")
 	if fire {
 		switch kind {
 		case KindPanic:
 			panic(injected)
 		case KindError:
-			return injected
+			var zero1 bool
+			return zero1, injected
 		case KindEffectThenError:
-			_ = w.real.UpdateSecretTemplate(ctx, t)
-			return injected
+			rv1, _ := w.real.UpdateSecretFields(ctx, id, f)
+			return rv1, injected
 		}
 	}
-	return w.real.UpdateSecretTemplate(ctx, t)
+	return w.real.UpdateSecretFields(ctx, id, f)
+}
+
+func (w *FaultyStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
+	fire, kind, injected := w.check("UpdateSecretRotationConfig")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.UpdateSecretRotationConfig(ctx, secret, fromBackend)
+			return rv1, injected
+		}
+	}
+	return w.real.UpdateSecretRotationConfig(ctx, secret, fromBackend)
+}
+
+func (w *FaultyStorage) UpdateSecretTemplateFields(ctx context.Context, id uint, f storage.SecretTemplateFieldUpdate, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("UpdateSecretTemplateFields")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.UpdateSecretTemplateFields(ctx, id, f, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.UpdateSecretTemplateFields(ctx, id, f, updatedAt)
 }
 
 func (w *FaultyStorage) UpdateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
@@ -6995,22 +7250,6 @@ func (w *FaultyStorage) UpdateUserIfActiveStateMatches(ctx context.Context, user
 		}
 	}
 	return w.real.UpdateUserIfActiveStateMatches(ctx, user, fromActive)
-}
-
-func (w *FaultyStorage) UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error {
-	fire, kind, injected := w.check("UpdateWebAuthnCredential")
-	if fire {
-		switch kind {
-		case KindPanic:
-			panic(injected)
-		case KindError:
-			return injected
-		case KindEffectThenError:
-			_ = w.real.UpdateWebAuthnCredential(ctx, c)
-			return injected
-		}
-	}
-	return w.real.UpdateWebAuthnCredential(ctx, c)
 }
 
 func (w *FaultyStorage) UpsertMFASecret(ctx context.Context, s *models.MFASecret) error {

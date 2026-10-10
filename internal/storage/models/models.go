@@ -293,6 +293,18 @@ type BreakGlassActivation struct {
 	// machine caller (ADR-030) rather than a human. Plain uint, 0 = none.
 	RevokedByMachineIdentityID uint       `json:"revoked_by_machine_identity_id,omitempty"`
 	RevokedAt                  *time.Time `json:"revoked_at,omitempty"`
+	// ReviewedBy/ReviewedAt/ReviewNote (ADR-112 §3, break-glass review item 5):
+	// a second, after-the-fact check on every activation, distinct from the
+	// activation itself staying single-person (decided). ReviewedBy is 0 and
+	// ReviewedAt is nil until a reviewer submits one -- an activation can be
+	// reviewed exactly once; a second attempt is refused by the core layer, not
+	// by a storage constraint (see ReviewBreakGlassActivation's own doc for the
+	// atomic conditional UPDATE this relies on). An activation whose ReviewedAt
+	// is still nil, older than break_glass.review_window, is what the posture
+	// report (item 4) lists as a deviation.
+	ReviewedBy uint       `gorm:"index" json:"reviewed_by,omitempty"`
+	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
+	ReviewNote string     `json:"review_note,omitempty"`
 }
 
 // BeforeSave normalises CreatedAt and ExpiresAt to UTC so SQLite string
@@ -313,6 +325,17 @@ func (b *BreakGlassActivation) BeforeSave(_ *gorm.DB) error {
 	if b.ExpiresAt != nil {
 		utc := b.ExpiresAt.UTC()
 		b.ExpiresAt = &utc
+	}
+	// ReviewedAt: same G81 normalization. ReviewBreakGlassActivation's own
+	// conditional UPDATE only ever compares it against IS NULL (not a range
+	// bound), so a mixed timezone wouldn't break that one query today -- but
+	// ListUnreviewedBreakGlassActivationsBefore's created_at <= cutoff (and any
+	// future ReviewedAt-based query) depends on every timestamp in this table
+	// being UTC-consistent, so this is normalized unconditionally rather than
+	// relying on today's one query shape happening not to need it.
+	if b.ReviewedAt != nil {
+		utc := b.ReviewedAt.UTC()
+		b.ReviewedAt = &utc
 	}
 	return nil
 }
@@ -1092,8 +1115,13 @@ type SecretVersion struct {
 	VersionNumber      int
 	EncryptedValue     []byte `json:"-"`
 	EncryptionMetadata JSON   `json:"-"`
-	ReadCount          int
-	CreatedAt          time.Time
+	// ReadCount is a best-effort display copy of the reads charged against the
+	// secret's MaxReads while this version was the one read (readVersionValue). A
+	// secret with no MaxReads is never charged, so this stays 0 however often the
+	// version is read; the enforcement counter is SecretNode.ReadCount. Actual read
+	// activity lives in the audit log (secret.read), not here. See docs/API_REFERENCE.md.
+	ReadCount int
+	CreatedAt time.Time
 }
 
 // DynamicSecretConfig (ADR-035) defines an on-demand database-credential source:
@@ -2019,8 +2047,24 @@ type NotificationChannel struct {
 	Name    string `gorm:"uniqueIndex;not null" json:"name"`
 	Type    string `gorm:"not null" json:"type"` // webhook|slack|teams|email
 	Enabled bool   `gorm:"default:true" json:"enabled"`
-	// URL is the webhook endpoint (for webhook/slack/teams types)
-	URL string `json:"url,omitempty"`
+	// URL is the webhook endpoint (for webhook/slack/teams types) -- the
+	// destination URL IS the bearer credential (internal/notifychan/delivery.go).
+	// Not a persisted column (#2433): the at-rest form lives in URLEnc/URLMeta
+	// below, and internal/core/notification_channels.go populates this field by
+	// decrypting them on every read, so every existing caller of ch.URL keeps
+	// working unchanged. gorm:"-" also keeps this out of GORM's own column
+	// mapping so a caller can never accidentally write the plaintext straight
+	// back into a column, bypassing the encrypt step.
+	URL string `gorm:"-" json:"url,omitempty"`
+	// URLEnc/URLMeta hold the at-rest encrypted form of URL (#2433; same
+	// EncryptSecretWithAAD/DecryptSecretWithAAD envelope and AAD-binding
+	// convention as DynamicSecretConfig.AdminDSNEnc below) — ciphertext and
+	// passthrough-plaintext bytes alike when no encryptor is wired, mirroring
+	// encryptAuthSecret's own disabled-encryption behavior. Never exposed via
+	// JSON; API responses and audit diffs alike only ever see the decrypted URL
+	// field above (or a redacted placeholder for the audit diff).
+	URLEnc  []byte `json:"-"`
+	URLMeta []byte `json:"-"`
 	// Email is the recipient address (for email type)
 	Email string `json:"email,omitempty"`
 	// Events is a comma-separated list of event types this channel receives

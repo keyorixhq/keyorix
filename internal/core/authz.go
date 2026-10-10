@@ -434,23 +434,37 @@ func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) 
 // configuration — the friction this product exists to avoid. Fails CLOSED on any lookup
 // error (an inability to verify must never open the auto-grant), matching scimGroupConfersAdmin.
 func (c *KeyorixCore) idpAutoGrantOfRoleIsEscalation(ctx context.Context, roleID uint, roleName string) bool {
+	escalation, err := c.idpAutoGrantEscalationVerdict(ctx, roleID, roleName)
+	return escalation || err != nil // fail closed: cannot verify → refuse the auto-grant
+}
+
+// idpAutoGrantEscalationVerdict is idpAutoGrantOfRoleIsEscalation with the lookup
+// failure kept apart from the verdict: err != nil means NOTHING was decided. A
+// caller that must tell "this role is admin-tier" from "could not find out" uses
+// this one. SSO reconcile (#2910) does: the first is a counted, deliberate block,
+// and the second is a reconcile error that refuses the login (#2839 condition 1).
+// Either way the grant is not made.
+func (c *KeyorixCore) idpAutoGrantEscalationVerdict(ctx context.Context, roleID uint, roleName string) (bool, error) {
 	if isAdminRoleName(roleName) {
-		return true
+		return true, nil
 	}
 	bypass, err := c.roleSetContainsAdmin(ctx, []uint{roleID})
-	if err != nil || bypass {
-		return true
+	if err != nil {
+		return false, fmt.Errorf("resolving role %d's admin-bypass flag: %w", roleID, err)
+	}
+	if bypass {
+		return true, nil
 	}
 	perms, err := c.storage.GetRolePermissions(ctx, roleID)
 	if err != nil {
-		return true // fail closed: cannot verify → refuse the auto-grant
+		return false, fmt.Errorf("resolving role %d's permissions: %w", roleID, err)
 	}
 	for _, p := range perms {
 		if p.Name == permRolesAssign {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // requireGlobalAdminToReinstateAdminRoles refuses to reinstate roleIDs unless
@@ -1170,7 +1184,10 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
 		return nil // not the global scope — project admins are recoverable
 	}
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return err // #2496: fail closed — "can't tell" must not read as "not an admin role"
+	}
 	if !adminIDs[roleID] {
 		return nil // not removing an install-admin role
 	}
@@ -1185,7 +1202,7 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to remove role %d from group %d: the install would be left with no super_admin/admin/system_admin at the global scope and no one able to manage users, roles, or settings", roleID, groupID)
+		return fmt.Errorf("refusing to remove role %d from group %d: the install would be left with no install administrator at the global scope and no one able to manage users, roles, or settings", roleID, groupID)
 	}
 	return nil
 }
@@ -1197,7 +1214,10 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 // group with no admin-tier grant at all is never blocked, regardless of the
 // install's overall admin count.
 func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, groupID uint) error {
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return err // #2496: fail closed
+	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
@@ -1215,7 +1235,7 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to delete group %d: it holds the install's last administrative role grant, and deleting it would leave no super_admin/admin/system_admin at the global scope", groupID)
+		return fmt.Errorf("refusing to delete group %d: it holds the install's last administrative role grant, and deleting it would leave no install administrator at the global scope", groupID)
 	}
 	return nil
 }
@@ -1229,7 +1249,10 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 // authority via this one group. A group with no admin-tier grant at all is never
 // blocked, regardless of the install's overall admin count.
 func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID, groupID uint) error {
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		return err // #2496: fail closed
+	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
@@ -1247,7 +1270,11 @@ func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to remove user %d from group %d: they may be the install's last administrator via this group's role grant, and removing them would leave no super_admin/admin/system_admin at the global scope", userID, groupID)
+		// Wraps storage.ErrWouldStrandLastAdmin -- the sentinel the direct-grant
+		// guard (RemoveGlobalAdminRoleGuarded) already returns -- so a caller can
+		// tell THIS refusal from a storage failure by errors.Is. SSO reconcile
+		// does (#2903): it is what selects the last-admin audit event and message.
+		return fmt.Errorf("refusing to remove user %d from group %d: they may be the install's last administrator via this group's role grant, and removing them would leave no install administrator at the global scope: %w", userID, groupID, storage.ErrWouldStrandLastAdmin)
 	}
 	return nil
 }

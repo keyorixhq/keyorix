@@ -183,31 +183,37 @@ func TestCheckpointExists_Some(t *testing.T) {
 	assert.True(t, exists)
 }
 
-// ── access_review_revoke.go — revokeRoleByPrincipalType ──────────────────────
+// ── access_review_decide_tx.go — planReviewRoleRevoke ───────────────────────
+//
+// #2676 replaced revokeRoleByPrincipalType (which dispatched a principal kind
+// straight to a removal call) with planReviewRoleRevoke, which resolves the
+// same dispatch into a plan the transactional and non-transactional revoke
+// paths both execute. These two tests keep their original subject: the
+// principal-kind dispatch resolves the principal BEFORE anything is removed, so
+// a nonexistent group/machine is refused rather than reaching a removal.
 
-func TestRevokeRoleByPrincipalType_GroupPath(t *testing.T) {
+func TestPlanReviewRoleRevoke_GroupPath_UnknownGroupRefused(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	// RemoveRoleFromGroup(ctx, actorID, groupID, roleID, scope) calls GetGroup first.
+	// The group branch resolves the group first.
 	ms.On("GetGroup", mock.Anything, uint(3)).Return(nil, errors.New("group not found"))
 	c := NewKeyorixCore(ms)
 	d := AccessReviewDecision{Source: "role", PrincipalType: "group", PrincipalID: 3, RoleID: 7}
-	scope := Scope{ProjectID: 1}
-	err := c.revokeRoleByPrincipalType(context.Background(), 1, d, scope)
-	// Will fail because GetGroup returns error.
+	plan, err := c.planReviewRoleRevoke(context.Background(), 1, 1, d)
 	require.Error(t, err)
+	assert.Nil(t, plan, "no plan may be returned for a principal that could not be resolved")
 }
 
-func TestRevokeRoleByPrincipalType_MachinePath(t *testing.T) {
+func TestPlanReviewRoleRevoke_MachinePath_UnknownMachineRefused(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	// RemoveMachineRole(ctx, machineID, roleID, scope, actorID) — check what it calls.
+	// The machine branch resolves the machine (and its project) first.
 	ms.On("GetMachineIdentity", mock.Anything, uint(4)).Return(nil, errors.New("machine not found"))
 	c := NewKeyorixCore(ms)
 	d := AccessReviewDecision{Source: "role", PrincipalType: "machine", PrincipalID: 4, RoleID: 7}
-	scope := Scope{ProjectID: 1}
-	err := c.revokeRoleByPrincipalType(context.Background(), 1, d, scope)
+	plan, err := c.planReviewRoleRevoke(context.Background(), 1, 1, d)
 	require.Error(t, err)
+	assert.Nil(t, plan)
 }
 
 // ── versions.go — GetSecretValueByVersionWithPermissionCheck: permission error ─

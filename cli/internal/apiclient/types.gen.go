@@ -1450,6 +1450,13 @@ type ChangePasswordJSONBody struct {
 	NewPassword     string `json:"new_password"`
 }
 
+// ActivateMFAJSONBody defines parameters for ActivateMFA.
+type ActivateMFAJSONBody struct {
+	// Code Current TOTP code from the pending secret
+	Code     string `json:"code"`
+	Password string `json:"password"`
+}
+
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
 type MfaStepUpJSONBody struct {
 	// Code TOTP code or a recovery code
@@ -1678,7 +1685,7 @@ type PatHygieneParams struct {
 
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
-	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. This form requires secrets.read at the GLOBAL scope: project-scoped role grants deliberately survive a soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id} returns 404 for a deleted project, so a project-scoped reader cannot read a soft-deleted project through any path and must not see one listed. A caller without the global grant gets 403 for this form, and 200 for the default one.
 	IncludeDeleted *ListProjectsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
 }
 
@@ -2365,6 +2372,9 @@ type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONB
 
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody ChangePasswordJSONBody
+
+// ActivateMFAJSONRequestBody defines body for ActivateMFA for application/json ContentType.
+type ActivateMFAJSONRequestBody ActivateMFAJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody

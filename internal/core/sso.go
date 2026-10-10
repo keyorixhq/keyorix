@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/oauth2"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -42,9 +44,23 @@ const (
 	EventSSOJITProvision = "auth.sso_jit_provisioned"
 	EventSSOGroupsSynced = "auth.sso_groups_synced"
 	EventSSORolesSynced  = "auth.sso_roles_synced"
-	ssoClockSkew         = 60 * time.Second
-	ssoDefaultRole       = "system_viewer"
-	ssoDefaultGroupClaim = "groups"
+	// EventSSOReconcileRefused is written whenever a group/role reconcile did not
+	// fully apply and the login is refused over it (#2903): it names every step
+	// that failed (which group or role, add or remove) and what had already been
+	// applied before the refusal. Class C means the applied part is NOT rolled
+	// back, so this event is the only record of it.
+	EventSSOReconcileRefused = "auth.sso_reconcile_refused"
+	// EventSSOReconcileLastAdminRefused replaces EventSSOReconcileRefused when one
+	// of the failed steps is a removal the last-admin guard refused: the IdP
+	// revoked the install's last administrator's admin-conferring group or role.
+	// The login stays refused (the IdP's revocation wins -- Andrei, 2026-10-10);
+	// this distinct type exists so an operator can alert on it, because the way
+	// back is out of band (re-add the user at the IdP, or `keyorix-server admin
+	// recover-admin`).
+	EventSSOReconcileLastAdminRefused = "auth.sso_reconcile_last_admin_removal_refused"
+	ssoClockSkew                      = 60 * time.Second
+	ssoDefaultRole                    = "system_viewer"
+	ssoDefaultGroupClaim              = "groups"
 )
 
 // ssoJITProvisionDetail is the structured payload stored in an
@@ -263,13 +279,26 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	}
 
 	// Reconcile native group memberships and/or mapped role grants from the IdP's
-	// groups claim (best-effort — a sync failure must not block an otherwise-valid
-	// login).
+	// groups claim, and refuse the login if that did not fully apply -- the same
+	// rule CompleteSAML follows (#2839 item 1, #2903; extended to OIDC by #2907).
+	// This used to be best-effort ("a sync failure must not block an otherwise-
+	// valid login"), so a failed REVOCATION -- the IdP dropped the user from its
+	// admin group and the removal errored or was refused -- left the user holding
+	// the privilege AND minted a session carrying it for its whole lifetime.
+	// Not rolled back on refusal: class C, see CompleteSAML and
+	// docs/atomicity-exempt.tsv (the JIT:(*KeyorixCore).CompleteSAML row, whose
+	// reconcile conditions cover this path too since #2907).
 	if p.GroupSync {
-		c.syncSSOGroups(ctx, p, user.ID, rawID)
+		if rerr := c.syncSSOGroups(ctx, p, user.ID, rawID); rerr != nil {
+			log.Printf("CompleteSSO: refusing login for user %d: %v", user.ID, rerr)
+			return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgGroupReconcileRefused, rerr)
+		}
 	}
 	if len(p.GroupRoleMap) > 0 {
-		c.syncSSORoles(ctx, p, user.ID, rawID)
+		if rerr := c.syncSSORoles(ctx, p, user.ID, rawID); rerr != nil {
+			log.Printf("CompleteSSO: refusing login for user %d: %v", user.ID, rerr)
+			return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgRoleReconcileRefused, rerr)
+		}
 	}
 
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
@@ -279,7 +308,12 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err != nil {
 		return nil, nil, "", err
 	}
-	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
+	// Best-effort last-login stamp, panic-safe (#2910 fault sweep): it runs
+	// AFTER the session is minted, so a panic here used to unwind past a
+	// committed session and turn a completed login into a reported failure
+	// with an orphan session. Every other login path already runs it
+	// panic-safe (goSafe in the handlers).
+	besteffort.Run(ctx, "sso.CompleteSSO.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SSO login via %s (subject=%s)", providerName, sub))
 	return session, user, st.ReturnTo, nil
@@ -401,15 +435,53 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 		return nil, nil, "", err
 	}
 
-	// Reconcile only when the assertion actually carried groups — an IdP that omits the
-	// groups attribute must not strip a user's memberships/roles (matches the OIDC
-	// absent-claim no-op).
-	if len(info.Groups) > 0 {
+	// Reconcile whenever the assertion carried the groups attribute, EVEN WITH NO
+	// VALUES (#2903 finding 2). An IdP asserting an empty group set is saying the
+	// user is in no groups, and must reconcile to zero -- removing every stale
+	// membership and managed role. This used to gate on len(info.Groups) > 0,
+	// which read "present but empty" as "absent": a user the IdP had removed from
+	// every group (admin group included) kept them all and got a session.
+	//
+	// An ABSENT attribute is a no-op, by decision: it means "this assertion
+	// carries no group information" (many IdPs release the groups attribute only
+	// when configured to), not "no groups". Treating it as empty would strip
+	// every membership on every login from such an IdP. That is acceptable only
+	// because Keyorix has no setting that REQUIRES the attribute when group sync
+	// is on; if one is added, absence under it must refuse the login instead.
+	// Matches the OIDC path's absent-claim no-op (extractTokenStringList's
+	// `present`).
+	//
+	// #2839 item 1, Andrei's condition 1: mintSession runs ONLY if reconciliation
+	// fully applied. Both calls used to discard their result (they returned
+	// nothing), so a failed REVOCATION — the IdP dropped a user from its admin
+	// group, the removal errored or was refused — left the user holding the group
+	// or role and still handed them a session, for the session's whole lifetime.
+	// Refusing the login is the only outcome that does not do that.
+	//
+	// The reconciled state is derived solely from info.Groups, which came out of
+	// p.SAML.ParseResponse — i.e. the signed, audience- and time-validated
+	// assertion. Nothing here reads request parameters or any prior stored group
+	// state as a source of desired state (condition 2).
+	//
+	// Not rolled back on refusal, by design: this is a class-C step set (#2839,
+	// docs/atomicity-exempt.tsv). Each reconciliation is idempotent and converges
+	// on the next successful login, and a half-applied reconcile only ever leaves
+	// the user with FEWER or equal privileges than the assertion grants plus the
+	// ones its removal failed to take away — which is precisely why the login must
+	// be refused rather than compensated. The refusal's audit event records what
+	// had already applied (finishSSOReconcile).
+	if info.GroupsPresent || len(info.Groups) > 0 {
 		if p.GroupSync {
-			c.reconcileSSOGroups(ctx, p, user.ID, info.Groups)
+			if rerr := c.reconcileSSOGroups(ctx, p, user.ID, info.Groups); rerr != nil {
+				log.Printf("CompleteSAML: refusing login for user %d: %v", user.ID, rerr)
+				return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgGroupReconcileRefused, rerr)
+			}
 		}
 		if len(p.GroupRoleMap) > 0 {
-			c.reconcileSSORoles(ctx, p, user.ID, info.Groups)
+			if rerr := c.reconcileSSORoles(ctx, p, user.ID, info.Groups); rerr != nil {
+				log.Printf("CompleteSAML: refusing login for user %d: %v", user.ID, rerr)
+				return nil, nil, "", ssoReconcileLoginRefusal(SSOMsgRoleReconcileRefused, rerr)
+			}
 		}
 	}
 
@@ -420,7 +492,8 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	if err != nil {
 		return nil, nil, "", err
 	}
-	_ = c.RecordLogin(ctx, user.ID) // best-effort last-login stamp
+	// Best-effort and panic-safe -- see the identical step in CompleteSSO.
+	besteffort.Run(ctx, "sso.CompleteSAML.RecordLogin", func() error { return c.RecordLogin(ctx, user.ID) })
 	c.writeAuditEvent(ctx, EventSSOLogin, actorPtr(user.ID), nil,
 		fmt.Sprintf("SAML login via %s (subject=%s)", name, info.Subject))
 	return session, user, st.ReturnTo, nil
@@ -497,11 +570,48 @@ func (c *KeyorixCore) resolveSSOUser(ctx context.Context, provider, sub, email s
 		// re-link it by asserting the same email. A subject-less claim still fully
 		// closes the cross-provider vector: ssoBoundToOtherProvider only cares which
 		// provider owns the scoped id, not whether a subject is present. Best-effort:
-		// a failed update just means we re-link on the next login.
-		u.ExternalID = ssoExternalID(provider, sub)
-		if updated, uerr := c.storage.UpdateUser(ctx, u); uerr == nil {
-			u = updated
+		// a failed claim just means we re-link on the next login.
+		//
+		// #2699: a column-scoped write of external_id alone, onto a row that is
+		// still live and still unfederated. It used to be the generic full-row
+		// UpdateUser, whose GORM Save upsert-fallback RESURRECTED an account an
+		// admin had deleted after the GetUserByEmail above — writing back
+		// deleted_at=NULL, is_active=true, account_state=active — and the same
+		// window also reverted a concurrent suspension, password change, MFA
+		// enable or lockout. The user controls the timing: they fire the first
+		// SSO login, and can fire several in parallel.
+		// The claimed flag is deliberately discarded: claiming is best-effort
+		// (that predates this change — "a failed claim just means we re-link on
+		// the next login"), and either way what the caller must act on is the
+		// re-read below, not this statement's own verdict. A no-match means
+		// another replica federated the account first or the row is gone; the
+		// re-read distinguishes those and handles both correctly.
+		if _, cerr := c.storage.ClaimUserExternalIDIfUnset(ctx, u.ID, ssoExternalID(provider, sub), c.now()); cerr != nil {
+			return nil, cerr
 		}
+		// Re-read regardless of whether the claim landed, and return the COMMITTED
+		// row rather than the snapshot read before it. Fixing only the write would
+		// leave the other half of #2699 open: CompleteSSO's login gate
+		// (!user.IsActive || AccountLoginBlocked) evaluates whatever this function
+		// returns, so handing back the stale struct — which still says active —
+		// mints a session for a deleted or suspended account even once the row
+		// itself is correctly left alone. A failed re-read means the account is
+		// gone or unreadable: fail closed, and in particular do NOT fall through
+		// to the caller's auto-provision branch, which would mint a brand-new
+		// account for the deleted one's email.
+		fresh, gerr := c.storage.GetUser(ctx, u.ID)
+		if gerr != nil {
+			return nil, fmt.Errorf("the account for this SSO identity is no longer available")
+		}
+		// The claim is conditional on external_id still being unset. If another
+		// provider claimed this account between our read and our write, the
+		// re-read shows ITS id: refuse instead of logging this provider's user in
+		// to an account bound elsewhere (the cross-provider vector the claim exists
+		// to close).
+		if fresh.ExternalID != ssoExternalID(provider, sub) {
+			return nil, fmt.Errorf("this account is already linked to a different sign-in provider")
+		}
+		u = fresh
 	}
 	return u, nil
 }
@@ -631,23 +741,185 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 // Crucially, if the groups claim is ABSENT from the token (vs present-but-empty), the
 // sync is a no-op: many IdPs only emit groups in the userinfo endpoint or under a
 // specific scope, and treating "absent" as "assert no groups" would strip every
-// membership on login. Best-effort: errors are swallowed (the caller must not fail an
-// otherwise-valid login on a sync hiccup), but the net change is audited.
-func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID uint, rawID string) {
+// membership on login. A present-but-EMPTY claim is the IdP asserting no groups and
+// reconciles to zero.
+//
+// Returns reconcileSSOGroups' error (wrapping ErrSSOReconcileIncomplete), and
+// CompleteSSO refuses the login on it (#2907). It used to swallow every error so
+// the login always proceeded -- see CompleteSSO for why that was the bug.
+func (c *KeyorixCore) syncSSOGroups(ctx context.Context, p *SSOProvider, userID uint, rawID string) error {
 	claim := strings.TrimSpace(p.GroupsClaim)
 	if claim == "" {
 		claim = ssoDefaultGroupClaim
 	}
 	asserted, present := extractTokenStringList(rawID, claim)
 	if !present {
-		return // IdP did not assert groups in the id_token — leave memberships untouched.
+		return nil // IdP did not assert groups in the id_token — leave memberships untouched.
 	}
-	c.reconcileSSOGroups(ctx, p, userID, asserted)
+	return c.reconcileSSOGroups(ctx, p, userID, asserted)
+}
+
+// ErrSSOReconcileIncomplete marks a group/role reconciliation that did not fully
+// apply the IdP's assertion. CompleteSAML and CompleteSSO refuse the login on it (#2839 item 1,
+// Andrei's condition 1): the dangerous direction is a REMOVAL that did not happen,
+// which leaves the user holding a group or role the IdP has revoked, and minting a
+// session then hands them that stale privilege for the whole session lifetime.
+//
+// Wrapped, not returned bare, so the underlying cause stays inspectable; the
+// caller only needs errors.Is to decide.
+var ErrSSOReconcileIncomplete = errors.New("SSO group/role reconciliation did not fully apply the asserted state")
+
+// Client-safe texts of the login refusals a failed reconcile produces. They are
+// the WHOLE of ssoLoginRefusedError.Error(), with no wrapped detail appended,
+// which is what lets server/http/handlers' isSafeSSOError (a substring match)
+// reflect them to the browser without also reflecting a storage error.
+const (
+	SSOMsgGroupReconcileRefused = "could not apply the identity provider's group assertion; login refused"
+	SSOMsgRoleReconcileRefused  = "could not apply the identity provider's role mapping; login refused"
+	// SSOMsgLastAdminRemovalRefused tells the person at the browser, who has just
+	// authenticated at the IdP as this account, why the login failed and that it
+	// needs an operator. It reveals that the account is the last administrator,
+	// which its own owner may know.
+	SSOMsgLastAdminRemovalRefused = "the identity provider no longer grants this account administrator access, " +
+		"but it is the install's last administrator, so the access cannot be removed; login refused -- " +
+		"ask an operator to restore the group at the identity provider or run keyorix-server admin recover-admin"
+)
+
+// ssoLoginRefusedError is a reconcile refusal as CompleteSAML/CompleteSSO return
+// it: Error() is exactly one of the SSOMsg* texts above (safe to show), and
+// Unwrap() keeps the full cause chain -- ErrSSOReconcileIncomplete and, for a
+// last-admin refusal, storage.ErrWouldStrandLastAdmin -- for errors.Is.
+type ssoLoginRefusedError struct {
+	msg   string
+	cause error
+}
+
+func (e *ssoLoginRefusedError) Error() string { return e.msg }
+func (e *ssoLoginRefusedError) Unwrap() error { return e.cause }
+
+// ssoReconcileLoginRefusal builds the error a login refused over a failed
+// reconcile returns: msg, or SSOMsgLastAdminRemovalRefused when the cause is the
+// install's last-admin guard, so the person at the browser learns that an
+// operator is needed rather than retrying.
+func ssoReconcileLoginRefusal(msg string, cause error) error {
+	if errors.Is(cause, storage.ErrWouldStrandLastAdmin) {
+		msg = SSOMsgLastAdminRemovalRefused
+	}
+	return &ssoLoginRefusedError{msg: msg, cause: cause}
+}
+
+// ssoReconcileReport accumulates what one reconcile pass applied and what it
+// failed to apply. finishSSOReconcile turns it into exactly one audit event --
+// a success event when everything applied, a refusal event naming every failed
+// step AND the already-applied counts when anything did not (#2903 finding 1:
+// the old code wrote the event only when something changed, so a lone failed
+// removal left no record, and wrote a partial change as a plain success).
+type ssoReconcileReport struct {
+	added, removed, blocked int
+	// failures names every step that did not apply, e.g.
+	// `remove group 42 "idp-admins": <cause>`.
+	failures []string
+	// lastAdmin: one of the failed steps was a removal the install's last-admin
+	// guard refused (storage.ErrWouldStrandLastAdmin).
+	lastAdmin bool
+	// The error to return, by precedence: a last-admin refusal (so the caller can
+	// tell the user why), then any other removal (the privilege-RETAINING
+	// direction), then anything else.
+	lastAdminErr, removalErr, otherErr error
+}
+
+func (r *ssoReconcileReport) fail(step string, removal bool, cause error) {
+	r.failures = append(r.failures, step+": "+cause.Error())
+	err := fmt.Errorf("%w: %s: %w", ErrSSOReconcileIncomplete, step, cause)
+	switch {
+	case errors.Is(cause, storage.ErrWouldStrandLastAdmin):
+		r.lastAdmin = true
+		if r.lastAdminErr == nil {
+			r.lastAdminErr = err
+		}
+	case removal:
+		if r.removalErr == nil {
+			r.removalErr = err
+		}
+	default:
+		if r.otherErr == nil {
+			r.otherErr = err
+		}
+	}
+}
+
+func (r *ssoReconcileReport) err() error {
+	switch {
+	case r.lastAdminErr != nil:
+		return r.lastAdminErr
+	case r.removalErr != nil:
+		return r.removalErr
+	default:
+		return r.otherErr
+	}
+}
+
+// ssoLastAdminWayBack is appended to the last-admin refusal's audit event and log
+// line: the operator reading it needs the way back, not just the fact.
+const ssoLastAdminWayBack = "the identity provider revoked admin access from the install's last administrator " +
+	"and the last-admin guard refused the removal, so this user's SSO login will keep being refused " +
+	"(the IdP's revocation wins). Two ways back: re-add the user to the admin group at the identity provider, " +
+	"or run `keyorix-server admin recover-admin <user>` with the recovery key on the server host " +
+	"(then create a second administrator, so the IdP's revocation can apply)"
+
+// finishSSOReconcile writes the one audit event a reconcile pass produces and
+// returns its error. kind names the pass ("group sync", "role mapping"),
+// counts/blockedNote describe what applied.
+//
+// A refusal is written as a FAILED event (Success=false) of type
+// EventSSOReconcileRefused, or EventSSOReconcileLastAdminRefused when the last-
+// admin guard was one of the reasons, and the applied counts are stated as
+// applied-and-not-rolled-back, because class C does not roll them back.
+func (c *KeyorixCore) finishSSOReconcile(ctx context.Context, p *SSOProvider, userID uint, kind, okEvent, counts, blockedNote string, r *ssoReconcileReport) error {
+	err := r.err()
+	if err == nil {
+		if r.added > 0 || r.removed > 0 || r.blocked > 0 {
+			c.writeAuditEvent(ctx, okEvent, actorPtr(userID), nil,
+				fmt.Sprintf("SSO %s via %s: user %d (%s)%s", kind, p.Name, userID, counts, blockedNote))
+		}
+		return nil
+	}
+	event := EventSSOReconcileRefused
+	msg := fmt.Sprintf("SSO %s via %s refused the login for user %d. Failed: %s. Already applied before the refusal (not rolled back): %s%s",
+		kind, p.Name, userID, strings.Join(r.failures, "; "), counts, blockedNote)
+	if r.lastAdmin {
+		event = EventSSOReconcileLastAdminRefused
+		msg += ". " + ssoLastAdminWayBack
+		log.Printf("SECURITY: %s", msg)
+	}
+	c.writeAuditEventFailed(ctx, event, actorPtr(userID), nil, "", msg)
+	return err
 }
 
 // reconcileSSOGroups reconciles native group memberships to match the asserted group
 // names — shared by the OIDC (id_token claim) and SAML (assertion attribute) paths.
-func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, userID uint, asserted []string) {
+//
+// Returns ErrSSOReconcileIncomplete (wrapped) when any step did not apply. It used
+// to return nothing and swallow every error, which is the bug #2839 item 1 names:
+// a user removed from an IdP admin group whose removal then failed kept the group
+// AND got a session. Whether the caller refuses the login on that is the caller's
+// decision; both login paths refuse (CompleteSAML, and CompleteSSO via
+// syncSSOGroups since #2907).
+//
+// Every step is attempted even after one fails, and the audit event written at
+// the end (finishSSOReconcile) records both what failed and what applied.
+func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, userID uint, asserted []string) error {
+	r := &ssoReconcileReport{}
+	c.applySSOGroupReconcile(ctx, userID, asserted, r)
+	blockedNote := ""
+	if r.blocked > 0 {
+		blockedNote = fmt.Sprintf("; %d admin-conferring group(s) refused (IdP assertion cannot grant admin)", r.blocked)
+	}
+	return c.finishSSOReconcile(ctx, p, userID, "group sync", EventSSOGroupsSynced,
+		fmt.Sprintf("+%d/-%d native group memberships", r.added, r.removed), blockedNote, r)
+}
+
+func (c *KeyorixCore) applySSOGroupReconcile(ctx context.Context, userID uint, asserted []string, r *ssoReconcileReport) {
 	assertedSet := make(map[string]bool, len(asserted))
 	for _, g := range asserted {
 		if g = strings.TrimSpace(g); g != "" {
@@ -657,36 +929,49 @@ func (c *KeyorixCore) reconcileSSOGroups(ctx context.Context, p *SSOProvider, us
 
 	nativeGroups, err := c.storage.ListGroups(ctx)
 	if err != nil {
+		// Nothing was changed, but nothing was VERIFIED either: without the native
+		// group list the desired set is unknown, so a revoked membership may still
+		// be in place. Unknown is not the same as reconciled.
+		r.fail("list native groups", false, err)
 		return
 	}
 	// Desired native group IDs = native groups whose name the IdP asserted.
 	desired := make(map[uint]bool)
+	names := make(map[uint]string, len(nativeGroups))
 	for _, g := range nativeGroups {
+		names[g.ID] = g.Name
 		if assertedSet[g.Name] {
 			desired[g.ID] = true
 		}
 	}
 	current, err := c.storage.GetUserGroups(ctx, userID)
 	if err != nil {
+		r.fail("read current group memberships", false, err)
 		return
 	}
 	currentSet := make(map[uint]bool, len(current))
 	for _, g := range current {
 		currentSet[g.ID] = true
+		if _, ok := names[g.ID]; !ok {
+			names[g.ID] = g.Name
+		}
 	}
 
-	added, blocked := c.reconcileSSOGroupAdditions(ctx, userID, desired, currentSet)
-	removed := c.reconcileSSOGroupRemovals(ctx, userID, desired, currentSet)
-	if added > 0 || removed > 0 || blocked > 0 {
-		msg := fmt.Sprintf("SSO group sync via %s: user %d (+%d/-%d native group memberships)", p.Name, userID, added, removed)
-		if blocked > 0 {
-			msg += fmt.Sprintf("; %d admin-conferring group(s) refused (IdP assertion cannot grant admin)", blocked)
-		}
-		c.writeAuditEvent(ctx, EventSSOGroupsSynced, actorPtr(userID), nil, msg)
-	}
+	c.reconcileSSOGroupAdditions(ctx, userID, desired, currentSet, names, r)
+	c.reconcileSSOGroupRemovals(ctx, userID, desired, currentSet, names, r)
 }
 
-func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uint, desired, currentSet map[uint]bool) (added, blocked int) {
+// reconcileSSOGroupAdditions records every ADD failure in r.
+// A blocked escalation is NOT an error: refusing to add an admin-conferring group
+// is the fail-closed direction and the privilege is not granted, so the login can
+// proceed -- the refusal is recorded in the aggregate audit event instead.
+//
+// A guard that could not DECIDE is an error, though (#2910 fault sweep). When
+// the escalation lookup fails, the group is still not added, but the failure is
+// recorded as a failed step and the login is refused. It used to be counted as
+// a blocked escalation: the session was minted short of a group the IdP
+// asserted, and the audit claimed a refusal nobody had decided.
+func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uint, desired, currentSet map[uint]bool, names map[uint]string, r *ssoReconcileReport) {
 	for id := range desired {
 		if currentSet[id] {
 			continue
@@ -694,15 +979,21 @@ func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uin
 		// Refuse to ESCALATE into an admin-conferring group via an IdP group assertion —
 		// the same guard SCIM applies (scimGroupConfersAdmin; the predicate is not
 		// SCIM-specific). scimGroupConfersAdmin fails CLOSED on a lookup error.
-		if c.scimGroupConfersAdmin(ctx, id) {
-			blocked++
+		confers, gerr := c.idpGroupConfersAdminVerdict(ctx, id)
+		if gerr != nil {
+			r.fail(fmt.Sprintf("check whether group %d %q confers admin", id, names[id]), false, gerr)
 			continue
 		}
-		if err := c.storage.AddUserToGroup(ctx, userID, id, 0); err == nil {
-			added++
+		if confers {
+			r.blocked++
+			continue
 		}
+		if aerr := c.storage.AddUserToGroup(ctx, userID, id, 0); aerr != nil {
+			r.fail(fmt.Sprintf("add group %d %q", id, names[id]), false, aerr)
+			continue
+		}
+		r.added++
 	}
-	return added, blocked
 }
 
 // FIX-2: this used to call c.storage.RemoveUserFromGroup directly, bypassing
@@ -715,20 +1006,40 @@ func (c *KeyorixCore) reconcileSSOGroupAdditions(ctx context.Context, userID uin
 // RemoveUserFromGroupGlobal — the guarded wrapper this file's own doc comment
 // already names as the one JIT/SSO de-provisioning callers should use — so
 // this is exactly as safe as any other de-provisioning path.
-func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint, desired, currentSet map[uint]bool) (removed int) {
+// reconcileSSOGroupRemovals records every REMOVAL failure in r.
+//
+// Every removal failure is reported, including a refusal by
+// RemoveUserFromGroupGlobal's last-admin guards. That is deliberate and is the
+// case #2839 item 1 describes in so many words: the IdP has revoked an
+// admin-conferring group and the removal did not happen, so minting a session
+// hands the user the stale admin privilege for its whole lifetime. Refusing the
+// login is the only outcome that does not do that.
+//
+// The trade-off is real, and Andrei decided it on 2026-10-10 (#2903): if the
+// user is the install's LAST administrator and holds that admin role through
+// this group, the guard keeps refusing and their SSO login keeps failing until
+// either the IdP re-asserts the group or a second admin exists -- the IdP's
+// revocation wins. That is recoverable out of band (`keyorix-server admin
+// recover-admin`, proven for an SSO-only admin by
+// TestPerformRecoverAdmin_SSOOnlyLastAdminWithNoPassword), whereas a session
+// minted with revoked admin is not recoverable at all once issued. The refusal
+// is written as EventSSOReconcileLastAdminRefused, naming both ways back.
+func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint, desired, currentSet map[uint]bool, names map[uint]string, r *ssoReconcileReport) {
 	// De-escalating removals are unconditional (dropping a group only reduces
 	// privilege) EXCEPT when doing so would strand the install or a project
 	// with no remaining admin — RemoveUserFromGroupGlobal refuses those. The
 	// acting principal is the logging-in user themself, matching this file's
 	// audit-logging convention (actorPtr(userID), reconcileSSOGroups above).
 	for id := range currentSet {
-		if !desired[id] {
-			if err := c.RemoveUserFromGroupGlobal(ctx, userID, userID, id); err == nil {
-				removed++
-			}
+		if desired[id] {
+			continue
 		}
+		if rerr := c.RemoveUserFromGroupGlobal(ctx, userID, userID, id); rerr != nil {
+			r.fail(fmt.Sprintf("remove group %d %q", id, names[id]), true, rerr)
+			continue
+		}
+		r.removed++
 	}
-	return removed
 }
 
 // syncSSORoles reconciles the user's grants of the MAPPED (system) roles to match the
@@ -737,24 +1048,39 @@ func (c *KeyorixCore) reconcileSSOGroupRemovals(ctx context.Context, userID uint
 // (the "managed" roles): a managed role is granted when an asserted group maps to it
 // and removed when none do; a role NOT in the map is never touched, so manual grants
 // survive. Like group sync, an ABSENT groups claim is a no-op (so an IdP that omits
-// groups can't strip a user's roles), and it is best-effort (never blocks login).
+// groups can't strip a user's roles). Its error refuses the login in CompleteSSO
+// (#2907), exactly as syncSSOGroups'.
 // Roles are bound at global scope (system roles); an unknown mapped role is skipped.
-func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID uint, rawID string) {
+func (c *KeyorixCore) syncSSORoles(ctx context.Context, p *SSOProvider, userID uint, rawID string) error {
 	claim := strings.TrimSpace(p.GroupsClaim)
 	if claim == "" {
 		claim = ssoDefaultGroupClaim
 	}
 	asserted, present := extractTokenStringList(rawID, claim)
 	if !present {
-		return // IdP did not assert groups in the id_token — leave roles untouched.
+		return nil // IdP did not assert groups in the id_token — leave roles untouched.
 	}
-	c.reconcileSSORoles(ctx, p, userID, asserted)
+	return c.reconcileSSORoles(ctx, p, userID, asserted)
 }
 
 // reconcileSSORoles reconciles the user's grants of the MAPPED roles to match the roles
 // their asserted groups map to — shared by the OIDC and SAML paths. Authoritative only
 // over roles named in GroupRoleMap (manual grants survive).
-func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, userID uint, asserted []string) {
+// Returns ErrSSOReconcileIncomplete (wrapped) when any grant or revocation did
+// not apply -- see reconcileSSOGroups' doc for why the caller may want to refuse
+// the login on it.
+func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, userID uint, asserted []string) error {
+	rep := &ssoReconcileReport{}
+	c.applySSORoleReconcile(ctx, p, userID, asserted, rep)
+	blockedNote := ""
+	if rep.blocked > 0 {
+		blockedNote = fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", rep.blocked)
+	}
+	return c.finishSSOReconcile(ctx, p, userID, "role mapping", EventSSORolesSynced,
+		fmt.Sprintf("+%d/-%d mapped role grants", rep.added, rep.removed), blockedNote, rep)
+}
+
+func (c *KeyorixCore) applySSORoleReconcile(ctx context.Context, p *SSOProvider, userID uint, asserted []string, rep *ssoReconcileReport) {
 	assertedSet := make(map[string]bool, len(asserted))
 	for _, g := range asserted {
 		if g = strings.TrimSpace(g); g != "" {
@@ -769,6 +1095,9 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 	// The user's current global-scope role names.
 	current, err := c.storage.GetUserRoles(ctx, userID)
 	if err != nil {
+		// Same reasoning as reconcileSSOGroups' read failures: without the
+		// current set, a role the IdP has revoked may still be held.
+		rep.fail("read current role grants", false, err)
 		return
 	}
 	currentSet := make(map[string]bool, len(current))
@@ -789,20 +1118,23 @@ func (c *KeyorixCore) reconcileSSORoles(ctx context.Context, p *SSOProvider, use
 	// the point, since authorization here is rooted in the admin-configured
 	// GroupRoleMap and the verified IdP assertion, not in the user's own
 	// roles.assign-derived authority.
-	counts := &ssoRoleCounters{}
 	for role := range managedRoles {
 		r, rerr := c.storage.GetRoleByName(ctx, role)
 		if rerr != nil {
-			continue // unknown role — skip rather than fail the login
+			// A role NAME that does not exist is a configuration fact about
+			// GroupRoleMap, not a failure: skip it, exactly as before. Any OTHER
+			// error means the lookup itself failed, so whether this managed role
+			// should be granted or revoked is UNKNOWN -- and "unknown" on a
+			// revocation is the dangerous direction. Distinguished by sentinel
+			// (storage.ErrRoleNotFound, which GetRoleByName now wraps) rather than
+			// by matching a translatable message.
+			if storage.IsRoleNotFound(rerr) {
+				continue
+			}
+			rep.fail(fmt.Sprintf("resolve managed role %q", role), currentSet[role] && !desiredRoles[role], rerr)
+			continue
 		}
-		c.applySSOManagedRole(ctx, userID, r, role, desiredRoles, currentSet, counts)
-	}
-	if counts.added > 0 || counts.removed > 0 || counts.blocked > 0 {
-		msg := fmt.Sprintf("SSO role mapping via %s: user %d (+%d/-%d mapped role grants)", p.Name, userID, counts.added, counts.removed)
-		if counts.blocked > 0 {
-			msg += fmt.Sprintf("; %d admin-tier role grant(s) refused (IdP group mapping cannot grant admin)", counts.blocked)
-		}
-		c.writeAuditEvent(ctx, EventSSORolesSynced, actorPtr(userID), nil, msg)
+		c.applySSOManagedRole(ctx, userID, r, role, desiredRoles, currentSet, rep)
 	}
 }
 
@@ -822,11 +1154,10 @@ func buildSSORoleMaps(p *SSOProvider, assertedSet map[string]bool) (desiredRoles
 	return desiredRoles, managedRoles
 }
 
-type ssoRoleCounters struct {
-	added, removed, blocked int
-}
-
-func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *models.Role, role string, desired, current map[string]bool, counts *ssoRoleCounters) {
+// applySSOManagedRole records in rep a grant or revocation that did not apply.
+// A blocked escalation is not an error -- see reconcileSSOGroupAdditions for the
+// same reasoning (the privilege is not granted, so the fail-closed direction).
+func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *models.Role, role string, desired, current map[string]bool, rep *ssoReconcileReport) {
 	switch {
 	case desired[role] && !current[role]:
 		// Refuse to auto-grant an escalation-conferring role from an IdP group mapping
@@ -839,17 +1170,33 @@ func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *m
 		// the SAME backstop the SCIM group-membership path uses (scimGroupConfersAdmin) — the
 		// two were inconsistent before (name vs bypass-flag) and both missed the roles.assign
 		// case. See idpAutoGrantOfRoleIsEscalation (authz.go).
-		if c.idpAutoGrantOfRoleIsEscalation(ctx, r.ID, role) {
-			counts.blocked++
+		// A lookup failure in the guard is a failed step, not a block -- see
+		// reconcileSSOGroupAdditions (#2910).
+		escalation, eerr := c.idpAutoGrantEscalationVerdict(ctx, r.ID, role)
+		if eerr != nil {
+			rep.fail(fmt.Sprintf("check whether role %q is an admin-tier grant", role), false, eerr)
 			return
 		}
-		if c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}) == nil {
-			counts.added++
+		if escalation {
+			rep.blocked++
+			return
 		}
+		if err := c.assignUserRoleSystemGrant(ctx, userID, userID, r.ID, Scope{}); err != nil {
+			rep.fail(fmt.Sprintf("grant role %q", role), false, err)
+			return
+		}
+		rep.added++
 	case !desired[role] && current[role]:
-		if c.RemoveUserRole(ctx, userID, userID, r.ID, Scope{}) == nil {
-			counts.removed++
+		// The privilege-RETAINING direction: the IdP no longer maps this user to
+		// this role, so failing here leaves them holding it.
+		// A last-admin-guard refusal lands here too (RemoveGlobalAdminRoleGuarded's
+		// storage.ErrWouldStrandLastAdmin) and is reported as such -- see
+		// reconcileSSOGroupRemovals for why the login stays refused.
+		if err := c.RemoveUserRole(ctx, userID, userID, r.ID, Scope{}); err != nil {
+			rep.fail(fmt.Sprintf("revoke role %q", role), true, err)
+			return
 		}
+		rep.removed++
 	}
 }
 

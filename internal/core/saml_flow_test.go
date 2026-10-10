@@ -337,9 +337,11 @@ func TestCompleteSAML_TrustAssertedEmailOptInLinksExistingAccount(t *testing.T) 
 		&models.SSOLoginState{Provider: "corp", Nonce: "req-1", ExpiresAt: time.Now().Add(time.Minute)}, nil)
 	store.On("GetUserByExternalID", mock.Anything, "sso:corp:corp|123").Return((*models.User)(nil), userNotFound())
 	store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return(&models.User{ID: 9, IsActive: true, AccountState: AccountActive, ExternalID: ""}, nil)
-	store.On("UpdateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool {
-		return u.ID == 9 && u.ExternalID == "sso:corp:corp|123"
-	})).Return(&models.User{ID: 9, IsActive: true, AccountState: AccountActive, ExternalID: "sso:corp:corp|123"}, nil)
+	// #2699: the first-federation claim is a column-scoped conditional write of
+	// external_id, followed by a re-read so the login gate below acts on the
+	// committed row rather than the snapshot GetUserByEmail returned.
+	store.On("ClaimUserExternalIDIfUnset", mock.Anything, uint(9), "sso:corp:corp|123", mock.Anything).Return(true, nil)
+	store.On("GetUser", mock.Anything, uint(9)).Return(&models.User{ID: 9, IsActive: true, AccountState: AccountActive, ExternalID: "sso:corp:corp|123"}, nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 9, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(9), mock.Anything).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

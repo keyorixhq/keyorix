@@ -40,6 +40,14 @@ interface Pair {
 // never read or store it (INV-WEB-03), so the field is deliberately undeclared.
 const TOKEN_NOT_READ = 'server sends the session token for non-browser clients; web is cookie-only (INV-WEB-03)';
 
+// #2848: a field the /auth/login 200 union only carries on its LoginSuccessData
+// branch, which LoginResponse declares non-optional because it flattens both
+// branches into one interface. authStore.login() guards on mfa_required before
+// reading any of them (see its own comment); the imprecision is recorded here
+// per field rather than left silent. See LoginResponse's entry below.
+const ONLY_ON_SUCCESS_BRANCH =
+    'present only on the LoginSuccessData branch of the /auth/login 200 oneOf; authStore.login() branches on mfa_required before reading it (#2848)';
+
 const WIRE_TYPES: Record<string, Pair> = {
     SecretAccessLogEntry: { locate: { schema: 'SecretAccessLogEntry' } },
     SecretAuditEntry: { locate: { schema: 'SecretAuditEntry' } },
@@ -53,7 +61,41 @@ const WIRE_TYPES: Record<string, Pair> = {
     },
     LoginResponse: {
         locate: { op: { path: '/auth/login', method: 'post' }, at: ['data'] },
-        allow: { 'LoginResponse.token': TOKEN_NOT_READ },
+        allow: {
+            'LoginResponse.token': TOKEN_NOT_READ,
+            // #2848: /auth/login's 200 `data` is a oneOf of LoginSuccessData |
+            // MFAChallengeData (both 200, disambiguated by data.mfa_required --
+            // the response's own description says so). openapiDriftLib's
+            // flattenUnion compares the TS interface against the MERGED object,
+            // where a field only one branch requires is correctly optional.
+            //
+            // LoginResponse flattens that wire union into ONE interface with the
+            // fields of both, declaring the identity fields non-optional. That is
+            // imprecise but not a latent bug: authStore.login() branches on
+            // mfa_required BEFORE reading any of them, and its own comment says
+            // "every field below is undefined when mfa_required is true, so this
+            // must be checked before touching any of them". The four exemptions
+            // below record exactly that, per field, so the imprecision is visible
+            // rather than silent.
+            //
+            // The faithful fix is a discriminated union on the TS side, which
+            // needs the comparator to model TS unions too (toShape collapses a
+            // union of object types to kind 'unknown'). Out of scope for a
+            // main-is-red unblock; proposed as a follow-up on #2848.
+            'LoginResponse.expires_at': ONLY_ON_SUCCESS_BRANCH,
+            'LoginResponse.user_id': ONLY_ON_SUCCESS_BRANCH,
+            'LoginResponse.username': ONLY_ON_SUCCESS_BRANCH,
+            'LoginResponse.email': ONLY_ON_SUCCESS_BRANCH,
+            // The schema pins mfa_required to `enum: [true]` (a const-true
+            // discriminator present only on the challenge branch). TS declares
+            // `mfa_required?: boolean`, and toShape collapses a boolean literal
+            // union to plain 'boolean' with no literals, so a const-true schema
+            // can never match any TS boolean. Exempted rather than worked around:
+            // narrowing TS to `mfa_required?: true` would not help until the
+            // comparator carries single boolean literals.
+            'LoginResponse.mfa_required':
+                'schema pins enum [true] on the challenge branch; toShape cannot express a const boolean (see #2848)',
+        },
     },
     RefreshTokenResponse: {
         locate: { op: { path: '/auth/refresh', method: 'post' }, at: ['data'] },
@@ -101,6 +143,10 @@ const NOT_COMPARED: Record<string, string> = {
     LoginFormData: 'UI form state',
     AuthState: 'UI store state',
     ImpersonatedBy: 'UI model translated by authStore from ProfileImpersonation',
+    // #2848: not a wire type. authStore derives it from LoginResponse's
+    // mfa_required branch (camelCase fields, unlike anything the server sends)
+    // and holds it until verifyMfa()/clearMfaChallenge() resolves it.
+    MfaChallengeState: 'UI store state derived by authStore from LoginResponse',
     PasswordResetRequest: 'UI form state',
     PasswordResetConfirm: 'UI form state',
     EnvironmentConfig: 'client build/runtime config',

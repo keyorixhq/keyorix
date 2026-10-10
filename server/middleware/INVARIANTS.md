@@ -38,11 +38,26 @@ Format: `INV-MW-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `TestSessionRevoke_SecondReplicaNeverInvalidatedCacheHitDenied`.
 - **INV-MW-05** A definitive revocation signal (revoked/expired/inactive/session-gone) on a
   cache hit denies AND evicts (`denyRevokedCacheHit` → `InvalidateTokenCacheByHash`); a
-  transient storage error degrades to the stale cached snapshot rather than failing open or
-  closed. Guard: `auth.go` lines ~581-589, `g18_cache_hit_revocation_test.go`. UNGUARDED for
-  the transient-degrade half specifically (#issue: `auth_transient_error_test.go` exists but
-  its coverage of the cache-hit path specifically was not confirmed in this pass — verify or
-  add a dedicated assertion).
+  transient storage error degrades to the stale cached snapshot — with that snapshot's own
+  restrictions still applied — rather than failing open or closed. Every definitive signal is
+  a TYPED sentinel so the two halves are distinguishable by `errors.Is`, not by message.
+  Why: #146's philosophy generalized by #G18; `docs/findings/2026-09-20-FINDING-session-revoke-cache-race.md`.
+  Guard: `g18_cache_hit_revocation_test.go` (definitive half),
+  `cache_hit_transient_degrade_test.go` (transient half, #2579 — note
+  `auth_transient_error_test.go` covers only the SLOW path and never reaches
+  `serveAuthCacheHit`), `internal/core/machine_identity_not_active_sentinel_test.go`
+  (the sentinels themselves, with both calibration directions).
+  Closed 2026-10-05 (#2518): `inactive` was listed in this invariant but not actually
+  enforced. `CurrentMachineTokenRestriction` returned a no-longer-active owning machine
+  identity as a bare `fmt.Errorf`, which this branch cannot tell apart from a storage blip,
+  so it took the DEGRADE path — a suspended machine identity's token kept authenticating for
+  up to `validTokenTTL` on every replica except the one that ran the suspension (only that one
+  flushes, via `SetMachineTokenCacheFlusher`). Now `core.ErrMachineIdentityNotActive`, denied
+  alongside the revoked/expired sentinels. The same sentinel is returned by
+  `ValidateMachineToken` and the OIDC-federated path for the identical condition — not
+  load-bearing there (their callers deny on any error) but kept in step, since a sibling
+  returning a differently-typed error for the same condition is exactly how this one went
+  unseen.
 - **INV-MW-06** The network allowlist is enforced per-request even on a cache hit, using the
   freshly-refreshed restriction, never the stale cached one. Guard: `auth.go` lines ~571-577.
   UNGUARDED as an isolated assertion (#issue: no test isolates "allowlist checked against

@@ -43,6 +43,17 @@ import (
 // fails if a new direct caller appears unlisted, or if a listed entry no
 // longer matches what it claims. Keys are repo-root-relative "path:func".
 var auditAttributionAllowlist = map[string]string{
+	"internal/core/audit_target.go:emitAuditOn": "#2676: emitAuditOn is emitAudit against an explicit " +
+		"storage handle (the transaction-scoped one the access-review revoke path needs so its evidence " +
+		"row commits or rolls back with the removal it describes). It is NOT a bypass of the attribution " +
+		"stamp this guard protects: it calls the SAME prepareAuditEventForEmit(ctx, event) immediately " +
+		"before the write, which is the function that stamps MachineIdentityID and clears UserID for a " +
+		"machine-typed event -- the correction emitAudit applies is applied here, by the same code, not " +
+		"re-implemented. The only differences are which storage handle receives the row and that the " +
+		"off-box side effects are deferred into an auditForwardSink until the transaction commits. It also " +
+		"delegates to emitAudit outright when no sink is set, so the non-transactional path is literally " +
+		"unchanged. Verified by TestEmitAuditOn_StampsMachineAttributionLikeEmitAudit " +
+		"(audit_target_attribution_test.go), which asserts the stamp on a row written through this path.",
 	"internal/faultstorage/faulty_storage_generated.go:LogAuditEvent": "generated, mechanical pass-through " +
 		"(w.real.LogAuditEvent(ctx, event)) inside a test/fuzz-harness-only storage.Storage wrapper " +
 		"(server/faultops's FuzzStorageFaultOperations) -- it forwards whatever *models.AuditEvent the real " +
@@ -61,6 +72,10 @@ var auditAttributionAllowlist = map[string]string{
 		"UserID (absent from the struct literal) -- the boot-time keyless-mode warning event " +
 		"(docs/design-b2-recover-admin.md §5), emitted before any request context exists, same " +
 		"no-actor shape as auditConnectorProjectBindingCreate above.",
+	"server/main.go:auditDurableSyncSkippedStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
+		"UserID (absent from the struct literal) -- the boot-time fast-audit-mode warning event (ADR-112 " +
+		"Amendment 1, docs/specs/fast-audit-mode.md), emitted before any request context exists, same " +
+		"no-actor shape as auditKeylessModeStartup above and for the same reason.",
 	"server/admin/admin.go:recordAdminAction": "hardcodes ActorType: adminActorType (\"admin_cli\", " +
 		"server/admin/admin.go) and never sets UserID (absent from the struct literal, so it's the zero value " +
 		"nil) -- a host-side `keyorix-server admin` CLI action with no HTTP/gRPC request context to derive a " +

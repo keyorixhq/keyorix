@@ -63,4 +63,59 @@ func TestDeprovisionSCIMUser_RevokesSessionAndPAT(t *testing.T) {
 	// And the user is soft-deleted — no longer resolvable.
 	_, err = ls.GetUser(ctx, 1)
 	require.Error(t, err, "a deprovisioned user must be soft-deleted")
+
+	// #2855: the two ValidatePATToken assertions above are NOT sufficient for the
+	// property this test's name claims, and that is how the gap survived. A
+	// deprovisioned account is login-blocked and soft-deleted, so ValidatePATToken
+	// errors whether or not the PAT row was ever revoked — the assertion proved
+	// INERTNESS, while the name promised REVOCATION. Assert the row.
+	var unrevoked int64
+	require.NoError(t, db.Model(&models.PersonalAccessToken{}).
+		Where("user_id = ? AND revoked = ?", 1, false).Count(&unrevoked).Error)
+	require.Zero(t, unrevoked,
+		"a deprovisioned user's PATs must be REVOKED, not merely inert: ReactivateUser and RestoreUser "+
+			"revoke nothing, so an unrevoked row is handed back the moment the account is restored")
+}
+
+// TestDeprovisionSCIMUser_RestoreDoesNotHandBackPATs is #2855's own regression
+// test: the consequence, driven end to end. The point is not that the PAT is
+// refused while the account is deprovisioned (it always was — the account is
+// blocked), but that it is still refused AFTER a restore, which is where an
+// unrevoked row came back to life.
+func TestDeprovisionSCIMUser_RestoreDoesNotHandBackPATs(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.PersonalAccessToken{}, &models.AuditEvent{},
+		&models.Role{}, &models.UserRole{}, &models.Project{}, &models.Environment{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
+
+	ls := store.NewLocalStorage(db)
+	c := NewKeyorixCore(ls)
+	ctx := context.Background()
+
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "bob", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
+	raw := patPrefix + "scim-restore-regression-token"
+	require.NoError(t, db.Create(&models.PersonalAccessToken{ID: 1, UserID: 1, Name: "ci", TokenHash: sha256Hex(raw)}).Error)
+
+	// Precondition: it works while the account is live.
+	_, _, _, _, err = c.ValidatePATToken(ctx, raw)
+	require.NoError(t, err)
+
+	require.NoError(t, c.DeprovisionSCIMUser(ctx, 2, 1))
+
+	// The IdP offboard is reversed — a restored hire, a deprovision-by-mistake,
+	// an IdP sync glitch. The account becomes usable again.
+	require.NoError(t, c.RestoreUser(ctx, 2, 1))
+	require.NoError(t, c.ReactivateUser(ctx, 2, 1))
+	restored, err := ls.GetUser(ctx, 1)
+	require.NoError(t, err, "the account must be live again — otherwise this test proves nothing")
+	require.True(t, restored.IsActive)
+
+	// The credential the offboarding was recorded as having removed must stay dead.
+	_, _, _, _, err = c.ValidatePATToken(ctx, raw)
+	require.Error(t, err,
+		"a PAT that existed at SCIM-deprovision time must not authenticate after the account is restored — "+
+			"the deprovision is the only point at which it is revoked (#2855)")
+	require.ErrorIs(t, err, ErrPATRevoked)
 }

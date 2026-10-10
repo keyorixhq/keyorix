@@ -520,6 +520,28 @@ type DatabaseConfig struct {
 	// SQLite
 	Path string `yaml:"path"`
 
+	// RequireExistingPath (INV-STORAGE-22, ADR-095 "Task 3", #2504) makes the
+	// server REFUSE to boot when the SQLite file at Path does not already
+	// exist, instead of letting gorm.Open silently vivify a fresh, empty,
+	// healthy-looking store. A mistyped path or a volume mount that failed to
+	// attach otherwise produces a working server with zero secrets in it and
+	// no error anywhere — the operator's own data is still on disk, untouched,
+	// at the path they meant.
+	//
+	// Default false, i.e. today's create-if-missing behaviour, DELIBERATELY:
+	// nothing in the supported first-boot paths creates the database file
+	// before the server starts (server/entrypoint.sh and docker-compose.yml
+	// both boot the server directly; `keyorix system init --database`, the
+	// explicit "yes, a fresh install belongs here" marker ADR-095 names, is
+	// optional), so defaulting this to true would break every containerized
+	// first boot. ADR-095 Task 3 says the flip "deserves a deliberate
+	// sign-off rather than landing inside a same-day investigation" — this
+	// field is that sign-off's prerequisite, not the flip itself.
+	//
+	// Does not apply to an in-memory DSN (":memory:", "mode=memory"), which
+	// has no file to pre-exist, nor to the Postgres backend.
+	RequireExistingPath bool `yaml:"require_existing_path"`
+
 	// PostgreSQL — use DSN directly or set individual fields
 	DSN      string `yaml:"dsn"` // e.g. "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
 	Host     string `yaml:"host"`
@@ -549,6 +571,58 @@ type DatabaseConfig struct {
 	// keyorix_audit_flusher_flushes_total) justifying a nonzero value can set
 	// one without a code change.
 	AuditFlusherLingerWindow string `yaml:"audit_flusher_linger_window"`
+
+	// InsecureAuditSkipDurableSync (ADR-112 Amendment 1, FASTAUDIT-1,
+	// docs/specs/fast-audit-mode.md) drops the audit commit's wait for a disk
+	// sync. DEFAULT false, and false is the secure baseline: a secret value is
+	// never returned before its audit record is DURABLY committed
+	// (audit-before-disclosure, ADR-112 §3).
+	//
+	// POSTGRES ONLY (Andrei's decision, 2026-10-05). The audit-commit
+	// transaction, and ONLY that transaction, issues `SET LOCAL
+	// synchronous_commit = off`. SET LOCAL is transaction-scoped, so it never
+	// leaks to the next transaction that borrows the same pooled connection,
+	// and a concurrent secret WRITE still commits durably.
+	//
+	// Per storage.type:
+	//   - postgres/postgresql: supported. In effect when true.
+	//   - local/sqlite: NOT SUPPORTED. Config validation REFUSES TO START (see
+	//     auditSkipDurableSyncSQLiteUnsupportedError and Validate's local/sqlite
+	//     case) rather than ignoring it silently. Two reasons, both measured or
+	//     structural: (1) `PRAGMA synchronous` is a PER-CONNECTION property and
+	//     the pool is shared by every query, so NORMAL would relax commit
+	//     durability for EVERY table — a power loss could undo a just-committed
+	//     secret rotation or revocation, not merely lose audit entries; (2) the
+	//     p99 measurably got WORSE (328.8→518.0ms at c=10, 703.7→919.0ms at
+	//     c=50 on pve01), so it was not even a clean latency win.
+	//   - remote: inert — there is no local database whose commit durability
+	//     could be relaxed. Reported as CONFIGURED BUT NOT IN EFFECT, with the
+	//     reason, everywhere the setting is listed; see AuditDurableSyncStatus.
+	//
+	// Settable from the config file ONLY — no HTTP handler, no gRPC RPC, no env
+	// var and no CLI flag may set it, the same containment
+	// security.recover_admin.keyless_mode has and for the same reason: a
+	// compromised admin API must not be able to silently weaken an install's
+	// durability posture remotely. The guards are
+	// TestInsecureAuditSkipDurableSync_NoWriteAssignment and
+	// TestInsecureAuditSkipDurableSync_NotSettableFromTheEnvironment.
+	//
+	// What it does NOT change when in effect: the audit row is still INSERTed
+	// and COMMITted, in the same transaction/batch as before, BEFORE the secret
+	// value is returned; if the audit row cannot be WRITTEN the request still
+	// fails. Only the wait for the disk sync is skipped. The hash chain may lose
+	// a TAIL of entries to an OS or database-server crash; it can never gap or
+	// fork, because WAL is a single totally-ordered stream and recovery accepts
+	// only a valid prefix — see docs/specs/fast-audit-mode.md §5 for the
+	// argument and TestFastAuditMode_PostgresCrashLosesOnlyATail for the proof.
+	//
+	// Loss window: ≤ ~3 × wal_writer_delay (~600ms at the default). This is
+	// HashiCorp Vault's and OpenBao's guarantee verbatim — both do one write()
+	// to an O_APPEND audit file with no fsync anywhere — which is why this
+	// exists, not because it is safe. Only enable it where power is genuinely
+	// guaranteed: a UPS, a battery-backed RAID write cache, or replicated cloud
+	// block storage. See docs/security/hardening-guide.md.
+	InsecureAuditSkipDurableSync bool `yaml:"insecure_audit_skip_durable_sync"`
 }
 
 // GetPassword returns the resolved DB password, preferring the environment variable.
@@ -562,6 +636,115 @@ func (d *DatabaseConfig) GetPassword() string {
 // value, is the default.
 func (d *DatabaseConfig) GetAuditFlusherLingerWindow() time.Duration {
 	return parseDurationDefault(d.AuditFlusherLingerWindow, 0)
+}
+
+// auditSkipDurableSyncSQLiteUnsupportedError is the exact start-up refusal for
+// storage.database.insecure_audit_skip_durable_sync on a SQLite backend
+// (Andrei's decision, 2026-10-05: Postgres only, "no silent ignore"). A
+// constant rather than an inline string so Validate and its red/green test
+// cannot drift apart, and so the wording an operator sees is reviewable in one
+// place.
+const auditSkipDurableSyncSQLiteUnsupportedError = "storage.database.insecure_audit_skip_durable_sync is only " +
+	"supported with PostgreSQL; remove it or switch storage to postgres"
+
+// auditSkipDurableSyncRemoteNotInEffectReason is the reason text reported
+// wherever the setting is listed, when it is configured on a storage.type:
+// remote install. Exported through AuditDurableSyncStatus as a structured
+// field, not only as log text (Andrei's decision, 2026-10-05).
+const auditSkipDurableSyncRemoteNotInEffectReason = "storage.type is remote; this setting only applies to a local database"
+
+// AuditDurableSyncStatus is the computed state of
+// storage.database.insecure_audit_skip_durable_sync for one loaded config —
+// the single source of truth every surface reads, so the start-up log, the
+// posture report and the API can never disagree about whether the setting is
+// actually doing anything.
+//
+// Structured on purpose. "Configured but not in effect, and here is why" is a
+// distinct state from both "off" and "weakening your durability", and an
+// auditor needs to tell them apart from the posture/API output alone rather
+// than by correlating log lines. When ADR-112's insecure_ registry (#2454)
+// lands, its entry's InEffect/NotInEffectReason should delegate here rather
+// than re-deriving the rule.
+type AuditDurableSyncStatus struct {
+	// Configured is true when the operator wrote the key into the config file,
+	// regardless of whether it does anything on this backend.
+	Configured bool
+	// InEffect is true only when the setting is configured AND this backend
+	// actually relaxes the audit commit's durability because of it. False on a
+	// remote backend; a SQLite backend never reaches this function at all,
+	// because Validate refuses to start.
+	InEffect bool
+	// NotInEffectReason explains, in operator-facing words, why a CONFIGURED
+	// setting is not InEffect. Empty whenever Configured is false or InEffect
+	// is true — so a non-empty value always means "you wrote this and it is
+	// doing nothing", and never means anything else.
+	NotInEffectReason string
+}
+
+// AuditDurableSyncStatus computes the state described on
+// AuditDurableSyncStatus. Takes storage.type explicitly rather than reading it
+// off a *Config so the rule stays a pure function of (setting, backend) and is
+// testable without building a whole config.
+func (d *DatabaseConfig) AuditDurableSyncStatus(storageType string) AuditDurableSyncStatus {
+	if !d.InsecureAuditSkipDurableSync {
+		return AuditDurableSyncStatus{}
+	}
+	// ALLOWLIST, not a denylist: only the two backends that actually implement
+	// the mechanism report InEffect. Every other value — "remote", "local",
+	// "sqlite", a blank type, a typo — reports configured-but-not-in-effect.
+	// Deliberately this direction round: a future backend added to
+	// Validate's switch without touching this function gets "not in effect"
+	// (truthful, since nothing would have implemented the relaxation for it)
+	// rather than a silent claim that its durability has been weakened.
+	switch storageType {
+	case "postgres", "postgresql":
+		return AuditDurableSyncStatus{Configured: true, InEffect: true}
+	case "remote":
+		// CURRENTLY UNREACHABLE IN ANY DEPLOYMENT, and said so here rather
+		// than shipped as though it were live. Validate rejects
+		// storage.type: remote UNCONDITIONALLY for this Config type
+		// (validateRemoteStorageNotServer, ADR-083: remote storage is a
+		// CLI/client mode, never a deployable server backend), so no server
+		// process can boot with it and neither the posture report nor
+		// /system/info can ever observe this branch. The thin CLI is a
+		// separate Go module (cli/go.mod) and cannot import this package at
+		// all, so it cannot reach it either.
+		//
+		// Kept, not deleted, for two reasons: it is the rule Andrei decided
+		// (2026-10-05) and this function is the place that rule belongs, so a
+		// future caller gets the right answer rather than inheriting the
+		// default branch; and it is a pure function of its inputs, so the
+		// branch costs one switch case and is unit-tested directly
+		// (TestAuditDurableSyncStatus) without pretending a live path exists.
+		// TestValidateStartup_RemoteConfigIsRejectedBeforePostureReporting
+		// pins the reachability claim itself, so this comment cannot quietly
+		// become false.
+		return AuditDurableSyncStatus{
+			Configured:        true,
+			InEffect:          false,
+			NotInEffectReason: auditSkipDurableSyncRemoteNotInEffectReason,
+		}
+	case "local", "sqlite":
+		// Unreachable through any normal path: Validate refuses to start on
+		// this combination (auditSkipDurableSyncSQLiteUnsupportedError), so a
+		// loaded config can never hold it. Handled anyway, and NOT as
+		// in-effect, so a caller that skipped validation (a test fixture, a
+		// future entry point) gets the safe answer rather than a claim that
+		// SQLite durability has been relaxed — which would be false, since the
+		// SQLite NORMAL path was removed entirely.
+		return AuditDurableSyncStatus{
+			Configured:        true,
+			InEffect:          false,
+			NotInEffectReason: auditSkipDurableSyncSQLiteUnsupportedError,
+		}
+	default:
+		return AuditDurableSyncStatus{
+			Configured: true,
+			InEffect:   false,
+			NotInEffectReason: fmt.Sprintf(
+				"storage.type %q does not support this setting; it only applies to a local PostgreSQL database", storageType),
+		}
+	}
 }
 
 // BuildPostgresDSN returns a ready-to-use PostgreSQL DSN.
@@ -812,14 +995,76 @@ func DeriveMaxRequestBodySize(maxSecretSize int) int64 {
 	return int64(base64Size) + secretSizeEnvelopeHeadroomBytes
 }
 
+// ADR112FilePermEnforcedMarker and ADR112RequireMFAEnforcedMarker are the
+// system_metadata keys the server writes once a deployment has been enforced on
+// enable_file_permission_check / require_mfa (ADR-112): a deployment whose
+// database has users and no marker is an upgrade still inside that key's grace
+// period (server/adr112_grace.go). The value is the RFC 3339 time first recorded.
+const (
+	ADR112FilePermEnforcedMarker   = "adr112.file_permission_check.enforced"
+	ADR112RequireMFAEnforcedMarker = "adr112.require_mfa.enforced"
+)
+
 type SecurityConfig struct {
-	EnableFilePermissionCheck  bool `yaml:"enable_file_permission_check"`
-	AutoFixFilePermissions     bool `yaml:"auto_fix_file_permissions"`
-	AllowUnsafeFilePermissions bool `yaml:"allow_unsafe_file_permissions"`
+	// EnableFilePermissionCheck gates the file-permission/DEK-salt-size/database-
+	// reachability startup checks (internal/startup.ValidateStartup) and whether
+	// enforceKeyFilePermissions fails closed instead of warning. ADR-112: secure
+	// by default -- Load() resolves an ABSENT key to true (and records that in
+	// EnableFilePermissionCheckImplicitDefault below), not Go's bool zero value,
+	// so a fresh install enforces from its first start without anyone setting this.
+	EnableFilePermissionCheck bool `yaml:"enable_file_permission_check"`
+	// EnableFilePermissionCheckImplicitDefault records whether Load() set
+	// EnableFilePermissionCheck to true itself (the key was absent from the
+	// config file) rather than the operator writing it. Computed from the raw
+	// YAML (a plain bool can't tell "absent" from "explicitly false" apart --
+	// both decode to false); never itself read from YAML.
+	//
+	// Deliberately false-by-default (unlike an "...Explicit" flag would be):
+	// every caller that builds a *Config by hand instead of through Load() --
+	// test fixtures across this repo, any future one-off caller -- leaves this
+	// at Go's zero value, which must mean "treat EnableFilePermissionCheck as
+	// if the operator meant it," the strict pre-ADR-112 behavior, not silently
+	// downgrade a hand-set EnableFilePermissionCheck: true into the softened
+	// grace-period path below. Only Load() ever sets this true, and only when
+	// it also just set EnableFilePermissionCheck to true itself.
+	//
+	// An existing deployment relying on this implicit default gets a start-up
+	// warning and a softened, warn-instead-of-fail-closed response to a real
+	// problem the check finds, until it explicitly sets the key -- see
+	// server/main.go's runStartupValidation and enforceKeyFilePermissions.
+	EnableFilePermissionCheckImplicitDefault bool `yaml:"-"`
+	// EnableFilePermissionCheckUpgradeGrace is the narrower fact the grace
+	// period actually turns on: ImplicitDefault above AND this is an upgraded,
+	// pre-existing deployment (its database already has users) that has never
+	// yet booted clean under the check. Never set by Load(): only
+	// server/main.go's adr112UpgradeGraceEligible sets it, at boot, from the
+	// database itself. A fresh install (no database, or no users yet) and a
+	// deployment that already passed once (the adr112 system_metadata marker)
+	// leave it false and are enforced. False-by-default for the same reason as
+	// ImplicitDefault: a hand-built *Config must never land in the softened path.
+	EnableFilePermissionCheckUpgradeGrace bool `yaml:"-"`
+	AutoFixFilePermissions                bool `yaml:"auto_fix_file_permissions"`
+	AllowUnsafeFilePermissions            bool `yaml:"allow_unsafe_file_permissions"`
 	// RequireMFA mandates TOTP MFA for interactive login: a session-authenticated
 	// user without MFA enabled is confined to the MFA-enrolment endpoints until
 	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.
+	// ADR-112: secure by default -- Load() resolves an ABSENT key to true (see
+	// RequireMFAImplicitDefault below), not Go's bool zero value.
 	RequireMFA bool `yaml:"require_mfa"`
+	// RequireMFAImplicitDefault is RequireMFA's counterpart to
+	// EnableFilePermissionCheckImplicitDefault above: true only when Load() set
+	// RequireMFA to true itself because the key was absent. False-by-default for
+	// the same reason -- a hand-built *Config with RequireMFA: true must not be
+	// read as "inherited the default." Never read from YAML.
+	RequireMFAImplicitDefault bool `yaml:"-"`
+	// RequireMFAUpgradeGrace is true when server/main.go's applyADR112UpgradeGrace
+	// found an UPGRADED deployment (its database already has users, and no
+	// adr112.require_mfa.enforced marker) relying on the implicit default, and so
+	// set RequireMFA back to false for this boot: ADR-112's grace period for MFA
+	// on upgrades, with a loud start-up warning, until the key is set explicitly.
+	// A fresh install is enforced and marked, so it never gets here. Never read
+	// from YAML; false on every hand-built *Config.
+	RequireMFAUpgradeGrace bool `yaml:"-"`
 	// LoginLockout configures per-account login lockout (brute-force protection):
 	// after MaxAttempts failed password logins within Window, the account is locked
 	// for an exponentially-backing-off cooldown. Distinct from (and complementary to)
@@ -1651,6 +1896,25 @@ type BreakGlassConfig struct {
 	EmergencyRole string `yaml:"emergency_role"` // role granted on activation (e.g. "project_developer" — must be contained: no roles.assign, so use a role like project_developer, NOT project_admin)
 	DefaultTTL    string `yaml:"default_ttl"`    // grant lifetime when none requested (e.g. "4h")
 	MaxTTL        string `yaml:"max_ttl"`        // ceiling on a requested TTL (e.g. "24h")
+	// ReviewWindow (ADR-112 §3, break-glass review item 5) is how long an
+	// activation may go unreviewed before the posture report (item 4) lists it
+	// as a deviation. Default 72h when unset or unparseable — long enough that
+	// a reviewer out for a long weekend isn't itself a false alarm, short
+	// enough that a genuinely-forgotten review surfaces within a normal work
+	// week. Purely a reporting threshold: it never blocks or expires anything,
+	// and never governs whether a review can still be submitted late.
+	ReviewWindow string `yaml:"review_window"`
+}
+
+// GetReviewWindow returns how long an activation may go unreviewed before the
+// posture report flags it; defaults to 72h.
+func (c BreakGlassConfig) GetReviewWindow() time.Duration {
+	if c.ReviewWindow != "" {
+		if d, err := time.ParseDuration(c.ReviewWindow); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 72 * time.Hour
 }
 
 // GetDefaultTTL returns the default emergency-grant lifetime; defaults to 4h.
@@ -1969,6 +2233,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// ADR-112 secure-by-default: resolve the two inverted-default security keys
+	// against whether the operator actually wrote them, not Go's bool zero value.
+	explicit, err := explicitSecurityKeys(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect config for explicit security keys: %w", err)
+	}
+	if !explicit["enable_file_permission_check"] {
+		cfg.Security.EnableFilePermissionCheck = true
+		cfg.Security.EnableFilePermissionCheckImplicitDefault = true
+	}
+	if !explicit["require_mfa"] {
+		cfg.Security.RequireMFA = true
+		cfg.Security.RequireMFAImplicitDefault = true
+	}
+
 	// server.http.domain/allowed_origins are the only fields documented (in
 	// server/config/production.yaml) as supporting ${VAR}/${VAR:-default} interpolation.
 	// Expansion is applied here, per-field, AFTER unmarshaling — not as a raw-bytes
@@ -2003,6 +2282,32 @@ func Load(path string) (*Config, error) {
 	cfg.Storage.Database.Path = resolvedDBPath
 
 	return &cfg, nil
+}
+
+// explicitSecurityKeys reports which top-level security.* keys the config file
+// actually wrote, as a set of lowercase YAML key names. Used by Load() to tell
+// "the operator explicitly set this bool to false" apart from "the operator
+// never mentioned this key, so it inherits a secure-by-default value" (ADR-112)
+// -- a distinction yaml.Unmarshal's own decode into SecurityConfig can't make,
+// since both cases leave the struct field at Go's false zero value. Re-parses
+// the same raw bytes Load() already decoded, this time into a generic map, so
+// it only needs to answer "was this key present," not reproduce the typed
+// decode. Deliberately permissive (no KnownFields, ignores a malformed/absent
+// security: block as "nothing explicit"): Load's own strict decode above has
+// already rejected a truly malformed document before this ever runs.
+func explicitSecurityKeys(data []byte) (map[string]bool, error) {
+	var raw struct {
+		Security map[string]interface{} `yaml:"security"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	explicit := make(map[string]bool, len(raw.Security))
+	for k := range raw.Security {
+		explicit[k] = true
+	}
+	return explicit, nil
 }
 
 // resolveConfigRelativePath anchors a relative SQLite database path to
@@ -2157,6 +2462,9 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 	case "local", "sqlite":
 		if c.Storage.Database.Path == "" {
 			return fmt.Errorf("database path is not specified")
+		}
+		if c.Storage.Database.InsecureAuditSkipDurableSync {
+			return fmt.Errorf("%s", auditSkipDurableSyncSQLiteUnsupportedError)
 		}
 	case "":
 		// #G-blank-storage-default: a blank storage.type used to be bucketed

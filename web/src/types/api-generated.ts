@@ -705,7 +705,7 @@ export interface paths {
         };
         /**
          * List projects with secret and environment counts
-         * @description List all projects accessible to the caller, including secret and environment counts.
+         * @description List the projects the CALLER CAN READ, including secret and environment counts. A caller holding secrets.read at the global scope gets every project; a caller whose grants are project-scoped gets exactly the projects they are authorized to read at the project scope — the same check GET /api/v1/projects/{id} applies, so every project listed here is one the caller can also fetch by id. A caller with no such grant gets 200 with an empty array, not 403.
          */
         get: operations["listProjects"];
         put?: never;
@@ -1197,7 +1197,7 @@ export interface paths {
         };
         /**
          * List all environments (global, backward-compat)
-         * @description Return all environments across all projects accessible to the authenticated user.
+         * @description Return the environments belonging to projects the CALLER CAN READ, across all of them. Scoped exactly like GET /api/v1/projects: a global secrets.read holder gets every environment, a project-scoped reader gets only their projects', and a caller with no such grant gets 200 with an empty array rather than 403.
          */
         get: operations["listEnvironments"];
         put?: never;
@@ -3612,7 +3612,7 @@ export interface paths {
         };
         /**
          * List user project memberships
-         * @description Return all project memberships for the specified user with their role and state in each project.
+         * @description Return every project the specified user is a member of, with their role(s) and the membership's onboarding state. "Member of a project" means the user holds a live role grant scoped to that project, directly or through a group — the same definition GET /api/v1/projects/{id}/members reports, so the two views agree. An install-wide grant (project 0) is not membership of any project and is never listed here, nor is an expired time-bound grant. `state` is the ADR-022 onboarding lifecycle state where an invite produced the membership, and `active` for a grant added directly via POST /api/v1/projects/{id}/members. `via_group` marks a membership held only through a group, which the project's own members list cannot remove.
          */
         get: operations["getUserMembershipsForUser"];
         put?: never;
@@ -6979,7 +6979,7 @@ export interface operations {
     listProjects: {
         parameters: {
             query?: {
-                /** @description When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. */
+                /** @description When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. This form requires secrets.read at the GLOBAL scope: project-scoped role grants deliberately survive a soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id} returns 404 for a deleted project, so a project-scoped reader cannot read a soft-deleted project through any path and must not see one listed. A caller without the global grant gets 403 for this form, and 200 for the default one. */
                 include_deleted?: "true" | "false";
             };
             header?: never;
@@ -9323,10 +9323,15 @@ export interface operations {
                     "application/json": {
                         data?: {
                             secrets?: components["schemas"]["SecretListEntry"][];
+                            /** @description Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true. */
                             total?: number;
                             page?: number;
                             page_size?: number;
                             total_pages?: number;
+                            /** @description Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response. */
+                            truncated?: boolean;
+                            /** @description Names the bound and the scopes it affected. Absent unless truncated. */
+                            truncated_reason?: string;
                         };
                     };
                 };
@@ -12179,12 +12184,34 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `data.memberships[]` with project_id, project_name, role, state. */
+            /** @description Envelope {data, message}. data.memberships is an array of {project_id, project_name, role, roles[], state, via_group}. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data?: {
+                            memberships?: {
+                                project_id?: number;
+                                project_name?: string;
+                                /** @description The highest-privilege role the user holds at this project's scope. */
+                                role?: string;
+                                /** @description Every role the user holds at this project's scope, sorted. */
+                                roles?: string[];
+                                /**
+                                 * @description ADR-022 onboarding state; 'active' when the grant was added directly.
+                                 * @enum {string}
+                                 */
+                                state?: "invited" | "identity_verified" | "provisioned" | "active" | "revoked";
+                                /** @description True when the membership comes only from a group grant. */
+                                via_group?: boolean;
+                                /** @description True when the project has been soft-deleted. The grant survives a soft-delete (RestoreProject reinstates it), so the membership is reported rather than hidden, but it is not counted by the per-user project tallies on GET /api/v1/users. */
+                                project_deleted?: boolean;
+                            }[];
+                        };
+                    };
+                };
             };
             401: components["responses"]["Error"];
         };
@@ -13623,6 +13650,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     getNotificationChannel: {

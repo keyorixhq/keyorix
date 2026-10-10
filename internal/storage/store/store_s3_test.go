@@ -907,6 +907,7 @@ func TestAuditEntryHashByID(t *testing.T) {
 func newDynamicFullStore(t *testing.T) *LocalStorage {
 	t.Helper()
 	ls := newStoreS3(t, "dynamic_full_"+t.Name(), &models.DynamicSecretConfig{}, &models.DynamicSecretLease{})
+	seedDynamicConfigProjects(t, ls.db)
 	return ls
 }
 

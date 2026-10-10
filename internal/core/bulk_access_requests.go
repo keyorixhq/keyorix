@@ -21,6 +21,23 @@ import (
 // worst-case handler runtime and DB load.
 const maxBulkAccessRequestBatchSize = 500
 
+// approverPrincipal derives the (actorType, principalID) pair for an
+// (approverID, approverMachineID) approver tuple — the ONE place the bulk paths
+// turn that tuple into something AuthorizePrincipal can resolve, so the two
+// bulk functions cannot drift apart.
+//
+// #2495: a machine identity's approverID is always 0 (ADR-030 — a machine has no
+// UserID), so "approverID==0" alone cannot tell a machine caller from the
+// unauthenticated/system pseudo-actor. The machine ID is the only
+// discriminator, which is why the bulk entry points require it from their
+// caller instead of defaulting it.
+func approverPrincipal(approverID, approverMachineID uint) (actorType string, principalID uint) {
+	if approverMachineID != 0 {
+		return ActorTypeMachine, approverMachineID
+	}
+	return ActorTypeUser, approverID
+}
+
 // ── Result types ─────────────────────────────────────────────────────────────
 
 // BulkApproveResult is the outcome of a bulk-approve call.
@@ -44,13 +61,29 @@ type BulkAccessError struct {
 // ── Bulk approve ──────────────────────────────────────────────────────────────
 
 // BulkApproveAccessRequests approves multiple pending access requests on behalf
-// of approverID. Each request is attempted independently: per-item failures are
-// collected in the result rather than aborting the whole batch.
+// of the (approverID, approverMachineID) principal. Each request is attempted
+// independently: per-item failures are collected in the result rather than
+// aborting the whole batch.
 //
-// The function delegates to the existing ApproveAccessRequest per item so all
-// invariants (state check, self-approval guard, dual-control, role validation,
-// project liveness, privilege ceiling) are enforced exactly once.
-func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs []uint, approverID uint) (*BulkApproveResult, error) {
+// The function delegates to the single-request path per item so all invariants
+// (state check, self-approval guard, dual-control, role validation, project
+// liveness, privilege ceiling) are enforced exactly once.
+//
+// approverMachineID is the acting MACHINE identity, or 0 for a human approver —
+// the same convention ApproveAccessRequestWithExpiry takes (#1573). It is
+// mandatory here rather than derived, because it cannot be derived: a machine
+// caller's approverID is 0 (ADR-030: a machine identity has no UserID), which is
+// indistinguishable from the unauthenticated/system pseudo-actor that
+// requireGranterHoldsRolePermissions deliberately exempts from the
+// escalation-by-proxy ceiling. #2495: this path previously called the
+// 4-argument ApproveAccessRequest wrapper, which hardcoded approverMachineID=0,
+// so every machine approver was reported to that ceiling as "the trusted system
+// pseudo-actor" and the ceiling was skipped outright. Nothing exploited it only
+// because the per-item authorization below was the user-only Authorize against
+// approverID=0, which no role resolution can satisfy — so the feature was
+// simultaneously broken for machine identities and one line away from being a
+// ceiling bypass. See internal/core/bulk_access_request_machine_actor_test.go.
+func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs []uint, approverID, approverMachineID uint) (*BulkApproveResult, error) {
 	if len(requestIDs) == 0 {
 		return nil, errors.New("request_ids is required")
 	}
@@ -70,6 +103,7 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 		byID[r.ID] = r
 	}
 
+	actorType, principalID := approverPrincipal(approverID, approverMachineID)
 	result := &BulkApproveResult{}
 	for _, id := range requestIDs {
 		req, ok := byID[id]
@@ -86,7 +120,13 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 		// projects the caller has no per-project roles.assign at — that would be
 		// cross-project approval. Mirror the RequireScopedPermission gate that the
 		// single-request path (PUT /projects/{id}/access-requests/{requestId}) uses.
-		if allowed, authErr := k.Authorize(ctx, approverID, permRolesAssign, Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
+		//
+		// #2495: AuthorizePrincipal, not the user-only Authorize. The route gate is
+		// already actor-aware (RequireScopedPermission → AuthorizePrincipal), so a
+		// machine identity holding roles.assign reaches this handler; resolving its
+		// authority as if it were user 0 denied every item unconditionally.
+		if allowed, authErr := k.AuthorizePrincipal(ctx, actorType, principalID, permRolesAssign,
+			Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,
 				Error:     "permission denied",
@@ -95,7 +135,7 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 		}
 		// Delegate to existing single-request logic (carries all validation).
 		// grantedRole="" → falls back to the request's SuggestedRole.
-		_, approveErr := k.ApproveAccessRequest(ctx, req.ProjectID, id, approverID, "")
+		_, approveErr := k.ApproveAccessRequestWithExpiry(ctx, req.ProjectID, id, approverID, approverMachineID, "", 0)
 		if approveErr != nil {
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,
@@ -118,12 +158,19 @@ func (k *KeyorixCore) BulkApproveAccessRequests(ctx context.Context, requestIDs 
 // ── Bulk reject ───────────────────────────────────────────────────────────────
 
 // BulkRejectAccessRequests rejects multiple pending access requests with a
-// shared reason on behalf of approverID. Each request is attempted independently;
-// per-item failures are collected rather than aborting the whole batch.
+// shared reason on behalf of the (approverID, approverMachineID) principal. Each
+// request is attempted independently; per-item failures are collected rather
+// than aborting the whole batch.
 //
 // The function delegates to the existing RejectAccessRequest per item so all
 // invariants (state check, etc.) are enforced exactly once.
-func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs []uint, approverID uint, reason string) (*BulkRejectResult, error) {
+//
+// approverMachineID: see BulkApproveAccessRequests. #2495 — rejection has no
+// privilege ceiling to skip (nothing is granted), but it had the same two
+// consequences: a machine identity holding roles.assign could not reject
+// anything, and the ResolvedByMachineIdentityID attribution column #1573 added
+// was written as 0, so the audit trail could not say which machine rejected.
+func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs []uint, approverID, approverMachineID uint, reason string) (*BulkRejectResult, error) {
 	if len(requestIDs) == 0 {
 		return nil, errors.New("request_ids is required")
 	}
@@ -144,6 +191,7 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 		byID[r.ID] = r
 	}
 
+	actorType, principalID := approverPrincipal(approverID, approverMachineID)
 	result := &BulkRejectResult{}
 	for _, id := range requestIDs {
 		req, ok := byID[id]
@@ -154,14 +202,15 @@ func (k *KeyorixCore) BulkRejectAccessRequests(ctx context.Context, requestIDs [
 			})
 			continue
 		}
-		if allowed, authErr := k.Authorize(ctx, approverID, permRolesAssign, Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
+		if allowed, authErr := k.AuthorizePrincipal(ctx, actorType, principalID, permRolesAssign,
+			Scope{ProjectID: req.ProjectID}); authErr != nil || !allowed {
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,
 				Error:     "permission denied",
 			})
 			continue
 		}
-		_, rejectErr := k.RejectAccessRequest(ctx, req.ProjectID, id, approverID, 0, reason)
+		_, rejectErr := k.RejectAccessRequest(ctx, req.ProjectID, id, approverID, approverMachineID, reason)
 		if rejectErr != nil {
 			result.Failed = append(result.Failed, BulkAccessError{
 				RequestID: id,

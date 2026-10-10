@@ -293,6 +293,14 @@ func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
 	return []byte(fmt.Sprintf("keyorix:dynsecret-lease:v1:%s:%d", leaseID, configID))
 }
 
+// NotificationChannelURLAAD returns the AAD for a notification channel's
+// encrypted webhook/Slack/Teams URL (#2433), binding the ciphertext to the
+// channel's identity so a DB-write attacker cannot transplant one channel's
+// encrypted URL onto another's row.
+func NotificationChannelURLAAD(channelID uint) []byte {
+	return []byte(fmt.Sprintf("keyorix:notifchan-url:v1:%d", channelID))
+}
+
 // NotaryReceipt is proof an external timestamping authority anchored a
 // message. Mirrors internal/notary.Receipt.
 type NotaryReceipt struct {
@@ -328,6 +336,15 @@ type SAMLAssertion struct {
 	Email   string
 	Name    string
 	Groups  []string
+	// GroupsPresent reports that the assertion carried the configured groups
+	// attribute at all, even with no (non-blank) values. It is what tells "the
+	// IdP asserts this user is in NO groups" (reconcile to zero, removing stale
+	// memberships) apart from "the IdP did not send a groups attribute" (leave
+	// memberships untouched) -- the SAML counterpart of the OIDC path's
+	// `present` bool from extractTokenStringList. A non-empty Groups implies
+	// presence whatever this field says, so a producer that predates it can
+	// never make a non-empty assertion look absent.
+	GroupsPresent bool
 }
 
 // SAMLServiceProvider is a SAML Service Provider. Mirrors the shape

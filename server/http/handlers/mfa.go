@@ -173,15 +173,43 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 	// same way the CR3 finding did — see FinishWebAuthnLogin's identical sibling fix
 	// (webauthn.go) for the full reasoning; this is the same release-only-pre-verdict
 	// rule applied to VerifyMFA's own reservation.
-	session, user, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
+	//
+	// #2841: the wrapper forwards the response identity core now resolves BEFORE
+	// the session/step-up-token writes, so there is exactly ONE call to
+	// VerifyMFALogin on this path — re-reading the identity in the handler would
+	// reopen the very window this fix closed.
+	session, user, identity, err := h.verifyMFALoginReleasingOnPanic(r.Context(), body.Challenge, body.Code, r.Header.Get("User-Agent"), ip, reserved, attemptID)
 	if err != nil {
-		if reserved && errors.Is(err, core.ErrMFAVerificationStorageFailure) {
-			h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+		if errors.Is(err, core.ErrMFAVerificationStorageFailure) {
+			if reserved {
+				h.coreService.ReleaseLoginAttempt(r.Context(), attemptID)
+			}
+			// FIX-1 (#2548) + #2740 review (option C): 503 "retry" ONLY when the
+			// failure happened before any code was evaluated. A failure after the
+			// code was found correct stays a plain 401, identical to a wrong code,
+			// so the response can never confirm a correct guess. err itself is
+			// never passed through (it wraps the raw storage error).
+			if errors.Is(err, core.ErrMFAVerificationUnavailable) {
+				sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
+				return
+			}
+		}
+		// #2841: the identity read now happens inside core, before the session
+		// and the user-scoped step-up token are written. Keep its caller-visible
+		// shape identical to the 500 completeLogin used to produce for the same
+		// failure — a transient authz-resolution error is not a wrong code and
+		// must not be reported as one. Unlike ErrMFAVerificationStorageFailure,
+		// the code WAS verified and passed, so the attempt reservation stays
+		// counted exactly as before.
+		if errors.Is(err, core.ErrLoginIdentityUnavailable) {
+			log.Printf("VerifyMFALogin: %v", err)
+			sendError(w, "Internal", errLoginIncomplete, http.StatusInternalServerError, nil)
+			return
 		}
 		sendError(w, "Unauthorized", "Invalid or expired code", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
+	resp, ok := h.completeLoginWithIdentity(w, session, user, identity)
 	if !ok {
 		return
 	}
@@ -196,7 +224,14 @@ func (h *AuthHandler) VerifyMFA(w http.ResponseWriter, r *http.Request) {
 // login-attempt slot and re-panicking unchanged if the call panics instead of
 // returning — see VerifyMFA's call-site comment, and FinishWebAuthnLogin's identical
 // sibling (webauthn.go), for why this exists.
-func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challenge, code, userAgent, ip string, reserved bool, attemptID uint) (session *models.Session, user *models.User, err error) {
+//
+// #2841: it forwards all FOUR of VerifyMFALogin's results, including the response
+// identity core resolves before its session/step-up-token writes. The wrapper is
+// deliberately transparent: it adds the release-on-panic side effect and changes
+// nothing else. The recover() re-panics with the ORIGINAL value, so a panic is
+// never converted into a (nil, nil, zero, nil) "success" and never swallowed —
+// the slot is released and the panic continues to the recovery middleware.
+func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challenge, code, userAgent, ip string, reserved bool, attemptID uint) (session *models.Session, user *models.User, identity core.UserIdentity, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			if reserved {
@@ -207,6 +242,14 @@ func (h *AuthHandler) verifyMFALoginReleasingOnPanic(ctx context.Context, challe
 	}()
 	return h.coreService.VerifyMFALogin(ctx, challenge, code, userAgent, ip)
 }
+
+// errMFAVerificationUnavailable is returned (with http.StatusServiceUnavailable)
+// when a storage error kept an MFA verification from reaching a verdict on the
+// code at all (core.ErrMFAVerificationStorageFailure) — deliberately distinct
+// from "Invalid or expired code" (#2548, FIX-1): the caller's credential was
+// never actually checked, so telling them it was wrong would be misleading, and
+// retrying immediately is the correct client behavior for a transient failure.
+const errMFAVerificationUnavailable = "A temporary error occurred while verifying your code. Please try again."
 
 // mfaSafeMessages are the fixed, deliberately client-safe error strings core's
 // MFA functions return for expected failure modes (missing user, already/not

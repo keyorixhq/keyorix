@@ -17,37 +17,44 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
-
-var ncCRUDCounter atomic.Int64
 
 // freshNCCore opens a unique in-memory SQLite DB migrated for notification channels
 // and returns a ready-to-use KeyorixCore.
 func freshNCCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_crud_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_crud_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
 		&models.NotificationChannel{},
 	))
-	return core.NewKeyorixCore(store.NewLocalStorage(db))
+	return ncCore(db)
+}
+
+// ncCore builds the KeyorixCore these handler tests drive. The webhook URL
+// validator is stubbed to accept: these tests exercise the CRUD handlers, not
+// the SSRF guard (core's own tests cover validateWebhookURL), and the real
+// validator resolves example.com over the network, so with no DNS the tests
+// failed 400 for reasons unrelated to what they assert. Same stub as
+// newNotifChannelHandler.
+func ncCore(db *gorm.DB) *core.KeyorixCore {
+	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs.SetWebhookURLValidator(func(_ string) error { return nil })
+	return cs
 }
 
 // freshNCCoreWithChannel opens a DB, migrates, seeds one channel, and returns
@@ -55,23 +62,30 @@ func freshNCCore(t *testing.T) *core.KeyorixCore {
 func freshNCCoreWithChannel(t *testing.T) (*core.KeyorixCore, uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_crud_ch_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_crud_ch_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
 		&models.NotificationChannel{},
 	))
+	// URLEnc, not URL (#2433): URL is gorm:"-" (not a persisted column) -- a raw
+	// db.Create setting only URL would silently persist no URL at all, and
+	// UpdateNotificationChannel (which TestNCUpdate_Success below drives) would
+	// then decrypt an empty URLEnc, failing webhook URL validation on any
+	// update that doesn't itself touch "url".
+	//
+	// Wrapped with the plaintext format tag (#2468), not the bare bytes: url_enc
+	// is self-describing now, and a raw URL there is an unrecognised format byte
+	// that the read path correctly refuses. This core has no encryptor wired, so
+	// plaintext-tagged is exactly what its own write path would have produced.
 	ch := &models.NotificationChannel{
 		Name:    "test-channel",
 		Type:    "webhook",
-		URL:     "https://example.com/hook",
+		URLEnc:  ports.WrapNotificationChannelURL(ports.NotificationChannelURLTagPlaintext, []byte("https://example.com/hook")),
 		Enabled: true,
 	}
 	require.NoError(t, db.Create(ch).Error)
-	return core.NewKeyorixCore(store.NewLocalStorage(db)), ch.ID
+	return ncCore(db), ch.ID
 }
 
 // ── Create ────────────────────────────────────────────────────────────────────
@@ -280,12 +294,9 @@ func TestNCList_WithChannel(t *testing.T) {
 func TestNCList_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_list_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_list_err_")
 	// No AutoMigrate — table missing to force a real DB error.
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := ncCore(db)
 	h := NewNotificationChannelHandler(cs)
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
@@ -357,12 +368,9 @@ func TestNCCreate_ValidationError(t *testing.T) {
 func TestNCCreate_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_create_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_create_err_")
 	// No AutoMigrate — table missing to force a real DB error on create.
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	cs := ncCore(db)
 	h := NewNotificationChannelHandler(cs)
 
 	body, _ := json.Marshal(map[string]any{
@@ -400,10 +408,7 @@ func TestNCGet_BadID(t *testing.T) {
 func TestNCGet_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_get_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_get_err_")
 	// Migrate the table so it exists, then close the connection to cause a real error.
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	ch := &models.NotificationChannel{Name: "ch", Type: "webhook", URL: "https://x.com", Enabled: true}
@@ -470,10 +475,7 @@ func TestNCUpdate_BadID(t *testing.T) {
 func TestNCUpdate_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_upd_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_upd_err_")
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	ch := &models.NotificationChannel{Name: "ch", Type: "webhook", URL: "https://x.com", Enabled: true}
 	require.NoError(t, db.Create(ch).Error)
@@ -540,10 +542,7 @@ func TestNCDelete_BadID(t *testing.T) {
 func TestNCDelete_StorageError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := ncCRUDCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_nc_del_err_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_nc_del_err_")
 	require.NoError(t, db.AutoMigrate(&models.NotificationChannel{}))
 	ch := &models.NotificationChannel{Name: "ch", Type: "webhook", URL: "https://x.com", Enabled: true}
 	require.NoError(t, db.Create(ch).Error)
@@ -582,4 +581,28 @@ func TestNCDelete_Success(t *testing.T) {
 	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
 	data := resp["data"].(map[string]any)
 	assert.Equal(t, true, data["deleted"])
+}
+
+// #2779: a duplicate channel name is a client error with a message naming the conflict,
+// not a 500 telling the operator to contact support. Real unique index (AutoMigrate'd
+// in-memory SQLite through the production LocalStorage), so the driver's own error text
+// is what the mapping has to cope with.
+func TestNCCreate_DuplicateNameIs409(t *testing.T) {
+	t.Parallel()
+	h := NewNotificationChannelHandler(freshNCCore(t))
+	create := func() *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"name": "ops-alerts", "type": "email", "email": "ops@example.com"})
+		req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Create(w, req)
+		return w
+	}
+	require.Equal(t, http.StatusCreated, create().Code)
+
+	w := create()
+	require.Equal(t, http.StatusConflict, w.Code, "response body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "already exists")
+	assert.NotContains(t, w.Body.String(), "contact support")
+	assert.NotContains(t, w.Body.String(), "UNIQUE", "the raw driver error must not reach the client")
 }

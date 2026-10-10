@@ -86,6 +86,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
             {/* Trigger button */}
             <button
                 type="button"
+                data-testid="project-switcher-trigger"
                 onClick={() => setOpen((o) => !o)}
                 className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm transition-colors duration-100"
                 style={{
@@ -149,7 +150,7 @@ export const ProjectSwitcher: React.FC<ProjectSwitcherProps> = ({ onNavigate }) 
                     </div>
 
                     {/* Project list */}
-                    <div className="max-h-48 overflow-y-auto py-1">
+                    <div data-testid="project-switcher-list" className="max-h-48 overflow-y-auto py-1">
                         {!searching && filtered.some((p) => recentIds.includes(p.id)) && (
                             <p
                                 className="px-3 pt-1 pb-1.5 text-[10px] font-semibold uppercase tracking-wide"

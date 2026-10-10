@@ -121,16 +121,14 @@ func (ls *LocalStorage) ListProjectsWithCounts(ctx context.Context, includeDelet
 			EnvironmentCount: r.EnvironmentCount,
 		}
 		// Last activity = most recent of the project's own update or any of its
-		// secrets' updates. Computed in Go (not SQL GREATEST) so the query works
-		// on both Postgres and the SQLite-backed tests; the two columns share a
-		// format within a given DB, so a lexical compare is a valid time compare.
-		pc.LastActivity = r.UpdatedAt
-		if r.LastSecretActivity != nil && *r.LastSecretActivity > pc.LastActivity {
-			pc.LastActivity = *r.LastSecretActivity
-		}
+		// secrets' updates, compared as instants (the columns can carry different
+		// offsets, so a lexical compare is not a time compare) and reported as UTC
+		// RFC 3339. Computed in Go (not SQL GREATEST) so the query works on both
+		// Postgres and the SQLite-backed tests.
+		pc.LastActivity = latestUTC(r.UpdatedAt, r.LastSecretActivity)
 		if r.DeletedAt != nil {
 			pc.Deleted = true
-			pc.DeletedAt = *r.DeletedAt
+			pc.DeletedAt = utcRFC3339(*r.DeletedAt)
 		}
 		result = append(result, pc)
 	}
@@ -166,16 +164,34 @@ func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*mod
 	return &project, nil
 }
 
-func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Project) (*models.Project, error) {
-	if err := ls.db.WithContext(ctx).Save(project).Error; err != nil {
-		if isDuplicateProjectNameViolation(err) {
+// UpdateProjectFields persists name, description and updated_at — plus
+// require_mfa only when requireMFA is non-nil — onto a live project row. See
+// the storage.Storage interface doc for the two things the full-row
+// UpdateProject this replaced (a bare Save) got wrong: resurrecting a
+// concurrently deleted project, and reverting a concurrently enabled ADR-037
+// require_mfa the caller never asked to touch (#2697).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the clause
+// that stops the resurrection.
+func (ls *LocalStorage) UpdateProjectFields(ctx context.Context, id uint, name, description string, requireMFA *bool, updatedAt time.Time) (bool, error) {
+	cols := map[string]interface{}{
+		"name":        name,
+		"description": description,
+		"updated_at":  updatedAt,
+	}
+	if requireMFA != nil {
+		cols["require_mfa"] = *requireMFA
+	}
+	res := ls.db.WithContext(ctx).Model(&models.Project{}).Where("id = ?", id).Updates(cols)
+	if res.Error != nil {
+		if isDuplicateProjectNameViolation(res.Error) {
 			// See CreateProject's comment: a rename collided with the partial
 			// case-insensitive unique index (#385).
-			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, err)
+			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateProjectName, res.Error)
 		}
-		return nil, fmt.Errorf("failed to update project: %w", err)
+		return false, fmt.Errorf("failed to update project: %w", res.Error)
 	}
-	return project, nil
+	return res.RowsAffected == 1, nil
 }
 
 // deleteProjectCascade performs DeleteProject's soft-delete cascade (secrets, their
@@ -185,6 +201,33 @@ func (ls *LocalStorage) UpdateProject(ctx context.Context, project *models.Proje
 // DeleteProjectIfEmpty can run the exact SAME cascade, inside its own transaction,
 // immediately after its own empty-project check, without duplicating this logic or
 // splitting the check and the cascade across two top-level storage calls.
+// lockProjectRowForCascade row-locks the project FIRST (#2656, INV-STORE-21).
+// Every child writer that must not commit under a deleted project
+// (RestoreEnvironment, RestoreSecret, CreateSecret via tx.LockLiveProject)
+// writes its child row, then re-reads the project FOR SHARE in the same
+// transaction. Taking this lock before any count or sweep that decides
+// whether to delete the project is what makes that sound: either the child
+// writer's FOR SHARE came first and this caller waits for it to commit, so
+// whatever runs next sees its row, or this lock came first and the child's
+// FOR SHARE waits, then sees the project gone and rolls back. Locking only
+// at the project's own final UPDATE (or not at all before a preceding
+// count) leaves a window where a child's write and re-check lands AFTER a
+// decision was made on stale information but BEFORE this lock, so the
+// decision goes uncorrected and the child commits under a project this
+// caller is about to (or already did) delete. SQLite has no row lock; its
+// single writer serializes the transaction instead.
+func lockProjectRowForCascade(tx *gorm.DB, id uint) error {
+	if tx.Dialector.Name() != "postgres" {
+		return nil
+	}
+	var locked []uint
+	if err := tx.Model(&models.Project{}).Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where(sqlWhereID, id).Pluck("id", &locked).Error; err != nil {
+		return fmt.Errorf("failed to lock project: %w", err)
+	}
+	return nil
+}
+
 func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	// Stamp the project and the rows the cascade soft-deletes with ONE uniform
 	// deleted_at, so RestoreProject can bring back exactly this cascade's rows and not
@@ -193,21 +236,8 @@ func deleteProjectCascade(tx *gorm.DB, id uint) error {
 	// model to deleted_at IS NULL, so already-deleted children are left untouched and
 	// keep their original timestamp.
 	deletedAt := time.Now()
-	// Row-lock the project FIRST (#2656, INV-STORE-21). Every child writer that must not
-	// commit under a deleted project (RestoreEnvironment) writes its child row, then
-	// re-reads the project FOR SHARE in the same transaction. Taking this lock before
-	// the child sweeps below is what makes that sound: either the child writer's
-	// FOR SHARE came first and this cascade waits for it to commit, so the sweeps see
-	// its row, or this lock came first and its FOR SHARE waits, then sees the project
-	// deleted and rolls back. Locking only at the project's own UPDATE at the end
-	// leaves a window where a child lands after its sweep but before the project lock.
-	// SQLite has no row lock; its single writer serializes the transaction instead.
-	if tx.Dialector.Name() == "postgres" {
-		var locked []uint
-		if err := tx.Model(&models.Project{}).Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where(sqlWhereID, id).Pluck("id", &locked).Error; err != nil {
-			return fmt.Errorf("failed to lock project: %w", err)
-		}
+	if err := lockProjectRowForCascade(tx, id); err != nil {
+		return err
 	}
 	// Soft-delete all currently-live secrets in the project.
 	if err := tx.Model(&models.SecretNode{}).
@@ -287,9 +317,28 @@ func (ls *LocalStorage) DeleteProject(ctx context.Context, id uint) error {
 // is read from, and committed alongside, the same transaction as the delete (mirrors
 // #313's original guarantee, just via a single storage-layer call instead of a
 // core-layer WithTransaction wrapper).
+//
+// #2887: the project row is locked FIRST, BEFORE the count -- not merely before the
+// cascade (deleteProjectCascade already did that, one call too late for this
+// function's own count). CreateSecret's own commit path writes its new secret row,
+// then re-reads the project FOR SHARE in the same transaction (tx.LockLiveProject) --
+// the same protocol lockProjectRowForCascade's doc comment describes. Counting
+// before taking this lock let the legitimate interleaving "CreateSecret inserts,
+// takes FOR SHARE (uncontended because this function hasn't locked yet), commits,
+// reporting success" land AFTER this function's own stale zero-count decision but
+// BEFORE its (deferred, cascade-only) lock -- so the cascade's own fresh sweep
+// still swept the just-committed secret, deleting a project that, at the moment its
+// caller was told "created", held a live secret forever. Locking first instead
+// forces CreateSecret's FOR SHARE to wait for THIS transaction to finish: either it
+// sees the project gone and rolls its own insert back (a clear, honest error to its
+// caller), or this count runs after CreateSecret's insert is visible and correctly
+// finds a blocking secret. Either outcome beats "reported created, silently swept".
 func (ls *LocalStorage) DeleteProjectIfEmpty(ctx context.Context, id uint) (int, error) {
 	var blockingSecretCount int
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := lockProjectRowForCascade(tx, id); err != nil {
+			return err
+		}
 		var secretCount int64
 		if err := tx.Model(&models.SecretNode{}).
 			Where(sqlWhereProjectID, id).Count(&secretCount).Error; err != nil {
@@ -563,26 +612,189 @@ func (ls *LocalStorage) ClearProjectSecretOwnership(ctx context.Context, userID,
 	return nil
 }
 
+// secretNodeSQLOwnedColumns are the secret_nodes columns whose value is owned by
+// the DATABASE, not by any in-memory *models.SecretNode, so a full-struct write
+// must never carry them.
+//
+// # Why this exists (#2843)
+//
+// read_count is the lifetime counter behind MaxReads — a burn-after-N-reads
+// budget (#133). It is only ever advanced by a conditional SQL expression
+// (TryIncrementSecretNodeReadCount: `read_count = read_count + 1` guarded by
+// `read_count < max_reads`), precisely so that concurrent readers cannot
+// overshoot the cap. Any full-struct write of a SecretNode re-sends the
+// read_count the caller happened to load, which means:
+//
+//	reader A: TryIncrementSecretNodeReadCount  -> read_count 4 -> 5 (cap 5, done)
+//	editor B: GetSecret (read_count 4) ... UpdateSecret(description) -> read_count 4
+//	reader C: TryIncrementSecretNodeReadCount  -> 4 < 5, granted
+//
+// i.e. an UNRELATED metadata edit silently REFUNDS reads against the cap, and
+// the editor needs no permission over the cap to do it. Every UpdateSecret
+// caller in internal/core has this shape (load, mutate one field, save):
+// secret_description, classification, secret_move, secret_ownership,
+// secret_bulk_rename, secret_extend_expiring, rotation_executor, and
+// secrets.go's own update path. It is not one site's bug.
+//
+// Omitting the column is the whole fix: GORM leaves it out of the UPDATE's SET
+// list, so the database's value stands and the conditional increment remains the
+// only writer. Note this is NOT the same defect as the stale-cache one
+// cache_epoch addresses — that was a stale READ of this column; this is a stale
+// WRITE of it. Both had to be fixed, and neither fixes the other.
+var secretNodeSQLOwnedColumns = []string{"read_count"}
+
 // UpdateSecret updates an existing secret.
+//
+// read_count is omitted deliberately — see secretNodeSQLOwnedColumns. A caller
+// that genuinely needs to change the counter must go through the dedicated
+// conditional path, not through a full-struct save.
+// UpdateSecret is the full-row Save that UpdateSecretFields replaces — see the
+// storage.Storage interface doc for why exactly one caller still reaches it and
+// which open PR removes that caller (#2695 / #2668).
 func (ls *LocalStorage) UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error) {
-	if err := ls.db.WithContext(ctx).Save(secret).Error; err != nil {
+	if err := ls.db.WithContext(ctx).Omit(secretNodeSQLOwnedColumns...).Save(secret).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	// Save() wrote every other column but left read_count alone, so the struct we
+	// hand back still carries the caller's stale value. Re-read it rather than
+	// returning a row that disagrees with the database about a security counter.
+	//
+	// The error is deliberately swallowed, and that is safe rather than merely
+	// convenient: the write above has already COMMITTED, so returning an error
+	// here would tell the caller its update failed when it did not. What a failed
+	// re-read costs is a stale ReadCount on the returned struct and nothing more
+	// — enforcement never consults this field (TryIncrementSecretNodeReadCount
+	// evaluates `read_count < max_reads` inside the UPDATE itself, against the
+	// stored value), and the Omit above means the stale number can never be
+	// written back. So the failure mode is a cosmetically stale number in one
+	// response, not a refunded read.
+	var fresh models.SecretNode
+	if err := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Select("read_count").Where(sqlWhereID, secret.ID).Take(&fresh).Error; err == nil {
+		secret.ReadCount = fresh.ReadCount
+	}
 	return secret, nil
+}
+
+// UpdateSecretFields persists ONLY the fields f names, onto a LIVE secret row:
+// "UPDATE secret_nodes SET <named columns> WHERE id = ? AND deleted_at IS NULL".
+// See the storage.Storage interface doc and SecretFieldUpdate's own comment for
+// why the full-row UpdateSecret this replaced (a bare GORM Save) was unsafe for
+// every one of its callers (#2695).
+//
+// `expiration` is normalised to UTC here because this raw UPDATE bypasses
+// SecretNode.BeforeSave, which exists precisely to keep that column canonical
+// (G81, INV-STORE-19) for the read paths that range-query it in SQL.
+func (ls *LocalStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+	cols := map[string]interface{}{}
+	if f.Name != nil {
+		cols["name"] = *f.Name
+	}
+	if f.Description != nil {
+		cols["description"] = *f.Description
+	}
+	if f.Classification != nil {
+		cols["classification"] = *f.Classification
+	}
+	if f.Type != nil {
+		cols["type"] = *f.Type
+	}
+	if f.OwnerID != nil {
+		cols["owner_id"] = *f.OwnerID
+	}
+	if f.Metadata != nil {
+		cols["metadata"] = *f.Metadata
+	}
+	if f.UpdatedAt != nil {
+		cols["updated_at"] = *f.UpdatedAt
+	}
+	// The four nullable columns carry an explicit Set* flag, so "write NULL" is a
+	// deliberate act rather than indistinguishable from "leave this alone".
+	if f.SetParentID {
+		cols["parent_id"] = f.ParentID
+	}
+	if f.SetExpiration {
+		if f.Expiration != nil {
+			utc := f.Expiration.UTC()
+			cols["expiration"] = &utc
+		} else {
+			cols["expiration"] = nil
+		}
+	}
+	if f.SetMaxReads {
+		cols["max_reads"] = f.MaxReads
+	}
+	if f.SetLastRotatedAt {
+		cols["last_rotated_at"] = f.LastRotatedAt
+	}
+	if len(cols) == 0 {
+		// A caller that asked for nothing has a bug; it must not read the result
+		// as "the row is there". GORM also rejects an empty Updates outright.
+		return false, fmt.Errorf("%s: no secret fields to update", i18n.T("ErrorValidation", nil))
+	}
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).Where(sqlWhereID, id).Updates(cols)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // TransitionSecretStatus persists secret's full row via a conditional UPDATE
 // gated on the row's CURRENT status still being fromStatus (see the interface
 // doc in internal/core/storage/interface.go for why this exists alongside —
-// not instead of — UpdateSecret). Mirrors TransitionMachineIdentityState's
-// `WHERE id = ? AND state = ?` + `Select("*")` shape exactly, so every field
-// the caller mutated on secret (Status, UpdatedAt, ...) is persisted in the
-// same statement, not just a hardcoded column subset.
+// not instead of — UpdateSecretFields).
+//
+// #2695: this CAS used to be paired with Select("*"), copied from
+// TransitionMachineIdentityState. The CAS means it can never resurrect a
+// soft-deleted row, but a full-row write still REVERTED every column a narrower
+// concurrent writer had changed since the caller's read — read_count (and with
+// it a MaxReads budget), owner_id, classification, the rotation columns. Both
+// callers (SuspendSecret, ResumeSecret) set exactly Status and UpdatedAt, so
+// those are the only two columns this may write. Same whitelisting #G42 applied
+// to TransitionDynamicSecretConfigDisabled, for the same reason.
 func (ls *LocalStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
 	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
 		Where("id = ? AND status = ?", secret.ID, fromStatus).
 		Select("*").
+		// Same reason as UpdateSecret: Select("*") would otherwise re-send the
+		// caller's stale read_count and refund reads against MaxReads. A status
+		// transition has no business moving a read counter.
+		Omit(secretNodeSQLOwnedColumns...).
+		Select("Status", "UpdatedAt").
 		Updates(secret)
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// UpdateSecretRotationConfig writes only the auto-rotation columns of secret,
+// conditional on the row still being live (GORM scopes the soft-delete model to
+// deleted_at IS NULL), in secret.ProjectID, and bound to fromBackend — see the
+// interface doc in internal/core/storage/interface.go.
+//
+// Bug origin (#2650):
+//
+//	Introduced-by: core.SetSecretAutoRotate persisting its pre-read snapshot
+//	               through UpdateSecret's full-row Save
+//	Detected-by:   C-GUARD2-EXEMPT-REVIEW #2662
+//	Class:         cross-replica check-then-act (stale Save upsert)
+//	Severity:      high (a deleted secret is live again with no RestoreSecret,
+//	               no secret.restored audit event; an admin backend binding or a
+//	               cleared ownership is silently reverted)
+//	Guard:         TestCTAReview_SetSecretAutoRotate_vs_DeleteSecret_CrossReplicaPostgres,
+//	               TestSetSecretAutoRotate_IsColumnScoped
+func (ls *LocalStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.SecretNode{}).
+		Where("id = ? AND project_id = ? AND rotation_backend = ?", secret.ID, secret.ProjectID, fromBackend).
+		Updates(map[string]interface{}{
+			"auto_rotate":      secret.AutoRotate,
+			"rotation_length":  secret.RotationLength,
+			"rotation_charset": secret.RotationCharset,
+			"rotation_backend": secret.RotationBackend,
+			"rotation_ref":     secret.RotationRef,
+			"updated_at":       secret.UpdatedAt,
+		})
 	if res.Error != nil {
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
@@ -676,16 +888,37 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 		return err
 	}
 
+	// #2702/#2712: the restore and the project re-check share one transaction,
+	// write-then-check, exactly as RestoreEnvironment does (#2656). The
+	// requireLiveProject call above runs BEFORE this and outside any transaction,
+	// so DeleteProject's cascade could commit in the window between it and the
+	// UPDATE — and the cascade skips an already-deleted secret (GORM scopes its
+	// sweep to deleted_at IS NULL), so nothing swept this row and the restore then
+	// cleared deleted_at underneath a deleted project. That is precisely the end
+	// state RestoreSecret's own error message says it prevents. The named
+	// environment lock does not help: deleteProjectCascade never takes it.
+	//
+	// requireLiveProject is kept as a cheap early rejection with a better message;
+	// it is no longer what makes this safe.
 	restore := func(ctx context.Context) error {
-		result := ls.db.WithContext(ctx).Unscoped().Model(&models.SecretNode{}).
-			Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
-		if result.Error != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-		}
-		if result.RowsAffected == 0 {
-			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
-		}
-		return nil
+		return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			result := tx.Unscoped().Model(&models.SecretNode{}).
+				Where("id = ? AND deleted_at IS NOT NULL", id).Update("deleted_at", nil)
+			if result.Error != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+			}
+			if result.RowsAffected == 0 {
+				return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			}
+			live, lerr := lockLiveParent(tx, &models.Project{}, sqlWhereID, secret.ProjectID)
+			if lerr != nil {
+				return lerr
+			}
+			if !live {
+				return fmt.Errorf("cannot restore: the parent project is deleted — restore the project first")
+			}
+			return nil
+		})
 	}
 
 	if secret.EnvironmentID == 0 {
@@ -1096,4 +1329,25 @@ func (ls *LocalStorage) GetSecretAncestors(ctx context.Context, nodeID uint) ([]
 		currentID = parentID
 	}
 	return ancestors, nil
+}
+
+// latestUTC returns the later of a project's own updated_at and its newest
+// secret's updated_at as UTC RFC 3339. If either value does not parse it falls
+// back to the previous lexical choice rather than dropping the field.
+func latestUTC(projectUpdated string, secretUpdated *string) string {
+	if secretUpdated == nil {
+		return utcRFC3339(projectUpdated)
+	}
+	pt, pok := parseDBTimestamp(projectUpdated)
+	st, sok := parseDBTimestamp(*secretUpdated)
+	if pok && sok {
+		if st.After(pt) {
+			return st.UTC().Format(time.RFC3339Nano)
+		}
+		return pt.UTC().Format(time.RFC3339Nano)
+	}
+	if *secretUpdated > projectUpdated {
+		return utcRFC3339(*secretUpdated)
+	}
+	return utcRFC3339(projectUpdated)
 }

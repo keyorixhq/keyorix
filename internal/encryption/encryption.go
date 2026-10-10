@@ -143,3 +143,34 @@ func DynamicSecretConfigAAD(configID, projectID, environmentID uint) []byte {
 func DynamicSecretLeaseAAD(leaseID string, configID uint) []byte {
 	return ports.DynamicSecretLeaseAAD(leaseID, configID)
 }
+
+// NotificationChannelURLAAD returns the AAD for a notification channel's
+// encrypted destination URL (#2433), binding the ciphertext to the channel's
+// identity. See ports.NotificationChannelURLAAD's doc comment for the same
+// two-line-re-export rationale as SecretAAD above.
+func NotificationChannelURLAAD(channelID uint) []byte {
+	return ports.NotificationChannelURLAAD(channelID)
+}
+
+// The self-describing at-rest format for notification_channels.url_enc
+// (#2468), re-exported here so sweepNotificationChannels can tell a real
+// envelope from a plaintext passthrough without internal/encryption growing a
+// second spelling of the tag constants. See
+// ports.UnwrapNotificationChannelURL for why the format exists at all.
+const (
+	NotificationChannelURLTagAbsent    = ports.NotificationChannelURLTagAbsent
+	NotificationChannelURLTagPlaintext = ports.NotificationChannelURLTagPlaintext
+	NotificationChannelURLTagEncrypted = ports.NotificationChannelURLTagEncrypted
+)
+
+// NotificationChannelURLUnwrap splits a stored url_enc value into its format
+// tag and payload — see ports.UnwrapNotificationChannelURL.
+func NotificationChannelURLUnwrap(stored []byte) (byte, []byte, error) {
+	return ports.UnwrapNotificationChannelURL(stored)
+}
+
+// NotificationChannelURLWrap prefixes payload with its format tag — see
+// ports.WrapNotificationChannelURL.
+func NotificationChannelURLWrap(tag byte, payload []byte) []byte {
+	return ports.WrapNotificationChannelURL(tag, payload)
+}

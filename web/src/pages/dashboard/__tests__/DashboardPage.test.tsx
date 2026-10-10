@@ -222,9 +222,22 @@ describe('DashboardPage — operational signals', () => {
 });
 
 describe('DashboardPage — recent activity', () => {
-    it('shows an empty state with no activity', () => {
+    // The empty-state copy depends on whether the user actually has secrets (#2780).
+    // "Create your first secret to get started" is only true for a genuinely new
+    // user; a read-only project member who can see secrets but has generated no
+    // visible audit events was shown it too, under a TOTAL SECRETS count that was
+    // also wrong. Both branches are asserted, because only the pair pins the
+    // condition — a single test would pass with the copy hard-coded either way.
+    it('shows a neutral empty state when the user has secrets but no recent activity', () => {
+        render(<DashboardPage />); // baseStats.totalSecrets = 120
+        expect(screen.getByText(/no recent activity to show/i)).toBeInTheDocument();
+        expect(screen.queryByText(/create your first secret/i)).not.toBeInTheDocument();
+    });
+
+    it('invites a genuinely new user to create their first secret', () => {
+        mockHooks({ stats: { ...baseStats, totalSecrets: 0 } });
         render(<DashboardPage />);
-        expect(screen.getByText(/no activity yet/i)).toBeInTheDocument();
+        expect(screen.getByText(/create your first secret/i)).toBeInTheDocument();
     });
 
     it('renders activity rows', () => {
@@ -451,6 +464,24 @@ describe('DashboardPage — recent activity edge cases', () => {
         render(<DashboardPage />);
         expect(screen.getByText('carol')).toBeInTheDocument();
         expect(screen.getByText('custom_event')).toBeInTheDocument();
+    });
+
+    it('renders a versions_listed activity as a listing, not the raw type or an access', () => {
+        mockHooks({
+            activity: [
+                {
+                    id: 1,
+                    type: 'versions_listed',
+                    actor: 'dave',
+                    secretName: 'db-pass',
+                    timestamp: '2026-01-01T10:00:00Z',
+                },
+            ],
+        });
+        render(<DashboardPage />);
+        expect(screen.queryByText(/versions_listed/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/accessed secret/)).not.toBeInTheDocument();
+        expect(screen.getByText(/listed versions of secret/)).toHaveTextContent('listed versions of secret "db-pass"');
     });
 });
 

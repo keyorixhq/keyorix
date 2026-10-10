@@ -25,10 +25,21 @@ func (s *failCreateSessionStorage) CreateSession(ctx context.Context, session *m
 }
 
 // TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed is O4's verification
-// for VerifyMFACredentials/VerifyMFALogin (Class B, consume-first): a failure
-// minting the session AFTER the challenge+TOTP-step are consumed must fail
-// closed -- no session issued, and the consumed code/challenge stay consumed
-// (a same-step replay, even with a fresh challenge, is still refused).
+// for VerifyMFACredentials/VerifyMFALogin, UPDATED for #2567 (FIX-1): a
+// failure minting the session AFTER the challenge+TOTP-step are consumed
+// must still fail closed for THIS attempt -- no session issued on the
+// faulted call. Unlike the original O4 "consume-first" decision (still in
+// force for VerifyMFAStepUp's grant creation, see
+// TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed below), the LOGIN
+// path now releases the just-consumed TOTP step when mintSession fails: a
+// storage hiccup unrelated to the code itself must not force the user to
+// wait a full ~30s time-step (or worse, lock them out of logging in at all
+// if the hiccup persists) to retry a code that was never actually wrong.
+// #2567's own text asked for exactly this call to be made, and explicitly
+// flagged that the two cases (login vs. step-up) could reasonably differ --
+// see this PR's body for why they do: a step-up grant failure leaves the
+// caller still fully logged in with the existing session, so consume-first
+// costs them only a 15-minute restricted-secret window, not an entire login.
 func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	t.Parallel()
 	c, db, fixed := newMFATestCore(t)
@@ -49,7 +60,7 @@ func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	base := c.storage
 	c.storage = &failCreateSessionStorage{Storage: base}
 
-	sess, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
+	sess, _, _, err := c.VerifyMFALogin(ctx, ch, code, "ua", "1.2.3.4")
 	require.Error(t, err)
 	require.Nil(t, sess)
 
@@ -57,15 +68,16 @@ func TestVerifyMFALogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	require.NoError(t, db.Model(&models.Session{}).Count(&sessionCount).Error)
 	assert.Zero(t, sessionCount, "a mint failure after consume must issue NO session")
 
-	// The code and challenge are consumed regardless -- a retry with a FRESH
-	// challenge but the SAME code (fault now removed) must still be refused,
-	// proving the TOTP step stayed consumed through the earlier failure.
+	// #2567: the TOTP step is released on a mint failure -- a retry with a
+	// FRESH challenge and the SAME code (fault now removed) must succeed,
+	// proving the user isn't locked out of their own account by a storage
+	// hiccup that had nothing to do with their code.
 	c.storage = base
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess2, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
-	require.Error(t, err, "the TOTP step must stay consumed even though the earlier mint failed")
-	assert.Nil(t, sess2)
+	sess2, _, _, err := c.VerifyMFALogin(ctx, ch2, code, "ua", "1.2.3.4")
+	require.NoError(t, err, "the TOTP step must be usable again once the earlier mint failure's fault clears")
+	require.NotNil(t, sess2)
 }
 
 // TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed is O4's
@@ -131,7 +143,7 @@ func TestFinishWebAuthnLogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	base := c.storage
 	c.storage = &failCreateSessionStorage{Storage: base}
 
-	session, user, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	session, user, _, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	require.Nil(t, session)
 	require.Nil(t, user)
@@ -143,7 +155,7 @@ func TestFinishWebAuthnLogin_MintFailureAfterConsume_FailsClosed(t *testing.T) {
 	// Both the MFA challenge and the WebAuthn ceremony session stay consumed
 	// even though the mint failed -- a replay (fault removed) is still refused.
 	c.storage = base
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err, "the challenge/session pair must stay consumed even though the earlier mint failed")
 }
 
@@ -164,7 +176,7 @@ func TestFinishWebAuthnPasswordlessLogin_MintFailureAfterConsume_FailsClosed(t *
 	base := c.storage
 	c.storage = &failCreateSessionStorage{Storage: base}
 
-	session, user, err := c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	session, user, _, err := c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	require.Nil(t, session)
 	require.Nil(t, user)
@@ -203,4 +215,87 @@ func TestFinishWebAuthnReauth_GrantFailureAfterConsume_FailsClosed(t *testing.T)
 	c.storage = base
 	err = c.FinishWebAuthnReauth(ctx, 1, token, parsed)
 	require.Error(t, err, "the reauth session must stay consumed even though the earlier grant-creation failed")
+}
+
+// failCreateMFARecoveryCodesStorage fails CreateMFARecoveryCodes, the LAST
+// write inside ActivateMFA's activation transaction — so the whole transaction
+// rolls back AFTER ActivateMFA's own MarkTOTPStepUsed has already burned the
+// submitted enrolment code's time-step outside it.
+type failCreateMFARecoveryCodesStorage struct {
+	storage.Storage
+}
+
+func (s *failCreateMFARecoveryCodesStorage) CreateMFARecoveryCodes(ctx context.Context, userID uint, hashes []string) error {
+	return errors.New("injected fault: CreateMFARecoveryCodes")
+}
+
+// WithTransaction re-wraps the tx handle. Without this the decorator is INERT
+// for the call it exists to fault: ActivateMFA writes the recovery codes as
+// tx.CreateMFARecoveryCodes inside the closure, and the embedded
+// storage.Storage's own WithTransaction hands the closure the BASE storage's tx
+// handle, which has no override on it. Confirmed empirically — the first draft
+// of this test saw ActivateMFA return nil. Same blind spot CLAUDE.md records
+// for raw_storage_bypass_guard_test.go's exportedCoreStorageWrappers ("not a
+// call through a tx handle inside WithTransaction"); the two
+// fail-on-c.storage-directly decorators above (CreateSession,
+// CreateMFAStepUpGrant) never needed it because their faulted calls are made
+// on c.storage, not on a tx.
+func (s *failCreateMFARecoveryCodesStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
+	return s.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		return fn(&failCreateMFARecoveryCodesStorage{Storage: tx})
+	})
+}
+
+// TestActivateMFA_ActivationFailureAfterConsume_FailsClosed verifies
+// ActivateMFA's class-B (consume-first) row in docs/atomicity-exempt.tsv: the
+// enrolment code's TOTP step is burned BEFORE the activation transaction, and a
+// failure inside that transaction must fail closed — nothing activated, and the
+// code stays burned so it cannot be replayed within its window.
+//
+// Added by ORACLE-A-1 after coordinator review on PR #2840 found that
+// requireReauth — the row the oracle exemption originally cited — performs NO
+// consumption on this path: activation runs with user.MFAEnabled still false, so
+// secondFactorEnrolled is false and requireReauth takes its bare-password
+// branch. ActivateMFA's own MarkTOTPStepUsed is the only consume here, and this
+// test is what makes the ledger row it now cites a checked claim rather than an
+// asserted one.
+func TestActivateMFA_ActivationFailureAfterConsume_FailsClosed(t *testing.T) {
+	t.Parallel()
+	c, db, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+
+	base := c.storage
+	c.storage = &failCreateMFARecoveryCodesStorage{Storage: base}
+
+	codes, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
+	require.Error(t, err, "a failure inside the activation transaction must be reported, not swallowed")
+	assert.Nil(t, codes, "no recovery codes may be returned when the activation failed")
+
+	// The transaction rolled back: nothing was activated.
+	c.storage = base
+	var user models.User
+	require.NoError(t, db.First(&user, uint(1)).Error)
+	assert.False(t, user.MFAEnabled, "MFAEnabled must stay false when the activation transaction rolled back")
+	var secretRow models.MFASecret
+	require.NoError(t, db.Where("user_id = ?", uint(1)).First(&secretRow).Error)
+	assert.False(t, secretRow.Activated, "the MFA secret must stay un-activated")
+	var codeCount int64
+	require.NoError(t, db.Model(&models.MFARecoveryCode{}).Count(&codeCount).Error)
+	assert.Zero(t, codeCount, "no recovery codes may be stored when the activation failed")
+
+	// THE CLASS-B PROPERTY. The submitted code's step stays burned even though
+	// the activation failed: retrying with the SAME code, fault now removed, is
+	// refused. If MarkTOTPStepUsed were folded into the transaction (the "fix"
+	// the oracle's complaint invites), this retry would SUCCEED and a stolen
+	// enrolment code would be replayable inside its window.
+	codes2, err := c.ActivateMFA(ctx, 1, code, mfaTestPassword, "")
+	require.Error(t, err, "the enrolment code's TOTP step must stay consumed even though the activation failed")
+	assert.Nil(t, codes2)
+	require.NoError(t, db.First(&user, uint(1)).Error)
+	assert.False(t, user.MFAEnabled, "the replayed code must not activate MFA either")
 }

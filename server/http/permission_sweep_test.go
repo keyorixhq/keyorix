@@ -534,6 +534,23 @@ var noPermissionGateAllowlist = map[string]string{
 		"so an admin acting as a user cannot mint a durable emergency role grant attributed to the " +
 		"target. See router.go's own adjacent comment.",
 
+	"GET /api/v1/projects": "GET /projects (ListProjects) performs its own authorization INSIDE the handler " +
+		"(#2780), exactly like GET /secrets below and for the same reason: the route used to require " +
+		"secrets.read at the GLOBAL scope and then return EVERY project unfiltered, so a project-scoped " +
+		"reader got a 403 while being able to read those same projects one at a time via " +
+		"GET /projects/{id}. The handler now resolves core.VisibleProjects, which authorizes each project " +
+		"at the PROJECT scope -- the same check GET /projects/{id} applies -- so every row returned is a " +
+		"row this caller could already fetch by id, a global reader's list is unchanged, and a caller with " +
+		"no grant gets an empty list rather than a 403. It also refuses a request with no user context " +
+		"(401) and keeps ?include_deleted=true on the global grant, since a soft-deleted project is " +
+		"unreadable by id to a scoped caller. See catalog.go's ListProjects doc comment.",
+	"GET /api/v1/environments": "GET /environments (ListEnvironments) authorizes INSIDE the handler, " +
+		"same change and same reasoning as GET /projects above (#2780, fix-siblings). It returns only " +
+		"environments whose parent project the caller can read, resolved by the same " +
+		"core.VisibleProjects answer. Load-bearing rather than cosmetic: the web New Secret dialog's " +
+		"required Environment select reads THIS endpoint, so scoping the project list alone would leave " +
+		"that dialog unsatisfiable for a project-scoped reader. Refuses a request with no user context " +
+		"(401). See catalog.go's ListEnvironments doc comment.",
 	"GET /api/v1/secrets": "GET /secrets (ListSecrets) performs its own authorization INSIDE the " +
 		"handler so a project-scoped reader gets the union of their accessible scopes rather than a " +
 		"403 on an unfiltered request -- see router.go's own adjacent comment and secrets_list.go. " +
