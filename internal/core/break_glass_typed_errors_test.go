@@ -101,3 +101,39 @@ func TestRevokeBreakGlass_RefusalsAreSentinelsWithUnchangedText(t *testing.T) {
 	assert.EqualError(t, err, "Validation error: activation is not active")
 	assert.False(t, errors.Is(err, storage.ErrBreakGlassNotFound), "sentinels must not bleed into each other")
 }
+
+// getRoleByNameErrStub overrides exactly GetRoleByName to inject a fixed error.
+type getRoleByNameErrStub struct {
+	storage.Storage
+	err error
+}
+
+func (s *getRoleByNameErrStub) GetRoleByName(ctx context.Context, name string) (*models.Role, error) {
+	return nil, s.err
+}
+
+// A storage failure while resolving the emergency role is an internal error:
+// it must NOT carry ErrBreakGlassInvalidRequest (which the HTTP handler maps to
+// 400 and echoes verbatim), and its text must not name the emergency role.
+func TestActivateBreakGlass_RoleLookupDBFailureIsInternalNotInvalidRequest(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	c, st := newBootstrappedCore(t)
+	proj, err := st.CreateProject(ctx, &models.Project{Name: "bg-typed-brokendb"})
+	require.NoError(t, err)
+	member, err := st.CreateUser(ctx, foldedTestUser(t, "bg-brokendb-member", "bg-brokendb-member@example.com"))
+	require.NoError(t, err)
+	viewer, err := st.GetRoleByName(ctx, "project_viewer")
+	require.NoError(t, err)
+	require.NoError(t, st.AssignRole(ctx, member.ID, viewer.ID, storage.Scope{ProjectID: proj.ID}))
+	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "editor", DefaultTTL: time.Hour, MaxTTL: time.Hour})
+
+	dbErr := errors.New("pq: connection refused (driver detail)")
+	c.storage = &getRoleByNameErrStub{Storage: c.storage, err: dbErr}
+
+	_, err = c.ActivateBreakGlass(ctx, proj.ID, member.ID, "prod incident, database is down", "")
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrBreakGlassInvalidRequest), "a DB failure must not be classed as a client error")
+	assert.NotContains(t, err.Error(), "editor", "the emergency role name must not appear in the error")
+	assert.ErrorIs(t, err, dbErr, "the underlying error stays reachable for logging")
+}

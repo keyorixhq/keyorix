@@ -209,6 +209,11 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	}
 	role, err := c.storage.GetRoleByName(ctx, c.breakGlassPolicy.EmergencyRole)
 	if err != nil {
+		// Only a genuine "no such role" is a client-side misconfiguration. Any other
+		// error (DB failure) is internal: no sentinel, no driver text, no role name.
+		if !errors.Is(err, storage.ErrRoleNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
 		return nil, refuseBreakGlass(fmt.Sprintf("emergency role %q not found: %v", c.breakGlassPolicy.EmergencyRole, err), ErrBreakGlassInvalidRequest, err)
 	}
 	// Refuse an install-wide admin role as the emergency role: break-glass grants at a
