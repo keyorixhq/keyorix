@@ -434,23 +434,37 @@ func (c *KeyorixCore) roleSetContainsAdmin(ctx context.Context, roleIDs []uint) 
 // configuration — the friction this product exists to avoid. Fails CLOSED on any lookup
 // error (an inability to verify must never open the auto-grant), matching scimGroupConfersAdmin.
 func (c *KeyorixCore) idpAutoGrantOfRoleIsEscalation(ctx context.Context, roleID uint, roleName string) bool {
+	escalation, err := c.idpAutoGrantEscalationVerdict(ctx, roleID, roleName)
+	return escalation || err != nil // fail closed: cannot verify → refuse the auto-grant
+}
+
+// idpAutoGrantEscalationVerdict is idpAutoGrantOfRoleIsEscalation with the lookup
+// failure kept apart from the verdict: err != nil means NOTHING was decided. A
+// caller that must tell "this role is admin-tier" from "could not find out" uses
+// this one. SSO reconcile (#2910) does: the first is a counted, deliberate block,
+// and the second is a reconcile error that refuses the login (#2839 condition 1).
+// Either way the grant is not made.
+func (c *KeyorixCore) idpAutoGrantEscalationVerdict(ctx context.Context, roleID uint, roleName string) (bool, error) {
 	if isAdminRoleName(roleName) {
-		return true
+		return true, nil
 	}
 	bypass, err := c.roleSetContainsAdmin(ctx, []uint{roleID})
-	if err != nil || bypass {
-		return true
+	if err != nil {
+		return false, fmt.Errorf("resolving role %d's admin-bypass flag: %w", roleID, err)
+	}
+	if bypass {
+		return true, nil
 	}
 	perms, err := c.storage.GetRolePermissions(ctx, roleID)
 	if err != nil {
-		return true // fail closed: cannot verify → refuse the auto-grant
+		return false, fmt.Errorf("resolving role %d's permissions: %w", roleID, err)
 	}
 	for _, p := range perms {
 		if p.Name == permRolesAssign {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // requireGlobalAdminToReinstateAdminRoles refuses to reinstate roleIDs unless
