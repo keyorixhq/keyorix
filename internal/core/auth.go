@@ -125,7 +125,7 @@ var ErrLoginPostVerdict = errors.New("login denied by a storage error after the 
 // cookies, and a failure there has to count toward the lockout exactly like a
 // wrong password (see LoginCompletion).
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
-	session, user, _, lc, err := c.LoginPending(ctx, req)
+	session, user, _, lc, err := c.loginPending(ctx, req, false)
 	if err != nil {
 		return nil, user, err
 	}
@@ -151,6 +151,12 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 // the session is always nil and no completion is handed back, because the
 // accounting has already been settled here.
 func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
+	return c.loginPending(ctx, req, true)
+}
+
+// loginPending is LoginPending; withIdentity=false skips the identity read for
+// Login, whose callers build no response from it.
+func (c *KeyorixCore) loginPending(ctx context.Context, req *LoginRequest, withIdentity bool) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
 	if err != nil {
 		return nil, nil, UserIdentity{}, nil, err
@@ -191,9 +197,11 @@ func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*mod
 		return nil, user, UserIdentity{}, nil, err
 	}
 	// #2844: the last fallible-and-reported read, before the session is written.
-	identity, err := c.resolveLoginIdentityBeforeMint(ctx, user.ID)
-	if err != nil {
-		return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
+	var identity UserIdentity
+	if withIdentity {
+		if identity, err = c.resolveLoginIdentityBeforeMint(ctx, user.ID); err != nil {
+			return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
+		}
 	}
 	lc := c.newLoginCompletion(user)
 	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)

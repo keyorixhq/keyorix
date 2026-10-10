@@ -84,11 +84,30 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 // or a storage error — same fail-open posture as every sibling limiter in
 // this file; a caller that gets ok=false has nothing to release and should
 // not call ReleaseLoginAttempt.
+//
+// The reservation is identified by a key generated HERE, before the write
+// (#2956 follow-up). A write can land and still report an error (a lost
+// acknowledgement). Keyed by the row id alone, that reservation had no handle:
+// the request could not hand it back when it delivered a session, so a
+// successful login stayed counted. One retry with the SAME key resolves it: the
+// storage write is idempotent per key, so the retry returns the row that
+// landed, or writes it if the first attempt did not. Either way the attempt is
+// counted exactly once and stays releasable, and a write that keeps failing is
+// the plain fail-open case above (never a double count).
 func (c *KeyorixCore) ReserveLoginAttempt(ctx context.Context, ip string) (id uint, ok bool) {
 	if ip == "" {
 		return 0, false
 	}
-	id, err := c.storage.ReserveLoginAttempt(ctx, CanonicalIP(ip), c.now())
+	key, err := generateSecureToken()
+	if err != nil {
+		return 0, false
+	}
+	now := c.now()
+	ip = CanonicalIP(ip)
+	id, err = c.storage.ReserveLoginAttempt(ctx, ip, now, key)
+	if err != nil {
+		id, err = c.storage.ReserveLoginAttempt(ctx, ip, now, key)
+	}
 	if err != nil {
 		return 0, false
 	}
