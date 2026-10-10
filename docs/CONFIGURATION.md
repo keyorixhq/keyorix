@@ -364,12 +364,49 @@ secrets:
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 
+**Both `enable_file_permission_check` and `require_mfa` default to `true` when
+omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
+from its first start with no config changes needed: the first admin to log in is
+asked to enrol MFA (TOTP or passkey) before doing anything else, and a problem
+with the encryption key material or the database file (missing, undersized,
+readable beyond its owner) refuses to start. The config file and TLS cert/key —
+inputs an orchestrator usually mounts (a Kubernetes ConfigMap/Secret is
+root-owned 0644 by default) — only get a warning naming the file, the mismatch
+and the fix while the key is left at its default; set
+`enable_file_permission_check: true` explicitly to refuse on those too.
+
+**Upgrading an existing deployment** that never set
+`enable_file_permission_check`: the server tells a fresh install from an upgrade
+by its database (users already exist). An upgrade gets a grace period — a
+problem the startup checks find is logged as a loud `ADR-112` warning instead of
+refusing to start. The grace period ends for good the first time the deployment
+boots with the checks passing (recorded in the database as
+`adr112.file_permission_check.enforced`); from then on it fails closed like a
+fresh install. Setting the key explicitly (`true`, or `false` to opt out
+visibly) also ends it.
+
+While in the grace period the deployment is **not** reported as compliant: every
+start logs `WARNING: security.insecure_skip_startup_validation is in effect
+(grace-warn-only)`, and `admin validate --posture` counts it as a deviation. The
+setting's state (`off`, `grace-warn-only`, `enforcing-implicit` or
+`enforcing-explicit`) is recorded in the start-to-start settings diff, so
+entering or leaving the grace period is audited. The first start after upgrading
+to this version records one such change, because the recorded value changed
+from `true`/`false` to these names.
+
+`require_mfa` on an upgraded deployment that never set it gets the same kind of
+grace period: MFA is **not** enforced yet, and every start logs a loud `ADR-112
+grace period` warning. Have every interactive admin enrol, then set
+`require_mfa: true` explicitly to enforce it (or `false` to opt out visibly). A
+fresh install is enforced from its first start and recorded in the database
+(`adr112.require_mfa.enforced`), so it stays enforced after its admins exist.
+
 ```yaml
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
-  require_mfa: false              # true = mandate a second factor for interactive login
+  require_mfa: true               # false = don't mandate a second factor for interactive login
   login_lockout:
     enabled: false                # opt-in per-account lockout (brute-force protection)
     max_attempts: 5               # failed password logins within the window before locking
@@ -378,11 +415,46 @@ security:
     max_cooldown: "1h"            # ceiling for the exponential backoff
 ```
 
-With `require_mfa: true`, an interactive (session-authenticated) user **without** a
-second factor is confined to the MFA-enrolment endpoints until they enrol. A TOTP
-secret **or** a passkey satisfies it. Non-interactive credentials — personal
-access tokens, machine tokens, OIDC — are **exempt** so automation is never broken.
-Per-project MFA (ADR-037) is set per project via the API
+Every setting named `insecure_*` is part of ADR-112's opt-out rule: it weakens
+the baseline below its secure default, is warned about at every start it's in
+effect, appears in the start-to-start settings diff audit, and is reported as a
+deviation by the posture report below.
+
+**`keyorix-server admin validate --posture`** (ADR-112 §4) reports every
+secure-baseline deviation in one place instead of warnings scattered across
+separate start-up log lines, and exits non-zero if any is found. **Every
+security-weakening setting in effect counts** — encryption-at-rest disabled,
+database TLS disabled, unauthenticated `/metrics`, a log-delivered setup link —
+because of what it does, independently of whether its `insecure_` naming has
+been settled yet. Also reported: `enable_file_permission_check` disabled, a real
+file-permission/encryption/database problem, an incomplete key-file set, a
+cleartext listener contradicting `require_transport_tls`, and an admin without
+MFA or a passkey.
+
+Each deviation says whether it comes from a **shipped default** or an
+**explicit** config choice, so "this install has not been hardened yet" is
+distinguishable from "someone turned this off" — both count toward the exit
+code. *Explicit* means the config file literally writes the setting's key (even
+to its default value — `server/config/production.yaml` writes
+`require_transport_tls: false`, so there it is explicit); *shipped default*
+means the file is silent and the weak state is what an absent key resolves to.
+A key that arrives only through a YAML merge key (`<<:`) reads as not written.
+Startup checks are reported only if they ran: validation stops at the first
+failed check, and any check after it is listed as "not evaluated" rather than
+as a second failure. An upgraded deployment in the `enable_file_permission_check`
+or `require_mfa` grace period is a deviation even when nothing is wrong yet, because
+the server would only warn, or not enforce at all, if something were. The report
+works this out from the database the same way the server does; if it cannot read
+the database it counts the deviation instead of assuming the deployment enforces.
+A setting on its implicit default with a real problem is also its own deviation. Only TLS mode and the KEK salt
+file's age are informational: no rotation-age threshold is defined anywhere in
+this codebase, so a number there would be a guess.
+
+With `require_mfa: true` (the default), an interactive (session-authenticated) user
+**without** a second factor is confined to the MFA-enrolment endpoints until they
+enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
+personal access tokens, machine tokens, OIDC — are **exempt** so automation is
+never broken. Per-project MFA (ADR-037) is set per project via the API
 (`PUT /projects/{id}` `{ "require_mfa": true }`), independent of this flag.
 
 **Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection
@@ -1009,18 +1081,27 @@ jit_access_expiry:
 
 ## break_glass
 
-Opt-in **self-service emergency access** (incident response — NIS2/DORA). When
-enabled, any authenticated user can `POST /api/v1/projects/{id}/break-glass` (or run
-`keyorix break-glass activate`) to **immediately** self-grant the configured
-emergency role at that project — no approval. The activation is **time-bound** (it
+Opt-in **self-service emergency access** (incident response — NIS2/DORA). **Disabled
+by default** (a deliberate secure default): until `break_glass.enabled: true` is set
+and the server restarted, every activation attempt is refused with
+`permission denied: break-glass is not enabled on this server; set
+break_glass.enabled: true in keyorix.yaml and restart`. When enabled, any
+**member of the project** (a user, or a user's group, holding a role scoped to that
+project — a global role such as the install-wide viewer does not count) can
+`POST /api/v1/projects/{id}/break-glass` (or run `keyorix break-glass activate`)
+to **immediately** self-grant the configured emergency role at that project — no
+approval. Non-members get `permission denied: break-glass is available only to
+members of the project`, so in practice it elevates a lower project role (for
+example `project_viewer`) to the emergency role. The activation is **time-bound** (it
 auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
 **written justification**, is **loudly audited** (`break_glass.activated`), and
 **alerts the project's admins**. Each activation is a queryable record for post-hoc
 review (`GET …/break-glass`, `keyorix break-glass list`).
 
-Deliberately not RBAC-gated — the point is access the caller does *not* have — so
-the controls are: it must be enabled here, every use is justified + audited +
-alerted, the grant expires, and an admin can revoke it early.
+Deliberately not RBAC-gated on the *emergency* permissions — the point is access the
+caller does *not* have — but gated on project membership, so the controls are: it
+must be enabled here, the caller must belong to the project, every use is
+justified + audited + alerted, the grant expires, and an admin can revoke it early.
 
 `POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
 after-the-fact check — who reviewed it, when, and a note — exactly once per
