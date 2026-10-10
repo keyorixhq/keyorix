@@ -39,12 +39,12 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-// adr112FilePermEnforcedKey / adr112RequireMFAEnforcedKey are the system_metadata
-// keys recording that this deployment is past (or was never in) ADR-112's grace
-// period for that setting. Their value is the RFC 3339 time first recorded.
+// The system_metadata markers recording that this deployment is past (or was
+// never in) ADR-112's grace period for that setting; defined in internal/config
+// so the posture report (server/admin) reads the same keys.
 const (
-	adr112FilePermEnforcedKey   = "adr112.file_permission_check.enforced"
-	adr112RequireMFAEnforcedKey = "adr112.require_mfa.enforced"
+	adr112FilePermEnforcedKey   = config.ADR112FilePermEnforcedMarker
+	adr112RequireMFAEnforcedKey = config.ADR112RequireMFAEnforcedMarker
 )
 
 // adr112MFAReason is applyADR112UpgradeGrace's reason for the require_mfa

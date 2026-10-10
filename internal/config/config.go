@@ -995,6 +995,16 @@ func DeriveMaxRequestBodySize(maxSecretSize int) int64 {
 	return int64(base64Size) + secretSizeEnvelopeHeadroomBytes
 }
 
+// ADR112FilePermEnforcedMarker and ADR112RequireMFAEnforcedMarker are the
+// system_metadata keys the server writes once a deployment has been enforced on
+// enable_file_permission_check / require_mfa (ADR-112): a deployment whose
+// database has users and no marker is an upgrade still inside that key's grace
+// period (server/adr112_grace.go). The value is the RFC 3339 time first recorded.
+const (
+	ADR112FilePermEnforcedMarker   = "adr112.file_permission_check.enforced"
+	ADR112RequireMFAEnforcedMarker = "adr112.require_mfa.enforced"
+)
+
 type SecurityConfig struct {
 	// EnableFilePermissionCheck gates the file-permission/DEK-salt-size/database-
 	// reachability startup checks (internal/startup.ValidateStartup) and whether
