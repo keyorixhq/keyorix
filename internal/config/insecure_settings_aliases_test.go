@@ -365,3 +365,16 @@ func TestLoad_DeprecatedAliases_EveryReleasedKeyRoundTripsThroughLoad(t *testing
 		t.Error("calibration: a misspelled OldPath row must fail the round trip for the released key")
 	}
 }
+
+// TestDocs_ConfigurationListsEveryDeprecatedAlias keeps the operator-facing
+// rename table in docs/CONFIGURATION.md in step with deprecatedSettingAliases
+// (coordinator review of #2899, item 3: the docs showed 3 of 16).
+func TestDocs_ConfigurationListsEveryDeprecatedAlias(t *testing.T) {
+	raw, err := os.ReadFile("../../docs/CONFIGURATION.md")
+	require.NoError(t, err)
+	doc := string(raw)
+	for _, a := range deprecatedSettingAliases {
+		row := fmt.Sprintf("| `%s` | `%s` |", a.OldPath, a.NewPath)
+		assert.Contains(t, doc, row, "docs/CONFIGURATION.md's rename table is missing %s -> %s", a.OldPath, a.NewPath)
+	}
+}

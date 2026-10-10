@@ -100,11 +100,10 @@ All notable changes to Keyorix are documented here. This project follows
   A **sweep of the whole config surface** (`insecure_settings_sweep_test.go`)
   is what keeps the registry honest: a setting whose name reads as an opt-out
   and that no entry covers fails CI by name, and a set ratchet over every
-  leaf setting fails on *any* config addition, removal or rename — because eight of the registered
+  leaf setting fails on *any* config addition, removal or rename — because seven of the registered
   weakenings (`membership.validation_mode`, `storage.database.ssl_mode`,
   `credential_delivery.mode`, the SMTP/email `tls` enums, `metrics_token`,
-  `max_request_body_bytes`, `sso.providers[].trust_asserted_email`) have names
-  no pattern list can recognise. Thirteen settings that cannot be renamed
+  `max_request_body_bytes`) have names no pattern list can recognise. Thirteen settings that cannot be renamed
   mechanically — each needing a polarity inversion of a load-bearing flag, or
   a non-boolean field restructured into a real boolean — are recorded as known
   exceptions with an owning tracking issue, and are covered by the warning,

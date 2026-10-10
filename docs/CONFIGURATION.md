@@ -414,6 +414,32 @@ deprecated alias that also warns when used. A start-to-start diff audits any
 security-relevant setting that changes between two starts of the same
 deployment.
 
+The renamed settings, with the deprecated name each still accepts (same
+meaning, a start-up warning when the old name is used; when both are set the
+new name wins and the old one is reported). `[]` marks a list: the rename
+applies to every entry.
+
+| Deprecated name | Current name |
+|---|---|
+| `security.allow_unsafe_file_permissions` | `security.insecure_allow_unsafe_file_permissions` |
+| `security.login_lockout.disabled` | `security.login_lockout.insecure_disable_login_lockout` |
+| `security.recover_admin.keyless_mode` | `security.recover_admin.insecure_keyless_admin_recovery` |
+| `audit.siem.allow_private_network_target` | `audit.siem.insecure_allow_private_network_siem_target` |
+| `audit.siem.allow_insecure_transport` | `audit.siem.insecure_allow_plaintext_siem_transport` |
+| `evidence_delivery.webhook.allow_private_network_target` | `evidence_delivery.webhook.insecure_allow_private_network_evidence_target` |
+| `evidence_delivery.webhook.allow_insecure_transport` | `evidence_delivery.webhook.insecure_allow_plaintext_evidence_transport` |
+| `notifications.webhook.allow_private_network_target` | `notifications.webhook.insecure_allow_private_network_notify_target` |
+| `notifications.webhook.allow_insecure_transport` | `notifications.webhook.insecure_allow_plaintext_notify_transport` |
+| `dynamic_secrets.allow_private_network_targets` | `dynamic_secrets.insecure_allow_private_network_dynamic_secret_targets` |
+| `dynamic_secrets.allow_insecure_transport` | `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` |
+| `storage.encryption.key_provider.kms_allow_context_fallback` | `storage.encryption.key_provider.insecure_allow_kms_context_fallback` |
+| `storage.encryption.key_provider.allow_weaker_fallback` | `storage.encryption.key_provider.insecure_allow_weaker_kek_fallback` |
+| `storage.encryption.key_provider.fallbacks[].kms_allow_context_fallback` | `storage.encryption.key_provider.fallbacks[].insecure_allow_kms_context_fallback` |
+| `storage.encryption.key_provider.fallbacks[].allow_weaker_fallback` | `storage.encryption.key_provider.fallbacks[].insecure_allow_weaker_kek_fallback` |
+| `sso.providers[].trust_asserted_email` | `sso.providers[].insecure_trust_saml_asserted_email` |
+| `sso.providers[].saml.allow_idp_initiated` | `sso.providers[].saml.insecure_allow_idp_initiated_saml` |
+| `audit_checkpoints.disabled` | `audit_checkpoints.insecure_disable_audit_checkpoints` |
+
 With `require_mfa: true` (the default), an interactive (session-authenticated) user
 **without** a second factor is confined to the MFA-enrolment endpoints until they
 enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —

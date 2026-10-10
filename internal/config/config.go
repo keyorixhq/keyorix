@@ -1015,10 +1015,10 @@ const (
 type SecurityConfig struct {
 	// EnableFilePermissionCheck gates the file-permission/DEK-salt-size/database-
 	// reachability startup checks (internal/startup.ValidateStartup) and whether
-	// enforceKeyFilePermissions fails closed instead of warning. ADR-112: secure
-	// by default -- Load() resolves an ABSENT key to true (and records that in
-	// EnableFilePermissionCheckImplicitDefault below), not Go's bool zero value,
-	// so a fresh install enforces from its first start without anyone setting this.
+	// enforceKeyFilePermissions fails closed instead of warning. An ABSENT key
+	// is false: the ADR-112 secure-by-default flip is decided in its own PR
+	// (see Load), and until it lands nothing sets the ImplicitDefault marker
+	// below.
 	EnableFilePermissionCheck bool `yaml:"enable_file_permission_check"`
 	// EnableFilePermissionCheckImplicitDefault records whether Load() set
 	// EnableFilePermissionCheck to true itself (the key was absent from the
@@ -1055,8 +1055,8 @@ type SecurityConfig struct {
 	// RequireMFA mandates TOTP MFA for interactive login: a session-authenticated
 	// user without MFA enabled is confined to the MFA-enrolment endpoints until
 	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.
-	// ADR-112: secure by default -- Load() resolves an ABSENT key to true (see
-	// RequireMFAImplicitDefault below), not Go's bool zero value.
+	// An ABSENT key is false until the ADR-112 secure-by-default flip lands in
+	// its own PR (see Load).
 	RequireMFA bool `yaml:"require_mfa"`
 	// RequireMFAImplicitDefault is RequireMFA's counterpart to
 	// EnableFilePermissionCheckImplicitDefault above: true only when Load() set
@@ -1077,7 +1077,8 @@ type SecurityConfig struct {
 	// for an exponentially-backing-off cooldown. Distinct from (and complementary to)
 	// the per-IP rate limiter, which a distributed/botnet guess against one account can
 	// evade. It is ENABLED BY DEFAULT — a secrets-manager login must resist online
-	// guessing out of the box. Set login_lockout.disabled to opt out.
+	// guessing out of the box. Set login_lockout.insecure_disable_login_lockout
+	// to opt out (deprecated alias: login_lockout.disabled).
 	LoginLockout LoginLockoutConfig `yaml:"login_lockout"`
 	// RequireTransportTLS, when true, refuses to start an enabled HTTP/gRPC listener
 	// that has no TLS configured — failing closed so bearer tokens and secret values are

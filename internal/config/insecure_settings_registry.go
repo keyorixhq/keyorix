@@ -13,11 +13,11 @@
 // the IDENTIFIER the warning, the audit trail and the posture report use, and
 // it is deliberately independent of what the YAML key is called today:
 //
-//   - NO setting is renamed by this PR. Andrei's 2026-10-06 split puts the
-//     literal YAML renames in later, small follow-ups, each keeping the old key
-//     working as a warning-logging deprecated alias. Until one lands, every
-//     entry is derived-only: Name is the target name, SourcePaths is what the
-//     config file actually says today.
+//   - Sixteen settings have been renamed to their insecure_ name (#2899), each
+//     keeping the old key working as a warning-logging deprecated alias
+//     (insecure_settings_aliases.go; DeprecatedAlias below names it). Every
+//     other entry is derived-only: Name is the target name, SourcePaths is
+//     what the config file actually says today.
 //   - Thirteen of them cannot be renamed mechanically at all, and are recorded
 //     here as KNOWN EXCEPTIONS rather than left out: each needs either a
 //     polarity inversion of a load-bearing flag, or a non-boolean field (an
@@ -25,8 +25,8 @@
 //     restructured into a real boolean. Those are product decisions, not
 //     mechanical edits. They are listed, with their current name, proposed
 //     name and the shape change each needs, in #2895 (rows 1-13; its row 14,
-//     sso.providers[].trust_asserted_email, IS mechanically renameable and is
-//     registered with the renameable entries) -- and they are fully
+//     sso.providers[].trust_asserted_email, was mechanically renameable and is
+//     now sso.providers[].insecure_trust_saml_asserted_email) -- and they are fully
 //     covered by the warning + audit + posture mechanisms under their CURRENT
 //     names in the meantime, so none of this is invisible while it waits.
 //
@@ -63,9 +63,10 @@ type InsecureSetting struct {
 	SourcePaths []string
 	// DeprecatedAlias is the old dotted YAML path this setting was renamed
 	// from, or "" when it was already compliant (ships with an insecure_
-	// name already) or has not been renamed yet. Empty for EVERY entry at
-	// present: see the package doc -- the renames are follow-up PRs, and the
-	// field is kept so one can set it without reshaping the registry.
+	// name already) or has not been renamed (a derived-only entry, including
+	// the thirteen known exceptions). Set for the sixteen renamed settings;
+	// TestInsecureSettingsRegistry_DeprecatedAliasesMatchAliasTable keeps it in
+	// step with deprecatedSettingAliases.
 	DeprecatedAlias string
 	// Describe is a one-line, human-readable explanation of what being in
 	// effect actually weakens, for the start-up warning and (eventually)
