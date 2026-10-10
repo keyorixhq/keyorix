@@ -46,10 +46,14 @@ func TestJourney_LivePostgresBackup(t *testing.T) {
 
 	srcDSN := j17IsolatedDatabase(t, base)
 	keysVolume := t.TempDir() // stands in for the keyorix_keys volume (absolute paths, as in the image)
-	src := harness.StartServer(t, serverBin, j17PostgresBackend(srcDSN, keysVolume))
+	src := harness.StartServer(t, serverBin, j17PostgresBackend(t, srcDSN, keysVolume))
 	t.Cleanup(src.Close)
-	seeded := appGetsSecret(t, src, cliBin, "smoketestadmin", harness.BootstrapAdminPassword)
-	srcToken := adminLogin(t, src, "smoketestadmin", harness.BootstrapAdminPassword)
+	// Shipped security.require_mfa default (ADR-112): prove it, then enrol TOTP through
+	// the real API. The factor is kept: the restored server carries the same MFA state,
+	// so the operator logs in there with the same authenticator.
+	requireMFAEnrolmentPremise(t, src, "smoketestadmin", harness.BootstrapAdminPassword)
+	srcToken, factor := enrolTOTPFactor(t, src, "smoketestadmin", harness.BootstrapAdminPassword)
+	seeded := appGetsSecretAs(t, src, cliBin, srcToken)
 	wantValue, _ := secretValueAndCount(t, src, srcToken, seeded.SecretID)
 
 	// ── Backup WHILE the server is live (the documented flow) ────────────
@@ -100,9 +104,9 @@ func TestJourney_LivePostgresBackup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read source config: %v", err)
 	}
-	dstCfg := strings.Replace(string(srcCfg), "name: "+pgdsnName(srcDSN), "name: "+pgdsnName(dstDSN), 1)
+	dstCfg := strings.Replace(string(srcCfg), "name: "+parsePGDSN(t, srcDSN).DBName, "name: "+parsePGDSN(t, dstDSN).DBName, 1)
 	if dstCfg == string(srcCfg) {
-		t.Fatalf("could not retarget the config at the fresh database (no %q line)", "name: "+pgdsnName(srcDSN))
+		t.Fatalf("could not retarget the config at the fresh database (no %q line)", "name: "+parsePGDSN(t, srcDSN).DBName)
 	}
 	if err := os.WriteFile(filepath.Join(targetDir, "keyorix.yaml"), []byte(dstCfg), 0o600); err != nil {
 		t.Fatalf("write target config: %v", err)
@@ -118,7 +122,7 @@ func TestJourney_LivePostgresBackup(t *testing.T) {
 	}
 	restored := bootRestoredServer(t, serverBin, targetDir, targetEnv, targetPort)
 	t.Cleanup(restored.Close)
-	restoredToken := adminLogin(t, restored, "smoketestadmin", harness.BootstrapAdminPassword)
+	restoredToken := loginWithTOTP(t, restored, "smoketestadmin", harness.BootstrapAdminPassword, factor)
 	gotValue, _ := secretValueAndCount(t, restored, restoredToken, seeded.SecretID)
 	if gotValue != wantValue {
 		t.Fatalf("restored secret value mismatch (redacted; want-len=%d got-len=%d)", len(wantValue), len(gotValue))
@@ -129,34 +133,17 @@ func TestJourney_LivePostgresBackup(t *testing.T) {
 // in the same field-by-field shape scripts/e2e's own Postgres smoke leg
 // uses (password via KEYORIX_DB_PASSWORD, never in the config file), and
 // key files at ABSOLUTE paths in keysDir, as keyorix.docker.yaml does.
-func j17PostgresBackend(dsn, keysDir string) harness.DBBackend {
-	f := j17ParseDSN(dsn)
-	def := func(k, d string) string {
-		if f[k] == "" {
-			return d
-		}
-		return f[k]
-	}
-	db := fmt.Sprintf("    host: %s\n    port: \"%s\"\n    name: %s\n    user: %s\n    ssl_mode: %s\n",
-		def("host", "localhost"), def("port", "5432"), def("dbname", "keyorix"), def("user", "keyorix"), def("sslmode", "disable"))
+func j17PostgresBackend(t *testing.T, dsn, keysDir string) harness.DBBackend {
+	t.Helper()
+	pg := parsePGDSN(t, dsn)
 	return harness.DBBackend{
 		Name: "postgres",
-		ConfigExtra: "storage:\n  type: postgres\n  database:\n" + db + fmt.Sprintf("  encryption:\n    enabled: true\n    dek_path: %q\n    salt_path: %q\n",
+		ConfigExtra: "storage:\n  type: postgres\n  database:\n" + pg.yaml() + fmt.Sprintf("  encryption:\n    enabled: true\n    dek_path: %q\n    salt_path: %q\n",
 			filepath.Join(keysDir, "data.key"), filepath.Join(keysDir, "kek.salt")),
-		ExtraEnv: []string{"KEYORIX_DB_PASSWORD=" + f["password"]},
+		ExtraEnv: []string{"KEYORIX_DB_PASSWORD=" + pg.Password},
+		// Shipped security.require_mfa default (ADR-112); the journey enrols TOTP.
+		KeepMFADefault: true,
 	}
-}
-
-func pgdsnName(dsn string) string { return j17ParseDSN(dsn)["dbname"] }
-
-func j17ParseDSN(dsn string) map[string]string {
-	out := map[string]string{}
-	for _, kv := range strings.Fields(dsn) {
-		if k, v, ok := strings.Cut(kv, "="); ok {
-			out[k] = v
-		}
-	}
-	return out
 }
 
 var j17DBCounter int64

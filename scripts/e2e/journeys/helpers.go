@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -342,3 +343,49 @@ func parseDecryptedValue(t *testing.T, cliOutput string) string {
 }
 
 var _ = context.Background // keep context imported for callers that need it
+
+// pgConn is the connection target KEYORIX_TEST_PG_DSN names, with libpq's defaults
+// filled in for anything the DSN leaves out.
+type pgConn struct{ Host, Port, DBName, User, Password, SSLMode string }
+
+// parsePGDSN reads a Postgres DSN in either form the test DB setting can take: a
+// postgres:// (or postgresql://) URL -- what `kpg dsn` and most CI services print -- or
+// libpq key=value pairs. Every PG-gated journey builds its server config from this, so
+// none of them can quietly fall back to localhost:5432 as user "keyorix" when the DSN is
+// in the other form.
+func parsePGDSN(t *testing.T, dsn string) pgConn {
+	t.Helper()
+	c := pgConn{}
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		u, err := url.Parse(dsn)
+		if err != nil {
+			t.Fatalf("KEYORIX_TEST_PG_DSN is not a valid URL: %v", err)
+		}
+		c.Host, c.Port, c.DBName = u.Hostname(), u.Port(), strings.TrimPrefix(u.Path, "/")
+		c.User = u.User.Username()
+		c.Password, _ = u.User.Password()
+		c.SSLMode = u.Query().Get("sslmode")
+	} else {
+		kv := map[string]string{}
+		for _, field := range strings.Fields(dsn) {
+			if k, v, ok := strings.Cut(field, "="); ok {
+				kv[k] = strings.Trim(v, "'\"")
+			}
+		}
+		c.Host, c.Port, c.DBName, c.User, c.Password, c.SSLMode =
+			kv["host"], kv["port"], kv["dbname"], kv["user"], kv["password"], kv["sslmode"]
+	}
+	for p, def := range map[*string]string{&c.Host: "localhost", &c.Port: "5432", &c.DBName: "keyorix", &c.User: "keyorix", &c.SSLMode: "disable"} {
+		if *p == "" {
+			*p = def
+		}
+	}
+	return c
+}
+
+// yaml renders the storage.database fields of the server config for this target (the
+// password travels in KEYORIX_DB_PASSWORD, never in the file).
+func (c pgConn) yaml() string {
+	return fmt.Sprintf("    host: %s\n    port: \"%s\"\n    name: %s\n    user: %s\n    ssl_mode: %s\n",
+		c.Host, c.Port, c.DBName, c.User, c.SSLMode)
+}

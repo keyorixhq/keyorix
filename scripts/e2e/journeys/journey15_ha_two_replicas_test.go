@@ -58,9 +58,10 @@ func TestJourney_HATwoReplicas(t *testing.T) {
 
 	serverBin, cliBin := harness.BuildBinaries(t)
 
+	pg := parsePGDSN(t, dsn)
 	dbPassword := os.Getenv("KEYORIX_TEST_PG_PASSWORD")
 	if dbPassword == "" {
-		dbPassword = parseLibpqDSNJ15(dsn)["password"]
+		dbPassword = pg.Password
 	}
 	if dbPassword == "" {
 		dbPassword = "keyorix-e2e-smoke"
@@ -68,11 +69,13 @@ func TestJourney_HATwoReplicas(t *testing.T) {
 	// anomaly_alerts.schedule: "2s" so the scheduler-singleton check below
 	// doesn't need to wait out the real 1h default interval to observe a tick.
 	configExtra := fmt.Sprintf("storage:\n  type: postgres\n  database:\n%s  encryption:\n    enabled: true\n    dek_path: keys/dek.key\n    salt_path: keys/kek.salt\nanomaly_alerts:\n  schedule: \"2s\"\n",
-		pgDatabaseYAMLJ15(dsn))
+		pg.yaml())
 	backend := harness.DBBackend{
 		Name:        "postgres",
 		ConfigExtra: configExtra,
 		ExtraEnv:    []string{"KEYORIX_DB_PASSWORD=" + dbPassword},
+		// Shipped security.require_mfa default (ADR-112); see the enrolment below.
+		KeepMFADefault: true,
 	}
 
 	// ── Replica A: the normal fresh-install boot sequence (admin init ->
@@ -94,7 +97,12 @@ func TestJourney_HATwoReplicas(t *testing.T) {
 	sB := startHAReplica(t, serverBin, backend, sA.Dir)
 	t.Cleanup(sB.Close)
 
-	adminToken := adminLogin(t, sA, "smoketestadmin", harness.BootstrapAdminPassword)
+	// Both replicas run the shipped config (security.require_mfa on): prove that on
+	// each, then enrol TOTP through replica A's API and work from the MFA-backed
+	// session (replica B reads the same shared MFA state from the database).
+	requireMFAEnrolmentPremise(t, sA, "smoketestadmin", harness.BootstrapAdminPassword)
+	requireMFAEnrolmentPremise(t, sB, "smoketestadmin", harness.BootstrapAdminPassword)
+	adminToken := enrolTOTPAndLogin(t, sA, "smoketestadmin", harness.BootstrapAdminPassword)
 	aEnvA := adminEnv(sA, adminToken)
 
 	const (
@@ -359,46 +367,4 @@ func applyConfigExtraJ15(t *testing.T, dir, configExtra string) {
 	if err := os.WriteFile(path, []byte(newText), 0o600); err != nil { // #nosec G703 -- dir is always t.TempDir()
 		t.Fatalf("rewrite config: %v", err)
 	}
-}
-
-// parseLibpqDSNJ15/pgDatabaseYAMLJ15 mirror scripts/e2e/audit_verify.go's
-// unexported parseLibpqDSN and api_smoke_test.go's pgDatabaseYAML exactly --
-// duplicated here rather than imported since this journey's package cannot
-// import scripts/e2e (and vice versa; both are separate `e2e`-tagged leaves).
-func parseLibpqDSNJ15(dsn string) map[string]string {
-	out := map[string]string{}
-	for _, field := range strings.Fields(dsn) {
-		kv := strings.SplitN(field, "=", 2)
-		if len(kv) != 2 {
-			continue
-		}
-		out[kv[0]] = strings.Trim(kv[1], "'\"")
-	}
-	return out
-}
-
-func pgDatabaseYAMLJ15(dsn string) string {
-	fields := parseLibpqDSNJ15(dsn)
-	host := fields["host"]
-	if host == "" {
-		host = "localhost"
-	}
-	port := fields["port"]
-	if port == "" {
-		port = "5432"
-	}
-	name := fields["dbname"]
-	if name == "" {
-		name = "keyorix"
-	}
-	user := fields["user"]
-	if user == "" {
-		user = "keyorix"
-	}
-	sslMode := fields["sslmode"]
-	if sslMode == "" {
-		sslMode = "disable"
-	}
-	return fmt.Sprintf("    host: %s\n    port: \"%s\"\n    name: %s\n    user: %s\n    ssl_mode: %s\n",
-		host, port, name, user, sslMode)
 }
