@@ -41,6 +41,7 @@ break_glass.default_ttl
 break_glass.emergency_role
 break_glass.enabled
 break_glass.max_ttl
+break_glass.review_window
 certificate_expiry.enabled
 certificate_expiry.lead_days
 certificate_expiry.schedule
