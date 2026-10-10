@@ -59,8 +59,40 @@ func (h *AuthHandler) checkLoginRateLimit(ctx context.Context, ip string) bool {
 // sharing this budget (Login, RefreshToken, VerifyMFA, BeginWebAuthnLogin,
 // FinishWebAuthnLogin, BeginWebAuthnPasswordlessLogin,
 // FinishWebAuthnPasswordlessLogin, ConsumeSetup) now reserves a slot.
-func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) {
-	h.coreService.RecordFailedLogin(ctx, ip)
+//
+// #2936 (Andrei, 2026-10-10: "count failures only"): the reservation is still
+// taken up front, for exactly F2's reason, but it is now RELEASABLE, and every
+// request that delivers a session hands its own slot back via returnLoginSlot.
+// "A successful login also consumes a slot" turned out to be a meaningful
+// behaviour change after all: one demo laptop / booth NAT / office egress is
+// one IP, an MFA login spent two slots, and a handful of ordinary logins
+// locked everybody out for 15 minutes, surviving a restart. Only an outcome
+// that delivers a session returns its slot; a wrong credential, a refused
+// request and a post-verdict storage fault (#2880/#2894) all keep it, so the
+// failure budget is exactly what it was. The step of a multi-request flow that
+// does NOT finish it (the password step of an MFA login, a WebAuthn Begin)
+// keeps its slot too, so one login flow costs at most one slot.
+func (h *AuthHandler) reserveLoginAttempt(ctx context.Context, ip string) loginSlot {
+	id, ok := h.coreService.ReserveLoginAttempt(ctx, ip)
+	return loginSlot{id: id, ok: ok}
+}
+
+// loginSlot is one reserved unit of an IP's login budget (#2936). ok is false
+// when nothing was reserved (blank IP, or the best-effort reservation write
+// failed), in which case there is nothing to return.
+type loginSlot struct {
+	id uint
+	ok bool
+}
+
+// returnLoginSlot hands a reserved slot back once its request has DELIVERED a
+// session (#2936). Call it only on that path: every other outcome must keep the
+// slot counted. Best-effort, like the reservation: a release that fails leaves
+// the slot counted, which only ever errs towards the stricter budget.
+func (h *AuthHandler) returnLoginSlot(ctx context.Context, s loginSlot) {
+	if s.ok {
+		h.coreService.ReleaseLoginAttempt(ctx, s.id)
+	}
 }
 
 // AuthHandler handles authentication HTTP requests.
@@ -155,7 +187,7 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// decode, rather than right after the rate-limit check: decode is not the
 	// slow step an attacker exploits, so a structurally-malformed request
 	// (never a real credential guess) need not consume a slot.
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 
 	// LoginPending, not Login: an HTTP login is not finished when core returns a
 	// session — completeLogin still has to resolve the identity payload, and a
@@ -226,6 +258,11 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "Unauthorized", "Invalid credentials", http.StatusUnauthorized, nil)
 		return
 	}
+
+	// #2936: a delivered login is not a failure; give the slot back. (The
+	// ErrMFARequired branch above returns earlier and keeps its slot: the flow
+	// is finished by /auth/mfa/verify, which returns ITS slot instead.)
+	h.returnLoginSlot(r.Context(), slot)
 
 	// Audit log + last-login stamp (both non-blocking)
 	ua := r.Header.Get(hdrUserAgent)
@@ -419,7 +456,7 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 	// an unbounded setup-token-guessing/DoS surface on an otherwise rate-limited
 	// unauthenticated endpoint. Reserved after the trivial field-presence check,
 	// matching every other call site's "not a structurally-malformed request" bar.
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 	result, err := h.coreService.CompleteSetup(r.Context(), body.Token, body.Password, r.Header.Get(hdrUserAgent), ip)
 	// The new password was accepted, but the account has MFA (TOTP) or a passkey
 	// enrolled — mirror Login's ErrMFARequired handling exactly (see Login above)
@@ -477,6 +514,9 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
 		return
 	}
+	// #2936: the session is delivered, so the slot goes back (the MFA-required
+	// branch above keeps it: the flow is finished by the second-factor step).
+	h.returnLoginSlot(r.Context(), slot)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
@@ -541,13 +581,18 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 	// doc. Reserved after the trivial "is a token even present" check, matching
 	// Login's "after decode" placement — a request with no token at all is not a
 	// real guess attempt.
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 
 	session, err := h.coreService.RefreshSession(r.Context(), token)
 	if err != nil {
 		sendError(w, "Unauthorized", "Session not found or expired", http.StatusUnauthorized, nil)
 		return
 	}
+	// #2936: a delivered refresh is not a failed guess. A logged-in client
+	// refreshes on a timer, and this endpoint shares the login budget, so
+	// keeping the slot would let an open browser tab lock its own IP out of
+	// logging in.
+	h.returnLoginSlot(r.Context(), slot)
 
 	// Token rotation: evict the OLD token from the auth cache immediately, like Logout
 	// and ChangePassword. Without this, the just-validated old token lingers in the 30s

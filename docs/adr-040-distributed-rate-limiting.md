@@ -37,6 +37,17 @@ Move the limiter into the database so the count is shared across replicas.
   `server/main.go`), independent of the opt-in retention
   purge scheduler — the limiter table must stay bounded even when purge is off.
 
+**Amendment (2026-10-10, #2936).** F2 (2026-09-20) moved the write to *before*
+the credential check, to stop a concurrent burst from outrunning the count, and in
+doing so started charging successful logins too, which locked whole offices and
+demo laptops out. The write still happens up front, but it is now a releasable
+reservation: a request that delivers a session (login, MFA verify, passkey finish,
+refresh, setup-link consume) deletes its own row, so in net only failures stay
+counted, as this ADR originally stated. The one exception is a step that does not
+finish its flow (the password step of an MFA login, a passwordless passkey
+`begin`), which keeps its row, so one login flow counts once. Host-side override:
+`keyorix-server admin clear-login-lockout --ip ADDR`.
+
 ## Why the write volume is acceptable
 
 A row is written only on a *failed* attempt, and the gate is checked *first*: once

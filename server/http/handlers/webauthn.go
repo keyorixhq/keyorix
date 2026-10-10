@@ -221,12 +221,18 @@ func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request)
 	}
 	// F2 (2026-09-20): reserve before resolving the challenge — see
 	// reserveLoginAttempt's doc (reserved after decode, matching Login).
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 	assertion, sessionToken, err := h.coreService.BeginWebAuthnLogin(r.Context(), body.Challenge)
 	if err != nil {
 		h.writeWebAuthnErr(w, err)
 		return
 	}
+	// #2936: a valid MFA challenge resolved -- this step guessed nothing (the
+	// challenge is the bearer token a correct password earned), and the flow's
+	// one counted slot is the password step's. Give this one back so a passkey
+	// second factor costs the same single slot a TOTP one does. A bad or expired
+	// challenge returned above and stays counted.
+	h.returnLoginSlot(r.Context(), slot)
 	sendSuccess(w, map[string]interface{}{
 		"publicKey":        assertion.Response,
 		"webauthn_session": sessionToken,
@@ -313,6 +319,8 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 		return
 	}
 	resp := h.completeLoginWithIdentity(w, r, session, user, identity, lc)
+	// #2936: the session is delivered, so this step's slot goes back.
+	h.returnLoginSlot(r.Context(), loginSlot{id: attemptID, ok: reserved})
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
@@ -360,7 +368,13 @@ func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *h
 	// gate but never reserved a slot at all (F2/#1981 left it out of scope), so
 	// unlike BeginWebAuthnLogin it never contributed to the shared per-IP
 	// budget and could be called without limit.
-	h.reserveLoginAttempt(r.Context(), ip)
+	//
+	// #2936: this slot is KEPT even on success, unlike BeginWebAuthnLogin's.
+	// Nothing here is earned by a credential -- anyone can call it cold, and it
+	// writes a WebAuthnSession row -- so returning the slot would reopen the
+	// unlimited-call surface G1 closed. It is the passwordless flow's one
+	// counted slot; the Finish step that delivers the session returns its own.
+	_ = h.reserveLoginAttempt(r.Context(), ip)
 	assertion, sessionToken, err := h.coreService.BeginWebAuthnPasswordlessLogin(r.Context())
 	if err != nil {
 		h.writeWebAuthnErr(w, err)
@@ -395,7 +409,7 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 	}
 	// F2 (2026-09-20): reserve before the (slow) assertion verification — see
 	// reserveLoginAttempt's doc (reserved after decode+parse, matching Login).
-	h.reserveLoginAttempt(r.Context(), ip)
+	slot := h.reserveLoginAttempt(r.Context(), ip)
 	session, user, identity, lc, err := h.coreService.FinishWebAuthnPasswordlessLoginPending(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
 		// #2894: as in FinishWebAuthnLogin -- same 401 either way (including an
@@ -410,6 +424,8 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 		return
 	}
 	resp := h.completeLoginWithIdentity(w, r, session, user, identity, lc)
+	// #2936: the session is delivered, so this step's slot goes back.
+	h.returnLoginSlot(r.Context(), slot)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
