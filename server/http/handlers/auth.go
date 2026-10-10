@@ -533,7 +533,8 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// #2936: the session is delivered, so the slot goes back (the MFA-required
-	// branch above keeps it: the flow is finished by the second-factor step).
+	// branch above binds it to the challenge instead; the second-factor step
+	// returns it once that step delivers the session).
 	h.returnLoginSlot(r.Context(), slot)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), result.User.ID, result.User.Username, ip, r.Header.Get(hdrUserAgent))
