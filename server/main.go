@@ -730,6 +730,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("Secret-name policy enabled (pattern=%q, max_length=%d)", snp.Pattern, snp.MaxLength)
 	}
 
+	// The auth rate limits' in-memory fallback is per process; divide its limits
+	// by the replicas sharing the budgets (ADR-040 amendment, AUTH-AUDIT-1).
+	coreService.SetAuthRateLimitFallbackReplicas(cfg.Security.AuthRateLimitFallback.GetReplicas())
+	log.Printf("Auth rate-limit storage fallback: limits divided by %d replica(s)", cfg.Security.AuthRateLimitFallback.GetReplicas())
+
 	// Apply per-account login lockout (brute-force protection, distinct from and
 	// complementary to the per-IP rate limiter, which distributed guessing can evade).
 	// Enabled BY DEFAULT — a secrets-manager login must resist online guessing out of

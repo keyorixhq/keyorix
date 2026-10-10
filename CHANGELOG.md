@@ -15,7 +15,11 @@ All notable changes to Keyorix are documented here. This project follows
   limiter with the same limits, per server process. Each fallback writes an
   `auth.rate_limit_error` audit event and increments
   `keyorix_auth_rate_limit_fallback_total{budget}`, so alert on that metric.
-  Clients see the same responses as before.
+  `/health` also reports `"auth_rate_limit": "degraded"` while a fallback is in use.
+  During the outage, password reset is tighter: half the per-IP limit, and a cap on
+  reset emails per account. In HA, set the new
+  `security.auth_rate_limit_fallback.replicas` to your replica count so each
+  replica enforces its share. Clients see the same responses as before.
 - **Successful logins no longer use up the per-IP login budget** (#2936). The
   budget (10 attempts per 15 minutes per IP, shared by the password, TOTP,
   passkey and token-refresh endpoints) was charged for every request, success

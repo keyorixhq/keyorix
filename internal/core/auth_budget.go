@@ -47,6 +47,17 @@
 //     age out. A delivered login and an admin unlock clear the entry, as they
 //     clear the stored columns.
 //
+// While a budget is on its fallback (item 5, points 2-4):
+//   - the in-memory count is held to the budget's fallback limit: its limit
+//     divided by fallbackDivisor (2 for password reset: half the per-IP limit)
+//     and by the configured replica count (SetAuthRateLimitFallbackReplicas,
+//     default 1), never below 1. A stored count that could be read is
+//     cluster-wide already and keeps the normal limit.
+//   - password reset also caps resets per account (passwordResetAccountBudget,
+//     checked in RequestPasswordReset): the email-bombing guard.
+//   - AuthRateLimitDegraded reports true until no budget has fallen back within
+//     its window, for the health endpoint.
+//
 // Every fallback is audited (EventAuthRateLimitError, Success=false) and
 // counted (keyorix_auth_rate_limit_fallback_total{budget}). The client sees no
 // difference: a refusal from memory is the same response a stored refusal is.
@@ -70,18 +81,24 @@ import (
 const EventAuthRateLimitError = "auth.rate_limit_error"
 
 // authBudget names one budget: its key namespace in login_attempts, its limit
-// and its window.
+// and its window. fallbackDivisor (0 means 1) tightens the limit while the
+// budget runs on its in-memory fallback.
 type authBudget struct {
-	name   string
-	prefix string
-	limit  int
-	window time.Duration
+	name            string
+	prefix          string
+	limit           int
+	window          time.Duration
+	fallbackDivisor int
 }
 
 var (
 	loginBudget         = authBudget{name: "login", limit: LoginMaxAttempts, window: LoginWindow}
-	passwordResetBudget = authBudget{name: "password_reset", prefix: passwordResetRateLimitPrefix, limit: PasswordResetMaxAttempts, window: PasswordResetWindow}
-	ssoBeginBudget      = authBudget{name: "sso_begin", prefix: ssoRateLimitPrefix, limit: SSOBeginMaxAttempts, window: SSOBeginWindow}
+	passwordResetBudget = authBudget{name: "password_reset", prefix: passwordResetRateLimitPrefix, limit: PasswordResetMaxAttempts, window: PasswordResetWindow, fallbackDivisor: 2}
+	// passwordResetAccountBudget caps resets per account while
+	// passwordResetBudget is on its fallback (memory only; see
+	// RequestPasswordReset). Same limit, window and divisor as the per-IP one.
+	passwordResetAccountBudget = authBudget{name: "password_reset_account", limit: PasswordResetMaxAttempts, window: PasswordResetWindow, fallbackDivisor: 2}
+	ssoBeginBudget             = authBudget{name: "sso_begin", prefix: ssoRateLimitPrefix, limit: SSOBeginMaxAttempts, window: SSOBeginWindow}
 	// accountLockoutBudget's limit and window come from the core's
 	// LoginLockoutPolicy; see accountBudget.
 	accountLockoutBudget = authBudget{name: "account_lockout"}
@@ -110,18 +127,75 @@ var authRateLimitFallbackTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help: "Count of auth rate-limit operations that fell back to the in-memory limiter because the budget's storage failed.",
 }, []string{"budget"})
 
+// SetAuthRateLimitFallbackReplicas sets how many server replicas share the
+// auth budgets (security.auth_rate_limit_fallback.replicas). Each replica's
+// in-memory fallback then enforces 1/n of a budget's fallback limit, so the
+// cluster as a whole stays near the normal limit during an outage. n < 1 is
+// treated as 1. Called once at startup.
+func (c *KeyorixCore) SetAuthRateLimitFallbackReplicas(n int) {
+	if n < 1 {
+		n = 1
+	}
+	c.authFallbackReplicas.Store(int64(n))
+}
+
+// fallbackLimit is b's limit while it runs on the in-memory fallback.
+func (c *KeyorixCore) fallbackLimit(b authBudget) int {
+	div := int64(1)
+	if b.fallbackDivisor > 1 {
+		div = int64(b.fallbackDivisor)
+	}
+	if r := c.authFallbackReplicas.Load(); r > 1 {
+		div *= r
+	}
+	limit := int64(b.limit) / div
+	if limit < 1 {
+		limit = 1
+	}
+	return int(limit)
+}
+
+// AuthRateLimitDegraded reports whether any auth budget has used its in-memory
+// fallback within that budget's window, i.e. whether a fallback may still be
+// deciding. For the health endpoint; it names no budget, key or address.
+func (c *KeyorixCore) AuthRateLimitDegraded() bool {
+	now := c.now()
+	c.authFallbackMu.Lock()
+	defer c.authFallbackMu.Unlock()
+	for _, m := range c.authFallbackLast {
+		if now.Sub(m.at) <= m.window {
+			return true
+		}
+	}
+	return false
+}
+
+// budgetDegraded reports whether b itself has fallen back within its window.
+func (c *KeyorixCore) budgetDegraded(b authBudget) bool {
+	now := c.now()
+	c.authFallbackMu.Lock()
+	defer c.authFallbackMu.Unlock()
+	m, ok := c.authFallbackLast[b.name]
+	return ok && now.Sub(m.at) <= m.window
+}
+
 // --- the stored budget, with the fallback behind it -------------------------
 
 // budgetLimited reports whether key has spent b within its window: the stored
-// count (0 when it cannot be read) plus the fallback's.
+// count plus the fallback's against the normal limit, or the fallback's alone
+// against the fallback limit. A stored count that cannot be read counts as 0.
 func (c *KeyorixCore) budgetLimited(ctx context.Context, b authBudget, key string) bool {
 	since := c.now().Add(-b.window)
+	mem := int64(c.authBudgetFallback(b).count(key, since))
+	if mem >= int64(c.fallbackLimit(b)) {
+		return true
+	}
 	n, err := c.storage.CountRecentLoginAttempts(ctx, b.prefix+key, since)
 	if err != nil {
 		c.noteAuthBudgetFallback(ctx, b, "check", key, nil, err)
-		n = 0
+		return false
 	}
-	return n+int64(c.authBudgetFallback(b).count(key, since)) >= int64(b.limit)
+	return n+mem >= int64(b.limit)
 }
 
 // budgetRecord counts one attempt against key, in memory when storage fails.
@@ -161,9 +235,16 @@ func (c *KeyorixCore) budgetRecordFallback(ctx context.Context, b authBudget, ke
 	c.authBudgetFallback(b).reserve(key, c.now(), b.window, 4*b.limit)
 }
 
-// budgetFallbackLimited reports whether the fallback alone has key at b's limit.
+// budgetFallbackLimited reports whether the fallback alone has key at b's
+// fallback limit.
 func (c *KeyorixCore) budgetFallbackLimited(b authBudget, key string) bool {
-	return b.limit > 0 && c.authBudgetFallback(b).count(key, c.now().Add(-b.window)) >= b.limit
+	return b.limit > 0 && c.authBudgetFallback(b).count(key, c.now().Add(-b.window)) >= c.fallbackLimit(b)
+}
+
+// budgetFallbackTryReserve counts one attempt for key in memory if key is
+// still under b's fallback limit, atomically, and reports whether it did.
+func (c *KeyorixCore) budgetFallbackTryReserve(b authBudget, key string) bool {
+	return c.authBudgetFallback(b).tryReserve(key, c.now(), b.window, 4*b.limit, c.fallbackLimit(b))
 }
 
 // budgetFallbackClear forgets key's in-memory attempts.
@@ -176,6 +257,12 @@ func (c *KeyorixCore) budgetFallbackClear(b authBudget, key string) {
 // will usually fail too, which is why the metric exists.
 func (c *KeyorixCore) noteAuthBudgetFallback(ctx context.Context, b authBudget, op, key string, userID *uint, err error) {
 	authRateLimitFallbackTotal.WithLabelValues(b.name).Inc()
+	c.authFallbackMu.Lock()
+	if c.authFallbackLast == nil {
+		c.authFallbackLast = map[string]authFallbackMark{}
+	}
+	c.authFallbackLast[b.name] = authFallbackMark{at: c.now(), window: b.window}
+	c.authFallbackMu.Unlock()
 	ip := key
 	if userID != nil {
 		ip = ""
@@ -198,6 +285,13 @@ func (c *KeyorixCore) authBudgetFallback(b authBudget) *authFallbackLimiter {
 		c.authFallbacks[b.name] = f
 	}
 	return f
+}
+
+// authFallbackMark is when a budget last fell back, and how long its
+// in-memory attempts live.
+type authFallbackMark struct {
+	at     time.Time
+	window time.Duration
 }
 
 // --- the bounded in-memory window -------------------------------------------
@@ -239,15 +333,38 @@ func (f *authFallbackLimiter) reserve(key string, now time.Time, window time.Dur
 	defer f.mu.Unlock()
 	e := f.touch(key)
 	f.prune(e, now.Add(-window))
+	f.add(e, now, maxPerKey)
+	return e.attempts[len(e.attempts)-1].id
+}
+
+// tryReserve is reserve, but only while key has fewer than limit attempts
+// inside window; the check and the record happen under one lock.
+func (f *authFallbackLimiter) tryReserve(key string, now time.Time, window time.Duration, maxPerKey, limit int) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e := f.touch(key)
+	f.prune(e, now.Add(-window))
+	if len(e.attempts) >= limit {
+		return false
+	}
+	f.add(e, now, maxPerKey)
+	return true
+}
+
+// add appends one attempt to e (it becomes e's last), dropping the oldest
+// beyond maxPerKey. Caller holds f.mu.
+func (f *authFallbackLimiter) add(e *authFallbackEntry, now time.Time, maxPerKey int) {
+	if maxPerKey < 1 {
+		maxPerKey = 1 // a zero limit still keeps the attempt just added
+	}
 	f.nextID++
 	id := f.nextID | authFallbackIDBit
 	e.attempts = append(e.attempts, authFallbackAttempt{id: id, at: now})
-	f.byID[id] = key
+	f.byID[id] = e.key
 	if len(e.attempts) > maxPerKey {
 		delete(f.byID, e.attempts[0].id)
 		e.attempts = e.attempts[1:]
 	}
-	return id
 }
 
 // count returns how many attempts key has at or after since.
