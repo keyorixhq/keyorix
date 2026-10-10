@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { ShareSecretModal, expiresAtFromPreset } from '../ShareSecretModal';
 import { Secret } from '../../../types';
+import { AxiosError, AxiosHeaders } from 'axios';
 
 const mockMutate = vi.fn();
 const mockReset = vi.fn();
@@ -372,6 +373,23 @@ describe('ShareSecretModal submission + lifecycle', () => {
         mutationError = new Error('Username not found');
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         expect(screen.getByText('Username not found')).toBeInTheDocument();
+    });
+
+    it("shows the server's reason, not axios's generic text, when a share is refused (#2976)", () => {
+        isError = true;
+        mutationError = new AxiosError('Request failed with status code 403', 'ERR_BAD_REQUEST', undefined, undefined, {
+            status: 403,
+            statusText: 'Forbidden',
+            headers: {},
+            config: { headers: new AxiosHeaders() },
+            data: {
+                error: 'Forbidden',
+                message: "The recipient is not a member of this secret's project.",
+            },
+        });
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        expect(screen.getByText("The recipient is not a member of this secret's project.")).toBeInTheDocument();
+        expect(screen.queryByText('Request failed with status code 403')).not.toBeInTheDocument();
     });
 
     it('shows a fallback message when the mutation fails with a non-Error value', () => {

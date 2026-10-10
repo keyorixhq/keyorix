@@ -123,8 +123,8 @@ func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
 	// CreateShareRecord verifies the recipient user row exists.
 	require.NoError(t, db.Create(&models.User{ID: actorID, Username: "actor", Email: "actor@example.com"}).Error)
 
-	// Both secrets are owned by someone else and actor 1 holds no project role at
-	// all (so it never passes via ownership or the RBAC fallback) — the ONLY
+	// Both secrets are owned by someone else and actor 1 holds no role-derived
+	// authority (so it never passes via ownership or the RBAC fallback) — the ONLY
 	// thing that distinguishes them is a direct write share on "shared".
 	mk := func(name string) uint {
 		s, err := c.storage.CreateSecret(ctx, &models.SecretNode{
@@ -141,6 +141,11 @@ func TestSuspendResumeProjectSecrets_PerSecretAuthzReCheck(t *testing.T) {
 		SecretID: sharedID, OwnerID: otherOwnerID, RecipientID: actorID, IsGroup: false, Permission: "write", CreatedAt: time.Now(),
 	})
 	require.NoError(t, err)
+	// #2941: a share applies only to a live member of the secret's project, so the
+	// actor is a member through a project-scoped grant of a role that carries no
+	// permissions (no roles/role_permissions rows exist here) — membership without
+	// any role-derived authority, leaving the share as the only distinguishing grant.
+	require.NoError(t, db.Create(&models.UserRole{UserID: actorID, RoleID: 999, ProjectID: p.ID}).Error)
 
 	// Sanity check: actor 1 really can write "shared" but not "unshared" via the
 	// single-secret path (this is exactly the authority the bulk op must mirror).

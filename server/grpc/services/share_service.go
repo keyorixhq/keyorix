@@ -272,6 +272,11 @@ func (s *ShareGRPCService) authorizeShareScoped(ctx context.Context, actor *inte
 
 // mapShareError translates core sharing errors into gRPC status codes.
 func mapShareError(err error) error {
+	// #2976: a typed share refusal carries a fixed, user-facing reason (owner not a
+	// project member, recipient not a member, ...) — the same text HTTP returns.
+	if reason, ok := core.ShareRefusalMessage(err); ok {
+		return status.Error(codes.PermissionDenied, reason)
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):

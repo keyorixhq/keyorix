@@ -265,7 +265,11 @@ func (c *KeyorixCore) principalHasScopedPermission(ctx context.Context, userID u
 // It first checks any explicit SecretACL grant (RBAC Phase 3); if found and it covers
 // perm, returns true immediately — the user need not hold a project role. Otherwise
 // falls back to project-scope RBAC (Authorize at the secret's own project/environment
-// scope). Fails closed: any resolution error returns (false, err).
+// scope), and finally to the share term (#2941, share_authz.go): an active share to a
+// project member satisfies secrets.read (read|write share) or secrets.write (write
+// share) on this one secret, and is audited as share_access_elevated because the role
+// alone denied it. A share never satisfies any other permission. Fails closed: any
+// resolution error returns (false, err).
 func (c *KeyorixCore) AuthorizeSecret(ctx context.Context, userID, secretID uint, perm string) (bool, error) {
 	// Resolve the secret first so we know its scope for the PAT check below.
 	secret, err := c.storage.GetSecret(ctx, secretID)
@@ -288,7 +292,25 @@ func (c *KeyorixCore) AuthorizeSecret(ctx context.Context, userID, secretID uint
 		return true, nil
 	}
 	// Fall back to project-scope RBAC.
-	return c.Authorize(ctx, userID, perm, scope)
+	allowed, err := c.Authorize(ctx, userID, perm, scope)
+	if err != nil || allowed {
+		return allowed, err
+	}
+	// Share term (#2941): consulted only when ACL and role both said no, so the
+	// share_access_elevated audit row marks exactly the decisions a share made.
+	need := shareNeedFor(perm)
+	if need == PermissionNone {
+		return false, nil
+	}
+	grant, err := c.sharePermissionFor(ctx, userID, secretID, secret.ProjectID, need)
+	if err != nil {
+		return false, err
+	}
+	if grant.Level == PermissionNone {
+		return false, nil
+	}
+	c.auditShareElevation(ctx, userID, secret, perm, grant)
+	return true, nil
 }
 
 // AuthorizeSecretPrincipal is the actor-aware counterpart to AuthorizeSecret,

@@ -1,0 +1,143 @@
+// share_authz_guard_test.go — #2941 guard, core half. The share term lives in exactly
+// one function (sharePermissionFor, share_authz.go); both per-secret decision
+// functions must call it, and the actor-aware entry points must route human users
+// to AuthorizeSecret. The transport halves (every per-secret REST route, every
+// per-secret gRPC RPC) are server/http/share_authz_route_guard_test.go and
+// server/grpc/services/share_authz_rpc_guard_test.go.
+//
+// Behavioural counterparts with real storage (so the guard is also watched failing on
+// the actual decision, not only on source shape): TestShareTerm_* below. Mutation
+// check (drop the share term from AuthorizeSecret → red) is recorded in the PR.
+package core
+
+import (
+	"context"
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"testing"
+	"time"
+
+	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+)
+
+func TestShareTerm_DecisionFunctionsConsultIt(t *testing.T) {
+	bodies := map[string]*ast.BlockStmt{}
+	for _, file := range []string{"authz.go", "permissions.go"} {
+		fset := token.NewFileSet()
+		f, err := parser.ParseFile(fset, file, nil, 0)
+		require.NoError(t, err)
+		for _, d := range f.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Body != nil {
+				bodies[fd.Name.Name] = fd.Body
+			}
+		}
+	}
+	for _, fn := range []string{"AuthorizeSecret", "CheckSecretPermission"} {
+		require.Contains(t, bodies, fn)
+		assert.True(t, bodyCalls(bodies[fn], "sharePermissionFor"),
+			"%s must consult the share term (sharePermissionFor) — #2941", fn)
+	}
+	for _, fn := range []string{"AuthorizeSecretPrincipal", "AuthorizeSecretPrincipalForSecret"} {
+		require.Contains(t, bodies, fn)
+		assert.True(t, bodyCalls(bodies[fn], "AuthorizeSecret") || bodyCalls(bodies[fn], "AuthorizeSecretPrincipalForSecret"),
+			"%s must route human users through AuthorizeSecret", fn)
+	}
+}
+
+func bodyCalls(body *ast.BlockStmt, name string) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == name {
+				found = true
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// shareTermRig: a real LocalStorage with one secret in project 1 owned by user 9,
+// user 2 a member of project 1 via a role that carries NO permissions (so any access
+// it gets comes from a share), and user 3 a non-member.
+func shareTermRig(t *testing.T) (*KeyorixCore, *gorm.DB, uint) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.ShareRecord{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		&models.UserRole{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SecretACL{},
+		&models.AuditEvent{}, &models.User{}, &models.Project{}, &models.Environment{},
+	))
+	require.NoError(t, db.Create(&models.Role{ID: 50, Name: "member-no-perms"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 50, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "s", IsSecret: true, ProjectID: 1, EnvironmentID: 1, OwnerID: 9}).Error)
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: time.Now}
+	return c, db, 1
+}
+
+func TestShareTerm_AuthorizeSecret_MaxOfRoleAndShare(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	c, db, secretID := shareTermRig(t)
+	ctx := context.Background()
+
+	allowed := func(user uint, perm string) bool {
+		ok, err := c.AuthorizeSecret(ctx, user, secretID, perm)
+		require.NoError(t, err)
+		return ok
+	}
+	assert.False(t, allowed(2, permSecretsRead), "member with a no-permission role and no share: denied")
+
+	share := &models.ShareRecord{SecretID: secretID, OwnerID: 9, RecipientID: 2, Permission: "write"}
+	require.NoError(t, db.Create(share).Error)
+	assert.True(t, allowed(2, permSecretsRead), "write share grants read")
+	assert.True(t, allowed(2, permSecretsWrite), "write share grants write")
+	for _, perm := range []string{permSecretsDelete, permSecretsManage, permRolesAssign} {
+		assert.False(t, allowed(2, perm), "a share never grants %s", perm)
+	}
+
+	// A non-member's share grants nothing.
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secretID, OwnerID: 9, RecipientID: 3, Permission: "write"}).Error)
+	assert.False(t, allowed(3, permSecretsRead), "shares never apply to non-members")
+
+	// Expired grants nothing.
+	past := time.Now().Add(-time.Minute)
+	require.NoError(t, db.Model(share).Update("expires_at", past).Error)
+	assert.False(t, allowed(2, permSecretsWrite), "an expired share grants nothing")
+
+	// A corrupt level grants nothing (never reads as owner).
+	require.NoError(t, db.Model(share).Updates(map[string]interface{}{"expires_at": nil, "permission": "owner"}).Error)
+	assert.False(t, allowed(2, permSecretsRead), "a share level outside read|write grants nothing")
+
+	// Revoked (deleted) grants nothing.
+	require.NoError(t, db.Model(share).Update("permission", "write").Error)
+	require.True(t, allowed(2, permSecretsWrite))
+	require.NoError(t, db.Delete(share).Error)
+	assert.False(t, allowed(2, permSecretsWrite), "revoke removes exactly the elevation")
+}
+
+func TestShareTerm_CheckSecretPermission_NonMemberShareGrantsNothing(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	c, db, secretID := shareTermRig(t)
+	ctx := context.Background()
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secretID, OwnerID: 9, RecipientID: 3, Permission: "write"}).Error)
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secretID, OwnerID: 9, RecipientID: 2, Permission: "write"}).Error)
+
+	_, err := c.CheckSecretPermission(ctx, secretID, 3, PermissionRead)
+	assert.Error(t, err, "a non-member's share must not pass the core permission check either")
+	pc, err := c.CheckSecretPermission(ctx, secretID, 2, PermissionWrite)
+	require.NoError(t, err)
+	assert.Equal(t, "direct_share", pc.Source)
+	require.NotNil(t, pc.ShareID)
+	_, err = c.CheckSecretPermission(ctx, secretID, 2, PermissionOwner)
+	assert.Error(t, err, "a write share never grants owner")
+}

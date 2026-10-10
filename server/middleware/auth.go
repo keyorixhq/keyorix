@@ -790,7 +790,10 @@ func handleScopedSecretRefPermissionRequest(next http.Handler, w http.ResponseWr
 		return
 	}
 	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	allowed, err := cs.AuthorizePrincipal(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), permission, scope)
+	// The same per-secret decision as RequireScopedSecretPermission (role, per-secret
+	// ACL, #2941 share term), so reading a secret by reference is allowed exactly when
+	// reading it by ID is. Machine principals take the role-only path inside it.
+	allowed, err := cs.AuthorizeSecretPrincipalForSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secret, permission)
 	// Pin the resolution on the request context BEFORE dispatch, regardless of
 	// the authorize outcome (finishScopedPermissionRequest still gates on
 	// allowed/err below) — this is the ONLY resolution of this ref for the

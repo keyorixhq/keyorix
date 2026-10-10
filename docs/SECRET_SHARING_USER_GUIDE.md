@@ -25,9 +25,41 @@ Secret sharing in Keyorix allows you to securely collaborate by giving other use
 - **Real-time Updates**: Changes are immediately reflected across all interfaces
 
 ### Who Can Share Secrets?
-- **Secret Owners**: Can share their secrets with others
+- **Secret Owners**: Can share their secrets with others, as long as they are a
+  member of the secret's project (they hold a role in that project). A global
+  role, such as the bootstrap `admin`, does not make anyone a member of a
+  project: give yourself a project role first (for example `project_admin`).
 - **Users with Write Permission**: Can modify shared secret content (but not sharing settings)
 - **Users with Read Permission**: Can view shared secrets but cannot modify them
+
+### How a Share Combines with a Project Role
+A share can only go to a **member of the secret's project**, and it only
+applies while the recipient is still a member. For that member, the
+permission on the shared secret is the **higher** of the two:
+
+| Project role gives | Share gives | Effective on that secret |
+|---|---|---|
+| read (e.g. `project_viewer`) | none | read |
+| read | `read` | read |
+| read | `write` | **read + write** (the share elevates them) |
+| write (e.g. `project_editor`) | `read` | read + write (the role already covers it) |
+
+- The elevation covers that one secret only, never the rest of the project.
+- A share never grants delete, secret management (`secrets.manage`: ACLs,
+  schedules, retention) or the right to share the secret onward. Only the
+  owner can share, change or revoke shares.
+- Revoking a share removes exactly the elevation. The recipient keeps whatever
+  their role gives them (in the table above, a `project_viewer` keeps read).
+- An expired share grants nothing, even before it is cleaned up.
+- A share to someone who is later removed from the project stops applying at
+  once.
+- Every action a share made possible (one the recipient's role alone would
+  not allow) is audited as `share_access_elevated` with the share ID. Share
+  create, update and revoke events name the share ID too.
+
+If a share is refused, the error says why: "you are not a member of this
+secret's project" (the owner needs a project role) or "the recipient is not a
+member of this secret's project" (the recipient needs one).
 
 ## Getting Started
 

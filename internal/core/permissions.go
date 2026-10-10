@@ -129,42 +129,20 @@ func (c *KeyorixCore) CheckSecretPermission(ctx context.Context, secretID, userI
 		}, nil
 	}
 
-	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
+	// Direct and group shares: the one share term every per-secret decision uses
+	// (share_authz.go) — active, project-member-only, read|write only.
+	grant, err := c.sharePermissionFor(ctx, userID, secretID, secret.ProjectID, requiredPermission)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		return nil, err
 	}
-	// Drop expired (time-bound) shares before any authorization: an expired share
-	// must never grant access, even though the sweep that reclaims its row runs later.
-	shares = activeShares(shares, c.shareEffectiveNow())
-
-	// Check direct shares.
-	for _, share := range shares {
-		if !share.IsGroup && share.RecipientID == userID {
-			permission := PermissionLevel(share.Permission)
-			if c.hasRequiredPermission(permission, requiredPermission) {
-				return &PermissionContext{
-					SecretID:   secretID,
-					UserID:     userID,
-					Permission: permission,
-					Source:     "direct_share",
-					ShareID:    &share.ID,
-				}, nil
-			}
-		}
-	}
-
-	// Check group shares.
-	groupPermission, shareID, err := c.CheckGroupPermissions(ctx, secretID, userID, shares, secret.ProjectID)
-	if err == nil && groupPermission != PermissionNone {
-		if c.hasRequiredPermission(groupPermission, requiredPermission) {
-			return &PermissionContext{
-				SecretID:   secretID,
-				UserID:     userID,
-				Permission: groupPermission,
-				Source:     "group_share",
-				ShareID:    shareID,
-			}, nil
-		}
+	if grant.Level != PermissionNone {
+		return &PermissionContext{
+			SecretID:   secretID,
+			UserID:     userID,
+			Permission: grant.Level,
+			Source:     grant.Source,
+			ShareID:    grant.ShareID,
+		}, nil
 	}
 
 	// Per-secret ACL fallback (RBAC Phase 3, additive — see secret_acl.go's design

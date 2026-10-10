@@ -63,9 +63,17 @@ Share a secret with a user or group.
 
 **Error Responses:**
 - `400 Bad Request`: Invalid request data
-- `403 Forbidden`: Insufficient permissions
+- `403 Forbidden`: Insufficient permissions. `message` says why when the share
+  itself is refused: only the owner can share; the owner is not a member of the
+  secret's project; or the recipient (user or group) is not a member of it.
 - `404 Not Found`: Secret not found
 - `409 Conflict`: Share already exists
+
+A share applies only to members of the secret's project. For them, the
+effective permission on the secret is the higher of their project role and the
+share (a `project_viewer` shared with `write` may update that secret); a share
+never grants delete, `secrets.manage` or re-sharing. See the
+[user guide](SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
 
 **Example:**
 ```bash

@@ -580,13 +580,21 @@ func mapSecretACLError(err error) error {
 // project/tenant boundary without silently absorbing global-scope callers'
 // legitimate "doesn't exist" answer into a denial. The downstream
 // *WithPermissionCheck core calls still enforce ownership/share on top of this.
+//
+// The found-secret decision is core.AuthorizeSecretPrincipalForSecret — the SAME
+// per-secret check HTTP's RequireScopedSecretPermission makes (role, per-secret ACL,
+// and the #2941 share term) — not the role-only AuthorizePrincipal, which left a
+// share-elevated member or an ACL grantee allowed on HTTP and denied on gRPC.
+// share_authz_guard_test.go pins this.
 func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string) error {
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
-	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	return authorizeScopedTarget(ctx, cs, actor, perm, nil, scope, "")
+	if allowed, aerr := cs.AuthorizeSecretPrincipalForSecret(ctx, actor.ActorKind(), actor.PrincipalID(), secret, perm); aerr != nil || !allowed {
+		return status.Error(codes.PermissionDenied, "insufficient permissions")
+	}
+	return enforceProjectMFA(ctx, cs, actor, secret.ProjectID)
 }
 
 // mapSecretError translates core errors into gRPC status codes.
