@@ -386,11 +386,18 @@ run_group() {
     done
     if [ "$require_mfa" = true ]; then
         echo "==> [group $group_label] ${specs[*]} asks for security.require_mfa=true"
-        awk '{ print } /^security:[[:space:]]*$/ { print "  require_mfa: true" }' "$config_path" >"$config_path.new"
-        mv "$config_path.new" "$config_path"
-        grep -q '^  require_mfa: true$' "$config_path" ||
-            fail "[group $group_label] could not set security.require_mfa in $config_path (no top-level 'security:' line?)"
+        # Flip the explicit line back (never insert a second one: a duplicate
+        # require_mfa key is a parse error or last-wins, i.e. the policy silently off).
+        sed -i.bak -E 's/^  require_mfa: false$/  require_mfa: true/' "$config_path"
+        rm -f "$config_path.bak"
     fi
+    # Exactly one require_mfa line, with the value this group asked for.
+    local want_mfa=false
+    [ "$require_mfa" = true ] && want_mfa=true
+    [ "$(grep -c '^[[:space:]]*require_mfa:' "$config_path")" = 1 ] ||
+        fail "[group $group_label] expected exactly one require_mfa line in $config_path"
+    grep -q "^  require_mfa: $want_mfa\$" "$config_path" ||
+        fail "[group $group_label] security.require_mfa is not $want_mfa in $config_path"
 
     echo "==> [group $group_label] keyorix-server admin encryption init"
     (cd "$smoke_dir" && "$SERVER_BIN" admin encryption init --config "$config_rel") ||

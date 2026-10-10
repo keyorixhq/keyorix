@@ -77,12 +77,18 @@ test('first login under require_mfa lands on enrolment, enrols TOTP, and reaches
     });
 
     // 4. Enrol TOTP through the UI.
-    await page.getByRole('button', { name: 'Enable' }).click();
-    const secretLocator = page.locator('code').first();
+    await page.getByRole('button', { name: 'Enable', exact: true }).click();
+    const secretLocator = page.getByTestId('mfa-setup-key');
     await expect(secretLocator).toBeVisible({ timeout: 10_000 });
     const secret = (await secretLocator.textContent())?.trim();
     expect(secret, 'enrolment must render a non-empty setup key').toBeTruthy();
 
+    // A code computed in the last seconds of a 30s window can expire before the
+    // server checks it. Wait out the boundary so the code is fresh when submitted.
+    const intoWindow = (Date.now() / 1000) % 30;
+    if (intoWindow > 25) {
+        await page.waitForTimeout((30 - intoWindow + 1) * 1000);
+    }
     await page.getByPlaceholder('123456').fill(totpCode(secret as string));
     await page.getByPlaceholder('Your current password').fill(ADMIN_PASSWORD as string);
     await page.getByRole('button', { name: 'Verify & enable' }).click();
