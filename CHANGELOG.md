@@ -59,6 +59,11 @@ All notable changes to Keyorix are documented here. This project follows
   unaffected). An explicit
   `enable_file_permission_check: true` keeps its exact pre-upgrade behavior,
   including refusing to start when the key material is missing.
+- **`keyorix mfa enroll` / `keyorix mfa activate`**: the CLI can now enrol a
+  TOTP factor (secret + otpauth URI, then confirm with a code and the account
+  password; prints one-time recovery codes). With `require_mfa` on, this is
+  how a CLI-only operator gets past the first-login enrolment confinement;
+  `keyorix login --mfa-code` completes later logins.
 
 ## v0.95.3 — 2026-10-01
 

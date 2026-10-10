@@ -115,8 +115,23 @@ Stores the session token (and server URL) at the CLI's one credential-file
 location — see `keyorix status --help`. Every command below reads it from there;
 none of them take `--server` again.
 
-If the account has an authenticator app enrolled (TOTP MFA), `login` asks for a
-code after the password — or pass one non-interactively:
+## Enrol MFA (required on first login)
+
+`security.require_mfa` defaults on (ADR-112): until the admin enrols a second
+factor, this session can only reach the enrolment endpoints — every command in
+"Use it" below returns `This deployment requires multi-factor authentication`.
+Enrol once, right after the first login:
+
+```bash
+./bin/keyorix mfa enroll        # prints an otpauth:// URI (QR) and a base32 secret
+./bin/keyorix mfa activate      # prompts for the code your authenticator app shows, then your password
+```
+
+In the web UI the same step is Profile → Security → Enable (TOTP) or a passkey.
+
+Save the recovery codes `mfa activate` prints — they are shown once. Enabling
+MFA invalidates the session from the first `login` above, so log in again;
+`login` now asks for a code after the password — or pass one non-interactively:
 
 ```bash
 ./bin/keyorix login --server http://localhost:8080 \
@@ -127,6 +142,8 @@ An unused recovery code works there too. Either is used for that one request:
 only the session token is stored. An account whose only second factor is a
 WebAuthn passkey cannot complete a CLI login — sign in with the web UI and use a
 personal access token (`KEYORIX_TOKEN`) for CLI work instead.
+
+(To opt out, set `security.require_mfa: false` explicitly in the config.)
 
 ## Use it
 
