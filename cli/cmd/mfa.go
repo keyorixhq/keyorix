@@ -87,7 +87,7 @@ func runMFAEnroll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("contact %s: %w", serverURL, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Secret == "" {
-		return fmt.Errorf("MFA enrolment failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("MFA enrolment failed", resp.StatusCode(), resp.Body)
 	}
 	data := resp.JSON200.Data
 
@@ -147,7 +147,7 @@ func runMFAActivate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("contact %s: %w", serverURL, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("MFA activation failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("MFA activation failed", resp.StatusCode(), resp.Body)
 	}
 
 	fmt.Println("MFA enabled. Log in again with \"keyorix login\" (it asks for a code).")
