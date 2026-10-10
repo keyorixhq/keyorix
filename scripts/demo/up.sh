@@ -260,7 +260,7 @@ ok "Admin bootstrapped"
 # admin enrols, every call except MFA enrolment is refused with HTTP 403. The
 # enrolment itself is shared with check.sh (scripts/demo/lib.sh, #3034).
 step "Enrolling TOTP for the demo admin (multi-factor authentication is required)"
-demo_enroll_admin_mfa "$SERVER_URL" "$ADMIN_USER" "$ADMIN_PASSWORD" || { echo "MFA enrolment failed (see above)" >&2; exit 1; }
+demo_enroll_mfa "$SERVER_URL" "$ADMIN_USER" "$ADMIN_PASSWORD" || { echo "MFA enrolment failed (see above)" >&2; exit 1; }
 MFA_SECRET="$DEMO_MFA_SECRET"
 MFA_URI="$DEMO_MFA_URI"
 RECOVERY_CODES="$DEMO_RECOVERY_CODES"
@@ -303,7 +303,11 @@ create_secret() { # create_secret NAME VALUE PROJECT_ID ENVIRONMENT_ID
   rm -f "$seed_value_file"
 }
 create_secret "stripe-api-key" "sk_test_demo_seed_v1" 1 1
-printf '%s\n' "sk_test_demo_seed_v2" | "$CLI_BIN" secret rotate --id 1 >/dev/null
+# rotate has no file flag; its stdin prompt writes "New secret value (hidden):" to
+# stderr, so keep stderr out of the presenter's output unless the command fails.
+printf '%s\n' "sk_test_demo_seed_v2" | "$CLI_BIN" secret rotate --id 1 >/dev/null 2>"$CLI_HOME/.rotate-err" \
+  || { cat "$CLI_HOME/.rotate-err" >&2; exit 1; }
+rm -f "$CLI_HOME/.rotate-err"
 create_secret "db-password" "demo-db-pass-v1" 2 4
 # The Secrets tab opens on Production: seed one there too so the presenter's
 # first view of backend-api is not empty (DEMO-WALK-3 finding 36).

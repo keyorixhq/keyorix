@@ -71,7 +71,7 @@ services:
     # /health — nginx:alpine has no curl), which Compose inherits without this
     # block; declared explicitly so it shows up the same way postgres' does.
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 3s
       retries: 3

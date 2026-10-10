@@ -233,9 +233,10 @@ seed_demo_org() {
   # MFAEnrollmentRequired) until it enrols TOTP, exactly as up.sh handles it
   # (#3034) -- same helper, scripts/demo/lib.sh.
   ensure_totpgen || return 1
-  demo_enroll_admin_mfa "$SERVER_URL" "$ADMIN_USER" "$ADMIN_PASSWORD" || { echo "admin MFA enrolment failed while seeding"; return 1; }
+  demo_enroll_mfa "$SERVER_URL" "$ADMIN_USER" "$ADMIN_PASSWORD" || { echo "admin MFA enrolment failed while seeding"; return 1; }
   ADMIN_MFA_SECRET="$DEMO_MFA_SECRET"
   ADMIN_TOKEN="$DEMO_TOKEN"
+  ADMIN_SESSION_FROM_SEED=true
 
   req POST /api/v1/projects "$ADMIN_TOKEN" '{"name":"backend-api","description":"Backend API"}'
   req POST /api/v1/projects "$ADMIN_TOKEN" '{"name":"mobile-app","description":"Mobile App"}'
@@ -295,6 +296,7 @@ teardown_postgres() {
 # ---------------------------------------------------------------------------
 ADMIN_USER="admin"
 ADMIN_PASSWORD="Correct-Horse-Battery-2026"
+ADMIN_SESSION_FROM_SEED=false
 ADMIN_MFA_SECRET="${ADMIN_MFA_SECRET:-}"   # set by the Postgres seed, or read from .demo-2-state below
 ALICE_PASSWORD="Nebula-Quartz-Flagstone-2026"
 MACHINE_TOKEN=""
@@ -312,19 +314,19 @@ else
   BROUGHT_UP=true
 fi
 
-if [ -f "$REPO_ROOT/.demo-2-state" ]; then
+if [ "$BACKEND" = "sqlite" ] && [ -f "$REPO_ROOT/.demo-2-state" ]; then
   MACHINE_TOKEN="$(grep -oE 'kx_machine_[A-Za-z0-9_-]+' "$REPO_ROOT/.demo-2-state" | head -1)"
   # up.sh enrols TOTP for the admin and records the key there; the admin login
   # step needs it to answer the second-factor challenge.
   [ -n "$ADMIN_MFA_SECRET" ] || ADMIN_MFA_SECRET="$(sed -n 's/^  Admin TOTP key: \([A-Z2-7]*\).*/\1/p' "$REPO_ROOT/.demo-2-state" | head -1)"
-elif [ -f "$REPO_ROOT/.demo-2-pg-state" ]; then
+elif [ "$BACKEND" = "postgres" ] && [ -f "$REPO_ROOT/.demo-2-pg-state" ]; then
   MACHINE_TOKEN="$(cat "$REPO_ROOT/.demo-2-pg-state")"
 fi
 
 CHECK_STATE_DIR="$REPO_ROOT/.demo-2-check-state"
 mkdir -p "$CHECK_STATE_DIR"
 
-ADMIN_TOKEN=""
+ADMIN_TOKEN="${ADMIN_TOKEN:-}"   # the Postgres seed leaves its MFA session here
 ALICE_TOKEN=""
 VERIFY_PROJECT_ID=""
 VERIFY_ENV_ID=""
@@ -368,6 +370,15 @@ step_webui() {
 }
 
 step_admin_login() {
+  # The Postgres seed already logged the admin in with a real MFA challenge; its
+  # session is reused rather than spending two more of the 10-per-15-minute login
+  # attempts (#2956) on an identical login.
+  if [ "$ADMIN_SESSION_FROM_SEED" = true ] && [ -n "$ADMIN_TOKEN" ]; then
+    req GET /api/v1/projects "$ADMIN_TOKEN"
+    [ "$HTTP_CODE" = "200" ] || { echo "the admin session from the seed's MFA login is not accepted ($HTTP_CODE): $RESP_BODY"; return 1; }
+    echo "reused the seed's MFA login"
+    return 0
+  fi
   # The demo admin has MFA (require_mfa is on): answer the challenge with the
   # TOTP key up.sh / the Postgres seed recorded. Against a --url target with no
   # known key a plain password login is attempted and fails clearly if MFA is on.
@@ -378,10 +389,17 @@ step_admin_login() {
 }
 
 step_alice_login() {
+  # alice has no TOTP yet (the demo has her enrol live): a password login must
+  # still succeed, but only into the MFA-enrolment-only session.
   req POST /auth/login "" "{\"username\":\"alice\",\"password\":\"$ALICE_PASSWORD\"}"
   [ "$HTTP_CODE" = "200" ] || { echo "POST /auth/login (alice) returned $HTTP_CODE: $RESP_BODY"; return 1; }
-  ALICE_TOKEN="$(jget 'd["data"]["token"]')"
-  [ -n "$ALICE_TOKEN" ] || { echo "alice login succeeded but no token in response: $RESP_BODY"; return 1; }
+  # Already enrolled (the presenter did the live enrolment on a --keep instance):
+  # the password step now asks for a code, which is the expected end state.
+  [ "$(jget 'd["data"].get("mfa_required")')" = "True" ] && { echo "alice has enrolled TOTP; password step asks for a code"; return 0; }
+  local t; t="$(jget 'd["data"]["token"]')"
+  [ -n "$t" ] || { echo "alice login succeeded but no token in response: $RESP_BODY"; return 1; }
+  req GET /api/v1/projects "$t"
+  [ "$HTTP_CODE" = "403" ] || { echo "alice (no MFA yet) got $HTTP_CODE listing projects, expected 403 MFAEnrollmentRequired -- security.require_mfa not enforced?"; return 1; }
   return 0
 }
 
@@ -486,6 +504,22 @@ step_mfa() {
   req POST /api/v1/users "$ADMIN_TOKEN" "{\"username\":\"$username\",\"email\":\"$email\",\"password\":\"$password\",\"display_name\":\"MFA Demo\"}"
   # 409 (already exists, from a previous run) is fine; any other setup problem
   # surfaces below when login itself fails.
+  #
+  # This user doubles as the MFA-enrolled "viewer" the alice checks run as: under
+  # require_mfa the real alice stays confined until she enrols, and the demo has
+  # her do that live (GOLDEN-PATH section 2) -- so the checks must not enrol HER.
+  # Same grant as alice's (project_viewer on backend-api); reusing this user also
+  # keeps the whole run inside the login budget (10 attempts / 15 min / IP, each
+  # login and each MFA verify counts; #2956).
+  local viewer_id; viewer_id="$(jget 'd["data"]["id"]')"
+  if [ -n "$viewer_id" ]; then
+    req GET /api/v1/projects "$ADMIN_TOKEN"
+    local backend_id; backend_id="$(jget 'next(p["id"] for p in d["data"]["projects"] if p["name"]=="backend-api")')"
+    req GET /api/v1/roles "$ADMIN_TOKEN"
+    local viewer_role_id; viewer_role_id="$(jget 'next(r["id"] for r in d["data"]["roles"] if r["name"]=="project_viewer")')"
+    req POST /api/v1/user-roles "$ADMIN_TOKEN" "{\"user_id\":$viewer_id,\"role_id\":$viewer_role_id,\"project_id\":$backend_id}"
+    [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ] || { echo "project_viewer grant for $username returned $HTTP_CODE: $RESP_BODY"; return 1; }
+  fi
 
   req POST /auth/login "" "{\"username\":\"$username\",\"password\":\"$password\"}"
   [ "$HTTP_CODE" = "200" ] || { echo "mfa-demo login (password step) returned $HTTP_CODE: $RESP_BODY"; return 1; }
@@ -500,6 +534,7 @@ step_mfa() {
     code="$(totp_code "$secret")"
     req POST /auth/mfa/verify "" "{\"mfa_challenge\":\"$challenge\",\"code\":\"$code\"}"
     [ "$HTTP_CODE" = "200" ] || { echo "MFA login verify failed: $HTTP_CODE $RESP_BODY -- server/http/handlers/mfa.go VerifyMFA, #2737/#2738"; return 1; }
+    ALICE_TOKEN="$(jget 'd["data"]["token"]')"
     return 0
   fi
 
@@ -527,6 +562,7 @@ step_mfa() {
   code="$(totp_code "$secret")"
   req POST /auth/mfa/verify "" "{\"mfa_challenge\":\"$challenge\",\"code\":\"$code\"}"
   [ "$HTTP_CODE" = "200" ] || { echo "MFA login verify failed right after enrolling: $HTTP_CODE $RESP_BODY"; return 1; }
+  ALICE_TOKEN="$(jget 'd["data"]["token"]')"
   return 0
 }
 
@@ -627,6 +663,7 @@ run_step "api version"               step_version
 run_step "web UI served (#2752)"     step_webui
 run_step "admin login"               step_admin_login
 run_step "alice (non-admin) login"   step_alice_login
+run_step "mfa: enroll + login (viewer session for the alice checks)" step_mfa
 run_step "alice: project list non-empty"      step_alice_projects_nonempty
 run_step "alice: dashboard secret count"      step_alice_dashboard_secret_count
 run_step "verify-write: create project/env/secret" step_verify_create
@@ -636,7 +673,6 @@ run_step "verify-write: version history"      step_verify_history
 run_step "acl: alice can read backend-api secret"   step_acl_can_read
 run_step "acl: alice cannot read default secret"    step_acl_cannot_read
 run_step "machine identity: read secret by ref"     step_machine_read_by_ref
-run_step "mfa: enroll + login"        step_mfa
 run_step "audit: log shows actions"   step_audit_logs
 run_step "audit: chain verify"        step_audit_verify
 run_step "posture report"             step_posture
