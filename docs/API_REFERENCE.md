@@ -98,8 +98,8 @@ Authorization: Bearer <token>
       "project_id": 1,
       "environment_id": 1,
       "created_by": "example-user",
-      "created_at": "2025-07-17T00:42:01+03:00",
-      "updated_at": "2025-07-17T00:42:01+03:00",
+      "created_at": "2025-07-16T21:42:01Z",
+      "updated_at": "2025-07-16T21:42:01Z",
       "expires_at": null
     }
   ],
@@ -163,8 +163,8 @@ Authorization: Bearer <token>
   "project_id": 1,
   "environment_id": 1,
   "created_by": "example-user",
-  "created_at": "2025-07-17T00:42:01+03:00",
-  "updated_at": "2025-07-17T00:42:01+03:00",
+  "created_at": "2025-07-16T21:42:01Z",
+  "updated_at": "2025-07-16T21:42:01Z",
   "value": "decrypted-secret-value"
 }
 ```
