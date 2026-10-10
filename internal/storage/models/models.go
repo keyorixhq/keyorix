@@ -1115,8 +1115,13 @@ type SecretVersion struct {
 	VersionNumber      int
 	EncryptedValue     []byte `json:"-"`
 	EncryptionMetadata JSON   `json:"-"`
-	ReadCount          int
-	CreatedAt          time.Time
+	// ReadCount is a best-effort display copy of the reads charged against the
+	// secret's MaxReads while this version was the one read (readVersionValue). A
+	// secret with no MaxReads is never charged, so this stays 0 however often the
+	// version is read; the enforcement counter is SecretNode.ReadCount. Actual read
+	// activity lives in the audit log (secret.read), not here. See docs/API_REFERENCE.md.
+	ReadCount int
+	CreatedAt time.Time
 }
 
 // DynamicSecretConfig (ADR-035) defines an on-demand database-credential source:

@@ -36,7 +36,7 @@ func sendSuccess(w http.ResponseWriter, data interface{}, message string) {
 
 	response := map[string]interface{}{
 		"success": true,
-		"data":    data,
+		"data":    utcTimes(data),
 	}
 	if message != "" {
 		response["message"] = message
@@ -58,7 +58,7 @@ func sendCreated(w http.ResponseWriter, data interface{}, message string) {
 	w.WriteHeader(http.StatusCreated)
 	response := map[string]interface{}{
 		"success": true,
-		"data":    data,
+		"data":    utcTimes(data),
 	}
 	if message != "" {
 		response["message"] = message

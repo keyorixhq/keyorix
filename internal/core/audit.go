@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -559,8 +560,56 @@ func (c *KeyorixCore) LogSecretDeleted(ctx context.Context, userID uint, secretI
 func (c *KeyorixCore) LogSecretDeletedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.deleted", &uid, &sid, &pid, ip,
-		fmt.Sprintf("User %s deleted secret %s", username, secretName))
+		fmt.Sprintf("User %s deleted secret %s", username, secretName)+c.softDeleteNote(ctx, secretID, projectID))
 	c.writeAccessLog(ctx, secretID, username, "delete", ip, ua)
+}
+
+// softDeleteNoteMarker starts the note appended to a secret.deleted description.
+// extractSecretName cuts the description at it, so the secret's name is still
+// recoverable from "User <u> deleted secret <name> (soft delete: ...)".
+const softDeleteNoteMarker = " (soft delete:"
+
+// softDeleteNote says what the delete actually did, for the audit entry (#2951):
+// a secret delete is a soft delete (restorable until purge, its versions are kept,
+// not destroyed), and secrets that depended on it lose that dependency until it is
+// restored. Best-effort and display only: a failed lookup just yields a shorter
+// note, never a missing or altered audit event.
+func (c *KeyorixCore) softDeleteNote(ctx context.Context, secretID, projectID uint) string {
+	versions := -1
+	var dependents []string
+	besteffort.Run(ctx, "audit.softDeleteNote", func() error {
+		if vs, err := c.storage.GetSecretVersions(ctx, secretID); err == nil {
+			versions = len(vs)
+		}
+		edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		for _, e := range edges {
+			if e.DependsOnSecretID != secretID {
+				continue
+			}
+			if dep, derr := c.storage.GetSecret(ctx, e.DependentSecretID); derr == nil && dep != nil {
+				dependents = append(dependents, dep.Name)
+			}
+		}
+		return nil
+	})
+	note := softDeleteNoteMarker + " restorable with 'secret restore' until purged"
+	if versions >= 0 {
+		note += fmt.Sprintf("; %d version(s) kept", versions)
+	}
+	if n := len(dependents); n > 0 {
+		shown := dependents
+		if n > 5 {
+			shown = dependents[:5]
+		}
+		note += fmt.Sprintf("; %d dependent secret(s) lose this dependency until restored: %s", n, strings.Join(shown, ", "))
+		if n > 5 {
+			note += fmt.Sprintf(" and %d more", n-5)
+		}
+	}
+	return note + ")"
 }
 
 // LogAuthLogin writes an auth.login audit event.
