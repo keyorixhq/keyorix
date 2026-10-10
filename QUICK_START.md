@@ -231,7 +231,9 @@ Skipping the two `rbac assign-role` lines and going straight to `share create`
 is refused with the reason: the owner (or the recipient) is not a member of
 the secret's project. A share only applies to project members, and for them
 it can lift access on that one secret: a `project_viewer` shared with `write`
-can update it, and revoking the share takes exactly that away again. See
+can update its value and metadata and rotate it (nothing else: suspend, move,
+expiry changes and the like still need a project role), and revoking the share
+takes exactly that away again. See
 [the sharing guide](docs/SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
 
 `--ttl` (a Go duration) and `--expires` (RFC3339) are mutually exclusive; either
