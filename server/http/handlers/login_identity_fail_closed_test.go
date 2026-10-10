@@ -5,10 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,7 +14,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -25,28 +22,29 @@ import (
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 const identityFailClosedTestPassword = "Secret#Passw0rd!"
 
 const totpStepDuration = 30 * time.Second
 
-var identityFailClosedDBCounter atomic.Int64
-
 // newIdentityFailClosedTestHandler builds an AuthHandler over a FaultyStorage-
 // wrapped LocalStorage, with MFA enrolled and activated for user "alice" (id 1).
-// Each call gets its own private in-memory DB (a unique shared-cache name) so
+// Each call gets its own private in-memory DB (sqlitetest.Open, a unique
+// shared-cache name with the pool capped to one connection) so
 // concurrent/sequential test functions in this file never collide over user id
-// 1. Returns the handler, the fault wrapper (initially unarmed — a pure pass-
+// 1 — and so the detached goSafe audit writes a request dispatches cannot
+// collide with this test's own reads over SQLite's shared-cache table locks
+// (#2906: "database table is locked", which a busy timeout cannot retry).
+// Returns the handler, the fault wrapper (initially unarmed — a pure pass-
 // through), the TOTP secret, a clock ONE STEP PAST activation's own code (so
 // the caller's first verify code doesn't collide with the step
 // ActivateMFA's own anti-replay check already consumed), and the backing
 // *gorm.DB so a test can inspect what a request actually left behind in storage.
 func newIdentityFailClosedTestHandler(t *testing.T) (*AuthHandler, *faultstorage.FaultyStorage, string, time.Time, *gorm.DB) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kxidentityfailclosed%d?mode=memory&cache=shared&_timeout=30000", identityFailClosedDBCounter.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxidentityfailclosed")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{}, &models.MFAChallenge{},
 		&models.Session{}, &models.AuditEvent{}, &models.MFAStepupToken{}, &models.MFAStepUpGrant{},
