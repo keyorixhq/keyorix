@@ -297,6 +297,16 @@ CA (browsers warn unless you trust Caddy's root). When running the `tls` profile
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
 
+Caddy runs as uid:gid `65532` (not root), with every capability dropped except
+`NET_BIND_SERVICE` and a read-only root filesystem. Earlier releases ran it as
+root, so an existing `caddy_data` / `caddy_config` volume is root-owned. **Upgrading
+needs no manual step:** the one-shot `caddy-init` service (same profile) chowns
+both volumes to `65532:65532` before Caddy starts, and Caddy waits for it to
+complete. It is idempotent, so it also runs harmlessly on a fresh or
+already-migrated volume; the issued certificates and Caddy's internal CA are
+kept. `caddy-init` is the only container in the stack that runs as root, with
+only `CHOWN` and no network.
+
 **Your own proxy.** Or terminate TLS at an existing Caddy/Traefik/nginx/LB in
 front of the `web` container: point it at `web:80` and forward
 `X-Forwarded-Proto: https`.

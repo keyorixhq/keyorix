@@ -6,6 +6,11 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **The bundled Caddy (`tls` compose profile) no longer runs as root.** It runs as
+  uid:gid 65532 with only `NET_BIND_SERVICE`. A one-shot `caddy-init` service
+  chowns the existing `caddy_data` / `caddy_config` volumes first, so upgrading
+  an install whose Caddy volumes are root-owned needs no manual step and keeps
+  its certificates. See `docs/SELF_HOSTING.md` §7.
 - **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
   baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
   1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD

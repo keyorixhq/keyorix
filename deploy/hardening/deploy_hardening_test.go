@@ -111,6 +111,122 @@ func TestCompose_ServicesAreHardened(t *testing.T) {
 	}
 }
 
+func nonRootUser(u string) bool {
+	u = strings.TrimSpace(u)
+	if u == "" || u == "root" || u == "0" || strings.HasPrefix(u, "0:") {
+		return false
+	}
+	return true
+}
+
+func volumeNames(svc m) []string {
+	var out []string
+	for _, v := range asList(svc["volumes"]) {
+		if s, ok := v.(string); ok {
+			// "caddy_data:/data" or "./file:/path:ro"
+			if src, _, found := strings.Cut(s, ":"); found && !strings.HasPrefix(src, ".") && !strings.HasPrefix(src, "/") {
+				out = append(out, src+":"+strings.Split(s, ":")[1])
+			}
+		}
+	}
+	return out
+}
+
+// DEPLOY-2 decision 3: caddy runs as a non-root user with only NET_BIND_SERVICE.
+// Its /data and /config volumes were created root-owned by the previous layout, so
+// a one-shot caddy-init service chowns them first. The init step is the only root
+// service and may add back only CHOWN; the guard also pins that caddy waits for it
+// to COMPLETE (not merely start) and that both mount the very same volumes.
+func TestCompose_CaddyRunsNonRootAfterOneShotInit(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc m
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	services := asMap(doc["services"])
+	caddy, ok := services["caddy"].(m)
+	if !ok {
+		t.Fatal("caddy service missing")
+	}
+	user, _ := caddy["user"].(string)
+	if !nonRootUser(user) {
+		t.Errorf("caddy: user must be a non-root uid:gid, got %q", user)
+	}
+	if !strings.Contains(user, ":") {
+		t.Errorf("caddy: user %q must name uid:gid explicitly so the init step can chown to it", user)
+	}
+	if len(asList(caddy["cap_add"])) != 1 || !hasString(caddy["cap_add"], "NET_BIND_SERVICE") {
+		t.Errorf("caddy: cap_add must be exactly [NET_BIND_SERVICE], got %v", caddy["cap_add"])
+	}
+
+	initSvc, ok := services["caddy-init"].(m)
+	if !ok {
+		t.Fatal("caddy-init service missing: an existing root-owned caddy_data/caddy_config volume would make non-root caddy fail")
+	}
+	if p := asList(initSvc["profiles"]); len(p) != 1 || !hasString(p, "tls") {
+		t.Errorf("caddy-init: profiles must be [tls] like caddy, got %v", initSvc["profiles"])
+	}
+	if initSvc["restart"] != "no" {
+		t.Errorf("caddy-init: restart must be \"no\" (one-shot), got %v", initSvc["restart"])
+	}
+	if initSvc["read_only"] != true {
+		t.Error("caddy-init: read_only must be true")
+	}
+	if !hasString(initSvc["cap_drop"], "ALL") {
+		t.Error("caddy-init: cap_drop must contain ALL")
+	}
+	if len(asList(initSvc["cap_add"])) != 1 || !hasString(initSvc["cap_add"], "CHOWN") {
+		t.Errorf("caddy-init: cap_add must be exactly [CHOWN], got %v", initSvc["cap_add"])
+	}
+	if !hasString(initSvc["security_opt"], "no-new-privileges:true") {
+		t.Error("caddy-init: security_opt must contain no-new-privileges:true")
+	}
+	if initSvc["privileged"] == true {
+		t.Error("caddy-init: privileged must not be set")
+	}
+	joined := ""
+	for _, key := range []string{"entrypoint", "command"} {
+		for _, c := range asList(initSvc[key]) {
+			s, _ := c.(string)
+			joined += s + " "
+		}
+	}
+	if !strings.Contains(joined, "chown") || !strings.Contains(joined, user) {
+		t.Errorf("caddy-init: entrypoint/command %q must chown the volumes to caddy's user %q", joined, user)
+	}
+	if !strings.Contains(joined, "/data") || !strings.Contains(joined, "/config") {
+		t.Errorf("caddy-init: %q must chown both /data and /config", joined)
+	}
+	if initSvc["network_mode"] != "none" {
+		t.Errorf("caddy-init: network_mode must be none, got %v", initSvc["network_mode"])
+	}
+
+	dep := asMap(asMap(caddy["depends_on"])["caddy-init"])
+	if dep["condition"] != "service_completed_successfully" {
+		t.Errorf("caddy: depends_on caddy-init must use condition service_completed_successfully, got %v", dep["condition"])
+	}
+	cv, iv := volumeNames(caddy), volumeNames(initSvc)
+	for _, want := range []string{"caddy_data:/data", "caddy_config:/config"} {
+		found := false
+		for _, v := range cv {
+			found = found || v == want
+		}
+		if !found {
+			t.Errorf("caddy: volume %s missing", want)
+		}
+		found = false
+		for _, v := range iv {
+			found = found || v == want
+		}
+		if !found {
+			t.Errorf("caddy-init: volume %s missing -- it must chown the same volumes caddy uses", want)
+		}
+	}
+}
+
 // ---- helm chart ----------------------------------------------------------
 
 func renderChart(t *testing.T) []m {
