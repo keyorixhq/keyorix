@@ -977,24 +977,14 @@ func diffSubsetOf(diff, allowed []string) bool {
 // which asserts the EFFECT ("a reported failure must leave ZERO new audit
 // rows") and does go red against that same pre-fix file.
 var knownOpenTolerances = []knownOpenTolerance{
-	// #2807 (filed 2026-10-05 from THIS PR's own fuzz-changed run, shard 0,
-	// minimized input committed by the fuzzer as
-	// testdata/fuzz/FuzzStorageFaultOperations/cc44f6cd6ac24cd8; pre-minimization
-	// REPLAY_HEX=d820633230): a GetUserRoles error AFTER the passkey assertion
-	// already verified leaves the reserved LoginAttempt consumed and an
-	// MFAStepUpGrant committed, while completeLogin reports a 500 and revokes
-	// only the Session (#2412). Confirmed PRE-EXISTING on origin/main @ cbb9863e
-	// by replaying the same input directly against it -- this PR touches no
-	// production code (it removes a dead tolerance and adds two seedIntent
-	// entries), so the finding is not ours. Scoped to this one tuple and this one
-	// table set, per COMMON-RULES: not table-wide, not method-wide.
-	// Remove this entry in the PR that fixes #2807.
-	{
-		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2807", expires: "2026-10-19",
-		tables:     []string{"MFAStepUpGrant", "LoginAttempt", "AuditEvent"},
-		findingDoc: "#2807",
-	},
+	// (#2807's entry — REST POST /auth/webauthn/login/finish, GetUserRoles#1/error,
+	// [MFAStepUpGrant LoginAttempt AuditEvent] — is gone: it was the same finding
+	// as #2841, tolerated twice under two issue numbers, and #2841's fix resolves
+	// the identity before minting anything, so the MFAStepUpGrant and AuditEvent
+	// halves no longer occur. The [LoginAttempt] residue is #2880's by-design
+	// post-verdict accounting and is pinned in oracleAByDesignErrors
+	// (oracle_a_by_design_test.go). TestKnownOpenTolerances_AreLoadBearing
+	// reported this row dead once that pin existed.)
 	// FOUR entries citing #2549 for the bulk access-request ops
 	// (bulk-reject/GetAccessRequest#1, and bulk-approve/GetAccessRequest#1,
 	// /RoleSetBypassesPermissionChecks#4, /GetRolePermissions#1) were DELETED
@@ -1195,35 +1185,18 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"CompliancePostureSnapshot"},
 		findingDoc: "#2834",
 	},
-	// Third pre-existing finding from the same live runs, also confirmed by
-	// byte-for-byte replay against unmodified origin/main. Filed as #2841,
-	// SEPARATELY from #2565 (the LoginAttempt-only finding on this same op)
-	// because the shape is different, not just wider: the WebAuthn assertion
-	// VERIFIES, so the session row, the unconditional MFAStepUpGrant both
-	// WebAuthn login paths mint, and the login audit event all land — and then
-	// the faulted GetUserRoles on the validate-session step
-	// (internal/core/auth.go:568) maps to ErrRoleResolutionUnavailable and the
-	// handler reports failure. A caller told the login failed is in fact
-	// authenticated, holding a live ambient step-up grant.
+	// (The third pre-existing finding from the same live runs — #2841, op="REST
+	// POST /auth/webauthn/login/finish", method=GetUserRoles, kind=error, nth 1,
+	// [AuditEvent LoginAttempt MFAStepUpGrant] — was tolerated here and is now
+	// FIXED, so its row is gone rather than expired. Both WebAuthn login paths
+	// resolve the response identity before minting the session and the ambient
+	// MFAStepUpGrant, so a login that reports failure persists neither; guarded
+	// by webauthn_login_no_partial_grant_test.go here and by
+	// internal/core/login_identity_before_mint_test.go at the core boundary.
+	// The remaining [LoginAttempt] diff is #2880's by-design post-verdict
+	// accounting, pinned for GetUserRoles only in oracleAByDesignErrors — not
+	// absorbed by #2565's wildcard entry, which is unchanged, not widened.)
 	//
-	// Not an escalation (the user authenticated correctly), but the response and
-	// the persisted state disagree, and #2841 asks the auth/WebAuthn owner which
-	// way to resolve it — role-NAME resolution failing is arguably not grounds to
-	// fail a verified login at all, which is the opposite fix from rolling the
-	// session and grant back. Either answer is defensible; picking one is not
-	// #2549's call.
-	//
-	// method is PINNED here, unlike #2565's wildcard entry on the same op:
-	// #2565's tables is [LoginAttempt] and correctly does not cover this
-	// three-table diff, so leaving this unpinned would have widened #2565 in
-	// effect (COMMON-RULES: never widen an existing tolerance to make CI green).
-	// Remove when #2841 is resolved either way.
-	{
-		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2841", expires: "2026-11-07",
-		tables:     []string{"AuditEvent", "LoginAttempt", "MFAStepUpGrant"},
-		findingDoc: "#2841",
-	},
 	// Fourth and LAST pre-existing finding tolerated from the same live runs,
 	// also confirmed by byte-for-byte replay against unmodified origin/main.
 	// Filed as #2844, which also records the thing that made me stop here: FOUR
