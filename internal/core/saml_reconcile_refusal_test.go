@@ -42,6 +42,15 @@ type reconcileFaultStorage struct {
 	// #2910 fuzzer finding: the escalation guard's own lookups.
 	failGetGroupRoles      bool
 	failGetRolePermissions bool
+	// #2910 fuzzer finding: the best-effort last-login stamp panicking.
+	panicUpdateLastLogin bool
+}
+
+func (s *reconcileFaultStorage) UpdateLastLogin(ctx context.Context, userID uint, at time.Time) error {
+	if s.panicUpdateLastLogin {
+		panic("injected fault: UpdateLastLogin")
+	}
+	return s.Storage.UpdateLastLogin(ctx, userID, at)
 }
 
 func (s *reconcileFaultStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {

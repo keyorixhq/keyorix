@@ -11,6 +11,17 @@
 # API/CLI only (never the database directly), and prints the URL + demo
 # logins.
 #
+# MFA: Keyorix ships with security.require_mfa ON (ADR-112) and the demo keeps
+# it on. After bootstrapping the admin this script therefore enrols TOTP for it
+# through the real API/CLI (`keyorix mfa enroll` + `mfa activate`, no database
+# writes), prints the TOTP secret / otpauth URI (and a QR code when `qrencode`
+# is installed) for the presenter's authenticator app, and logs in with a valid
+# code before seeding.
+#
+# All-or-nothing seed: if anything fails between starting a fresh container
+# and writing .demo-2-state, the container and data volume are removed again
+# so the next run starts clean instead of finding a half-seeded system.
+#
 # Idempotent: safe to re-run. If the demo is already up and seeded, it just
 # reprints the URL + logins (read from .demo-2-state, written on first run —
 # a machine token is shown exactly once by the product itself, so a second
@@ -31,9 +42,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
-IMAGE_TAG="keyorix-demo:airgap"
-CONTAINER_NAME="keyorix-demo"
-VOLUME_NAME="keyorix-demo-data"
+IMAGE_TAG="${KEYORIX_DEMO_IMAGE:-keyorix-demo:airgap}"
+CONTAINER_NAME="${KEYORIX_DEMO_CONTAINER:-keyorix-demo}"
+VOLUME_NAME="${KEYORIX_DEMO_VOLUME:-keyorix-demo-data}"
 PORT="${KEYORIX_DEMO_PORT:-8080}"
 STATE_FILE="$REPO_ROOT/.demo-2-state"
 
@@ -73,6 +84,15 @@ if [ ! -x "$CLI_BIN" ]; then
   make -C "$REPO_ROOT" build-cli >/dev/null
 fi
 
+TOTPGEN_BIN="$REPO_ROOT/bin/totpgen"
+if [ ! -x "$TOTPGEN_BIN" ]; then
+  # Stands in for the presenter's authenticator app (scripts/totpgen is a
+  # test/CI helper, never part of the shipped binaries).
+  command -v go >/dev/null 2>&1 || { echo "go is required to build the TOTP helper (scripts/totpgen)" >&2; exit 1; }
+  step "Building the TOTP helper (stands in for an authenticator app while seeding)"
+  GOWORK=off go build -o "$TOTPGEN_BIN" "$REPO_ROOT/scripts/totpgen/main.go"
+fi
+
 # ── Build the image (once) ─────────────────────────────────────────────────
 if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1; then
   step "Building the air-gapped image with the web UI embedded (needs network this one time)"
@@ -98,6 +118,37 @@ docker volume create "$VOLUME_NAME" >/dev/null
 ALREADY_SEEDED=false
 if docker run --rm -v "$VOLUME_NAME:/app/data" alpine test -f /app/data/.demo-seeded 2>/dev/null; then
   ALREADY_SEEDED=true
+fi
+
+# Seed-in-progress guard (see header): armed for a fresh seed, disarmed once
+# the state file is written.
+SEED_IN_PROGRESS=false
+discard_unfinished_seed() {
+  docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+  docker volume rm "$VOLUME_NAME" >/dev/null 2>&1 || true
+  rm -f "$STATE_FILE"
+  rm -rf "$REPO_ROOT/.demo-2-cli-home"
+}
+on_exit() {
+  local rc=$?
+  if [ "$rc" -ne 0 ] && [ "$SEED_IN_PROGRESS" = true ]; then
+    echo >&2
+    echo "Demo setup failed (exit $rc). Removing the unfinished container and data volume so nothing half-seeded is left behind; fix the error above and re-run scripts/demo/up.sh." >&2
+    discard_unfinished_seed
+  fi
+}
+trap on_exit EXIT
+
+if [ "$ALREADY_SEEDED" = false ]; then
+  # A volume without the seeded marker is either brand new or left by an
+  # older, interrupted run (admin created, seed never finished). The admin
+  # bootstrap is one-shot, so start from an empty volume either way.
+  if docker ps -a --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
+    docker rm -f "$CONTAINER_NAME" >/dev/null
+  fi
+  docker volume rm "$VOLUME_NAME" >/dev/null
+  docker volume create "$VOLUME_NAME" >/dev/null
+  SEED_IN_PROGRESS=true
 fi
 
 if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
@@ -158,6 +209,38 @@ step "Bootstrapping the admin account (public API, via 'keyorix system init')"
 "$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" --password "$ADMIN_PASSWORD" >/dev/null
 ok "Admin bootstrapped and logged in"
 
+# security.require_mfa is ON (the secure default, kept for the demo): until the
+# admin enrols, every call except MFA enrolment is refused with HTTP 403.
+step "Enrolling TOTP for the demo admin (multi-factor authentication is required)"
+ENROLL_OUT="$("$CLI_BIN" mfa enroll)"
+MFA_URI="$(echo "$ENROLL_OUT" | grep -oE 'otpauth://[^[:space:]]+' | head -1 || true)"
+MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]' || true)"
+if [ -z "$MFA_SECRET" ] || [ -z "$MFA_URI" ]; then
+  echo "could not read the TOTP secret from 'keyorix mfa enroll' output:" >&2
+  echo "$ENROLL_OUT" >&2
+  exit 1
+fi
+ACTIVATE_OUT="$("$CLI_BIN" mfa activate --code "$("$TOTPGEN_BIN" "$MFA_SECRET")" --password "$ADMIN_PASSWORD" 2> >(grep -v '^Warning: --code' >&2))"
+RECOVERY_CODES="$(echo "$ACTIVATE_OUT" | grep -E '^  [A-Za-z0-9-]+$' | tr -d ' ' | paste -sd' ' - || true)"
+
+echo
+echo -e "${YELLOW}  >>> ADD THIS TO YOUR AUTHENTICATOR APP NOW (shown once; the web login asks for a code) <<<${NC}"
+echo "      Setup key (manual entry): $MFA_SECRET"
+echo "      otpauth URI:              $MFA_URI"
+if command -v qrencode >/dev/null 2>&1; then
+  qrencode -t ANSIUTF8 "$MFA_URI"
+else
+  echo "      (install 'qrencode' to get a scannable QR code here; otherwise type the setup key in by hand)"
+fi
+[ -z "$RECOVERY_CODES" ] || echo "      Recovery codes (one use each): $RECOVERY_CODES"
+echo
+
+# Activation invalidates the pre-MFA session and consumes the current 30 s TOTP
+# step (anti-replay), so log in again with the NEXT step's code (+30 s).
+"$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" --password "$ADMIN_PASSWORD" \
+  --mfa-code "$("$TOTPGEN_BIN" "$MFA_SECRET" 30)" >/dev/null
+ok "Admin MFA enrolled (TOTP) and logged in with a code"
+
 step "Seeding org structure: 2 projects, 2 groups"
 "$CLI_BIN" project create --name backend-api --description "Backend API" >/dev/null
 "$CLI_BIN" project create --name mobile-app --description "Mobile App" >/dev/null
@@ -189,14 +272,19 @@ curl -s -H "Authorization: Bearer $MACHINE_TOKEN" "http://localhost:${PORT}/api/
 ok "Audit trail populated — 'keyorix audit logs' now has real events to show"
 
 docker exec "$CONTAINER_NAME" touch /app/data/.demo-seeded
+SEED_IN_PROGRESS=false
 
 cat > "$STATE_FILE" <<EOF
 ======================================================================
   Keyorix air-gapped demo is up.
 
   URL:            $SERVER_URL
-  Admin login:    $ADMIN_USER / $ADMIN_PASSWORD
-  Alice login:    alice / $ALICE_PASSWORD   (least-privilege: backend-api only)
+  Admin login:    $ADMIN_USER / $ADMIN_PASSWORD   + a 6-digit code (MFA is required)
+  Admin TOTP key: $MFA_SECRET
+                  $MFA_URI
+  Recovery codes: $RECOVERY_CODES
+  Alice login:    alice / $ALICE_PASSWORD   (least-privilege: backend-api only;
+                  the web UI makes her enrol her own TOTP at first login)
   Machine token:  $MACHINE_TOKEN
                   (ci-app, project_viewer on default — shown once, saved here)
 

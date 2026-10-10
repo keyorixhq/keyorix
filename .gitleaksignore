@@ -1,0 +1,8 @@
+# Fingerprints of historical gitleaks findings that are NOT real credentials.
+# One exact fingerprint per entry (commit:file:rule:line) -- never a path or rule.
+
+# Demo fixture: scripts/demo/up.sh's fixed, throwaway local-demo admin password
+# ("Correct-Horse-Battery-2026", printed in its own banner) was repeated as a
+# literal in the demo-up-smoke login body. Not a real credential. The literal
+# was removed from ci.yml in b50bd35 (now read from scripts/demo/up.sh).
+923d9448a7f9721076e8bfa1ae2c770858af56d0:.github/workflows/ci.yml:generic-api-key:1643
