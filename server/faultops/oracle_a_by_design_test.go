@@ -440,10 +440,12 @@ func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
 
 	for _, label := range c.underspecified {
 		if !toleranceStalenessUndrivable[label] {
-			t.Errorf("knownOpenTolerance %q is not fully specified (blank method and/or nth==0) so this "+
-				"staleness check cannot drive it, and it is not listed in "+
-				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is "+
-				"visible rather than silent", label)
+			t.Errorf("knownOpenTolerance %q wildcards at least one of method/kind/nth, so there is no single "+
+				"fault for this staleness check to arm and it cannot be driven — and it is not listed in "+
+				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is visible "+
+				"rather than silent. (A wildcard row is still constrained by its mandatory non-empty "+
+				"tables, enforced by TestKnownOpenTolerances_CarryIssueAndExpiry; what it is NOT covered by "+
+				"is this staleness check.)", label)
 		}
 	}
 
@@ -542,7 +544,12 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 	var c toleranceStaleness
 	for _, k := range knownOpenTolerances {
 		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
-		if k.method == "" || k.nth == 0 {
+		// A row wildcarded in ANY dimension cannot be driven: there is no
+		// single (method, nth, kind) to arm. Derived from the one shared
+		// definition of "wildcarded" (#2844) rather than re-spelled here, so
+		// this check and matchingKnownOpen's matching cannot disagree about
+		// which rows those are.
+		if len(toleranceWildcardedDimensions(k)) > 0 {
 			c.underspecified = append(c.underspecified, label)
 			continue
 		}
@@ -591,8 +598,8 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 }
 
 // TestKnownToleranceStaleness_DetectsDeadAndLiveRows is the calibration for
-// TestKnownOpenTolerances_AreLoadBearing: both directions, on the real list,
-// through the real classifier.
+// TestKnownOpenTolerances_AreLoadBearing: both directions, through the real
+// classifier.
 //
 // The thing that can silently break is the `consulted` signal — it comes from
 // observeKnownOpenMatch, a hook matchingKnownOpen calls. If that hook stops
@@ -603,30 +610,23 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 // reads as load-bearing and the check passes forever while verifying nothing.
 // That is the failure this test catches.
 //
-// It asserts that the classifier puts at least one real row in the live bucket
-// AND at least one in a not-live bucket. A stuck signal can satisfy only one of
-// those. Deliberately NOT asserted: which specific rows land where — that
-// changes every time a bug is fixed or a tolerance added, and pinning it would
-// make this test a second copy of the list.
+// Live direction: at least one REAL row must classify live. Not-live
+// direction: a PLANTED known-dead row must classify dead. A stuck signal can
+// satisfy only one of those.
+//
+// Why the not-live half is planted rather than read off the real list: it used
+// to require at least one real row in a not-live bucket, which only held while
+// some debt happened to be outstanding. TOL-1 cleared the last baselined dead
+// row (#2548's GetMFASecret), and a calibration that depends on a bug staying
+// unfixed is one cleanup away from vanishing — this file's own comment on the
+// #2606 precedent says as much. The planted row is that exact real shape:
+// GetMFASecret#1/error on /auth/mfa/verify fires, but its diff is [AuditEvent]
+// only, accepted by onlyOutcomeLogTables before matchingKnownOpen runs, so a
+// correct classifier must call it dead. Deliberately NOT asserted: which real
+// rows land where — that changes every time a bug is fixed or a tolerance
+// added, and pinning it would make this test a second copy of the list.
 func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 	c := classifyToleranceStaleness(t)
-
-	notLive := len(c.dead) + len(c.undrivable) + len(c.inconclusive)
-	for label := range toleranceDeadPendingTriage {
-		// A baselined row that stayed dead is in no reported bucket (it is the
-		// expected steady state), but it IS a not-live observation, which is
-		// what this calibration needs.
-		isRevived := false
-		for _, r := range c.revivedLive {
-			if r == label {
-				isRevived = true
-			}
-		}
-		if !isRevived {
-			notLive++
-		}
-	}
-
 	if len(c.live) == 0 {
 		t.Errorf("the staleness classifier found NO load-bearing tolerance among %d entries. Either every "+
 			"tolerance really is dead (then TestKnownOpenTolerances_AreLoadBearing is already failing and "+
@@ -636,18 +636,38 @@ func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v",
 			len(knownOpenTolerances), c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive)
 	}
-	if notLive == 0 {
-		t.Errorf("the staleness classifier found EVERY drivable tolerance load-bearing, with nothing dead, "+
-			"undrivable, inconclusive, or baselined-and-still-dead. That is the dangerous direction: a "+
-			"`consulted` signal stuck TRUE makes this check pass forever while verifying nothing. If the "+
-			"list genuinely has no debt left, delete toleranceDeadPendingTriage and replace this assertion "+
-			"with one that plants a known-dead row, rather than weakening it.\n"+
-			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v baseline=%d",
-			c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive, len(toleranceDeadPendingTriage))
+
+	planted := knownOpenTolerance{
+		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#calibration", expires: "2099-01-01",
+		findingDoc: "TestKnownToleranceStaleness_DetectsDeadAndLiveRows planted known-dead row",
 	}
-	t.Logf("staleness classifier discriminates: %d live, %d not-live (dead=%d undrivable=%d inconclusive=%d "+
-		"baselined=%d)", len(c.live), notLive, len(c.dead), len(c.undrivable), len(c.inconclusive),
-		len(toleranceDeadPendingTriage))
+	plantedLabel := fmt.Sprintf("%s/%s/%s#%d", planted.op, planted.method, planted.kind, planted.nth)
+	real := knownOpenTolerances
+	knownOpenTolerances = append(append([]knownOpenTolerance{}, real...), planted)
+	pc := classifyToleranceStaleness(t)
+	knownOpenTolerances = real
+
+	plantedDead := false
+	for _, l := range pc.dead {
+		if l == plantedLabel {
+			plantedDead = true
+		}
+	}
+	if !plantedDead {
+		t.Errorf("the planted known-dead row %q was NOT classified dead. Either the `consulted` signal is "+
+			"stuck TRUE — the dangerous direction: this check would pass forever while verifying nothing — "+
+			"or that tuple's behaviour changed so it is no longer dead (then pick another tuple whose fault "+
+			"fires and whose diff the oracle accepts before matchingKnownOpen; never drop this half).\n"+
+			"buckets with the plant: live=%v dead=%v undrivable=%v inconclusive=%v",
+			plantedLabel, pc.live, pc.dead, pc.undrivable, pc.inconclusive)
+	}
+	if len(pc.live) != len(c.live) {
+		t.Errorf("planting one dead row changed the real rows' live count (%d -> %d) — the classification "+
+			"is not independent per row", len(c.live), len(pc.live))
+	}
+	t.Logf("staleness classifier discriminates: %d real rows live, planted %q classified dead=%v",
+		len(c.live), plantedLabel, plantedDead)
 }
 
 // toleranceDeadPendingTriage is the ratchet baseline: knownOpenTolerances
@@ -689,27 +709,22 @@ func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 // baseline entry with no row behind it is pure noise — it can never go red
 // again, so it only hides the fact that the exemption it names is already
 // retired.)
-var toleranceDeadPendingTriage = map[string]string{
-	"REST POST /auth/mfa/verify/GetMFASecret/error#1": "#2548",
-}
+//
+// (#2548's GetMFASecret entry is GONE: TOL-1 deleted the dead row it baselined,
+// so the baseline went with it. The map is empty, not deleted -- the next row
+// found dead while its issue is still open belongs here.)
+var toleranceDeadPendingTriage = map[string]string{}
 
 // toleranceStalenessUndrivable names the knownOpenTolerances entries
 // TestKnownOpenTolerances_AreLoadBearing cannot drive, with why. Keeping the
 // list explicit is the point: an unlisted undrivable entry fails the test, so
 // the uncovered set cannot grow silently.
-var toleranceStalenessUndrivable = map[string]bool{
-	// method is deliberately blank (wildcard): the finding's root cause is
-	// reserveLoginAttempt's unconditional write before the faulted call runs,
-	// so ANY fault on this op shows the same LoginAttempt-only diff. There is
-	// no single method to drive. Both fault kinds have their own entry (#2548).
-	"REST POST /auth/mfa/verify//error#1": true,
-	"REST POST /auth/mfa/verify//panic#1": true,
-	// Same wildcard shape: a webauthn-login-finish failure's diff comes from a
-	// write that lands before whichever call is faulted. Both fault kinds have
-	// their own entry in knownOpenTolerances (#2565), and both are wildcards.
-	"REST POST /auth/webauthn/login/finish//error#1": true,
-	"REST POST /auth/webauthn/login/finish//panic#1": true,
-}
+//
+// (Empty since TOL-1: the four wildcard rows that used to be listed here --
+// /auth/mfa/verify and /auth/webauthn/login/finish, error and panic -- were
+// deleted as dead or pinned to ReserveLoginAttempt, so every remaining row is
+// fully specified and actually driven.)
+var toleranceStalenessUndrivable = map[string]bool{}
 
 // isOutcomeLogTable reports whether t is one of outcomeLogTables.
 func isOutcomeLogTable(t string) bool {

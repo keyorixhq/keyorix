@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -489,6 +490,56 @@ func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint,
 	return c.emitAuditWithAccessLog(ctx, event, accessLog)
 }
 
+// EventSecretVersionsListed is the audit event for listing a secret's version
+// history (GET /secrets/{id}/versions, gRPC GetSecretVersions). The listing
+// carries version numbers, timestamps and read counters, never a value
+// (SecretVersion.EncryptedValue is json:"-"), so it is not a secret.read:
+// secret.read, and every count keyed on it (read summaries, billing and usage
+// reads, dashboard "accessed"), means a value disclosure only (AUDIT-UX-2, #2951).
+const EventSecretVersionsListed = "secret.versions_listed"
+
+// AccessActionVersionsList is the secret_access_logs action written with
+// EventSecretVersionsListed. Not "read": read counts (total reads, most-accessed,
+// rotation risk) filter on action "read". Anomaly detection reads every action,
+// so who listed a secret's versions from where still feeds its baselines.
+const AccessActionVersionsList = "versions_list"
+
+// LogSecretVersionsListed writes audit_events + secret_access_logs for a
+// version-history listing, as ONE atomic unit, and blocks until both are
+// durably committed: the same audit-before-response contract (and the same
+// writer) as LogSecretReadWithProject, which this replaces for the listing.
+// Returns an error if the write fails; the caller must not send the listing.
+func (c *KeyorixCore) LogSecretVersionsListed(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	uid, sid, pid := userID, secretID, projectID
+	t := true
+	event := &models.AuditEvent{
+		EventType:    EventSecretVersionsListed,
+		UserID:       &uid,
+		SecretNodeID: &sid,
+		ProjectID:    &pid,
+		IPAddress:    ip,
+		Description:  sanitizeAuditText(fmt.Sprintf("User %s listed the versions of secret %s", username, secretName)),
+		Success:      &t,
+		EventTime:    time.Now(),
+		ActorType:    actorTypeFromContext(ctx),
+	}
+	if adminID, ok := impersonatorFromContext(ctx); ok {
+		a := adminID
+		event.ImpersonatedBy = &a
+		event.ActingAs = &uid
+		event.Impersonation = true
+	}
+	accessLog := &models.SecretAccessLog{
+		SecretNodeID: secretID,
+		AccessedBy:   username,
+		AccessTime:   time.Now(),
+		Action:       AccessActionVersionsList,
+		IPAddress:    ip,
+		UserAgent:    ua,
+	}
+	return c.emitAuditWithAccessLog(ctx, event, accessLog)
+}
+
 // LogSecretCreated writes audit_events + secret_access_logs for a secret creation.
 func (c *KeyorixCore) LogSecretCreated(ctx context.Context, userID uint, secretID uint, username, secretName, ip, ua string) {
 	uid, sid := userID, secretID
@@ -559,8 +610,56 @@ func (c *KeyorixCore) LogSecretDeleted(ctx context.Context, userID uint, secretI
 func (c *KeyorixCore) LogSecretDeletedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.deleted", &uid, &sid, &pid, ip,
-		fmt.Sprintf("User %s deleted secret %s", username, secretName))
+		fmt.Sprintf("User %s deleted secret %s", username, secretName)+c.softDeleteNote(ctx, secretID, projectID))
 	c.writeAccessLog(ctx, secretID, username, "delete", ip, ua)
+}
+
+// softDeleteNoteMarker starts the note appended to a secret.deleted description.
+// extractSecretName cuts the description at it, so the secret's name is still
+// recoverable from "User <u> deleted secret <name> (soft delete: ...)".
+const softDeleteNoteMarker = " (soft delete:"
+
+// softDeleteNote says what the delete actually did, for the audit entry (#2951):
+// a secret delete is a soft delete (restorable until purge, its versions are kept,
+// not destroyed), and secrets that depended on it lose that dependency until it is
+// restored. Best-effort and display only: a failed lookup just yields a shorter
+// note, never a missing or altered audit event.
+func (c *KeyorixCore) softDeleteNote(ctx context.Context, secretID, projectID uint) string {
+	versions := -1
+	var dependents []string
+	besteffort.Run(ctx, "audit.softDeleteNote", func() error {
+		if vs, err := c.storage.GetSecretVersions(ctx, secretID); err == nil {
+			versions = len(vs)
+		}
+		edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		for _, e := range edges {
+			if e.DependsOnSecretID != secretID {
+				continue
+			}
+			if dep, derr := c.storage.GetSecret(ctx, e.DependentSecretID); derr == nil && dep != nil {
+				dependents = append(dependents, dep.Name)
+			}
+		}
+		return nil
+	})
+	note := softDeleteNoteMarker + " restorable with 'secret restore' until purged"
+	if versions >= 0 {
+		note += fmt.Sprintf("; %d version(s) kept", versions)
+	}
+	if n := len(dependents); n > 0 {
+		shown := dependents
+		if n > 5 {
+			shown = dependents[:5]
+		}
+		note += fmt.Sprintf("; %d dependent secret(s) lose this dependency until restored: %s", n, strings.Join(shown, ", "))
+		if n > 5 {
+			note += fmt.Sprintf(" and %d more", n-5)
+		}
+	}
+	return note + ")"
 }
 
 // LogAuthLogin writes an auth.login audit event.

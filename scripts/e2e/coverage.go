@@ -197,7 +197,8 @@ var skipList = map[string]string{
 	// run (after assertRouteCoverage) -- intentionally not through a group
 	// function, since either one changes or ends the session this entire
 	// driver depends on for every earlier call.
-	"DELETE /api/v1/auth/sessions/{id}": "would need a second, non-current session to delete non-destructively; deleting the driver's own current session would break every later authenticated call in this run",
+	"POST /api/v1/projects/{id}/break-glass/{activationId}/review": "post-incident review of a break-glass activation needs a prior activation by a second, non-admin session (see journeys/journey9_break_glass_test.go); not folded into this driver's single shared admin session",
+	"DELETE /api/v1/auth/sessions/{id}":                            "would need a second, non-current session to delete non-destructively; deleting the driver's own current session would break every later authenticated call in this run",
 }
 
 // assertRouteCoverage is the completeness half of I2: every route.json entry

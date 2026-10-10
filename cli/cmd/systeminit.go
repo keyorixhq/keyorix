@@ -133,7 +133,7 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", username)
 	fmt.Printf("\nNext steps:\n")
 	fmt.Printf("  keyorix login --server %s\n", server)
-	fmt.Printf("  keyorix secret create my-first-secret --value \"hello\"\n")
+	fmt.Printf("  keyorix secret create --name my-first-secret --value \"hello\"\n")
 	return nil
 }
 
