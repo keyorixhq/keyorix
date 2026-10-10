@@ -1005,79 +1005,35 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// TestKnownOpenTolerances_AreLoadBearing drives every fully-specified entry
 	// in this list and fails on any that no longer tolerates anything.
 	//
-	// docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md
-	// (SESSION-FI, AT5, out of OWNS, not fixed there): loadTOTPSecret's
-	// GetMFASecret error is checked with `err == nil` as the gate to even
-	// attempt TOTP validation; on error the whole branch is skipped,
-	// collapsing into the SAME path a genuine wrong code takes --
-	// audited as mfa.failed AND counted toward the account lockout, for a
-	// correct code that was never actually checked. Filed as #2548. Fix is PR
-	// #2398, not yet merged -- keep tolerating until it lands. Reproduced
-	// directly against this PR's rebased opCatalog: op="REST POST
-	// /auth/mfa/verify" fault=(method=GetMFASecret, NthCall=1, kind=error) --
-	// oracle (a) VIOLATION, differing tables: [AuditEvent LoginAttempt].
-	{
-		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
-		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
-	},
-	// Second trigger for the same finding (#2548), reached through a
-	// structurally different call site: VerifyMFACredentials' OWN GetUser
-	// call fails closed correctly -- it returns before ever reaching
-	// loadTOTPSecret/recordFailedLogin -- but the HANDLER
-	// (server/http/handlers/mfa.go's VerifyMFA) already called
-	// reserveLoginAttempt (RecordFailedLogin by IP) UNCONDITIONALLY, before
-	// VerifyMFALogin even runs, as its own rate-limiting bookkeeping (F2,
-	// 2026-09-20). That write is structural to this op's wiring, not tied to
-	// GetMFASecret specifically: ANY storage-error fault that makes this op
-	// report failure will show the identical LoginAttempt-only diff, since
-	// reserveLoginAttempt's write already landed before the fault-affected
-	// call runs. method is deliberately left blank (wildcard) for this
-	// reason, and tables is scoped to LoginAttempt alone -- unlike the
-	// GetMFASecret entry above (whose diff also legitimately includes
-	// AuditEvent from auditMFAFailed, a different code path entirely), a
-	// GetUser-stage failure never reaches auditMFAFailed at all, so AuditEvent
-	// never appears in ITS diff. A diff that included anything beyond
-	// LoginAttempt would be a different, unexplained issue and must still
-	// fail. Fix is PR #2398 (second commit), not yet merged -- keep
-	// tolerating until it lands; #2398's own body says to remove this entry
-	// once both it and #2392 have merged. Reproduced directly against this
-	// PR's rebased opCatalog (the originally-committed seed, 877139548d2805a6,
-	// now decodes to an unrelated op post-rebase -- see
-	// mfa-verify-getuser-loginattempt-2548 below): op="REST POST
-	// /auth/mfa/verify" fault=(method=GetUser, NthCall=1, kind=error) --
-	// oracle (a) VIOLATION, differing tables: [LoginAttempt].
-	{
-		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
-	},
-	// The KindPanic arm of the SAME #2548 wildcard entry directly above. Found by
-	// a live run while working #2549, confirmed PRE-EXISTING by byte-for-byte
-	// replay against unmodified origin/main (fault=GetMFASecret#1/panic, oracle
-	// (a), differing tables: [LoginAttempt]).
+	// #2548's three rows on this op were triaged by LOGIN-ACCT-1 (verdicts in
+	// SESSION-LOGIN-ACCT-1.md and #2548#issuecomment-6090942175) and settled by
+	// TOL-1 (QUEUE-FIX-1), each re-verified by driving every storage method on
+	// this op at nth 1, error and panic, against origin/main @ ff1c2439:
 	//
-	// FLAG FOR THE COORDINATOR — a pattern, not just a row. Both of this run's
-	// LoginAttempt findings (this one and the webauthn/login/finish panic above)
-	// are the KindPanic arm of an EXISTING KindError wildcard entry, same op,
-	// same table, same root cause (reserveLoginAttempt writes unconditionally
-	// before the faulted call runs, so the row is there whatever the fault is).
-	// The existing entries wildcard `method` precisely so the next storage call
-	// CI finds is not a fresh red build — but `kind` has no wildcard, so every
-	// such entry needs its panic twin added by hand, and CI's randomized
-	// fuzz-changed will keep producing them one at a time. That is the same
-	// shared-mechanism question an earlier author already flagged for `nth`
-	// ("the existing knownOpenTolerance struct has no nth-wildcard mechanism ...
-	// inventing one is a shared-mechanism change, not a data entry"). Deciding
-	// whether to add a kind-wildcard belongs with that one; NOT invented here,
-	// and deliberately not worked around by widening either existing entry
-	// (COMMON-RULES: never widen an existing tolerance to make CI green).
+	//   (a) method GetMFASecret, error: DELETED. Dead -- its diff is
+	//       [AuditEvent] only, accepted by onlyOutcomeLogTables before
+	//       matchingKnownOpen is consulted. Its toleranceDeadPendingTriage
+	//       baseline entry is gone with it.
+	//   (c) blank method, PANIC, [LoginAttempt]: DELETED. Dead -- no panic tuple
+	//       on this op yields a LoginAttempt-only diff since
+	//       verifyMFALoginReleasingOnPanic (#2805) releases the reservation on a
+	//       panic too.
+	//   (b) blank method, error, [LoginAttempt]: KEPT, but no longer #2548's
+	//       and no longer a wildcard. Its ConsumeMFAChallenge trigger was a real
+	//       residual bug, fixed by #2912 (no longer consults any row). The one
+	//       remaining trigger is ReserveLoginAttempt#1/error: the IP-budget
+	//       reservation write itself fails, the handler proceeds best-effort,
+	//       the login SUCCEEDS, and the run differs from the fault-free
+	//       reference only by the missing LoginAttempt row. That is #2837's
+	//       question (an op-scoped best-effort exemption for the reservation
+	//       write; see also #2921's proposal to bind such rows to the
+	//       atomicity ledger instead), so the row is re-pointed there and
+	//       pinned to that one method. Expiry deliberately NOT moved.
 	{
-		op: "REST POST /auth/mfa/verify", kind: faultstorage.KindPanic,
-		nth: 1, oracle: "a", issue: "#2548", expires: "2026-10-17",
+		op: "REST POST /auth/mfa/verify", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
-		findingDoc: "docs/findings/2026-10-02-FINDING-mfa-login-getmfasecret-storage-error-counted-as-wrong-code.md",
+		findingDoc: "#2837",
 	},
 	// The fifth #2549 entry (op="REST POST /api/v1/auth/mfa/stepup",
 	// method=CreateMFAStepUpGrant#1, tables=[MFASecret]) MOVED to
@@ -1100,62 +1056,29 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// a PANIC in CreateSecretAccessLog, not just a returned error. Same three
 	// signals as the deletions at the end of this list: issue CLOSED, the
 	// recover() present in the tree, and the row reported dead.)
-	// Pre-existing, unrelated to this PR's own MFA-reauth changes -- found by
-	// a live 2-minute FuzzStorageFaultOperations run during this PR's rebase
-	// (ListWebAuthnCredentials#1/error), then CI's own fuzz-changed shard
-	// independently found a SECOND call site of the identical root cause
-	// (ConsumeMFAChallenge#1/error) during this PR's own CI run. Same
-	// root-cause family as #2548's second (wildcard) entry above: the
-	// WebAuthn login/finish handler (server/http/handlers/webauthn.go) calls
-	// reserveLoginAttempt UNCONDITIONALLY, before the real assertion
-	// verification runs, so a storage error on ANY call the verification path
-	// makes fails closed correctly but still leaves a LoginAttempt row
-	// behind -- structural to the op itself, not tied to one storage method,
-	// same reasoning as #2548's own wildcard entry. method is deliberately
-	// left blank for this reason (narrowed back to a single method would just
-	// mean the NEXT call site CI's randomized fuzz-changed finds becomes a
-	// fresh red build instead of this same already-tracked finding). Filed as
-	// #2565 (cross-links #2548 and #2398's own "CR3" note, since the root
-	// cause is shared across every reserveLoginAttempt call site, not
-	// MFA-specific). A THIRD trigger (ConsumeWebAuthnSession#1/error, cited
-	// by the coordinator as #2603) already matches this same wildcard entry
-	// -- same op, same kind, same LoginAttempt-only diff -- confirmed by
-	// direct replay; no separate tolerance entry needed for it. #2603 and
-	// #2565 look like the same tracked finding under two issue numbers.
-	{
-		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2565",
-	},
-	// The KindPanic arm of the SAME #2565 finding, found by a 2-minute live
-	// FuzzStorageFaultOperations run while working #2549
-	// (fault=ListWebAuthnCredentials#1/panic, oracle (a), differing tables:
-	// [LoginAttempt]). Confirmed PRE-EXISTING, not caused by #2549's change:
-	// replayed byte-for-byte against unmodified origin/main, where it fails
-	// identically (COMMON-RULES' "replay the failing input on origin/main
-	// first" rule). #2549 only ADDS an exemption branch and deletes tolerances
-	// that were already never consulted, neither of which can make the oracle
-	// report more.
+	// #2565's two wildcard rows on REST POST /auth/webauthn/login/finish
+	// (blank method, error and panic, [LoginAttempt]) are settled by TOL-1
+	// (QUEUE-FIX-1), re-verified by driving every storage method on the op at
+	// nth 1, error and panic, against origin/main @ ff1c2439:
 	//
-	// Same op, same oracle, same LoginAttempt-only diff, same root cause the
-	// KindError entry above describes (reserveLoginAttempt writes
-	// UNCONDITIONALLY, before the verification path runs, so the row is there
-	// whatever the fault is). kind is the ONLY axis that differs, so this is a
-	// one-field sibling, not a widening: method stays blank for the reason that
-	// entry gives, and tables stays scoped to LoginAttempt so a diff touching
-	// anything else still fails. Remove when #2565 is fixed.
-	//
-	// No corpus seed committed for it deliberately: this harness's input bytes
-	// encode the op as a raw opCatalog INDEX, so a committed seed decodes to a
-	// different op after any rebase that reorders the catalog (a hazard this
-	// repo has already been bitten by). The tolerance is keyed on
-	// (op, kind, nth, tables), which is rebase-stable; the seed would not be.
+	//   - The pre-verdict triggers #2565 was filed for (ListWebAuthnCredentials,
+	//     ConsumeMFAChallenge, ConsumeWebAuthnSession, GetUser) no longer consult
+	//     any row: ErrWebAuthnLoginNotEvaluated releases the reservation.
+	//   - PANIC row: DELETED, dead (no panic tuple yields a LoginAttempt-only
+	//     diff).
+	//   - CreateSession#1/error, [LoginAttempt]: post-verdict, by design (#2880)
+	//     -- MOVED to oracleAByDesignErrors, pinned (oracle_a_by_design_test.go).
+	//     Its GetUserRoles sibling is pinned there by #2876, the PR that makes
+	//     that tuple's diff [LoginAttempt]; on main it is still #2807's bug shape.
+	//   - ReserveLoginAttempt#1/error: the same #2837 shape as /auth/mfa/verify's
+	//     row above (reservation write fails, login succeeds best-effort, run
+	//     lacks only the LoginAttempt row). Kept, re-pointed to #2837, pinned to
+	//     that method. Expiry deliberately NOT moved.
 	{
-		op: "REST POST /auth/webauthn/login/finish", kind: faultstorage.KindPanic,
-		nth: 1, oracle: "a", issue: "#2565", expires: "2026-10-17",
+		op: "REST POST /auth/webauthn/login/finish", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
 		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2565",
+		findingDoc: "#2837",
 	},
 	// Also found by the same live run while working #2549, also confirmed
 	// PRE-EXISTING by byte-for-byte replay against unmodified origin/main, also
