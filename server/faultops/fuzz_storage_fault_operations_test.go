@@ -293,7 +293,55 @@ var opScopedBestEffortTables = []struct {
 	// since DeleteSessionsForUserExcept IS load-bearing at other call sites
 	// (RevokeUserSessions propagates its error as "failed to revoke
 	// sessions").
-	{op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteSessionsForUserExcept", tables: []string{"Session"}},
+	//
+	// #2835: AuditEvent joined this entry's tables, and requireLogSubstring was
+	// added, when the purge failure stopped being silent. A plain (non-panic)
+	// error from DeleteSessionsForUserExcept now writes EventSessionRevocationFailed
+	// (account.go's deleteSessionsForUserAndEvict, the ONE choke point all 8
+	// call sites share) instead of vanishing the instant this op's own `_ =
+	// c.deleteSessionsForUserAndEvict(...)` discards it. The purge failure
+	// itself is still correctly non-fatal to the MFA disable; only its
+	// silence was the defect.
+	{
+		op: "REST POST /api/v1/auth/mfa/disable", method: "DeleteSessionsForUserExcept", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "deleteSessionsForUserAndEvict failed to purge sessions for user",
+	},
+	// REST POST /api/v1/auth/webauthn/register/finish, DeleteSessionsForUserExcept:
+	// the "Related" finding from the same #2835 sweep — the purge itself
+	// failing (not the keep-session lookup widening scope) at a DIFFERENT op
+	// reaching the identical deleteSessionsForUserAndEvict choke point
+	// (webauthn.go's own post-registration session purge). Same tradeoff,
+	// same fix, different op string — scoped per-op like its mfa/disable
+	// sibling above, not a blanket bestEffortTables entry, for the same
+	// reason (DeleteSessionsForUserExcept is load-bearing elsewhere).
+	{
+		op: "REST POST /api/v1/auth/webauthn/register/finish", method: "DeleteSessionsForUserExcept", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "deleteSessionsForUserAndEvict failed to purge sessions for user",
+	},
+	// REST POST /api/v1/auth/mfa/activate, /mfa/disable, /change-password, GetSession:
+	// ActivateMFA, DisableMFA, and ChangePassword each resolve the caller's own
+	// session (via keepSessionToken) so their post-change session purge can spare
+	// it. #2835: when that lookup fails, the purge deliberately still widens to
+	// include the caller's own session (the correct fail-closed fallback — we
+	// cannot prove which session is the caller's, so revoking all of them is
+	// safer than guessing; see resolveKeepSession's doc comment, account.go) —
+	// unchanged by this fix. What changed is that the widening now writes
+	// EventKeepSessionLookupFailed instead of vanishing silently, so AuditEvent
+	// joins the pre-existing Session-only diff. requireLogSubstring ties this to
+	// evidence the reviewed fallback actually fired, not to the diff shape alone
+	// (same discipline as the WithTransaction entry below).
+	{
+		op: "REST POST /api/v1/auth/mfa/activate", method: "GetSession", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "could not resolve the caller's own session",
+	},
+	{
+		op: "REST POST /api/v1/auth/mfa/disable", method: "GetSession", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "could not resolve the caller's own session",
+	},
+	{
+		op: "REST POST /api/v1/auth/change-password", method: "GetSession", tables: []string{"Session", "AuditEvent"},
+		requireLogSubstring: "could not resolve the caller's own session",
+	},
 	{
 		op: "REST POST /api/v1/projects", method: "WithTransaction", tables: []string{"Environment", "AuditEvent"},
 		minNthCall:          2,
@@ -1174,19 +1222,10 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// inside #2549's PR. Expect CI's fuzz-changed to find a fifth; that is the
 	// documented, expected outcome, not a surprise.
 	//
-	// WebAuthn registration finishing is expected to invalidate the user's other
-	// sessions (an MFA/credential-enrollment change is one of the session-revoke
-	// events); when DeleteSessionsForUserExcept fails, the registration still
-	// reports SUCCESS, so the credential is enrolled and the other sessions
-	// survive. Whether that should fail closed or retry is the auth owner's call.
-	// Remove when #2844 is resolved.
-	{
-		op: "REST POST /api/v1/auth/webauthn/register/finish", method: "DeleteSessionsForUserExcept",
-		kind: faultstorage.KindError,
-		nth:  1, oracle: "a", issue: "#2844", expires: "2026-11-07",
-		tables:     []string{"Session"},
-		findingDoc: "#2844",
-	},
+	// (The WebAuthn register/finish DeleteSessionsForUserExcept tolerance that
+	// stood here is removed: #2897 makes that purge failure observable and it is
+	// now an op-scoped acceptable-by-design entry above, so the tolerance no
+	// longer tolerates anything.)
 	// Pre-existing, unrelated to this PR's own MFA-reauth changes (#2392 only
 	// newly wires /auth/mfa/verify into the fuzzer, it doesn't touch this code
 	// path) -- found by a live 2-minute FuzzStorageFaultOperations run during
@@ -1892,6 +1931,48 @@ func TestOpScopedAcceptableByDesign_ProjectWithTransaction_RequiresNthCallTwo(t 
 func TestOpScopedAcceptableByDesign_UnrestrictedEntriesIgnoreNthCall(t *testing.T) {
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "AssignRole", 1, []string{"UserRole"}, ""))
 	assert.True(t, opScopedAcceptableByDesign("REST POST /api/v1/users/", "GetRoleByName", 99, []string{"UserRole"}, ""))
+}
+
+// TestOpScopedAcceptableByDesign_KeepSessionLookupFailure_RequiresLogEvidence
+// (#2835) proves the 3 GetSession entries (mfa/activate, mfa/disable,
+// change-password) and the 2 DeleteSessionsForUserExcept entries (mfa/disable,
+// webauthn/register/finish) all require their new log evidence, exactly like
+// the WithTransaction entry above -- a [Session, AuditEvent] diff alone must
+// not be waved through without proof the REVIEWED fallback (not some other,
+// unreviewed cause) actually produced it. Red without requireLogSubstring:
+// every "no log"/"unrelated log" case below would wrongly return true.
+func TestOpScopedAcceptableByDesign_KeepSessionLookupFailure_RequiresLogEvidence(t *testing.T) {
+	const keepSessionLog = "2026/10/09 17:00:00 SECURITY: change_password: could not resolve the caller's own session (fault-fuzz injected failure) -- purging ALL sessions for user 1 instead of sparing the caller's\n"
+	const purgeFailureLog = "2026/10/09 17:00:00 SECURITY: deleteSessionsForUserAndEvict failed to purge sessions for user 1 (best-effort, primary operation already succeeded): fault-fuzz injected failure\n"
+
+	keepSessionOps := []string{
+		"REST POST /api/v1/auth/mfa/activate",
+		"REST POST /api/v1/auth/mfa/disable",
+		"REST POST /api/v1/auth/change-password",
+	}
+	for _, op := range keepSessionOps {
+		assert.True(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent"}, keepSessionLog),
+			"%s: a Session+AuditEvent diff WITH the resolve-failure log must be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent"}, ""),
+			"%s: EVIDENCE REQUIRED -- no captured log output must NOT be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent"}, "some unrelated log line\n"),
+			"%s: EVIDENCE REQUIRED -- log present but missing the specific substring must NOT be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "GetSession", 1, []string{"Session", "AuditEvent", "User"}, keepSessionLog),
+			"%s: a diff touching a table OUTSIDE the allowed set must never be exempted, regardless of log evidence", op)
+	}
+	assert.False(t, opScopedAcceptableByDesign("REST POST /api/v1/some/other/op", "GetSession", 1, []string{"Session", "AuditEvent"}, keepSessionLog),
+		"an unrelated op must never match these op-scoped entries")
+
+	purgeFailureOps := []string{
+		"REST POST /api/v1/auth/mfa/disable",
+		"REST POST /api/v1/auth/webauthn/register/finish",
+	}
+	for _, op := range purgeFailureOps {
+		assert.True(t, opScopedAcceptableByDesign(op, "DeleteSessionsForUserExcept", 1, []string{"Session", "AuditEvent"}, purgeFailureLog),
+			"%s: a Session+AuditEvent diff WITH the purge-failure log must be exempted", op)
+		assert.False(t, opScopedAcceptableByDesign(op, "DeleteSessionsForUserExcept", 1, []string{"Session", "AuditEvent"}, ""),
+			"%s: EVIDENCE REQUIRED -- no captured log output must NOT be exempted", op)
+	}
 }
 
 // TestHashExcludingColumns_ColumnScopedExclusion is #2410's direct proof:

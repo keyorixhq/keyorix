@@ -217,14 +217,7 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	// recovery-codes-status query refetch, triggered by this call's own success,
 	// would otherwise race this purge and force a global logout before the user ever
 	// sees them). Best-effort: enrolment must not fail on a session-cleanup error.
-	var keepID uint
-	var keepHash string
-	if keepSessionToken != "" {
-		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
-			keepID = s.ID
-			keepHash = s.SessionToken
-		}
-	}
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "activate_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.activated", &uid, nil, nil, "", fmt.Sprintf("user %s activated MFA", user.Username))
@@ -264,14 +257,7 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	// too only forces an immediate, surprising logout of the very request that just
 	// disabled MFA, with no security benefit over letting it continue normally.
 	// Best-effort: disable must not fail on a cleanup error.
-	var keepID uint
-	var keepHash string
-	if keepSessionToken != "" {
-		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
-			keepID = s.ID
-			keepHash = s.SessionToken
-		}
-	}
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "disable_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", fmt.Sprintf("user %s disabled MFA", user.Username))
