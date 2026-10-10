@@ -78,7 +78,9 @@ func readSecretFile(path string) (string, error) {
 	// key as a symlink into the kubelet's ..data/ directory. The permission
 	// check (CheckPermissions) stats the target, so a symlink cannot be used to
 	// launder a loose file.
-	f, err := os.Open(path) // #nosec G304 -- operator-configured secret path (X_FILE)
+	// #nosec G304 G703 -- path is the operator's own X_FILE setting (process environment,
+	// not network input); the file must be a regular file and is size-capped below.
+	f, err := os.Open(path)
 	if err != nil {
 		return "", fmt.Errorf("cannot open secret file: %w", unwrapPathError(err))
 	}
