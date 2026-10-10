@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -253,10 +252,13 @@ const sqliteBusyTimeoutMillis = 10000
 //     own cascade logic could orphan dependent rows with zero DB-level backstop and
 //     no visible error. See factory_sqlite_pragma_test.go for the scope note on
 //     what this codebase's GORM-generated schema currently declares.
+//
 //   - _busy_timeout=<ms> (#465): see sqliteBusyTimeoutMillis above.
+//
 //   - _journal_mode=WAL (#465): the default rollback-journal mode blocks readers
 //     during a write and vice versa, increasing SQLITE_BUSY frequency under
 //     concurrent access; WAL lets readers proceed concurrently with a writer.
+//
 //   - _txlock=immediate: SQLite's default BEGIN is DEFERRED — a transaction that
 //     reads first and writes second (e.g. AssignRole's existing-grant check
 //     before its Create) only requests the write lock at that first write
@@ -274,6 +276,7 @@ const sqliteBusyTimeoutMillis = 10000
 //     35871480798, 35840030029: "grant victim ...: database is locked (5)
 //     (SQLITE_BUSY)" from AssignUserRole) despite _busy_timeout already
 //     being set.
+//
 //   - _synchronous=FULL (SESSION-PERF, 2026-10-02): without this, `synchronous`
 //     is never touched by this DSN and falls through to the driver/library
 //     default — which modernc.org/sqlite v1.59.0 leaves unset when the DSN
@@ -296,6 +299,24 @@ const sqliteBusyTimeoutMillis = 10000
 //     docs/g80-remediation-notes.md's SESSION-PERF entry for the measured
 //     before/after (no throughput delta, as expected, since the pragma value
 //     is unchanged — this closes an unasserted-guarantee gap, not a bug).
+//
+//     NOT RELAXABLE BY CONFIGURATION. ADR-112 Amendment 1's fast audit mode
+//     (storage.database.insecure_audit_skip_durable_sync) is PostgreSQL-ONLY
+//     (Andrei's decision, 2026-10-05) and config validation REFUSES TO START
+//     when it is combined with a SQLite backend
+//     (internal/config's auditSkipDurableSyncSQLiteUnsupportedError), so this
+//     DSN has no NORMAL branch at all and never had one in a shipped build.
+//     Two reasons it is not offered here, both measured or structural:
+//     `synchronous` is a PER-CONNECTION property set once per DSN and the pool
+//     is shared by every query, so NORMAL would relax commit durability for
+//     the WHOLE database — a power loss could undo a just-committed secret
+//     rotation or revocation, not merely lose audit entries; and the measured
+//     p99 got WORSE under concurrency anyway (328.8->518.0ms at c=10,
+//     703.7->919.0ms at c=50 on pve01), so it was not even a clean latency
+//     win. Postgres's own path confines the equivalent change to the audit
+//     transaction alone (SET LOCAL synchronous_commit, see
+//     internal/storage/store/local_audit_chain.go), which is why it IS offered
+//     there.
 //
 // Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
 // pragmas, so this is intentionally SQLite-only — never applied to the Postgres
@@ -565,7 +586,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// switch; every later Open against an already-WAL file is a same-mode pragma
 	// no-op that always succeeds immediately, regardless of other open connections.
 	migrationMu.Lock()
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := openSQLiteGorm(sqliteDSN(dbPath))
 	migrationMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -585,6 +606,12 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	// No SetAuditSkipDurableSync here, deliberately: ADR-112 Amendment 1's
+	// fast audit mode is PostgreSQL-only and config validation refuses to
+	// start a SQLite backend that sets it, so there is nothing to propagate --
+	// and leaving the zero value (false, durable) means a config that somehow
+	// bypassed validation still gets durable commits rather than a half-
+	// applied weak mode.
 	return ls, nil
 }
 
@@ -611,6 +638,11 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	// ADR-112 Amendment 1: read the computed status rather than the raw bool,
+	// so "configured" and "actually in effect" cannot drift apart between
+	// here and the surfaces that report it (start-up log, posture, API). This
+	// is the one backend where InEffect can be true.
+	ls.SetAuditSkipDurableSync(cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type).InEffect)
 	return ls, nil
 }
 
@@ -1620,7 +1652,6 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	scheduleExists := tableExists(db, "secret_access_schedules")
 	secretTemplateExists := tableExists(db, "secret_templates")
 	alertEscalationExists := tableExists(db, "alert_escalation_policies")
-	notificationChannelExists := tableExists(db, "notification_channels")
 	secretVersionCommentExists := tableExists(db, "secret_version_comments")
 	mfaStepupTokenExists := tableExists(db, "mfa_stepup_tokens")
 	hygieneTrendExists := tableExists(db, "hygiene_trend_snapshots")
@@ -1918,6 +1949,22 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := db.AutoMigrate(&models.BreakGlassActivation{}); err != nil {
 			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
 		}
+	} else {
+		// ADR-112 §3 (break-glass review item 5): ReviewedBy/ReviewedAt/ReviewNote
+		// were added to BreakGlassActivation after this table could already exist in
+		// the field — same "never full-AutoMigrate an existing table here" constraint
+		// as AccessReviewCampaign above; add the new columns via the Migrator so an
+		// upgraded install picks them up. Without this, ReviewBreakGlassActivation's
+		// conditional UPDATE would hard-fail on every upgraded install that predates
+		// this feature (the column it sets simply wouldn't exist).
+		m := db.Migrator()
+		for _, col := range []string{"ReviewedBy", "ReviewedAt", "ReviewNote"} {
+			if !m.HasColumn(&models.BreakGlassActivation{}, col) {
+				if err := m.AddColumn(&models.BreakGlassActivation{}, col); err != nil {
+					return fmt.Errorf("failed to add break_glass_activations.%s column: %w", col, err)
+				}
+			}
+		}
 	}
 	// Enforce at most one ACTIVE break-glass activation per (project, user), even
 	// under a race — see ensureBreakGlassActiveIndex. Runs whether the table was just
@@ -2117,10 +2164,20 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return fmt.Errorf("failed to migrate alert_escalation_policies table: %w", err)
 		}
 	}
-	if !notificationChannelExists {
-		if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
-			return fmt.Errorf("failed to migrate notification_channels table: %w", err)
-		}
+	// Unconditional (#2433), not guarded on !notificationChannelExists like the
+	// SESSION-U U1 block above: that guard only ever existed to catch up a table
+	// that was missing ENTIRELY on an upgrading install (the historical bug those
+	// 11 models share) -- it was never meant to freeze the table's columns at
+	// whatever existed the day the catch-up landed. NotificationChannel added two
+	// new columns (URLEnc/URLMeta) after that fix shipped; the old `if !exists`
+	// gate would skip AutoMigrate entirely once the table exists, so an
+	// upgrading install would never get the new columns at all, even though
+	// notification_channels.go's CRUD now depends on them unconditionally.
+	// AutoMigrate is additive and safe on an existing table (same rationale as
+	// "Create rotation_policies if missing" below), so there is no reason this
+	// one model needed the once-only gate going forward.
+	if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
+		return fmt.Errorf("failed to migrate notification_channels table: %w", err)
 	}
 	if !secretVersionCommentExists {
 		if err := db.AutoMigrate(&models.SecretVersionComment{}); err != nil {

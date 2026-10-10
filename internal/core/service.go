@@ -312,6 +312,22 @@ type KeyorixCore struct {
 	// ssoJWKS verifies their id_tokens. Empty = SSO disabled. Set via SetSSOProviders.
 	ssoProviders map[string]*SSOProvider
 	ssoJWKS      JWKSResolver
+	// unionPageSizeOverride lowers ListReadableSecrets' per-scope page bound
+	// (secret_readable_listing.go's maxUnionPageSize) so a test can drive the
+	// truncation path without seeding 100001 secrets. 0 = use the real bound; never
+	// set outside tests. A bound that can only be exercised by an unaffordable
+	// fixture is a bound nobody has watched behave — which is how its truncation
+	// came to be silent in the first place.
+	unionPageSizeOverride int
+	// listingMaxRowsOverride lowers the STORAGE row bound
+	// (secret_listing_query.go's secretListingMaxRows, 10000) for the same reason
+	// and with the same rules as unionPageSizeOverride above. It exists because the
+	// coordinator's review of #2874 found that bound was the one actually in force
+	// — convertToStorageFilter hard-codes it and discards the caller's paging — so
+	// every truncation test that only lowered unionPageSizeOverride was driving a
+	// bound that the storage clamp shadowed. 0 = use the real bound; never set
+	// outside tests.
+	listingMaxRowsOverride int
 	// membershipValidationMode is the ADR-022 install-level onboarding mode;
 	// "" = allowlist default. Set via SetMembershipValidationMode.
 	membershipValidationMode string
@@ -677,7 +693,7 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) (
 	// way the existing returned-error handling below already does.
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("SECURITY: emitAudit panicked persisting audit event %q (success=%v, best-effort, primary operation already succeeded): %v", event.EventType, event.Success, r)
+			logAuditEmitPanic(event, r)
 			persisted = false
 		}
 	}()
@@ -690,15 +706,31 @@ func (c *KeyorixCore) emitAudit(ctx context.Context, event *models.AuditEvent) (
 	// those three still vulnerable. See store.auditWriteContext's doc comment for the
 	// full rationale.
 	if err := c.storage.LogAuditEvent(ctx, event); err != nil {
-		// A failed chain-write is an audit gap that VerifyAuditChain cannot detect — a
-		// never-written event leaves no hole. Surface it loudly instead of swallowing,
-		// and do NOT forward a phantom event (ID 0, no chain position) to the SIEM: the
-		// off-box mirror must reflect the durable chain, not events that never landed.
-		log.Printf("SECURITY: failed to persist audit event %q (success=%v): %v", event.EventType, event.Success, err)
+		logAuditEmitFailure(event, err)
 		return false
 	}
 	c.afterAuditEventPersisted(event)
 	return true
+}
+
+// logAuditEmitPanic and logAuditEmitFailure are the two failure reports every
+// audit-emit path shares. Extracted (#2676) so emitAudit and emitAuditOn
+// (audit_target.go, the transaction-scoped variant) cannot report the same
+// condition two different ways — an operator grepping for one of these strings
+// must find every occurrence of the condition, not whichever path happened to be
+// taken.
+func logAuditEmitPanic(event *models.AuditEvent, r any) {
+	log.Printf("SECURITY: emitAudit panicked persisting audit event %q (success=%v, best-effort, primary operation already succeeded): %v", event.EventType, event.Success, r)
+}
+
+// A failed chain-write is an audit gap that VerifyAuditChain cannot detect — a
+// never-written event leaves no hole. Surface it loudly instead of swallowing,
+// and do NOT forward a phantom event (ID 0, no chain position) to the SIEM: the
+// off-box mirror must reflect the durable chain, not events that never landed.
+// (auditForwardSink extends that same rule to an event written inside a
+// transaction that later rolls back.)
+func logAuditEmitFailure(event *models.AuditEvent, err error) {
+	log.Printf("SECURITY: failed to persist audit event %q (success=%v): %v", event.EventType, event.Success, err)
 }
 
 // prepareAuditEventForEmit applies the mutations emitAudit/emitAuditWithAccessLog

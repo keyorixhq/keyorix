@@ -173,6 +173,60 @@ type LocalStorage struct {
 	// back to the always-correct GORM path" pattern as auditFlusher above.
 	// Only the root LocalStorage returned by NewLocalStorage gets a real one.
 	rawStmts *rawStatements
+	// auditSkipDurableSync, when true, makes the audit-commit transaction skip
+	// the WAIT for a disk sync — nothing else (ADR-112 Amendment 1,
+	// FASTAUDIT-1, docs/specs/fast-audit-mode.md). Set once at construction
+	// from config.DatabaseConfig.InsecureAuditSkipDurableSync; zero value
+	// (false, Go's own default) is the secure baseline, so a construction site
+	// that forgets to call SetAuditSkipDurableSync gets DURABLE commits, never
+	// the weak mode.
+	//
+	// Read by commitBatchAttempt and logAuditEventDirect, and acted on ONLY on
+	// Postgres (`SET LOCAL synchronous_commit = off`, transaction-scoped).
+	// There is no SQLite equivalent and deliberately never was in a shipped
+	// build: the mode is PostgreSQL-only (Andrei's decision, 2026-10-05) and
+	// config validation refuses to start a SQLite backend that sets it, so a
+	// SQLite-backed LocalStorage can never have this field true. See
+	// config.DatabaseConfig.InsecureAuditSkipDurableSync for the two reasons
+	// (per-connection pragma relaxes every table; measured p99 regression).
+	//
+	// Deliberately NOT shared with transaction-scoped clones, same as
+	// auditFlusherLingerWindow: read-only after construction, and a clone's
+	// own audit writes go through logAuditEventDirect inside the CALLER's
+	// transaction, whose durability is the caller's business, not the audit
+	// chain's.
+	auditSkipDurableSync bool
+	// rolePermCache backs RoleSetHasPermission's read-path cache (PERF-3,
+	// docs/specs/read-path-caching.md PR-2). A pointer so a transaction-scoped
+	// LocalStorage (see WithTransaction) shares the SAME cache as its parent,
+	// same sharing reason as auditChainMu etc. above — see
+	// role_permission_cache.go's own header for why this must NOT be a
+	// package-level global instead.
+	rolePermCache *rolePermissionCache
+	// cacheEnabled gates every read-path cache READ and WRITE. It is set in
+	// exactly ONE place — NewLocalStorage — and is deliberately never copied
+	// anywhere else, so any LocalStorage derived from another (WithTransaction's
+	// tx-scoped clone, and the several ad-hoc `&LocalStorage{db: tx}` literals
+	// in this package) has it false by construction and bypasses the cache
+	// entirely.
+	//
+	// This is a correctness requirement, not an optimisation. A tx-scoped store
+	// reads through the TRANSACTION handle, so both the generation and the data
+	// it sees are UNCOMMITTED, and it shares the parent's cache pointer. Caching
+	// from inside a transaction therefore publishes an uncommitted answer into a
+	// cache that outlives the transaction: if the transaction then rolls back
+	// and a later COMMITTED write happens to reproduce the same generation
+	// value, that rolled-back answer validates and is served. For
+	// RoleSetHasPermission that is an authorization bypass — and it is not a
+	// remote possibility: with the generation now a monotonic integer (see
+	// bumpRolePermissionsGenerationTx), a rolled-back bump N→N+1 is reproduced
+	// EXACTLY by the very next committed role_permissions write.
+	//
+	// Phrased as a flag that must be SET to enable the cache, never one that
+	// must be set to disable it, so a future constructor that forgets about it
+	// fails closed (no caching) rather than open (caching from inside a
+	// transaction).
+	cacheEnabled bool
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -199,6 +253,10 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		rbacClockWatermark:    &clockWatermark{},
 		auditFlusher:          &auditFlusherState{},
 		rawStmts:              &rawStatements{},
+		rolePermCache:         newRolePermissionCache(),
+		// The ONLY place this is set. See the field's doc comment: every derived
+		// or transaction-scoped LocalStorage must leave it false.
+		cacheEnabled: true,
 	}
 }
 
@@ -213,6 +271,23 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 // construction-time-only field on this type (db, the mutex pointers).
 func (ls *LocalStorage) SetAuditFlusherLingerWindow(d time.Duration) {
 	ls.auditFlusherLingerWindow = d
+}
+
+// SetAuditSkipDurableSync configures whether the audit-commit transaction
+// skips the WAIT for a disk sync (ADR-112 Amendment 1, FASTAUDIT-1 —
+// docs/specs/fast-audit-mode.md). false, the zero value and this type's
+// default if this is never called, is the secure baseline: the audit record is
+// durably committed before a secret value is returned. Only
+// internal/storage's factory calls this, and only with
+// config.DatabaseConfig.InsecureAuditSkipDurableSync, which no transport can
+// set.
+//
+// Same constraint as SetAuditFlusherLingerWindow: safe to call only before
+// this LocalStorage starts serving traffic — the field is read once per
+// commit attempt with no synchronization, like every other
+// construction-time-only field on this type.
+func (ls *LocalStorage) SetAuditSkipDurableSync(skip bool) {
+	ls.auditSkipDurableSync = skip
 }
 
 // DB returns the underlying *gorm.DB. Exposed for test helpers that need direct

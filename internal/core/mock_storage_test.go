@@ -60,6 +60,19 @@ func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage
 	return fn(m)
 }
 
+// LockLiveProject answers "live" (#2702/#2710/#2711/#2712). This mock has no
+// projects at all, and every test using it exercises a path where the project's
+// existence is not the subject — answering false would make the create paths
+// that now re-check it fail for a reason none of those tests is about.
+//
+// Note what this costs: a mock-backed test can never observe the deleted-parent
+// rollback. That is deliberate, and it is why the proof for this fix is the four
+// cross-replica Postgres tests in
+// concurrency_child_under_deleted_project_postgres_test.go against real storage
+// and a real row lock, not anything here — a mock cannot model a row lock, and a
+// mock that returned a canned false would test the error message, not the race.
+func (m *MockStorage) LockLiveProject(_ context.Context, _ uint) (bool, error) { return true, nil }
+
 // Login rate-limiting stubs (core rate-limit logic is tested against real SQLite).
 func (m *MockStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Time) error { return nil }
 func (m *MockStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {
@@ -371,6 +384,11 @@ func (m *MockStorage) UpdateAccessReviewItem(ctx context.Context, item *models.A
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID uint, fromDecision string, actorID uint) (bool, error) {
+	args := m.Called(ctx, itemID, fromDecision, actorID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
 	args := m.Called(ctx, projectID)
 	if args.Get(0) == nil {
@@ -590,6 +608,19 @@ func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revoke
 	return args.Error(0)
 }
 
+func (m *MockStorage) ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error {
+	args := m.Called(ctx, id, reviewerID, note, reviewedAt)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	args := m.Called(ctx, cutoff)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.BreakGlassActivation), args.Error(1)
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
@@ -647,8 +678,18 @@ func (m *MockStorage) UpdateSecret(ctx context.Context, secret *models.SecretNod
 	return args.Get(0).(*models.SecretNode), args.Error(1)
 }
 
+func (m *MockStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+	args := m.Called(ctx, id, f)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStorage) TransitionSecretStatus(ctx context.Context, secret *models.SecretNode, fromStatus string) (bool, error) {
 	args := m.Called(ctx, secret, fromStatus)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
+	args := m.Called(ctx, secret, fromBackend)
 	return args.Bool(0), args.Error(1)
 }
 
@@ -1907,8 +1948,8 @@ func (m *MockStorage) ListRotationPolicies(ctx context.Context, projectID *uint,
 	return args.Get(0).([]*models.RotationPolicy), args.Error(1)
 }
 
-func (m *MockStorage) UpdateRotationPolicy(_ context.Context, _ *models.RotationPolicy) error {
-	return nil
+func (m *MockStorage) UpdateRotationPolicyFields(_ context.Context, _ uint, _ storage.RotationPolicyFieldUpdate, _ time.Time) (bool, error) {
+	return true, nil
 }
 
 func (m *MockStorage) DeleteRotationPolicy(_ context.Context, _ uint) error {
@@ -2337,8 +2378,11 @@ func (m *MockStorage) GetWebAuthnCredentialByCredID(_ context.Context, _ []byte,
 func (m *MockStorage) LockWebAuthnCredentialForUpdate(_ context.Context, _ []byte, _ uint) (*models.WebAuthnCredential, error) {
 	return nil, nil
 }
-func (m *MockStorage) UpdateWebAuthnCredential(_ context.Context, _ *models.WebAuthnCredential) error {
-	return nil
+func (m *MockStorage) DisableWebAuthnCredential(_ context.Context, _ uint) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) SetWebAuthnCredentialCounterState(_ context.Context, _ uint, _ []byte, _ time.Time) (bool, error) {
+	return true, nil
 }
 func (m *MockStorage) AdvanceWebAuthnCredentialCounter(_ context.Context, _ []byte, _ uint, _ []byte, _ uint32, _ time.Time) (bool, error) {
 	return false, nil

@@ -1,0 +1,39 @@
+# Exemptions for TestFullRowWriteGuard_NoStaleFullRowWriteOnSecurityStateModels
+# (internal/storage/store/full_row_write_guard_test.go): a Save / Select("*").Updates /
+# OnConflict{UpdateAll} upsert of a whole security-state row. Each row says why the site
+# is acceptable, or that it is not (UNSAFE-OPEN #issue) and stays listed only so main
+# stays green until the fix lands.
+#
+# Columns: file <TAB> function <TAB> model <TAB> reason <TAB> expires <TAB> added_by <TAB> reviewed_by
+#
+# Reason classes:
+#   SAFE-CAS     a conditional write (WHERE on the state column) and no narrower writer of
+#                any other column of that table exists, so nothing can be reverted.
+#   RESIDUAL     a stale revert is possible, of the columns named, none of which gates
+#                access, liveness or credential validity.
+#   UNSAFE-OPEN  a real race; the issue tracks the fix. Not "accepted": remove the row
+#                when the fix lands.
+#   pending: #N  an open PR fixes this site; the row expires (expires column) and
+#                internal/core/exempt_ledger_review_test.go fails once #N has merged.
+#   arrives with #N  pre-registered for a site an open PR creates or renames; may match
+#                nothing until #N merges.
+#
+# expires: YYYY-MM-DD (pending/arrives rows only) or -.
+# reviewed_by must be non-empty and differ from added_by
+# (internal/core/exempt_ledger_review_test.go).
+internal/storage/store/local_access_review_campaigns.go	(*LocalStorage).UpdateAccessReviewCampaign	AccessReviewCampaign	SAFE-CAS: conditional on state='open' (WHERE id AND state); the only transition is open->closed by CloseAccessReviewCampaign, a losing racer matches 0 rows, and no other writer changes any column of an open campaign (purge deletes only closed ones).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_access_review_campaigns.go	(*LocalStorage).UpdateAccessReviewItem	AccessReviewItem	SAFE-CAS: conditional on decision='pending' and an open campaign; on main no other writer changes an item row, and the snapshot columns are immutable. (Open PR #2678 adds RevertAccessReviewItemClaim, column-scoped and conditional on decision+decided_by.)	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_break_glass.go	(*LocalStorage).UpdateBreakGlassActivation	BreakGlassActivation	RESIDUAL: one caller (break_glass.go revert-after-grant-failure) on a row it created in the same operation; it always writes the terminal state=revoked, so state cannot regress. A racing RevokeBreakGlassActivation can have its revoked_by attribution overwritten with 0 (audit attribution only).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_dynamic.go	(*LocalStorage).UpdateDynamicSecretConfig	DynamicSecretConfig	UNSAFE-OPEN #2691 (dup #2698): ClassifyDynamicSecretConfig's stale Save writes disabled=false over a concurrent DeleteProject/kill-switch disable (#369). The other caller on main, CreateDynamicSecretConfig's DSN persist, is #2651 (fix: open PR #2675).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_dynamic.go	(*LocalStorage).UpdateDynamicSecretLease	DynamicSecretLease	UNSAFE-OPEN #2698: RenewLease's stale Save can write status=active with a later expires_at over a concurrent RevokeLease's revoke_failed (target drop failed, credential still live); the sweep then waits for the extended expiry, and the revoke_failed signal is lost. A successful revoke can also be flipped back to active (bookkeeping; holds a MaxActiveLeases slot until the sweep). Renew is a no-op for MySQL/Mongo/Redis, so it does not fail first there.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_invitations.go	(*LocalStorage).UpdateAccessRequest	AccessRequest	SAFE-CAS: conditional on state='pending'; no other writer changes a pending request's columns (purge removes only resolved rows).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_invitations.go	(*LocalStorage).UpdateProjectInvitation	ProjectInvitation	SAFE-CAS: conditional on state='pending'; every invitation writer goes through this transition, no column-narrower writer exists.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_legal_hold.go	(*LocalStorage).UpdateLegalHold	LegalHold	RESIDUAL: one caller (LiftLegalHold); released only ever goes false->true and rows are never deleted, so a racing second lift only overwrites released_by/release_reason (and audits twice).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_machine_identities.go	(*LocalStorage).TransitionMachineIdentityState	MachineIdentity	SAFE-CAS: conditional on state=from; transitionMachineInTx re-reads under LockMachineIdentityForUpdate in the same tx, ClassifyMachineIdentity's UPDATE blocks on that row lock and then fails its state CAS; no other writer of this table exists. Worst case: one of two concurrent classifies is lost.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_memberships.go	(*LocalStorage).TransitionProjectMembershipState	ProjectMembership	SAFE-CAS: conditional on state; every membership writer goes through this transition and changes only state-related columns. (The role-grant side effect of a racing activate/revoke is #2657/#2659, not a column revert.)	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_mfa.go	(*LocalStorage).UpsertMFASecret	MFASecret	UNSAFE-OPEN #2692: BeginMFAEnrollment's late OnConflict{UpdateAll} upsert replaces an already-activated secret after a concurrent ActivateMFA.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_rbac.go	(*LocalStorage).UpdateRole	Role	RESIDUAL: core UpdateRole's stale Save re-inserts a concurrently hard-deleted custom role (same id) with no holders (grants were cascaded); builtin roles are refused so bypasses_permission_checks is not reachable. Breaks DeleteRole's no-id-reuse premise for history rows only.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_risk_exceptions.go	(*LocalStorage).ApproveRiskExceptionIfPending	RiskException	SAFE-CAS: conditional on revoked=false AND approved=false; the only other writer (RevokeRiskExceptionIfNotRevoked) is column-scoped and makes this CAS miss.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_secrets.go	(*LocalStorage).UpdateSecret	SecretNode	UNSAFE-OPEN #2689 (dup #2695): ten callers persist stale secret rows (SetSecretAutoRotate's is #2650, fix in open PR #2668); a racing delete/suspend/classify/ownership/read-count/rotation write is reverted, and Save's upsert fallback un-deletes.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_sharing.go	createShareRecordTx	ShareRecord	arrives with #2671 (the CreateShareRecord Saves move here; on merge drop this phrase and set expires to -). RESIDUAL: re-sharing over an existing (possibly concurrently revoked) share Saves the in-tx-read row; a racing revoke ends with the share live, which is serial-equivalent to revoke-then-share (permission/expiry come from the new share request; only created_at/owner_id are stale). The SecretNode parent is re-checked separately (INV-STORE-21).	2026-10-18	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+internal/storage/store/local_users.go	(*LocalStorage).UpdateUser	User	UNSAFE-OPEN #2677, #2699: DeleteUser (#2677) and resolveSSOUser on a first SSO link (#2699) persist stale user rows; a racing suspend/delete/password/MFA write is reverted, and the SSO path un-deletes via Save's upsert. RestoreUser's caller is safe (row locked by tx.RestoreUser first).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW

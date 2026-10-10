@@ -2,7 +2,9 @@ package core
 
 import (
 	"context"
+	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -35,9 +37,9 @@ func (m *MockStorage) ListSecretTemplates(ctx context.Context) ([]*models.Secret
 	return args.Get(0).([]*models.SecretTemplate), args.Error(1)
 }
 
-func (m *MockStorage) UpdateSecretTemplate(ctx context.Context, t *models.SecretTemplate) error {
-	args := m.Called(ctx, t)
-	return args.Error(0)
+func (m *MockStorage) UpdateSecretTemplateFields(ctx context.Context, id uint, f storage.SecretTemplateFieldUpdate, updatedAt time.Time) (bool, error) {
+	args := m.Called(ctx, id, f, updatedAt)
+	return args.Bool(0), args.Error(1)
 }
 
 func (m *MockStorage) DeleteSecretTemplate(ctx context.Context, id uint) error {

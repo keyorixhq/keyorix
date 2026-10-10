@@ -518,14 +518,21 @@ func TestWebAuthnCredential_S22_LockAndUpdate(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "MacBook", locked.Name)
 
-	// UpdateWebAuthnCredential — modify the name and persist.
-	locked.Name = "YubiKey 5C"
-	require.NoError(t, ls.UpdateWebAuthnCredential(ctx, locked))
+	// #2700: the full-row UpdateWebAuthnCredential is gone (it re-inserted a
+	// concurrently deleted passkey). The two narrow writers replace it, and
+	// there is no production path that renames a credential — so this now
+	// exercises the counter-state write, which is a real production path
+	// (AdvanceWebAuthnCredentialCounter).
+	usedAt := time.Now().UTC().Truncate(time.Second)
+	matched, err := ls.SetWebAuthnCredentialCounterState(ctx, locked.ID, []byte(`{"Authenticator":{"SignCount":9}}`), usedAt)
+	require.NoError(t, err)
+	require.True(t, matched)
 
 	// Reload and verify the update was persisted.
 	updated, err := ls.LockWebAuthnCredentialForUpdate(ctx, credID, 1)
 	require.NoError(t, err)
-	assert.Equal(t, "YubiKey 5C", updated.Name)
+	assert.JSONEq(t, `{"Authenticator":{"SignCount":9}}`, string(updated.CredentialBlob))
+	require.NotNil(t, updated.LastUsedAt)
 }
 
 // TestWebAuthnCredential_S22_LockNotFound verifies the error path when the

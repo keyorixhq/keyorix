@@ -179,16 +179,45 @@ test('a user the server refuses is told it is a permission problem, not a down b
         await page.getByTestId('login-button').click();
         await page.waitForURL(/\/dashboard/, { timeout: 20_000 });
 
-        // This persona holds secrets.read only at a project scope, and
-        // GET /api/v1/projects is gated on it at global scope
-        // (server/http/router.go uses RequirePermission, not
-        // RequireScopedPermission), so the list genuinely 403s -- see #2780.
-        // Whatever happens to that gate, the page must describe what the
-        // server actually said.
-        const refused = page.waitForResponse((r) => r.url().includes('/api/v1/projects') && r.status() === 403, {
-            timeout: 20_000,
-        });
+        // This test's own comment used to say "whatever happens to that gate,
+        // the page must describe what the server actually said" -- and then
+        // waited for a 403 on the PLAIN listing. #2780 removed that 403: a
+        // project-scoped member now gets 200 and their own projects, which is
+        // the whole point of the fix. The property under test is still worth
+        // having, so it moves to a refusal that survives.
+        //
+        // ?include_deleted=true is that refusal, and deliberately so: role
+        // grants scoped to a project survive a soft-delete (RestoreProject
+        // reinstates them) while GET /projects/{id} 404s on a deleted project,
+        // so a project-scoped reader cannot read a soft-deleted project through
+        // ANY path and must not see one listed. #2780 keeps that form
+        // global-only and asserts it at three layers
+        // (TestListProjects2780_IncludeDeletedStillRequiresGlobal, the
+        // router-level persona walk, and the handler tests), so this 403 is an
+        // invariant rather than an accident of today's gating.
+        //
+        // The page issues it when "Show deleted" is ticked. That control is
+        // offered to everyone -- the obvious client-side guard does not work,
+        // since useAuth().hasPermission reads the FLAT permission union and a
+        // project-scoped reader therefore "has" secrets.read -- so the honest
+        // behaviour is exactly what this test now pins: the refusal is named as
+        // a permission problem rather than reported as a possibly-down backend.
         await page.goto('/projects', { waitUntil: 'domcontentloaded' });
+        await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
+
+        // Precondition: the plain listing SUCCEEDS for this persona now. Asserted
+        // so a regression of #2780 shows up here as its own failure rather than
+        // as a confusing timeout on the refusal below.
+        await expect(
+            page.locator('main'),
+            'the plain listing must serve this persona their own project (#2780)'
+        ).not.toContainText(/do not have permission to list projects/i);
+
+        const refused = page.waitForResponse(
+            (r) => r.url().includes('/api/v1/projects') && r.url().includes('include_deleted') && r.status() === 403,
+            { timeout: 20_000 }
+        );
+        await page.getByLabel(/show deleted/i).check();
         await refused;
         await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => undefined);
 

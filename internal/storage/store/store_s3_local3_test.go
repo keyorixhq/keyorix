@@ -503,7 +503,11 @@ func newRBACAdvancedStore(t *testing.T) *LocalStorage {
 		&models.Project{}, &models.Environment{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.User{}, &models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
-		&models.MachineIdentity{}, &models.MachineIdentityRole{})
+		&models.MachineIdentity{}, &models.MachineIdentityRole{},
+		// SystemMetadata: AssignPermissionToRole/RemovePermissionFromRole/
+		// DeleteRole bump the PERF-3 PR-2 role_permissions cache generation
+		// (a system_metadata row) in the same transaction as the real write.
+		&models.SystemMetadata{})
 }
 
 func TestRBAC_RemoveAllProjectRoleGrants(t *testing.T) {
@@ -831,12 +835,14 @@ func TestWebAuthn_Credential_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), n)
 
-	// UpdateWebAuthnCredential.
-	cred.Name = "YubiKey"
-	require.NoError(t, ls.UpdateWebAuthnCredential(ctx, cred))
+	// #2700: DisableWebAuthnCredential replaces the full-row writer for this
+	// path. It must also report no-match (not re-insert) once the row is gone.
+	matched, err := ls.DisableWebAuthnCredential(ctx, cred.ID)
+	require.NoError(t, err)
+	require.True(t, matched)
 	list2, err := ls.ListWebAuthnCredentials(ctx, u.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "YubiKey", list2[0].Name)
+	assert.True(t, list2[0].Disabled)
 
 	// SetUserWebAuthnEnabled.
 	require.NoError(t, ls.SetUserWebAuthnEnabled(ctx, u.ID, true))
