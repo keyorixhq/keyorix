@@ -135,9 +135,9 @@ MFA_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpg
 "$CLI_BIN" mfa activate --code "$MFA_CODE" --password "$ADMIN_PASSWORD" \
     || fail "mfa activate exited non-zero"
 
-# ActivateMFA invalidates every existing session for this user (correctly --
-# enabling MFA should never leave a pre-MFA session usable), so the token
-# `login` stored above is now dead. Log in again: the account now has MFA
+# ActivateMFA invalidates every OTHER session for this user (the calling session
+# is kept, #2978), so a pre-MFA session elsewhere cannot outlive the upgrade.
+# Log in again anyway, to exercise the MFA login path: the account now has MFA
 # enabled, so this second attempt gets mfa_required instead of a token
 # directly -- exercises the exact two-step login path (`--mfa-code`,
 # completing POST /auth/mfa/verify) a real operator's SECOND-and-later
