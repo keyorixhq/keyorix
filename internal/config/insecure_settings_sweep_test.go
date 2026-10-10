@@ -39,6 +39,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -372,5 +373,132 @@ func TestConfigSurface_RatchetCatchesACountPreservingSwap(t *testing.T) {
 	// And the known-good direction: an unchanged surface is not drift.
 	if a, r := configSurfaceDrift(want, want); len(a) != 0 || len(r) != 0 {
 		t.Errorf("an unchanged surface must not be drift; got added=%v removed=%v", a, r)
+	}
+}
+
+// derivedFieldExemptions are derived (yaml:"-") Config fields that no registry
+// entry claims through DerivedInputs, each with the reason. Same contract as
+// sweepExemptions: a claim a reviewer can check at its source.
+var derivedFieldExemptions = map[string]string{
+	"security.RequireMFAImplicitDefault": "security.require_mfa has no InsecureSettingsRegistry entry at all yet " +
+		"(#2986); its implicit/grace states are reported by server/admin's collectRequireMFAPosture and " +
+		"server/main.go's logWarnOnImplicitRequireMFADefault, NOT by the registry. Remove when #2986 is fixed.",
+	"security.RequireMFAUpgradeGrace": "see security.RequireMFAImplicitDefault (#2986). Remove when #2986 is fixed.",
+}
+
+// configDerivedFields returns every yaml:"-" field reachable from Config, as
+// <yaml path of its parent>.<GoFieldName> -- the spelling DerivedInputs uses.
+// Same walk as configSurfaceLeaves, inverted: these are exactly the fields
+// that walk skips.
+func configDerivedFields() []string {
+	var out []string
+	var walk func(t reflect.Type, prefix string, onPath map[reflect.Type]bool)
+	walk = func(t reflect.Type, prefix string, onPath map[reflect.Type]bool) {
+		for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+			t = t.Elem()
+		}
+		if t.Kind() != reflect.Struct || onPath[t] {
+			return
+		}
+		onPath[t] = true
+		defer delete(onPath, t)
+		for i := 0; i < t.NumField(); i++ {
+			f := t.Field(i)
+			if f.PkgPath != "" {
+				continue
+			}
+			name := strings.Split(f.Tag.Get("yaml"), ",")[0]
+			if name == "-" {
+				p := f.Name
+				if prefix != "" {
+					p = prefix + "." + f.Name
+				}
+				out = append(out, p)
+				continue
+			}
+			if name == "" {
+				name = strings.ToLower(f.Name)
+			}
+			path := name
+			if prefix != "" {
+				path = prefix + "." + name
+			}
+			walk(f.Type, path, onPath)
+		}
+	}
+	walk(reflect.TypeOf(Config{}), "", map[reflect.Type]bool{})
+	sort.Strings(out)
+	return out
+}
+
+// unclaimedDerivedFields returns the derived fields neither claimed by an
+// entry's DerivedInputs nor exempted, and the DerivedInputs naming no real
+// derived field.
+func unclaimedDerivedFields(registry []InsecureSetting, derived []string, exempt map[string]string) (unclaimed, dangling []string) {
+	real := map[string]bool{}
+	for _, d := range derived {
+		real[d] = true
+	}
+	claimed := map[string]bool{}
+	for _, e := range registry {
+		for _, d := range e.DerivedInputs {
+			claimed[d] = true
+			if !real[d] {
+				dangling = append(dangling, e.Name+": "+d)
+			}
+		}
+	}
+	for _, d := range derived {
+		if _, ok := exempt[d]; !claimed[d] && !ok {
+			unclaimed = append(unclaimed, d)
+		}
+	}
+	return unclaimed, dangling
+}
+
+// TestConfigSurface_DerivedFieldRatchet is the derived-state half of the
+// config-surface sweep (#2908). configSurfaceLeaves skips yaml:"-" fields
+// because a config file cannot set them -- but Load() and the boot path set
+// them, and some change what a setting DOES. The ADR-112 grace period lives in
+// two of them (EnableFilePermissionCheckImplicitDefault/UpgradeGrace): the
+// registry entry read only the YAML bool, so a grace-period deployment that
+// only warned was reported as clean everywhere. Every derived field must now
+// be claimed by an entry's DerivedInputs or exempted with a reason, and every
+// DerivedInputs must name a real derived field.
+func TestConfigSurface_DerivedFieldRatchet(t *testing.T) {
+	derived := configDerivedFields()
+	unclaimed, dangling := unclaimedDerivedFields(InsecureSettingsRegistry, derived, derivedFieldExemptions)
+	if len(unclaimed) > 0 {
+		t.Errorf("derived (yaml:\"-\") Config field(s) no InsecureSettingsRegistry entry reads and no exemption "+
+			"explains: %v\n\nA derived field can change what a security setting does without any config-file "+
+			"change (#2908: the ADR-112 grace period). Either add it to the DerivedInputs of the entry whose "+
+			"InEffect/Value must reflect it, or add it to derivedFieldExemptions with a reason.", unclaimed)
+	}
+	if len(dangling) > 0 {
+		t.Errorf("DerivedInputs naming no derived Config field (renamed? removed?): %v", dangling)
+	}
+	for d, reason := range derivedFieldExemptions {
+		if reason == "" {
+			t.Errorf("derived-field exemption %q has no reason", d)
+		}
+		if !slices.Contains(derived, d) {
+			t.Errorf("derived-field exemption %q names no derived Config field -- remove it", d)
+		}
+	}
+
+	// Calibration, both directions: the #2908 shape (the entry stops claiming
+	// the grace field) must be reported; the live registry must not be.
+	var stripped []InsecureSetting
+	for _, e := range InsecureSettingsRegistry {
+		e.DerivedInputs = slices.DeleteFunc(slices.Clone(e.DerivedInputs), func(d string) bool {
+			return d == "security.EnableFilePermissionCheckUpgradeGrace"
+		})
+		stripped = append(stripped, e)
+	}
+	if got, _ := unclaimedDerivedFields(stripped, derived, derivedFieldExemptions); !slices.Contains(got, "security.EnableFilePermissionCheckUpgradeGrace") {
+		t.Errorf("calibration: an entry that stops claiming the grace field must be reported; got %v", got)
+	}
+	if !slices.Contains(derived, "security.EnableFilePermissionCheckUpgradeGrace") {
+		t.Errorf("calibration: the walk must see the derived grace field; got %v", derived)
 	}
 }
