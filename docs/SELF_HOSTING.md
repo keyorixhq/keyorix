@@ -97,10 +97,13 @@ with `openssl rand -base64 32`.
 
 **Secrets as files.** The server also accepts each secret as a file instead of an
 environment variable: set `KEYORIX_DB_PASSWORD_FILE`, `KEYORIX_MASTER_PASSWORD_FILE`
-or `KEYORIX_BOOTSTRAP_TOKEN_FILE` to a path (Docker secrets mount under
+or `KEYORIX_BOOTSTRAP_TOKEN_FILE` (and, for the container's first-boot admin
+bootstrap, `KEYORIX_ADMIN_PASSWORD_FILE`) to a path (Docker secrets mount under
 `/run/secrets/`, a Kubernetes Secret volume wherever you mount it). Setting both
 `X` and `X_FILE` is a startup error, not a precedence rule, and an unreadable or
-empty file stops the server. Details and the full list of supported variables:
+empty file stops the server. The master-password file must be `0600`/`0400` (or a
+root-owned `0440` mount in a group the container holds -- Kubernetes `fsGroup`,
+Docker `group_add`); a looser one is refused. Details and the full list of supported variables:
 [CONFIGURATION.md](CONFIGURATION.md#secrets-from-files-name_file).
 
 Server configuration (storage, encryption paths, ports) lives in

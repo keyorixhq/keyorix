@@ -3,6 +3,86 @@ set -e
 
 echo "Starting Keyorix server..."
 
+# --- BEGIN resolve_secret (extracted verbatim by server/entrypoint_secret_file_test.go) ---
+# resolve_secret NAME: NAME may come from the environment or, as NAME_FILE, from a
+# mounted secret file (Docker secrets, Kubernetes Secret volume) -- the same rules
+# as the server's own *_FILE support (internal/secretenv):
+#   - both NAME and NAME_FILE set -> refuse (exit 1), no precedence;
+#   - NAME_FILE unreadable / empty / not a regular file / over 1 MiB -> refuse;
+#   - exactly one trailing newline (or CRLF) is stripped;
+#   - the file must not be accessible to "other", writable by its group, or carry
+#     setuid/setgid/sticky; group-read (0440/0640) is accepted only for a file the
+#     running user does not own whose group the process holds (fsGroup/group_add);
+#   - neither the value nor the file contents are ever printed.
+# The value is assigned to a shell variable that is NOT exported, so it never
+# reaches the server's environment (or any child's).
+resolve_secret() {
+    _rs_name="$1"
+    eval "_rs_direct=\${$_rs_name:-}"
+    eval "_rs_path=\${${_rs_name}_FILE:-}"
+    [ -n "$_rs_path" ] || return 0
+    if [ -n "$_rs_direct" ]; then
+        echo "ERROR: both $_rs_name and ${_rs_name}_FILE are set; set exactly one" >&2
+        return 1
+    fi
+    if [ ! -f "$_rs_path" ] || [ ! -r "$_rs_path" ]; then
+        echo "ERROR: ${_rs_name}_FILE=$_rs_path is not a readable regular file" >&2
+        return 1
+    fi
+    _rs_mode=$(stat -L -c '%a' "$_rs_path") || return 1
+    _rs_uid=$(stat -L -c '%u' "$_rs_path") || return 1
+    _rs_gid=$(stat -L -c '%g' "$_rs_path") || return 1
+    _rs_other=${_rs_mode#"${_rs_mode%?}"}
+    _rs_rest=${_rs_mode%?}
+    _rs_group=${_rs_rest#"${_rs_rest%?}"}
+    _rs_ok=1
+    [ "${#_rs_mode}" -le 3 ] || _rs_ok=0                      # setuid/setgid/sticky
+    [ "$_rs_other" = 0 ] || _rs_ok=0                          # any access for other
+    [ $(( _rs_group & 2 )) -eq 0 ] || _rs_ok=0                # group-writable
+    if [ "$_rs_ok" = 1 ] && [ $(( _rs_group & 5 )) -ne 0 ]; then
+        # group-readable: only an orchestrator-owned file in a group we hold
+        _rs_ok=0
+        if [ "$_rs_uid" != "$(id -u)" ]; then
+            for _rs_g in $(id -G); do
+                [ "$_rs_g" = "$_rs_gid" ] && _rs_ok=1
+            done
+        fi
+    fi
+    if [ "$_rs_ok" != 1 ]; then
+        echo "ERROR: ${_rs_name}_FILE=$_rs_path has mode $_rs_mode -- refusing to trust it (chmod 0600/0400, or mount it root-owned with a group the process belongs to and mode 0440)" >&2
+        return 1
+    fi
+    _rs_nl='
+'
+    _rs_cr=$(printf '\r')
+    # head -c caps the read at 1 MiB + 1; the trailing x protects the final newline
+    # from command substitution.
+    _rs_val=$(head -c 1048577 "$_rs_path"; printf x) || return 1
+    _rs_val=${_rs_val%x}
+    if [ "${#_rs_val}" -gt 1048576 ]; then
+        echo "ERROR: ${_rs_name}_FILE=$_rs_path is too large" >&2
+        return 1
+    fi
+    case "$_rs_val" in
+        *"$_rs_nl")
+            _rs_val=${_rs_val%"$_rs_nl"}
+            case "$_rs_val" in *"$_rs_cr") _rs_val=${_rs_val%"$_rs_cr"} ;; esac
+            ;;
+    esac
+    if [ -z "$_rs_val" ]; then
+        echo "ERROR: ${_rs_name}_FILE=$_rs_path is empty" >&2
+        return 1
+    fi
+    eval "$_rs_name=\$_rs_val"
+}
+# --- END resolve_secret ---
+
+# KEYORIX_BOOTSTRAP_TOKEN_FILE is also read by the server itself; resolve both
+# credentials here before starting it so a bad setting fails the container at once
+# and a _FILE-only deployment still auto-bootstraps.
+resolve_secret KEYORIX_ADMIN_PASSWORD || exit 1
+resolve_secret KEYORIX_BOOTSTRAP_TOKEN || exit 1
+
 # Run the server in the background so we can perform an optional first-boot admin
 # bootstrap once it is healthy, then hand the process the foreground.
 ./keyorix-server &
@@ -21,10 +101,11 @@ for _ in $(seq 1 30); do
 done
 
 # First-boot admin bootstrap (optional, idempotent). Only runs when an admin
-# password is supplied via the environment — there are NO hardcoded credentials.
+# password is supplied via the environment (KEYORIX_ADMIN_PASSWORD or
+# KEYORIX_ADMIN_PASSWORD_FILE) — there are NO hardcoded credentials.
 # POST /system/init is safe to call repeatedly: it reports already_initialized
 # and changes nothing once an admin exists. /system/init always requires a
-# matching bootstrap token (operator-set via KEYORIX_BOOTSTRAP_TOKEN, or else a
+# matching bootstrap token (operator-set via KEYORIX_BOOTSTRAP_TOKEN or _FILE, or else a
 # random one the server generates and only logs) — without KEYORIX_BOOTSTRAP_TOKEN
 # set here, this call has no token to send and is rejected.
 if [ -n "$KEYORIX_ADMIN_PASSWORD" ]; then
