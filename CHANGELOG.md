@@ -6,6 +6,16 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **No auth rate limit fails open on a database error any more.** The per-IP
+  login, password-reset and SSO/SAML-begin budgets, and the per-account lockout,
+  used to stop counting whenever their storage failed. While the database (or
+  just its rate-limit table) was failing, brute-force and email-bombing limits
+  were off. The per-account lockout is the only bound on MFA step-up and
+  recovery-code guessing. Now each budget falls back to a bounded in-memory
+  limiter with the same limits, per server process. Each fallback writes an
+  `auth.rate_limit_error` audit event and increments
+  `keyorix_auth_rate_limit_fallback_total{budget}`, so alert on that metric.
+  Clients see the same responses as before.
 - **Successful logins no longer use up the per-IP login budget** (#2936). The
   budget (10 attempts per 15 minutes per IP, shared by the password, TOTP,
   passkey and token-refresh endpoints) was charged for every request, success
