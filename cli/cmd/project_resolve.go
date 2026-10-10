@@ -67,7 +67,7 @@ func resolveProject(ctx context.Context, client *apiclient.ClientWithResponses, 
 	case resp.StatusCode() == http.StatusForbidden:
 		return resolveProjectScoped(ctx, client, ref)
 	case resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Projects == nil:
-		return projectListItem{}, fmt.Errorf("failed to list projects: HTTP %d", resp.StatusCode())
+		return projectListItem{}, httpStatusError("failed to list projects", resp.StatusCode(), resp.Body)
 	}
 	projects := *resp.JSON200.Data.Projects
 	for _, p := range projects {
@@ -106,7 +106,7 @@ func resolveProjectScoped(ctx context.Context, client *apiclient.ClientWithRespo
 		if resp.StatusCode() == http.StatusForbidden || resp.StatusCode() == http.StatusNotFound {
 			return projectListItem{}, fmt.Errorf("project %d not found or you hold no grant on it (HTTP %d)", n, resp.StatusCode())
 		}
-		return projectListItem{}, fmt.Errorf("failed to get project %d: HTTP %d", n, resp.StatusCode())
+		return projectListItem{}, httpStatusError(fmt.Sprintf("failed to get project %d", n), resp.StatusCode(), resp.Body)
 	}
 	d := resp.JSON200.Data
 	return projectListItem{ID: uint(n), Name: derefStr(d.Name), Description: derefStr(d.Description)}, nil // #nosec G115 -- n is positive

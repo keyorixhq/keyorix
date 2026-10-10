@@ -44,7 +44,7 @@ func runSecretExpiring(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("list expiring secrets: HTTP %d", resp.StatusCode())
+		return httpStatusError("list expiring secrets", resp.StatusCode(), resp.Body)
 	}
 	rows := resp.JSON200.Data.Expiring
 	if rows == nil || len(*rows) == 0 {
@@ -99,7 +99,7 @@ func runSecretOrphaned(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("list orphaned secrets: HTTP %d", resp.StatusCode())
+		return httpStatusError("list orphaned secrets", resp.StatusCode(), resp.Body)
 	}
 	rows := resp.JSON200.Data.Orphaned
 	if rows == nil || len(*rows) == 0 {
@@ -149,7 +149,7 @@ func runSecretNameConformance(_ *cobra.Command, _ []string) error {
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get org-wide name conformance: HTTP %d", resp.StatusCode())
+			return httpStatusError("get org-wide name conformance", resp.StatusCode(), resp.Body)
 		}
 		printDeploymentNameConformance(resp.JSON200.Data)
 		return nil
@@ -160,7 +160,7 @@ func runSecretNameConformance(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get name conformance: HTTP %d", resp.StatusCode())
+		return httpStatusError("get name conformance", resp.StatusCode(), resp.Body)
 	}
 	printNameConformance(resp.JSON200.Data)
 	return nil
@@ -233,7 +233,7 @@ func runSecretQuotaReport(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get quota report: HTTP %d", resp.StatusCode())
+		return httpStatusError("get quota report", resp.StatusCode(), resp.Body)
 	}
 	rows := resp.JSON200.Data.Secrets
 	if rows == nil || len(*rows) == 0 {
@@ -283,7 +283,7 @@ func runSecretOwnershipHistory(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get ownership history: HTTP %d", resp.StatusCode())
+		return httpStatusError("get ownership history", resp.StatusCode(), resp.Body)
 	}
 	records := resp.JSON200.Data.OwnershipHistory
 	if records == nil || len(*records) == 0 {
@@ -341,7 +341,7 @@ func runSecretReassignOwner(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("reassign owner: HTTP %d", resp.StatusCode())
+		return httpStatusError("reassign owner", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Reassigned %d secret(s) from user %d to user %d.\n", derefInt(resp.JSON200.Data.Reassigned), reassignFrom, reassignTo)
 	return nil
