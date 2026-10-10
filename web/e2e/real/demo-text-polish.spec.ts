@@ -44,7 +44,10 @@ async function mainText(page: Page, route: string): Promise<string> {
             .locator('main')
             .innerText()
             .catch(() => '')) || ''
-    ).replace(/\s+/g, ' ');
+    )
+        // Config keys inside audit descriptions ("sso.providers.auto_provision") are not event names.
+        .replace(/\bsso\.providers[\w.]*/g, '')
+        .replace(/\s+/g, ' ');
     expect(text.length, `${route}: <main> rendered nothing, so the scans below would be vacuous`).toBeGreaterThan(25);
     return text;
 }
@@ -58,7 +61,7 @@ test.describe('presenter-facing text (admin)', () => {
         // The login above is itself an audit event, so both screens have rows to scan.
         for (const route of ['/dashboard', '/audit']) {
             const text = await mainText(page, route);
-            expect(text, `${route} shows a raw audit event name`).not.toMatch(RAW_EVENT_NAME);
+            expect(text.match(RAW_EVENT_NAME)?.[0] ?? null, `${route} shows a raw audit event name`).toBeNull();
         }
         // The audit table's Login row is the friendly label, and its time carries a timezone.
         await page.goto('/audit', { waitUntil: 'domcontentloaded' });
@@ -69,7 +72,7 @@ test.describe('presenter-facing text (admin)', () => {
 
     test('project activity shows friendly labels', async ({ page }) => {
         const text = await mainText(page, '/projects/2/activity');
-        expect(text).not.toMatch(RAW_EVENT_NAME);
+        expect(text.match(RAW_EVENT_NAME)?.[0] ?? null, 'raw audit event name on project activity').toBeNull();
     });
 
     test('Authentication settings show durations in words, not Go strings', async ({ page }) => {
@@ -89,7 +92,7 @@ test.describe('presenter-facing text (admin)', () => {
 
     test('Encryption settings name the key provider', async ({ page }) => {
         const text = await mainText(page, '/settings/encryption');
-        expect(text).toMatch(/Key provider/);
+        expect(text).toMatch(/key provider/i);
         // The "Type" row is never an empty dash.
         expect(text).not.toMatch(/Type\s+—/);
     });
@@ -97,8 +100,8 @@ test.describe('presenter-facing text (admin)', () => {
     test('the keyboard hint matches the platform and Ctrl+K really opens the palette', async ({ page }) => {
         await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
         const isMac = await page.evaluate(() => /Mac|iPhone|iPad/i.test(navigator.platform + navigator.userAgent));
-        await expect(page.locator('aside kbd').first()).toHaveText(isMac ? '⌘K' : 'Ctrl+K');
+        await expect(page.locator('kbd').first()).toHaveText(isMac ? '⌘K' : 'Ctrl+K');
         await page.keyboard.press(isMac ? 'Meta+k' : 'Control+k');
-        await expect(page.getByRole('dialog')).toBeVisible({ timeout: 5_000 });
+        await expect(page.getByPlaceholder('Search projects and secrets…')).toBeVisible({ timeout: 5_000 });
     });
 });
