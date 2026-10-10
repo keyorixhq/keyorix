@@ -70,8 +70,11 @@ KEYORIX_MASTER_PASSWORD=yourpassword keyorix-server
 **Log in with the CLI:**
 
 ```bash
-keyorix login --server http://localhost:8080 --username admin --password yourpassword
+keyorix login --server https://localhost:8080 --ca-file certs/server.crt --username admin --password yourpassword
 ```
+
+(`certs/server.crt` is the self-signed certificate `keyorix-server admin init`
+generated; `login` remembers the CA file for later commands.)
 
 With an authenticator app enrolled, `login` prompts for a code after the
 password; `--mfa-code` supplies one (or an unused recovery code)
