@@ -450,6 +450,10 @@ func collectRequireMFAPosture(ctx context.Context, cfg *config.Config, store cor
 	if !inGrace {
 		return false, nil // fresh install: the server enforces require_mfa from its first start
 	}
+	// #2986: the registry entry security.insecure_disable_mfa_requirement reads
+	// this flag (collectInsecureSettingsPosture runs after this), the same way
+	// the server's boot sets it in applyADR112UpgradeGrace.
+	cfg.Security.RequireMFAUpgradeGrace = true
 	report.deviateShippedDefault("grace-period", "security.require_mfa is in its ADR-112 upgrade grace period: this upgraded deployment never set it, so the server does NOT enforce MFA yet. Have every interactive admin enrol, then set security.require_mfa: true explicitly (#2923 tracks an automatic end condition)")
 	return true, nil
 }

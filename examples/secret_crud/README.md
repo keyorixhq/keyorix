@@ -136,7 +136,18 @@ keyorix secret delete --id 123 --force
 
 # Delete by name
 keyorix secret delete --name "old-secret" --project 1 --environment 1
+
+# Machine-readable (non-interactive; requires --force)
+keyorix secret delete --id 123 --force --format json
 ```
+
+Delete is a **soft-delete**: the secret and its versions are kept, not
+destroyed, and can be restored with `keyorix secret restore --id 123` (find
+the ID with `keyorix secret trash --project <id>`) until the server's
+soft-delete retention window expires (default 30 days).
+
+If other secrets depend on it (`keyorix secret deps list`), the command lists
+them and refuses to proceed unless you pass `--force`.
 
 ## Expected Output
 

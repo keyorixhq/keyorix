@@ -28,6 +28,7 @@ vi.mock('../../../features/admin', () => ({
 
 vi.mock('../../../services/client', () => ({
     apiClient: { get: (...args: any[]) => apiClientGet(...args) },
+    apiErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
 const entries = [
@@ -158,6 +159,38 @@ describe('AuditLogPage — audit tab', () => {
             target: { value: 'secret.versions_listed' },
         });
         expect(screen.getByText('dave')).toBeInTheDocument();
+        expect(screen.queryByText('bob')).not.toBeInTheDocument();
+    });
+
+    it('labels secret.metadata_read and offers it as a filter', () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    ...entries,
+                    {
+                        id: 5,
+                        event_type: 'secret.metadata_read',
+                        actor: 'erin',
+                        actor_type: 'user',
+                        description: 'User erin looked up secret db',
+                        timestamp: '2026-01-16T10:00:00Z',
+                    },
+                ],
+                total: 4,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        render(<AuditLogPage />);
+        expect(within(screen.getByRole('table')).getByText('Metadata read')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Filter by event type'), {
+            target: { value: 'secret.metadata_read' },
+        });
+        expect(screen.getByText('erin')).toBeInTheDocument();
         expect(screen.queryByText('bob')).not.toBeInTheDocument();
     });
 

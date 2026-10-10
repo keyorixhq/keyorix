@@ -38,7 +38,7 @@ value. Requires secrets.read at the secret's scope.`,
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret", resp.StatusCode(), resp.Body)
 		}
 		v := secretGetResultToSecret(resp.JSON200.Data)
 
@@ -130,7 +130,7 @@ Examples:
 				return serr
 			}
 			if resp.JSON200 == nil || resp.JSON200.Data == nil {
-				return fmt.Errorf("set secret tags: HTTP %d", resp.StatusCode())
+				return httpStatusError("set secret tags", resp.StatusCode(), resp.Body)
 			}
 			printSecretTags(derefStrSlice(resp.JSON200.Data.Tags))
 			return nil
@@ -141,7 +141,7 @@ Examples:
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret tags: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret tags", resp.StatusCode(), resp.Body)
 		}
 		printSecretTags(derefStrSlice(resp.JSON200.Data.Tags))
 		return nil
@@ -205,7 +205,7 @@ Examples:
 				return serr
 			}
 			if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-				return fmt.Errorf("set secret description: HTTP %d", resp.StatusCode())
+				return httpStatusError("set secret description", resp.StatusCode(), resp.Body)
 			}
 		}
 
@@ -215,7 +215,7 @@ Examples:
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret", resp.StatusCode(), resp.Body)
 		}
 		desc := derefStr(resp.JSON200.Data.Description)
 		if desc == "" {
@@ -268,7 +268,7 @@ confidential, or restricted (or empty to clear). Requires secrets.write.`,
 			return err
 		}
 		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return fmt.Errorf("classify secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("classify secret", resp.StatusCode(), resp.Body)
 		}
 		label := secretClassifyLevel
 		if label == "" {

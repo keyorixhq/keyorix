@@ -46,6 +46,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -80,6 +81,14 @@ type lockoutOracleEnv struct {
 // NO second factor, so /auth/login alone completes her login.
 func newLockoutOracleEnv(t *testing.T) *lockoutOracleEnv {
 	t.Helper()
+	return newLockoutOracleEnvOver(t, nil)
+}
+
+// newLockoutOracleEnvOver is newLockoutOracleEnv with wrap (when non-nil)
+// interposed between the fault wrapper and the real storage, for a probe that
+// needs a concurrent effect at an exact point inside one storage call.
+func newLockoutOracleEnvOver(t *testing.T, wrap func(corestorage.Storage, *gorm.DB) corestorage.Storage) *lockoutOracleEnv {
+	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}))
 
 	// A private shared-cache DB per env: these tests all use user id 1, and
@@ -111,7 +120,11 @@ func newLockoutOracleEnv(t *testing.T) *lockoutOracleEnv {
 		EmailFolded: "alice@example.com", PasswordHash: string(hash), AccountState: "active", IsActive: true,
 	}).Error)
 
-	fs := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
+	var real corestorage.Storage = store.NewLocalStorage(db)
+	if wrap != nil {
+		real = wrap(real, db)
+	}
+	fs := faultstorage.NewFaultyStorage(real, nil)
 	c := core.NewKeyorixCore(fs)
 	c.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
 		Enabled: true, MaxAttempts: lockoutOracleMaxAttempts, Window: time.Hour,
@@ -224,8 +237,8 @@ func (e *lockoutOracleEnv) driveToThresholdMinusOne(t *testing.T) {
 // case of #2894. Each armed method is a storage call /auth/login makes only
 // AFTER bcrypt has already confirmed the password correct:
 //
-//	CreateSession       -- mintSession, inside core.LoginPending
-//	GetUserPermissions  -- the identity read in completeLogin, in the transport
+//	CreateSession       -- mintSession, inside core.LoginWithIdentityPending
+//	GetUserPermissions  -- the identity read, inside core before the mint (#2844)
 //
 // so in both the password WAS right, and in both the client gets the same 401
 // "Invalid credentials" a wrong password gets (#2888). Before #2894 the account
@@ -258,6 +271,75 @@ func TestLogin_PostVerdictFaultCostsTheSameAsAWrongPassword(t *testing.T) {
 			assert.Zero(t, sessions, "a post-verdict fault must leave no live session")
 		})
 	}
+}
+
+// suspendBeforeCreateSession suspends user 1 (a direct row update, standing in
+// for an admin's SuspendUser on another replica) immediately before the real
+// CreateSession runs: the interleaving where the suspend lands between Login's
+// password check and its session insert.
+type suspendBeforeCreateSession struct {
+	corestorage.Storage
+	db    *gorm.DB
+	fired atomic.Bool
+}
+
+func (s *suspendBeforeCreateSession) CreateSession(ctx context.Context, session *models.Session) (*models.Session, error) {
+	if session.UserID == 1 && s.fired.CompareAndSwap(false, true) {
+		if err := s.db.Model(&models.User{}).Where("id = ?", 1).Update("account_state", "suspended").Error; err != nil {
+			return nil, err
+		}
+	}
+	return s.Storage.CreateSession(ctx, session)
+}
+
+// TestLogin_SuspendBetweenPasswordCheckAndSessionInsertCostsTheSameAsAWrongPassword
+// is where #2866 and #2894 meet. #2866 (#2701) made CreateSession re-check the
+// owner inside its transaction, so a suspend landing after the password matched
+// but before the insert is refused there as a STORAGE error, not minted. That is
+// a post-verdict failure like any other (#2894): the client must get the exact
+// wrong-password response (in particular, nothing that says "suspended" and
+// thereby confirms the password), the lockout must be charged exactly as a wrong
+// password charges it, it must be audited auth.login_error (not login_failed),
+// and no session may exist.
+func TestLogin_SuspendBetweenPasswordCheckAndSessionInsertCostsTheSameAsAWrongPassword(t *testing.T) {
+	ctrlEnv := newLockoutOracleEnv(t)
+	ctrlEnv.driveToThresholdMinusOne(t)
+	control := ctrlEnv.observe(t, ctrlEnv.postLogin(t, "still-not-her-password"))
+	require.True(t, control.locked, "control: a wrong password at threshold-1 must lock the account, or this test proves nothing")
+
+	var hook *suspendBeforeCreateSession
+	probeEnv := newLockoutOracleEnvOver(t, func(real corestorage.Storage, db *gorm.DB) corestorage.Storage {
+		hook = &suspendBeforeCreateSession{Storage: real, db: db}
+		return hook
+	})
+	probeEnv.driveToThresholdMinusOne(t)
+	// The setup's own auth.login_failed events are async: let them settle so the
+	// count below measures only the probe.
+	require.Eventually(t, func() bool {
+		var n int64
+		return probeEnv.db.Model(&models.AuditEvent{}).Where("event_type = ?", "auth.login_failed").Count(&n).Error == nil &&
+			n == lockoutOracleMaxAttempts-1
+	}, 5*time.Second, 10*time.Millisecond, "setup: one auth.login_failed per wrong password")
+	w := probeEnv.postLogin(t, lockoutOracleTestPassword)
+	require.True(t, hook.fired.Load(), "the suspend must have landed inside the session insert, after the password matched")
+	var u models.User
+	require.NoError(t, probeEnv.db.First(&u, 1).Error)
+	require.Equal(t, "suspended", u.AccountState, "calibration: the account really is suspended")
+	probe := probeEnv.observe(t, w)
+
+	requireIndistinguishable(t, control, probe, "login/suspend-before-insert")
+	assert.NotContains(t, w.Body.String(), "suspend", "the response must not name the suspension")
+
+	var sessions int64
+	require.NoError(t, probeEnv.db.Model(&models.Session{}).Count(&sessions).Error)
+	assert.Zero(t, sessions, "the owner re-check must refuse the insert: no session for a suspended account")
+
+	assert.Equal(t, int64(1), waitForAuditEvent(t, probeEnv.db, "auth.login_error"),
+		"a correct password denied by the insert's owner re-check is auth.login_error")
+	var failedEvents int64
+	require.NoError(t, probeEnv.db.Model(&models.AuditEvent{}).Where("event_type = ?", "auth.login_failed").Count(&failedEvents).Error)
+	assert.Equal(t, int64(lockoutOracleMaxAttempts-1), failedEvents,
+		"only the setup's wrong passwords are auth.login_failed; the probe must not add one")
 }
 
 // TestLogin_CreateMFAChallengeFaultCostsTheSameAsAWrongPassword covers the one

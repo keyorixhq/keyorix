@@ -33,6 +33,11 @@ Vault is powerful but requires a dedicated admin. Doppler is simple but SaaS-onl
 curl -L https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh
 ```
 
+That installs the `keyorix` **CLI** only. The server (`keyorix-server`) is a
+separate release asset (`keyorix-server_linux_amd64`, plus an `-airgap` variant,
+with `checksums.txt`) — see [QUICK_START.md](QUICK_START.md#get-the-binaries) — or a
+container image (`ghcr.io/keyorixhq/keyorix-server`).
+
 Or build from source:
 
 ```bash
