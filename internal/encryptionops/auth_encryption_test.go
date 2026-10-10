@@ -92,18 +92,16 @@ func TestEnableAuthEncryptionWithConfig_WrongPassphraseFailsClosed(t *testing.T)
 	}
 }
 
-// TestEnableAuthEncryptionWithConfig_AlreadyEnabledShortCircuit_NeverFires
-// documents a real (non-security) bug: EnableAuthEncryptionWithConfig reads
-// authEnc.GetAuthEncryptionStatus() to decide whether to print "already
-// enabled" and skip re-initializing, but it reads that status BEFORE ever
-// calling authEnc.Initialize() -- Service.IsInitialized() is only ever true
-// AFTER Initialize sets the internal flag, so status["initialized"] is
-// unconditionally false at that call site and the short-circuit can never
-// fire. This test documents the current (buggy) behavior: even calling
-// enable twice in a row with --force=false never prints "already enabled" or
-// skips its own re-init work. Filed as a plain bug, not fixed here per this
-// session's test-only scope (see internal/encryptionops/auth_encryption.go:124).
-func TestEnableAuthEncryptionWithConfig_AlreadyEnabledShortCircuit_NeverFires(t *testing.T) {
+// TestEnableAuthEncryptionWithConfig_AlreadyEnabledWhenKeysPreProvisioned:
+// this test used to document the dead "already enabled" short-circuit (the
+// status was read before Initialize, so it could never fire). #2915/#2932
+// fixed that: "already enabled" now means the wrapped DEK was already on disk
+// when the command started. The pre-provisioned-keys case (keys created by
+// InitWithConfig, auth encryption never enabled) is not covered by
+// auth_encryption_enable_test.go, which starts from no keys, so this test now
+// pins the fixed behavior for it: every non-forced run reports "already
+// enabled", none claims a fresh enablement.
+func TestEnableAuthEncryptionWithConfig_AlreadyEnabledWhenKeysPreProvisioned(t *testing.T) {
 	chdirTemp(t)
 	cfg := testConfig(true)
 	setPassphraseEnv(t, testBaselinePassphrase)
@@ -122,8 +120,11 @@ func TestEnableAuthEncryptionWithConfig_AlreadyEnabledShortCircuit_NeverFires(t 
 		if err != nil {
 			t.Fatalf("call %d: EnableAuthEncryptionWithConfig: %v", i, err)
 		}
-		if strings.Contains(stdout, "already enabled") {
-			t.Fatalf("call %d: got the 'already enabled' short-circuit message — the dead-code bug this test documents appears to be fixed; update/remove this test", i)
+		if !strings.Contains(stdout, "already enabled") {
+			t.Fatalf("call %d: keys were already on disk, must report \"already enabled\", got:\n%s", i, stdout)
+		}
+		if strings.Contains(stdout, "enabled successfully") {
+			t.Fatalf("call %d: must not claim a fresh enablement, got:\n%s", i, stdout)
 		}
 	}
 }
