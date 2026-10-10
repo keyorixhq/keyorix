@@ -1949,6 +1949,22 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := db.AutoMigrate(&models.BreakGlassActivation{}); err != nil {
 			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
 		}
+	} else {
+		// ADR-112 §3 (break-glass review item 5): ReviewedBy/ReviewedAt/ReviewNote
+		// were added to BreakGlassActivation after this table could already exist in
+		// the field — same "never full-AutoMigrate an existing table here" constraint
+		// as AccessReviewCampaign above; add the new columns via the Migrator so an
+		// upgraded install picks them up. Without this, ReviewBreakGlassActivation's
+		// conditional UPDATE would hard-fail on every upgraded install that predates
+		// this feature (the column it sets simply wouldn't exist).
+		m := db.Migrator()
+		for _, col := range []string{"ReviewedBy", "ReviewedAt", "ReviewNote"} {
+			if !m.HasColumn(&models.BreakGlassActivation{}, col) {
+				if err := m.AddColumn(&models.BreakGlassActivation{}, col); err != nil {
+					return fmt.Errorf("failed to add break_glass_activations.%s column: %w", col, err)
+				}
+			}
+		}
 	}
 	// Enforce at most one ACTIVE break-glass activation per (project, user), even
 	// under a race — see ensureBreakGlassActiveIndex. Runs whether the table was just
