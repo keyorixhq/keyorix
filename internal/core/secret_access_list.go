@@ -211,8 +211,11 @@ func (c *KeyorixCore) effectiveSecretAccess(ctx context.Context, secret *models.
 			break
 		}
 	}
+	// A write share elevates only the #3001 allowlist; SecretActionUpdate is on it, so a
+	// share-sourced "write" here means "update value/metadata, rotate", not full
+	// secrets.write. A read share ignores the action.
 	for _, need := range []PermissionLevel{PermissionWrite, PermissionRead} {
-		g, err := c.sharePermissionFor(ctx, uid, secret.ID, secret.ProjectID, need)
+		g, err := c.sharePermissionFor(ctx, uid, secret.ID, secret.ProjectID, need, SecretActionUpdate)
 		if err != nil {
 			result.degrade(fmt.Sprintf("share:user=%d", uid), err)
 			break
