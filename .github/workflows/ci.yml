@@ -2418,6 +2418,12 @@ jobs:
             --set auth.masterPassword=ci --set postgresql.enabled=false \
             --set externalDatabase.host=db.example.com --set externalDatabase.password=ci \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
+          # secureBaseline (SECURE-DEFAULT-1): TLS server/web/postgres, the
+          # prepare-files initContainer and the generated Secret.
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            --set auth.adminPassword=Ci-Render-Only-Pw1! --set secureBaseline.enabled=true \
+            | ./kubeconform -strict -summary -kubernetes-version 1.29.0
 
       - name: Pinned default image tag + Secret-sourced passwords (#137)
         run: |

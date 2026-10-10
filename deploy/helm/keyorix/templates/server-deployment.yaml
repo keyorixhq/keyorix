@@ -49,8 +49,58 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
+        {{- if .Values.secureBaseline.enabled }}
+        # Secret volume files are root-owned; group 1001 lets prepare-files read them.
+        fsGroup: 1001
+        {{- end }}
         seccompProfile:
           type: RuntimeDefault
+      {{- if .Values.secureBaseline.enabled }}
+      initContainers:
+        # secureBaseline (SECURE-DEFAULT-1, #2922): the startup audit and
+        # `admin validate --posture` require the config, TLS certificate/key and
+        # metrics token to be 0600 and owned by the server's uid. ConfigMap and
+        # Secret files are root-owned, so copy them into the /app/run memory
+        # emptyDir as this uid first.
+        - name: prepare-files
+          image: {{ include "keyorix.server.image" . }}
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              umask 077
+              mkdir -p /app/run/tls
+              cp /mnt/config/keyorix.yaml /app/run/keyorix.yaml
+              cp /mnt/secure/server.crt /app/run/tls/server.crt
+              cp /mnt/secure/server.key /app/run/tls/server.key
+              cp /mnt/secure/metrics_token /app/run/tls/metrics_token
+              chmod 600 /app/run/keyorix.yaml /app/run/tls/server.crt /app/run/tls/server.key /app/run/tls/metrics_token
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /mnt/config
+              readOnly: true
+            - name: secure-baseline
+              mountPath: /mnt/secure
+              readOnly: true
+            - name: run
+              mountPath: /app/run
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+              ephemeral-storage: 1Mi
+            limits:
+              cpu: 100m
+              memory: 16Mi
+              ephemeral-storage: 1Mi
+      {{- end }}
       containers:
         - name: server
           image: {{ include "keyorix.server.image" . }}
@@ -99,6 +149,16 @@ spec:
                   name: {{ include "keyorix.secretName" . }}
                   key: KEYORIX_BOOTSTRAP_TOKEN
                   optional: true
+            {{- if .Values.secureBaseline.enabled }}
+            # The private copy prepare-files made, and how entrypoint.sh reaches
+            # this server for its first-boot bootstrap (verified TLS).
+            - name: KEYORIX_CONFIG_PATH
+              value: /app/run/keyorix.yaml
+            - name: KEYORIX_LOCAL_URL
+              value: "https://localhost:{{ .Values.server.service.port }}"
+            - name: KEYORIX_LOCAL_CA_FILE
+              value: /app/run/tls/server.crt
+            {{- end }}
           volumeMounts:
             - name: config
               mountPath: /app/keyorix.yaml
@@ -108,16 +168,27 @@ spec:
               mountPath: /app/keys
             - name: tmp
               mountPath: /tmp
+            {{- if .Values.secureBaseline.enabled }}
+            - name: run
+              mountPath: /app/run
+              readOnly: true
+            {{- end }}
           livenessProbe:
             httpGet:
               path: /health
               port: http
+              {{- if .Values.secureBaseline.enabled }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 15
             periodSeconds: 20
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
+              {{- if .Values.secureBaseline.enabled }}
+              scheme: HTTPS
+              {{- end }}
             initialDelaySeconds: 5
             periodSeconds: 10
           resources:
@@ -147,6 +218,23 @@ spec:
           {{- end }}
         - name: tmp
           emptyDir: {}
+        {{- if .Values.secureBaseline.enabled }}
+        - name: run
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: secure-baseline
+          secret:
+            secretName: {{ include "keyorix.fullname" . }}-secure-baseline
+            defaultMode: 0440
+            items:
+              - key: server.crt
+                path: server.crt
+              - key: server.key
+                path: server.key
+              - key: metrics_token
+                path: metrics_token
+        {{- end }}
       {{- with .Values.server.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

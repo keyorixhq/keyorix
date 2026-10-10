@@ -2,11 +2,14 @@ package deploy
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 )
@@ -143,4 +146,92 @@ func versionAfter(t *testing.T, a, b string) bool {
 		}
 	}
 	return false
+}
+
+// renderHelmServerConfig renders the chart's server keyorix.yaml with extra
+// --set flags, its metrics_token_file pointed at a real 0600 file.
+func renderHelmServerConfig(t *testing.T, sets ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skip("helm not installed -- skipping chart config check")
+	}
+	args := []string{"template", "kx", filepath.Join("..", "deploy", "helm", "keyorix"), "-s", "templates/server-config.yaml",
+		"--set", "auth.masterPassword=x", "--set", "postgresql.auth.password=x"}
+	for _, s := range sets {
+		args = append(args, "--set", s)
+	}
+	out, err := exec.Command("helm", args...).CombinedOutput() //nolint:gosec // fixed binary, chart path and flags
+	if err != nil {
+		t.Fatalf("helm template: %v\n%s", err, out)
+	}
+	var cm struct {
+		Data map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal(out, &cm); err != nil {
+		t.Fatal(err)
+	}
+	body, ok := cm.Data["keyorix.yaml"]
+	if !ok {
+		t.Fatalf("server ConfigMap has no keyorix.yaml: %s", out)
+	}
+	dir := t.TempDir()
+	token := filepath.Join(dir, "metrics_token")
+	if err := os.WriteFile(token, []byte("test-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(dir, "keyorix.yaml")
+	if err := os.WriteFile(p, []byte(strings.ReplaceAll(body, "/app/run/tls/metrics_token", token)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestHelmSecureConfig_NoInsecureSettingInEffect(t *testing.T) {
+	path := renderHelmServerConfig(t, "secureBaseline.enabled=true")
+	if in := insecureInEffect(t, path); len(in) > 0 {
+		t.Fatalf("chart with secureBaseline.enabled=true has insecure settings in effect: %v", in)
+	}
+}
+
+// The control: secureBaseline off (today's default) still has the deviations,
+// including the bundled PostgreSQL's ssl_mode: disable.
+func TestHelmDefaultConfig_StillHasTheDeviations(t *testing.T) {
+	in := strings.Join(insecureInEffect(t, renderHelmServerConfig(t)), " ")
+	for _, want := range []string{
+		"security.insecure_allow_cleartext_transport",
+		"server.insecure_allow_unauthenticated_metrics",
+		"server.insecure_disable_api_ratelimit",
+		"storage.database.insecure_disable_database_tls",
+	} {
+		if !strings.Contains(in, want) {
+			t.Errorf("chart default no longer reports %s; if it was hardened, update this control and TestHelmSecureBaselineOnByDefaultAfterRelease", want)
+		}
+	}
+}
+
+// TestHelmSecureBaselineOnByDefaultAfterRelease is the chart's premise guard:
+// secureBaseline defaults to off only because the chart's appVersion image
+// predates it. Once appVersion moves past lastReleaseWithoutSecureBaseline the
+// default must be on (RELEASING.md).
+func TestHelmSecureBaselineOnByDefaultAfterRelease(t *testing.T) {
+	var chart struct {
+		AppVersion string `yaml:"appVersion"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, "deploy/helm/keyorix/Chart.yaml")), &chart); err != nil {
+		t.Fatal(err)
+	}
+	var values struct {
+		SecureBaseline struct {
+			Enabled bool `yaml:"enabled"`
+		} `yaml:"secureBaseline"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, "deploy/helm/keyorix/values.yaml")), &values); err != nil {
+		t.Fatal(err)
+	}
+	if !versionAfter(t, strings.TrimPrefix(chart.AppVersion, "v"), lastReleaseWithoutSecureBaseline) {
+		t.Skipf("chart appVersion %s predates the secure baseline; secureBaseline.enabled stays opt-in until the next release", chart.AppVersion)
+	}
+	if !values.SecureBaseline.Enabled {
+		t.Errorf("chart appVersion %s is past v%s: set secureBaseline.enabled: true in values.yaml (RELEASING.md)", chart.AppVersion, lastReleaseWithoutSecureBaseline)
+	}
 }
