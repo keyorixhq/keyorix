@@ -289,8 +289,11 @@ func TestValidateFilePermissions_AutoFixViaConfigField(t *testing.T) {
 	result := &ValidationResult{}
 	err := validateFilePermissions(cfg, configPath, false, result)
 	require.NoError(t, err)
-	assert.Contains(t, result.Warnings, "File permissions were automatically fixed",
-		"autoFix via config field must append the 'fixed' warning")
+	assert.Contains(t, result.Warnings, autoFixPermsNotice,
+		"autoFix via config field must append the auto-fix notice")
+	// #2940: the notice must name the setting and say how to switch it off.
+	assert.Contains(t, autoFixPermsNotice, "security.auto_fix_file_permissions")
+	assert.Contains(t, autoFixPermsNotice, "[FIXED]")
 }
 
 // ---- validateDatabase branch tests ----
