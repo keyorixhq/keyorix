@@ -61,6 +61,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/keyorixhq/keyorix/internal/startup"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
@@ -151,21 +152,17 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
-	// ADR-112 opt-out rule (item 2): every insecure_ setting currently in effect
-	// gets a warning on EVERY start — never silent. See
-	// warnInsecureSettingsInEffect below. (The deprecated-alias warning for an old
-	// key that was renamed lands with the renames themselves, in their own
-	// follow-up PRs; no setting is renamed yet.)
-	warnInsecureSettingsInEffect(cfg)
+	// ADR-112: decide, once and from the database, whether this boot is an upgraded
+	// deployment still inside the file-permission-check grace period, then warn about
+	// every insecure_ setting in effect (opt-out rule item 2: on EVERY start, never
+	// silent). See resolveADR112BootPosture. Must run before
+	// runStartupValidation/enforceKeyFilePermissions, which both read the grace result.
+	resolveADR112BootPosture(cfg)
 
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
 	// automatically on every boot.
-	// ADR-112: decide, once and from the database, whether this boot is an upgraded
-	// deployment still inside the file-permission-check grace period. Must run before
-	// runStartupValidation/enforceKeyFilePermissions, which both read the result.
-	applyADR112UpgradeGrace(cfg)
 	if err := runStartupValidation(cfg); err != nil {
 		log.Fatalf("startup validation: %v", err)
 	}
@@ -221,6 +218,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Refuse (or warn) when key material on disk is readable beyond its owner.
 	if err := enforceKeyFilePermissions(cfg); err != nil {
 		log.Fatalf("key file security: %v", err)
+	}
+
+	// Same policy for the files behind KEYORIX_*_FILE secrets (DB password, master
+	// password, bootstrap token, ...).
+	if err := enforceSecretFilePermissions(cfg); err != nil {
+		log.Fatalf("secret file security: %v", err)
 	}
 
 	// Refuse to start if the installed key files are a PARTIAL set (ADR-112,
@@ -597,7 +600,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// install is still empty, log it so the operator can complete first-boot init. This
 	// closes the unauthenticated, first-caller-wins admin-claim race on a fresh, reachable
 	// instance.
-	bootstrapToken := strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
+	bootstrapToken, btErr := resolveBootstrapToken()
+	if btErr != nil {
+		// Both KEYORIX_BOOTSTRAP_TOKEN and _FILE set, or the file unreadable: do not
+		// fall through to a generated token the operator never asked for.
+		return nil, nil, fmt.Errorf("bootstrap token: %w", btErr)
+	}
 	bootstrapTokenGenerated := false
 	if bootstrapToken == "" {
 		if t, gerr := core.GenerateBootstrapToken(); gerr == nil {
@@ -2201,6 +2209,65 @@ func groupOrOtherReadable(paths []string) []string {
 	return out
 }
 
+// resolveBootstrapToken returns the operator-pinned bootstrap token from
+// KEYORIX_BOOTSTRAP_TOKEN or the file named by KEYORIX_BOOTSTRAP_TOKEN_FILE, or
+// "" when neither is set (the caller then generates a one-time token). Both set,
+// or an unreadable/empty file, is an error -- never a silent fall-through to a
+// generated token.
+func resolveBootstrapToken() (string, error) {
+	v, found, err := secretenv.Lookup("KEYORIX_BOOTSTRAP_TOKEN")
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", nil
+	}
+	return strings.TrimSpace(v), nil
+}
+
+// resolveVaultToken returns the Vault connector token from the env var named by
+// tokenEnv (default VAULT_TOKEN) or its _FILE variant; "" when unset.
+func resolveVaultToken(tokenEnv string) (string, error) {
+	if tokenEnv == "" {
+		tokenEnv = "VAULT_TOKEN"
+	}
+	v, _, err := secretenv.Lookup(tokenEnv)
+	return v, err
+}
+
+// enforceSecretFilePermissions applies the key-material permission policy to the
+// files named by *_FILE secret variables (secretenv.CheckPermissions: nothing
+// for "other", no group write; owner not compared because an orchestrator owns
+// the mount). Same warn-vs-refuse matrix as enforceKeyFilePermissions: refuse
+// when security.enable_file_permission_check is on and
+// allow_unsafe_file_permissions is off, otherwise warn.
+func enforceSecretFilePermissions(cfg *config.Config) error {
+	var problems []string
+	for _, p := range cfg.SecretFilePaths() {
+		if err := secretenv.CheckPermissions(p); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) == 0 {
+		return nil
+	}
+	msg := strings.Join(problems, "; ")
+	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
+		// A secret file is key material: strict on the implicit ADR-112 default as
+		// well (only orchestrator-mounted config/TLS files are softened there). The
+		// one exception is the upgrade grace period, same as for the key files in
+		// enforceKeyFilePermissions: warn, and record that this boot was softened.
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: %s -- this now fails closed by default (ADR-112); fix the file mode (chmod 0400/0440, or defaultMode 0440 on a Kubernetes Secret volume) and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+			return nil
+		}
+		return fmt.Errorf("%s -- refusing to start (or set security.allow_unsafe_file_permissions to override)", msg)
+	}
+	log.Printf("WARNING: %s. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+	return nil
+}
+
 // verifyKeyFileSetConsistency is the boot-time key-file-set consistency check
 // (ADR-112, follow-up from #2400) — see keyfiles.VerifyKeySetConsistency's own
 // doc comment for the two things it checks and why. No-op when encryption is
@@ -2247,9 +2314,21 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 func warnInsecureSettingsInEffect(cfg *config.Config) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if s.InEffect(cfg) {
-			log.Printf("WARNING: %s is in effect — %s", s.Name, s.Describe)
+			log.Printf("WARNING: %s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
 		}
 	}
+}
+
+// resolveADR112BootPosture applies the ADR-112 upgrade-grace decision and THEN
+// warns about every registry entry in effect. The order is the point (#2908):
+// security.insecure_skip_startup_validation's grace-warn-only state is read
+// from EnableFilePermissionCheckUpgradeGrace, which only
+// applyADR112UpgradeGrace sets. Warning first -- main's order before #2908 --
+// evaluated that entry with the flag still false, so a grace-period
+// deployment that only warns on a failed startup check got no opt-out warning.
+func resolveADR112BootPosture(cfg *config.Config) {
+	applyADR112UpgradeGrace(cfg)
+	warnInsecureSettingsInEffect(cfg)
 }
 
 // securityPostureSnapshot computes this boot's value of every ADR-112
@@ -2882,7 +2961,10 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) error {
 			if tokenEnv == "" {
 				tokenEnv = "VAULT_TOKEN"
 			}
-			token := os.Getenv(tokenEnv)
+			token, terr0 := resolveVaultToken(tokenEnv)
+			if terr0 != nil {
+				return fmt.Errorf("connect: vault connector %q token: %w", cn.Name, terr0)
+			}
 			if token == "" {
 				log.Printf("Keyorix Connect: vault connector %q has no token (%s unset) — reads will fail", cn.Name, tokenEnv)
 			}

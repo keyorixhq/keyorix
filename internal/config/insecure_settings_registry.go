@@ -61,6 +61,15 @@ type InsecureSetting struct {
 	// effect if EITHER server.http.metrics_token or server.grpc.metrics_token
 	// is empty, and both must be swept as covered.
 	SourcePaths []string
+	// DerivedInputs names the derived (yaml:"-") Config fields this entry's
+	// InEffect/Value also read, as section.GoFieldName (e.g.
+	// "security.EnableFilePermissionCheckUpgradeGrace"). They are set by
+	// Load() or at boot, never by the config file, so the YAML sweep cannot
+	// see them; insecure_settings_sweep_test.go's derived-field ratchet
+	// requires every such field to be claimed here or exempted with a reason
+	// (#2908: the grace-period state was invisible exactly because it lives in
+	// one). Empty for an entry that reads only its SourcePaths.
+	DerivedInputs []string
 	// DeprecatedAlias is the old dotted YAML path this setting was renamed
 	// from, or "" when it was already compliant (ships with an insecure_
 	// name already) or has not been renamed yet. Empty for EVERY entry at
@@ -318,21 +327,21 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		InEffect:    func(c *Config) bool { return !c.Security.RequireTransportTLS },
 		Value:       func(c *Config) string { return boolStr(!c.Security.RequireTransportTLS) },
 	},
-	// KNOWN GAP, deferred by Andrei's 2026-10-10 decision to #2908 (fixed
-	// after #2454 and #2478 merge): InEffect reads false throughout the
-	// ADR-112 grace period. With the key ABSENT, Load() resolves
-	// EnableFilePermissionCheck to true and sets ...ImplicitDefault, and
-	// server/main.go's runStartupValidation / enforceKeyFilePermissions then
-	// WARN instead of failing closed -- so this deployment is not enforcing,
-	// yet the start-up warning, the settings diff and the posture report all
-	// record a clean posture for it. The fix is a third state (off / enforcing
-	// implicitly / explicitly enabled), not a boolean tweak here.
+	// #2908: not a boolean. During the ADR-112 upgrade grace period the field
+	// reads true while the server only WARNS about a failed startup check, so
+	// InEffect/Value read StartupValidationState (off / grace-warn-only /
+	// enforcing-implicit / enforcing-explicit) and both weak states count.
+	// The grace state is decided from the database at boot
+	// (EnableFilePermissionCheckUpgradeGrace), so every consumer must evaluate
+	// this entry AFTER applyADR112UpgradeGrace (server) or the posture
+	// report's own grace lookup (server/admin) -- DerivedInputs records that.
 	{
-		Name:        "security.insecure_skip_startup_validation",
-		SourcePaths: []string{"security.enable_file_permission_check"},
-		Describe:    "NEEDS ANDREI (polarity-inverted rename of security.enable_file_permission_check, which item 1 just gave ADR-112 default-flip + grace-period machinery under its current name) -- skips the file-permission/DEK-salt-size/database-reachability startup checks",
-		InEffect:    func(c *Config) bool { return !c.Security.EnableFilePermissionCheck },
-		Value:       func(c *Config) string { return boolStr(!c.Security.EnableFilePermissionCheck) },
+		Name:          "security.insecure_skip_startup_validation",
+		SourcePaths:   []string{"security.enable_file_permission_check"},
+		DerivedInputs: []string{"security.EnableFilePermissionCheckImplicitDefault", "security.EnableFilePermissionCheckUpgradeGrace"},
+		Describe:      "NEEDS ANDREI (polarity-inverted rename of security.enable_file_permission_check, which item 1 just gave ADR-112 default-flip + grace-period machinery under its current name) -- the file-permission/DEK-salt-size/database-reachability startup checks are skipped (off) or, in the ADR-112 upgrade grace period (grace-warn-only), only warn instead of refusing to start",
+		InEffect:      func(c *Config) bool { return c.Security.StartupValidationState().Weakened() },
+		Value:         func(c *Config) string { return string(c.Security.StartupValidationState()) },
 	},
 	{
 		Name:        "storage.encryption.key_provider.insecure_omit_shamir_commitment_check",

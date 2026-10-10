@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // decodeKeyMaterial accepts a 32-byte KEK supplied as raw bytes, hex, or base64
@@ -90,9 +92,12 @@ func (p *EnvKeyProvider) KEK() ([]byte, error) {
 	if p.envVar == "" {
 		return nil, fmt.Errorf("env key provider: env_var is required")
 	}
-	val := os.Getenv(p.envVar)
-	if val == "" {
-		return nil, fmt.Errorf("env key provider: %s is not set or empty", p.envVar)
+	val, found, err := secretenv.Lookup(p.envVar) // also honours <env_var>_FILE
+	if err != nil {
+		return nil, fmt.Errorf("env key provider: %w", err)
+	}
+	if !found {
+		return nil, fmt.Errorf("env key provider: %s is not set or empty (or set %s%s to a file holding it)", p.envVar, p.envVar, secretenv.FileSuffix)
 	}
 	return decodeKeyMaterial([]byte(val), "env")
 }

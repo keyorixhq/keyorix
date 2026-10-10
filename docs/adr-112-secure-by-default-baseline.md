@@ -11,6 +11,10 @@ audit-before-disclosure and `synchronous` baseline items gain one named
 `synchronous=FULL` becomes unconditional rather than merely default. Full spec
 (Accepted): `docs/specs/fast-audit-mode.md`.
 
+Amendment 2 (2026-10-10, **proposed, pending Andrei's OK**, #2908): the
+`enable_file_permission_check` upgrade grace period is a reported state:
+a start-up warning, a settings-diff value and a posture deviation.
+
 Related: ADR-111 (signed connector host, host connector allowlist), ADR-098 (process memory hardening), ADR-064 (air-gap update bundles), ADR-109 (air-gapped build profile).
 
 A read-only gap check of `main` @ 219160b2 against this baseline (2026-10-02) found 9 of 22 items in place, 5 partial and 8 missing; see "Gap check results".
@@ -184,6 +188,52 @@ re-litigated:
 
 This is Vault's guarantee, not a safe one, and the hardening guide says so in
 those words.
+
+## Amendment 2 (2026-10-10, PROPOSED — needs Andrei's OK): the grace period is a reported state, not a clean one
+
+#2908, decided by Andrei 2026-10-10 to fix after #2454 and #2478. The gap check
+above says existing deployments get "a grace period with a start-up warning and
+a posture deviation until they comply". For `enable_file_permission_check` only
+the start-up warning existed: its `insecure_skip_startup_validation` registry
+entry was the boolean `!enable_file_permission_check`, which is false all through
+the grace period, so a deployment whose failed startup checks only **warn** was
+reported as clean by the §1 start-up warning, the §1 settings-diff audit and the
+§2 posture report.
+
+The setting now has four states, the registry entry's settings-diff value:
+
+| State | When | Deviation |
+|---|---|---|
+| `off` | `enable_file_permission_check: false` written | yes (explicit) |
+| `grace-warn-only` | key absent, upgraded deployment (users exist) with no `adr112.file_permission_check.enforced` marker: a failed check only warns | **yes** (shipped default) |
+| `enforcing-implicit` | key absent, fresh install or already ratcheted past the grace period | no |
+| `enforcing-explicit` | `enable_file_permission_check: true` written | no |
+
+Choices made where neither #2908 nor this ADR was explicit, each the stricter option:
+
+- **Four states, not three.** #2908 names three (off / enforcing implicitly /
+  explicitly enabled). The implicit default covers two different behaviours
+  since the grace decision moved into the database (fresh installs enforce,
+  upgrades warn), so "implicit" is split. Every pair has its own value, so every
+  transition (entering or leaving the grace period, writing the key down) is an
+  audited settings-diff change. `enforcing-implicit` is not a deviation because
+  §4 and the definition of done require zero deviations for the default
+  configuration, which is that state.
+- **The posture report decides the grace period from the database**, using
+  the same facts as the boot. If the database cannot be read, an
+  implicit-default deployment is counted as a deviation (cannot be shown to be
+  enforcing), not reported as enforcing.
+- **The registry warning moves after the grace decision at boot**, and names
+  the state (`... is in effect (grace-warn-only)`).
+- **Derived fields are swept.** The grace state lives in fields the config file
+  cannot set (`yaml:"-"`), which the config-surface sweep skipped. Every such
+  field must now be read by a registry entry (`DerivedInputs`) or exempted with a
+  reason. `require_mfa`'s two are exempted for now: it has no registry entry at
+  all (#2986).
+
+Upgrade note: the settings-diff value of `security.insecure_skip_startup_validation`
+changes from `true`/`false` to the state names, so the first boot after upgrade
+writes one audit event for it.
 
 ## Consequences
 
