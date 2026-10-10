@@ -533,7 +533,8 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			query = query.Where("success = ?", *filter.Success)
 		}
 		if filter.ActorType != nil {
-			query = query.Where("actor_type = ?", *filter.ActorType)
+			cond, args := actorTypeWhere(*filter.ActorType)
+			query = query.Where(cond, args...)
 		}
 		if filter.AfterID != nil {
 			query = query.Where("id > ?", *filter.AfterID)
@@ -547,10 +548,13 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			// escapeLIKE sanitises % and _ in the caller-supplied username so
 			// a value like "admin%" doesn't turn into a wildcard prefix scan
 			// covering all usernames (#r124 LIKE injection).
-			query = query.Where(
-				`user_id IN (SELECT id FROM users WHERE username LIKE ? ESCAPE '\' AND deleted_at IS NULL)`,
-				"%"+escapeLIKE(*filter.ActorUsername)+"%",
-			)
+			cond := `user_id IN (SELECT id FROM users WHERE username LIKE ? ESCAPE '\' AND deleted_at IS NULL)`
+			// Events with no acting user are displayed with actor "system" (#2951), so
+			// a term that matches "system" also finds them, like a username match.
+			if strings.Contains("system", strings.ToLower(*filter.ActorUsername)) && *filter.ActorUsername != "" {
+				cond = "(" + cond + " OR user_id IS NULL OR user_id = 0)"
+			}
+			query = query.Where(cond, "%"+escapeLIKE(*filter.ActorUsername)+"%")
 		}
 		if filter.ResourceType != nil {
 			// event_type is "resource_type.action" — match rows whose event_type
@@ -755,4 +759,22 @@ func (ls *LocalStorage) GetDistinctActiveUserIDs(ctx context.Context, since time
 		Distinct("user_id").
 		Pluck("user_id", &ids).Error
 	return ids, err
+}
+
+// actorTypeWhere returns the WHERE clause for the audit actor_type filter. It
+// matches the KIND the API displays (server/http/handlers displayActorType), not
+// just the raw column: a row with no acting user is shown as actor "system", so
+// kind "system" also covers rows that store "" (legacy) or the column default
+// "user" with a NULL/0 user_id, and kind "user" requires a real acting user.
+// Display only: the stored actor_type (part of the hashed record) is unchanged.
+func actorTypeWhere(kind string) (string, []interface{}) {
+	const noUser = "(user_id IS NULL OR user_id = 0)"
+	switch kind {
+	case "system":
+		return "(actor_type = ? OR (actor_type IN ('', 'user') AND " + noUser + "))", []interface{}{kind}
+	case "user":
+		return "(actor_type IN ('', 'user') AND NOT " + noUser + ")", nil
+	default:
+		return "actor_type = ?", []interface{}{kind}
+	}
 }

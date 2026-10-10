@@ -145,7 +145,7 @@ func (h *AuditHandler) toAuditLogEntries(ctx context.Context, events []*models.A
 			ID:          e.ID,
 			EventType:   e.EventType,
 			Actor:       actorNames[uid],
-			ActorType:   actorTypeOrDefault(e.ActorType),
+			ActorType:   displayActorType(e.ActorType, e.UserID),
 			Description: e.Description,
 			Timestamp:   e.EventTime,
 		}
@@ -255,7 +255,7 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 			SecretID:    e.SecretNodeID,
 			Description: e.Description,
 			IPAddress:   e.IPAddress,
-			ActorType:   actorTypeOrDefault(e.ActorType),
+			ActorType:   displayActorType(e.ActorType, e.UserID),
 			Success:     success,
 			PrevHash:    e.PrevHash,
 			EntryHash:   e.EntryHash,
@@ -297,6 +297,20 @@ func actorTypeOrDefault(s string) string {
 		return core.ActorTypeUser
 	}
 	return s
+}
+
+// displayActorType is the KIND shown for an audit row. An event with no acting
+// user is labelled actor "system" (core.ResolveUsernames maps user id 0), so
+// its kind is "system" too, whether it stores "" (legacy) or the column default
+// "user". An explicit "system" or "machine_identity" is kept. Display only: the
+// stored actor_type is untouched. The actor_type query filter applies the same
+// rule (store.actorTypeWhere).
+func displayActorType(stored string, userID *uint) string {
+	kind := actorTypeOrDefault(stored)
+	if kind == core.ActorTypeUser && (userID == nil || *userID == 0) {
+		return core.ActorTypeSystem
+	}
+	return kind
 }
 
 // GetRBACAuditLogs handles GET /api/v1/audit/rbac-logs — the role-assignment

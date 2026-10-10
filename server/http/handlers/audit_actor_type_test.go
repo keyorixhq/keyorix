@@ -28,3 +28,32 @@ func TestActorTypeOrDefault(t *testing.T) {
 		t.Errorf("actorTypeOrDefault(machine) = %q, want %q", got, core.ActorTypeMachine)
 	}
 }
+
+// #2951 item 1: an event with no acting user is shown with actor "system"
+// (core.ResolveUsernames maps user id 0), so its KIND must read "system" too,
+// whether the row stores actor_type "" (legacy) or the column default "user".
+func TestDisplayActorType_SystemWhenNoActingUser(t *testing.T) {
+	uid := uint(7)
+	zero := uint(0)
+	cases := []struct {
+		name   string
+		stored string
+		userID *uint
+		want   string
+	}{
+		{"legacy empty, no user", "", nil, core.ActorTypeSystem},
+		{"default user, no user", core.ActorTypeUser, nil, core.ActorTypeSystem},
+		{"default user, user id 0", core.ActorTypeUser, &zero, core.ActorTypeSystem},
+		{"explicit system", core.ActorTypeSystem, nil, core.ActorTypeSystem},
+		{"explicit system with user", core.ActorTypeSystem, &uid, core.ActorTypeSystem},
+		{"legacy empty, real user", "", &uid, core.ActorTypeUser},
+		{"user, real user", core.ActorTypeUser, &uid, core.ActorTypeUser},
+		{"machine, no user", core.ActorTypeMachine, nil, core.ActorTypeMachine},
+		{"machine, with user", core.ActorTypeMachine, &uid, core.ActorTypeMachine},
+	}
+	for _, c := range cases {
+		if got := displayActorType(c.stored, c.userID); got != c.want {
+			t.Errorf("%s: displayActorType(%q, %v) = %q, want %q", c.name, c.stored, c.userID, got, c.want)
+		}
+	}
+}

@@ -42,6 +42,35 @@ GET /openapi.yaml
 
 Returns the complete OpenAPI 3.0 specification for all endpoints.
 
+## 🕒 **Conventions**
+
+### Timestamps
+Every timestamp in an API response (`timestamp`, `created_at`, `expires_at`,
+`last_activity`, `deleted_at`, …) is **UTC, RFC 3339** (for example
+`2026-10-10T01:53:40Z`; sub-second digits appear only when present). The server
+never emits a local offset such as `+02:00`, whatever zone it runs in or the
+database stored. This is display only: stored values, including everything
+covered by the audit hash chain, are not changed. Query parameters that take a
+time (`start_time`, `end_time`, `since`) accept any RFC 3339 offset and are
+compared as instants.
+
+### Audit log actor kind
+`GET /api/v1/audit/logs`, `/audit/search`, `/audit/export` and the CSV export
+report each event's `actor` (a username, or `system`) and `actor_type`:
+
+| `actor_type` | Meaning |
+|---|---|
+| `user` | A signed-in human; `actor` is their username |
+| `machine_identity` | A machine identity / token |
+| `system` | Keyorix itself (schedulers, rotation, retention, anomaly detection). `actor` is `system` |
+
+An event with no acting user is always reported as `system` (including older
+rows that stored an empty or default kind). The filters follow the same rule:
+`GET /api/v1/audit/logs?actor_type=system` returns exactly the events shown with
+kind `system` (`actor_type=user` only events with a real acting user), and
+`GET /api/v1/audit/search?actor=system` (a partial, case-insensitive match, like
+a username) finds system events as well as any user whose name contains the term.
+
 ## 🔐 **Secret Management API**
 
 ### List Secrets
