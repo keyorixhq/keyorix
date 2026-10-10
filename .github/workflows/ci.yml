@@ -1708,12 +1708,12 @@ jobs:
           TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
             -H 'Content-Type: application/json' \
             -d "$body" | \
-            python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["token"])')
+            jq -r '.data.token')
           projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
-            python3 -c 'import sys,json; print(len(json.load(sys.stdin)["data"]["projects"]))')
+            jq -r '.data.projects | length')
           [ "$projects" = "3" ] || { echo "expected 3 seeded projects, got $projects" >&2; exit 1; }
           audit=$(curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/audit/logs?page_size=1" | \
-            python3 -c 'import sys,json; print(json.load(sys.stdin)["data"]["total"])')
+            jq -r '.data.total')
           [ "$audit" -gt "0" ] || { echo "expected a non-empty seeded audit trail, got $audit events" >&2; exit 1; }
           echo "seed verified: $projects projects, $audit audit events"
 
