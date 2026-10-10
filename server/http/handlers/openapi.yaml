@@ -1418,6 +1418,63 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
+  /api/v1/projects/{id}/share-recipients:
+    get:
+      tags: [Shares]
+      summary: Search share recipients in a project
+      description: >-
+        The active members of the project that the caller could share a secret with,
+        for the Share dialog. Requires secrets.write at the project's scope, and the
+        caller must be a member of the project (the rule ShareSecret applies to a
+        secret's owner) or hold global users.read. A project-only admin can therefore
+        find recipients without the global users.read that GET /api/v1/users needs.
+        Only members whose account is active are listed (not suspended, deprovisioned,
+        deactivated or deleted), ordered by username. Each result carries id, username
+        and display_name; email is included, and matched by q, only when the caller
+        holds users.read at the project's scope. Every refusal is the same 403 with a
+        fixed reason, whether or not the project exists.
+      operationId: searchShareRecipients
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive prefix of the username, the display name (or any word of it) or, when visible, the email. Empty lists every recipient.
+          schema: {type: string}
+        - {name: page, in: query, required: false, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        '200':
+          description: Envelope `{success, data}`. `data.recipients` is one page of results; `data.total` counts every match.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: {type: boolean}
+                  data:
+                    type: object
+                    required: [recipients, total, page, page_size]
+                    properties:
+                      recipients:
+                        type: array
+                        items:
+                          type: object
+                          required: [id, username, display_name]
+                          additionalProperties: false
+                          properties:
+                            id: {type: integer, format: uint32}
+                            username: {type: string}
+                            display_name: {type: string}
+                            email: {type: string, description: Present only when the caller holds users.read at the project's scope.}
+                      total: {type: integer}
+                      page: {type: integer}
+                      page_size: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/projects/{id}/members:
     get:
       tags: [Members]
@@ -3592,7 +3649,14 @@ paths:
     get:
       tags: [Secrets]
       summary: List who can read a secret
-      description: Effective access list -- every user who can read the secret, with their permission and how it was granted (owner, direct share, group share).
+      description: >-
+        Effective access list -- every user who can read the secret, with their EFFECTIVE
+        permission and how it was granted. For a project member the level is
+        max(role permission, active share permission), so a share that elevates a role
+        shows as the higher level; `grants` lists every grant behind it. Expired shares
+        and shares to users who are not project members grant nothing and are not
+        listed. Holders of a global role (global admins) have implicit access and are
+        not enumerated.
       operationId: listAccessors
       security: [{bearerAuth: []}]
       parameters:
@@ -7933,12 +7997,16 @@ components:
         affected: {type: array, items: {$ref: '#/components/schemas/SecretImpactedSecret'}}
     SecretAccessor:
       type: object
-      description: One entry in a secret's effective access list (owner, direct share, or group share).
+      description: One entry in a secret's effective access list.
       properties:
         user_id: {type: integer}
         username: {type: string}
-        permission: {type: string}
-        source: {type: string, description: "How access was granted: owner, direct share, or group share."}
+        permission: {type: string, description: "Effective level: read, write or owner."}
+        source: {type: string, description: "The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>."}
+        grants:
+          type: array
+          description: Every grant the user holds on the secret with its level, e.g. role:read, direct_share:write.
+          items: {type: string}
     SecretAccessLogEntry:
       type: object
       description: >-

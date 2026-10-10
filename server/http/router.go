@@ -493,6 +493,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// view the roster; mutations require roles.assign at the project scope, so
 		// a project_admin can manage their own project's members.
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get(pathProjectMembers, catalogHandler.ListProjectMembers)
+		// Share-dialog recipient search (SHARE-2): the active members of the project a
+		// caller who can share there (secrets.write at the project) may pick from, so a
+		// project-only admin no longer needs the global users.read of GET /users. Core
+		// adds the owner-must-be-a-member rule and shows emails only to a caller who
+		// may already read them (users.read at the project).
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope,
+			customMiddleware.DenyMessage(core.ShareRecipientSearchDeniedMessage))).Get("/projects/{id}/share-recipients", shareHandler.SearchShareRecipients)
 		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/access-review", catalogHandler.GetProjectAccessReview)
 		// Recertification decisions (ISO 27001 A.5.18): attest is a reviewer action
 		// (roles.read); revoke removes the grant and needs roles.assign.

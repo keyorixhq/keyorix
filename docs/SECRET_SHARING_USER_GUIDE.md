@@ -57,6 +57,11 @@ permission on the shared secret is the **higher** of the two:
   not allow) is audited as `share_access_elevated` with the share ID. Share
   create, update and revoke events name the share ID too.
 
+`keyorix secret access --id N` (and the API's `GET /secrets/{id}/access`) shows
+each user's **effective** level on the secret, the grant that gives it, and every
+grant they hold. A viewer elevated by a write share shows as `write`, from
+`direct_share`, with grants `role:read, direct_share:write`.
+
 If a share is refused, the error says why: "you are not a member of this
 secret's project" (the owner needs a project role) or "the recipient is not a
 member of this secret's project" (the recipient needs one).
@@ -95,7 +100,11 @@ See the [API Documentation](SECRET_SHARING_API.md) for programmatic access.
 #### Via Web Interface
 1. **Select Secret**: Navigate to the secret you want to share
 2. **Click Share**: Click the "Share" button
-3. **Choose Recipient**: Enter the username or select from suggestions
+3. **Choose Recipient**: Type a name, username or email and pick from the
+   suggestions. The suggestions are the active members of the secret's project,
+   because a share can only go to a project member. A project-only admin sees them
+   too; no global role is needed. If you have no role in the project that allows
+   sharing, the dialog says so instead of listing anyone.
 4. **Set Permission**: Choose "Read" or "Write" permission
 5. **Confirm**: Click "Share Secret" to complete
 

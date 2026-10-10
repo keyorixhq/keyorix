@@ -6,7 +6,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { Select } from '../../components/ui/Select';
 import { Alert } from '../../components/ui/Alert';
-import { useShareSecret } from './api';
+import { useShareSecret, searchShareRecipients } from './api';
 import { usersApi } from '../../services/users';
 import { apiErrorMessage } from '../../services/client';
 
@@ -21,7 +21,9 @@ interface UserOption {
     id: number;
     username: string;
     display_name: string;
-    email: string;
+    // Only present when the caller may see it (project recipient search hides it
+    // from a caller without users.read in the project).
+    email?: string;
 }
 
 const ALL_PERMISSION_OPTIONS = [
@@ -66,6 +68,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
     const [selected, setSelected] = useState<UserOption | null>(null);
     const [open, setOpen] = useState(false);
     const [loading, setLoading] = useState(false);
+    const [searchError, setSearchError] = useState<string | null>(null);
     const [permission, setPermission] = useState<'read' | 'write'>('read');
     const [expiry, setExpiry] = useState('never');
     const [success, setSuccess] = useState(false);
@@ -81,20 +84,34 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
     // on the secret, and a refusal comes back with its reason (shareErrorMessage).
     const permissionOptions = ALL_PERMISSION_OPTIONS;
 
-    // Search users as query changes
+    // Search recipients as the query changes. With the secret's project known, search
+    // that project's active members (SHARE-2): they are the only users a share can be
+    // made with, and the search needs no global permission, so a project-only admin can
+    // use it. Without a project (a secret object that did not come from a list), fall
+    // back to the global user list, which needs users.read.
     useEffect(() => {
         if (!query.trim()) {
             setResults([]);
+            setSearchError(null);
             return;
         }
         let cancelled = false;
         const timer = setTimeout(async () => {
             setLoading(true);
             try {
-                const data = await usersApi.list({ search: query, pageSize: 8 });
-                if (!cancelled) setResults((data as any).users ?? []);
-            } catch {
-                if (!cancelled) setResults([]);
+                const found: UserOption[] = secret.projectId
+                    ? (await searchShareRecipients(secret.projectId, query.trim())).recipients
+                    : (((await usersApi.list({ search: query, pageSize: 8 })) as any).users ?? []);
+                if (!cancelled) {
+                    setResults(found);
+                    setSearchError(null);
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    setResults([]);
+                    // A refused search says why (e.g. no role in this project).
+                    setSearchError(isAxiosError(err) ? apiErrorMessage(err) : 'Could not search users.');
+                }
             } finally {
                 if (!cancelled) setLoading(false);
             }
@@ -103,7 +120,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
             cancelled = true;
             clearTimeout(timer);
         };
-    }, [query]);
+    }, [query, secret.projectId]);
 
     // Close dropdown on outside click
     useEffect(() => {
@@ -160,36 +177,40 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
         );
     };
 
-    const dropdownContent =
-        results.length === 0 ? (
-            <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
-                No users found for "{query}"
-            </div>
-        ) : (
-            results.map((user) => (
-                <button
-                    key={user.id}
-                    type="button"
-                    onClick={() => handleSelect(user)}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
-                    style={{ color: 'var(--text-primary)' }}
-                    onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)')}
-                    onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '')}
-                >
-                    <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
-                        <span className="text-xs font-semibold" style={{ color: 'var(--accent-text)' }}>
-                            {(user.display_name || user.username).charAt(0).toUpperCase()}
-                        </span>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">{user.display_name || user.username}</p>
-                        <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
-                            @{user.username} · {user.email}
-                        </p>
-                    </div>
-                </button>
-            ))
-        );
+    const dropdownContent = searchError ? (
+        <div role="alert" className="px-4 py-3 text-sm" style={{ color: 'var(--text-danger, #dc2626)' }}>
+            {searchError}
+        </div>
+    ) : results.length === 0 ? (
+        <div className="px-4 py-3 text-sm" style={{ color: 'var(--text-muted)' }}>
+            No {secret.projectId ? 'project members' : 'users'} found for "{query}"
+        </div>
+    ) : (
+        results.map((user) => (
+            <button
+                key={user.id}
+                type="button"
+                onClick={() => handleSelect(user)}
+                className="w-full flex items-center gap-3 px-4 py-2.5 text-left transition-colors"
+                style={{ color: 'var(--text-primary)' }}
+                onMouseEnter={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = 'var(--bg-subtle)')}
+                onMouseLeave={(e) => ((e.currentTarget as HTMLElement).style.backgroundColor = '')}
+            >
+                <div className="shrink-0 h-7 w-7 rounded-full bg-blue-500/20 flex items-center justify-center">
+                    <span className="text-xs font-semibold" style={{ color: 'var(--accent-text)' }}>
+                        {(user.display_name || user.username).charAt(0).toUpperCase()}
+                    </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium truncate">{user.display_name || user.username}</p>
+                    <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
+                        @{user.username}
+                        {user.email ? ` · ${user.email}` : ''}
+                    </p>
+                </div>
+            </button>
+        ))
+    );
 
     return (
         <Modal isOpen={isOpen} onClose={handleClose} title={`Share "${secret.name}"`} size="md">

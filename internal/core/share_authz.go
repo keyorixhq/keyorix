@@ -86,6 +86,8 @@ func ShareRefusalMessage(err error) (string, bool) {
 			"give the group a role in the project first, then share again.", true
 	case errors.Is(err, ErrShareNotOwner):
 		return "Only the secret's owner can share it or change its shares.", true
+	case errors.Is(err, ErrShareRecipientSearchDenied):
+		return ShareRecipientSearchDeniedMessage, true
 	}
 	return "", false
 }
