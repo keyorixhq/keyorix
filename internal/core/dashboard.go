@@ -442,6 +442,7 @@ func computeTrend(prev, current float64) *StatTrend {
 // Type mapping — what the frontend receives:
 //
 //	secret.read     → "accessed"
+//	secret.versions_listed → "versions_listed" (a listing, not a value read)
 //	secret.created  → "created"
 //	secret.updated  → "updated"
 //	secret.deleted  → "deleted"
@@ -462,6 +463,9 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 	// Secret events — extract secret name from description
 	case "secret.read":
 		eventType = "accessed"
+		secretName = extractSecretName(e.Description)
+	case EventSecretVersionsListed:
+		eventType = "versions_listed"
 		secretName = extractSecretName(e.Description)
 	case "secret.created":
 		eventType = "created"
