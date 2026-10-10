@@ -356,19 +356,6 @@ curl "https://api.keyorix.com/api/v1/projects/7/share-recipients?q=al&page_size=
   -H "Authorization: Bearer your-token"
 ```
 
-### 9. Effective Access List of a Secret
-
-**Endpoint:** `GET /secrets/{id}/access` (CLI: `keyorix secret access --id N`)
-
-Every user who can read the secret, with their **effective** permission. For a
-project member, that is the higher of their role and any active share, so a share
-that elevates a role shows as the higher level. `source` names the grant that
-gives the permission (`owner`, `role`, `acl`, `direct_share` or
-`group_share:<group>`). `grants` lists every grant the user holds, for example
-`["role:read", "direct_share:write"]`. Expired shares, and shares to users who are
-no longer project members, grant nothing and are not listed. Holders of a global
-role (global admins) have implicit access and are not listed.
-
 ## Group Sharing
 
 ### Share with Group

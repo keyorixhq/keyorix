@@ -473,8 +473,7 @@ const AccessorsPanel: React.FC<AccessorsPanelProps> = ({ accessors }) => {
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
             <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Who can access</h3>
             <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                Users who can read this secret, at their effective level (the higher of their project role and any
-                share). Global admins are not listed.
+                Users who can read this secret (admins with a role grant are not listed).
             </p>
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
                 {accessors.map((a) => (
@@ -482,12 +481,7 @@ const AccessorsPanel: React.FC<AccessorsPanelProps> = ({ accessors }) => {
                         <div className="flex items-center gap-2">
                             <UserIcon className="h-4 w-4 text-gray-400" />
                             <span className="font-medium text-gray-900 dark:text-white">{a.username}</span>
-                            <span
-                                className="text-xs text-gray-500 dark:text-gray-400"
-                                title={a.grants && a.grants.length > 0 ? a.grants.join(', ') : undefined}
-                            >
-                                {a.grants && a.grants.length > 1 ? a.grants.join(' + ') : a.source}
-                            </span>
+                            <span className="text-xs text-gray-500 dark:text-gray-400">{a.source}</span>
                         </div>
                         <span
                             className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${getPermissionColor(a.permission)}`}
