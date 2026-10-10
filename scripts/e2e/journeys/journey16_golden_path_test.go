@@ -74,7 +74,7 @@ func TestJourney_GoldenPath(t *testing.T) {
 	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", n16LeastPrivEmail,
 		"--role", "project_viewer", "--project", n16ProjectName)
 
-	aliceToken := mfaLogin(t, s, n16LeastPrivUser, n16LeastPrivPass)
+	aliceToken := mfaPersonaLogin(t, s, n16LeastPrivUser, n16LeastPrivPass)
 	// She can read the ONE project she was granted...
 	restExpect(t, s, aliceToken, http.MethodGet, "/api/v1/projects/"+strconv.Itoa(projID), nil, http.StatusOK)
 	// ...and since #2780 the all-projects list is least-privilege rather than

@@ -81,9 +81,9 @@ func accessControl(t *testing.T, s *harness.Server, cliBin, adminToken string) {
 	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", n2ViewerEml, "--role", "project_viewer", "--project", n2ProjectA)
 	// n2Outsider gets no grant anywhere.
 
-	editorToken := mfaLogin(t, s, n2EditorU, n2UserPass)
-	viewerToken := mfaLogin(t, s, n2ViewerU, n2UserPass)
-	outsiderToken := mfaLogin(t, s, n2Outsider, n2UserPass)
+	editorToken := mfaPersonaLogin(t, s, n2EditorU, n2UserPass)
+	viewerToken := mfaPersonaLogin(t, s, n2ViewerU, n2UserPass)
+	outsiderToken := mfaPersonaLogin(t, s, n2Outsider, n2UserPass)
 	editorEnv := tokenEnv(s, editorToken)
 	viewerEnv := tokenEnv(s, viewerToken)
 	outsiderEnv := tokenEnv(s, outsiderToken)

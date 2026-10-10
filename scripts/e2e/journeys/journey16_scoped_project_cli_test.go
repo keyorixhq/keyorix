@@ -69,7 +69,7 @@ func TestJourney_ScopedUserProjectCLI(t *testing.T) {
 	runCLI(t, cliBin, aEnv, "user", "create", "--username", viewerU, "--email", viewerEml, "--password", viewerPw)
 	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", viewerEml, "--role", "project_viewer", "--project", projA)
 
-	viewerToken := mfaLogin(t, s, viewerU, viewerPw)
+	viewerToken := mfaPersonaLogin(t, s, viewerU, viewerPw)
 	vEnv := tokenEnv(s, viewerToken)
 	refA := strconv.Itoa(idA)
 	refB := strconv.Itoa(idB)

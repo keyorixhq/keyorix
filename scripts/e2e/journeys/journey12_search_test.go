@@ -71,7 +71,7 @@ func TestJourney_Search(t *testing.T) {
 
 	// ── The scoped caller's search: sees project A's matches, nothing from B ──
 
-	searcherToken := mfaLogin(t, s, searcherU, searcherPwd)
+	searcherToken := mfaPersonaLogin(t, s, searcherU, searcherPwd)
 	searcherEnv := tokenEnv(s, searcherToken)
 
 	hits := searchSecretNames(t, cliBin, searcherEnv, needle)

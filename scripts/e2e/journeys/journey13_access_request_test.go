@@ -63,9 +63,9 @@ func TestJourney_AccessRequest(t *testing.T) {
 	runCLI(t, cliBin, aEnv, "user", "create", "--username", requesterU, "--email", requesterEm, "--password", userPass)
 	runCLI(t, cliBin, aEnv, "user", "create", "--username", deniedU, "--email", deniedEm, "--password", userPass)
 
-	requesterToken := mfaLogin(t, s, requesterU, userPass)
+	requesterToken := mfaPersonaLogin(t, s, requesterU, userPass)
 	requesterEnvCLI := tokenEnv(s, requesterToken)
-	deniedToken := mfaLogin(t, s, deniedU, userPass)
+	deniedToken := mfaPersonaLogin(t, s, deniedU, userPass)
 	deniedEnvCLI := tokenEnv(s, deniedToken)
 
 	ref := fmt.Sprintf("%s/%s/%s", projName, envName, secretName)
