@@ -17,7 +17,6 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
-	"sort"
 	"strings"
 	"time"
 
@@ -40,6 +39,50 @@ var (
 	// short and too long).
 	ErrBreakGlassInvalidNote = errors.New("break-glass: invalid review note")
 )
+
+// Sentinels for ActivateBreakGlass / RevokeBreakGlass refusals (#2905). Their
+// handlers (HTTP and gRPC) used to classify core's error by matching
+// strings.Contains over err.Error(), which embeds i18n.T(...) output; under a
+// locale that translates those prefixes a deliberate 403/404 silently fell
+// through to 500. Callers now use errors.Is.
+//
+// Revoke's not-found and not-active refusals are storage.ErrBreakGlassNotFound
+// and storage.ErrBreakGlassNotActive (already the sentinels the review path
+// uses); only the refusals with no storage-level equivalent are defined here.
+var (
+	// ErrBreakGlassDisabled: self-service emergency access is not enabled.
+	ErrBreakGlassDisabled = errors.New("break-glass: not enabled")
+	// ErrBreakGlassNotProjectMember: the activator is not a member of the project.
+	ErrBreakGlassNotProjectMember = errors.New("break-glass: caller is not a project member")
+	// ErrBreakGlassInvalidRequest: the request itself is malformed (missing
+	// project/user, short justification, bad TTL) or names no usable emergency role.
+	ErrBreakGlassInvalidRequest = errors.New("break-glass: invalid request")
+)
+
+// breakGlassRefusal is an error whose user-visible text is fixed (the
+// i18n-translated, human-facing message) and whose classification is carried
+// separately as sentinels reachable through errors.Is/As. Wrapping a sentinel
+// with fmt.Errorf("%w") instead would append the sentinel's own text to the
+// message, changing what users see.
+type breakGlassRefusal struct {
+	msg   string
+	kinds []error
+}
+
+func (e *breakGlassRefusal) Error() string   { return e.msg }
+func (e *breakGlassRefusal) Unwrap() []error { return e.kinds }
+
+// refuseBreakGlass returns an error reading exactly msg that matches every
+// non-nil kind under errors.Is.
+func refuseBreakGlass(msg string, kinds ...error) error {
+	live := make([]error, 0, len(kinds))
+	for _, k := range kinds {
+		if k != nil {
+			live = append(live, k)
+		}
+	}
+	return &breakGlassRefusal{msg: msg, kinds: live}
+}
 
 // minBreakGlassJustificationLen is the minimum length, after trimming
 // surrounding whitespace, a break-glass justification must have. This becomes
@@ -64,6 +107,10 @@ const (
 	// alongside the posture report's own count.
 	EventBreakGlassReviewOverdue = "break_glass.review_overdue" // #nosec G101 -- audit event type, not a credential
 )
+
+// errBreakGlassDisabled is the reason ActivateBreakGlass gives while
+// break_glass.enabled is false (the default).
+const errBreakGlassDisabled = "break-glass is not enabled on this server; set break_glass.enabled: true in keyorix.yaml and restart"
 
 // minBreakGlassReviewNoteLen mirrors minBreakGlassJustificationLen's reasoning
 // (above) for the review note (ADR-112 §3, break-glass review item 5): this
@@ -121,15 +168,22 @@ func (c *KeyorixCore) SetBreakGlassPolicy(p BreakGlassPolicy) {
 // userID is the activating (self) user; ttlOverride is an optional Go duration.
 func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID uint, justification, ttlOverride string) (*models.BreakGlassActivation, error) { // NOSONAR -- cognitive complexity 28, suppress go:S3776
 	if !c.breakGlassPolicy.Enabled {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorPermissionDenied", nil))
+		// Disabled is the secure default, but "permission denied" alone looks like
+		// a role problem. Say it is off and which key turns it on (#2943). The
+		// "permission denied" prefix keeps the HTTP mapping (403) in
+		// server/http/handlers/break_glass.go.
+		// refuseBreakGlass keeps the typed ErrBreakGlassDisabled kind that the
+		// HTTP and gRPC mappings match with errors.Is.
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorPermissionDenied", nil), errBreakGlassDisabled), ErrBreakGlassDisabled)
 	}
 	if projectID == 0 || userID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and user are required")
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and user are required"), ErrBreakGlassInvalidRequest)
 	}
 	justification = strings.TrimSpace(justification)
 	if len(justification) < minBreakGlassJustificationLen {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil),
-			fmt.Sprintf("a justification of at least %d characters is required for emergency access", minBreakGlassJustificationLen))
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil),
+			fmt.Sprintf("a justification of at least %d characters is required for emergency access", minBreakGlassJustificationLen)),
+			ErrBreakGlassInvalidRequest)
 	}
 	// Only a user already affiliated with the project may break-glass it. Eligibility
 	// must require a role scoped to THIS project (project_id = P), directly or via a
@@ -143,7 +197,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), merr)
 	}
 	if !affiliated {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "break-glass is available only to members of the project")
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "break-glass is available only to members of the project"), ErrBreakGlassNotProjectMember)
 	}
 	// Note: IsProjectMember has no minimum-tenure requirement — a user added
 	// to the project seconds ago can immediately self-activate break-glass.
@@ -161,11 +215,16 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		}
 	}
 	if c.breakGlassPolicy.EmergencyRole == "" {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "no emergency role is configured")
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "no emergency role is configured"), ErrBreakGlassInvalidRequest)
 	}
 	role, err := c.storage.GetRoleByName(ctx, c.breakGlassPolicy.EmergencyRole)
 	if err != nil {
-		return nil, fmt.Errorf("emergency role %q not found: %w", c.breakGlassPolicy.EmergencyRole, err)
+		// Only a genuine "no such role" is a client-side misconfiguration. Any other
+		// error (DB failure) is internal: no sentinel, no driver text, no role name.
+		if !errors.Is(err, storage.ErrRoleNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		return nil, refuseBreakGlass(fmt.Sprintf("emergency role %q not found: %v", c.breakGlassPolicy.EmergencyRole, err), ErrBreakGlassInvalidRequest, err)
 	}
 	// Refuse an install-wide admin role as the emergency role: break-glass grants at a
 	// project scope and must not be a vehicle for install-wide super-user.
@@ -201,7 +260,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	if ttlOverride != "" {
 		d, perr := time.ParseDuration(ttlOverride)
 		if perr != nil || d <= 0 {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "ttl must be a positive Go duration (e.g. 2h)")
+			return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "ttl must be a positive Go duration (e.g. 2h)"), ErrBreakGlassInvalidRequest)
 		}
 		ttl = d
 	}
@@ -393,14 +452,17 @@ func (c *KeyorixCore) ListBreakGlassActivations(ctx context.Context, projectID u
 // actorID is the admin performing the revoke.
 func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachineID, projectID, activationID uint) error {
 	if projectID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required")
+		return refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "project ID is required"), ErrBreakGlassInvalidRequest)
 	}
 	activation, err := c.storage.GetBreakGlassActivation(ctx, activationID)
 	if err != nil {
+		// GetBreakGlassActivation wraps storage.ErrBreakGlassNotFound for a
+		// missing row and nothing of the kind for a genuine failure, so %w
+		// keeps that distinction: only the former is a 404.
 		return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
 	}
 	if activation.ProjectID != projectID {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return refuseBreakGlass(i18n.T("ErrorNotFound", nil), storage.ErrBreakGlassNotFound)
 	}
 	// #1653 reopened: only an ALREADY-revoked activation refuses a revoke. A
 	// TTL-lapsed (State == BreakGlassExpired, a read-time projection —
@@ -413,11 +475,11 @@ func (c *KeyorixCore) RevokeBreakGlass(ctx context.Context, actorID, actorMachin
 	// active-OR-expired, RevokeBreakGlassActivation's own doc) is what protects
 	// the STATE TRANSITION from a concurrent double-revoke race, not this check.
 	if activation.State == BreakGlassRevoked {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
+		return refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active"), storage.ErrBreakGlassNotActive)
 	}
 	if err := c.RevokeBreakGlassActivationAtomic(ctx, actorID, actorMachineID, activation, c.now()); err != nil {
 		if errors.Is(err, storage.ErrBreakGlassNotActive) {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active")
+			return refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "activation is not active"), storage.ErrBreakGlassNotActive)
 		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -720,7 +782,7 @@ func (c *KeyorixCore) notifyOverdueBreakGlassReviewers(ctx context.Context, rows
 		byProject[a.ProjectID] = append(byProject[a.ProjectID], a)
 	}
 	for pid, acts := range byProject {
-		recipients, err := c.breakGlassAlertRecipients(ctx, pid)
+		recipients, err := c.projectAdminRecipients(ctx, pid)
 		if err != nil {
 			log.Printf("SECURITY: notifyOverdueBreakGlassReviewers: failed to fully resolve project %d admins (%d resolved), some admins may not be notified for %d overdue activation(s): %v", pid, len(recipients), len(acts), err)
 		}
@@ -757,7 +819,7 @@ func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, proje
 			err = nil
 		}
 	}()
-	recipients, rerr := c.breakGlassAlertRecipients(ctx, projectID)
+	recipients, rerr := c.projectAdminRecipients(ctx, projectID)
 	pid := projectID
 	title := "Break-glass emergency access activated"
 	msg := fmt.Sprintf("User %d self-granted emergency role %q until %s. Review the audit trail.",
@@ -768,65 +830,4 @@ func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, proje
 		c.notify(ctx, uid, EventBreakGlassActivated, title, msg, &pid, link)
 	}
 	return rerr
-}
-
-// breakGlassAlertRecipients resolves who is alerted about break-glass events on
-// a project (#2955): the project's own approver-role members PLUS every holder
-// of an install-wide admin-bypass role -- directly or through a group. The
-// previous fan-out read only ListProjectMembers, which matches
-// user_roles.project_id exactly, so the install's global admin (the usual admin
-// on a fresh install, who holds no project-scoped row) was never considered and
-// received nothing. A global admin has admin authority on every project
-// (requireAdminAuthorityAt), so they are a project admin for alerting purposes.
-//
-// Returns each user once, in ascending ID order. On a partial failure it
-// returns the recipients it did resolve together with the error, so the caller
-// can still alert them and report the gap loudly (#166).
-func (c *KeyorixCore) breakGlassAlertRecipients(ctx context.Context, projectID uint) ([]uint, error) {
-	seen := map[uint]struct{}{}
-	var ids []uint
-	add := func(uid uint) {
-		if _, dup := seen[uid]; !dup {
-			seen[uid] = struct{}{}
-			ids = append(ids, uid)
-		}
-	}
-	var errs []error
-
-	members, err := c.storage.ListProjectMembers(ctx, projectID)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("list project %d members: %w", projectID, err))
-	}
-	for _, m := range members {
-		if isApproverRole(m.RoleName) {
-			add(m.UserID)
-		}
-	}
-
-	adminRoleIDs, err := c.adminBypassRoleIDSlice(ctx)
-	if err != nil {
-		errs = append(errs, fmt.Errorf("resolve install-wide admins: %w", err))
-	} else if assignments, aerr := c.storage.ListGlobalAdminAssignmentsForUpdate(ctx, adminRoleIDs); aerr != nil {
-		// Read-only use outside any transaction: the Postgres row lock it takes is
-		// released immediately, and a stale read here only costs one alert.
-		errs = append(errs, fmt.Errorf("list install-wide admin grants: %w", aerr))
-	} else {
-		for _, a := range assignments {
-			switch a.PrincipalType {
-			case "user":
-				add(a.PrincipalID)
-			case "group":
-				gm, gerr := c.storage.ListGroupMembers(ctx, a.PrincipalID)
-				if gerr != nil {
-					errs = append(errs, fmt.Errorf("list members of admin group %d: %w", a.PrincipalID, gerr))
-					continue
-				}
-				for _, u := range gm {
-					add(u.ID)
-				}
-			}
-		}
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	return ids, errors.Join(errs...)
 }

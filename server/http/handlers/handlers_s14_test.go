@@ -16,9 +16,9 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -27,6 +27,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -41,10 +42,7 @@ func freshSecretHandlerS14(t *testing.T) (*SecretHandler, uint) {
 	cfg := &config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}
 	require.NoError(t, i18n.Initialize(cfg))
 
-	n := s12DBCounter.Add(1)
-	dsn := "file:kxhandlers_s14_" + strconv.FormatInt(n, 10) + "?mode=memory&cache=shared&_timeout=30000"
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithConfig(t, "kxhandlers_s14_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},

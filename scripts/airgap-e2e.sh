@@ -128,6 +128,18 @@ storage:
     salt_path: keys/kek.salt
 audit_checkpoints:
   schedule: "3s"
+# ADR-112 item 1: security.require_mfa defaults on, which would confine the
+# bootstrap admin's session to the MFA-enrolment endpoints
+# (EnforceMFAEnrollment) until it enrols -- blocking the secret create/read
+# calls below. scripts/smoke.sh and the release-qa scenarios enrol for real
+# via the CLI's \`mfa enroll\`/\`mfa activate\`; this script drives the raw
+# HTTP API with wget/jq instead of the CLI (see this file's own header: it
+# proves the admin backup/restore round trip inside a --network none
+# container, not the CLI), and has no dependency-free way to compute a TOTP
+# code from inside that container. Opt out visibly (not silently) rather
+# than add a new host/image dependency just to simulate an authenticator app.
+security:
+  require_mfa: false
 EOF
 
 # --- exec helpers: every HTTP call goes through the container's own
@@ -263,6 +275,10 @@ storage:
     salt_path: keys/kek.salt
 audit_checkpoints:
   schedule: "3s"
+# ADR-112 item 1 -- see the identical override + comment on \$SRC_DIR's
+# config above; the restored admin here never enrolled MFA either.
+security:
+  require_mfa: false
 EOF
 cp "$WORK_DIR/backup.tar.gz" "$DST_DIR/backup.tar.gz"
 $ENGINE run --rm --network none --workdir /app/data \

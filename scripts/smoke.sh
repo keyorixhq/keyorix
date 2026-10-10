@@ -50,7 +50,12 @@ trap cleanup EXIT
 echo "==> Isolated smoke test dir: $SMOKE_DIR"
 
 # HOME isolation: a real ~/.keyorix/ credential file must never be visible to this
-# run, and must never be overwritten by it.
+# run, and must never be overwritten by it. REAL_HOME is kept aside so the
+# scripts/totpgen `go run` call below (needs the real module cache, not a
+# throwaway one under this ephemeral dir -- `go run` under the isolated HOME
+# re-resolves GOPATH/GOMODCACHE there and re-downloads the entire module
+# graph on every run) can still find Go's real toolchain state.
+REAL_HOME="$HOME"
 export HOME="$SMOKE_DIR"
 export KEYORIX_MASTER_PASSWORD="smoke-test-master-password-$$-${RANDOM}"
 BOOTSTRAP_TOKEN="smoke-test-bootstrap-token-$$-${RANDOM}"
@@ -107,6 +112,44 @@ echo "==> keyorix system init --server (bootstrap admin + default workspace)"
 echo "==> keyorix login"
 "$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
     || fail "login exited non-zero"
+
+# ADR-112 item 1: security.require_mfa defaults on, so admin init's generated
+# config enforces it from this run's first boot. The bootstrap admin has no
+# MFA enrolled yet, so EnforceMFAEnrollment confines this session to the
+# enrolment endpoints until it enrols -- every OTHER authenticated call below
+# (starting with project create) would otherwise fail closed with
+# "This deployment requires multi-factor authentication." Enrol for real,
+# the way an operator would: `mfa enroll` returns a fresh TOTP secret,
+# scripts/totpgen computes a code from it the way an authenticator app
+# would (there is no human here to read one off a phone), and `mfa activate`
+# confirms enrolment with that code plus the account password.
+echo "==> keyorix mfa enroll"
+ENROLL_OUT="$("$CLI_BIN" mfa enroll)" || fail "mfa enroll exited non-zero"
+MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]')"
+[ -n "$MFA_SECRET" ] || fail "could not parse MFA secret from:
+$ENROLL_OUT"
+
+echo "==> keyorix mfa activate"
+MFA_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET")" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" mfa activate --code "$MFA_CODE" --password "$ADMIN_PASSWORD" \
+    || fail "mfa activate exited non-zero"
+
+# ActivateMFA invalidates every OTHER session for this user (the calling session
+# is kept, #2978), so a pre-MFA session elsewhere cannot outlive the upgrade.
+# Log in again anyway, to exercise the MFA login path: the account now has MFA
+# enabled, so this second attempt gets mfa_required instead of a token
+# directly -- exercises the exact two-step login path (`--mfa-code`,
+# completing POST /auth/mfa/verify) a real operator's SECOND-and-later
+# login goes through from now on.
+echo "==> keyorix login (again, now MFA-enabled)"
+# +30s step offset: ActivateMFA just marked the CURRENT step's code used
+# (anti-replay) -- without the offset this would very likely compute the
+# identical code (same 30s window) and get rejected as a replay.
+MFA_LOGIN_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET" 30)" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
+    --mfa-code "$MFA_LOGIN_CODE" || fail "login (MFA-enabled) exited non-zero"
 
 echo "==> keyorix project create"
 "$CLI_BIN" project create --name smoke-project || fail "project create exited non-zero"

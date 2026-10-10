@@ -10,7 +10,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -504,11 +504,7 @@ func secretTemplateBrokenDBSetup(t *testing.T) (*httptest.Server, string) {
 	t.Cleanup(i18n.ResetForTesting)
 
 	// Build a normal core (full schema) to bootstrap and mint a session.
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
 		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'").Error)
@@ -523,7 +519,7 @@ func secretTemplateBrokenDBSetup(t *testing.T) (*httptest.Server, string) {
 
 	brokenCore := core.NewKeyorixCore(store.NewLocalStorage(db))
 	brokenCore.SetBootstrapToken("broken-bootstrap-token")
-	_, err = brokenCore.BootstrapSystem(t.Context(), &core.BootstrapRequest{
+	_, err := brokenCore.BootstrapSystem(t.Context(), &core.BootstrapRequest{
 		Username: "brokenadmin",
 		Email:    "brokenadmin@example.com",
 		Password: "BrokenPassw0rd!X#",

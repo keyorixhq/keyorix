@@ -127,6 +127,72 @@ describe('AuditLogPage — audit tab', () => {
         expect(screen.queryByText('alice')).not.toBeInTheDocument();
     });
 
+    it('labels secret.versions_listed, offers it as a filter, and keeps it out of the "reads" view', () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    ...entries,
+                    {
+                        id: 4,
+                        event_type: 'secret.versions_listed',
+                        actor: 'dave',
+                        actor_type: 'user',
+                        description: 'User dave listed the versions of secret db',
+                        timestamp: '2026-01-16T10:00:00Z',
+                    },
+                ],
+                total: 4,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        render(<AuditLogPage />);
+        const table = within(screen.getByRole('table'));
+        expect(table.getByText('Versions listed')).toBeInTheDocument();
+        expect(table.queryByText('versions listed')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Filter by event type'), {
+            target: { value: 'secret.versions_listed' },
+        });
+        expect(screen.getByText('dave')).toBeInTheDocument();
+        expect(screen.queryByText('bob')).not.toBeInTheDocument();
+    });
+
+    it('labels secret.metadata_read and offers it as a filter', () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    ...entries,
+                    {
+                        id: 5,
+                        event_type: 'secret.metadata_read',
+                        actor: 'erin',
+                        actor_type: 'user',
+                        description: 'User erin looked up secret db',
+                        timestamp: '2026-01-16T10:00:00Z',
+                    },
+                ],
+                total: 4,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        render(<AuditLogPage />);
+        expect(within(screen.getByRole('table')).getByText('Metadata read')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Filter by event type'), {
+            target: { value: 'secret.metadata_read' },
+        });
+        expect(screen.getByText('erin')).toBeInTheDocument();
+        expect(screen.queryByText('bob')).not.toBeInTheDocument();
+    });
+
     it('filters by actor type', () => {
         render(<AuditLogPage />);
         fireEvent.click(screen.getByRole('button', { name: 'Machine' }));

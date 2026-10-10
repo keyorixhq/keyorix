@@ -158,6 +158,8 @@ const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
     created: { dot: 'bg-emerald-500', label: 'created secret' },
     updated: { dot: 'bg-blue-500', label: 'updated secret' },
     accessed: { dot: 'bg-amber-500', label: 'accessed secret' },
+    versions_listed: { dot: 'bg-gray-400', label: 'listed versions of secret' },
+    metadata_read: { dot: 'bg-gray-400', label: 'looked up secret' },
     shared: { dot: 'bg-purple-500', label: 'shared secret' },
     login: { dot: 'bg-gray-400', label: 'logged in' },
     logout: { dot: 'bg-gray-300', label: 'logged out' },

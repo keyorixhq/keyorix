@@ -47,6 +47,22 @@ const EVENT_STYLES: Record<
         lightBg: '#fef9c3',
         lightColor: '#854d0e',
     },
+    // A by-name lookup exposes metadata only, never a value: styled neutral, not as a Read.
+    'secret.metadata_read': {
+        label: 'Metadata read',
+        darkBg: 'rgba(148,163,184,0.15)',
+        darkColor: '#94a3b8',
+        lightBg: '#f1f5f9',
+        lightColor: '#475569',
+    },
+    // A version listing exposes metadata only, never a value: styled neutral, not as a Read.
+    'secret.versions_listed': {
+        label: 'Versions listed',
+        darkBg: 'rgba(148,163,184,0.15)',
+        darkColor: '#94a3b8',
+        lightBg: '#f1f5f9',
+        lightColor: '#475569',
+    },
     'secret.created': {
         label: 'Created',
         darkBg: 'rgba(16,185,129,0.15)',
