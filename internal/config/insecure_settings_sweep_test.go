@@ -16,17 +16,17 @@
 //     written exemption. This catches the common shape and names the offender
 //     exactly.
 //
-//  2. A COUNT ratchet over the same surface. This is not belt-and-braces: half
-//     the known exceptions prove the lexical net cannot see them —
-//     membership.validation_mode, storage.database.ssl_mode,
-//     credential_delivery.mode, credential_delivery.smtp.tls,
-//     notifications.email.tls, server.http.metrics_token,
-//     server.http.max_request_body_bytes and sso.providers.trust_asserted_email
-//     are all security-weakening in some value, and not one of them contains a
-//     word a pattern list would flag. A new field of that kind would sail
-//     straight through net 1. Net 2 cannot miss it: ANY new leaf anywhere in
-//     Config fails, and the failure message states the two legitimate ways to
-//     resolve it.
+//  2. A SET ratchet over the same surface (testdata/config_surface_leaves.txt).
+//     This is not belt-and-braces: half the known exceptions prove the lexical
+//     net cannot see them — membership.validation_mode,
+//     storage.database.ssl_mode, credential_delivery.mode,
+//     credential_delivery.smtp.tls, notifications.email.tls,
+//     server.http.metrics_token, server.http.max_request_body_bytes and
+//     sso.providers.trust_asserted_email are all security-weakening in some
+//     value, and not one of them contains a word a pattern list would flag. A
+//     new field of that kind would sail straight through net 1. Net 2 cannot
+//     miss it: ANY added, removed or renamed leaf anywhere in Config fails, and
+//     the failure message states the two legitimate ways to resolve it.
 //
 // What this does NOT claim: that it can tell a weakening setting from a benign
 // one by itself. Net 1 guesses from the name and net 2 refuses to guess at all,
@@ -37,6 +37,7 @@ package config
 
 import (
 	"fmt"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -242,16 +243,72 @@ func TestConfigSurface_ExemptionsAreLive(t *testing.T) {
 	}
 }
 
-// wantConfigSurfaceLeafCount is net 2's ratchet.
+// configSurfaceGolden is net 2's ratchet: the sorted set of every leaf path
+// on Config's YAML surface, one per line.
 //
 // Update it ONLY together with the classification the failure message asks for.
-// Bumping the number to make CI green, with no entry added to either
+// Editing the file to make CI green, with no entry added to either
 // InsecureSettingsRegistry or sweepExemptions and nothing written down, is the
-// one way to defeat this check — and it is exactly the decision this number
-// exists to force someone to make in the open.
-const wantConfigSurfaceLeafCount = 304
+// one way to defeat this check — and it is exactly the decision this file
+// exists to force someone to make in the open. Because it is a SET, the edit
+// itself shows a reviewer which paths appeared and disappeared.
+const configSurfaceGolden = "testdata/config_surface_leaves.txt"
 
-// TestConfigSurface_LeafCountRatchet is net 2: the net for a weakening setting
+// configSurfaceDrift compares the live leaf set against the golden one and
+// returns the paths present only in got (added) and only in want (removed).
+//
+// A set comparison, not a count: the coordinator's 2026-10-08 review defeated
+// the earlier len() ratchet with one change that added a non-lexical opt-out
+// (bypass_approval_workflow) and hid an existing leaf (yaml:"-") at the same
+// time — the count stayed 304 and every sweep test passed.
+// TestConfigSurface_RatchetCatchesACountPreservingSwap pins that shape.
+func configSurfaceDrift(got, want []string) (added, removed []string) {
+	inWant := make(map[string]bool, len(want))
+	for _, p := range want {
+		inWant[p] = true
+	}
+	inGot := make(map[string]bool, len(got))
+	for _, p := range got {
+		inGot[p] = true
+		if !inWant[p] {
+			added = append(added, p)
+		}
+	}
+	for _, p := range want {
+		if !inGot[p] {
+			removed = append(removed, p)
+		}
+	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	return added, removed
+}
+
+func readConfigSurfaceGolden(t *testing.T) []string {
+	t.Helper()
+	raw, err := os.ReadFile(configSurfaceGolden)
+	if err != nil {
+		t.Fatalf("reading %s: %v", configSurfaceGolden, err)
+	}
+	var paths []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			paths = append(paths, line)
+		}
+	}
+	return paths
+}
+
+func liveConfigSurfacePaths() []string {
+	leaves := configSurfaceLeaves()
+	paths := make([]string, len(leaves))
+	for i, l := range leaves {
+		paths[i] = l.Path
+	}
+	return paths
+}
+
+// TestConfigSurface_LeafSetRatchet is net 2: the net for a weakening setting
 // whose NAME gives nothing away.
 //
 // Eight of the known exceptions are proof this is needed rather than
@@ -262,26 +319,58 @@ const wantConfigSurfaceLeafCount = 304
 // each weakening in some value and none of them contains a word net 1 looks
 // for. A ninth of the same kind, added tomorrow, would pass net 1 silently.
 //
-// This check cannot be silently passed: any added or removed leaf anywhere in
-// Config fails it.
-func TestConfigSurface_LeafCountRatchet(t *testing.T) {
-	leaves := configSurfaceLeaves()
-	if len(leaves) == wantConfigSurfaceLeafCount {
+// This check cannot be silently passed: any added, removed or renamed leaf
+// anywhere in Config fails it, including a swap that keeps the count.
+func TestConfigSurface_LeafSetRatchet(t *testing.T) {
+	added, removed := configSurfaceDrift(liveConfigSurfacePaths(), readConfigSurfaceGolden(t))
+	if len(added) == 0 && len(removed) == 0 {
 		return
 	}
-	verb := "grew to"
-	if len(leaves) < wantConfigSurfaceLeafCount {
-		verb = "shrank to"
-	}
-	t.Errorf("Config's YAML surface %s %d leaf settings (wantConfigSurfaceLeafCount = %d).\n\n"+
-		"This is ADR-112's opt-out rule asking one question about whatever changed: can any value of "+
-		"the new/changed setting weaken security?\n"+
+	t.Errorf("Config's YAML surface differs from %s.\n  added:   %v\n  removed: %v\n\n"+
+		"This is ADR-112's opt-out rule asking one question about every ADDED path: can any value of "+
+		"it weaken security?\n"+
 		"  - YES -> add an InsecureSettingsRegistry entry whose SourcePaths names it. It then gets the "+
 		"start-up warning, the settings-diff audit and the posture report automatically; no call site to "+
 		"wire up.\n"+
-		"  - NO  -> update wantConfigSurfaceLeafCount, and say so in the commit message.\n\n"+
+		"  - NO  -> add the path to %s, and say so in the commit message.\n"+
+		"A REMOVED path that a registry entry covered means that weakening is no longer audited under its "+
+		"old name: check the entry's SourcePaths moved with it.\n\n"+
 		"The name-based sweep (TestConfigSurface_EveryOptOutLookingSettingIsRegisteredOrExempt) is not a "+
 		"substitute for answering this: validation_mode, ssl_mode, mode, tls, metrics_token and "+
 		"max_request_body_bytes are all registered weakenings whose names it cannot see.",
-		verb, len(leaves), wantConfigSurfaceLeafCount)
+		configSurfaceGolden, added, removed, configSurfaceGolden)
+}
+
+// TestConfigSurface_RatchetCatchesACountPreservingSwap is the calibration for
+// net 2, on a synthetic surface so it needs no edit to Config: the reviewer's
+// bypass (one non-lexical opt-out added, one existing leaf hidden, net count
+// unchanged) must be reported as drift in BOTH directions.
+func TestConfigSurface_RatchetCatchesACountPreservingSwap(t *testing.T) {
+	want := liveConfigSurfacePaths()
+	got := make([]string, 0, len(want))
+	for _, p := range want {
+		if p != "security.auto_fix_file_permissions" {
+			got = append(got, p)
+		}
+	}
+	got = append(got, "security.bypass_approval_workflow")
+	if len(got) != len(want) {
+		t.Fatalf("fixture must preserve the leaf count (got %d, want %d)", len(got), len(want))
+	}
+	if looksLikeOptOut("security.bypass_approval_workflow") {
+		t.Fatalf("fixture must be invisible to net 1, or it does not exercise net 2")
+	}
+
+	added, removed := configSurfaceDrift(got, want)
+	if len(added) != 1 || added[0] != "security.bypass_approval_workflow" {
+		t.Errorf("a count-preserving swap must report the added path; got added=%v", added)
+	}
+	if len(removed) != 1 || removed[0] != "security.auto_fix_file_permissions" {
+		t.Errorf("a count-preserving swap must report the removed path; got removed=%v", removed)
+	}
+
+	// And the known-good direction: an unchanged surface is not drift.
+	if a, r := configSurfaceDrift(want, want); len(a) != 0 || len(r) != 0 {
+		t.Errorf("an unchanged surface must not be drift; got added=%v removed=%v", a, r)
+	}
 }

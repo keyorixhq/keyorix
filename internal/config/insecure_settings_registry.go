@@ -18,13 +18,15 @@
 //     working as a warning-logging deprecated alias. Until one lands, every
 //     entry is derived-only: Name is the target name, SourcePaths is what the
 //     config file actually says today.
-//   - Fourteen of them cannot be renamed mechanically at all, and are recorded
+//   - Thirteen of them cannot be renamed mechanically at all, and are recorded
 //     here as KNOWN EXCEPTIONS rather than left out: each needs either a
 //     polarity inversion of a load-bearing flag, or a non-boolean field (an
 //     enum string, an empty-string sentinel, a negative-number sentinel)
 //     restructured into a real boolean. Those are product decisions, not
 //     mechanical edits. They are listed, with their current name, proposed
-//     name and the shape change each needs, in #2895 -- and they are fully
+//     name and the shape change each needs, in #2895 (rows 1-13; its row 14,
+//     sso.providers[].trust_asserted_email, IS mechanically renameable and is
+//     registered with the renameable entries) -- and they are fully
 //     covered by the warning + audit + posture mechanisms under their CURRENT
 //     names in the meantime, so none of this is invisible while it waits.
 //
@@ -289,15 +291,17 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		Value:       func(c *Config) string { return boolStr(c.Notifications.Webhook.InsecureSkipVerify) },
 	},
 
-	// -- The fourteen KNOWN EXCEPTIONS. Each needs a product decision, not a
-	//    mechanical edit: a polarity inversion of a load-bearing flag, or a
-	//    non-boolean field (enum string / empty-string sentinel / negative-number
-	//    sentinel) restructured into a real boolean. Recorded here, not omitted,
-	//    so each is covered by the start-up warning, the settings-diff audit and
-	//    the posture report under its CURRENT name while it waits -- and so the
-	//    sweep in insecure_settings_sweep_test.go counts them as covered rather
-	//    than as unlisted gaps. Enumerated with their proposed names and shape
-	//    changes in #2895. --
+	// -- The thirteen KNOWN EXCEPTIONS (#2895 rows 1-13; its row 14,
+	//    trust_asserted_email, is renameable and registered above). Each
+	//    needs a product decision, not a mechanical edit: a polarity
+	//    inversion of a load-bearing flag, or a non-boolean field (enum
+	//    string / empty-string sentinel / negative-number sentinel)
+	//    restructured into a real boolean. Recorded here, not omitted, so
+	//    each is covered by the start-up warning, the settings-diff audit and
+	//    the posture report under its CURRENT name while it waits -- and so
+	//    the sweep in insecure_settings_sweep_test.go counts them as covered
+	//    rather than as unlisted gaps. Enumerated with their proposed names
+	//    and shape changes in #2895. --
 	{
 		Name:        "security.insecure_allow_cleartext_transport",
 		SourcePaths: []string{"security.require_transport_tls"},
@@ -305,6 +309,15 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		InEffect:    func(c *Config) bool { return !c.Security.RequireTransportTLS },
 		Value:       func(c *Config) string { return boolStr(!c.Security.RequireTransportTLS) },
 	},
+	// KNOWN GAP, deferred by Andrei's 2026-10-10 decision to #2908 (fixed
+	// after #2454 and #2478 merge): InEffect reads false throughout the
+	// ADR-112 grace period. With the key ABSENT, Load() resolves
+	// EnableFilePermissionCheck to true and sets ...ImplicitDefault, and
+	// server/main.go's runStartupValidation / enforceKeyFilePermissions then
+	// WARN instead of failing closed -- so this deployment is not enforcing,
+	// yet the start-up warning, the settings diff and the posture report all
+	// record a clean posture for it. The fix is a third state (off / enforcing
+	// implicitly / explicitly enabled), not a boolean tweak here.
 	{
 		Name:        "security.insecure_skip_startup_validation",
 		SourcePaths: []string{"security.enable_file_permission_check"},

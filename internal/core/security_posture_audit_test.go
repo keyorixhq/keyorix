@@ -126,3 +126,31 @@ func TestReconcileSecurityPostureSnapshot_ReadFailureDegradesGracefully(t *testi
 		c.ReconcileSecurityPostureSnapshot(context.Background(), map[string]string{"x": "true"})
 	})
 }
+
+// A posture-setting change is an informational system event that was
+// RECORDED successfully -- not a failed operation. It must carry
+// Success == true, matching every other startup-time system audit event
+// (AuditLicenseState's license.evaluated). Recording it as false made every
+// genuine posture change look like a failed operation to an operator
+// filtering the audit trail on success, i.e. it vanished from a "what
+// changed" view and polluted a "what failed" one.
+func TestReconcileSecurityPostureSnapshot_ChangeEventRecordsSuccessTrue(t *testing.T) {
+	ms := new(MockStorage)
+	previous, _ := json.Marshal(map[string]string{"security.insecure_allow_unsafe_file_permissions": "false"})
+	ms.On("GetSystemMetadata", mock.Anything, securityPostureSnapshotMetadataKey).Return(string(previous), true, nil)
+
+	var captured *models.AuditEvent
+	ms.On("LogAuditEvent", mock.Anything, mock.AnythingOfType("*models.AuditEvent")).
+		Run(func(args mock.Arguments) { captured = args.Get(1).(*models.AuditEvent) }).Return(nil)
+	ms.On("SetSystemMetadata", mock.Anything, securityPostureSnapshotMetadataKey, mock.AnythingOfType("string")).Return(nil)
+
+	c := NewKeyorixCore(ms)
+	c.ReconcileSecurityPostureSnapshot(context.Background(), map[string]string{
+		"security.insecure_allow_unsafe_file_permissions": "true",
+	})
+
+	if assert.NotNil(t, captured) && assert.NotNil(t, captured.Success, "Success must be set") {
+		assert.True(t, *captured.Success,
+			"a recorded posture-setting change is not a failed operation: Success must be true")
+	}
+}

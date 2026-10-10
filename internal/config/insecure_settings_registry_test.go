@@ -66,3 +66,73 @@ func TestInsecureSettingsRegistry_ZeroValueConfigNeverPanics(t *testing.T) {
 		})
 	}
 }
+
+// issue2895TrackedKeys is #2895's table: the fourteen security-weakening
+// settings tracked there, by the config key(s) they read TODAY. Rows 1-13
+// are the known exceptions (a polarity inversion or a shape change each);
+// row 14, sso.providers[].trust_asserted_email, is mechanically renameable
+// and sits with the other renameable entries, listed in #2895 only because
+// its name gives a lexical sweep nothing to see.
+var issue2895TrackedKeys = [][]string{
+	{"security.require_transport_tls"},
+	{"security.enable_file_permission_check"},
+	{"storage.encryption.enabled"},
+	{"storage.encryption.key_provider.shamir_commitment"},
+	{"membership.validation_mode"},
+	{"sso.providers.auto_provision"},
+	{"sso.providers.group_sync"},
+	{"server.http.metrics_token", "server.grpc.metrics_token"},
+	{"server.http.max_request_body_bytes", "server.grpc.max_request_body_bytes"},
+	{"storage.database.ssl_mode"},
+	{"server.http.ratelimit.enabled", "server.grpc.ratelimit.enabled"},
+	{"credential_delivery.mode"},
+	{"credential_delivery.smtp.tls", "notifications.email.tls"},
+	{"sso.providers.trust_asserted_email"},
+}
+
+// untrackedIssue2895Keys returns every #2895 key no entry of registry covers.
+func untrackedIssue2895Keys(registry []InsecureSetting) []string {
+	covered := map[string]bool{}
+	for _, e := range registry {
+		for _, p := range e.SourcePaths {
+			covered[p] = true
+		}
+	}
+	var missing []string
+	for _, row := range issue2895TrackedKeys {
+		for _, k := range row {
+			if !covered[k] {
+				missing = append(missing, k)
+			}
+		}
+	}
+	return missing
+}
+
+// TestInsecureSettingsRegistry_EveryIssue2895RowIsRegistered turns "all
+// fourteen are fully covered by the registry under their current names"
+// (#2895, and this package's doc) from a sentence into a check. A row dropped
+// from the registry -- in a split, a rebase, a rename that forgets its
+// SourcePaths -- is exactly the non-lexical kind of weakening the sweep's
+// net 1 cannot see, so it must fail here by name.
+func TestInsecureSettingsRegistry_EveryIssue2895RowIsRegistered(t *testing.T) {
+	if len(issue2895TrackedKeys) != 14 {
+		t.Fatalf("#2895 tracks 14 settings; this table has %d -- keep it in step with the issue", len(issue2895TrackedKeys))
+	}
+	if missing := untrackedIssue2895Keys(InsecureSettingsRegistry); len(missing) > 0 {
+		t.Errorf("#2895 settings with no InsecureSettingsRegistry entry covering them: %v -- each "+
+			"is in effect SILENTLY (no start-up warning, no settings-diff audit, no posture deviation)", missing)
+	}
+
+	// Calibration: the guard must fire on the shape the coordinator asked
+	// about -- the fourteenth row dropped in the split.
+	var without []InsecureSetting
+	for _, e := range InsecureSettingsRegistry {
+		if !strings.Contains(strings.Join(e.SourcePaths, ","), "trust_asserted_email") {
+			without = append(without, e)
+		}
+	}
+	if got := untrackedIssue2895Keys(without); len(got) != 1 || got[0] != "sso.providers.trust_asserted_email" {
+		t.Errorf("calibration: dropping the trust_asserted_email entry must be reported; got %v", got)
+	}
+}

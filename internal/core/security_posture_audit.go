@@ -48,7 +48,10 @@ type securityPostureSettingChange struct {
 // a non-default value" is exactly the kind of thing an operator reviewing
 // the audit trail needs to see.
 func (c *KeyorixCore) logSecurityPostureSettingChanged(ctx context.Context, change securityPostureSettingChange) {
-	failed := false // the event reports a security-relevant change, not an operation's success/failure
+	// The change was recorded, so the event succeeded: same convention as
+	// AuditLicenseState. false would file every posture change under "failed
+	// operations" in any success-filtered view of the trail.
+	ok := true
 	diff, _ := json.Marshal(change)
 	c.emitAudit(ctx, &models.AuditEvent{
 		EventType: EventSecurityPostureSettingChanged,
@@ -56,7 +59,7 @@ func (c *KeyorixCore) logSecurityPostureSettingChanged(ctx context.Context, chan
 			"security-relevant setting %q changed since the previous start: %q -> %q",
 			change.Setting, change.OldValue, change.NewValue),
 		Diff:      string(diff),
-		Success:   &failed,
+		Success:   &ok,
 		ActorType: "system",
 		EventTime: time.Now(),
 	})
