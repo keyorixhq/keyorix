@@ -8,8 +8,10 @@ package main
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 )
 
 // Flipping ONE setting's InEffect from false to true adds exactly one new
@@ -54,5 +56,49 @@ func TestSecurityPostureSnapshot_CoversEveryRegistryEntryExactlyOnce(t *testing.
 		if want := s.Value(cfg); val != want {
 			t.Errorf("snapshot[%q] = %q, want %q", s.Name, val, want)
 		}
+	}
+}
+
+// TestResolveADR112BootPosture_GracePeriodWarnsAndIsDiffed is #2908 at the
+// boot path: an upgraded deployment (users, no enforcement marker) that never
+// set security.enable_file_permission_check only WARNS on a failed startup
+// check, so the opt-out warning must name insecure_skip_startup_validation and
+// the settings-diff snapshot must record grace-warn-only. Once the marker
+// ratchets it to enforced, neither appears and the snapshot value changes --
+// which is what makes leaving the grace period an audited transition.
+// RED if resolveADR112BootPosture warns before applying the grace decision.
+func TestResolveADR112BootPosture_GracePeriodWarnsAndIsDiffed(t *testing.T) {
+	const name = "security.insecure_skip_startup_validation"
+	for _, tc := range []struct {
+		label     string
+		marker    bool
+		wantWarn  bool
+		wantValue config.StartupValidationState
+	}{
+		{"upgrade in grace period", false, true, config.StartupValidationGraceWarnOnly},
+		{"upgrade past grace period", true, false, config.StartupValidationEnforcingImplicit},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			adr112GraceSoftened.Store(false)
+			cfg := adr112GraceConfig(t)
+			migrateADR112DB(t, cfg, 2)
+			if tc.marker {
+				db, err := appstorage.OpenGormDB(cfg)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := recordADR112Enforced(db, adr112FilePermEnforcedKey, time.Now()); err != nil {
+					t.Fatal(err)
+				}
+				closeGormDB(db)
+			}
+			logs := captureLogs(func() { resolveADR112BootPosture(cfg) })
+			if got := strings.Contains(logs, "WARNING: "+name+" is in effect"); got != tc.wantWarn {
+				t.Errorf("opt-out warning for %s: got %v, want %v; logs:\n%s", name, got, tc.wantWarn, logs)
+			}
+			if got := securityPostureSnapshot(cfg)[name]; got != string(tc.wantValue) {
+				t.Errorf("settings-diff value = %q, want %q", got, tc.wantValue)
+			}
+		})
 	}
 }

@@ -2,14 +2,11 @@ package middleware
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,12 +15,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
-
-// scopedTestDBSeq makes each in-memory DB unique within the process, so that
-// repeated invocations of the same test (go test -count=N) don't attach to a
-// live leftover DB from a prior iteration.
-var scopedTestDBSeq atomic.Int64
 
 // newScopedTestDB creates an in-memory SQLite DB suitable for scope resolver
 // and handleScopedPermissionRequest tests. It migrates only the tables needed
@@ -33,9 +26,9 @@ func newScopedTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	// i18n is needed by the local storage layer for error messages.
 	require.NoError(t, i18n.InitializeForTesting())
-	// Use a unique per-test file URI so parallel subtests don't share state.
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:%s_%d?mode=memory&cache=shared", t.Name(), scopedTestDBSeq.Add(1))), &gorm.Config{})
-	require.NoError(t, err)
+	// sqlitetest gives each call a private DB (so parallel subtests don't share
+	// state) on a single-connection pool (no shared-cache "table is locked").
+	db := sqlitetest.OpenWithConfig(t, "kxmw_scoped_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.Role{},
 		&models.Permission{},
@@ -507,7 +500,7 @@ func TestHandleScopedSecretPermission_NoUserContext(t *testing.T) {
 
 	req := makeRequest(t, http.MethodGet, "/secrets/7", map[string]string{"id": "7"}, nil, nil)
 	rec := httptest.NewRecorder()
-	handleScopedSecretPermissionRequest(next, rec, req, "secrets.read", "id")
+	handleScopedSecretPermissionRequest(next, rec, req, "secrets.read", "id", "")
 
 	assert.False(t, nextCalled, "next must not be called without a user context")
 	assert.Equal(t, http.StatusUnauthorized, rec.Code)
@@ -525,7 +518,7 @@ func TestHandleScopedSecretPermission_InvalidTarget(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleScopedSecretPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}), rec, req, "secrets.read", "id")
+	}), rec, req, "secrets.read", "id", "")
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 }
@@ -546,7 +539,7 @@ func TestHandleScopedSecretPermission_SecretNotFound(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleScopedSecretPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}), rec, req, "secrets.read", "id")
+	}), rec, req, "secrets.read", "id", "")
 
 	assert.Equal(t, http.StatusNotFound, rec.Code)
 }
@@ -583,7 +576,7 @@ func TestHandleScopedSecretPermission_AllowedViaACL(t *testing.T) {
 
 	req := makeRequest(t, http.MethodGet, "/secrets/7", map[string]string{"id": "7"}, userCtx, cs)
 	rec := httptest.NewRecorder()
-	handleScopedSecretPermissionRequest(next, rec, req, "secrets.read", "id")
+	handleScopedSecretPermissionRequest(next, rec, req, "secrets.read", "id", "")
 
 	assert.True(t, nextCalled, "an ACL-only grantee with no project role must reach next()")
 	assert.Equal(t, http.StatusOK, rec.Code)
@@ -606,7 +599,7 @@ func TestHandleScopedSecretPermission_Denied(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleScopedSecretPermissionRequest(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	}), rec, req, "secrets.read", "id")
+	}), rec, req, "secrets.read", "id", "")
 
 	assert.Equal(t, http.StatusForbidden, rec.Code)
 }

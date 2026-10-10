@@ -991,15 +991,11 @@ type SecretAccessSchedule struct {
 	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
 }
 
-// SecretAccessor One entry in a secret's effective access list.
+// SecretAccessor One entry in a secret's effective access list (owner, direct share, or group share).
 type SecretAccessor struct {
-	// Grants Every grant the user holds on the secret with its level, e.g. role:read, direct_share:write.
-	Grants *[]string `json:"grants,omitempty"`
-
-	// Permission Effective level: read, write or owner.
 	Permission *string `json:"permission,omitempty"`
 
-	// Source The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>.
+	// Source How access was granted: owner, direct share, or group share.
 	Source   *string `json:"source,omitempty"`
 	UserId   *int    `json:"user_id,omitempty"`
 	Username *string `json:"username,omitempty"`
