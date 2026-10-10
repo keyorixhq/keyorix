@@ -122,7 +122,8 @@ func TestInsecureSettingsRegistry_ZeroValueConfigNeverPanics(t *testing.T) {
 // issue2895TrackedKeys is #2895's table: the fourteen security-weakening
 // settings tracked there, by the config key(s) they read TODAY. Rows 1-13
 // are the known exceptions (a polarity inversion or a shape change each);
-// row 14, sso.providers[].trust_asserted_email, is mechanically renameable
+// row 14, sso.providers[].trust_asserted_email (renamed by #2899 to
+// insecure_trust_saml_asserted_email, old key kept as an alias), is mechanically renameable
 // and sits with the other renameable entries, listed in #2895 only because
 // its name gives a lexical sweep nothing to see.
 var issue2895TrackedKeys = [][]string{
@@ -139,7 +140,7 @@ var issue2895TrackedKeys = [][]string{
 	{"server.http.ratelimit.enabled", "server.grpc.ratelimit.enabled"},
 	{"credential_delivery.mode"},
 	{"credential_delivery.smtp.tls", "notifications.email.tls"},
-	{"sso.providers.trust_asserted_email"},
+	{"sso.providers.insecure_trust_saml_asserted_email"}, // renamed from trust_asserted_email (#2899)
 }
 
 // untrackedIssue2895Keys returns every #2895 key no entry of registry covers.
@@ -180,11 +181,11 @@ func TestInsecureSettingsRegistry_EveryIssue2895RowIsRegistered(t *testing.T) {
 	// about -- the fourteenth row dropped in the split.
 	var without []InsecureSetting
 	for _, e := range InsecureSettingsRegistry {
-		if !strings.Contains(strings.Join(e.SourcePaths, ","), "trust_asserted_email") {
+		if !strings.Contains(strings.Join(e.SourcePaths, ","), "asserted_email") {
 			without = append(without, e)
 		}
 	}
-	if got := untrackedIssue2895Keys(without); len(got) != 1 || got[0] != "sso.providers.trust_asserted_email" {
+	if got := untrackedIssue2895Keys(without); len(got) != 1 || got[0] != "sso.providers.insecure_trust_saml_asserted_email" {
 		t.Errorf("calibration: dropping the trust_asserted_email entry must be reported; got %v", got)
 	}
 }
