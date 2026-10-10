@@ -51,13 +51,16 @@ import (
 // has nothing to exercise yet. Left open, reported as such (not silently
 // dropped) per this repo's own "no silent caps" convention.
 func TestJourney_HATwoReplicas(t *testing.T) {
-	dsn := os.Getenv("KEYORIX_TEST_PG_DSN")
-	if dsn == "" {
+	base := os.Getenv("KEYORIX_TEST_PG_DSN")
+	if base == "" {
 		t.Skip("KEYORIX_TEST_PG_DSN not set -- skipping the HA two-replica journey (Postgres only)")
 	}
 
 	serverBin, cliBin := harness.BuildBinaries(t)
 
+	// Own database per run: the admin enrols TOTP below, and that must not survive
+	// into the next run against the same server.
+	dsn := isolatedPGDatabase(t, base, "j15_ha")
 	pg := parsePGDSN(t, dsn)
 	dbPassword := os.Getenv("KEYORIX_TEST_PG_PASSWORD")
 	if dbPassword == "" {
@@ -190,7 +193,7 @@ const schedLockAnomaly int64 = 0x4B455953414E4F4D
 // held, then releases it and confirms the job resumes on at least one replica.
 func testHoldsSchedulerLockOnBothReplicas(t *testing.T, dsn string, sA, sB *harness.Server) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	conn, err := pgx.Connect(ctx, dsn)
@@ -208,12 +211,21 @@ func testHoldsSchedulerLockOnBothReplicas(t *testing.T, dsn string, sA, sB *harn
 	}
 
 	// anomaly_alerts.schedule is "2s" on both replicas (see TestJourney_HATwoReplicas's
-	// ConfigExtra): holding the lock for 6s guarantees each replica's own ticker
-	// fires at least twice while it's held.
-	time.Sleep(6 * time.Second)
-
-	skippedA := schedulerOutcomeCount(t, sA, "anomaly_detection", "skipped")
-	skippedB := schedulerOutcomeCount(t, sB, "anomaly_detection", "skipped")
+	// ConfigExtra), but each replica's FIRST pass is deferred by a jittered 1-5 minutes
+	// after startup (server/scheduler_run.go's anomalyFirstPassDelay, #2632) and there is
+	// no knob to shorten it. So poll, rather than sleep a fixed time, until both replicas
+	// have recorded a skipped tick; the lock stays held throughout, so a tick that is
+	// not skipped would show up as a success.
+	waitDeadline := time.Now().Add(6 * time.Minute)
+	var skippedA, skippedB int
+	for time.Now().Before(waitDeadline) {
+		skippedA = schedulerOutcomeCount(t, sA, "anomaly_detection", "skipped")
+		skippedB = schedulerOutcomeCount(t, sB, "anomaly_detection", "skipped")
+		if skippedA > 0 && skippedB > 0 {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
 	if skippedA == 0 {
 		t.Errorf("replica A recorded 0 skipped anomaly_detection ticks while the lock was externally held -- expected at least one")
 	}

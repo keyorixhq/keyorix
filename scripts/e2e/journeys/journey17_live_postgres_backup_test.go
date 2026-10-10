@@ -8,14 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
-	"gorm.io/gorm/logger"
-
-	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
 
@@ -44,7 +38,7 @@ func TestJourney_LivePostgresBackup(t *testing.T) {
 	}
 	serverBin, cliBin := harness.BuildBinaries(t)
 
-	srcDSN := j17IsolatedDatabase(t, base)
+	srcDSN := isolatedPGDatabase(t, base, "j17_live_backup")
 	keysVolume := t.TempDir() // stands in for the keyorix_keys volume (absolute paths, as in the image)
 	src := harness.StartServer(t, serverBin, j17PostgresBackend(t, srcDSN, keysVolume))
 	t.Cleanup(src.Close)
@@ -98,7 +92,7 @@ func TestJourney_LivePostgresBackup(t *testing.T) {
 			t.Fatalf("wipe keys volume: %v", err)
 		}
 	}
-	dstDSN := j17IsolatedDatabase(t, base)
+	dstDSN := isolatedPGDatabase(t, base, "j17_live_backup")
 	targetDir := t.TempDir()
 	srcCfg, err := os.ReadFile(filepath.Join(src.Dir, "keyorix.yaml")) // #nosec G304 -- t.TempDir() path
 	if err != nil {
@@ -144,36 +138,4 @@ func j17PostgresBackend(t *testing.T, dsn, keysDir string) harness.DBBackend {
 		// Shipped security.require_mfa default (ADR-112); the journey enrols TOTP.
 		KeepMFADefault: true,
 	}
-}
-
-var j17DBCounter int64
-
-// j17IsolatedDatabase creates a fresh, empty database on the Postgres server
-// at base, dropped on cleanup.
-func j17IsolatedDatabase(t *testing.T, base string) string {
-	t.Helper()
-	name := fmt.Sprintf("j17_live_backup_%d_%d", os.Getpid(), atomic.AddInt64(&j17DBCounter, 1))
-	open := func() *gorm.DB {
-		db, err := gorm.Open(postgres.Open(base), &gorm.Config{Logger: logger.Discard})
-		if err != nil {
-			t.Fatalf("open %s: %v", base, err)
-		}
-		return db
-	}
-	closeDB := func(db *gorm.DB) {
-		if sqlDB, err := db.DB(); err == nil {
-			_ = sqlDB.Close()
-		}
-	}
-	admin := open()
-	defer closeDB(admin)
-	if err := admin.Exec("CREATE DATABASE " + name).Error; err != nil { //nolint:gosec // generated name, not external input
-		t.Fatalf("create database %s: %v", name, err)
-	}
-	t.Cleanup(func() {
-		c := open()
-		defer closeDB(c)
-		_ = c.Exec("DROP DATABASE IF EXISTS " + name + " WITH (FORCE)").Error
-	})
-	return pgdsn.PGReplaceDBName(base, name)
 }

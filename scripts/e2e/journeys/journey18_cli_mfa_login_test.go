@@ -283,14 +283,15 @@ func totpCodeAfterStep(t *testing.T, secret string, burned int64) string {
 // totpCodeAfterStepN is totpCodeAfterStep that also returns the step the code is for.
 func totpCodeAfterStepN(t *testing.T, secret string, burned int64) (string, int64) {
 	t.Helper()
-	now := time.Now().UTC()
-	for step := max(totpStep(now), burned) + 1; ; step++ {
+	for {
+		now := time.Now().UTC()
+		step := max(totpStep(now), burned) + 1
 		at := time.Unix(step*int64(totpPeriod.Seconds()), 0).UTC()
 		if step > totpStep(now)+1 {
-			// Would fall outside the server's +1 skew window: wait for the clock to
-			// catch up rather than submitting a code that cannot be accepted.
+			// Would fall outside the server's +1 skew window: wait until that step is
+			// the clock's next one (re-deriving the step afterwards, not advancing past
+			// it) rather than submitting a code that cannot be accepted.
 			time.Sleep(time.Until(at.Add(-totpPeriod)) + time.Second)
-			now = time.Now().UTC()
 			continue
 		}
 		return totpCodeAt(t, secret, at), step

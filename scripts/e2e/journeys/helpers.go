@@ -18,10 +18,18 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
+
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 
 	"github.com/keyorixhq/keyorix/scripts/e2e/harness"
 )
@@ -388,4 +396,37 @@ func parsePGDSN(t *testing.T, dsn string) pgConn {
 func (c pgConn) yaml() string {
 	return fmt.Sprintf("    host: %s\n    port: \"%s\"\n    name: %s\n    user: %s\n    ssl_mode: %s\n",
 		c.Host, c.Port, c.DBName, c.User, c.SSLMode)
+}
+
+var isolatedPGDBCounter int64
+
+// isolatedPGDatabase creates a fresh, empty database on the Postgres server
+// at base, dropped on cleanup. Journeys that enrol MFA must not reuse a shared
+// database: the enrolment would persist into the next run.
+func isolatedPGDatabase(t *testing.T, base, prefix string) string {
+	t.Helper()
+	name := fmt.Sprintf("%s_%d_%d", prefix, os.Getpid(), atomic.AddInt64(&isolatedPGDBCounter, 1))
+	open := func() *gorm.DB {
+		db, err := gorm.Open(postgres.Open(base), &gorm.Config{Logger: logger.Discard})
+		if err != nil {
+			t.Fatalf("open %s: %v", base, err)
+		}
+		return db
+	}
+	closeDB := func(db *gorm.DB) {
+		if sqlDB, err := db.DB(); err == nil {
+			_ = sqlDB.Close()
+		}
+	}
+	admin := open()
+	defer closeDB(admin)
+	if err := admin.Exec("CREATE DATABASE " + name).Error; err != nil { //nolint:gosec // generated name, not external input
+		t.Fatalf("create database %s: %v", name, err)
+	}
+	t.Cleanup(func() {
+		c := open()
+		defer closeDB(c)
+		_ = c.Exec("DROP DATABASE IF EXISTS " + name + " WITH (FORCE)").Error
+	})
+	return pgdsn.PGReplaceDBName(base, name)
 }
