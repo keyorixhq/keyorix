@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { isAxiosError } from 'axios';
 import { MagnifyingGlassIcon, CheckIcon } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
 import { Modal } from '../../components/ui/Modal';
@@ -7,6 +8,7 @@ import { Select } from '../../components/ui/Select';
 import { Alert } from '../../components/ui/Alert';
 import { useShareSecret } from './api';
 import { usersApi } from '../../services/users';
+import { apiErrorMessage } from '../../services/client';
 
 interface ShareSecretModalProps {
     secret: Secret;
@@ -26,6 +28,17 @@ const ALL_PERMISSION_OPTIONS = [
     { value: 'read', label: 'Read Only' },
     { value: 'write', label: 'Read & Write' },
 ];
+
+// What each share level grants (server: core.secretActionShareElevates). A write
+// share never covers suspend/resume, expiry or read limits, moving, ownership,
+// rollback, classification, auto-rotation, re-sharing, ACLs or delete: those keep
+// needing a project role.
+export const PERMISSION_HINTS: Record<'read' | 'write', string> = {
+    read: 'The recipient can read this secret.',
+    write:
+        'The recipient can read this secret, update its value and metadata (description, tags), and rotate it. ' +
+        'Suspending, changing its expiry, moving, deleting, re-sharing or changing access still needs a project role.',
+};
 
 // Time-bound (JIT) share presets. 'never' = a permanent share (no expiry sent);
 // the rest are durations from now, resolved to an ISO timestamp at submit time.
@@ -51,6 +64,13 @@ export const expiresAtFromPreset = (preset: string, now: number = Date.now()): s
     return ms ? new Date(now + ms).toISOString() : undefined;
 };
 
+// shareErrorMessage shows the server's reason for a refused share (#2976: e.g. "the
+// recipient is not a member of this secret's project") instead of axios's generic
+// "Request failed with status code 403".
+const shareErrorMessage = (error: unknown): string => {
+    if (isAxiosError(error)) return apiErrorMessage(error);
+    return error instanceof Error ? error.message : 'Failed to share secret.';
+};
 export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOpen, onClose, onSuccess }) => {
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<UserOption[]>([]);
@@ -186,13 +206,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
         <Modal isOpen={isOpen} onClose={handleClose} title={`Share "${secret.name}"`} size="md">
             <form onSubmit={handleSubmit} className="space-y-4">
                 {shareSecret.isError && (
-                    <Alert
-                        type="error"
-                        title="Error"
-                        message={
-                            shareSecret.error instanceof Error ? shareSecret.error.message : 'Failed to share secret.'
-                        }
-                    />
+                    <Alert type="error" title="Error" message={shareErrorMessage(shareSecret.error)} />
                 )}
                 {success && <Alert type="success" title="Shared!" message="Secret shared successfully." />}
 
@@ -276,6 +290,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
                         onChange={(e) => setPermission(e.target.value as 'read' | 'write')}
                         options={permissionOptions}
                         disabled={shareSecret.isPending || success}
+                        helperText={PERMISSION_HINTS[permission]}
                     />
                 </div>
 

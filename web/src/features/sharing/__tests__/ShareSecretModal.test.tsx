@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '../../../test/test-utils';
 import { ShareSecretModal, expiresAtFromPreset } from '../ShareSecretModal';
 import { Secret } from '../../../types';
+import { AxiosError, AxiosHeaders } from 'axios';
 
 const mockMutate = vi.fn();
 const mockReset = vi.fn();
@@ -351,6 +352,18 @@ describe('ShareSecretModal submission + lifecycle', () => {
         expect(optionLabels).toContain('Read & Write');
     });
 
+    it('says what a Read & Write share grants and what it does not (#3001 allowlist)', () => {
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        expect(screen.getByText('The recipient can read this secret.')).toBeInTheDocument();
+        fireEvent.change(screen.getByDisplayValue('Read Only'), { target: { value: 'write' } });
+        const hint = screen.getByText(/update its value and metadata/);
+        expect(hint).toHaveTextContent('rotate it');
+        expect(hint).toHaveTextContent(
+            /Suspending, changing its expiry, moving, deleting, re-sharing or changing access still needs a project role/
+        );
+        expect(screen.getByDisplayValue('Read & Write')).toHaveAttribute('aria-describedby', hint.id);
+    });
+
     it('shows a success message, calls onSuccess, and auto-closes after a delay', async () => {
         mockMutate.mockImplementation((_vars: unknown, opts: { onSuccess: () => void }) => opts.onSuccess());
         const onSuccessCb = vi.fn();
@@ -372,6 +385,23 @@ describe('ShareSecretModal submission + lifecycle', () => {
         mutationError = new Error('Username not found');
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         expect(screen.getByText('Username not found')).toBeInTheDocument();
+    });
+
+    it("shows the server's reason, not axios's generic text, when a share is refused (#2976)", () => {
+        isError = true;
+        mutationError = new AxiosError('Request failed with status code 403', 'ERR_BAD_REQUEST', undefined, undefined, {
+            status: 403,
+            statusText: 'Forbidden',
+            headers: {},
+            config: { headers: new AxiosHeaders() },
+            data: {
+                error: 'Forbidden',
+                message: "The recipient is not a member of this secret's project.",
+            },
+        });
+        render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
+        expect(screen.getByText("The recipient is not a member of this secret's project.")).toBeInTheDocument();
+        expect(screen.queryByText('Request failed with status code 403')).not.toBeInTheDocument();
     });
 
     it('shows a fallback message when the mutation fails with a non-Error value', () => {
