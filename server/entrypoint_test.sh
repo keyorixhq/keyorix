@@ -93,6 +93,7 @@ env -i \
     WGET_PAYLOAD_PATH_FILE="$payload_path_file" \
     WGET_PAYLOAD_MODE_FILE="$payload_mode_file" \
     KEYORIX_ADMIN_PASSWORD="$password" \
+    KEYORIX_BOOTSTRAP_TOKEN="test-bootstrap-token" \
     KEYORIX_ADMIN_USERNAME="admin" \
     KEYORIX_ADMIN_EMAIL="admin@example.test" \
     sh -c "$block"
@@ -144,6 +145,45 @@ if [[ -f "$payload_path_file" ]]; then
     else
         note "bootstrap temp directory was removed after use"
     fi
+fi
+
+# --- #3025: when the bootstrap call keeps failing the entrypoint must exit
+# non-zero (container fails loudly), never fall through to "healthy but
+# unusable". wget always fails here; sleep is stubbed so the retries are instant. ---
+fail_bin="$work_dir/failbin"
+mkdir -p "$fail_bin"
+cp "$stub_bin/mktemp" "$fail_bin/mktemp"
+printf '#!/bin/sh\nexit 1\n' >"$fail_bin/wget"
+printf '#!/bin/sh\nexit 0\n' >"$fail_bin/sleep"
+chmod +x "$fail_bin/wget" "$fail_bin/sleep"
+
+set +e
+env -i \
+    PATH="$fail_bin:/usr/bin:/bin" \
+    TMPDIR="${TMPDIR:-/tmp}" \
+    KEYORIX_ADMIN_PASSWORD="$password" \
+    KEYORIX_BOOTSTRAP_TOKEN="test-bootstrap-token" \
+    KEYORIX_BOOTSTRAP_ATTEMPTS=3 \
+    sh -c "$block" >"$work_dir/fail_out.txt" 2>&1
+rc=$?
+set -e
+if [[ "$rc" -ne 0 ]] && grep -q "attempt 3/3 failed" "$work_dir/fail_out.txt" && grep -q "ERROR: admin bootstrap did not complete" "$work_dir/fail_out.txt"; then
+    note "persistent bootstrap failure retries, logs, and exits non-zero (rc=$rc)"
+else
+    bad "persistent bootstrap failure did not exit non-zero with logged retries (rc=$rc)"
+fi
+
+# --- Password set without a bootstrap token is also fatal, not a silent skip. ---
+set +e
+env -i PATH="$fail_bin:/usr/bin:/bin" TMPDIR="${TMPDIR:-/tmp}" \
+    KEYORIX_ADMIN_PASSWORD="$password" \
+    sh -c "$block" >"$work_dir/notoken_out.txt" 2>&1
+rc=$?
+set -e
+if [[ "$rc" -ne 0 ]] && grep -q "KEYORIX_BOOTSTRAP_TOKEN is not" "$work_dir/notoken_out.txt"; then
+    note "admin password without bootstrap token exits non-zero"
+else
+    bad "admin password without bootstrap token did not fail (rc=$rc)"
 fi
 
 if [[ "$fail" -ne 0 ]]; then
