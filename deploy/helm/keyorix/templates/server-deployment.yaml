@@ -149,10 +149,12 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "keyorix.server.fullname" . }}-keys
           {{- else }}
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 16Mi
           {{- end }}
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 64Mi
       {{- with .Values.server.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

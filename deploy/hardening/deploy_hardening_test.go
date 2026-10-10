@@ -24,6 +24,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -178,8 +179,13 @@ func TestCompose_CaddyRunsNonRootAfterOneShotInit(t *testing.T) {
 	if !hasString(initSvc["cap_drop"], "ALL") {
 		t.Error("caddy-init: cap_drop must contain ALL")
 	}
-	if len(asList(initSvc["cap_add"])) != 1 || !hasString(initSvc["cap_add"], "CHOWN") {
-		t.Errorf("caddy-init: cap_add must be exactly [CHOWN], got %v", initSvc["cap_add"])
+	// CHOWN to change the owner; DAC_READ_SEARCH because Caddy creates its storage
+	// directories 0700: after the first run they belong to 65532, and root without
+	// it cannot open them, so every later run (and an interrupted first one) would
+	// fail and, with caddy gated on service_completed_successfully, keep HTTPS down.
+	// DAC_OVERRIDE (write everywhere) is deliberately NOT needed and not allowed.
+	if caps := asList(initSvc["cap_add"]); len(caps) != 2 || !hasString(caps, "CHOWN") || !hasString(caps, "DAC_READ_SEARCH") {
+		t.Errorf("caddy-init: cap_add must be exactly [CHOWN, DAC_READ_SEARCH], got %v", initSvc["cap_add"])
 	}
 	if !hasString(initSvc["security_opt"], "no-new-privileges:true") {
 		t.Error("caddy-init: security_opt must contain no-new-privileges:true")
@@ -199,6 +205,22 @@ func TestCompose_CaddyRunsNonRootAfterOneShotInit(t *testing.T) {
 	}
 	if !strings.Contains(joined, "/data") || !strings.Contains(joined, "/config") {
 		t.Errorf("caddy-init: %q must chown both /data and /config", joined)
+	}
+	// Scope: the two Caddy volumes only, no symlink following, no mount crossing,
+	// and only entries not already owned by caddy (idempotent: a migrated volume is
+	// left untouched).
+	if got := asList(initSvc["entrypoint"]); len(got) == 0 || got[0] != "find" {
+		t.Errorf("caddy-init: entrypoint must be a find over the Caddy volumes (idempotent, owner-filtered), got %v", got)
+	}
+	for _, want := range []string{"-xdev", "-user", "-group", "-h"} {
+		if !strings.Contains(" "+joined, " "+want+" ") {
+			t.Errorf("caddy-init: entrypoint %q must contain %s", joined, want)
+		}
+	}
+	for _, c := range asList(initSvc["entrypoint"]) {
+		if s, _ := c.(string); s == "-L" || s == "-follow" || s == "-R" || strings.HasPrefix(s, "/") && s != "/data" && s != "/config" {
+			t.Errorf("caddy-init: entrypoint element %q widens the scope beyond /data and /config", s)
+		}
 	}
 	if initSvc["network_mode"] != "none" {
 		t.Errorf("caddy-init: network_mode must be none, got %v", initSvc["network_mode"])
@@ -229,17 +251,20 @@ func TestCompose_CaddyRunsNonRootAfterOneShotInit(t *testing.T) {
 
 // ---- helm chart ----------------------------------------------------------
 
-func renderChart(t *testing.T) []m {
+func renderChart(t *testing.T) []m { return renderChartWith(t) }
+
+func renderChartWith(t *testing.T, extra ...string) []m {
 	t.Helper()
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm not installed -- skipping chart hardening check")
 	}
 	chart := filepath.Join(repoRoot(), "deploy", "helm", "keyorix")
-	cmd := exec.Command("helm", "template", "kx", chart, //nolint:gosec // fixed binary and chart path
+	args := append([]string{"template", "kx", chart,
 		"--set", "auth.masterPassword=x",
 		"--set", "postgresql.auth.password=x",
 		"--set-string", "auth.adminPassword=0123456789abcdef0123",
-	)
+	}, extra...)
+	cmd := exec.Command("helm", args...) //nolint:gosec // fixed binary, chart path and test-controlled args
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("helm template: %v\n%s", err, out)
@@ -336,6 +361,203 @@ func TestHelmChart_WorkloadsAreHardened(t *testing.T) {
 	for _, want := range []string{"server", "web", "postgresql"} {
 		if !seen[want] {
 			t.Errorf("no %q Deployment rendered -- the guard would be vacuous; update it if the component was renamed", want)
+		}
+	}
+}
+
+// ---- tmpfs / emptyDir size limits ------------------------------------------
+
+// An unbounded tmpfs is host RAM: a runaway writer in a "hardened" container
+// could still take the host down. Every tmpfs mount in compose must carry an
+// explicit size=.
+func TestCompose_EveryTmpfsHasASizeLimit(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc m
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	total := 0
+	for name, v := range asMap(doc["services"]) {
+		for _, e := range asList(asMap(v)["tmpfs"]) {
+			total++
+			s, _ := e.(string)
+			if !strings.Contains(s, "size=") {
+				t.Errorf("%s: tmpfs %q has no size= (unbounded tmpfs is unbounded host memory)", name, s)
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatal("no tmpfs mounts found -- the guard would be vacuous; update it if they were removed")
+	}
+}
+
+// Same for the chart: an emptyDir without sizeLimit lets a pod fill the node's
+// ephemeral storage. (A data emptyDir used when persistence is off is bounded by
+// the persistence size.)
+func TestHelmChart_EveryEmptyDirHasASizeLimit(t *testing.T) {
+	docs := renderChart(t)
+	total := 0
+	for _, d := range docs {
+		if d["kind"] != "Deployment" {
+			continue
+		}
+		name, _ := asMap(d["metadata"])["name"].(string)
+		spec := asMap(asMap(asMap(d["spec"])["template"])["spec"])
+		for _, v := range asList(spec["volumes"]) {
+			vm := asMap(v)
+			ed, ok := vm["emptyDir"]
+			if !ok {
+				continue
+			}
+			total++
+			if asMap(ed)["sizeLimit"] == nil {
+				t.Errorf("%s: emptyDir volume %v has no sizeLimit", name, vm["name"])
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatal("no emptyDir volumes found -- the guard would be vacuous")
+	}
+}
+
+// ---- postgres uid -----------------------------------------------------------
+
+// The bundled Postgres must run as the uid the chosen image actually uses, the
+// same in compose and in the chart: the official Alpine images use 70, the Debian
+// ones 999. A data volume created by the previous (root-entrypoint) layouts is
+// owned by that uid, so any other value cannot open an existing volume. The
+// image's own uid was verified with `docker run postgres:15-alpine id postgres`
+// (uid=70(postgres) gid=70(postgres)); this guard keeps the three places that
+// must agree -- compose user, chart securityContext and image flavour -- in step.
+func postgresUIDForImage(image string) int {
+	if strings.Contains(image, "alpine") {
+		return 70
+	}
+	return 999
+}
+
+func TestPostgresUID_ConsistentBetweenComposeAndHelmAndMatchesImage(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), "docker-compose.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc m
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatal(err)
+	}
+	pg := asMap(asMap(doc["services"])["postgres"])
+	image, _ := pg["image"].(string)
+	want := postgresUIDForImage(image)
+	wantStr := strconv.Itoa(want)
+	if user, _ := pg["user"].(string); user != wantStr+":"+wantStr {
+		t.Errorf("compose postgres: user %q must be %s:%s for image %s", user, wantStr, wantStr, image)
+	}
+	for _, e := range asList(pg["tmpfs"]) {
+		if s, _ := e.(string); strings.HasPrefix(s, "/var/run/postgresql") &&
+			(!strings.Contains(s, "uid="+wantStr) || !strings.Contains(s, "gid="+wantStr)) {
+			t.Errorf("compose postgres: tmpfs %q must be owned by uid/gid %s", s, wantStr)
+		}
+	}
+
+	for _, d := range renderChart(t) {
+		if d["kind"] != "Deployment" {
+			continue
+		}
+		if comp, _ := asMap(asMap(d["metadata"])["labels"])["app.kubernetes.io/component"].(string); comp != "postgresql" {
+			continue
+		}
+		spec := asMap(asMap(asMap(d["spec"])["template"])["spec"])
+		pod := asMap(spec["securityContext"])
+		for _, k := range []string{"runAsUser", "runAsGroup", "fsGroup"} {
+			if got, _ := pod[k].(int); got != want {
+				t.Errorf("helm postgresql: %s is %v, want %d (the uid of the postgres image)", k, pod[k], want)
+			}
+		}
+		chartImage, _ := asMap(asList(spec["containers"])[0])["image"].(string)
+		if postgresUIDForImage(chartImage) != want {
+			t.Errorf("helm postgresql image %q and compose image %q are different flavours (uid %d vs %d)", chartImage, image, postgresUIDForImage(chartImage), want)
+		}
+		return
+	}
+	t.Fatal("no postgresql Deployment rendered -- the guard would be vacuous")
+}
+
+func postgresPodSpec(t *testing.T, docs []m) m {
+	t.Helper()
+	for _, d := range docs {
+		if d["kind"] != "Deployment" {
+			continue
+		}
+		if comp, _ := asMap(asMap(d["metadata"])["labels"])["app.kubernetes.io/component"].(string); comp == "postgresql" {
+			return asMap(asMap(asMap(d["spec"])["template"])["spec"])
+		}
+	}
+	t.Fatal("no postgresql Deployment rendered")
+	return nil
+}
+
+// A volume created by an older chart (which ran the pod as 999) is owned by 999.
+// The opt-in migration is the only root container the chart can render; it must stay
+// that narrow: off by default, CHOWN + DAC_READ_SEARCH only, read-only root FS,
+// confined to the data volume, owner-filtered and symlink-safe.
+func TestHelmChart_PostgresOwnershipMigrationIsOptInAndNarrow(t *testing.T) {
+	if got := asList(postgresPodSpec(t, renderChart(t))["initContainers"]); len(got) != 0 {
+		t.Fatalf("default render must not contain an init container (the chart has no root container by default), got %v", got)
+	}
+
+	spec := postgresPodSpec(t, renderChartWith(t, "--set", "postgresql.migrateOwnership=true"))
+	inits := asList(spec["initContainers"])
+	if len(inits) != 1 {
+		t.Fatalf("migrateOwnership=true must render exactly one init container, got %d", len(inits))
+	}
+	c := asMap(inits[0])
+	sc := asMap(c["securityContext"])
+	if sc["allowPrivilegeEscalation"] != false || sc["readOnlyRootFilesystem"] != true || sc["privileged"] == true {
+		t.Errorf("init container securityContext too loose: %v", sc)
+	}
+	caps := asMap(sc["capabilities"])
+	if !hasString(caps["drop"], "ALL") {
+		t.Error("init container must drop ALL capabilities")
+	}
+	if add := asList(caps["add"]); len(add) != 2 || !hasString(add, "CHOWN") || !hasString(add, "DAC_READ_SEARCH") {
+		t.Errorf("init container capabilities.add must be exactly [CHOWN, DAC_READ_SEARCH], got %v", add)
+	}
+	var words []string
+	for _, w := range asList(c["command"]) {
+		s, _ := w.(string)
+		words = append(words, s)
+	}
+	joined := " " + strings.Join(words, " ") + " "
+	for _, want := range []string{" find /var/lib/postgresql/data ", " -xdev ", " -user 70 ", " -group 70 ", " chown -h 70:70 "} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("init container command %q must contain %q", joined, want)
+		}
+	}
+	for _, bad := range []string{" -L ", " -follow ", " -R "} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("init container command %q must not contain %q", joined, bad)
+		}
+	}
+	mounts := asList(c["volumeMounts"])
+	if len(mounts) != 1 || asMap(mounts[0])["mountPath"] != "/var/lib/postgresql/data" {
+		t.Errorf("init container must mount only the data volume, got %v", mounts)
+	}
+
+	// With persistence off there is no old volume to migrate: no init container.
+	spec = postgresPodSpec(t, renderChartWith(t, "--set", "postgresql.migrateOwnership=true", "--set", "postgresql.persistence.enabled=false"))
+	if got := asList(spec["initContainers"]); len(got) != 0 {
+		t.Errorf("no init container expected without persistence, got %v", got)
+	}
+
+	// The uid is one value: pod, group and fsGroup follow it.
+	spec = postgresPodSpec(t, renderChartWith(t, "--set", "postgresql.runAsUser=999"))
+	pod := asMap(spec["securityContext"])
+	for _, k := range []string{"runAsUser", "runAsGroup", "fsGroup"} {
+		if pod[k] != 999 {
+			t.Errorf("postgresql.runAsUser=999: %s is %v", k, pod[k])
 		}
 	}
 }

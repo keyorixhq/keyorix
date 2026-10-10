@@ -107,12 +107,19 @@ spec:
         - name: nginx-config
           configMap:
             name: {{ include "keyorix.web.fullname" . }}-config
+        # Every emptyDir carries a sizeLimit: past it the kubelet evicts the pod
+        # instead of letting a runaway writer fill the node's ephemeral storage.
         - name: nginx-cache
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 64Mi
         - name: nginx-run
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 1Mi
+        # access/error logs (web/nginx.conf writes files here).
         - name: nginx-log
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 32Mi
         - name: nginx-tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 16Mi
 {{- end -}}
