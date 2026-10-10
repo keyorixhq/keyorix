@@ -1704,6 +1704,20 @@ type Storage interface {
 	// (a full-row Save) and wrote disabled=false back over a concurrent DeleteProject's
 	// #369 disable. Returns an error when no row matched.
 	SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error
+	// SetDynamicSecretConfigClassification persists ONLY the classification
+	// column (plus updated_at), and only if the row's CURRENT classification is
+	// still fromClassification (the value the caller read). matched=false (no
+	// error) means another classifier moved it; the caller must fail closed.
+	//
+	// ClassifyDynamicSecretConfig used the full-row UpdateDynamicSecretConfig
+	// (a bare Save) and therefore wrote `disabled=false` back over a concurrent
+	// SetDynamicSecretConfigEnabled(false) — the incident kill switch, which
+	// also revokes the config's live leases — so IssueLease could mint real
+	// database credentials again, with an audit trail reading "config_disabled"
+	// then only "classified" and nothing recording the re-enable (#2698). The
+	// same column is what DeleteProject's #369 cascade sets, so the same write
+	// also re-enabled a config under a deleted project.
+	SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification, toClassification string, updatedAt time.Time) (matched bool, err error)
 	// TransitionDynamicSecretConfigDisabled persists cfg's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND disabled = ?" — succeeding
 	// only if the row's CURRENT persisted disabled value still equals fromDisabled
@@ -1741,6 +1755,27 @@ type Storage interface {
 	// still live) — used to enforce the config's MaxActiveLeases ceiling.
 	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
 	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
+	// ExtendDynamicSecretLeaseExpiry persists ONLY expires_at, and only for a
+	// lease whose status is STILL "active": "UPDATE ... SET expires_at WHERE
+	// lease_id = ? AND status = 'active'". matched=false (no error) means the
+	// lease is no longer active (revoked, expired, or revoke_failed) and the
+	// renewal must be refused.
+	//
+	// RenewLease used the full-row UpdateDynamicSecretLease (a bare Save) and
+	// therefore wrote the stale Status/RevokeError/RevokedAt back (#2698): a
+	// concurrent successful RevokeLease became `active` again with a LATER
+	// expiry, so the row lied about a dead credential and kept holding a
+	// MaxActiveLeases slot until the sweep; a revoke that had recorded
+	// `revoke_failed` was erased outright, its error cleared. Renew is a no-op
+	// on several backends, so nothing downstream would have noticed.
+	ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (matched bool, err error)
+	// RecordDynamicSecretLeaseRevocation persists ONLY status, revoke_reason,
+	// revoke_error and revoked_at. Deliberately NOT conditional on the current
+	// status: it records what already happened to the credential at the
+	// backend, so it must land regardless of what else moved meanwhile — a
+	// lease whose target drop failed must never be left reading `active`.
+	// What it must not do is carry the caller's whole pre-read row with it.
+	RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID, status, revokeReason, revokeError string, revokedAt *time.Time) (matched bool, err error)
 	ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error)
 
 	CreateMFAChallenge(ctx context.Context, c *models.MFAChallenge) error

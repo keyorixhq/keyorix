@@ -108,6 +108,10 @@ const (
 	EventBreakGlassReviewOverdue = "break_glass.review_overdue" // #nosec G101 -- audit event type, not a credential
 )
 
+// errBreakGlassDisabled is the reason ActivateBreakGlass gives while
+// break_glass.enabled is false (the default).
+const errBreakGlassDisabled = "break-glass is not enabled on this server; set break_glass.enabled: true in keyorix.yaml and restart"
+
 // minBreakGlassReviewNoteLen mirrors minBreakGlassJustificationLen's reasoning
 // (above) for the review note (ADR-112 §3, break-glass review item 5): this
 // becomes the PERMANENT audit-trail record of what the reviewer actually
@@ -164,7 +168,13 @@ func (c *KeyorixCore) SetBreakGlassPolicy(p BreakGlassPolicy) {
 // userID is the activating (self) user; ttlOverride is an optional Go duration.
 func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID uint, justification, ttlOverride string) (*models.BreakGlassActivation, error) { // NOSONAR -- cognitive complexity 28, suppress go:S3776
 	if !c.breakGlassPolicy.Enabled {
-		return nil, refuseBreakGlass(i18n.T("ErrorPermissionDenied", nil), ErrBreakGlassDisabled)
+		// Disabled is the secure default, but "permission denied" alone looks like
+		// a role problem. Say it is off and which key turns it on (#2943). The
+		// "permission denied" prefix keeps the HTTP mapping (403) in
+		// server/http/handlers/break_glass.go.
+		// refuseBreakGlass keeps the typed ErrBreakGlassDisabled kind that the
+		// HTTP and gRPC mappings match with errors.Is.
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorPermissionDenied", nil), errBreakGlassDisabled), ErrBreakGlassDisabled)
 	}
 	if projectID == 0 || userID == 0 {
 		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and user are required"), ErrBreakGlassInvalidRequest)
