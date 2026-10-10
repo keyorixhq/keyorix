@@ -92,7 +92,7 @@ test('secrets table headers, rotation label and action bar at 1366 px', async ({
     await row.getByTitle('View').click();
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByTestId('secret-actions')).toBeVisible();
-    await expect(dialog.getByText('Never rotated')).toBeVisible();
+    await expect(dialog.getByText('Never rotated', { exact: true })).toBeVisible();
 
     const dialogBox = (await dialog.boundingBox())!;
     for (const button of await dialog.getByTestId('secret-actions').getByRole('button').all()) {
@@ -110,7 +110,7 @@ test('secrets table headers, rotation label and action bar at 1366 px', async ({
     await page.getByRole('button', { name: 'Rotate secret' }).click();
     await expect(page.getByText(`Rotate ${secretName}`)).not.toBeVisible({ timeout: 10_000 });
 
-    await expect(dialog.getByText('Never rotated')).toHaveCount(0);
+    await expect(dialog.getByText('Never rotated', { exact: true })).toHaveCount(0);
     await expect(dialog.getByText(/^Rotated /)).toBeVisible();
     await shot(page, 'detail-after-rotate');
 });
