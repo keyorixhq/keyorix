@@ -461,6 +461,24 @@ grace period` warning. Have every interactive admin enrol, then set
 fresh install is enforced from its first start and recorded in the database
 (`adr112.require_mfa.enforced`), so it stays enforced after its admins exist.
 
+`require_mfa` is an ADR-112 opt-out like the `insecure_*` settings: its registry
+entry is `security.insecure_disable_mfa_requirement`. An explicit
+`require_mfa: false` logs `WARNING: security.insecure_disable_mfa_requirement is
+in effect (off)` on every start, is recorded in the start-to-start settings
+diff, and `admin validate --posture` counts it as a deviation. The grace period
+reads `grace-not-enforced` and is treated the same way. (The YAML key keeps its
+current name; only the registry identifier carries the `insecure_` prefix.)
+
+| State (settings-diff value) | When | Counts as a deviation |
+|---|---|---|
+| `off` | `require_mfa: false` written in the config | yes |
+| `grace-not-enforced` | key absent, upgraded deployment inside the grace period | yes |
+| `enforcing-implicit` | key absent, fresh install or past the grace period | no |
+| `enforcing-explicit` | `require_mfa: true` written in the config | no |
+
+The first start after upgrading to this version records one settings-diff
+change for this entry, because it did not appear in the previous snapshot.
+
 ```yaml
 security:
   enable_file_permission_check: true

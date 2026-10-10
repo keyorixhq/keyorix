@@ -190,6 +190,7 @@ func TestCollectInsecureSettingsPosture_FullyHardenedConfigReportsZero(t *testin
 	cfg := &config.Config{}
 	cfg.Security.RequireTransportTLS = true
 	cfg.Security.EnableFilePermissionCheck = true
+	cfg.Security.RequireMFA = true // #2986: security.require_mfa is a registry entry now
 	cfg.Storage.Encryption.Enabled = true
 	cfg.Storage.Database.SSLMode = "require"
 	cfg.Membership.ValidationMode = "allowlist"
