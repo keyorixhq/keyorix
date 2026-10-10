@@ -153,7 +153,7 @@ func TestJourney_VaultMigrate(t *testing.T) {
 			serverBin, cliBin := harness.BuildBinaries(t)
 			s := harness.StartServer(t, serverBin, harness.DBBackend{Name: "sqlite"})
 			t.Cleanup(s.Close)
-			adminToken := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+			adminToken := mfaLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 			aEnv := adminEnv(s, adminToken)
 
 			projectName := "n4-" + backend.name + "-import"

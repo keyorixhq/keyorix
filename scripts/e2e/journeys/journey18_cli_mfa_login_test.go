@@ -251,6 +251,16 @@ func requireMFAEnrolmentPremise(t *testing.T, s *harness.Server, username, passw
 	}
 }
 
+// mfaLogin is how a journey logs an interactive user in under the shipped
+// security.require_mfa default: assert the enrolment premise, then enrol a TOTP
+// factor and complete a real two-step login. Journeys use it where they used a
+// plain password login before the harness default became require_mfa on.
+func mfaLogin(t *testing.T, s *harness.Server, username, password string) string {
+	t.Helper()
+	requireMFAEnrolmentPremise(t, s, username, password)
+	return enrolTOTPAndLogin(t, s, username, password)
+}
+
 // totpPeriod mirrors internal/core's own step length (mfa.go's totpPeriod).
 const totpPeriod = 30 * time.Second
 
