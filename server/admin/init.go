@@ -98,6 +98,9 @@ func runAdminInit(cmd *cobra.Command, args []string) error { // NOSONAR -- cogni
 
 	fmt.Println("\nKeyorix system initialization completed successfully.")
 	fmt.Printf("Config file: %s\n", configPath)
+	if cfg.Storage.Type == "local" || cfg.Storage.Type == "sqlite" {
+		fmt.Println("Using PostgreSQL instead? Set storage.type: postgres (and storage.database.dsn) in the config BEFORE the steps below; the SQLite file created here is then unused and can be deleted.")
+	}
 	fmt.Println("Run 'keyorix-server admin encryption init' to generate encryption keys (required before the server can start)")
 	fmt.Println("Run 'keyorix-server admin validate' to check the setup")
 	fmt.Println("Run 'keyorix-server admin migrate' to create the database schema")
@@ -130,6 +133,14 @@ func generateAdminConfigFile(configPath string) error {
 }
 
 func initializeAdminDatabase(cfg *config.Config) error {
+	// #2980: the SQLite file is only this deployment's database when the backend
+	// is SQLite. For PostgreSQL (or remote) there is nothing to pre-create on
+	// disk, and creating one leaves a stray, unused keyorix.db behind.
+	switch cfg.Storage.Type {
+	case "postgres", "postgresql", "remote":
+		fmt.Printf("Database: storage.type is %q, no local database file to create (run 'keyorix-server admin migrate' to create the schema)\n", cfg.Storage.Type)
+		return nil
+	}
 	dbPath := filepath.Clean(cfg.Storage.Database.Path)
 	if strings.Contains(dbPath, "..") {
 		return fmt.Errorf("invalid path for database: %s", dbPath)

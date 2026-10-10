@@ -37,7 +37,9 @@ func TestActivateBreakGlass_RefusalsAreSentinelsWithUnchangedText(t *testing.T) 
 	// Disabled (the default policy).
 	_, err = c.ActivateBreakGlass(ctx, proj.ID, member.ID, just, "")
 	require.ErrorIs(t, err, ErrBreakGlassDisabled)
-	assert.EqualError(t, err, "permission denied")
+	// #2943: the disabled refusal says it is disabled and which key enables it
+	// (the "permission denied" prefix is kept for the 403 mapping).
+	assert.EqualError(t, err, "permission denied: "+errBreakGlassDisabled)
 
 	c.SetBreakGlassPolicy(BreakGlassPolicy{Enabled: true, EmergencyRole: "editor", DefaultTTL: time.Hour, MaxTTL: time.Hour})
 

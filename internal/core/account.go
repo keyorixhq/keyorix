@@ -12,6 +12,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -349,10 +350,18 @@ func (c *KeyorixCore) applyNewPassword(ctx context.Context, user *models.User, n
 	user.UpdatedAt = now
 
 	// Record the new hash in history and prune to the configured depth.
-	// Best-effort: the password change itself has already succeeded.
+	// Best-effort: the password change itself has already succeeded. Through
+	// besteffort.Run, not a bare `_ =`: a PANIC here used to escape, report the
+	// committed password change as a 500, and skip the PAT and session
+	// revocation below entirely (FuzzStorageFaultOperations: change-password,
+	// PrunePasswordHistory#1/panic, oracle (a), [PasswordHistory]).
 	if c.passwordPolicy.HistoryCount > 0 {
-		_ = c.storage.AddPasswordHistory(ctx, user.ID, string(hash), now)
-		_ = c.storage.PrunePasswordHistory(ctx, user.ID, c.passwordPolicy.HistoryCount)
+		besteffort.Run(ctx, "account.ChangePassword.AddPasswordHistory", func() error {
+			return c.storage.AddPasswordHistory(ctx, user.ID, string(hash), now)
+		})
+		besteffort.Run(ctx, "account.ChangePassword.PrunePasswordHistory", func() error {
+			return c.storage.PrunePasswordHistory(ctx, user.ID, c.passwordPolicy.HistoryCount)
+		})
 	}
 
 	// Revoke the user's PATs too. A credential change must invalidate EVERY bearer class,

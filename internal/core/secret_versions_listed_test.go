@@ -19,3 +19,12 @@ func TestMapAuditEventToActivity_VersionsListed(t *testing.T) {
 	assert.Equal(t, "versions_listed", item.Type)
 	assert.Equal(t, "db-pass", item.SecretName)
 }
+
+// AUDIT-UX-3 item 1: a by-name lookup is shown as its own type, not "accessed".
+func TestMapAuditEventToActivity_MetadataRead(t *testing.T) {
+	t.Parallel()
+	e := &models.AuditEvent{ID: 13, EventType: EventSecretMetadataRead, Description: "User alice looked up secret db-pass", EventTime: time.Now()}
+	item := mapAuditEventToActivity(e, "alice")
+	assert.Equal(t, "metadata_read", item.Type)
+	assert.Equal(t, "db-pass", item.SecretName)
+}
