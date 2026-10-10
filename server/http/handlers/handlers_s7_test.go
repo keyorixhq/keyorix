@@ -6,24 +6,21 @@ package handlers
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -57,11 +54,6 @@ func newDynamicSecretHandlerS7(t *testing.T) *DynamicSecretHandler {
 	return NewDynamicSecretHandler(newHandlerCoreS4(t))
 }
 
-// s7DBCounter ensures every freshCoreS7 call gets a unique in-memory SQLite
-// DSN so the databases are fully isolated from each other and from the shared
-// s4 DB.
-var s7DBCounter atomic.Int64
-
 // freshCoreS7 creates a brand-new in-memory SQLite DB (different DSN from the
 // s4 shared DB) with a full schema including system_metadata.  Use this for
 // tests that call BootstrapSystem, Login, or any other stateful flow that would
@@ -70,11 +62,8 @@ var s7DBCounter atomic.Int64
 func freshCoreS7(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s7DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s7_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
+	db := sqlitetest.Open(t, "kxhandlers_s7_")
+	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},

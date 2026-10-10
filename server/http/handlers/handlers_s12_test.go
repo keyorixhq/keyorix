@@ -18,11 +18,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -32,11 +30,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
-
-var s12DBCounter atomic.Int64
 
 // freshCoreS12 opens a uniquely-named in-memory SQLite DB with a broad set of
 // models migrated and returns a ready-to-use KeyorixCore.
@@ -53,11 +50,8 @@ func freshCoreS12(t *testing.T) *core.KeyorixCore {
 func freshLocalStorageS12(t *testing.T) *store.LocalStorage {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s12DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s12_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
+	db := sqlitetest.Open(t, "kxhandlers_s12_")
+	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
@@ -96,11 +90,8 @@ func freshLocalStorageS12(t *testing.T) *store.LocalStorage {
 func freshCoreS12WithAdmin(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s12DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s12a_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
+	db := sqlitetest.Open(t, "kxhandlers_s12a_")
+	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
