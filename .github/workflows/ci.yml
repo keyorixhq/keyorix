@@ -1718,7 +1718,9 @@ jobs:
             -H 'Content-Type: application/json' \
             -d "$body" | \
             jq -r '.data.mfa_challenge')
-          [ -n "$challenge" ] && [ "$challenge" != "null" ] || { echo "login did not return an MFA challenge" >&2; exit 1; }
+          if [ -z "$challenge" ] || [ "$challenge" = "null" ]; then
+            echo "login did not return an MFA challenge" >&2; exit 1
+          fi
           sleep $(( 30 - $(date +%s) % 30 + 1 ))
           code=$(./bin/totpgen "$totp_key" 30)
           verify=$(jq -n --arg c "$challenge" --arg k "$code" '{mfa_challenge:$c,code:$k}')
@@ -1726,7 +1728,9 @@ jobs:
             -H 'Content-Type: application/json' \
             -d "$verify" | \
             jq -r '.data.token')
-          [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] || { echo "MFA verify did not return a session token" >&2; exit 1; }
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "MFA verify did not return a session token" >&2; exit 1
+          fi
           projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
             jq -r '.data.projects | length')
           [ "$projects" = "3" ] || { echo "expected 3 seeded projects, got $projects" >&2; exit 1; }
