@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -134,4 +136,41 @@ func TestListShares_DeniesGlobalScopeMFABypass(t *testing.T) {
 	w2 := httptest.NewRecorder()
 	r.shareH.ListShares(w2, sessionReq(1, true))
 	require.Equal(t, http.StatusOK, w2.Code, "a session with MFA is allowed")
+}
+
+// erroringSecretsByIDsStorage makes the batched secret lookup fail (a transient
+// storage error), which is the only source of the project ids the share lists'
+// aggregate MFA check sees.
+type erroringSecretsByIDsStorage struct {
+	corestorage.Storage
+}
+
+func (erroringSecretsByIDsStorage) GetSecretsByIDs(context.Context, []uint) ([]*models.SecretNode, error) {
+	return nil, errors.New("connection reset by peer")
+}
+
+// TestListShares_MFACheckFailsClosedOnLookupError: shareViewProjectIDs used to log a
+// failed project lookup and return no project ids, so ProjectsMFABlocked had nothing
+// to check and a no-MFA session got the shares on an MFA-required project back
+// (review of #3018, note 3; GET /shares/owned shares the helper). A lookup error
+// must deny, never answer 200.
+func TestListShares_MFACheckFailsClosedOnLookupError(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{},
+		&models.ShareRecord{}, &models.User{}, &models.Group{}, &models.UserGroup{}))
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "guarded", RequireMFA: true}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "guarded-secret", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active", OwnerID: 1}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "auditor", Email: "auditor@example.com"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recipient", Email: "recipient@example.com"}).Error)
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}).Error)
+	shareH, err := NewShareHandler(core.NewKeyorixCore(erroringSecretsByIDsStorage{store.NewLocalStorage(db)}))
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	shareH.ListShares(w, sessionReq(1, false))
+	require.Equal(t, http.StatusInternalServerError, w.Code, "an unverifiable MFA policy must not let the shares through: %s", w.Body.String())
+	require.NotContains(t, w.Body.String(), `"secretId"`)
 }

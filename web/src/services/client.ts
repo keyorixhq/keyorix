@@ -188,7 +188,11 @@ export const makeAuthenticatedRequest = async <T>(reqConfig: AxiosRequestConfig)
 // the server's `message` (e.g. a validation reason like "secret value is a known weak
 // or placeholder value") over the `error` type code. Use this where the message is
 // shown to the user; handleApiError keeps its legacy code-first ordering.
-export const apiErrorMessage = (error: unknown): string => {
+// apiErrorMessage is what a dialog shows for a failed request: the server's own
+// reason (`message`, else `error`) when there is one, so a refusal reads e.g. "You
+// can't edit this secret: ..." instead of axios's "Request failed with status code
+// 403"; otherwise the Error's message; otherwise `fallback`.
+export const apiErrorMessage = (error: unknown, fallback = 'An unexpected error occurred'): string => {
     if (axios.isAxiosError(error)) {
         const data = error.response?.data as { message?: string; error?: string } | undefined;
         if (data?.message) return data.message;
@@ -196,7 +200,7 @@ export const apiErrorMessage = (error: unknown): string => {
         if (error.message) return error.message;
     }
     if (error instanceof Error) return error.message;
-    return 'An unexpected error occurred';
+    return fallback;
 };
 
 export const handleApiError = (error: unknown): string => {

@@ -24,6 +24,7 @@ import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
 import { Dialog } from '../../components/ui/Dialog';
+import { apiErrorMessage } from '../../services/client';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -137,6 +138,10 @@ export const SharingManagementPage: React.FC = () => {
         }
     }, [data]);
 
+    // SHARE-3: 'owned' when the caller lacks global secrets.read and sees only the
+    // shares they created, in projects they are a member of (GET /shares/owned).
+    const ownedOnly = data?.scope === 'owned';
+
     const deleteMutation = useDeleteShare();
     const bulkDeleteMutation = useBulkDeleteShares();
 
@@ -249,7 +254,10 @@ export const SharingManagementPage: React.FC = () => {
                 <Alert
                     type="error"
                     title="Failed to load shares"
-                    message="There was an error loading the sharing information. Please try again."
+                    message={apiErrorMessage(
+                        error,
+                        'There was an error loading the sharing information. Please try again.'
+                    )}
                 >
                     <Button variant="outline" size="sm" onClick={() => refetch()}>
                         Retry
@@ -269,7 +277,9 @@ export const SharingManagementPage: React.FC = () => {
                 <p className="text-base-muted dark:text-base-muted">
                     {filters.search || filters.recipientType !== 'all' || filters.permission !== 'all'
                         ? 'Try adjusting your filters.'
-                        : 'No secrets have been shared yet.'}
+                        : ownedOnly
+                          ? "You haven't shared any secrets in your projects yet."
+                          : 'No secrets have been shared yet.'}
                 </p>
             </div>
         ) : (
@@ -541,6 +551,30 @@ export const SharingManagementPage: React.FC = () => {
                 </div>
             </div>
 
+            {ownedOnly && (
+                <div>
+                    <h2 className="text-lg font-medium text-base-primary dark:text-white">Shares you created</h2>
+                    <p className="mt-1 text-sm text-base-muted dark:text-base-muted">
+                        The shares you created, in projects you are a member of. You can revoke them here.
+                    </p>
+                </div>
+            )}
+
+            {deleteMutation.isError && (
+                <Alert
+                    type="error"
+                    title="Failed to revoke share"
+                    message={apiErrorMessage(deleteMutation.error, 'The share could not be revoked.')}
+                />
+            )}
+            {bulkDeleteMutation.isError && (
+                <Alert
+                    type="error"
+                    title="Failed to revoke shares"
+                    message={apiErrorMessage(bulkDeleteMutation.error, 'Some shares could not be revoked.')}
+                />
+            )}
+
             {/* Filters */}
             <div className="bg-surface dark:bg-gray-800 rounded-lg border border-base dark:border-gray-700 p-4">
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -637,11 +671,7 @@ export const SharingManagementPage: React.FC = () => {
                         <Alert
                             type="error"
                             title="Error"
-                            message={
-                                updateShare.error instanceof Error
-                                    ? updateShare.error.message
-                                    : 'Failed to update share.'
-                            }
+                            message={apiErrorMessage(updateShare.error, 'Failed to update share.')}
                         />
                     )}
                     <div>
