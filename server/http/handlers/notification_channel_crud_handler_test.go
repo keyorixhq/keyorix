@@ -594,3 +594,27 @@ func TestNCDelete_Success(t *testing.T) {
 	data := resp["data"].(map[string]any)
 	assert.Equal(t, true, data["deleted"])
 }
+
+// #2779: a duplicate channel name is a client error with a message naming the conflict,
+// not a 500 telling the operator to contact support. Real unique index (AutoMigrate'd
+// in-memory SQLite through the production LocalStorage), so the driver's own error text
+// is what the mapping has to cope with.
+func TestNCCreate_DuplicateNameIs409(t *testing.T) {
+	t.Parallel()
+	h := NewNotificationChannelHandler(freshNCCore(t))
+	create := func() *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]any{"name": "ops-alerts", "type": "email", "email": "ops@example.com"})
+		req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.Create(w, req)
+		return w
+	}
+	require.Equal(t, http.StatusCreated, create().Code)
+
+	w := create()
+	require.Equal(t, http.StatusConflict, w.Code, "response body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "already exists")
+	assert.NotContains(t, w.Body.String(), "contact support")
+	assert.NotContains(t, w.Body.String(), "UNIQUE", "the raw driver error must not reach the client")
+}

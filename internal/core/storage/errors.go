@@ -108,6 +108,18 @@ var ErrDuplicateEmail = errors.New("a user with this email already exists")
 // "project name already in use" error rather than a raw constraint-violation message.
 var ErrDuplicateProjectName = errors.New("a project with this name already exists")
 
+// ErrDuplicateGroupName is returned (wrapped) by CreateGroup when the insert collides
+// with the partial unique index on groups.name_folded (live rows only, #1642). Callers
+// translate it into a 409 with a message naming the conflict instead of a bare 500
+// (#2779); matching the driver's message text at the handler is not reliable (SQLite
+// says "UNIQUE constraint failed", Postgres "duplicate key value violates unique
+// constraint").
+var ErrDuplicateGroupName = errors.New("a group with this name already exists")
+
+// ErrDuplicateNotificationChannelName is returned (wrapped) by CreateNotificationChannel
+// when the insert collides with the unique index on notification_channels.name (#2779).
+var ErrDuplicateNotificationChannelName = errors.New("a notification channel with this name already exists")
+
 // ErrDuplicateSecretVersion is returned (wrapped) by CreateSecretVersion when the insert
 // collides with the unique index on (secret_node_id, version_number). RotateSecret's
 // GetLatestSecretVersion -> +1 -> storeSecretVersion sequence is a read-then-write race
