@@ -3,12 +3,11 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -17,14 +16,9 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// complianceSnapDBSeq makes each in-memory DB unique within the process.
-var complianceSnapDBSeq atomic.Int64
-
 func newSnapshotCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kx_snap_core_%d?mode=memory&cache=shared&_timeout=30000", complianceSnapDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "compliancesnapshots_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{},
 		&models.Environment{},

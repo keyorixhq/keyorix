@@ -139,7 +139,7 @@ func runPATCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("create token failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("create token failed", resp.StatusCode(), resp.Body)
 	}
 	data := resp.JSON201.Data
 	var pat apiclient.PATToken
@@ -188,7 +188,7 @@ func runPATRevoke(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("revoke token failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("revoke token failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Token %d revoked.\n", id)
 	return nil
@@ -225,7 +225,7 @@ func runPATCleanupExpired(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("cleanup-expired failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("cleanup-expired failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Println("All expired tokens have been revoked.")
 	return nil
@@ -245,7 +245,7 @@ func runPATHygiene(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("pat hygiene failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("pat hygiene failed", resp.StatusCode(), resp.Body)
 	}
 	var rows []apiclient.PATHygieneRow
 	if resp.JSON200 != nil && resp.JSON200.Data != nil && resp.JSON200.Data.Tokens != nil {

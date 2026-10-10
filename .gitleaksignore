@@ -6,3 +6,6 @@
 # literal in the demo-up-smoke login body. Not a real credential. The literal
 # was removed from ci.yml in b50bd35 (now read from scripts/demo/up.sh).
 923d9448a7f9721076e8bfa1ae2c770858af56d0:.github/workflows/ci.yml:generic-api-key:1643
+# Same demo-fixture literal as the entry above, as it appears in this branch (#2757 commit carried here by cherry-pick/rebase; removed in the ci.yml fix commit on this branch).
+78603ff28f638349789fec1889e1ad37de045c6b:.github/workflows/ci.yml:generic-api-key:1620
+83f8361c36a22ae8db059e55d288ffc81cb8fd84:.github/workflows/ci.yml:generic-api-key:1620
