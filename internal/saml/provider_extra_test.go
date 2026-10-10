@@ -440,3 +440,50 @@ func TestExtractAssertion_AllBlankValues(t *testing.T) {
 	assert.Empty(t, info.Email, "attribute with all-blank values must be skipped")
 	assert.Equal(t, "Alice", info.Name)
 }
+
+// TestExtractAssertion_GroupsPresenceIsDistinctFromEmptiness pins the
+// distinction #2903 item 2 rests on: a groups attribute that is PRESENT with no
+// (non-blank) values is the IdP asserting "this user is in no groups", which
+// must reconcile to zero memberships; an ABSENT attribute is "the IdP sent no
+// group information", which must leave memberships alone. Before the fix both
+// produced the same AssertionInfo (Groups empty, nothing else), so CompleteSAML
+// could not tell them apart and skipped reconcile for both -- a user removed
+// from every IdP group kept every stale native membership, admin included.
+func TestExtractAssertion_GroupsPresenceIsDistinctFromEmptiness(t *testing.T) {
+	cases := []struct {
+		name        string
+		attrs       []csaml.Attribute
+		wantPresent bool
+		wantGroups  []string
+	}{
+		{
+			name:        "attribute absent",
+			attrs:       []csaml.Attribute{{Name: defaultNameAttr, Values: []csaml.AttributeValue{{Value: "Alice"}}}},
+			wantPresent: false,
+		},
+		{
+			name:        "attribute present with no AttributeValue elements",
+			attrs:       []csaml.Attribute{{Name: defaultGroupsAttr}},
+			wantPresent: true,
+		},
+		{
+			name:        "attribute present with only blank values",
+			attrs:       []csaml.Attribute{{Name: defaultGroupsAttr, Values: []csaml.AttributeValue{{Value: ""}, {Value: "  "}}}},
+			wantPresent: true,
+		},
+		{
+			name:        "attribute present with groups",
+			attrs:       []csaml.Attribute{{Name: defaultGroupsAttr, Values: []csaml.AttributeValue{{Value: "engineers"}}}},
+			wantPresent: true,
+			wantGroups:  []string{"engineers"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &csaml.Assertion{AttributeStatements: []csaml.AttributeStatement{{Attributes: tc.attrs}}}
+			info := extractAssertion(a, defaultEmailAttr, defaultNameAttr, defaultGroupsAttr)
+			assert.Equal(t, tc.wantPresent, info.GroupsPresent)
+			assert.Equal(t, tc.wantGroups, info.Groups)
+		})
+	}
+}
