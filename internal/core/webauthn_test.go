@@ -113,7 +113,7 @@ func TestWebAuthn_FinishDisabledServerRejects(t *testing.T) {
 	ctx := context.Background()
 	_, err := c.FinishWebAuthnRegistration(ctx, 1, "tok", "laptop", webauthnTestPassword, nil)
 	require.ErrorIs(t, err, ErrWebAuthnDisabled)
-	_, _, err = c.FinishWebAuthnLogin(ctx, "ch", "tok", "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, "ch", "tok", "ua", "1.2.3.4", nil)
 	require.ErrorIs(t, err, ErrWebAuthnDisabled)
 }
 
@@ -128,7 +128,7 @@ func TestWebAuthn_FinishLoginRejectsInvalidSessionToken(t *testing.T) {
 
 	ch, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, "not-a-real-session-token", "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, "not-a-real-session-token", "ua", "1.2.3.4", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "webauthn session")
 }
@@ -357,7 +357,7 @@ func TestWebAuthn_PasswordlessDisabledServerRejects(t *testing.T) {
 	ctx := context.Background()
 	_, _, err := c.BeginWebAuthnPasswordlessLogin(ctx)
 	require.ErrorIs(t, err, ErrWebAuthnDisabled)
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, "tok", "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, "tok", "ua", "1.2.3.4", nil)
 	require.ErrorIs(t, err, ErrWebAuthnDisabled)
 }
 
@@ -370,11 +370,11 @@ func TestWebAuthn_PasswordlessFinishRejectsWrongPurposeSession(t *testing.T) {
 	sd := &webauthn.SessionData{Challenge: "x"}
 	tok, err := c.storeWebAuthnSession(ctx, 1, "login", sd)
 	require.NoError(t, err)
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, tok, "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, tok, "ua", "1.2.3.4", nil)
 	require.Error(t, err)
 
 	// An unknown/expired session token is rejected too.
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, "nope", "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, "nope", "ua", "1.2.3.4", nil)
 	require.Error(t, err)
 }
 
@@ -396,7 +396,7 @@ func TestWebAuthn_FinishLoginRejectsSuspendedAccount(t *testing.T) {
 	// Admin suspends the account after the ceremony began (challenge + session exist).
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Update("account_state", AccountSuspended).Error)
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "ua", "1.2.3.4", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not active")
 }
@@ -420,7 +420,7 @@ func TestWebAuthn_FinishLoginHonorsAccountLockout(t *testing.T) {
 	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: "x"})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "ua", "1.2.3.4", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "locked")
 }
@@ -470,7 +470,7 @@ func TestWebAuthn_FinishLoginRejectsMismatchedSession(t *testing.T) {
 	otherToken, err := c.storeWebAuthnSession(ctx, 2, "login", sd)
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, otherToken, "ua", "1.2.3.4", nil)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, otherToken, "ua", "1.2.3.4", nil)
 	require.Error(t, err, "a webauthn session for another user must not complete this challenge")
 }
 

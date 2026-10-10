@@ -36,8 +36,13 @@ import (
 // folding "secret.deleted" into this plain-tier list would let an admin-tier
 // grant's destructive action satisfy the WRONG activity check for
 // countDormantRoleGrants' per-grant-tier split (#258).
+//
+// "secret.versions_listed" (listing a secret's version history, AUDIT-UX-2) is
+// included on the read tier: it needs secrets.read but is deliberately not a
+// "secret.read" (no value is disclosed), so without it a grant used only to browse
+// version history would be reported dormant.
 var accessActivityEventTypes = []string{
-	"secret.read", "secret.created", "secret.updated", "secret.rotated",
+	"secret.read", "secret.versions_listed", "secret.created", "secret.updated", "secret.rotated",
 }
 
 // secretReadActivityEventTypes / secretWriteActivityEventTypes split
@@ -53,7 +58,7 @@ var accessActivityEventTypes = []string{
 // accessActivityEventTypes/LastUserSecretActivity bucket: exercising either
 // permission satisfied BOTH grants' dormancy check, identical in shape to the
 // admin-tier masking #487/#801 already closed.
-var secretReadActivityEventTypes = []string{"secret.read"}
+var secretReadActivityEventTypes = []string{"secret.read", "secret.versions_listed"}
 var secretWriteActivityEventTypes = []string{"secret.created", "secret.updated", "secret.rotated"}
 
 // roleManagementActivityEventTypes are the audit event types that count as

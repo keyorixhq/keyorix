@@ -98,14 +98,7 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	// Drop OTHER sessions and evict them from the auth cache, so a thief holding a
 	// stolen session is locked out immediately on the next request — not after the
 	// cache TTL. Best-effort: the password change itself has succeeded.
-	var keepID uint
-	var keepHash string
-	if keepSessionToken != "" {
-		if s, serr := c.storage.GetSession(ctx, keepSessionToken); serr == nil {
-			keepID = s.ID
-			keepHash = s.SessionToken
-		}
-	}
+	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "change_password")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
 	c.writeAuditEvent(ctx, "auth.password_changed", actorPtr(userID), nil,
 		fmt.Sprintf("user %d changed their own password", userID))
@@ -217,6 +210,53 @@ func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
 // affected user's ID, not just swallowed.
 const EventSessionRevocationPanicked = "auth.session_revocation_panicked" // #nosec G101 -- audit event type, not a credential
 
+// EventSessionRevocationFailed audits deleteSessionsForUserAndEvict's own
+// storage.DeleteSessionsForUserExcept call returning a plain (non-panic) error.
+// #2835: previously this was indistinguishable from success to every caller --
+// all 8 call sites discard the returned error (`_ = c.deleteSessionsForUserAndEvict(...)`)
+// because, same as EventSessionRevocationPanicked's own rationale, the primary
+// operation has already committed by the time this runs. A failed purge here means
+// sessions that should have been revoked are left live with no signal anywhere else
+// that happened, so — like the panic case — it is audited under the affected user's
+// ID rather than only swallowed.
+const EventSessionRevocationFailed = "auth.session_revocation_failed" // #nosec G101 -- audit event type, not a credential
+
+// EventKeepSessionLookupFailed audits resolveKeepSession falling back to purging
+// EVERY session (including the caller's own) because keepSessionToken was supplied
+// but could not be resolved. #2835: ChangePassword, ActivateMFA, and DisableMFA all
+// spare the calling session from their post-change session purge by resolving
+// keepSessionToken via storage.GetSession; a storage-layer failure on that one
+// lookup previously widened the purge silently -- the caller saw an unexplained
+// logout with nothing in the audit trail distinguishing it from "no session to
+// spare" (keepSessionToken == ""). The widened purge itself is NOT a bug -- it is
+// the correct fail-closed fallback (we cannot prove which session is the caller's,
+// so revoking all of them is safer than guessing) -- only its silence was.
+const EventKeepSessionLookupFailed = "auth.keep_session_lookup_failed" // #nosec G101 -- audit event type, not a credential
+
+// resolveKeepSession resolves keepSessionToken (when supplied) to the session ID and
+// stored hash deleteSessionsForUserAndEvict should spare from its post-change purge.
+// reason identifies the calling operation ("change_password", "activate_mfa",
+// "disable_mfa") for the audit trail. If keepSessionToken is empty, there is no
+// session to spare and this returns (0, "") -- a full purge -- exactly as before.
+//
+// #2835: if keepSessionToken is supplied but storage.GetSession fails, the purge
+// still widens to include the caller's own session (keepID stays 0) -- that
+// fallback is deliberately unchanged, see EventKeepSessionLookupFailed. What
+// changes is that the widening is no longer silent.
+func (c *KeyorixCore) resolveKeepSession(ctx context.Context, userID uint, keepSessionToken, reason string) (keepID uint, keepHash string) {
+	if keepSessionToken == "" {
+		return 0, ""
+	}
+	s, serr := c.storage.GetSession(ctx, keepSessionToken)
+	if serr != nil {
+		log.Printf("SECURITY: %s: could not resolve the caller's own session (%v) -- purging ALL sessions for user %d instead of sparing the caller's", reason, serr, userID)
+		c.writeAuditEventFull(ctx, EventKeepSessionLookupFailed, &userID, nil, nil, "",
+			fmt.Sprintf("%s: the caller's own session could not be resolved (%v), so the session purge included it too instead of sparing it", reason, serr))
+		return 0, ""
+	}
+	return s.ID, s.SessionToken
+}
+
 // deleteSessionsForUserAndEvict deletes all of the user's sessions except keepID and
 // evicts the deleted sessions from the HTTP auth cache, so a revoked session stops
 // authenticating on the very NEXT request rather than lingering for the positive-cache
@@ -238,6 +278,11 @@ func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID,
 	}()
 	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
 	err = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
+	if err != nil {
+		log.Printf("SECURITY: deleteSessionsForUserAndEvict failed to purge sessions for user %d (best-effort, primary operation already succeeded): %v", userID, err)
+		c.writeAuditEventFull(ctx, EventSessionRevocationFailed, &userID, nil, nil, "",
+			fmt.Sprintf("failed to purge sessions for user %d: %v — sessions may not have been fully revoked, review manually", userID, err))
+	}
 	for _, h := range hashes {
 		if h != "" && h != keepHash {
 			c.invalidateTokenCache(h)

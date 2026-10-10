@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -88,11 +89,21 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		secret.ParentID = nil
 	}
 
-	secret.UpdatedAt = c.now()
-	updated, err := c.storage.UpdateSecret(ctx, secret)
+	// #2695: parent_id + updated_at only — see ClassifySecret's comment.
+	// SetParentID is explicit so a move to root (nil) really writes NULL
+	// rather than reading as "leave the parent alone".
+	now := c.now()
+	matched, err := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{
+		SetParentID: true, ParentID: secret.ParentID, UpdatedAt: &now,
+	})
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	secret.UpdatedAt = now
+	updated := secret
 
 	uid, sid := actorID, secretID
 	parentDesc := "root"

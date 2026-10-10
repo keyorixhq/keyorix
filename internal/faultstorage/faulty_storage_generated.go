@@ -5302,6 +5302,23 @@ func (w *FaultyStorage) ListUnalertedAnomalyAlerts(ctx context.Context) ([]model
 	return w.real.ListUnalertedAnomalyAlerts(ctx)
 }
 
+func (w *FaultyStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	fire, kind, injected := w.check("ListUnreviewedBreakGlassActivationsBefore")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []*models.BreakGlassActivation
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+			return rv1, injected
+		}
+	}
+	return w.real.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+}
+
 func (w *FaultyStorage) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
 	fire, kind, injected := w.check("ListUserProjectMemberships")
 	if fire {
@@ -6062,6 +6079,22 @@ func (w *FaultyStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID 
 		}
 	}
 	return w.real.RevertAccessReviewItemClaim(ctx, itemID, fromDecision, actorID)
+}
+
+func (w *FaultyStorage) ReviewBreakGlassActivation(ctx context.Context, id uint, reviewerID uint, note string, reviewedAt time.Time) error {
+	fire, kind, injected := w.check("ReviewBreakGlassActivation")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.ReviewBreakGlassActivation(ctx, id, reviewerID, note, reviewedAt)
+			return injected
+		}
+	}
+	return w.real.ReviewBreakGlassActivation(ctx, id, reviewerID, note, reviewedAt)
 }
 
 func (w *FaultyStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
@@ -7064,6 +7097,23 @@ func (w *FaultyStorage) UpdateSecret(ctx context.Context, secret *models.SecretN
 		}
 	}
 	return w.real.UpdateSecret(ctx, secret)
+}
+
+func (w *FaultyStorage) UpdateSecretFields(ctx context.Context, id uint, f storage.SecretFieldUpdate) (bool, error) {
+	fire, kind, injected := w.check("UpdateSecretFields")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.UpdateSecretFields(ctx, id, f)
+			return rv1, injected
+		}
+	}
+	return w.real.UpdateSecretFields(ctx, id, f)
 }
 
 func (w *FaultyStorage) UpdateSecretRotationConfig(ctx context.Context, secret *models.SecretNode, fromBackend string) (bool, error) {
