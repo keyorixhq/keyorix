@@ -221,6 +221,11 @@ soft-delete confirmation text (#2568), stale docker-compose image pins
   admin lock for the whole rotation
   ([#2540](https://github.com/keyorixhq/keyorix/issues/2540)). Stop the server
   (`docker stop keyorix-demo`) first, run it, then start the server again.
+- `admin recovery-key rotate` still refuses to run against a live server
+  (SQLite and Postgres) — [#2540](https://github.com/keyorixhq/keyorix/issues/2540)
+  was closed 2026-10-04 but the failure still reproduces on current `main`;
+  flagged on the issue for the coordinator to confirm. Stop the server (or
+  `docker stop keyorix-demo`) first if you want to demo it live.
 
 **Polish, safe to demo through:** none currently open that affect this
 script's own steps.

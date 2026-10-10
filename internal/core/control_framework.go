@@ -198,11 +198,28 @@ func EvaluateControls(p *CompliancePosture) []ControlState {
 		},
 		{
 			ID: "emergency-access", Name: "Governed emergency (break-glass) access", Area: ctrlAccessGovernance,
-			// presence of the register is the control; usage is informational — but a
-			// failed collection still needs to surface as unknown, not a default Pass.
-			Status:     controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), false),
-			Detail:     fmt.Sprintf("%d active, %d total activations (all audited)", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations),
+			// #2461 round 2: an unreviewed activation past the review window used to
+			// be purely informational here (Status always Pass-or-Unknown, never
+			// Gap) -- "visibility is the control"
+			// (INV-CORE-break-glass-unreviewed-reported-never-blocks-activation)
+			// does not mean this
+			// matrix may silently read a real posture deviation as passing. A
+			// failed collection still needs to surface as unknown, not a default
+			// Pass or a false Gap.
+			Status:     controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), p.EmergencyAccess.UnreviewedActivations > 0),
+			Detail:     fmt.Sprintf("%d active, %d total activations (all audited), %d unreviewed past the window", p.EmergencyAccess.ActiveActivations, p.EmergencyAccess.TotalActivations, p.EmergencyAccess.UnreviewedActivations),
 			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4, "op.exp.7"}},
+		},
+		{
+			ID: "emergency-access-independent-reviewer", Name: "Break-glass has an independent reviewer available", Area: ctrlAccessGovernance,
+			// INV-CORE-break-glass-independent-review-impossible-is-visible
+			// (#2461 round 2, Andrei's decision item (c)): a deployment
+			// where no human other than the activator could ever review an
+			// activation must say so as its own distinct finding -- never silently
+			// read identical to "reviewed" or to an ordinary unreviewed backlog.
+			Status:     controlStatus(p.DegradedArea("emergency_access:", "evidence:break_glass:"), p.EmergencyAccess.IndependentReviewImpossible),
+			Detail:     independentReviewerDetail(p.EmergencyAccess),
+			Frameworks: FrameworkRefs{ISO27001: []string{ctrlA515}, SOC2: []string{"CC6.1"}, DORA: []string{"Art.9"}, ENS: []string{ctrlOpAcc4}},
 		},
 		{
 			ID: "access-request-hygiene", Name: "Access-request approval hygiene (no stale, unresolved lapses)", Area: ctrlAccessGovernance,
@@ -354,6 +371,18 @@ func classificationStatus(p *CompliancePosture) ControlStatus {
 func classificationDetail(p *CompliancePosture) string {
 	unclassified, total := classificationTotals(p)
 	return fmt.Sprintf("%d of %d classifiable items unclassified across secrets/dynamic-configs/machine-identities/machine-credentials", unclassified, total)
+}
+
+// independentReviewerDetail reports
+// INV-CORE-break-glass-independent-review-impossible-is-visible's distinct
+// finding in
+// human-readable form -- it must say outright that independent review is
+// impossible, not leave an auditor to infer it from a count being 1.
+func independentReviewerDetail(e EmergencyAccessPosture) string {
+	if e.IndependentReviewImpossible {
+		return "no reviewer other than the activator is available in this deployment -- independent post-activation review is not currently possible"
+	}
+	return "an independent reviewer is available"
 }
 
 // statusFromBool maps an enabled flag to pass / not-configured (an unset optional

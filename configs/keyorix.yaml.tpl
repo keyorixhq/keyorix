@@ -148,6 +148,11 @@ security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
+  # Require a second factor (TOTP or passkey) for interactive login (ADR-112: on by
+  # default). The first admin login is confined to MFA enrolment until it enrols
+  # (`keyorix mfa enroll` / `keyorix mfa activate`, or Profile -> Security in the web
+  # UI). Tokens and machine credentials are unaffected.
+  require_mfa: true
   # DEV-ONLY DEFAULT (#G36/#G37) — with server.http/grpc.tls.enabled false above, a
   # cleartext listener normally only logs a loud startup WARNING. Set this true (and
   # enable tls, or front the listener with a TLS-terminating proxy) to fail closed

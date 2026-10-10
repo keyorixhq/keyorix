@@ -168,8 +168,8 @@ func newWorldCore(tb tbLite, faulty *faultstorage.FaultyStorage) *core.KeyorixCo
 	}
 	testCore.SetWebAuthn(rp)
 
-	if err := wireSAMLProvider(testCore); err != nil {
-		tb.Fatalf("wireSAMLProvider: %v", err)
+	if err := wireSSOProviders(testCore); err != nil {
+		tb.Fatalf("wireSSOProviders: %v", err)
 	}
 
 	testCore.SetBootstrapToken("fault-fuzz-bootstrap")

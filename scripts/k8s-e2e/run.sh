@@ -169,6 +169,31 @@ kubectl -n "$J1_NS" logs deploy/keyorix-keyorix-server | grep -q "System initial
 port_forward "$J1_NS" svc/keyorix-keyorix-web 18080:80
 kx login --server http://localhost:18080 --username admin --password "$ADMIN_PASSWORD" >/dev/null \
     || fail "CLI login as bootstrapped admin failed"
+
+# ADR-112 item 1: security.require_mfa defaults on, so the bootstrap admin is
+# confined to the enrolment endpoints (EnforceMFAEnrollment) until it enrols
+# -- every other authenticated call below would otherwise fail closed with
+# "This deployment requires multi-factor authentication." Enrol for real
+# (see scripts/smoke.sh's identical block for the full rationale), then log
+# in again since ActivateMFA invalidates the pre-enrolment session.
+log "J1: mfa enroll"
+ENROLL_OUT="$(kx mfa enroll)" || fail "CLI mfa enroll failed"
+MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]')"
+[ -n "$MFA_SECRET" ] || fail "could not parse MFA secret from:
+$ENROLL_OUT"
+
+log "J1: mfa activate"
+MFA_CODE="$(cd "$REPO_ROOT" && GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET")" \
+    || fail "totpgen failed"
+kx mfa activate --code "$MFA_CODE" --password "$ADMIN_PASSWORD" >/dev/null \
+    || fail "CLI mfa activate failed"
+
+log "J1: login (again, now MFA-enabled)"
+MFA_LOGIN_CODE="$(cd "$REPO_ROOT" && GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET" 30)" \
+    || fail "totpgen failed"
+kx login --server http://localhost:18080 --username admin --password "$ADMIN_PASSWORD" \
+    --mfa-code "$MFA_LOGIN_CODE" >/dev/null || fail "CLI login (MFA-enabled) failed"
+
 kx secret create --name k8s-e2e-roundtrip --value 'k8s-e2e-roundtrip-value' --project 1 --environment 1 >/dev/null \
     || fail "CLI secret create failed"
 GOT_VALUE="$(kx secret get --id 1 --show-value | awk '/^Decrypted Value/{getline; getline; print}')"

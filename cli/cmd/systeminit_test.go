@@ -182,6 +182,11 @@ func TestRunSystemInit_Success(t *testing.T) {
 		"development, staging, production", "Admin user: admin") {
 		t.Fatalf("output missing expected fields: %q", out)
 	}
+	// #2940: the printed next step must be a command that works (`secret create`
+	// takes --name; the bare positional form fails with "secret name is required").
+	if !containsAll(out, "keyorix secret create --name my-first-secret") {
+		t.Fatalf("next-step hint is not a working command: %q", out)
+	}
 }
 
 func TestRunSystemInit_AlreadyInitialized(t *testing.T) {
