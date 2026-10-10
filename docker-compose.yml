@@ -4,6 +4,11 @@
 #   2. docker compose up -d
 #   3. open http://localhost:8088  and log in with the admin you set in .env
 #
+# The image pins below are the RELEASE pair (server + web from one tag; guarded by
+# deploy/compose_pins_test.go). scripts/demo/check.sh --postgres overlays both
+# with images built from the checkout (see docs/demo/GOLDEN-PATH.md, "Which
+# images does what") because a released web UI does not match a main backend.
+#
 # All secrets come from .env — there are NO baked-in default passwords. See
 # docs/SELF_HOSTING.md for production hardening (TLS, backups, upgrades).
 services:
@@ -66,7 +71,7 @@ services:
     # /health — nginx:alpine has no curl), which Compose inherits without this
     # block; declared explicitly so it shows up the same way postgres' does.
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1/health"]
       interval: 30s
       timeout: 3s
       retries: 3

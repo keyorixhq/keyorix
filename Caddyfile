@@ -11,5 +11,8 @@
 # Add `email you@example.com` below for ACME expiry notifications if you like.
 
 {$KEYORIX_DOMAIN:localhost} {
+	# Caddy is the TLS terminator in this profile, so it owns HSTS (the web
+	# container is plain HTTP and sends none).
+	header Strict-Transport-Security "max-age=63072000; includeSubDomains"
 	reverse_proxy web:80
 }
