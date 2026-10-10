@@ -2400,7 +2400,7 @@ export interface paths {
         };
         /**
          * List who can read a secret
-         * @description Effective access list -- every user who can read the secret, with their permission and how it was granted (owner, direct share, group share).
+         * @description Effective access list -- every user who can read the secret, with their EFFECTIVE permission and how it was granted. For a project member the level is max(role permission, active share permission), so a share that elevates a role shows as the higher level; `grants` lists every grant behind it. Expired shares and shares to users who are not project members grant nothing and are not listed. Holders of a global role (global admins) have implicit access and are not enumerated.
          */
         get: operations["listAccessors"];
         put?: never;
@@ -5623,13 +5623,16 @@ export interface components {
             secret_name?: string;
             affected?: components["schemas"]["SecretImpactedSecret"][];
         };
-        /** @description One entry in a secret's effective access list (owner, direct share, or group share). */
+        /** @description One entry in a secret's effective access list. */
         SecretAccessor: {
             user_id?: number;
             username?: string;
+            /** @description Effective level: read, write or owner. */
             permission?: string;
-            /** @description How access was granted: owner, direct share, or group share. */
+            /** @description The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>. */
             source?: string;
+            /** @description Every grant the user holds on the secret with its level, e.g. role:read, direct_share:write. */
+            grants?: string[];
         };
         /** @description One read event from a secret's access log (server/http/handlers/secrets_access_history.go's secretAccessLogEntry -- a snake_case DTO, not the raw internal/storage/models.SecretAccessLog). ip_address/user_agent are present only when the caller separately holds audit.read (see the route's own description); an ordinary secrets.read-only caller never sees another user's originating IP. */
         SecretAccessLogEntry: {
