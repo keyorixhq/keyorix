@@ -152,20 +152,21 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	}
 
 	// ADR-112 opt-out rule (item 2): a deprecated alias (an old key renamed to its
-	// current insecure_ form) found in this config file, and every insecure_ setting
-	// currently in effect, both get a warning on EVERY start — never silent. See
-	// warnDeprecatedSettingAliases/warnInsecureSettingsInEffect below.
+	// current insecure_ form) found in this config file gets a warning on EVERY
+	// start — never silent. See warnDeprecatedSettingAliases below.
 	warnDeprecatedSettingAliases(cfg)
-	warnInsecureSettingsInEffect(cfg)
+
+	// ADR-112: decide, once and from the database, whether this boot is an upgraded
+	// deployment still inside the file-permission-check grace period, then warn about
+	// every insecure_ setting in effect (opt-out rule item 2: on EVERY start, never
+	// silent). See resolveADR112BootPosture. Must run before
+	// runStartupValidation/enforceKeyFilePermissions, which both read the grace result.
+	resolveADR112BootPosture(cfg)
 
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
 	// automatically on every boot.
-	// ADR-112: decide, once and from the database, whether this boot is an upgraded
-	// deployment still inside the file-permission-check grace period. Must run before
-	// runStartupValidation/enforceKeyFilePermissions, which both read the result.
-	applyADR112UpgradeGrace(cfg)
 	if err := runStartupValidation(cfg); err != nil {
 		log.Fatalf("startup validation: %v", err)
 	}
@@ -2257,9 +2258,21 @@ func warnDeprecatedSettingAliases(cfg *config.Config) {
 func warnInsecureSettingsInEffect(cfg *config.Config) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if s.InEffect(cfg) {
-			log.Printf("WARNING: %s is in effect — %s", s.Name, s.Describe)
+			log.Printf("WARNING: %s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
 		}
 	}
+}
+
+// resolveADR112BootPosture applies the ADR-112 upgrade-grace decision and THEN
+// warns about every registry entry in effect. The order is the point (#2908):
+// security.insecure_skip_startup_validation's grace-warn-only state is read
+// from EnableFilePermissionCheckUpgradeGrace, which only
+// applyADR112UpgradeGrace sets. Warning first -- main's order before #2908 --
+// evaluated that entry with the flag still false, so a grace-period
+// deployment that only warns on a failed startup check got no opt-out warning.
+func resolveADR112BootPosture(cfg *config.Config) {
+	applyADR112UpgradeGrace(cfg)
+	warnInsecureSettingsInEffect(cfg)
 }
 
 // securityPostureSnapshot computes this boot's value of every ADR-112

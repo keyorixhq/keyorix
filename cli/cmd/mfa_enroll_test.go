@@ -113,3 +113,14 @@ func TestMFAActivate_WrongCodeIsAFailure(t *testing.T) {
 		t.Fatalf("expected an HTTP 401 failure, got %v", err)
 	}
 }
+
+// #2978: the server keeps the calling session on activation (internal/core
+// mfa_session_preserved_test.go); the help must not claim otherwise.
+func TestMFAActivateHelp_DoesNotClaimTheSessionEnds(t *testing.T) {
+	if strings.Contains(mfaActivateCmd.Long, "ends the current session") {
+		t.Fatal("mfa activate help claims activation ends the current session; the server keeps it")
+	}
+	if !strings.Contains(mfaActivateCmd.Long, "keeps the current session") {
+		t.Fatal("mfa activate help must say the current session is kept")
+	}
+}

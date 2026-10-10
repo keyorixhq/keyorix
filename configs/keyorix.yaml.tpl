@@ -90,14 +90,14 @@ server:
       burst: 20
 
 storage:
-  type: sqlite  # options: sqlite, postgres
+  type: sqlite  # options: sqlite, postgres. For PostgreSQL change THIS line to "type: postgres" (the backend selector is storage.type, not a key under database:)
 
   database:
     # SQLite (default — zero infrastructure required)
     path: "keyorix.db"
 
-    # PostgreSQL (recommended for production)
-    # type: postgres
+    # PostgreSQL (recommended for production): set storage.type: postgres above, then
+    # uncomment ONE of the options below (and drop "path" — it is SQLite-only).
     # Option A — full DSN:
     # dsn: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
     # Option B — field by field:
@@ -204,6 +204,17 @@ audit:
     token: ""
     # Skip TLS verification for self-signed SIEM endpoints (not recommended).
     insecure_skip_verify: false
+
+# Self-service emergency access ("break-glass"). OFF by default: until you enable
+# it, `keyorix break-glass activate` is refused with "break-glass is not enabled".
+# When on, a member of a project (a role scoped to that project) can grant
+# themselves emergency_role there for a limited time, with a justification; every
+# use is audited. See docs/CONFIGURATION.md#break_glass.
+# break_glass:
+#   enabled: true
+#   emergency_role: "project_developer"
+#   default_ttl: "4h"
+#   max_ttl: "24h"
 
 membership:
   # Project membership onboarding (ADR-022). validation_mode controls how a new
