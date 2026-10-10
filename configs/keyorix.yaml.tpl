@@ -90,14 +90,14 @@ server:
       burst: 20
 
 storage:
-  type: sqlite  # options: sqlite, postgres
+  type: sqlite  # options: sqlite, postgres. For PostgreSQL change THIS line to "type: postgres" (the backend selector is storage.type, not a key under database:)
 
   database:
     # SQLite (default — zero infrastructure required)
     path: "keyorix.db"
 
-    # PostgreSQL (recommended for production)
-    # type: postgres
+    # PostgreSQL (recommended for production): set storage.type: postgres above, then
+    # uncomment ONE of the options below (and drop "path" — it is SQLite-only).
     # Option A — full DSN:
     # dsn: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
     # Option B — field by field:
