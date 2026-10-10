@@ -28,6 +28,10 @@ server:
   http:
     # Enable HTTP server
     enabled: true
+    # Address to bind. Default (when omitted) is 127.0.0.1: reachable from this
+    # machine only. Set "0.0.0.0" to accept connections from the network (e.g.
+    # inside a container, or a LAN demo); put TLS in front of it first.
+    # host: "127.0.0.1"
     port: "8080"
     protocol_versions: ["1.1"]
     tls:
@@ -76,6 +80,7 @@ server:
     # HTTP-only exclusions, and the phasing are in
     # docs/adr-105-grpc-scope-and-parity.md.
     enabled: false
+    # host: "127.0.0.1"  # same default and meaning as server.http.host
     port: "9090"
     protocol_versions: ["1.0"]
     tls:

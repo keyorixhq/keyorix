@@ -169,6 +169,9 @@ if ! docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
       set -e
       if [ ! -f keyorix.yaml ]; then
         /app/keyorix-server admin init --config keyorix.yaml
+        # The server binds 127.0.0.1 by default (#2939); inside the container
+        # it must listen on all interfaces for the published -p port to work.
+        sed -i "s|^    port: \"8080\"|    host: \"0.0.0.0\"\n    port: \"8080\"|" keyorix.yaml
         /app/keyorix-server admin encryption init --config keyorix.yaml
         /app/keyorix-server admin migrate --config keyorix.yaml
         # Break-glass is off by default (secure default); the demo turns it on
