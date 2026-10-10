@@ -196,6 +196,37 @@ type LocalStorage struct {
 	// transaction, whose durability is the caller's business, not the audit
 	// chain's.
 	auditSkipDurableSync bool
+	// rolePermCache backs RoleSetHasPermission's read-path cache (PERF-3,
+	// docs/specs/read-path-caching.md PR-2). A pointer so a transaction-scoped
+	// LocalStorage (see WithTransaction) shares the SAME cache as its parent,
+	// same sharing reason as auditChainMu etc. above — see
+	// role_permission_cache.go's own header for why this must NOT be a
+	// package-level global instead.
+	rolePermCache *rolePermissionCache
+	// cacheEnabled gates every read-path cache READ and WRITE. It is set in
+	// exactly ONE place — NewLocalStorage — and is deliberately never copied
+	// anywhere else, so any LocalStorage derived from another (WithTransaction's
+	// tx-scoped clone, and the several ad-hoc `&LocalStorage{db: tx}` literals
+	// in this package) has it false by construction and bypasses the cache
+	// entirely.
+	//
+	// This is a correctness requirement, not an optimisation. A tx-scoped store
+	// reads through the TRANSACTION handle, so both the generation and the data
+	// it sees are UNCOMMITTED, and it shares the parent's cache pointer. Caching
+	// from inside a transaction therefore publishes an uncommitted answer into a
+	// cache that outlives the transaction: if the transaction then rolls back
+	// and a later COMMITTED write happens to reproduce the same generation
+	// value, that rolled-back answer validates and is served. For
+	// RoleSetHasPermission that is an authorization bypass — and it is not a
+	// remote possibility: with the generation now a monotonic integer (see
+	// bumpRolePermissionsGenerationTx), a rolled-back bump N→N+1 is reproduced
+	// EXACTLY by the very next committed role_permissions write.
+	//
+	// Phrased as a flag that must be SET to enable the cache, never one that
+	// must be set to disable it, so a future constructor that forgets about it
+	// fails closed (no caching) rather than open (caching from inside a
+	// transaction).
+	cacheEnabled bool
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single
@@ -222,6 +253,10 @@ func NewLocalStorage(db *gorm.DB) *LocalStorage {
 		rbacClockWatermark:    &clockWatermark{},
 		auditFlusher:          &auditFlusherState{},
 		rawStmts:              &rawStatements{},
+		rolePermCache:         newRolePermissionCache(),
+		// The ONLY place this is set. See the field's doc comment: every derived
+		// or transaction-scoped LocalStorage must leave it false.
+		cacheEnabled: true,
 	}
 }
 
