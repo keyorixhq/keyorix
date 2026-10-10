@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -616,8 +617,12 @@ func (c *KeyorixCore) VerifyMFALoginPending(ctx context.Context, challenge, code
 	// Record the MFA step-up window when the classification gate requires it.
 	// Best-effort: a write failure does not block the login, but the user won't
 	// be able to read restricted secrets until they re-verify successfully.
+	// Panic-safe too: it runs after the session is written, so an escaping
+	// panic would report a failed login with a live session behind it (#2844).
 	if c.classificationRestrictedRequiresMFAStepUp {
-		_ = c.storage.UpsertMFAStepupToken(ctx, user.ID, c.now().Add(c.mfaStepUpWindow()))
+		besteffort.Run(ctx, "mfa.VerifyMFALogin.UpsertMFAStepupToken", func() error {
+			return c.storage.UpsertMFAStepupToken(ctx, user.ID, c.now().Add(c.mfaStepUpWindow()))
+		})
 	}
 	uid := user.ID
 	if usedRecovery {

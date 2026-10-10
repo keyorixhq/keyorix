@@ -125,7 +125,7 @@ var ErrLoginPostVerdict = errors.New("login denied by a storage error after the 
 // cookies, and a failure there has to count toward the lockout exactly like a
 // wrong password (see LoginCompletion).
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
-	session, user, lc, err := c.LoginPending(ctx, req)
+	session, user, _, lc, err := c.LoginPending(ctx, req)
 	if err != nil {
 		return nil, user, err
 	}
@@ -140,14 +140,20 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 // found, which is what makes a post-verdict fault indistinguishable from a
 // wrong password in lockout state as well as in the response (#2894).
 //
+// It also returns the response identity, resolved BEFORE the session is
+// minted (#2844, the #2841 ordering the MFA and WebAuthn logins use): the HTTP
+// handler used to read it after this returned, and a panic in that read left a
+// live session the client never received. An identity-read failure is a
+// post-verdict denial like any other (denyAfterCredentialMatched).
+//
 // On an error return the user may still be non-nil (it is, for every
 // post-verdict failure) so a transport can name the account in an audit event;
 // the session is always nil and no completion is handed back, because the
 // accounting has already been settled here.
-func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, *LoginCompletion, error) {
+func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	// Enforce the password max-age policy: if the password has expired, gate the
 	// account to password_reset_required NOW so the middleware blocks API access
@@ -160,7 +166,7 @@ func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*mod
 		// toward the lockout exactly as a wrong password would — the response the
 		// caller builds is already identical either way (#2888), so leaving the
 		// counter untouched here would make a correct password the CHEAPER probe.
-		return nil, user, nil, c.denyAfterCredentialMatched(ctx, user, err)
+		return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
 	}
 	// Accounts with any second factor (TOTP or a passkey) get no session from the
 	// password step — the caller must complete it (CreateMFAChallenge →
@@ -172,7 +178,7 @@ func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*mod
 	// the WebAuthn Finish* functions each do their own clear once the second
 	// factor actually succeeds).
 	if user.MFAEnabled || user.WebAuthnEnabled {
-		return nil, user, nil, ErrMFARequired
+		return nil, user, UserIdentity{}, nil, ErrMFARequired
 	}
 	// No second factor configured — the password step IS the full authentication.
 	// Re-check the lock state under the same serialization recordFailedLogin uses
@@ -182,15 +188,20 @@ func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*mod
 	// (TOCTOU) — never trust that stale snapshot alone. The accumulated failure
 	// state is deliberately NOT cleared here; see LoginCompletion.
 	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
-		return nil, user, nil, err
+		return nil, user, UserIdentity{}, nil, err
+	}
+	// #2844: the last fallible-and-reported read, before the session is written.
+	identity, err := c.resolveLoginIdentityBeforeMint(ctx, user.ID)
+	if err != nil {
+		return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
 	}
 	lc := c.newLoginCompletion(user)
 	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)
 	if err != nil {
 		lc.Failed(ctx)
-		return nil, user, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
+		return nil, user, UserIdentity{}, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
-	return created, user, lc, nil
+	return created, user, identity, lc, nil
 }
 
 // denyAfterCredentialMatched settles the lockout accounting for a login denied
@@ -246,7 +257,10 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 		}
 		session.AbsoluteExpiresAt = &absolute
 	}
-	created, err := c.storage.CreateSession(ctx, session)
+	// A failed insert may still have committed: createSession delivers the row
+	// if it landed instead of reporting a failed login over a live session
+	// (#2844). See session_undelivered.go.
+	created, err := c.createSession(ctx, session, ip, "login")
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
@@ -410,7 +424,16 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	}
 	created, won, err := c.storage.RotateSession(ctx, old.ID, session, now)
 	if err != nil {
-		return nil, fmt.Errorf("failed to rotate session: %w", err)
+		// RotateSession is one transaction, so a rotation that committed despite
+		// the error has both retired the old row and written the new one. Failing
+		// it would leave the client holding a retired token while the new
+		// session sits live and undelivered (#2844); deliver it instead.
+		row := c.sessionWriteLanded(ctx, newToken, old.UserID, old.IPAddress, "session refresh", err)
+		if row == nil {
+			return nil, fmt.Errorf("failed to rotate session: %w", err)
+		}
+		session.ID, session.SessionToken = row.ID, newToken
+		created, won = session, true
 	}
 	if !won {
 		// Lost the CAS: a concurrent refresh of this exact token won first between

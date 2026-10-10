@@ -1561,6 +1561,10 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 	t.Helper()
 	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
 
+	// Oracle (f), #2844: no undelivered session. Independent of every other
+	// oracle and of the tolerance tables. See undelivered_session_oracle_test.go.
+	checkNoUndeliveredSession(t, label, in)
+
 	report := func(oracle string, diff []string, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
 		if known := matchingKnownOpen(in, oracle, diff); known != nil {

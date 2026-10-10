@@ -53,7 +53,7 @@ func TestLogin_RecheckFaultCostsTheSameAsAWrongPassword(t *testing.T) {
 	pc.loginLockout = postVerdictParityPolicy
 	putAtThresholdMinusOne(t, pdb, 1)
 	fs, restore := armRecheckFault(pc)
-	_, _, _, perr := pc.LoginPending(context.Background(), &LoginRequest{Username: "alice", Password: lockoutTestPassword})
+	_, _, _, _, perr := pc.LoginPending(context.Background(), &LoginRequest{Username: "alice", Password: lockoutTestPassword})
 	restore()
 	require.True(t, fs.Fired(), "the recheck's LockUserForUpdate must have been reached")
 	require.Error(t, perr)
