@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -144,10 +145,17 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	//
 	// A caller with audit.read still gets the DEPLOYMENT-wide total instead, further
 	// down (fetchAdminDashboardStats) — unchanged.
-	total, err := c.CountReadableSecrets(ctx, userID, principalID)
-	if err != nil {
+	total, exact, err := c.CountReadableSecrets(ctx, userID, principalID)
+	switch {
+	case err != nil:
 		total = 0
 		stats.degrade("total_secrets", err)
+	case !exact:
+		// The listing hit its per-scope bound, so `total` is a floor. Degrade rather
+		// than show it as a count: a number that is quietly short is the same defect
+		// this tile was fixed for, just smaller. Degraded is exactly the signal for
+		// "treat this as incomplete".
+		stats.degrade("total_secrets", errUnexactReadableSecretCount)
 	}
 
 	outgoing, err := c.storage.ListSharesByOwner(ctx, userID, c.shareEffectiveNow())
@@ -570,6 +578,11 @@ func (c *KeyorixCore) activitySecretNames(ctx context.Context, events []*models.
 // Returns empty string if the pattern is not found.
 func extractSecretName(description string) string {
 	const marker = " secret "
+	// A secret.deleted description ends in a soft-delete note (softDeleteNoteMarker)
+	// that is not part of the name, and may itself contain " secret ".
+	if i := strings.Index(description, softDeleteNoteMarker); i >= 0 {
+		description = description[:i]
+	}
 	if idx := lastIndex(description, marker); idx >= 0 {
 		return description[idx+len(marker):]
 	}

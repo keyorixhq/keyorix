@@ -91,10 +91,9 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// TestSetDynamicSecretConfigEnabled_RefusesUnderDeletedProject is the red test
-// for the finding above. Un-skip it in the fixing PR.
+// TestSetDynamicSecretConfigEnabled_RefusesUnderDeletedProject is #2806's
+// regression test, green since the fix in SetDynamicSecretConfigEnabled.
 func TestSetDynamicSecretConfigEnabled_RefusesUnderDeletedProject(t *testing.T) {
-	t.Skip("open gap #2806: SetDynamicSecretConfigEnabled re-enables a config under a soft-deleted project; un-skip in the fixing PR")
 	t.Parallel()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)

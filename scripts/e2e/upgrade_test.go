@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,6 +166,16 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	harness.StartBackgroundProcess(t, newSrv, serverEnv)
 	t.Cleanup(newSrv.Close)
 	harness.WaitHealthy(t, newSrv)
+
+	// ADR-112: the old release's config never set security.require_mfa, and its
+	// database already has users, so HEAD must boot it in the require_mfa grace
+	// period (warning, not enforced) rather than confine the existing admin to MFA
+	// enrolment -- the sweep below logs in as that admin without MFA.
+	if logBytes, err := os.ReadFile(newSrv.LogPath); err != nil {
+		t.Fatalf("read upgraded server log: %v", err)
+	} else if !strings.Contains(string(logBytes), "ADR-112 grace period: security.require_mfa") {
+		t.Fatalf("expected the ADR-112 require_mfa grace-period warning after upgrade; server log:\n%s", logBytes)
+	}
 
 	// The full happy-path sweep, logged in as the admin the OLD binary
 	// created -- proves every route this driver covers works against a

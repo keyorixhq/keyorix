@@ -634,6 +634,23 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	if s := seedFor("GRPC keyorix.v1.RoleService.CreateRole", "GetRole", 1, 0); s != nil {
 		f.Add(s)
 	}
+	// #2910 (SSO-2): the SSO login ops' group/role reconcile, and the three
+	// defects the SSO fault sweep (zz_sso_reconcile_sweep_test.go) found in it:
+	// a failed group REVOCATION (the class-C refusal, accepted by
+	// ssoClassCAccountsForDiff), an undecided escalation guard (oracles a and c),
+	// and a panicking last-login stamp masking a completed login (oracle a).
+	if s := seedFor("REST GET /auth/sso/{provider}/callback", "RemoveUserFromGroup", 1, 0); s != nil {
+		f.Add(s)
+	}
+	if s := seedFor("REST GET /auth/sso/{provider}/callback", "GetRolePermissions", 1, 0); s != nil {
+		f.Add(s)
+	}
+	if s := seedFor("REST POST /auth/saml/{provider}/acs", "GetGroupRoles", 1, 0); s != nil {
+		f.Add(s)
+	}
+	if s := seedFor("REST POST /auth/saml/{provider}/acs", "UpdateLastLogin", 1, 1); s != nil {
+		f.Add(s)
+	}
 	// Harness completeness regression (REPLAY_HEX=c900cb0000): DynamicSecretLease.LeaseID
 	// is a random token (see snapshot_test.go's typeScopedPresenceOnlyFields entry, scoped to
 	// DynamicSecretLease so the exemption can never leak onto BreakGlassActivation.RoleName or
@@ -862,16 +879,44 @@ type oracleInput struct {
 // write-up (a docs/findings/*.md path, or a keyorix-private doc).
 //
 // nth and oracle (added alongside the first real entry, #2449) narrow the
-// match further: nth is the exact 1-indexed fault call number
-// (oracleInput.nth), and oracle is the exact letter ("a".."e") of the ONE
-// GOAL oracle this tolerance covers. Without them, (op, method, kind) alone
-// would match EVERY call number and EVERY oracle that happens to report a
-// violation on this triple -- silently swallowing a different, unrelated
-// violation (a different nth, or a different oracle) that happens to share
-// the same op/method/kind. Both are required, same as issue/expires.
+// match further: nth is the 1-indexed fault call number (oracleInput.nth), and
+// oracle is the exact letter ("a".."e") of the ONE GOAL oracle this tolerance
+// covers. oracle is never a wildcard: without it, (op, method, kind) alone
+// would match EVERY oracle that happens to report a violation on this triple,
+// silently swallowing a different, unrelated one.
+//
+// Wildcards (#2844 (a)). method, kind and nth each match ANYTHING on their zero
+// value. op and oracle never do.
+//
+// This is not a loosening on net, because the dimension that decides what gets
+// swallowed is `tables`, not these three. A finding whose root cause is
+// structural to the OP (a write that lands before the faulted call even runs)
+// produces the same diff for every method, every fault kind and every call
+// ordinal — so before this, it needed one near-identical row per combination,
+// each with its own issue+expiry, each re-filed on its own schedule. That
+// per-combination duplication is what the #2548/#2565 pairs were, and it is how
+// rows drift apart and go stale individually.
+//
+// What keeps a wildcard row narrow is enforced, not hoped for:
+// TestKnownOpenTolerances_CarryIssueAndExpiry REQUIRES a non-empty `tables`
+// whenever any of method/kind/nth is wildcarded. tables is a subset check, so
+// such a row still fails loudly the moment a diff contains one table it does
+// not list. Combined with TestKnownOpenTolerances_AreLoadBearing (which fails
+// on any row the oracle no longer consults), a widened row cannot outlive its
+// finding — which is exactly the precondition that makes widening safe.
 type knownOpenTolerance struct {
-	op, method string
-	kind       faultstorage.FaultKind
+	op string
+	// method == "" matches ANY storage method -- for a finding whose root
+	// cause is structural to the OP itself (e.g. a write that happens
+	// unconditionally before the faulted call even runs), not tied to one
+	// specific storage call. Requires a non-empty tables.
+	method string
+	// kind == faultstorage.KindNone matches ANY fault kind. KindNone is never
+	// a real armed fault (faultstorage's own zero value means "nothing armed"),
+	// so there is no ambiguity in repurposing it. Requires a non-empty tables.
+	kind faultstorage.FaultKind
+	// nth == 0 matches ANY call ordinal. Ordinals are 1-indexed, so 0 was
+	// already meaningless as a value. Requires a non-empty tables.
 	nth        int
 	oracle     string
 	issue      string
@@ -885,10 +930,6 @@ type knownOpenTolerance struct {
 	// original, table-unaware behavior: tolerate the full diff for this exact
 	// (op, method, kind, nth, oracle).
 	tables []string
-	// method == "" matches ANY storage method -- for a finding whose root
-	// cause is structural to the OP itself (e.g. a write that happens
-	// unconditionally before the faulted call even runs), not tied to one
-	// specific storage call.
 }
 
 // diffSubsetOf reports whether every table in diff also appears in allowed —
@@ -1295,10 +1336,19 @@ var observeKnownOpenMatch func(*knownOpenTolerance)
 
 func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenTolerance {
 	for i, k := range knownOpenTolerances {
-		if k.op != in.op || k.kind != in.kind || k.nth != in.nth || k.oracle != oracle {
+		if k.op != in.op || k.oracle != oracle {
 			continue
 		}
+		// method, kind and nth all wildcard on their zero value (#2844 (a)).
+		// op and oracle never do: a row must always name the operation it is
+		// about and the single oracle it suppresses.
 		if k.method != "" && k.method != in.method {
+			continue
+		}
+		if k.kind != faultstorage.KindNone && k.kind != in.kind {
+			continue
+		}
+		if k.nth != 0 && k.nth != in.nth {
 			continue
 		}
 		if len(k.tables) > 0 && !diffSubsetOf(diff, k.tables) {
@@ -1313,26 +1363,90 @@ func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenT
 }
 
 // TestKnownOpenTolerances_CarryIssueAndExpiry enforces knownOpenTolerance's own
-// doc comment: issue and expires are required, not optional decoration. Passes
-// trivially while knownOpenTolerances is empty (today) -- it exists for the next
-// entry, not this one; see docs/adr-069-testing-strategy.md's QUARANTINE
-// expiry-check precedent for why a tolerance without a checked issue+expiry pair
-// tends to become a silent permanent carve-out instead of the bounded, visible
-// one it's meant to be.
+// doc comment: issue and expires are required, not optional decoration. See
+// docs/adr-069-testing-strategy.md's QUARANTINE expiry-check precedent for why a
+// tolerance without a checked issue+expiry pair tends to become a silent
+// permanent carve-out instead of the bounded, visible one it's meant to be.
+//
+// #2844 adds the two checks that make those fields mean something:
+//
+//   - A wildcarded row (method, kind or nth left at its zero value) MUST carry a
+//     non-empty tables. This is the entire safety argument for wildcards: the
+//     dimension that decides what gets swallowed is tables, and a wildcard row
+//     without one would tolerate ANY divergence on its op.
+//   - An EXPIRED row fails the build. Until now `expires` was checked for
+//     presence and format only, so nothing happened when the date passed and the
+//     field was documentation. A date nobody enforces is not a deadline.
+//
+// Deliberately NOT checked here: whether the cited issue is still open. That
+// needs the network, which a unit test must not. It is
+// scripts/check-fault-tolerance-issues.sh, run as its own CI step — see that
+// script's header for why issue STATE (not labels) is the signal, and why it
+// refuses to run rather than pass when it cannot reach the API.
 func TestKnownOpenTolerances_CarryIssueAndExpiry(t *testing.T) {
 	for _, k := range knownOpenTolerances {
-		label := fmt.Sprintf("%s/%s/%s", k.op, k.method, k.kind)
+		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
 		if k.issue == "" {
 			t.Errorf("knownOpenTolerance %s: issue is empty -- every tolerance must cite a GitHub issue (\"#1234\")", label)
+		}
+		if k.oracle == "" {
+			t.Errorf("knownOpenTolerance %s: oracle is empty -- oracle is never a wildcard, or this row would "+
+				"swallow every oracle that happens to fire on this op", label)
+		}
+		// #2844 (a): wildcards are safe only because tables stays narrow.
+		if wild := toleranceWildcardedDimensions(k); len(wild) > 0 && len(k.tables) == 0 {
+			t.Errorf("knownOpenTolerance %s wildcards %v but has an EMPTY tables list, so it tolerates ANY "+
+				"divergence on this op -- the blanket skip wildcards exist to avoid, not enable. tables is "+
+				"the dimension that keeps a widened row narrow (it is a subset check, so one unlisted table "+
+				"still fails loudly). Either name the tables this finding actually diverges in, or pin the "+
+				"dimension(s) you wildcarded", label, wild)
 		}
 		if k.expires == "" {
 			t.Errorf("knownOpenTolerance %s: expires is empty -- every tolerance must carry an explicit \"YYYY-MM-DD\" expiry", label)
 			continue
 		}
-		if _, err := time.Parse("2006-01-02", k.expires); err != nil {
+		exp, err := time.Parse("2006-01-02", k.expires)
+		if err != nil {
 			t.Errorf("knownOpenTolerance %s: expires %q does not parse as YYYY-MM-DD: %v", label, k.expires, err)
+			continue
+		}
+		// #2844 (b): an expiry that does not fail the build is documentation.
+		// Compared against the END of the named day (UTC) so a row expiring
+		// today is still valid today, rather than going red at 00:00 in a
+		// timezone nobody chose.
+		if deadline := exp.AddDate(0, 0, 1).UTC(); time.Now().UTC().After(deadline) {
+			t.Errorf("knownOpenTolerance %s EXPIRED on %s (issue %s) and is still suppressing an oracle "+
+				"violation.\n\n"+
+				"Re-triage it, do not just push the date out: by now either (1) the bug is fixed and the row "+
+				"must be DELETED (TestKnownOpenTolerances_AreLoadBearing will already be calling it dead), "+
+				"(2) the behaviour is intended and the row belongs in oracleAByDesignErrors with a design "+
+				"citation and a proving test, or (3) it is still a real open bug, in which case say so on "+
+				"%s and set a new date with a reason. Silently extending the expiry is how a bounded "+
+				"carve-out becomes a permanent one.", label, k.expires, k.issue, k.issue)
 		}
 	}
+}
+
+// toleranceWildcardedDimensions names which of method/kind/nth a row leaves at
+// its wildcard (zero) value.
+//
+// Kept as a named helper rather than inlined because three things have to agree
+// about what "wildcarded" means — matchingKnownOpen's matching, this file's
+// tables-required rule, and TestKnownOpenTolerances_AreLoadBearing's
+// "underspecified, cannot be driven" skip — and a drifted fourth copy would let
+// a row be treated as pinned by one and wildcarded by another.
+func toleranceWildcardedDimensions(k knownOpenTolerance) []string {
+	var wild []string
+	if k.method == "" {
+		wild = append(wild, "method")
+	}
+	if k.kind == faultstorage.KindNone {
+		wild = append(wild, "kind")
+	}
+	if k.nth == 0 {
+		wild = append(wild, "nth")
+	}
+	return wild
 }
 
 // bestEffortTables maps a storage method this codebase deliberately calls
@@ -1543,6 +1657,12 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 					label)
 				return
 			}
+			// #2910 (SSO-2): same class-C rule as oracle (a)'s error branch.
+			if ssoClassCAccountsForDiff(in) {
+				t.Logf("ACCEPTABLE-BY-DESIGN (SSO class C, docs/atomicity-exempt.tsv %s): %s: effect-then-error state is "+
+					"a sub-transition of the fault-free login's, no session minted", ssoClassCLedgerKey, label)
+				return
+			}
 			report("d", nil, "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
@@ -1602,6 +1722,14 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"deliberately keeps while reporting failure — %s (proving test: %s)",
 					label, diff, e.designComment, e.provingTest)
+				return
+			}
+			// Sixth layer, #2910 (SSO-2): the SSO login ops' class-C step set. Accepts only a
+			// change that is a sub-transition of the fault-free login's own change,
+			// with no session -- see zz_sso_class_c_oracle_test.go.
+			if ssoClassCAccountsForDiff(in) {
+				t.Logf("ACCEPTABLE-BY-DESIGN (SSO class C, docs/atomicity-exempt.tsv %s): %s: state diverges in %v, "+
+					"every change a sub-transition of the fault-free login's and no session minted", ssoClassCLedgerKey, label, diff)
 				return
 			}
 			report("a", diff, "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+
