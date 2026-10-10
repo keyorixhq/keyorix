@@ -42,7 +42,12 @@ func newCrossReplicaPair(t *testing.T) (*store.LocalStorage, *store.LocalStorage
 	if pgDSN == "" {
 		t.Skip("KEYORIX_TEST_PG_DSN not set — skipping cross-replica Postgres test")
 	}
-	schema := fmt.Sprintf("perf3_crcache_%d_%d", os.Getpid(), crossReplicaSchemaSeq.Add(1))
+	// Own prefix: cross_replica_postgres_helpers_test.go (RBAC cache) names its
+	// schemas perf3_crcache_<pid>_<seq> from a DIFFERENT counter, so sharing the
+	// prefix let the two helpers hand out the same name and one test's
+	// DROP SCHEMA ... CASCADE destroy the other's tables ("relation secret_nodes
+	// does not exist", pg_namespace duplicate key) -- seen in CI on #2764.
+	schema := fmt.Sprintf("perf3_crsecret_%d_%d", os.Getpid(), crossReplicaSchemaSeq.Add(1))
 	admin, err := gorm.Open(postgres.Open(pgDSN), &gorm.Config{Logger: logger.Discard})
 	require.NoError(t, err)
 	require.NoError(t, admin.Exec("DROP SCHEMA IF EXISTS "+schema+" CASCADE").Error)
