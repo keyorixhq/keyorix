@@ -54,6 +54,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
 	"github.com/keyorixhq/keyorix/internal/hardening"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/notary"
@@ -209,6 +210,16 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Refuse (or warn) when key material on disk is readable beyond its owner.
 	if err := enforceKeyFilePermissions(cfg); err != nil {
 		log.Fatalf("key file security: %v", err)
+	}
+
+	// Refuse to start if the installed key files are a PARTIAL set (ADR-112,
+	// follow-up from #2400). Unconditional, like the permission check above: a
+	// broken key set is not a "weaker but working" state to warn about. The
+	// same call also applies a best-effort same-group mtime heuristic, which is
+	// deliberately not claimed as a mixed-generation guarantee — see
+	// keyfiles.VerifyKeySetConsistency and #2900.
+	if err := verifyKeyFileSetConsistency(cfg); err != nil {
+		log.Fatalf("key file consistency: %v", err)
 	}
 
 	// Mark this process as a live server attached to cfg's database (ADR-108 §B,
@@ -2064,6 +2075,17 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 	}
 	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
 	return nil
+}
+
+// verifyKeyFileSetConsistency is the boot-time key-file-set consistency check
+// (ADR-112, follow-up from #2400) — see keyfiles.VerifyKeySetConsistency's own
+// doc comment for the two things it checks and why. No-op when encryption is
+// disabled: there is no key material to check in the first place.
+func verifyKeyFileSetConsistency(cfg *config.Config) error {
+	if !cfg.Storage.Encryption.Enabled {
+		return nil
+	}
+	return keyfiles.VerifyKeySetConsistency(&cfg.Storage.Encryption, ".")
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {

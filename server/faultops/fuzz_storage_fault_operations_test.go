@@ -118,7 +118,25 @@ type nonLoadBearingException struct {
 	nth        int
 }
 
-var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{}
+// REST PUT /api/v1/auth/profile, GetUserPermissions, NthCall=1 (#2839): UpdateProfile
+// is a self-service route gated ONLY by session identity (router.go's own comment:
+// "Authenticated but not permission-gated — every user manages their own profile...
+// ADR-021 / ADR-027") -- no RequireScopedPermission or any RBAC check is attached.
+// The handler authorizes via middleware.GetUserFromContext + UpdateOwnProfile (self-
+// scoped), and only calls GetUserPermissions (via userIdentity -> GetUserIdentity)
+// AFTER the update has already succeeded, purely to decorate the response with the
+// caller's own roles/permissions. UserIdentity's own doc comment states this
+// directly: "The backend still enforces real, scope-aware checks on every request
+// via Authorize — this summary is for UI convenience, not a security boundary."
+// userIdentity's own doc comment: "Best-effort: on error it returns an empty
+// identity so the profile still renders" -- the empty permissions/roles the fuzzer
+// observed is this designed fallback, not a bypass artefact. Found live by the
+// ORACLE-A-1 derived sweep (session ORACLE-A-1, item 4) as the sweep's only oracle
+// (c) hit; confirmed by tracing router.go's route registration and UpdateProfile's
+// own authorization path rather than from the diff shape alone.
+var nonLoadBearingAuthzReadExceptions = []nonLoadBearingException{
+	{op: "REST PUT /api/v1/auth/profile", method: "GetUserPermissions", nth: 1},
+}
 
 // multiStepAmbiguousCommitExceptions narrowly flags a traced instance of
 // oracle (d) firing on the FIRST storage call of a multi-step create, NOT
@@ -442,6 +460,23 @@ func multiStepFirstCallAmbiguousCommit(op, method string, nth int) bool {
 		}
 	}
 	return false
+}
+
+// TestNonLoadBearingAuthzRead_ProfileUpdateGetUserPermissions (#2839) proves the
+// new entry matches exactly the traced triple and nothing else — an authz-read
+// exception is scoped per (op, method, nth) precisely so it cannot silently widen
+// to mask a fail-open bug on an unrelated op, method, or call number.
+func TestNonLoadBearingAuthzRead_ProfileUpdateGetUserPermissions(t *testing.T) {
+	const op = "REST PUT /api/v1/auth/profile"
+	const method = "GetUserPermissions"
+	assert.True(t, nonLoadBearingAuthzRead(op, method, 1),
+		"the traced (op, method, NthCall=1) triple must be exempted")
+	assert.False(t, nonLoadBearingAuthzRead(op, method, 2),
+		"a DIFFERENT call number must not be exempted -- GetUserIdentity calls GetUserPermissions exactly once per request, so a second call is unexplained and must stay a violation")
+	assert.False(t, nonLoadBearingAuthzRead(op, "GetUserRolesByID", 1),
+		"a DIFFERENT method on the same op must not be exempted")
+	assert.False(t, nonLoadBearingAuthzRead("REST GET /api/v1/auth/profile", method, 1),
+		"a DIFFERENT op must not be exempted -- this entry's trace is specific to UpdateProfile's post-success decoration, not the GET profile route")
 }
 
 func nonLoadBearingAuthzRead(op, method string, nth int) bool {
@@ -1108,6 +1143,35 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// boundary. #2565's wildcard entry on this same op still stands and still
 	// covers only [LoginAttempt] — unchanged, not widened.)
 	//
+	// Third pre-existing finding from the same live runs, also confirmed by
+	// byte-for-byte replay against unmodified origin/main. Filed as #2841,
+	// SEPARATELY from #2565 (the LoginAttempt-only finding on this same op)
+	// because the shape is different, not just wider: the WebAuthn assertion
+	// VERIFIES, so the session row, the unconditional MFAStepUpGrant both
+	// WebAuthn login paths mint, and the login audit event all land — and then
+	// the faulted GetUserRoles on the validate-session step
+	// (internal/core/auth.go:568) maps to ErrRoleResolutionUnavailable and the
+	// handler reports failure. A caller told the login failed is in fact
+	// authenticated, holding a live ambient step-up grant.
+	//
+	// Not an escalation (the user authenticated correctly), but the response and
+	// the persisted state disagree, and #2841 asks the auth/WebAuthn owner which
+	// way to resolve it — role-NAME resolution failing is arguably not grounds to
+	// fail a verified login at all, which is the opposite fix from rolling the
+	// session and grant back. Either answer is defensible; picking one is not
+	// #2549's call.
+	//
+	// method is PINNED here, unlike #2565's wildcard entry on the same op:
+	// #2565's tables is [LoginAttempt] and correctly does not cover this
+	// three-table diff, so leaving this unpinned would have widened #2565 in
+	// effect (COMMON-RULES: never widen an existing tolerance to make CI green).
+	// Remove when #2841 is resolved either way.
+	{
+		op: "REST POST /auth/webauthn/login/finish", method: "GetUserRoles", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#2841", expires: "2026-11-07",
+		tables:     []string{"AuditEvent", "LoginAttempt", "MFAStepUpGrant"},
+		findingDoc: "#2841",
+	},
 	// Fourth and LAST pre-existing finding tolerated from the same live runs,
 	// also confirmed by byte-for-byte replay against unmodified origin/main.
 	// Filed as #2844, which also records the thing that made me stop here: FOUR
@@ -1273,7 +1337,7 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// wildcard needed, and no #2549-style treadmill of one new row per red
 	// build expected on this op.
 	{
-		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecret", kind: faultstorage.KindError,
+		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecretFields", kind: faultstorage.KindError,
 		nth: 1, oracle: "a", issue: "#2842", expires: "2026-10-17",
 		tables:     []string{"SecretVersion"},
 		findingDoc: "#2842",

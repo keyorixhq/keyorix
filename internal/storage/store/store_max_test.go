@@ -1141,6 +1141,10 @@ func newRBACStoreMax(t *testing.T) *LocalStorage {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.GroupRole{}, &models.User{}, &models.Group{}, &models.UserGroup{},
 		&models.Project{}, &models.Environment{},
+		// SystemMetadata: AssignPermissionToRole/RemovePermissionFromRole/
+		// DeleteRole bump the PERF-3 PR-2 role_permissions cache generation
+		// (a system_metadata row) in the same transaction as the real write.
+		&models.SystemMetadata{},
 	)
 }
 
