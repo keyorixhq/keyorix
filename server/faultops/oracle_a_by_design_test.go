@@ -187,6 +187,29 @@ var oracleAByDesignErrors = []oracleAByDesignError{
 			"unlimited post-verification failures against an IP without spending budget (#2880). No session is " +
 			"minted, so the kept LoginAttempt row is the rate-limit enforcement, not a partial commit.",
 	},
+	// Same #2880 decision, the other half of the identity read: GetUserIdentity
+	// reads roles, then permissions, and both resolve before anything is minted
+	// (#2841). Pinned separately -- one row per method, never a wildcard.
+	// Found by the fuzzer on #2764's CI (pre-existing on main, where it still
+	// leaves [AuditEvent LoginAttempt MFAStepUpGrant]); on this branch the diff
+	// is [LoginAttempt], which #2565's wildcard used to absorb.
+	{
+		op:     "REST POST /auth/webauthn/login/finish",
+		method: "GetUserPermissions",
+		kind:   faultstorage.KindError,
+		nth:    1,
+		tables: []string{"LoginAttempt"},
+		designComment: "internal/core/webauthn.go: ErrLoginIdentityUnavailable (\"deliberately NOT " +
+			"ErrWebAuthnLoginNotEvaluated: the assertion WAS evaluated and passed, so the per-IP " +
+			"login-attempt reservation must stay counted\"); server/http/handlers/webauthn.go " +
+			"FinishWebAuthnLogin releases the reservation only on ErrWebAuthnLoginNotEvaluated",
+		provingTest: "internal/core/TestFinishWebAuthnLogin_PermissionsReadFailureLeavesNoSessionOrGrant",
+		why: "Identical to the GetUserRoles row above: the assertion has passed when the permissions read " +
+			"fails, so the request keeps the IP slot it reserved (#2880) -- releasing it would make " +
+			"post-verification failures free -- and the login is refused before any session, step-up " +
+			"grant or step-up token is written (#2841). The kept LoginAttempt row is the rate-limit " +
+			"enforcement, not a partial commit.",
+	},
 }
 
 // oracleAErrorByDesign reports whether an error-reporting-branch oracle (a)
