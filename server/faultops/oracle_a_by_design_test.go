@@ -100,6 +100,16 @@ type oracleAByDesignError struct {
 	// anything else is a different, unexplained divergence and still fails.
 	// Required and non-empty.
 	tables []string
+	// outcomeLogs names the outcome-log tables (AuditEvent, ...) the same
+	// reported failure deliberately writes ALONGSIDE tables -- e.g. the
+	// auth.login_error audit event a post-verdict login fault records (#2894).
+	// Kept apart from tables so tables stays business-state only (the
+	// outcome-log check in TestOracleAByDesign_RowsAreFullyAttributed still
+	// applies to it unchanged), and so every outcome log a row accepts is named
+	// per row rather than stripped from every diff. onlyOutcomeLogTables
+	// accepts an outcome-log-ONLY diff on its own; it never accepts a MIXED one,
+	// which is the only case this field matters for. Optional.
+	outcomeLogs []string
 	// designComment names where in PRODUCTION code the intent is stated, so a
 	// reader can check the claim at its source rather than trusting this row.
 	// Required.
@@ -138,6 +148,55 @@ var oracleAByDesignErrors = []oracleAByDesignError{
 			"mis-labelled intended behaviour as a filed-but-unfixed bug and so guaranteed " +
 			"perpetual re-filing at each expiry.",
 	},
+	// #2880 / #2894: post-verdict faults on /auth/mfa/verify. Both are reached
+	// only AFTER the TOTP code matched, so the request is charged exactly like
+	// a wrong code -- lockout counter, per-IP LoginAttempt slot and a 401
+	// byte-identical to a wrong code -- because doing anything cheaper for a
+	// correct code is a side channel confirming correctness. Found untolerated
+	// on #2894's head by LOGIN-ACCT-1 (pass on main, where the slot used to be
+	// released). Pinned per method; never a wildcard.
+	{
+		op:          "REST POST /auth/mfa/verify",
+		method:      "MarkTOTPStepUsed",
+		kind:        faultstorage.KindError,
+		nth:         1,
+		tables:      []string{"LoginAttempt"},
+		outcomeLogs: []string{"AuditEvent"},
+		designComment: "internal/core/mfa.go VerifyMFACredentials: \"the code WAS confirmed correct here -- " +
+			"only the anti-replay consumption write (MarkTOTPStepUsed) failed. This must still count toward " +
+			"the lockout exactly like a wrong code would\" (#2888); the error wraps " +
+			"ErrMFAVerificationStorageFailure but NOT ErrMFAVerificationUnavailable, the handler's only " +
+			"release condition (server/http/handlers/mfa.go)",
+		provingTest: "server/http/handlers/TestVerifyMFA_PostVerdictFaultCostsTheSameAsAWrongCode/MarkTOTPStepUsed " +
+			"(slot, lockout, response parity); internal/core/" +
+			"TestVerifyMFALogin_MarkTOTPStepUsedErrorAfterMatch_StillCountsTowardLockout (lockout, mfa.error audit)",
+		why: "The code matched; only the anti-replay write failed, so the login is refused (the step could not " +
+			"be recorded as used) and the request keeps its LoginAttempt slot like a wrong code does. Releasing " +
+			"the slot here would make a correct guess cheaper than a wrong one, observable as when the per-IP " +
+			"429s start (#2894). The AuditEvent is the mfa.error record that keeps the storage fault " +
+			"distinguishable from a wrong code for an operator. No session, grant or step is left behind.",
+	},
+	{
+		op:          "REST POST /auth/mfa/verify",
+		method:      "CreateSession",
+		kind:        faultstorage.KindError,
+		nth:         1,
+		tables:      []string{"LoginAttempt", "MFASecret"},
+		outcomeLogs: []string{"AuditEvent"},
+		designComment: "internal/core/mfa.go VerifyMFALoginPending: on a mintSession failure the consumed TOTP " +
+			"step is given back with ReleaseTOTPStepIfUnchanged (#2567; last_used_step -> step-1, see its " +
+			"interface doc), the attempt is counted (lc.Failed) and the error is ErrLoginPostVerdict, so " +
+			"\"the per-IP login-attempt slot stays CONSUMED\" and VerifyMFA audits auth.login_error",
+		provingTest: "server/http/handlers/TestVerifyMFA_PostVerdictFaultCostsTheSameAsAWrongCode/CreateSession " +
+			"(slot, lockout, response parity, no session); server/http/handlers/" +
+			"TestVerifyMFA_MintFailureAfterCorrectCodeAuditsLoginError (audit); internal/core/" +
+			"TestVerifyMFALogin_CreateSessionFailure_ReleasesTOTPStepForRetry (MFASecret)",
+		why: "The code matched and the session write failed. No session exists, the slot stays counted exactly " +
+			"as for a wrong code (#2880/#2894), and MFASecret differs only because the step release writes " +
+			"last_used_step = step-1 rather than the row's pre-mark value -- which re-permits exactly this one " +
+			"step so the user can retry the same code, and cannot re-open any step a later request consumed " +
+			"(CAS-guarded). The AuditEvent is the auth.login_error record.",
+	},
 }
 
 // oracleAErrorByDesign reports whether an error-reporting-branch oracle (a)
@@ -156,7 +215,7 @@ func oracleAErrorByDesign(op, method string, kind faultstorage.FaultKind, nth in
 		if e.nth > 0 && e.nth != nth {
 			continue
 		}
-		if diffSubsetOf(diff, e.tables) {
+		if diffSubsetOf(diff, append(append([]string{}, e.tables...), e.outcomeLogs...)) {
 			return e
 		}
 	}
@@ -197,6 +256,12 @@ func TestOracleAByDesign_RowsAreFullyAttributed(t *testing.T) {
 				t.Errorf("oracleAByDesignError %q: table %q is an outcome log, already accepted "+
 					"unconditionally by onlyOutcomeLogTables — a row for it would be dead on arrival "+
 					"(exactly how #2549's four bulk-op tolerances went stale)", label, tb)
+			}
+		}
+		for _, tb := range e.outcomeLogs {
+			if !isOutcomeLogTable(tb) {
+				t.Errorf("oracleAByDesignError %q: outcomeLogs lists %q, which is not an outcome log — "+
+					"business state belongs in tables, where the outcome-log check above applies", label, tb)
 			}
 		}
 		if e.designComment == "" {

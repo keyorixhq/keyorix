@@ -374,7 +374,11 @@ func (e *lockoutOracleEnv) driveMFAToThresholdMinusOne(t *testing.T) {
 // observable by watching when the per-IP 429s start. observation.loginAttempts
 // carries that, so requireIndistinguishable asserts it alongside the rest.
 func TestVerifyMFA_PostVerdictFaultCostsTheSameAsAWrongCode(t *testing.T) {
-	for _, method := range []string{"CreateSession", "GetUserPermissions"} {
+	// MarkTOTPStepUsed is the anti-replay write, reached only after the code
+	// matched: post-verdict too, so it must cost the same as a wrong code,
+	// rate-limit slot included (the oracleAByDesignErrors row for
+	// /auth/mfa/verify MarkTOTPStepUsed#1/error cites this subtest).
+	for _, method := range []string{"CreateSession", "GetUserPermissions", "MarkTOTPStepUsed"} {
 		t.Run(method, func(t *testing.T) {
 			ctrlEnv := newLockoutOracleEnvWithMFA(t)
 			ctrlEnv.driveMFAToThresholdMinusOne(t)
