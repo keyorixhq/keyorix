@@ -137,10 +137,17 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	//
 	// A caller with audit.read still gets the DEPLOYMENT-wide total instead, further
 	// down (fetchAdminDashboardStats) — unchanged.
-	total, err := c.CountReadableSecrets(ctx, userID, principalID)
-	if err != nil {
+	total, exact, err := c.CountReadableSecrets(ctx, userID, principalID)
+	switch {
+	case err != nil:
 		total = 0
 		stats.degrade("total_secrets", err)
+	case !exact:
+		// The listing hit its per-scope bound, so `total` is a floor. Degrade rather
+		// than show it as a count: a number that is quietly short is the same defect
+		// this tile was fixed for, just smaller. Degraded is exactly the signal for
+		// "treat this as incomplete".
+		stats.degrade("total_secrets", errUnexactReadableSecretCount)
 	}
 
 	outgoing, err := c.storage.ListSharesByOwner(ctx, userID, c.shareEffectiveNow())

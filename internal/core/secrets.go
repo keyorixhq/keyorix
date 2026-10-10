@@ -439,14 +439,30 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	if err := applyUpdateSecretFields(secret, req); err != nil {
 		return nil, err
 	}
-	secret.UpdatedAt = time.Now()
+	now := time.Now()
+	secret.UpdatedAt = now
+	// #2695: the columns this request actually asked to change, and nothing
+	// else. The previous full-row Save persisted the whole struct read above, so
+	// an update landing after a concurrent DeleteSecret resurrected the secret
+	// (its shares and ACLs already revoked, no secret.restored audit) and
+	// reverted a concurrent SuspendSecret, read-count increment or ownership
+	// clear. Built from req, not from the mutated struct, so a field the request
+	// did not carry cannot reach the UPDATE at all.
+	fields, err := secretFieldUpdateFromRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	fields.UpdatedAt = &now
 
 	if len(req.Value) == 0 {
-		updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		matched, uerr := c.storage.UpdateSecretFields(ctx, secret.ID, fields)
+		if uerr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 		}
-		return updatedSecret, nil
+		if !matched {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		return secret, nil
 	}
 
 	// #121 follow-up: two concurrent UpdateSecret calls on the same secret (or one
@@ -458,11 +474,44 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	// a freshly re-read version number instead, same as RotateSecret, and shares one
 	// transaction between the version write and this row update — see that function's
 	// doc comment for why.
-	updatedSecret, err := c.updateSecretWithNewVersion(ctx, secret, req.Value)
+	updatedSecret, err := c.updateSecretWithNewVersion(ctx, secret, req.Value, fields)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return updatedSecret, nil
+}
+
+// secretFieldUpdateFromRequest derives the column set an UpdateSecretRequest
+// asks to change, mirroring applyUpdateSecretFields exactly — that function
+// mutates the in-memory struct (for the value returned to the caller and for
+// the new-version path), this one names the columns that may be written
+// (#2695). They must stay in lockstep; TestUpdateSecretRequest_FieldSetsMatch
+// asserts that mechanically rather than by comment.
+func secretFieldUpdateFromRequest(req *UpdateSecretRequest) (storage.SecretFieldUpdate, error) {
+	var f storage.SecretFieldUpdate
+	if req.Type != "" {
+		f.Type = &req.Type
+	}
+	if req.Description != nil {
+		f.Description = req.Description
+	}
+	if req.MaxReads != nil {
+		f.SetMaxReads, f.MaxReads = true, req.MaxReads
+	}
+	if req.ClearExpiration {
+		f.SetExpiration, f.Expiration = true, nil
+	} else if req.Expiration != nil {
+		f.SetExpiration, f.Expiration = true, req.Expiration
+	}
+	if req.Metadata != nil {
+		metadataJSON, err := json.Marshal(req.Metadata)
+		if err != nil {
+			return f, fmt.Errorf("%s: %w", i18n.T("ErrorInvalidMetadata", nil), err)
+		}
+		j := models.JSON(metadataJSON)
+		f.Metadata = &j
+	}
+	return f, nil
 }
 
 // applyUpdateSecretFields patches the non-value fields (max reads, expiration,
@@ -600,10 +649,20 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 		secret.LastRotatedAt = &now
 	}
 	secret.UpdatedAt = now
-	updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update rotation timestamp: %w", err)
+	// #2695: RotateSecret owns last_rotated_at and updated_at, nothing else.
+	// SetLastRotatedAt is explicit because the no-op branch above deliberately
+	// WITHHOLDS the stamp (#408) — passing secret.LastRotatedAt unconditionally
+	// here is correct precisely because that branch left it at its prior value.
+	matched, uerr := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{
+		SetLastRotatedAt: true, LastRotatedAt: secret.LastRotatedAt, UpdatedAt: &now,
+	})
+	if uerr != nil {
+		return nil, fmt.Errorf("failed to update rotation timestamp: %w", uerr)
 	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	updatedSecret := secret
 	// Refresh the cached certificate expiry immediately for a certificate-typed secret
 	// (ADR-056) so the certificate-hygiene posture reflects the rotated certificate
 	// without waiting for the next expiry scan. The plaintext is already in hand, so no

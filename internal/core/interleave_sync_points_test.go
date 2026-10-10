@@ -108,6 +108,29 @@ type syncPoint struct {
 	arrived chan struct{}
 	release chan struct{}
 	once    sync.Once
+
+	// remove unregisters this sync point's GORM callback. See the method of
+	// the same name below for why a caller in a loop must not rely on
+	// t.Cleanup for this.
+	removeFn func()
+}
+
+// remove unregisters the sync point's GORM callback immediately, rather than
+// at the end of the test.
+//
+// This matters for any caller that creates sync points in a LOOP. GORM holds
+// one callback chain per *gorm.DB and walks it for every statement, so N
+// still-registered sync points cost O(N) per query — and t.Cleanup does not
+// run until the whole test function returns. The ordering sweep creates two
+// per run across ~175 runs; leaving them registered made it quadratic and it
+// failed to finish inside a 60-minute timeout twice before this was found.
+// Idempotent, and safe to call even when t.Cleanup will also fire.
+func (sp *syncPoint) remove() {
+	if sp == nil || sp.removeFn == nil {
+		return
+	}
+	sp.removeFn()
+	sp.removeFn = nil
 }
 
 // syncPointName builds the canonical name for a sync point: the production
@@ -147,16 +170,17 @@ func newSyncPoint(t *testing.T, db *gorm.DB, fn, kind, table string) *syncPoint 
 	switch kind {
 	case "create":
 		require.NoError(t, db.Callback().Create().Before("gorm:create").Register(cbName, cb))
-		t.Cleanup(func() { _ = db.Callback().Create().Remove(cbName) })
+		sp.removeFn = func() { _ = db.Callback().Create().Remove(cbName) }
 	case "update":
 		require.NoError(t, db.Callback().Update().Before("gorm:update").Register(cbName, cb))
-		t.Cleanup(func() { _ = db.Callback().Update().Remove(cbName) })
+		sp.removeFn = func() { _ = db.Callback().Update().Remove(cbName) }
 	case "delete":
 		require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(cbName, cb))
-		t.Cleanup(func() { _ = db.Callback().Delete().Remove(cbName) })
+		sp.removeFn = func() { _ = db.Callback().Delete().Remove(cbName) }
 	default:
 		t.Fatalf("newSyncPoint: unknown kind %q (want create|update|delete)", kind)
 	}
+	t.Cleanup(sp.remove)
 	return sp
 }
 
@@ -352,6 +376,36 @@ func runInterleavingTimeout(t *testing.T, order interleaveOrder, spA, spB *syncP
 		t.Fatalf("runInterleaving: unknown ordering %q", order)
 	}
 
+	// A nil sync point means "this side has no reachable pause between its
+	// check and its act" — the operation does not issue the statement a sync
+	// point could sit on, on this input. The commonest case by far: a
+	// destructive op whose decisive write is a DELETE of rows that do not
+	// exist yet (TransitionMembership's revoke removing a role grant the
+	// concurrent activation has not inserted). Rather than time out and call
+	// it DEGRADED, such a side is run to COMPLETION in its slot — which is
+	// exactly the shape C-GUARD2-EXEMPT-REVIEW's beforeA hook produces, and
+	// still a legal, fully-deterministic interleaving. Only the orderings that
+	// genuinely need that side's check and act pulled apart become
+	// unrepresentable, and those are reported, not silently approximated.
+	if first.sp == nil {
+		res.Degraded = fmt.Sprintf("replica %s has no sync point, so its check and act cannot be separated; "+
+			"%s reduces to a serial ordering", first.label, order)
+		res.logf("%s full (unpausable)", first.label)
+		*first.err = first.op()
+		res.logf("%s full", second.label)
+		*second.err = second.op()
+		return res
+	}
+	if second.sp == nil && releaseFirstActFirst {
+		res.Degraded = fmt.Sprintf("replica %s has no sync point, so %s (which needs %s's check before %s's act "+
+			"and %s's act after it) cannot be realized", second.label, order, second.label, first.label, second.label)
+		res.logf("%s full (unpausable)", first.label)
+		*first.err = first.op()
+		res.logf("%s full", second.label)
+		*second.err = second.op()
+		return res
+	}
+
 	start := func(s *side) {
 		s.sp.arm()
 		go func() {
@@ -373,6 +427,51 @@ func runInterleavingTimeout(t *testing.T, order interleaveOrder, spA, spB *syncP
 		return res
 	}
 	res.logf("%s checked, paused at %s", first.label, first.sp.name)
+
+	if second.sp == nil {
+		// first is paused between its check and its act; run second's whole
+		// operation here, then let first write on its now-stale check. This is
+		// the "O runs to completion inside S's window" interleaving, forced
+		// with no timing dependence at all.
+		//
+		// second runs in a goroutine with a deadline rather than inline,
+		// because a CORRECTLY SERIALIZED pair deadlocks this shape: if the
+		// paused side holds a named/advisory lock that second needs, second
+		// can never finish while first is parked, and first can never be
+		// released while we wait for second. Running it inline hung the whole
+		// test binary until `go test -timeout` killed it, with no output
+		// saying why — found while green-proving #2669's membership
+		// serialization fix, which is exactly a pair that does this. The
+		// deadline turns that into the Degraded verdict it should have been
+		// all along, and "blocked while the other side holds the lock" is
+		// evidence the fix works.
+		res.logf("%s full (unpausable) while %s waits", second.label, first.label)
+		go func() {
+			defer close(second.done)
+			*second.err = second.op()
+		}()
+		select {
+		case <-second.done:
+			res.logf("%s finished (err=%v)", second.label, *second.err)
+			first.sp.resume()
+			<-first.done
+			res.logf("%s acted and finished (err=%v)", first.label, *first.err)
+			res.Forced = first.sp.fired()
+			if !res.Forced {
+				res.Degraded = "the pausable side's sync point did not fire"
+			}
+		case <-time.After(arrival):
+			res.Degraded = fmt.Sprintf("replica %s did not finish within %s while %s was parked at %s "+
+				"(the two are serialized against each other)", second.label, arrival, first.label, first.sp.name)
+			res.logf("%s did not finish; releasing %s to unblock it", second.label, first.label)
+			first.sp.resume()
+			<-first.done
+			res.logf("%s finished (err=%v)", first.label, *first.err)
+			<-second.done
+			res.logf("%s finished (err=%v)", second.label, *second.err)
+		}
+		return res
+	}
 
 	start(second)
 	secondArrived := second.sp.waitArrive(arrival)
@@ -398,8 +497,31 @@ func runInterleavingTimeout(t *testing.T, order interleaveOrder, spA, spB *syncP
 		actFirst, actSecond = first, second
 	}
 	actFirst.sp.resume()
-	<-actFirst.done
-	res.logf("%s acted and finished (err=%v)", actFirst.label, *actFirst.err)
+	// Bounded, not a bare receive. The side we just released can block on a
+	// row lock the STILL-PARKED other side holds: a parked sync point sits
+	// inside its replica's open transaction, so every lock that transaction
+	// has taken is still held while it waits. Releasing A and then waiting
+	// forever for A's write to land behind B's locks is a deadlock the test
+	// binary cannot get out of — it hung two full sweep runs at exactly the
+	// same pair before this was found, with no diagnostic beyond "still
+	// running". This is the same failure as the unpausable-side deadlock
+	// handled above, in the other branch; both exist because a parked replica
+	// is not an idle one.
+	select {
+	case <-actFirst.done:
+		res.logf("%s acted and finished (err=%v)", actFirst.label, *actFirst.err)
+	case <-time.After(arrival):
+		res.Degraded = fmt.Sprintf("replica %s could not complete its act while %s was still parked at %s "+
+			"(the two are serialized against each other), so %s could not be realized",
+			actFirst.label, actSecond.label, actSecond.sp.name, order)
+		res.logf("%s blocked on %s's held locks; releasing %s", actFirst.label, actSecond.label, actSecond.label)
+		actSecond.sp.resume()
+		<-actSecond.done
+		res.logf("%s finished (err=%v)", actSecond.label, *actSecond.err)
+		<-actFirst.done
+		res.logf("%s finished (err=%v)", actFirst.label, *actFirst.err)
+		return res
+	}
 	actSecond.sp.resume()
 	<-actSecond.done
 	res.logf("%s acted and finished (err=%v)", actSecond.label, *actSecond.err)
@@ -410,6 +532,17 @@ func runInterleavingTimeout(t *testing.T, order interleaveOrder, spA, spB *syncP
 	}
 	return res
 }
+
+// interleavePauseA builds the (spA, spB) pair for "pause replica A between its check and
+// its act, run replica B to completion in that window, then let A write" —
+// combined with orderABBaAa. interleavePauseB is the mirror. Returning the nil side
+// explicitly keeps the caller's intent readable at the call site, and keeps the
+// "which side is the stale writer" decision in the test rather than inside the
+// driver.
+func interleavePauseA(spA *syncPoint) (*syncPoint, *syncPoint) { return spA, nil }
+
+// interleavePauseB is interleavePauseA's mirror, for use with orderBAAaBa.
+func interleavePauseB(spB *syncPoint) (*syncPoint, *syncPoint) { return nil, spB }
 
 // requireForced fails the test unless the ordering was realized exactly as
 // requested. Per-issue regression tests call this: their whole claim is "this
