@@ -82,7 +82,7 @@ const (
 	SecretActionSetAutoRotate   SecretAction = "secret.set_auto_rotate"
 	SecretActionRollback        SecretAction = "secret.rollback"
 	SecretActionCommentVersion  SecretAction = "secret.comment_version"
-	SecretActionAddDependency   SecretAction = "secret.add_dependency"
+	SecretActionAddDependency   SecretAction = "secret.add_dependency" // #nosec G101 -- authorization action name, not a credential
 	SecretActionRemoveDep       SecretAction = "secret.remove_dependency"
 	SecretActionMove            SecretAction = "secret.move"
 	SecretActionTransferOwner   SecretAction = "secret.transfer_ownership"
