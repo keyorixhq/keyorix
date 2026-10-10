@@ -82,6 +82,44 @@ func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	h.sendShareViewPage(w, r, views)
+}
+
+// ListOwnedShares handles GET /api/v1/shares/owned — the owner-scoped list behind the
+// Sharing Management page for a caller without global secrets.read (SHARE-3): only the
+// shares the caller created, on secrets in projects they are a member of now
+// (core.ListOwnedShareViews). Same filters, paging and response shape as ListShares.
+// The route gate (RequirePermissionInAnyScope) refuses a caller with no secrets.read
+// anywhere; core refuses machine identities. Both refusals carry
+// core.OwnedShareListDeniedMessage. Like ListShares, a read: no audit event.
+func (h *ShareHandler) ListOwnedShares(w http.ResponseWriter, r *http.Request) {
+	userCtx := middleware.GetUserFromContext(r.Context())
+	if userCtx == nil {
+		h.sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		return
+	}
+	views, err := h.coreService.ListOwnedShareViews(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID())
+	if err != nil {
+		if reason, ok := core.ShareRefusalMessage(err); ok {
+			h.sendError(w, "Forbidden", reason, http.StatusForbidden, nil)
+			return
+		}
+		log.Printf("Error listing owned shares: %v", err)
+		h.sendError(w, "InternalError", "Failed to list shares", http.StatusInternalServerError, nil)
+		return
+	}
+	if middleware.ProjectsMFABlocked(r, h.coreService, h.shareViewProjectIDs(r.Context(), views)) {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
+	h.sendShareViewPage(w, r, views)
+}
+
+// sendShareViewPage applies the optional ?secretId= and ?recipientType= filters and
+// ?page / ?pageSize paging to views and writes the PaginatedResponse shape the web
+// client consumes. Shared by ListShares and ListOwnedShares so the two lists cannot
+// drift apart in shape.
+func (h *ShareHandler) sendShareViewPage(w http.ResponseWriter, r *http.Request, views []core.ShareView) {
 	// Optional server-side filters.
 	if v := r.URL.Query().Get("secretId"); v != "" {
 		if sid, perr := strconv.ParseUint(v, 10, 32); perr == nil {

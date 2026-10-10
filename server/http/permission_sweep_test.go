@@ -602,6 +602,7 @@ var permissionGateMiddleware = map[string]bool{
 	"RequireScopedPermission":           true,
 	"RequireScopedSecretPermission":     true,
 	"RequireScopedSecretRefPermission":  true,
+	"RequirePermissionInAnyScope":       true,
 	"RequireNodeCredential":             true,
 	"RequireNodeCredentialOrPermission": true,
 	// SCIMToken is not permission-shaped (no `permission string` argument) but

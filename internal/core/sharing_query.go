@@ -197,12 +197,17 @@ type ShareView struct {
 
 // ListUserShareViews returns the user's shares (received + owned) as enriched views
 // with recipient/creator names resolved, ready to serialise for the web sharing UI.
-func (c *KeyorixCore) ListUserShareViews(ctx context.Context, userID uint) ([]ShareView, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
+func (c *KeyorixCore) ListUserShareViews(ctx context.Context, userID uint) ([]ShareView, error) {
 	shares, err := c.ListSharesByUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
+	return c.shareViews(ctx, shares), nil
+}
 
+// shareViews enriches share records with recipient/creator display names, resolving
+// each user and group once.
+func (c *KeyorixCore) shareViews(ctx context.Context, shares []*models.ShareRecord) []ShareView { // NOSONAR -- cognitive complexity 17, suppress go:S3776
 	userNames := map[uint]string{}
 	resolveUser := func(id uint) string {
 		if id == 0 {
@@ -251,7 +256,7 @@ func (c *KeyorixCore) ListUserShareViews(ctx context.Context, userID uint) ([]Sh
 		}
 		views = append(views, v)
 	}
-	return views, nil
+	return views
 }
 
 // CheckSharePermission checks if a user has permission to access a secret.
