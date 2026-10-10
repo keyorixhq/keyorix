@@ -185,7 +185,7 @@ func formatShareExpiry(expiresAt *time.Time) string {
 	if expiresAt == nil {
 		return "never"
 	}
-	return expiresAt.Format("2006-01-02 15:04:05")
+	return expiresAt.UTC().Format("2006-01-02 15:04:05")
 }
 
 func runShareCreate(cmd *cobra.Command, args []string) error {

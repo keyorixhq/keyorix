@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"log"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"time"
 
@@ -719,19 +720,15 @@ func (c *KeyorixCore) notifyOverdueBreakGlassReviewers(ctx context.Context, rows
 		byProject[a.ProjectID] = append(byProject[a.ProjectID], a)
 	}
 	for pid, acts := range byProject {
-		members, err := c.storage.ListProjectMembers(ctx, pid)
+		recipients, err := c.breakGlassAlertRecipients(ctx, pid)
 		if err != nil {
-			log.Printf("SECURITY: notifyOverdueBreakGlassReviewers: failed to list project %d members, admins not notified for %d overdue activation(s): %v", pid, len(acts), err)
-			continue
+			log.Printf("SECURITY: notifyOverdueBreakGlassReviewers: failed to fully resolve project %d admins (%d resolved), some admins may not be notified for %d overdue activation(s): %v", pid, len(recipients), len(acts), err)
 		}
 		title := "Break-glass review overdue"
 		msg := fmt.Sprintf("%d break-glass activation(s) in this project have gone unreviewed for longer than %s. ADR-112 requires an independent post-activation review of every activation.", len(acts), window)
 		link := fmt.Sprintf("/projects/%d/access-review", pid)
-		for _, m := range members {
-			if !isApproverRole(m.RoleName) {
-				continue
-			}
-			c.notify(ctx, m.UserID, EventBreakGlassReviewOverdue, title, msg, &pid, link)
+		for _, uid := range recipients {
+			c.notify(ctx, uid, EventBreakGlassReviewOverdue, title, msg, &pid, link)
 		}
 	}
 }
@@ -760,20 +757,76 @@ func (c *KeyorixCore) notifyBreakGlassAdmins(ctx context.Context, actorID, proje
 			err = nil
 		}
 	}()
-	members, err := c.storage.ListProjectMembers(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("list project %d members: %w", projectID, err)
-	}
+	recipients, rerr := c.breakGlassAlertRecipients(ctx, projectID)
 	pid := projectID
 	title := "Break-glass emergency access activated"
 	msg := fmt.Sprintf("User %d self-granted emergency role %q until %s. Review the audit trail.",
 		actorID, roleName, expiresAt.UTC().Format(time.RFC3339))
 	link := fmt.Sprintf("/projects/%d/access-review", projectID)
-	for _, m := range members {
-		if !isApproverRole(m.RoleName) {
-			continue
-		}
-		c.notify(ctx, m.UserID, EventBreakGlassActivated, title, msg, &pid, link)
+	// Notify whoever WAS resolved even when part of the resolution failed.
+	for _, uid := range recipients {
+		c.notify(ctx, uid, EventBreakGlassActivated, title, msg, &pid, link)
 	}
-	return nil
+	return rerr
+}
+
+// breakGlassAlertRecipients resolves who is alerted about break-glass events on
+// a project (#2955): the project's own approver-role members PLUS every holder
+// of an install-wide admin-bypass role -- directly or through a group. The
+// previous fan-out read only ListProjectMembers, which matches
+// user_roles.project_id exactly, so the install's global admin (the usual admin
+// on a fresh install, who holds no project-scoped row) was never considered and
+// received nothing. A global admin has admin authority on every project
+// (requireAdminAuthorityAt), so they are a project admin for alerting purposes.
+//
+// Returns each user once, in ascending ID order. On a partial failure it
+// returns the recipients it did resolve together with the error, so the caller
+// can still alert them and report the gap loudly (#166).
+func (c *KeyorixCore) breakGlassAlertRecipients(ctx context.Context, projectID uint) ([]uint, error) {
+	seen := map[uint]struct{}{}
+	var ids []uint
+	add := func(uid uint) {
+		if _, dup := seen[uid]; !dup {
+			seen[uid] = struct{}{}
+			ids = append(ids, uid)
+		}
+	}
+	var errs []error
+
+	members, err := c.storage.ListProjectMembers(ctx, projectID)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list project %d members: %w", projectID, err))
+	}
+	for _, m := range members {
+		if isApproverRole(m.RoleName) {
+			add(m.UserID)
+		}
+	}
+
+	adminRoleIDs, err := c.adminBypassRoleIDSlice(ctx)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("resolve install-wide admins: %w", err))
+	} else if assignments, aerr := c.storage.ListGlobalAdminAssignmentsForUpdate(ctx, adminRoleIDs); aerr != nil {
+		// Read-only use outside any transaction: the Postgres row lock it takes is
+		// released immediately, and a stale read here only costs one alert.
+		errs = append(errs, fmt.Errorf("list install-wide admin grants: %w", aerr))
+	} else {
+		for _, a := range assignments {
+			switch a.PrincipalType {
+			case "user":
+				add(a.PrincipalID)
+			case "group":
+				gm, gerr := c.storage.ListGroupMembers(ctx, a.PrincipalID)
+				if gerr != nil {
+					errs = append(errs, fmt.Errorf("list members of admin group %d: %w", a.PrincipalID, gerr))
+					continue
+				}
+				for _, u := range gm {
+					add(u.ID)
+				}
+			}
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, errors.Join(errs...)
 }
