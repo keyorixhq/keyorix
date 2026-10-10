@@ -85,6 +85,9 @@ func TestListSessionTokenHashesByFamily_Empty(t *testing.T) {
 // EnforceSessionLimit — at-cap path (keep > 0, user has fewer than keep sessions) and keep=0.
 func TestEnforceSessionLimit_NeedsToPrune(t *testing.T) {
 	ls := newMaxStore(t, "esl", sessionModels...)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	// Create 3 sessions.
@@ -132,6 +135,9 @@ func TestListSessionTokenHashesForUser_Empty(t *testing.T) {
 // CreatePersonalAccessToken + GetPersonalAccessTokenByID — success + not-found.
 func TestPersonalAccessToken_CreateAndGetByID(t *testing.T) {
 	ls := newMaxStore(t, "patid", &models.PersonalAccessToken{}, &models.User{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	pat, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
