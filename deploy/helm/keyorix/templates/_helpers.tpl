@@ -50,14 +50,16 @@ Renders "true" or nothing.
 */}}
 {{- define "keyorix.hasAdminPassword" -}}
 {{- if .Values.auth.existingSecret -}}
+{{- $k := .Values.auth.existingSecretKeys | default dict -}}
 {{- $s := lookup "v1" "Secret" .Release.Namespace .Values.auth.existingSecret -}}
-{{- if or .Values.auth.existingSecretKeys.adminPassword (and $s $s.data (hasKey $s.data "KEYORIX_ADMIN_PASSWORD")) -}}true{{- end -}}
+{{- if or $k.adminPassword (and $s $s.data (hasKey $s.data "KEYORIX_ADMIN_PASSWORD")) -}}true{{- end -}}
 {{- else if .Values.auth.adminPassword -}}true{{- end -}}
 {{- end -}}
 {{- define "keyorix.hasBootstrapToken" -}}
 {{- if .Values.auth.existingSecret -}}
+{{- $k := .Values.auth.existingSecretKeys | default dict -}}
 {{- $s := lookup "v1" "Secret" .Release.Namespace .Values.auth.existingSecret -}}
-{{- if or .Values.auth.existingSecretKeys.bootstrapToken (and $s $s.data (hasKey $s.data "KEYORIX_BOOTSTRAP_TOKEN")) -}}true{{- end -}}
+{{- if or $k.bootstrapToken (and $s $s.data (hasKey $s.data "KEYORIX_BOOTSTRAP_TOKEN")) -}}true{{- end -}}
 {{- else -}}true{{- end -}}
 {{- end -}}
 
