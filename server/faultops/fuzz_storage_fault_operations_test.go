@@ -1187,19 +1187,10 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// inside #2549's PR. Expect CI's fuzz-changed to find a fifth; that is the
 	// documented, expected outcome, not a surprise.
 	//
-	// WebAuthn registration finishing is expected to invalidate the user's other
-	// sessions (an MFA/credential-enrollment change is one of the session-revoke
-	// events); when DeleteSessionsForUserExcept fails, the registration still
-	// reports SUCCESS, so the credential is enrolled and the other sessions
-	// survive. Whether that should fail closed or retry is the auth owner's call.
-	// Remove when #2844 is resolved.
-	{
-		op: "REST POST /api/v1/auth/webauthn/register/finish", method: "DeleteSessionsForUserExcept",
-		kind: faultstorage.KindError,
-		nth:  1, oracle: "a", issue: "#2844", expires: "2026-11-07",
-		tables:     []string{"Session"},
-		findingDoc: "#2844",
-	},
+	// (The WebAuthn register/finish DeleteSessionsForUserExcept tolerance that
+	// stood here is removed: #2897 makes that purge failure observable and it is
+	// now an op-scoped acceptable-by-design entry above, so the tolerance no
+	// longer tolerates anything.)
 	// Pre-existing, unrelated to this PR's own MFA-reauth changes (#2392 only
 	// newly wires /auth/mfa/verify into the fuzzer, it doesn't touch this code
 	// path) -- found by a live 2-minute FuzzStorageFaultOperations run during
