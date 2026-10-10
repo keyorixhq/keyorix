@@ -25,6 +25,7 @@
 # restore refuses a non-empty target by design (refuseNonEmptyPostgresTarget).
 set -euo pipefail
 
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OLD_SERVER_BIN="$1"
 OLD_CLI_BIN="$2"
 NEW_SERVER_BIN="$3"
@@ -67,6 +68,7 @@ stop_server() {
     SERVER_PID=""
 }
 
+REAL_HOME="$HOME"
 export HOME="$WORK_DIR"
 export KEYORIX_MASTER_PASSWORD="qavs-master-password-$$-${RANDOM}"
 BOOTSTRAP_TOKEN="qavs-bootstrap-token-$$-${RANDOM}"
@@ -244,10 +246,38 @@ pass "new: admin verify-audit (explicit, standalone re-check)"
 pass "new: start HEAD server against restored Postgres database"
 start_server "$NEW_SERVER_BIN" "$NEW_CONFIG" "new"
 
-pass "new: secret decrypts identically"
+pass "new: login"
 clear_cli_credentials
-NEW_GET_OUT="$("$NEW_CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
-    && "$NEW_CLI_BIN" secret get --id 1 --show-value)" || fail "new secret get exited non-zero:
+"$NEW_CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
+    || fail "new login exited non-zero"
+
+# ADR-112 item 1: security.require_mfa defaults on for the HEAD binary --
+# the restored admin account predates MFA entirely (old binary, old
+# schema default), so this login succeeds as a plain session but is
+# confined to the enrolment endpoints (EnforceMFAEnrollment) until it
+# enrols. Enrol for real (see scripts/smoke.sh's identical block for the
+# full rationale), then log in again since ActivateMFA invalidates the
+# pre-enrolment session.
+pass "new: mfa enroll"
+ENROLL_OUT="$("$NEW_CLI_BIN" mfa enroll)" || fail "new mfa enroll exited non-zero"
+MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]')"
+[ -n "$MFA_SECRET" ] || fail "could not parse MFA secret from:
+$ENROLL_OUT"
+
+pass "new: mfa activate"
+MFA_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET")" \
+    || fail "totpgen exited non-zero"
+"$NEW_CLI_BIN" mfa activate --code "$MFA_CODE" --password "$ADMIN_PASSWORD" \
+    || fail "new mfa activate exited non-zero"
+
+pass "new: login (again, now MFA-enabled)"
+MFA_LOGIN_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET" 30)" \
+    || fail "totpgen exited non-zero"
+"$NEW_CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
+    --mfa-code "$MFA_LOGIN_CODE" || fail "new login (MFA-enabled) exited non-zero"
+
+pass "new: secret decrypts identically"
+NEW_GET_OUT="$("$NEW_CLI_BIN" secret get --id 1 --show-value)" || fail "new secret get exited non-zero:
 $NEW_GET_OUT"
 echo "$NEW_GET_OUT" | grep -qF "$SECRET_VALUE" \
     || fail "secret did NOT decrypt identically after version-skip upgrade -- expected to find %q in:

@@ -74,6 +74,81 @@ All notable changes to Keyorix are documented here. This project follows
   *across* groups: `rotate-kek` rewrites only the salt and DEK, so a deployment
   with a KMS/TPM/Shamir fallback keeps that provider's blob at its original
   age, which must not become a refusal to boot after an ordinary rotation.
+- **`security.enable_file_permission_check` and `security.require_mfa` now
+  default to the secure state** (ADR-112, secure-by-default baseline, item 1).
+  A fresh install enforces file-permission/DEK-salt-size/database-reachability
+  startup checks and admin MFA from its very first start, with no config
+  changes needed; the first admin login asks for MFA enrolment. On the
+  default, the encryption key material and database file are checked strictly;
+  the config file and TLS cert/key (usually orchestrator-mounted) get a warning
+  naming the file and the fix, and an explicit `true` makes those strict too.
+  **Upgrade note:** an existing deployment (its database already has users)
+  that never set `enable_file_permission_check` keeps booting during a grace
+  period: a real file-permission or startup-validation problem logs a loud
+  `ADR-112` warning naming the setting and how to comply, instead of refusing
+  to start. The grace period ends for good at the first boot whose checks pass
+  (or when the key is set explicitly). `require_mfa` on such a deployment is
+  also in a grace period: not enforced yet, with a loud start-up warning on
+  every boot until the key is set explicitly. On a fresh install a
+  session-authenticated user without MFA is confined to the enrolment
+  endpoints until they enrol (non-interactive PAT/machine credentials are
+  unaffected). An explicit
+  `enable_file_permission_check: true` keeps its exact pre-upgrade behavior,
+  including refusing to start when the key material is missing.
+- **`keyorix mfa enroll` / `keyorix mfa activate`**: the CLI can now enrol a
+  TOTP factor (secret + otpauth URI, then confirm with a code and the account
+  password; prints one-time recovery codes). With `require_mfa` on, this is
+  how a CLI-only operator gets past the first-login enrolment confinement;
+  `keyorix login --mfa-code` completes later logins.
+- **Every security-weakening setting is now registered, warned about and
+  audited** (ADR-112, secure-by-default baseline, item 2 — the opt-out rule).
+  `internal/config.InsecureSettingsRegistry` is the single enumeration of all
+  33 of them (32 plus the fast-audit opt-out from ADR-112 Amendment 1); three things read it, so nothing has to be wired up per setting:
+  a start-up **warning** for every one currently in effect, a start-to-start
+  **settings diff** that writes an audit event (old value → new value) for any
+  of them that changed between two starts of the same deployment, and the
+  posture report. Nothing is renamed yet and no behaviour changes for an
+  existing config file: each entry records the `insecure_`-prefixed name it is
+  *heading for* alongside the real key it reads today, and the literal YAML
+  renames land as their own small follow-ups, each keeping the old key working
+  as a warning-logging deprecated alias.
+  A **sweep of the whole config surface** (`insecure_settings_sweep_test.go`)
+  is what keeps the registry honest: a setting whose name reads as an opt-out
+  and that no entry covers fails CI by name, and a set ratchet over every
+  leaf setting fails on *any* config addition, removal or rename — because eight of the registered
+  weakenings (`membership.validation_mode`, `storage.database.ssl_mode`,
+  `credential_delivery.mode`, the SMTP/email `tls` enums, `metrics_token`,
+  `max_request_body_bytes`, `sso.providers[].trust_asserted_email`) have names
+  no pattern list can recognise. Thirteen settings that cannot be renamed
+  mechanically — each needing a polarity inversion of a load-bearing flag, or
+  a non-boolean field restructured into a real boolean — are recorded as known
+  exceptions with an owning tracking issue, and are covered by the warning,
+  the audit diff and the posture report under their current names meanwhile.
+- **New `keyorix-server admin validate --posture` command** (ADR-112,
+  secure-by-default baseline, item 4) reports every secure-baseline deviation
+  in one place and exits non-zero if any is found. **Every security-weakening
+  setting in effect counts**, whatever stage its `insecure_` naming is at:
+  encryption-at-rest disabled, database TLS disabled, unauthenticated
+  `/metrics`, log-delivered setup links and the rest are deviations because of
+  what they do, not because of what they are called. The report also covers
+  `security.enable_file_permission_check` disabled outright, a real
+  file-permission / encryption / database problem, an incomplete key-file set
+  (item 6), an enabled listener with no TLS while
+  `security.require_transport_tls` is set, and an admin-tier holder with
+  neither TOTP MFA nor a passkey enrolled. `security.require_mfa: false` is a
+  deviation, and so is an upgraded deployment still in `require_mfa`'s ADR-112
+  grace period (the server does not enforce MFA there yet, even with every
+  admin enrolled). A grace-period setting (item 1)
+  still enforcing only via its new secure-by-default value, with the underlying
+  condition it covers still non-compliant, is reported as its own deviation
+  referencing the detail above it. Each deviation is labelled with whether it
+  comes from a **shipped default** or an **explicit** config choice (whether
+  the config file literally writes the key), so an
+  operator can tell "this install has not been hardened yet" from "someone
+  turned this off" — but both count toward the exit code. Only genuinely
+  non-judgemental facts are informational: TLS mode, and the KEK salt file's
+  age (no rotation-age threshold is defined anywhere in this codebase, so a
+  number here would be a guess).
 
 ## v0.95.3 — 2026-10-01
 

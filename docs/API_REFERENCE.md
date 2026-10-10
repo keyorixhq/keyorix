@@ -218,6 +218,35 @@ Authorization: Bearer <token>
 
 **Response:** `204 No Content` (empty body)
 
+A delete is a **soft delete**: the secret and all of its versions disappear from
+normal listings immediately but are kept, and `POST /api/v1/secrets/{id}/restore`
+brings them back until the retention window expires and the purge scheduler
+removes them. The `secret.deleted` audit entry says so: its description reads
+`User <u> deleted secret <name> (soft delete: restorable with 'secret restore'
+until purged; N version(s) kept[; M dependent secret(s) lose this dependency
+until restored: a, b])`. Secrets that depended on the deleted one keep their
+dependency edge (it is restored with the secret) and get a
+`secret.dependency_invalidated` audit entry each.
+
+### `read_count`
+`read_count` appears on a secret and on each entry of
+`GET /api/v1/secrets/{id}/versions`. It is **the number of reads charged against
+`max_reads`**, not a general access counter:
+
+- On the secret it is the lifetime count of value reads against its `max_reads`
+  budget (it survives rotation and rollback, so a burn-after-N-reads secret cannot
+  be re-armed).
+- On a version it is a display copy of the reads that were charged while that
+  version was the one read.
+- A secret **without** `max_reads` is never charged: its `read_count` is `0` no
+  matter how often it is read. That is the defined behaviour, not a missing
+  count.
+
+To see how often a secret was actually read, use the audit trail: `secret.read`
+events (`GET /api/v1/audit/search?action=secret.read`) or the per-secret access
+log (`keyorix secret access-log`). A true per-version read total is not recorded
+today (access-log rows do not carry the version read).
+
 ## 🤝 **Secret Sharing API**
 
 ### Create Share
