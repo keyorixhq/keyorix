@@ -1456,6 +1456,13 @@ type ChangePasswordJSONBody struct {
 	NewPassword     string `json:"new_password"`
 }
 
+// ActivateMFAJSONBody defines parameters for ActivateMFA.
+type ActivateMFAJSONBody struct {
+	// Code Current TOTP code from the pending secret
+	Code     string `json:"code"`
+	Password string `json:"password"`
+}
+
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
 type MfaStepUpJSONBody struct {
 	// Code TOTP code or a recovery code
@@ -2371,6 +2378,9 @@ type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONB
 
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody ChangePasswordJSONBody
+
+// ActivateMFAJSONRequestBody defines body for ActivateMFA for application/json ContentType.
+type ActivateMFAJSONRequestBody ActivateMFAJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody

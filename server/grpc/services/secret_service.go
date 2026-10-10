@@ -432,9 +432,12 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
-	// Audit as a secret read, mirroring the HTTP handler (secrets_versions.go) —
-	// without this, listing version history over gRPC left no secret.read event,
-	// an HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168).
+	// Audit the listing, mirroring the HTTP handler (secrets_versions.go) —
+	// without this, listing version history over gRPC left no audit event, an
+	// HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168). It is
+	// secret.versions_listed (with an access-log row of action "versions_list",
+	// which anomaly detection reads), not secret.read: no value is returned
+	// (AUDIT-UX-2, #2951).
 	// Plain, unauthorized read, matching the HTTP handler's own GetSecret (not
 	// GetSecretWithPermissionCheck) for this exact prefetch: authorizeSecretScoped
 	// above already authorized this read, and GetSecretVersionsWithPermissionCheck
@@ -445,7 +448,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if secret, sErr := s.core.GetSecret(ctx, uint(req.GetId())); sErr == nil && secret != nil {
 		auditCtx := core.DetachedAuditContext(ctx)
 		ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
-		if auditErr := s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
+		if auditErr := s.core.LogSecretVersionsListed(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
 			return nil, status.Error(codes.Internal, "failed to record audit trail")
 		}
 	}

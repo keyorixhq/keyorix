@@ -61,16 +61,17 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Log as a secret read — fetching versions means the caller is accessing the
-	// secret value. SESSION-PERF #2403 follow-up (item 3, audit-before-disclosure):
-	// `versions` is only sent below AFTER its audit entry has been durably
-	// committed.
+	// Audit the listing as secret.versions_listed, not secret.read: the response
+	// carries version metadata, never a value (EncryptedValue is json:"-"), and
+	// secret.read means a value disclosure (AUDIT-UX-2, #2951). Still
+	// audit-before-response (SESSION-PERF #2403 follow-up, item 3): `versions` is
+	// only sent below AFTER its audit entry has been durably committed.
 	secret, sErr := h.coreService.GetSecret(r.Context(), uint(id))
 	if sErr == nil && secret != nil {
 		ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
 		auditCtx := core.DetachedAuditContext(r.Context())
-		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua); auditErr != nil {
-			log.Printf("SECURITY: audit write failed for secret versions read (secret=%d): %v -- failing closed", id, auditErr)
+		if auditErr := h.coreService.LogSecretVersionsListed(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua); auditErr != nil {
+			log.Printf("SECURITY: audit write failed for secret versions listing (secret=%d): %v -- failing closed", id, auditErr)
 			h.sendError(w, "InternalError", "Failed to record audit trail", http.StatusInternalServerError, nil)
 			return
 		}

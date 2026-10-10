@@ -560,3 +560,28 @@ func TestSecretService_TotalReads_GetSecretAndVersions(t *testing.T) {
 		assert.Nil(t, s.TotalReads, "ListSecrets must not carry total_reads")
 	}
 }
+
+// AUDIT-UX-2 item 3: listing version history over gRPC is audited as
+// secret.versions_listed with an access-log row of action "versions_list"
+// (anomaly detection reads every action), never as secret.read: no value is
+// returned. Mirrors the HTTP handler (server/http
+// TestCLISecretDeleteFlow_WritesNoSecretRead).
+func TestSecretService_GetSecretVersions_AuditsListingNotRead(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
+	created := r.createSecret(t, ctx, "token", "the-value")
+
+	_, err := r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: created.GetId()})
+	require.NoError(t, err)
+
+	count := func(q string, args ...any) int64 {
+		var n int64
+		r.db.Raw(q, args...).Scan(&n)
+		return n
+	}
+	assert.Equal(t, int64(1), count("SELECT COUNT(*) FROM audit_events WHERE event_type = ? AND secret_node_id = ?", core.EventSecretVersionsListed, created.GetId()))
+	assert.Zero(t, count("SELECT COUNT(*) FROM audit_events WHERE event_type = ? AND secret_node_id = ?", "secret.read", created.GetId()), "a version listing is not a value read")
+	assert.Equal(t, int64(1), count("SELECT COUNT(*) FROM secret_access_logs WHERE secret_node_id = ? AND action = ?", created.GetId(), core.AccessActionVersionsList))
+	assert.Zero(t, count("SELECT COUNT(*) FROM secret_access_logs WHERE secret_node_id = ? AND action = ?", created.GetId(), "read"))
+}
