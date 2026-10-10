@@ -1,8 +1,11 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -197,4 +200,168 @@ func TestInsecureSettingsInEffect_SeesAFallbackChainOptOut(t *testing.T) {
 		}
 	}
 	require.True(t, found, "registry entry not found — renamed?")
+}
+
+// yamlForPath renders a minimal document that sets dotted path to value. A
+// segment ending in "[]" becomes a one-element sequence, matching the alias
+// table's spelling.
+func yamlForPath(path, value string) string {
+	var b strings.Builder
+	indent := ""
+	segs := strings.Split(path, ".")
+	for i, seg := range segs {
+		name := strings.TrimSuffix(seg, "[]")
+		if i == len(segs)-1 {
+			fmt.Fprintf(&b, "%s%s: %s\n", indent, name, value)
+			break
+		}
+		fmt.Fprintf(&b, "%s%s:\n", indent, name)
+		indent += "  "
+		if strings.HasSuffix(seg, "[]") {
+			b.WriteString(indent + "- ")
+			// The sequence element's first key shares the "- " line.
+			rest := yamlForPath(strings.Join(segs[i+1:], "."), value)
+			lines := strings.Split(strings.TrimRight(rest, "\n"), "\n")
+			b.WriteString(lines[0] + "\n")
+			for _, l := range lines[1:] {
+				b.WriteString(indent + "  " + l + "\n")
+			}
+			return b.String()
+		}
+	}
+	return b.String()
+}
+
+// boolAtPath walks cfg by yaml tags along dotted path ("[]" segments take
+// element 0) and returns the bool there.
+func boolAtPath(cfg *Config, path string) (bool, error) {
+	v := reflect.ValueOf(cfg).Elem()
+	for _, seg := range strings.Split(path, ".") {
+		name := strings.TrimSuffix(seg, "[]")
+		for v.Kind() == reflect.Pointer {
+			if v.IsNil() {
+				return false, fmt.Errorf("%s: nil pointer before %q", path, name)
+			}
+			v = v.Elem()
+		}
+		found := false
+		for i := 0; i < v.NumField(); i++ {
+			if strings.Split(v.Type().Field(i).Tag.Get("yaml"), ",")[0] == name {
+				v, found = v.Field(i), true
+				break
+			}
+		}
+		if !found {
+			return false, fmt.Errorf("no field tagged %q on the way to %s", name, path)
+		}
+		if strings.HasSuffix(seg, "[]") {
+			if v.Kind() != reflect.Slice || v.Len() == 0 {
+				return false, fmt.Errorf("%s: expected a non-empty sequence at %q", path, name)
+			}
+			v = v.Index(0)
+		}
+	}
+	for v.Kind() == reflect.Pointer && !v.IsNil() {
+		v = v.Elem()
+	}
+	if v.Kind() != reflect.Bool {
+		return false, fmt.Errorf("%s is a %s, not a bool", path, v.Kind())
+	}
+	return v.Bool(), nil
+}
+
+// releasedOldPaths are the pre-rename keys exactly as released (the yaml tags
+// on main before #2899), spelled INDEPENDENTLY of deprecatedSettingAliases.
+// The independence is the point: YAML generated from the alias table's own
+// OldPath would rewrite a misspelled row's own misspelling and pass, while
+// every real deployment using the released key failed to boot.
+var releasedOldPaths = []string{
+	"security.allow_unsafe_file_permissions",
+	"security.login_lockout.disabled",
+	"security.recover_admin.keyless_mode",
+	"audit.siem.allow_private_network_target",
+	"audit.siem.allow_insecure_transport",
+	"evidence_delivery.webhook.allow_private_network_target",
+	"evidence_delivery.webhook.allow_insecure_transport",
+	"notifications.webhook.allow_private_network_target",
+	"notifications.webhook.allow_insecure_transport",
+	"dynamic_secrets.allow_private_network_targets",
+	"dynamic_secrets.allow_insecure_transport",
+	"storage.encryption.key_provider.kms_allow_context_fallback",
+	"storage.encryption.key_provider.allow_weaker_fallback",
+	"storage.encryption.key_provider.fallbacks[].kms_allow_context_fallback",
+	"storage.encryption.key_provider.fallbacks[].allow_weaker_fallback",
+	"sso.providers[].trust_asserted_email",
+	"sso.providers[].saml.allow_idp_initiated",
+	"audit_checkpoints.disabled",
+}
+
+// aliasRoundTrip loads a config that sets ONLY the released key oldPath to
+// true, through the real Load, against the given alias table, and checks the
+// value arrives at that row's NewPath with exactly one deprecation warning
+// naming the old key.
+func aliasRoundTrip(t *testing.T, table []deprecatedSettingAlias, oldPath string) error {
+	t.Helper()
+	var alias *deprecatedSettingAlias
+	for i := range table {
+		if table[i].OldPath == oldPath {
+			alias = &table[i]
+		}
+	}
+	if alias == nil {
+		return fmt.Errorf("released key %s has no alias row (misspelled OldPath?) -- a deployment still using it fails to boot", oldPath)
+	}
+	saved := deprecatedSettingAliases
+	deprecatedSettingAliases = table
+	defer func() { deprecatedSettingAliases = saved }()
+
+	path := filepath.Join(t.TempDir(), "keyorix.yaml")
+	if err := os.WriteFile(path, []byte(yamlForPath(oldPath, "true")), 0600); err != nil {
+		return err
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		return fmt.Errorf("released key %s no longer loads (an existing deployment would fail to boot): %w", oldPath, err)
+	}
+	got, err := boolAtPath(cfg, alias.NewPath)
+	if err != nil {
+		return err
+	}
+	if !got {
+		return fmt.Errorf("released key %s=true did not arrive at %s", oldPath, alias.NewPath)
+	}
+	if len(cfg.DeprecatedSettingWarnings) != 1 || !strings.Contains(cfg.DeprecatedSettingWarnings[0], oldPath) {
+		return fmt.Errorf("want exactly one deprecation warning naming %s, got %v", oldPath, cfg.DeprecatedSettingWarnings)
+	}
+	return nil
+}
+
+// TestLoad_DeprecatedAliases_EveryReleasedKeyRoundTripsThroughLoad drives
+// EVERY released pre-rename key through Load (coordinator review of #2899:
+// 7 of 16 were covered, so a typo in an untested OldPath would ship and
+// hard-fail the boot of the first deployment still using the old name).
+func TestLoad_DeprecatedAliases_EveryReleasedKeyRoundTripsThroughLoad(t *testing.T) {
+	if len(releasedOldPaths) != len(deprecatedSettingAliases) {
+		t.Errorf("alias table has %d rows but %d released keys are listed -- every row must be a released key "+
+			"and every released key must have a row", len(deprecatedSettingAliases), len(releasedOldPaths))
+	}
+	for _, old := range releasedOldPaths {
+		t.Run(old, func(t *testing.T) {
+			if err := aliasRoundTrip(t, deprecatedSettingAliases, old); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+
+	// Calibration: the table with ONE row misspelled must fail for that key.
+	typo := make([]deprecatedSettingAlias, len(deprecatedSettingAliases))
+	copy(typo, deprecatedSettingAliases)
+	for i := range typo {
+		if typo[i].OldPath == "security.recover_admin.keyless_mode" {
+			typo[i].OldPath = "security.recover_admin.keyles_mode"
+		}
+	}
+	if err := aliasRoundTrip(t, typo, "security.recover_admin.keyless_mode"); err == nil {
+		t.Error("calibration: a misspelled OldPath row must fail the round trip for the released key")
+	}
 }
