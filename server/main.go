@@ -54,6 +54,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
 	"github.com/keyorixhq/keyorix/internal/hardening"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/notary"
@@ -211,6 +212,16 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("key file security: %v", err)
 	}
 
+	// Refuse to start if the installed key files are a PARTIAL set (ADR-112,
+	// follow-up from #2400). Unconditional, like the permission check above: a
+	// broken key set is not a "weaker but working" state to warn about. The
+	// same call also applies a best-effort same-group mtime heuristic, which is
+	// deliberately not claimed as a mixed-generation guarantee — see
+	// keyfiles.VerifyKeySetConsistency and #2900.
+	if err := verifyKeyFileSetConsistency(cfg); err != nil {
+		log.Fatalf("key file consistency: %v", err)
+	}
+
 	// Mark this process as a live server attached to cfg's database (ADR-108 §B,
 	// PR 11) — held for the whole process lifetime, released on shutdown. Lets
 	// `keyorix-server admin` commands detect and refuse to run concurrently
@@ -346,6 +357,7 @@ const (
 	schedLockReadQuota         int64 = 0x4B455953_52445154 // "KEYSRDQT"
 	schedLockMFAGrantPrune     int64 = 0x4B455953_4D464147 // "KEYSMFAG"
 	schedLockRecoverAdminAlert int64 = 0x4B455953_52435652 // "KEYSRCVR"
+	schedLockBreakGlassReview  int64 = 0x4B455953_42475256 // "KEYSBGRV"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -886,6 +898,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		EmergencyRole: cfg.BreakGlass.EmergencyRole,
 		DefaultTTL:    cfg.BreakGlass.GetDefaultTTL(),
 		MaxTTL:        cfg.BreakGlass.GetMaxTTL(),
+		// #2461: GetReviewWindow had no non-test caller, so ADR-112's
+		// post-activation-review deviation was computed against nothing. Wired
+		// unconditionally, NOT behind cfg.BreakGlass.Enabled: an install that
+		// has since turned break-glass off can still hold unreviewed
+		// activations from when it was on, and those are exactly the ones that
+		// must not drop off the posture report.
+		ReviewWindow: cfg.BreakGlass.GetReviewWindow(),
 	})
 
 	// Wire N-of-M dual-control approval for access requests (1 = disabled).
@@ -1758,6 +1777,26 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 		})
 	})
 
+	// Warn about break-glass activations that have gone unreviewed past the
+	// configured review window (ADR-112 §3, item 4/5; #2461) — ALWAYS runs,
+	// deliberately not gated on cfg.BreakGlass.Enabled, for the same reason the
+	// recover-admin alert above isn't opt-in: an install that has since turned
+	// break-glass OFF can still be holding unreviewed activations from when it
+	// was on, and those are precisely the ones that must not quietly drop off
+	// the report. Runs once immediately on startup (the "startup warning" half)
+	// and every 6h thereafter. Single-replica-gated (ADR-039) so an HA
+	// deployment logs and audits this once per pass, not once per replica.
+	//
+	// Visibility only — see RunBreakGlassReviewReminder's own doc comment for
+	// why ADR-112's "enforced" is a posture deviation plus this warning, and
+	// explicitly NOT a lockout.
+	runScheduler(ctx, "break_glass_review_reminder", 6*time.Hour, func() middleware.SchedulerOutcome {
+		return lockedRun(ctx, coreService.Storage(), schedLockBreakGlassReview, "Break-glass review reminder", func() error {
+			_, rerr := coreService.RunBreakGlassReviewReminder(ctx)
+			return rerr
+		})
+	})
+
 	// Start the read-quota alert scheduler — opt-in. Scans all secrets with MaxReads > 0
 	// and sends in-app notifications to their owners when usage reaches 80 % (Warning)
 	// or 95 % / 100 % (Critical / Exhausted). Single-replica-gated (ADR-039).
@@ -2064,6 +2103,17 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 	}
 	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
 	return nil
+}
+
+// verifyKeyFileSetConsistency is the boot-time key-file-set consistency check
+// (ADR-112, follow-up from #2400) — see keyfiles.VerifyKeySetConsistency's own
+// doc comment for the two things it checks and why. No-op when encryption is
+// disabled: there is no key material to check in the first place.
+func verifyKeyFileSetConsistency(cfg *config.Config) error {
+	if !cfg.Storage.Encryption.Enabled {
+		return nil
+	}
+	return keyfiles.VerifyKeySetConsistency(&cfg.Storage.Encryption, ".")
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {

@@ -567,6 +567,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
 		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
+		// #2461 watchdog review (2026-10-09): blocked while impersonating, same
+		// reasoning as ActivateBreakGlass above. ReviewBreakGlass's self-review
+		// refusal compares actorID against activation.UserID -- an impersonating
+		// actor's context carries the IMPERSONATED user's ID, not the real
+		// admin's, so an activator who can impersonate any roles.assign holder
+		// could impersonate one and pass the self-review check, forging an
+		// independent "reviewed" record for their own activation. Blocking
+		// impersonation here outright is the same structural fix as the
+		// activation route: the whole point of ADR-112's independent review is
+		// defeated by a puppet identity, so no impersonated session may submit
+		// one, regardless of whose account it is impersonating.
+		r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/review", catalogHandler.ReviewBreakGlass)
 		// Machine identities (ADR-023): non-human members, segmented from humans.
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities/stale", catalogHandler.ListStaleMachineIdentities)
