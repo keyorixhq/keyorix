@@ -74,7 +74,11 @@ func (ls *LocalStorage) GetBreakGlassActivation(ctx context.Context, id uint) (*
 		// GetMachineIdentityCredentialByID's (local_machine_credentials.go) already-
 		// established pattern for the same bug class.
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+			// Also wraps the storage.ErrBreakGlassNotFound sentinel (#2461 round 2)
+			// so a caller can classify this without matching the LOCALE-DEPENDENT
+			// i18n.T("ErrorNotFound") text; gorm.ErrRecordNotFound stays wrapped too
+			// for the existing errors.Is callers.
+			return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorNotFound", nil), storage.ErrBreakGlassNotFound, err)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -165,4 +169,46 @@ func (ls *LocalStorage) RevokeBreakGlassActivation(ctx context.Context, id, revo
 		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), storage.ErrBreakGlassNotActive)
 	}
 	return nil
+}
+
+// ReviewBreakGlassActivation conditionally records a review — reviewer, when,
+// and an optional note — guarded on reviewed_at IS NULL in the same single-
+// UPDATE shape RevokeBreakGlassActivation uses, so two concurrent review
+// submissions for the same activation cannot both "win": only the first sets
+// reviewed_at, the second gets ErrBreakGlassAlreadyReviewed (RowsAffected==0
+// distinguishes "already reviewed" from "activation does not exist" the same
+// way the caller must anyway — see ReviewBreakGlass in internal/core, which
+// looks the activation up first). Allowed regardless of the activation's
+// active/expired/revoked state.
+func (ls *LocalStorage) ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error {
+	result := ls.db.WithContext(ctx).Model(&models.BreakGlassActivation{}).
+		Where("id = ? AND reviewed_at IS NULL", id).
+		Updates(map[string]interface{}{
+			"reviewed_by": reviewerID,
+			"reviewed_at": reviewedAt,
+			"review_note": note,
+		})
+	if result.Error != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), storage.ErrBreakGlassAlreadyReviewed)
+	}
+	return nil
+}
+
+// ListUnreviewedBreakGlassActivationsBefore returns every activation (across
+// all projects — this is a global posture query, not a per-project one) with
+// reviewed_at still NULL and created_at at or before cutoff, oldest first (the
+// posture report's natural display order: longest-outstanding review first).
+func (ls *LocalStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	var rows []*models.BreakGlassActivation
+	err := ls.db.WithContext(ctx).
+		Where("reviewed_at IS NULL AND created_at <= ?", cutoff).
+		Order("created_at ASC").
+		Find(&rows).Error
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return rows, nil
 }

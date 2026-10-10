@@ -533,7 +533,10 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			query = query.Where("success = ?", *filter.Success)
 		}
 		if filter.ActorType != nil {
-			query = query.Where("actor_type = ?", *filter.ActorType)
+			// The displayed kind, not the raw column (#2951): one rule shared with
+			// the HTTP/gRPC views, storage.AuditActorKind.
+			cond, args := storage.AuditActorKindWhere(*filter.ActorType)
+			query = query.Where(cond, args...)
 		}
 		if filter.AfterID != nil {
 			query = query.Where("id > ?", *filter.AfterID)
@@ -547,10 +550,22 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			// escapeLIKE sanitises % and _ in the caller-supplied username so
 			// a value like "admin%" doesn't turn into a wildcard prefix scan
 			// covering all usernames (#r124 LIKE injection).
-			query = query.Where(
-				`user_id IN (SELECT id FROM users WHERE username LIKE ? ESCAPE '\' AND deleted_at IS NULL)`,
-				"%"+escapeLIKE(*filter.ActorUsername)+"%",
-			)
+			// LOWER on both sides: LIKE is case-insensitive (ASCII) on SQLite but
+			// case-sensitive on Postgres, so without it the same search returned
+			// different rows per backend.
+			cond := `user_id IN (SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL)`
+			args := []interface{}{"%" + escapeLIKE(*filter.ActorUsername) + "%"}
+			// Rows of kind "system" are displayed with actor "system" (#2951), so a
+			// term that is part of "system" (ASCII case-insensitive, e.g. "sys") also
+			// finds exactly those rows: the same rule as actor_type=system
+			// (storage.AuditSystemActorWhere). A failed login has no user but is
+			// kind "user", so it is not pulled in here.
+			if term := strings.ToLower(*filter.ActorUsername); term != "" && strings.Contains("system", term) {
+				sysCond, sysArgs := storage.AuditSystemActorWhere()
+				cond = "(" + cond + " OR " + sysCond + ")"
+				args = append(args, sysArgs...)
+			}
+			query = query.Where(cond, args...)
 		}
 		if filter.ResourceType != nil {
 			// event_type is "resource_type.action" — match rows whose event_type

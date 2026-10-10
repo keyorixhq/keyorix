@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
@@ -66,7 +65,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 		if err := prepareLocalStorageFile(dbPath); err != nil {
 			return nil, err
 		}
-		db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+		db, err := openSQLiteGorm(sqliteDSN(dbPath))
 		if err != nil {
 			return nil, fmt.Errorf("failed to connect to database: %w", err)
 		}

@@ -555,6 +555,25 @@ type Storage interface {
 	// revoke because of what a clock-derived State happens to read; only an
 	// already-'revoked' row is excluded.
 	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error
+	// ReviewBreakGlassActivation (ADR-112 §3, break-glass review item 5)
+	// atomically records a post-activation review -- reviewer, when, and an
+	// optional note -- via a single conditional UPDATE guarded on
+	// reviewed_at IS NULL, the same shape as RevokeBreakGlassActivation's
+	// guard, so two concurrent review submissions for the same activation
+	// cannot both "win": only the first is recorded, the second gets
+	// ErrBreakGlassAlreadyReviewed. This storage-layer primitive itself does
+	// not condition on active/expired/revoked state -- it records a review
+	// against whatever row id names. #2461 round 2: that is NOT the same as
+	// "a review is allowed at any state" -- core.ReviewBreakGlass, the only
+	// production caller, refuses a still-active activation BEFORE reaching
+	// here (ErrBreakGlassStillActive), so in practice this is only ever
+	// called once the activation has concluded.
+	ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error
+	// ListUnreviewedBreakGlassActivationsBefore returns every activation
+	// (across all projects) with reviewed_at still NULL and created_at at or
+	// before cutoff -- the posture report's (item 4) source for "open
+	// break-glass activations without review."
+	ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error)
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
@@ -774,6 +793,42 @@ type Storage interface {
 	// small constant number of queries, not N.
 	GetSecretsByIDs(ctx context.Context, ids []uint) ([]*models.SecretNode, error)
 	GetSecretByName(ctx context.Context, name string, projectID, environmentID uint) (*models.SecretNode, error)
+	// UpdateSecretFields persists ONLY the fields f names, onto a LIVE secret
+	// row: "UPDATE secret_nodes SET <named columns> WHERE id = ? AND deleted_at
+	// IS NULL". matched=false (no error) means the secret is gone; the caller
+	// must not report success. See SecretFieldUpdate.
+	//
+	// This REPLACES the former UpdateSecret, a bare GORM Save of a struct the
+	// caller read earlier and unlocked (#2695). Being on the SHARED primitive,
+	// every one of its eight callers inherited two defects at once:
+	//
+	//   - Save's 0-rows fallback upserts with deleted_at = NULL, so ANY of them
+	//     landing after a concurrent DeleteSecret RESURRECTED the secret — and
+	//     DeleteSecret also revokes its shares and ACLs, so the secret came
+	//     back without them, with no secret.restored audit event and without
+	//     going through RestoreSecret;
+	//   - Save writes every column, so each caller reverted whatever a narrower
+	//     concurrent writer had changed since its own read: SuspendSecret's
+	//     status=suspended (an incident freeze), TryIncrementSecretNodeReadCount's
+	//     read_count (re-opening a spent MaxReads budget),
+	//     ClearProjectSecretOwnership's owner_id=0 (an offboarded user regains
+	//     the owner short-circuit), and the rotation columns.
+	//
+	// Per-field pointers are the fix, not a convenience: each caller names only
+	// the columns it owns, so no caller can revert another's. A caller that
+	// populates everything is visible as exactly that in a diff.
+	UpdateSecretFields(ctx context.Context, id uint, f SecretFieldUpdate) (matched bool, err error)
+	// UpdateSecret is the full-row Save UpdateSecretFields replaces. It is kept
+	// ONLY because one caller still needs it: SetSecretAutoRotate
+	// (rotation_executor.go), which is #2650's site and is converted to a
+	// column-scoped UpdateSecretRotationConfig by open PR #2668 — in the same
+	// few lines of this file. Deleting it here would make #2695 conflict with a
+	// PR the coordinator is about to merge, for no safety gain, since that one
+	// call site is exactly what #2668 fixes.
+	//
+	// Do not add a caller. TestUpdateSecret_HasNoProductionCallerBeyond2668
+	// fails if one appears, and fails again once #2668 lands and the last one
+	// goes away — at which point this method and that test both get deleted.
 	UpdateSecret(ctx context.Context, secret *models.SecretNode) (*models.SecretNode, error)
 	// TransitionSecretStatus persists secret's full row via a single conditional
 	// write — "UPDATE ... WHERE id = ? AND status = ?" — succeeding only if the
@@ -2000,6 +2055,46 @@ type SecretTemplateFieldUpdate struct {
 	DefaultTags           string
 	DescriptionPattern    string
 	RotationHintDays      int
+}
+
+// SecretFieldUpdate names the secret_nodes columns one operation owns, for
+// UpdateSecretFields. A nil pointer means "do not write this column at all" —
+// which is the whole point: it replaced a full-row GORM Save whose eight
+// callers each silently reverted every column the others owned (#2695).
+//
+// The union of fields here is exactly what those callers legitimately change,
+// and nothing more. Columns deliberately ABSENT, because no caller of this
+// method owns them and a full-row write was how they got clobbered:
+// `deleted_at` (DeleteSecret / RestoreSecret), `status` (TransitionSecretStatus),
+// `read_count` (TryIncrementSecretNodeReadCount — a MaxReads budget),
+// `auto_rotate` and the other rotation columns (UpdateSecretRotationConfig),
+// `project_id` / `environment_id` / `is_secret`, and the certificate cache.
+// Adding a field here is a decision about which operation may revert which
+// other operation, not a mechanical convenience — say why in the commit.
+//
+// The four nullable columns use an explicit Set* flag rather than relying on a
+// nil pointer, so "clear this column" is distinguishable from "leave it alone"
+// and reads as the deliberate act it is at the call site.
+type SecretFieldUpdate struct {
+	Name           *string
+	Description    *string
+	Classification *string
+	Type           *string
+	OwnerID        *uint
+	Metadata       *models.JSON
+	UpdatedAt      *time.Time
+
+	SetParentID bool
+	ParentID    *uint // nil + SetParentID = move to root
+
+	SetExpiration bool
+	Expiration    *time.Time // nil + SetExpiration = clear the expiry
+
+	SetMaxReads bool
+	MaxReads    *int // nil + SetMaxReads = clear the read cap
+
+	SetLastRotatedAt bool
+	LastRotatedAt    *time.Time
 }
 
 // SecretFilter defines filtering options for secret queries

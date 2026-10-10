@@ -152,6 +152,13 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
+	// ADR-112 opt-out rule (item 2): every insecure_ setting currently in effect
+	// gets a warning on EVERY start — never silent. See
+	// warnInsecureSettingsInEffect below. (The deprecated-alias warning for an old
+	// key that was renamed lands with the renames themselves, in their own
+	// follow-up PRs; no setting is renamed yet.)
+	warnInsecureSettingsInEffect(cfg)
+
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
@@ -288,6 +295,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// entitlement (and any degrade reason) is on the audit record.
 	coreService.AuditLicenseState(ctx)
 
+	// ADR-112 opt-out rule (item 2): the start-to-start settings diff. Config has no
+	// hot reload, so this is the only place a security-relevant setting changing
+	// between two starts ever becomes visible — audits old vs. new value for any
+	// difference since the previous start.
+	coreService.ReconcileSecurityPostureSnapshot(ctx, securityPostureSnapshot(cfg))
+
 	// Start every background scheduler exactly once, regardless of which of
 	// HTTP/gRPC is enabled (#G12) — see startSchedulers' doc comment.
 	startSchedulers(ctx, cfg, coreService)
@@ -375,6 +388,7 @@ const (
 	schedLockReadQuota         int64 = 0x4B455953_52445154 // "KEYSRDQT"
 	schedLockMFAGrantPrune     int64 = 0x4B455953_4D464147 // "KEYSMFAG"
 	schedLockRecoverAdminAlert int64 = 0x4B455953_52435652 // "KEYSRCVR"
+	schedLockBreakGlassReview  int64 = 0x4B455953_42475256 // "KEYSBGRV"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -920,6 +934,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		EmergencyRole: cfg.BreakGlass.EmergencyRole,
 		DefaultTTL:    cfg.BreakGlass.GetDefaultTTL(),
 		MaxTTL:        cfg.BreakGlass.GetMaxTTL(),
+		// #2461: GetReviewWindow had no non-test caller, so ADR-112's
+		// post-activation-review deviation was computed against nothing. Wired
+		// unconditionally, NOT behind cfg.BreakGlass.Enabled: an install that
+		// has since turned break-glass off can still hold unreviewed
+		// activations from when it was on, and those are exactly the ones that
+		// must not drop off the posture report.
+		ReviewWindow: cfg.BreakGlass.GetReviewWindow(),
 	})
 
 	// Wire N-of-M dual-control approval for access requests (1 = disabled).
@@ -1792,6 +1813,26 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 		})
 	})
 
+	// Warn about break-glass activations that have gone unreviewed past the
+	// configured review window (ADR-112 §3, item 4/5; #2461) — ALWAYS runs,
+	// deliberately not gated on cfg.BreakGlass.Enabled, for the same reason the
+	// recover-admin alert above isn't opt-in: an install that has since turned
+	// break-glass OFF can still be holding unreviewed activations from when it
+	// was on, and those are precisely the ones that must not quietly drop off
+	// the report. Runs once immediately on startup (the "startup warning" half)
+	// and every 6h thereafter. Single-replica-gated (ADR-039) so an HA
+	// deployment logs and audits this once per pass, not once per replica.
+	//
+	// Visibility only — see RunBreakGlassReviewReminder's own doc comment for
+	// why ADR-112's "enforced" is a posture deviation plus this warning, and
+	// explicitly NOT a lockout.
+	runScheduler(ctx, "break_glass_review_reminder", 6*time.Hour, func() middleware.SchedulerOutcome {
+		return lockedRun(ctx, coreService.Storage(), schedLockBreakGlassReview, "Break-glass review reminder", func() error {
+			_, rerr := coreService.RunBreakGlassReviewReminder(ctx)
+			return rerr
+		})
+	})
+
 	// Start the read-quota alert scheduler — opt-in. Scans all secrets with MaxReads > 0
 	// and sends in-app notifications to their owners when usage reaches 80 % (Warning)
 	// or 95 % / 100 % (Critical / Exhausted). Single-replica-gated (ADR-039).
@@ -2042,12 +2083,24 @@ func runStartupValidation(cfg *config.Config) error {
 	}
 	configPath := config.ResolvedPath("")
 	// Server startup has no --fix flag; remediation is governed solely by the
-	// config's Security.AutoFixFilePermissions field, as before. Only the ADR-112
-	// implicit default gets the first-boot tolerance for not-yet-generated key
-	// material: before ADR-112 such a deployment skipped this check entirely and
-	// went straight to first-boot key generation. An explicit true keeps the strict
-	// ValidateStartup, which refuses to boot (rather than mint a new encryption
-	// domain) when the salt and wrapped DEK are both missing.
+	// config's Security.AutoFixFilePermissions field, as before.
+	//
+	// The TOLERANT variant is reachable ONLY through the ADR-112 grace period —
+	// never for a deployment that set security.enable_file_permission_check
+	// explicitly. That gate is the whole point, not a detail: the tolerance
+	// treats "KEK salt AND wrapped DEK both missing" as a fresh install, so with
+	// it in force a key volume that failed to mount is explained away as first
+	// boot, this function returns nil, and initializeEncryption then GENERATES A
+	// FRESH SALT AND DEK — over an existing, still-encrypted database whose real
+	// key material is merely unmounted. Every value in it becomes permanently
+	// unreadable, and the server reports a clean start while doing it.
+	//
+	// So the variant follows the same explicit/implicit split the err→warn
+	// softening below already follows, and for the same reason: an operator who
+	// wrote the key down asked for these checks, and "an explicit true keeps
+	// failing closed exactly as before" is what this function's own doc comment
+	// above promises. Guarded by
+	// TestRunStartupValidation_ExplicitTrue_MissingKeyMaterial_RefusesToStart.
 	validate := startup.ValidateStartup
 	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
 		validate = startup.ValidateStartupTolerant
@@ -2252,6 +2305,36 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 		}
 		log.Printf("INFO: security.require_mfa is enforcing on its ADR-112 secure-by-default value (%s). Session-authenticated users without MFA are confined to MFA enrolment until they enrol (PAT/machine credentials are unaffected). Set security.require_mfa explicitly to silence this.", reason)
 	}
+}
+
+// warnInsecureSettingsInEffect logs a start-up warning for every ADR-112
+// registry entry currently in effect — unconditionally, on every boot, so a
+// security-weakening setting can never be silently in effect (opt-out rule
+// item 2's "a start-up warning for every insecure_ setting in effect").
+// Looping config.InsecureSettingsRegistry here is also half of what makes
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee hold: every entry with a non-nil InEffect is warned about by
+// construction, with no per-entry call site that could forget to wire one in.
+func warnInsecureSettingsInEffect(cfg *config.Config) {
+	for _, s := range config.InsecureSettingsRegistry {
+		if s.InEffect(cfg) {
+			log.Printf("WARNING: %s is in effect — %s", s.Name, s.Describe)
+		}
+	}
+}
+
+// securityPostureSnapshot computes this boot's value of every ADR-112
+// registry entry, keyed by its Name — the input to
+// coreService.ReconcileSecurityPostureSnapshot's start-to-start diff. Looping
+// config.InsecureSettingsRegistry here is the other half of
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee: every entry with a non-nil Value is audited by construction.
+func securityPostureSnapshot(cfg *config.Config) map[string]string {
+	snapshot := make(map[string]string, len(config.InsecureSettingsRegistry))
+	for _, s := range config.InsecureSettingsRegistry {
+		snapshot[s.Name] = s.Value(cfg)
+	}
+	return snapshot
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {
