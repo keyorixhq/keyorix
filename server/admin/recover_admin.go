@@ -139,7 +139,8 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 	fmt.Printf("  %s\n", summary.oneTimePassword)
 	if cfg.Security.RequireMFA {
 		// #3024: the login this password allows is a setup-only session.
-		fmt.Printf("Log in as %q with this password. That session lasts at most %s and can only set a new\n", summary.username, core.SetupSessionTTL)
+		fmt.Printf("Log in as %q with this password. That session lasts at most %d minutes and can only set a new\n",
+			summary.username, int(core.SetupSessionTTL.Minutes()))
 		fmt.Println("password (keyorix change-password) and enrol a second factor (keyorix mfa enroll + activate), in either")
 		fmt.Println("order. When both are done it ends; log in again with the new password and a code.")
 	} else {
