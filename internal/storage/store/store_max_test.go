@@ -18,11 +18,11 @@ package store
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -36,15 +36,9 @@ import (
 // helper: newMaxStore — unique in-memory SQLite DB auto-migrated for many models
 // ---------------------------------------------------------------------------
 
-// maxStoreDBSeq makes each in-memory DB unique within the process, even
-// across repeated invocations of the same test (e.g. `go test -count=N`).
-var maxStoreDBSeq atomic.Int64
-
 func newMaxStore(t *testing.T, tag string, ms ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:max_%s_%s_%d?mode=memory&cache=shared", tag, t.Name(), maxStoreDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "storemax_", sqlite.Open, &gorm.Config{})
 	if len(ms) > 0 {
 		require.NoError(t, db.AutoMigrate(ms...))
 	}
@@ -91,6 +85,9 @@ func TestListSessionTokenHashesByFamily_Empty(t *testing.T) {
 // EnforceSessionLimit — at-cap path (keep > 0, user has fewer than keep sessions) and keep=0.
 func TestEnforceSessionLimit_NeedsToPrune(t *testing.T) {
 	ls := newMaxStore(t, "esl", sessionModels...)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	// Create 3 sessions.
@@ -138,6 +135,9 @@ func TestListSessionTokenHashesForUser_Empty(t *testing.T) {
 // CreatePersonalAccessToken + GetPersonalAccessTokenByID — success + not-found.
 func TestPersonalAccessToken_CreateAndGetByID(t *testing.T) {
 	ls := newMaxStore(t, "patid", &models.PersonalAccessToken{}, &models.User{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	pat, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{

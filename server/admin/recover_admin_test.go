@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,13 +14,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/recoverykey"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	storelib "github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
-
-var recoverAdminTestDBSeq atomic.Int64
 
 // newRecoverAdminTestStore returns a *storelib.LocalStorage over a unique
 // in-memory SQLite database, migrated for every table performRecoverAdmin's
@@ -49,11 +47,13 @@ func newRecoverAdminTestStoreWithDSN(t *testing.T) (*storelib.LocalStorage, stri
 	if err := i18n.InitializeForTesting(); err != nil {
 		t.Fatalf("i18n.InitializeForTesting: %v", err)
 	}
-	dsn := fmt.Sprintf("file:recover_admin_%d?mode=memory&cache=shared", recoverAdminTestDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
-	}
+	// The DSN is handed back so one test can open a deliberate SECOND connection
+	// to the same database; capture it from the dialector factory.
+	var dsn string
+	db := sqlitetest.OpenWithDialector(t, "recover_admin_", func(d string) gorm.Dialector {
+		dsn = d
+		return sqlite.Open(d)
+	}, &gorm.Config{})
 	if err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{},
 		&models.Group{}, &models.GroupRole{}, &models.UserGroup{},
@@ -491,6 +491,11 @@ func TestPerformRecoverAdmin_BrokenAuditChainStillRecovers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open second connection: %v", err)
 	}
+	t.Cleanup(func() {
+		if sqlDB, e := rawDB.DB(); e == nil {
+			_ = sqlDB.Close()
+		}
+	})
 	if err := rawDB.Exec("UPDATE audit_events SET entry_hash = 'corrupted' WHERE event_type = 'test.seed'").Error; err != nil {
 		t.Fatalf("corrupt audit row: %v", err)
 	}

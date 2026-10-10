@@ -10,15 +10,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 var bulkHandlerCounter int
@@ -45,9 +46,7 @@ func newBulkAccessBrokenHandler(t *testing.T) *CatalogHandler {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	bulkHandlerCounter++
-	dsn := fmt.Sprintf("file:bah_broken%d?mode=memory&cache=shared", bulkHandlerCounter)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "bah_broken")
 	require.NoError(t, db.AutoMigrate(
 		&models.AccessRequest{},
 		&models.RejectionReasonTemplate{},

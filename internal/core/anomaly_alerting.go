@@ -102,7 +102,8 @@ func (c *KeyorixCore) AlertNewAnomalies(ctx context.Context) (int, error) {
 	return announced, nil
 }
 
-// notifyAnomalyAdmins sends an in-app alert to the project's approver-role members.
+// notifyAnomalyAdmins sends an in-app alert to the project's admins
+// (projectAdminRecipients: approver-role members + install-wide admins).
 // With no resolvable project the in-app notify is skipped (the audit + SIEM event
 // still carries it) — not an error. Individual notify() delivery stays best-effort,
 // but a failure to list the project's members is a distinct, louder failure mode
@@ -111,19 +112,14 @@ func (c *KeyorixCore) notifyAnomalyAdmins(ctx context.Context, projectID uint, a
 	if projectID == 0 {
 		return nil
 	}
-	members, err := c.storage.ListProjectMembers(ctx, projectID)
-	if err != nil {
-		return fmt.Errorf("list project %d members: %w", projectID, err)
-	}
+	recipients, rerr := c.projectAdminRecipients(ctx, projectID)
 	pid := projectID
 	title := fmt.Sprintf("Anomaly detected (%s)", a.Severity)
 	msg := fmt.Sprintf("%s on secret %q by %s from %s — %s", a.AlertType, a.SecretName, a.AccessedBy, a.IPAddress, a.Description)
 	link := fmt.Sprintf("/projects/%d", projectID)
-	for _, m := range members {
-		if !isApproverRole(m.RoleName) {
-			continue
-		}
-		c.notify(ctx, m.UserID, EventAnomalyDetected, title, msg, &pid, link)
+	// Notify whoever WAS resolved even when part of the resolution failed.
+	for _, uid := range recipients {
+		c.notify(ctx, uid, EventAnomalyDetected, title, msg, &pid, link)
 	}
-	return nil
+	return rerr
 }

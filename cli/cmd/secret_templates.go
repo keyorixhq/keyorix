@@ -35,7 +35,7 @@ var secretTemplateListCmd = &cobra.Command{
 			return fmt.Errorf("list templates: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("list templates: HTTP %d", resp.StatusCode())
+			return httpStatusError("list templates", resp.StatusCode(), resp.Body)
 		}
 		templates := derefSecretTemplateSlice(resp.JSON200.Data.Templates)
 		if len(templates) == 0 {
@@ -64,7 +64,7 @@ var secretTemplateGetCmd = &cobra.Command{
 			return fmt.Errorf("get template: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get template: HTTP %d", resp.StatusCode())
+			return httpStatusError("get template", resp.StatusCode(), resp.Body)
 		}
 		for _, t := range derefSecretTemplateSlice(resp.JSON200.Data.Templates) {
 			if derefStr(t.Name) == args[0] {
@@ -122,7 +122,7 @@ var secretTemplateCreateCmd = &cobra.Command{
 			return fmt.Errorf("create template: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("create template: HTTP %d", resp.StatusCode())
+			return httpStatusError("create template", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Template %q created (ID %d).\n", derefStr(resp.JSON200.Data.Name), derefSecretInt(resp.JSON200.Data.Id))
 		return nil
@@ -145,7 +145,7 @@ var secretTemplateDeleteCmd = &cobra.Command{
 			return fmt.Errorf("list templates: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("list templates: HTTP %d", resp.StatusCode())
+			return httpStatusError("list templates", resp.StatusCode(), resp.Body)
 		}
 		var id int
 		for _, t := range derefSecretTemplateSlice(resp.JSON200.Data.Templates) {
@@ -162,7 +162,7 @@ var secretTemplateDeleteCmd = &cobra.Command{
 			return fmt.Errorf("delete template: %w", err)
 		}
 		if dresp.StatusCode() != 204 {
-			return fmt.Errorf("delete template: HTTP %d", dresp.StatusCode())
+			return httpStatusError("delete template", dresp.StatusCode(), dresp.Body)
 		}
 		fmt.Printf("Template %q deleted.\n", args[0])
 		return nil

@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -97,16 +96,10 @@ func TestSecretGetAndVersions_ReportTotalReads(t *testing.T) {
 	assert.Equal(t, int64(2), *m.TotalReads, "metadata GETs are not reads")
 	assert.Equal(t, 0, m.ReadCount, "read_count keeps its #2963 meaning: 0 without max_reads")
 
-	// GET /secrets/by-name is a metadata lookup that is itself audited (async) as a
-	// secret.read, so a count read there would be non-deterministic and would include
-	// non-value reads. It does not report total_reads.
-	st, nameBody := do(http.MethodGet, "/api/v1/secrets/by-name?name=total-reads&project_id=1&environment_id=1", "")
-	require.Equal(t, http.StatusOK, st, string(nameBody))
-	assert.NotContains(t, string(nameBody), "total_reads", "by-name must not report total_reads")
-
-	// Versions: total_reads beside each version's ReadCount. Compared with the
-	// access log itself, because whether the listing writes a "read" row is
-	// #2970's business (it should not), not this field's.
+	// Versions: total_reads beside each version's ReadCount. Exactly the two value
+	// reads above: listing versions is secret.versions_listed (#2970), not a read, and
+	// nothing else has touched the access log yet (the async by-name audit write
+	// below has not been triggered), so the count is deterministic.
 	st, body = do(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d/versions", id), "")
 	require.Equal(t, http.StatusOK, st, string(body))
 	var vout struct {
@@ -119,16 +112,7 @@ func TestSecretGetAndVersions_ReportTotalReads(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(body, &vout))
 	require.NotNil(t, vout.Data.TotalReads, "GET /secrets/{id}/versions must report total_reads: %s", body)
-	logs, err := c.Storage().ListSecretAccessLogs(t.Context(), id, time.Now().Add(-time.Hour))
-	require.NoError(t, err)
-	var reads int64
-	for _, l := range logs {
-		if l.Action == "read" {
-			reads++
-		}
-	}
-	assert.Equal(t, reads, *vout.Data.TotalReads, "total_reads is the access log's read count")
-	assert.GreaterOrEqual(t, *vout.Data.TotalReads, int64(2))
+	assert.Equal(t, int64(2), *vout.Data.TotalReads, "the two value reads, and not the versions listing")
 	for _, v := range vout.Data.Versions {
 		assert.Equal(t, 0, v.ReadCount, "per-version ReadCount stays max_reads accounting")
 	}
@@ -137,4 +121,12 @@ func TestSecretGetAndVersions_ReportTotalReads(t *testing.T) {
 	st, body = do(http.MethodGet, "/api/v1/secrets?project_id=1&environment_id=1", "")
 	require.Equal(t, http.StatusOK, st, string(body))
 	assert.NotContains(t, string(body), "total_reads", "listings do not carry total_reads (one COUNT per row)")
+
+	// LAST, because it starts an asynchronous audit write that would race any count
+	// taken after it. GET /secrets/by-name is a metadata lookup that is itself audited
+	// (async) as a secret.read, so a count there would be non-deterministic and would
+	// include non-value reads. It does not report total_reads.
+	st, nameBody := do(http.MethodGet, "/api/v1/secrets/by-name?name=total-reads&project_id=1&environment_id=1", "")
+	require.Equal(t, http.StatusOK, st, string(nameBody))
+	assert.NotContains(t, string(nameBody), "total_reads", "by-name must not report total_reads")
 }

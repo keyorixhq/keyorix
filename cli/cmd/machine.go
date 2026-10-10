@@ -4,15 +4,13 @@
 // its local/embedded-mode branch (ADR-108 Decision A removes local mode entirely --
 // every command here is the "remote" branch of its old-CLI counterpart).
 //
-// Unlike the old CLI, this one has no "active project" concept yet (that lives in
-// the `project` command group, ported in a later Phase 3 PR per docs/cli-split-
-// inventory.md §7) -- every command requires --project or KEYORIX_PROJECT.
+// The project comes from --project, KEYORIX_PROJECT, or the active project set by
+// `keyorix project use` (#2981).
 package cmd
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -49,12 +47,12 @@ func machineAPIClient() (*apiclient.ClientWithResponses, error) {
 // KEYORIX_PROJECT) to its numeric ID via resolveProjectRef (#2562: a
 // project-scoped caller can pass the numeric ID).
 func resolveMachineProjectID(client *apiclient.ClientWithResponses, flagValue string) (string, int, error) {
-	name := flagValue
-	if name == "" {
-		name = os.Getenv("KEYORIX_PROJECT")
-	}
-	if name == "" {
-		return "", 0, fmt.Errorf("no project given: pass --project or set KEYORIX_PROJECT")
+	// flag > KEYORIX_PROJECT > the project set with `keyorix project use` (#2981: the
+	// other project-scoped command groups already honour the active project; machine
+	// alone demanded --project on every call).
+	name, err := resolveActiveProjectName(flagValue)
+	if err != nil {
+		return "", 0, fmt.Errorf("no project given: pass --project, set KEYORIX_PROJECT, or run 'keyorix project use <name>'")
 	}
 	_, id, err := resolveProjectRef(context.Background(), client, name, false)
 	if err != nil {
@@ -71,7 +69,7 @@ func fetchMachineIdentities(client *apiclient.ClientWithResponses, projectID int
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.MachineIdentities == nil {
 		if resp.StatusCode() != 200 {
-			return nil, fmt.Errorf("failed to list machine identities: HTTP %d", resp.StatusCode())
+			return nil, httpStatusError("failed to list machine identities", resp.StatusCode(), resp.Body)
 		}
 		return nil, nil
 	}
@@ -158,7 +156,7 @@ func runMachineCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create machine identity: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.MachineIdentity == nil {
-		return fmt.Errorf("failed to create machine identity: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to create machine identity", resp.StatusCode(), resp.Body)
 	}
 	m := *resp.JSON201.Data.MachineIdentity
 	fmt.Printf("Machine identity created: id=%d name=%q type=%s state=%s\n",

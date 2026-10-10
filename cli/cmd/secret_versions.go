@@ -49,7 +49,7 @@ func runSecretVersions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("secret not found: %w", err)
 	}
 	if sresp.JSON200 == nil || sresp.JSON200.Data == nil {
-		return fmt.Errorf("secret not found: HTTP %d", sresp.StatusCode())
+		return httpStatusError("secret not found", sresp.StatusCode(), sresp.Body)
 	}
 	secret := secretGetResultToSecret(sresp.JSON200.Data)
 
@@ -58,7 +58,7 @@ func runSecretVersions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get versions: %w", err)
 	}
 	if vresp.JSON200 == nil || vresp.JSON200.Data == nil {
-		return fmt.Errorf("failed to get versions: HTTP %d", vresp.StatusCode())
+		return httpStatusError("failed to get versions", vresp.StatusCode(), vresp.Body)
 	}
 	versions := derefSecretVersionSlice(vresp.JSON200.Data.Versions)
 	totalReads := vresp.JSON200.Data.TotalReads
@@ -216,7 +216,7 @@ func runSecretDiff(_ *cobra.Command, args []string) error {
 			return fmt.Errorf("secret %q not found: %w", name, nerr)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("secret %q not found: HTTP %d", name, resp.StatusCode())
+			return httpStatusError(fmt.Sprintf("secret %q not found", name), resp.StatusCode(), resp.Body)
 		}
 		id = derefSecretInt(resp.JSON200.Data.Id)
 	}
@@ -226,7 +226,7 @@ func runSecretDiff(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("diff secret versions: HTTP %d", resp.StatusCode())
+		return httpStatusError("diff secret versions", resp.StatusCode(), resp.Body)
 	}
 	d := resp.JSON200.Data
 	printSecretDiff(derefStr(d.SecretName), derefSecretInt(d.FromVersion), derefSecretInt(d.ToVersion), derefDiffChangeSlice(d.Changes), derefSecretIntSlice(d.AclUserIds), derefSecretBool(d.Degraded))
@@ -305,7 +305,7 @@ var versionCommentAddCmd = &cobra.Command{
 			return fmt.Errorf("failed to add comment: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("failed to add comment: HTTP %d", resp.StatusCode())
+			return httpStatusError("failed to add comment", resp.StatusCode(), resp.Body)
 		}
 		c := resp.JSON200.Data
 		when := ""
@@ -340,7 +340,7 @@ var versionCommentListCmd = &cobra.Command{
 			return fmt.Errorf("failed to list comments: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("failed to list comments: HTTP %d", resp.StatusCode())
+			return httpStatusError("failed to list comments", resp.StatusCode(), resp.Body)
 		}
 		comments := derefVersionCommentSlice(resp.JSON200.Data.Comments)
 		total := derefSecretInt(resp.JSON200.Data.Total)
@@ -387,7 +387,7 @@ var versionCommentDeleteCmd = &cobra.Command{
 			return fmt.Errorf("failed to delete comment: %w", err)
 		}
 		if resp.StatusCode() != 204 {
-			return fmt.Errorf("failed to delete comment: HTTP %d", resp.StatusCode())
+			return httpStatusError("failed to delete comment", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Comment %d deleted.\n", commentID)
 		return nil
@@ -435,7 +435,7 @@ as a NEW version (history stays append-only, so the rollback itself can be undon
 			return err
 		}
 		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return fmt.Errorf("rollback secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("rollback secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Secret %d rolled back to the value of version %d (as a new version).\n", secretRollbackID, secretRollbackVersion)
 		return nil

@@ -41,6 +41,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -86,7 +87,7 @@ type apiFuzzWorld struct {
 // per world.
 func buildAPIFuzzWorldSQLite(f *testing.F) *apiFuzzWorld {
 	f.Helper()
-	return buildAPIFuzzWorld(f, fuzzworld.BackendSQLite, fuzzworld.OpenSQLite(f, uniqueMemDSN("&_timeout=30000&_journal_mode=WAL"), 1))
+	return buildAPIFuzzWorld(f, fuzzworld.BackendSQLite, fuzzworld.OpenSQLite(f, sqlitetest.DSN("kxtest_"), 1))
 }
 
 func buildAPIFuzzWorldPostgres(f *testing.F, schemaPrefix string) *apiFuzzWorld {
