@@ -1068,14 +1068,15 @@ var knownOpenTolerances = []knownOpenTolerance{
 	//       reference only by the missing LoginAttempt row. That is #2837's
 	//       question (an op-scoped best-effort exemption for the reservation
 	//       write; see also #2921's proposal to bind such rows to the
-	//       atomicity ledger instead), so the row is re-pointed there and
-	//       pinned to that one method. Expiry deliberately NOT moved.
-	{
-		op: "REST POST /auth/mfa/verify", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2837",
-	},
+	//       atomicity ledger instead), so the row was re-pointed there and
+	//       pinned to that one method.
+	//       DELETED by #2956 (#2936, "the per-IP login budget counts failures,
+	//       not logins"): a delivered login now RETURNS its reservation
+	//       (returnLoginSlot after completeLoginWithIdentity), so the fault-free
+	//       reference run has no LoginAttempt row either and the
+	//       ReserveLoginAttempt#1/error run no longer differs from it at all.
+	//       TestKnownOpenTolerances_AreLoadBearing reported the row dead; it went
+	//       quiet because the behaviour changed, not because something shadows it.
 	// The fifth #2549 entry (op="REST POST /api/v1/auth/mfa/stepup",
 	// method=CreateMFAStepUpGrant#1, tables=[MFASecret]) MOVED to
 	// oracleAByDesignErrors (oracle_a_by_design_test.go). Unlike the four bulk-op
@@ -1113,14 +1114,10 @@ var knownOpenTolerances = []knownOpenTolerance{
 	//     that tuple's diff [LoginAttempt]; on main it is still #2807's bug shape.
 	//   - ReserveLoginAttempt#1/error: the same #2837 shape as /auth/mfa/verify's
 	//     row above (reservation write fails, login succeeds best-effort, run
-	//     lacks only the LoginAttempt row). Kept, re-pointed to #2837, pinned to
-	//     that method. Expiry deliberately NOT moved.
-	{
-		op: "REST POST /auth/webauthn/login/finish", method: "ReserveLoginAttempt", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2837", expires: "2026-10-17",
-		tables:     []string{"LoginAttempt"},
-		findingDoc: "#2837",
-	},
+	//     lacks only the LoginAttempt row). Was kept, re-pointed to #2837 and
+	//     pinned to that method; DELETED by #2956 for the same reason as
+	//     /auth/mfa/verify's row above (a delivered login returns its slot, so
+	//     there is no LoginAttempt diff left to tolerate).
 	// Also found by the same live run while working #2549, also confirmed
 	// PRE-EXISTING by byte-for-byte replay against unmodified origin/main, also
 	// not caused by #2549's change. Filed as #2834 (no prior issue found).
