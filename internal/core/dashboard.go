@@ -520,7 +520,7 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 // principal that acted (system for events with no user), not the viewer, and
 // carries the subject secret's name where the event has one. Both are display
 // lookups; the audit rows are not touched.
-func (c *KeyorixCore) activityItems(ctx context.Context, events []*models.AuditEvent) []ActivityItem {
+func (c *KeyorixCore) activityItems(ctx context.Context, events []*models.AuditEvent) []ActivityItem { // nosemgrep: keyorix-unbounded-bulk-slice-param -- events is an already-paginated GetAuditLogs result (PageSize-bounded), not a raw client-supplied array; the only per-item work is in-memory mapping, the lookups are batched
 	actors := c.ResolveUsernames(ctx, events)
 	secretNames := c.activitySecretNames(ctx, events)
 	items := make([]ActivityItem, 0, len(events))
@@ -553,7 +553,7 @@ var activityNameFromSubject = map[string]bool{
 
 // activitySecretNames batch-resolves the secret names for the events that have a
 // SecretNodeID. A secret that is gone (soft-deleted) simply has no entry.
-func (c *KeyorixCore) activitySecretNames(ctx context.Context, events []*models.AuditEvent) map[uint]string {
+func (c *KeyorixCore) activitySecretNames(ctx context.Context, events []*models.AuditEvent) map[uint]string { // nosemgrep: keyorix-unbounded-bulk-slice-param -- events is an already-paginated GetAuditLogs result (PageSize-bounded), not a raw client-supplied array; the lookup is one batched GetSecretsByIDs call, not a per-item round trip
 	var ids []uint
 	seen := map[uint]bool{}
 	for _, e := range events {

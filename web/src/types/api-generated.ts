@@ -14438,7 +14438,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data: items[] (each: id, type, secretName, timestamp, actor), total, page, pageSize. */
+            /** @description Envelope {data, message}. data: items[] (each: id, type, eventType, label, secretName, timestamp, actor), total, page, pageSize. eventType is the raw audit event type; label is the readable phrase to show after the actor ("revoked break-glass access"); actor is who did it ("system" when no user did); secretName is empty for events with no subject secret. timestamp is UTC RFC 3339. */
             200: {
                 headers: {
                     [name: string]: unknown;

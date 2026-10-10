@@ -9,7 +9,7 @@ import "strings"
 // Types missing here still get a readable label from humanizeEventType, so the
 // dashboard never shows "secret.dependency_invalidated"; add an entry when the
 // generated wording is not good enough.
-var activityLabels = map[string]string{
+var activityLabels = map[string]string{ // #nosec G101 -- audit event types mapped to display phrases, not credentials
 	"secret.read":                   "accessed secret",
 	"secret.versions_listed":        "listed versions of secret",
 	"secret.created":                "created secret",
