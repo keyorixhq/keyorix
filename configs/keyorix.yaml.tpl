@@ -29,7 +29,6 @@ server:
     # Enable HTTP server
     enabled: true
     port: "8080"
-    protocol_versions: ["1.1"]
     tls:
       # Enable TLS on HTTP
       enabled: false  # DEV-ONLY DEFAULT (#G36) — set true (or front with a TLS-
@@ -77,7 +76,6 @@ server:
     # docs/adr-105-grpc-scope-and-parity.md.
     enabled: false
     port: "9090"
-    protocol_versions: ["1.0"]
     tls:
       enabled: false  # DEV-ONLY DEFAULT (#G36) — see server.http.tls.enabled above.
       cert_file: "certs/server.crt"

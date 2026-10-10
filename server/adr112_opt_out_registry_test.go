@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
+
+	"github.com/keyorixhq/keyorix/configs"
 	"github.com/keyorixhq/keyorix/internal/config"
 )
 
@@ -83,6 +86,34 @@ func TestInsecureSettingsRegistry_DescribeIsOperatorText(t *testing.T) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if m := internalMarker.FindString(s.Describe); m != "" {
 			t.Errorf("%s: Describe leaks an internal marker %q: %q", s.Name, m, s.Describe)
+		}
+	}
+}
+
+// The config `keyorix-server admin init` writes is what every new install
+// boots with, so its boot log is the first thing an operator reads (#2979).
+// Assert it is free of internal notes and of the "protocol_versions is set but
+// NOT honored" warning the template itself used to trigger on every boot.
+// The real security warnings (cleartext listener, insecure settings in effect)
+// must still be there: this is about wording and noise, not about hiding state.
+func TestDefaultConfigTemplate_BootLogIsOperatorText(t *testing.T) {
+	var cfg config.Config
+	if err := yaml.Unmarshal(configs.DefaultConfigTemplate, &cfg); err != nil {
+		t.Fatalf("default config template does not parse: %v", err)
+	}
+	out := captureLogs(func() {
+		warnInsecureSettingsInEffect(&cfg)
+		_ = checkTransportTLSPosture(&cfg)
+	})
+	if m := internalMarker.FindString(out); m != "" {
+		t.Errorf("default-config boot log leaks an internal marker %q:\n%s", m, out)
+	}
+	if strings.Contains(out, "NOT honored") {
+		t.Errorf("the shipped template sets a field the server warns it ignores on every boot:\n%s", out)
+	}
+	for _, want := range []string{"is in effect", "CLEARTEXT"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("real security warning %q went missing from the default-config boot log:\n%s", want, out)
 		}
 	}
 }
