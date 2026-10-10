@@ -69,6 +69,7 @@ const relativeFromNow = (d: string | Date): string => {
 // "secret." prefix stripped so unknown/new events still render sensibly.
 const auditEventLabel = (eventType: string): string => {
     const KNOWN: Record<string, string> = {
+        'secret.versions_listed': 'Versions listed',
         'secret.created': 'Created',
         'secret.updated': 'Updated',
         'secret.rotated': 'Rotated',

@@ -180,7 +180,13 @@ test('secrets lifecycle: project/env creation, reveal gating, update, delete, re
     await expect(page.getByRole('row', { name: new RegExp(secretName) })).toHaveCount(0);
 
     await page.goto(`${projectUrl}/settings`);
-    await expect(page.getByText('Recycle bin')).toBeVisible();
+    // #2788: getByText('Recycle bin') is a case-insensitive SUBSTRING match, so it also hit the
+    // "Recycle bin is empty." placeholder. ProjectSettingsTab renders that placeholder for as
+    // long as the deleted-secrets query is still loading (`data: deletedSecrets = []`), i.e.
+    // right after page.goto, and a strict-mode violation (two matches) throws immediately
+    // instead of being retried. Target the heading by role; the recycleRow wait below is what
+    // actually covers the query finishing.
+    await expect(page.getByRole('heading', { name: 'Recycle bin', exact: true })).toBeVisible();
     const recycleRow = page.locator('li', { hasText: secretName });
     await expect(recycleRow).toBeVisible({ timeout: 10_000 });
     await recycleRow.getByRole('button', { name: 'Restore' }).click();

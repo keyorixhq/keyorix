@@ -166,14 +166,22 @@ func runBGList(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 	fmt.Printf("Break-glass activations — project %d:\n\n", bgProject)
-	fmt.Printf("%-5s %-8s %-9s %-16s %-20s %s\n", "ID", "USER", "STATE", "ROLE", "EXPIRES", "JUSTIFICATION")
 	var activations []apiclient.BreakGlassActivation
 	if resp.JSON200.Data.Activations != nil {
 		activations = *resp.JSON200.Data.Activations
 	}
+	// ROLE is as wide as the longest role name: "project_developer" used to be cut
+	// to "project_develop…" (#2942).
+	roleW := len("ROLE")
 	for _, a := range activations {
-		fmt.Printf("%-5d %-8d %-9s %-16s %-20s %s\n", derefUint32(a.Id), derefUint32(a.UserId),
-			derefStr((*string)(a.State)), bgTruncate(derefStr(a.RoleName), 16), derefStr(a.ExpiresAt), derefStr(a.Justification))
+		if n := len(derefStr(a.RoleName)); n > roleW {
+			roleW = n
+		}
+	}
+	fmt.Printf("%-5s %-8s %-9s %-*s %-20s %s\n", "ID", "USER", "STATE", roleW, "ROLE", "EXPIRES (UTC)", "JUSTIFICATION")
+	for _, a := range activations {
+		fmt.Printf("%-5d %-8d %-9s %-*s %-20s %s\n", derefUint32(a.Id), derefUint32(a.UserId),
+			derefStr((*string)(a.State)), roleW, cliout.SanitizeForTerminal(derefStr(a.RoleName)), shortTime(derefStr(a.ExpiresAt)), derefStr(a.Justification))
 	}
 	return nil
 }
@@ -195,14 +203,4 @@ func runBGRevoke(_ *cobra.Command, _ []string) error {
 	}
 	fmt.Printf("Revoked break-glass activation %d in project %d.\n", bgActivation, bgProject)
 	return nil
-}
-
-func bgTruncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	if n <= 1 {
-		return s[:n]
-	}
-	return s[:n-1] + "…"
 }

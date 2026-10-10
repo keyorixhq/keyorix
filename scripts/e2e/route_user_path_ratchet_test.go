@@ -66,7 +66,12 @@ var knownUncoveredUserPaths = map[string]string{
 	// though the literal-prefix scan (by construction) can't find a static
 	// call site for something that's mechanically unreachable without a
 	// real external ceremony.
-	"POST /api/v1/auth/mfa/disable":                   "see coverage.go skipList -- depends on mfa/enroll+activate",
+	// POST /api/v1/auth/mfa/disable was here until this PR. It is now covered
+	// by web/e2e/real/mfa-disable-dialog.spec.ts, which names the path literally
+	// (it counts the POSTs to assert one click produces exactly one), so the
+	// ratchet finds it and the allowlist entry is stale -- hence removed. Its
+	// coverage.go skipList entry STAYS: that skip is about this Go driver, which
+	// still has nothing enrolled to disable, and is a separate mechanism.
 	"POST /api/v1/auth/mfa/recovery-codes/regenerate": "see coverage.go skipList -- depends on mfa/enroll+activate",
 	"POST /api/v1/auth/mfa/stepup":                    "see coverage.go skipList -- depends on mfa/enroll+activate",
 	"POST /auth/mfa/verify":                           "see coverage.go skipList -- needs an MFA-enrolled account",
@@ -212,7 +217,8 @@ var playwrightPathRE = regexp.MustCompile(`["'\x60](/(?:api/v1|auth)/[A-Za-z0-9_
 
 // scanStaticUserPathCoverage walks journeys/*.go, scripts/e2e/*.go (this
 // package, excluding itself and other _test.go infra that isn't the
-// api-smoke driver), and web/e2e/real/**/*.spec.ts, returning the set of
+// api-smoke driver), and web/e2e/real/*.spec.ts plus the .ts helpers they
+// import (see playwrightScanFiles), returning the set of
 // (method, literal-prefix) pairs found, as "METHOD prefix" keys.
 func scanStaticUserPathCoverage(t *testing.T, repoRoot string) map[string]bool {
 	t.Helper()
@@ -294,15 +300,59 @@ func scanStaticUserPathCoverage(t *testing.T, repoRoot string) map[string]bool {
 	}
 
 	webRealDir := filepath.Join(repoRoot, "web", "e2e", "real")
-	specFiles, err := filepath.Glob(filepath.Join(webRealDir, "*.spec.ts"))
-	if err != nil {
-		t.Fatalf("glob %s: %v", webRealDir, err)
-	}
-	for _, f := range specFiles {
+	for _, f := range playwrightScanFiles(t, webRealDir) {
 		addFromPlaywright(f)
 	}
 
 	return found
+}
+
+// tsRelativeImportRE captures the module specifier of a relative import or
+// re-export ("from './helpers'", "from '../real/helpers.ts'") in a .ts file.
+var tsRelativeImportRE = regexp.MustCompile(`\bfrom\s+["'](\.{1,2}/[^"']+)["']`)
+
+// playwrightScanFiles returns every *.spec.ts in dir plus every .ts module
+// they import (transitively, relative imports only). A path literal that
+// lives in a shared helper (e.g. helpers.ts's POST /auth/login, moved there
+// from mfa-login.spec.ts by #2789) is real coverage for every spec that
+// calls the helper, so it must be scanned; but a helper no spec imports is
+// dead code and is deliberately NOT credited.
+func playwrightScanFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	specs, err := filepath.Glob(filepath.Join(dir, "*.spec.ts"))
+	if err != nil {
+		t.Fatalf("glob %s: %v", dir, err)
+	}
+	seen := map[string]bool{}
+	queue := append([]string(nil), specs...)
+	var out []string
+	for len(queue) > 0 {
+		f := queue[0]
+		queue = queue[1:]
+		if seen[f] {
+			continue
+		}
+		seen[f] = true
+		out = append(out, f)
+		raw, err := os.ReadFile(f) // #nosec G304 -- path comes from the glob above or a resolved relative import inside the repo
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		for _, m := range tsRelativeImportRE.FindAllStringSubmatch(string(raw), -1) {
+			base := filepath.Join(filepath.Dir(f), m[1])
+			for _, cand := range []string{base, base + ".ts", filepath.Join(base, "index.ts")} {
+				if !strings.HasSuffix(cand, ".ts") {
+					continue
+				}
+				if st, err := os.Stat(cand); err == nil && !st.IsDir() {
+					queue = append(queue, cand)
+					break
+				}
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // isCoveredByPrefix reports whether route is covered by anything in found:
@@ -436,4 +486,34 @@ func TestRouteCoverageRatchet_SelfTest(t *testing.T) {
 			t.Fatalf("want 0 -- a non-mutating, non-secret-disclosing route is out of scope, got: %v", failures)
 		}
 	})
+}
+
+// TestPlaywrightScanFiles_FollowsSpecImports pins the helper-import behavior
+// against a synthetic web/e2e/real tree: a helper a spec imports is scanned
+// (transitively), a helper nothing imports is not.
+func TestPlaywrightScanFiles_FollowsSpecImports(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, body string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.spec.ts", "import { login } from './helpers';\n")
+	write("helpers.ts", "import { post } from \"./deep.ts\";\nexport const x = 1;\n")
+	write("deep.ts", "export const y = '/auth/login';\n")
+	write("orphan.ts", "export const z = '/auth/orphan';\n")
+
+	got := map[string]bool{}
+	for _, f := range playwrightScanFiles(t, dir) {
+		got[filepath.Base(f)] = true
+	}
+	for _, want := range []string{"a.spec.ts", "helpers.ts", "deep.ts"} {
+		if !got[want] {
+			t.Errorf("%s not scanned; got %v", want, got)
+		}
+	}
+	if got["orphan.ts"] {
+		t.Errorf("orphan.ts is imported by no spec and must not be credited; got %v", got)
+	}
 }

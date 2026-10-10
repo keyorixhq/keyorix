@@ -15,6 +15,19 @@ make build
 Produces `./bin/keyorix` (CLI) and `./bin/keyorix-server` (API server).
 Go 1.23+ and a C toolchain for SQLite are the only requirements.
 
+`make build` does **not** include the web UI: the server then logs
+`Web UI not bundled in this build; serving API only` and shows a placeholder page
+at `/`. To get the UI, build it first (needs Node and `pnpm`) and then build
+again:
+
+```bash
+make build-ui
+make build
+```
+
+Everything below works with the CLI alone. The Docker demo (`scripts/demo/up.sh`)
+already bundles the UI.
+
 ## Initialise the server host
 
 `keyorix-server admin init` writes a config file, and creates the encryption key
@@ -94,12 +107,26 @@ call. Without `KEYORIX_BOOTSTRAP_TOKEN` set before the server starts, the server
 generates and logs a random token instead — pass that one to `--bootstrap-token`.
 
 - Health: <http://localhost:8080/health>
-- OpenAPI spec: <http://localhost:8080/openapi.yaml>
-- Swagger UI: <http://localhost:8080/swagger/> — only when `server.http.swagger_enabled: true`
+- OpenAPI spec: <http://localhost:8080/openapi.yaml> — only when
+  `server.http.swagger_enabled: true` in `keyorix.yaml` (otherwise it returns 404)
+- Swagger UI: <http://localhost:8080/swagger/> — same setting
 
 TLS is off in the generated config. Turn it on, or front the server with a
 TLS-terminating proxy, before anything reaches a network you do not control.
 `security.require_transport_tls` makes that failure loud instead of silent.
+
+What you will see on first start, and what it means:
+
+- **Three `WARNING` lines about cleartext transport and `trusted_proxies`.**
+  Expected with the generated config: TLS is off and no reverse proxy is
+  trusted. Fine on one machine; act on them before exposing the server.
+- **`Automatic file-permission fixing is on (security.auto_fix_file_permissions ...)`.**
+  Informational. The generated config turns the setting on, so it is printed on
+  every start. A permission change is reported separately as `[FIXED] <path>`; if
+  there is no such line, nothing was changed. Set the option to `false` in
+  `keyorix.yaml` to silence it.
+- **`storage: opening existing SQLite database ...` several times** from every
+  `admin` command. Harmless, including after a brand-new `admin init`.
 
 For Postgres instead of SQLite, `docker compose up -d postgres` starts one, and
 `configs/dev.yaml` shows the connection block.
@@ -115,8 +142,23 @@ Stores the session token (and server URL) at the CLI's one credential-file
 location — see `keyorix status --help`. Every command below reads it from there;
 none of them take `--server` again.
 
-If the account has an authenticator app enrolled (TOTP MFA), `login` asks for a
-code after the password — or pass one non-interactively:
+## Enrol MFA (required on first login)
+
+`security.require_mfa` defaults on (ADR-112): until the admin enrols a second
+factor, this session can only reach the enrolment endpoints — every command in
+"Use it" below returns `This deployment requires multi-factor authentication`.
+Enrol once, right after the first login:
+
+```bash
+./bin/keyorix mfa enroll        # prints an otpauth:// URI (QR) and a base32 secret
+./bin/keyorix mfa activate      # prompts for the code your authenticator app shows, then your password
+```
+
+In the web UI the same step is Profile → Security → Enable (TOTP) or a passkey.
+
+Save the recovery codes `mfa activate` prints — they are shown once. Enabling
+MFA invalidates the session from the first `login` above, so log in again;
+`login` now asks for a code after the password — or pass one non-interactively:
 
 ```bash
 ./bin/keyorix login --server http://localhost:8080 \
@@ -127,6 +169,8 @@ An unused recovery code works there too. Either is used for that one request:
 only the session token is stored. An account whose only second factor is a
 WebAuthn passkey cannot complete a CLI login — sign in with the web UI and use a
 personal access token (`KEYORIX_TOKEN`) for CLI work instead.
+
+(To opt out, set `security.require_mfa: false` explicitly in the config.)
 
 ## Use it
 
