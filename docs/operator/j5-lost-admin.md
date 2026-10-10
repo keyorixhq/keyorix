@@ -75,7 +75,7 @@ to be running when you do this.
 
 ```bash
 KEYORIX_CONFIG_PATH=./keyorix.yaml keyorix-server     # the server has no --config flag
-keyorix login --server http://localhost:8080 --username admin --password '_M2vVfCk4K*6%x4v7uKt'
+keyorix login --server http://localhost:8080 --username admin   # paste the one-time password at the hidden prompt
 ```
 
 Expected: `Logged in to http://localhost:8080 as admin.` The account is still
@@ -96,11 +96,12 @@ change it — confirmed live: `keyorix secret list` right after this login retur
 ## 4. Set a real password
 
 ```bash
-keyorix change-password --current-password '_M2vVfCk4K*6%x4v7uKt' --new-password 'a-real-strong-password-you-choose'
+keyorix change-password
 ```
 
-Omit either flag to be prompted for it instead (no terminal echo, and it confirms the new
-password before submitting). Expected: `Password changed. Every other active session for
+You are prompted for the current (one-time) password and the new one (no terminal echo, and it
+confirms the new password before submitting); `--current-password` / `--new-password` exist but
+put the passwords in your shell history and process list. Expected: `Password changed. Every other active session for
 this account has been revoked.` From this point on, `keyorix secret list` (and everything
 else) works normally — confirmed live: logging in again with the OLD one-time password now
 returns `401` (it was superseded), and logging in with the new password succeeds with full
