@@ -14,6 +14,7 @@ package main
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/pem"
 	"fmt"
 	"io"
 	"net/http"
@@ -280,4 +281,86 @@ func getStatus(t *testing.T, client *http.Client, url, bearer string) int {
 	}
 	_ = resp.Body.Close()
 	return resp.StatusCode
+}
+
+// TestAdminInitSecureFiles_GeneratesOnlyMissingReferencedFiles: the container
+// entrypoint's explicit opt-in (KEYORIX_INIT_SECURE_FILES=true) for an
+// orchestrator-supplied config with absolute paths. It creates exactly the
+// files the config references, with the extra DNS name, keeps them on a second
+// run, and never writes the config or anything else.
+func TestAdminInitSecureFiles_GeneratesOnlyMissingReferencedFiles(t *testing.T) {
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	env := baseEnv(dir)
+	tlsDir := filepath.Join(dir, "tls")
+	cfg := fmt.Sprintf(`server:
+  http:
+    enabled: true
+    port: "8080"
+    tls:
+      enabled: true
+      cert_file: %[1]q
+      key_file: %[2]q
+    metrics_token_file: %[3]q
+storage:
+  type: sqlite
+  database:
+    path: keyorix.db
+`, filepath.Join(tlsDir, "server.crt"), filepath.Join(tlsDir, "server.key"), filepath.Join(tlsDir, "metrics_token"))
+	cfgPath := filepath.Join(dir, "keyorix.yaml")
+	if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--secure-files", "--config", "./missing.yaml"); err == nil {
+		t.Fatalf("--secure-files without an existing config succeeded:\n%s", out)
+	}
+
+	out, err := runAdmin(t, bin, dir, env, "init", "--secure-files", "--tls-dns-name", "backend", "--config", "./keyorix.yaml")
+	if err != nil {
+		t.Fatalf("admin init --secure-files: %v\n%s", err, out)
+	}
+	first := map[string][]byte{}
+	for _, name := range []string{"server.crt", "server.key", "metrics_token"} {
+		p := filepath.Join(tlsDir, name)
+		info, err := os.Stat(p)
+		if err != nil {
+			t.Fatalf("--secure-files did not create %s: %v", name, err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Errorf("%s has mode %04o, want 0600", name, info.Mode().Perm())
+		}
+		first[name], _ = os.ReadFile(p)
+	}
+	if strings.Contains(out, strings.TrimSpace(string(first["metrics_token"]))) || strings.Contains(out, "PRIVATE KEY") {
+		t.Fatalf("--secure-files printed secret material:\n%s", out)
+	}
+	block, _ := pem.Decode(first["server.crt"])
+	if block == nil {
+		t.Fatal("server.crt is not PEM")
+	}
+	cert, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cert.VerifyHostname("backend"); err != nil {
+		t.Errorf("generated certificate does not cover --tls-dns-name backend: %v", err)
+	}
+	if raw, _ := os.ReadFile(cfgPath); string(raw) != cfg {
+		t.Error("--secure-files changed the config")
+	}
+	for _, rel := range []string{"keyorix.db", "keys", "certs", "secrets"} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err == nil {
+			t.Errorf("--secure-files created %s; it must only generate the referenced files", rel)
+		}
+	}
+
+	if out, err := runAdmin(t, bin, dir, env, "init", "--secure-files", "--config", "./keyorix.yaml"); err != nil {
+		t.Fatalf("second --secure-files run: %v\n%s", err, out)
+	}
+	for name, want := range first {
+		if got, _ := os.ReadFile(filepath.Join(tlsDir, name)); string(got) != string(want) {
+			t.Errorf("second --secure-files run replaced %s", name)
+		}
+	}
 }
