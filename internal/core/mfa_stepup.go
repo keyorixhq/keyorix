@@ -32,7 +32,7 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	if !user.MFAEnabled {
-		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix auth mfa enroll' first")
+		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix mfa enroll' first")
 	}
 
 	// storageErr distinguishes a genuine storage-read/write failure from a
@@ -55,8 +55,17 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("invalid code")
 	}
 
+	// From here on the submitted code has been found CORRECT (and consumed). Any
+	// failure now must be reported as ErrMFAVerificationStorageFailure, which the
+	// handler answers byte-for-byte like a wrong code: a different message (the
+	// raw storage error, "unable to verify account lock state", "failed to record
+	// MFA step-up") would confirm a correct guess and expose storage detail. The
+	// real cause goes to the server log, not the caller or the audit trail: an
+	// audit row here would also add an AuditEvent to the by-design diff of
+	// oracleAByDesignErrors' stepup/CreateMFAStepUpGrant row (#2740 option C).
 	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return err
+		log.Printf("SECURITY: MFA step-up for user %d: code verified but the lockout re-check failed (reported to the caller as an invalid code): %v", userID, err)
+		return fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
 	grant := &models.MFAStepUpGrant{
@@ -65,7 +74,8 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
 	}
 	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
-		return fmt.Errorf("failed to record MFA step-up: %w", err)
+		log.Printf("SECURITY: MFA step-up for user %d: code verified but the grant could not be recorded (reported to the caller as an invalid code): %v", userID, err)
+		return fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	uid := userID
 	c.writeAuditEvent(ctx, "mfa.stepup_verified", &uid, nil,
