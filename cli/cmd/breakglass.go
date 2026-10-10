@@ -101,7 +101,7 @@ func runBGActivate(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.Activation == nil {
-		return fmt.Errorf("activate break-glass failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("activate break-glass failed", resp.StatusCode(), resp.Body)
 	}
 	a := resp.JSON201.Data.Activation
 	fmt.Printf("Emergency access activated (id=%d): role %q until %s.\n",
@@ -151,7 +151,7 @@ func runBGRevoke(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("revoke break-glass activation failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("revoke break-glass activation failed", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Revoked break-glass activation %d in project %d.\n", bgActivation, bgProject)
 	return nil

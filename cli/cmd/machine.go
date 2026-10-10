@@ -71,7 +71,7 @@ func fetchMachineIdentities(client *apiclient.ClientWithResponses, projectID int
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.MachineIdentities == nil {
 		if resp.StatusCode() != 200 {
-			return nil, fmt.Errorf("failed to list machine identities: HTTP %d", resp.StatusCode())
+			return nil, httpStatusError("failed to list machine identities", resp.StatusCode(), resp.Body)
 		}
 		return nil, nil
 	}
@@ -158,7 +158,7 @@ func runMachineCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create machine identity: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.MachineIdentity == nil {
-		return fmt.Errorf("failed to create machine identity: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to create machine identity", resp.StatusCode(), resp.Body)
 	}
 	m := *resp.JSON201.Data.MachineIdentity
 	fmt.Printf("Machine identity created: id=%d name=%q type=%s state=%s\n",

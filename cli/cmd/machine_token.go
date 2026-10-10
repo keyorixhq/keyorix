@@ -95,7 +95,7 @@ func runMachineTokenIssue(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to issue machine token: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to issue machine token: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to issue machine token", resp.StatusCode(), resp.Body)
 	}
 	data := *resp.JSON201.Data
 	fmt.Println("Machine token issued. Copy it now — it will not be shown again.")
@@ -130,7 +130,7 @@ func runMachineTokenList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list machine tokens: %w", err)
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("failed to list machine tokens: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list machine tokens", resp.StatusCode(), resp.Body)
 	}
 	var rows []apiclient.MachineToken
 	if resp.JSON200 != nil && resp.JSON200.Data != nil && resp.JSON200.Data.Tokens != nil {
@@ -192,7 +192,7 @@ func runMachineTokenRevoke(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to revoke machine token: %w", err)
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("failed to revoke machine token: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to revoke machine token", resp.StatusCode(), resp.Body)
 	}
 	fmt.Println("Machine token revoked.")
 	return nil

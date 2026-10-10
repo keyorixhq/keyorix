@@ -67,7 +67,7 @@ func runMFAStepUp(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("contact %s: %w", serverURL, err)
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("MFA step-up failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("MFA step-up failed", resp.StatusCode(), resp.Body)
 	}
 
 	fmt.Println("MFA step-up verified. Restricted secrets are accessible for 15 minutes.")

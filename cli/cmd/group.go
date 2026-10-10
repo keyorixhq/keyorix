@@ -83,7 +83,7 @@ func runGroupCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create group: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to create group: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to create group", resp.StatusCode(), resp.Body)
 	}
 	g := *resp.JSON201.Data
 	fmt.Printf("Group created: id=%d name=%s\n", derefInt(g.Id), derefStr(g.Name))
@@ -118,7 +118,7 @@ func runGroupGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get group: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to get group: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to get group", resp.StatusCode(), resp.Body)
 	}
 	g := *resp.JSON200.Data
 	fmt.Printf("ID: %d\nName: %s\nDescription: %s\n", derefInt(g.Id), derefStr(g.Name), derefStr(g.Description))
@@ -171,7 +171,7 @@ func runGroupUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update group: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to update group: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to update group", resp.StatusCode(), resp.Body)
 	}
 	g := *resp.JSON200.Data
 	fmt.Printf("Group updated: id=%d name=%s\n", derefInt(g.Id), derefStr(g.Name))
@@ -230,7 +230,7 @@ func runGroupDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete group: %w", err)
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("failed to delete group: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to delete group", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Deleted %s.\n", label)
 	return nil
@@ -269,7 +269,7 @@ func runGroupList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list groups: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to list groups: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list groups", resp.StatusCode(), resp.Body)
 	}
 	groups := derefGroupSlice(resp.JSON200.Data.Groups)
 	fmt.Printf("%-6s %-25s %s\n", "ID", "NAME", "DESCRIPTION")
@@ -307,7 +307,7 @@ func runGroupMembers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list members: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to list members: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list members", resp.StatusCode(), resp.Body)
 	}
 	members := derefUserSummarySlice(resp.JSON200.Data.Members)
 	fmt.Printf("Group %d — %d member(s)\n", groupMembersID, len(members))
@@ -356,7 +356,7 @@ func runGroupAddMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to add member: %w", err)
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("failed to add member: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to add member", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("User %d added to group %d (project %d).\n", groupAddMemberUserID, groupAddMemberGroupID, groupAddMemberProjectID)
 	return nil
@@ -400,7 +400,7 @@ func runGroupRemoveMember(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to remove member: %w", err)
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("failed to remove member: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to remove member", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("User %d removed from group %d (project %d).\n", groupRemoveMemberUserID, groupRemoveMemberGroupID, groupRemoveMemberProjectID)
 	return nil

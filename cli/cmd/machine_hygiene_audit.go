@@ -61,7 +61,7 @@ func runMachineTokenHygiene(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("machine token hygiene failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("machine token hygiene failed", resp.StatusCode(), resp.Body)
 	}
 	var rows []apiclient.MachineTokenHygieneRow
 	if resp.JSON200 != nil && resp.JSON200.Data != nil && resp.JSON200.Data.Tokens != nil {
@@ -105,7 +105,7 @@ func runMachineAudit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to fetch machine audit report: %w", err)
 	}
 	if resp.StatusCode() != 200 || resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to fetch machine audit report: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to fetch machine audit report", resp.StatusCode(), resp.Body)
 	}
 	report := *resp.JSON200.Data
 	switch machineAuditFormat {
