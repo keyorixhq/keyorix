@@ -637,7 +637,9 @@ func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge,
 	// Record the MFA step-up window when the classification gate requires it,
 	// matching the existing TOTP path in VerifyMFALogin.
 	if c.classificationRestrictedRequiresMFAStepUp {
-		_ = c.storage.UpsertMFAStepupToken(ctx, ch.UserID, c.now().Add(c.mfaStepUpWindow()))
+		besteffort.Run(ctx, "webauthn.FinishWebAuthnLogin.UpsertMFAStepupToken", func() error {
+			return c.storage.UpsertMFAStepupToken(ctx, ch.UserID, c.now().Add(c.mfaStepUpWindow()))
+		})
 	}
 	// Also mint a genuine MFAStepUpGrant, unconditionally (not gated behind
 	// classificationRestrictedRequiresMFAStepUp, matching the pre-existing
@@ -651,10 +653,16 @@ func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge,
 	// proving possession of the second factor at the moment of a
 	// takeover-grade change. THIS purpose separation — not gating the write —
 	// is the fix for the confused-deputy bug this grant used to enable.
-	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
-		UserID:    ch.UserID,
-		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
-		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	//
+	// Panic-safe as well as error-tolerant: this runs after the session is
+	// written, and a panic escaping here reported the login as failed while
+	// the session stayed live (#2844, CreateMFAStepUpGrant#1/panic).
+	besteffort.Run(ctx, "webauthn.FinishWebAuthnLogin.CreateMFAStepUpGrant", func() error {
+		return c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+			UserID:    ch.UserID,
+			Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
+			ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+		})
 	})
 	uid := ch.UserID
 	c.writeAuditEventFull(ctx, "webauthn.login_verified", &uid, nil, nil, ip,
@@ -794,17 +802,25 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context
 	// Record the MFA step-up window when the classification gate requires it,
 	// matching both VerifyMFALogin and FinishWebAuthnLogin.
 	if c.classificationRestrictedRequiresMFAStepUp {
-		_ = c.storage.UpsertMFAStepupToken(ctx, resolved.ID, c.now().Add(c.mfaStepUpWindow()))
+		besteffort.Run(ctx, "webauthn.FinishWebAuthnPasswordlessLogin.UpsertMFAStepupToken", func() error {
+			return c.storage.UpsertMFAStepupToken(ctx, resolved.ID, c.now().Add(c.mfaStepUpWindow()))
+		})
 	}
 	// Also mint a genuine MFAStepUpGrant, unconditionally (matching the
 	// pre-existing behavior this fix does not change) — see the identical
 	// comment in FinishWebAuthnLogin for why this purpose does NOT satisfy
 	// requireReauth (that requires MFAStepUpPurposeReauth, minted only by
 	// FinishWebAuthnReauth's live re-assertion). Best-effort.
-	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
-		UserID:    resolved.ID,
-		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
-		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	//
+	// Panic-safe as well as error-tolerant: this runs after the session is
+	// written, and a panic escaping here reported the login as failed while
+	// the session stayed live (#2844, CreateMFAStepUpGrant#1/panic).
+	besteffort.Run(ctx, "webauthn.FinishWebAuthnPasswordlessLogin.CreateMFAStepUpGrant", func() error {
+		return c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+			UserID:    resolved.ID,
+			Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
+			ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+		})
 	})
 	uid := resolved.ID
 	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,

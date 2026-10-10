@@ -170,6 +170,7 @@ const EnrollModal: React.FC<{ isOpen: boolean; onClose: () => void }> = ({ isOpe
                                     Setup key
                                 </p>
                                 <code
+                                    data-testid="mfa-setup-key"
                                     className="block break-all rounded-md p-3 text-sm"
                                     style={{
                                         backgroundColor: 'var(--bg-subtle)',

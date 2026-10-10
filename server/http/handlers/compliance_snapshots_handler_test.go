@@ -21,15 +21,32 @@ func newSnapshotHandlerDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Project{},
-		&models.Environment{}, &models.SecretNode{}, &models.RotationPolicy{},
-		&models.AuditEvent{}, &models.AnomalyAlert{}, &models.LegalHold{},
-		&models.SoDPolicy{}, &models.AccessReviewCampaign{}, &models.AccessReviewItem{},
-		&models.BreakGlassActivation{}, &models.AccessRequest{}, &models.RiskException{},
-		&models.CompliancePostureSnapshot{},
-	))
+	// Full schema: a posture sub-rollup that cannot be read degrades the posture,
+	// and a degraded posture is never snapshotted (#2834).
+	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	return db
+}
+
+// #2834: a degraded posture (here: the legal-hold table is gone) must NOT yield
+// a success response or a persisted row; the response carries a reason.
+func TestTakeComplianceSnapshot_HandlerDegradedFailsClosed_2834(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db := newSnapshotHandlerDB(t)
+	require.NoError(t, db.Exec("DROP TABLE legal_holds").Error)
+	h := NewDashboardHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+
+	w := httptest.NewRecorder()
+	h.TakeComplianceSnapshot(w, httptest.NewRequest(http.MethodPost, "/api/v1/compliance/snapshots", nil))
+
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
+	assert.Contains(t, w.Body.String(), "legal_hold", "the response must say which area was unreadable")
+	assert.NotContains(t, w.Body.String(), "no such table", "raw storage error text must not reach the client")
+	var n int64
+	require.NoError(t, db.Model(&models.CompliancePostureSnapshot{}).Count(&n).Error)
+	assert.Zero(t, n, "no snapshot row may be persisted")
+	var audits int64
+	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", core.EventComplianceSnapshotTaken).Count(&audits).Error)
+	assert.Zero(t, audits, "no compliance.snapshot_taken event on a failed snapshot")
 }
 
 func TestTakeComplianceSnapshot_HandlerSuccess(t *testing.T) {

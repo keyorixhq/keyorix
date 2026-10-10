@@ -5,28 +5,23 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
-
-var retentionOverrideDBCounter atomic.Int64
 
 // freshRetentionHandlerFixture opens a unique in-memory SQLite DB, migrates
 // models, seeds one user + project + env + secret, and returns the handler and
@@ -37,10 +32,7 @@ func freshRetentionHandlerFixture(t *testing.T) (*SecretHandler, uint) {
 	cfg := &config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}
 	require.NoError(t, i18n.Initialize(cfg))
 
-	n := retentionOverrideDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_ret_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_ret_")
 
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
@@ -264,10 +256,7 @@ func TestSetRetentionOverride_StorageError_500(t *testing.T) {
 	cfg := &config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}
 	require.NoError(t, i18n.Initialize(cfg))
 
-	n := retentionOverrideDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_ret_500_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_ret_500_")
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}))
 
 	st := store.NewLocalStorage(db)

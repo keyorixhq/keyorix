@@ -87,7 +87,7 @@ func runSecretBulkRotate(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("bulk rotate: HTTP %d", resp.StatusCode())
+		return httpStatusError("bulk rotate", resp.StatusCode(), resp.Body)
 	}
 	result := resp.JSON200.Data
 	triggered, failed := 0, 0
@@ -167,7 +167,7 @@ func listSecretNameIndex(ctx context.Context, client *apiclient.ClientWithRespon
 		return nil, err
 	}
 	if resp.StatusCode() != 200 {
-		return nil, fmt.Errorf("list secrets: HTTP %d", resp.StatusCode())
+		return nil, httpStatusError("list secrets", resp.StatusCode(), resp.Body)
 	}
 	var body struct {
 		Data struct {
@@ -248,7 +248,7 @@ func runSecretBulkRename(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("bulk rename: HTTP %d", resp.StatusCode())
+		return httpStatusError("bulk rename", resp.StatusCode(), resp.Body)
 	}
 	report := resp.JSON200.Data
 
@@ -377,7 +377,7 @@ func runSecretBulkDelete(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("bulk delete: HTTP %d", resp.StatusCode())
+		return httpStatusError("bulk delete", resp.StatusCode(), resp.Body)
 	}
 	result := resp.JSON200.Data
 	deleted := 0
