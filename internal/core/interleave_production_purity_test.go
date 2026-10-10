@@ -78,6 +78,7 @@ var interleaveSyncPointIdents = []string{
 	"interleavePauseA",
 	"interleavePauseB",
 	"requireForced",
+	"removeFn",
 	// The GORM callback-name prefix every sync point registers under. A
 	// production file registering a callback under this prefix would be a
 	// production-timing change even if it reused none of the identifiers.

@@ -265,3 +265,108 @@ func TestReconcileExpiredBreakGlassActivation_NoMatchIsNoop(t *testing.T) {
 	ls := newBreakGlassStore(t)
 	require.NoError(t, ls.ReconcileExpiredBreakGlassActivation(context.Background(), 404, 404))
 }
+
+// ReviewBreakGlassActivation records the reviewer, timestamp, and note.
+func TestReviewBreakGlassActivation_RecordsReviewerAndNote(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	ctx := context.Background()
+	activation, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "active",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	require.NoError(t, ls.ReviewBreakGlassActivation(ctx, activation.ID, 99, "checked the justification, looks legitimate", now))
+
+	var got models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&got, activation.ID).Error)
+	assert.Equal(t, uint(99), got.ReviewedBy)
+	assert.Equal(t, "checked the justification, looks legitimate", got.ReviewNote)
+	require.NotNil(t, got.ReviewedAt)
+	assert.Equal(t, now, got.ReviewedAt.UTC())
+}
+
+// A second review attempt on an already-reviewed activation is refused with
+// ErrBreakGlassAlreadyReviewed, not a silent overwrite of the first review.
+func TestReviewBreakGlassActivation_SecondAttemptIsRefused(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	ctx := context.Background()
+	activation, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "active",
+	})
+	require.NoError(t, err)
+
+	now := time.Now().UTC()
+	require.NoError(t, ls.ReviewBreakGlassActivation(ctx, activation.ID, 99, "first review", now))
+
+	err = ls.ReviewBreakGlassActivation(ctx, activation.ID, 100, "second review attempt", now)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, storage.ErrBreakGlassAlreadyReviewed)
+
+	// The first review must be untouched.
+	var got models.BreakGlassActivation
+	require.NoError(t, ls.db.First(&got, activation.ID).Error)
+	assert.Equal(t, uint(99), got.ReviewedBy)
+	assert.Equal(t, "first review", got.ReviewNote)
+}
+
+// A review is allowed regardless of the activation's state -- a revoked
+// activation can still (and should) be reviewed.
+func TestReviewBreakGlassActivation_AllowedOnRevokedActivation(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	ctx := context.Background()
+	activation, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "revoked",
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, ls.ReviewBreakGlassActivation(ctx, activation.ID, 99, "reviewed after revoke", time.Now().UTC()))
+}
+
+// Reviewing a nonexistent activation ID is a no-op error (RowsAffected==0),
+// same shape as RevokeBreakGlassActivation's own not-found handling.
+func TestReviewBreakGlassActivation_NonexistentID(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	err := ls.ReviewBreakGlassActivation(context.Background(), 404, 99, "no such activation", time.Now().UTC())
+	require.Error(t, err)
+	assert.ErrorIs(t, err, storage.ErrBreakGlassAlreadyReviewed)
+}
+
+// ListUnreviewedBreakGlassActivationsBefore returns only unreviewed rows at
+// or before cutoff, across every project, oldest first.
+func TestListUnreviewedBreakGlassActivationsBefore_FiltersCorrectly(t *testing.T) {
+	ls := newBreakGlassStore(t)
+	ctx := context.Background()
+
+	old, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 1, UserID: 10, RoleID: 3, RoleName: "editor", State: "active",
+	})
+	require.NoError(t, err)
+	require.NoError(t, ls.db.Model(&models.BreakGlassActivation{}).Where("id = ?", old.ID).
+		Update("created_at", time.Now().UTC().Add(-48*time.Hour)).Error)
+
+	recent, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 2, UserID: 11, RoleID: 4, RoleName: "viewer", State: "active",
+	})
+	require.NoError(t, err)
+
+	reviewed, err := ls.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+		ProjectID: 3, UserID: 12, RoleID: 5, RoleName: "editor", State: "active",
+	})
+	require.NoError(t, err)
+	require.NoError(t, ls.db.Model(&models.BreakGlassActivation{}).Where("id = ?", reviewed.ID).
+		Update("created_at", time.Now().UTC().Add(-48*time.Hour)).Error)
+	require.NoError(t, ls.ReviewBreakGlassActivation(ctx, reviewed.ID, 99, "already handled", time.Now().UTC()))
+
+	cutoff := time.Now().UTC().Add(-24 * time.Hour)
+	rows, err := ls.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+	require.NoError(t, err)
+
+	var gotIDs []uint
+	for _, r := range rows {
+		gotIDs = append(gotIDs, r.ID)
+	}
+	assert.Contains(t, gotIDs, old.ID, "old + unreviewed must appear")
+	assert.NotContains(t, gotIDs, recent.ID, "recent (not yet past the cutoff) must not appear")
+	assert.NotContains(t, gotIDs, reviewed.ID, "already-reviewed must not appear even though it's old")
+}

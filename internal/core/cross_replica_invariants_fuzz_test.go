@@ -880,6 +880,16 @@ func g4CheckInvariants(t testing.TB, w *g4World) {
 // returning it as a violation string would let a typo'd column name read as a
 // real finding.
 func g4FindViolation(t testing.TB, w *g4World) string {
+	if v := g4FindStateViolation(t, w); v != "" {
+		return v
+	}
+	return g4FindAuditChainViolation(t, w)
+}
+
+// g4FindStateViolation is g4FindViolation minus the audit-chain check — the
+// bounded, per-run half. See g4FindAuditChainViolation for why the split
+// exists.
+func g4FindStateViolation(t testing.TB, w *g4World) string {
 	t.Helper()
 	ctx := context.Background()
 
@@ -1011,13 +1021,6 @@ func g4FindViolation(t testing.TB, w *g4World) string {
 		return fmt.Sprintf("GLOBAL INVARIANT VIOLATED (#2651 class): %d enabled dynamic-secret config(s) exist under a soft-deleted project", enabledConfigUnderDeletedProject)
 	}
 
-	// 13. the audit hash chain still verifies end to end (ADR-029).
-	v, err := w.c0.VerifyAuditChain(ctx)
-	require.NoError(t, err)
-	if !v.Valid {
-		return fmt.Sprintf("GLOBAL INVARIANT VIOLATED: audit hash chain broken: %s (first broken id=%v)", v.Reason, v.FirstBrokenID)
-	}
-
 	// 14. a password hash a successful ChangePassword superseded is never the
 	// stored hash again (#2654 class). GUARD-5 addition: invariant 7 above
 	// watches account_state, which is #2653's half of that pair and says
@@ -1050,6 +1053,31 @@ func g4FindViolation(t testing.TB, w *g4World) string {
 		}
 	}
 
+	return ""
+}
+
+// g4FindAuditChainViolation checks invariant 13 (the audit hash chain verifies
+// end to end, ADR-029) on its own.
+//
+// Split out of g4FindViolation (GUARD-5 item 3) because it is the one
+// invariant whose cost grows with the audit log, and the audit log grows
+// monotonically for the life of a world. Every other invariant is a bounded
+// indexed query; this one re-hashes every row. Checking it after each of the
+// ordering sweep's 174 runs made the sweep quadratic and it blew the 60-minute
+// test timeout without finishing. The sweep calls g4FindStateViolation
+// per-run and this one ONCE at the end instead — so a broken chain is still
+// caught, just not re-verified 174 times.
+//
+// The per-issue regression tests and the fuzz target keep checking it every
+// time, which is where per-operation granularity actually matters: there, a
+// chain break needs to be attributable to one pair.
+func g4FindAuditChainViolation(t testing.TB, w *g4World) string {
+	t.Helper()
+	v, err := w.c0.VerifyAuditChain(context.Background())
+	require.NoError(t, err)
+	if !v.Valid {
+		return fmt.Sprintf("GLOBAL INVARIANT VIOLATED: audit hash chain broken: %s (first broken id=%v)", v.Reason, v.FirstBrokenID)
+	}
 	return ""
 }
 

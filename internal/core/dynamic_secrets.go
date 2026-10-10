@@ -434,6 +434,37 @@ func (c *KeyorixCore) SetDynamicSecretConfigEnabled(ctx context.Context, actorID
 	if cfg.Disabled == disabled {
 		return cfg, nil // no-op
 	}
+	// #2806: ENABLING requires the parent project to be live. #369's rule is
+	// that a project's configs stay disabled across a delete AND across a
+	// later RestoreProject, so that re-enabling one is always a fresh,
+	// deliberate, audited decision taken while the project is live. Without
+	// this check that decision can be taken while the project is soft-deleted
+	// — invisible in every project-scoped view — and it then takes effect
+	// silently the moment someone restores the project, with no
+	// re-authorization at that point and nothing in the restore's own audit
+	// trail about a credential-minting config coming back. Same shape as
+	// #370's "a share silently reactivates on restore".
+	//
+	// GetProject is soft-delete-scoped, which is what makes this a liveness
+	// check and not merely an existence check.
+	//
+	// Checked BEFORE the write and not after, unlike the parent-liveness
+	// checks #2675 adds at the storage layer (lockLiveParent, write-then-
+	// re-read-under-FOR-SHARE). That asymmetry is deliberate: those guard a
+	// RACE against a concurrent cascade, where checking first leaves a window
+	// for the cascade to run entirely between check and write. This one
+	// guards a SERIAL path — one API call, no concurrency — so a pre-check is
+	// sufficient and is the readable place for it. The racing case for this
+	// same column is #2651's, and it is fixed separately in #2675.
+	//
+	// DISABLING is deliberately NOT gated: it is the safe direction, and
+	// refusing it would make a deleted project's configs un-disableable,
+	// which is strictly worse than the bug. One direction narrowed, not both.
+	if enabled {
+		if _, perr := c.storage.GetProject(ctx, cfg.ProjectID); perr != nil {
+			return nil, fmt.Errorf("cannot enable a dynamic-secret config under project %d: project not found or deleted — restore the project first", cfg.ProjectID)
+		}
+	}
 	old := cfg.Disabled
 	cfg.Disabled = disabled
 	cfg.UpdatedAt = c.now()

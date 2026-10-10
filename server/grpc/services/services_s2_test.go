@@ -249,7 +249,7 @@ func TestMapRoleError_BuiltIn(t *testing.T) {
 // --- breakGlassError ---
 
 func TestBreakGlassError_NotFound(t *testing.T) {
-	err := breakGlassError(errors.New("activation not found"))
+	err := breakGlassError(errBGNotFound)
 	st, _ := status.FromError(err)
 	if st.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", st.Code())
@@ -257,7 +257,7 @@ func TestBreakGlassError_NotFound(t *testing.T) {
 }
 
 func TestBreakGlassError_Justification(t *testing.T) {
-	err := breakGlassError(errors.New("justification is required"))
+	err := breakGlassError(errBGInvalidRequest)
 	st, _ := status.FromError(err)
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
@@ -265,7 +265,7 @@ func TestBreakGlassError_Justification(t *testing.T) {
 }
 
 func TestBreakGlassError_PermissionDenied(t *testing.T) {
-	err := breakGlassError(errors.New("permission denied to activate break-glass"))
+	err := breakGlassError(errBGNotMember)
 	st, _ := status.FromError(err)
 	if st.Code() != codes.PermissionDenied {
 		t.Errorf("expected PermissionDenied, got %v", st.Code())
@@ -273,7 +273,7 @@ func TestBreakGlassError_PermissionDenied(t *testing.T) {
 }
 
 func TestBreakGlassError_AlreadyRevoked(t *testing.T) {
-	err := breakGlassError(errors.New("already revoked"))
+	err := breakGlassError(errBGNotActive)
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())

@@ -364,12 +364,40 @@ secrets:
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 
+**Both `enable_file_permission_check` and `require_mfa` default to `true` when
+omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
+from its first start with no config changes needed: the first admin to log in is
+asked to enrol MFA (TOTP or passkey) before doing anything else, and a problem
+with the encryption key material or the database file (missing, undersized,
+readable beyond its owner) refuses to start. The config file and TLS cert/key —
+inputs an orchestrator usually mounts (a Kubernetes ConfigMap/Secret is
+root-owned 0644 by default) — only get a warning naming the file, the mismatch
+and the fix while the key is left at its default; set
+`enable_file_permission_check: true` explicitly to refuse on those too.
+
+**Upgrading an existing deployment** that never set
+`enable_file_permission_check`: the server tells a fresh install from an upgrade
+by its database (users already exist). An upgrade gets a grace period — a
+problem the startup checks find is logged as a loud `ADR-112` warning instead of
+refusing to start. The grace period ends for good the first time the deployment
+boots with the checks passing (recorded in the database as
+`adr112.file_permission_check.enforced`); from then on it fails closed like a
+fresh install. Setting the key explicitly (`true`, or `false` to opt out
+visibly) also ends it.
+
+`require_mfa` on an upgraded deployment that never set it gets the same kind of
+grace period: MFA is **not** enforced yet, and every start logs a loud `ADR-112
+grace period` warning. Have every interactive admin enrol, then set
+`require_mfa: true` explicitly to enforce it (or `false` to opt out visibly). A
+fresh install is enforced from its first start and recorded in the database
+(`adr112.require_mfa.enforced`), so it stays enforced after its admins exist.
+
 ```yaml
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
   allow_unsafe_file_permissions: false
-  require_mfa: false              # true = mandate a second factor for interactive login
+  require_mfa: true               # false = don't mandate a second factor for interactive login
   login_lockout:
     enabled: false                # opt-in per-account lockout (brute-force protection)
     max_attempts: 5               # failed password logins within the window before locking
@@ -378,11 +406,42 @@ security:
     max_cooldown: "1h"            # ceiling for the exponential backoff
 ```
 
-With `require_mfa: true`, an interactive (session-authenticated) user **without** a
-second factor is confined to the MFA-enrolment endpoints until they enrol. A TOTP
-secret **or** a passkey satisfies it. Non-interactive credentials — personal
-access tokens, machine tokens, OIDC — are **exempt** so automation is never broken.
-Per-project MFA (ADR-037) is set per project via the API
+Every setting named `insecure_*` is part of ADR-112's opt-out rule: it weakens
+the baseline below its secure default, is warned about at every start it's in
+effect, appears in the start-to-start settings diff audit, and is reported as a
+deviation by the posture report below.
+
+**`keyorix-server admin validate --posture`** (ADR-112 §4) reports every
+secure-baseline deviation in one place instead of warnings scattered across
+separate start-up log lines, and exits non-zero if any is found. **Every
+security-weakening setting in effect counts** — encryption-at-rest disabled,
+database TLS disabled, unauthenticated `/metrics`, a log-delivered setup link —
+because of what it does, independently of whether its `insecure_` naming has
+been settled yet. Also reported: `enable_file_permission_check` disabled, a real
+file-permission/encryption/database problem, an incomplete key-file set, a
+cleartext listener contradicting `require_transport_tls`, and an admin without
+MFA or a passkey.
+
+Each deviation says whether it comes from a **shipped default** or an
+**explicit** config choice, so "this install has not been hardened yet" is
+distinguishable from "someone turned this off" — both count toward the exit
+code. *Explicit* means the config file literally writes the setting's key (even
+to its default value — `server/config/production.yaml` writes
+`require_transport_tls: false`, so there it is explicit); *shipped default*
+means the file is silent and the weak state is what an absent key resolves to.
+A key that arrives only through a YAML merge key (`<<:`) reads as not written.
+Startup checks are reported only if they ran: validation stops at the first
+failed check, and any check after it is listed as "not evaluated" rather than
+as a second failure. A grace-period setting merely relying on its new implicit default, with a
+real underlying problem, is its own deviation. Only TLS mode and the KEK salt
+file's age are informational: no rotation-age threshold is defined anywhere in
+this codebase, so a number there would be a guess.
+
+With `require_mfa: true` (the default), an interactive (session-authenticated) user
+**without** a second factor is confined to the MFA-enrolment endpoints until they
+enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
+personal access tokens, machine tokens, OIDC — are **exempt** so automation is
+never broken. Per-project MFA (ADR-037) is set per project via the API
 (`PUT /projects/{id}` `{ "require_mfa": true }`), independent of this flag.
 
 **Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection
@@ -1022,6 +1081,37 @@ Deliberately not RBAC-gated — the point is access the caller does *not* have �
 the controls are: it must be enabled here, every use is justified + audited +
 alerted, the grant expires, and an admin can revoke it early.
 
+`POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
+after-the-fact check — who reviewed it, when, and a note — exactly once per
+activation. Activation itself stays single-person by design (decided
+2026-10-02: an emergency path needing a second person fails exactly when it's
+needed); review is not a second approver, it's the record that someone
+independent looked afterwards. Three things are refused:
+
+- **the activating user reviewing their own activation** (403). This is what
+  makes single-person activation acceptable at all; self-review would collapse
+  it to one person end to end.
+- **an unattributable reviewer** (403) — a machine identity, or an
+  unauthenticated local-CLI invocation. A review attributed to nobody records
+  accountability to nobody.
+- **reviewing a still-active activation** (400). Revoke it or let it expire
+  first; a reviewer cannot assess access that is still being used.
+
+`review_window` is how long an activation may go unreviewed before it is
+reported. Past that it shows up as `emergency_access.unreviewed_activations`
+in the compliance posture report (alongside
+`oldest_unreviewed_age_hours` and the `review_window_hours` it was measured
+against), and a recurring check — on startup, then every 6h — logs a
+`SECURITY:` warning and writes one `break_glass.review_overdue` audit event
+per pass.
+
+That reporting is the entire enforcement, deliberately. An unreviewed
+activation is never locked out, never cut short, and never blocks the user who
+activated it: an emergency path that unfiled paperwork can disable fails
+exactly when it is needed. The check runs even when `enabled: false`, because
+an install that has since turned break-glass off can still be holding
+unreviewed activations from when it was on.
+
 ```yaml
 break_glass:
   enabled: true
@@ -1030,6 +1120,8 @@ break_glass:
                                        # is REJECTED at activation time
   default_ttl: "4h"                 # grant lifetime when none is requested
   max_ttl: "24h"                    # ceiling on a requested TTL
+  review_window: "72h"               # how long an activation may go unreviewed
+                                      # before it's a posture-report deviation
 ```
 
 ## dual_control
@@ -1271,6 +1363,32 @@ group memberships, or both). Changes are audited as `auth.sso_roles_synced`.
 > for tightly controlled groups. Keyorix trusts the IdP's `groups` claim (verified
 > id_token) as the source of truth, so the IdP's group governance *is* your Keyorix
 > RBAC governance for these roles.
+
+**A reconcile that cannot be fully applied refuses the login.** For a SAML or OIDC
+provider, if any part of `group_sync` or `group_role_map` fails to apply on login — most
+importantly a **removal** the IdP asked for (the user was dropped from a group at the
+IdP) — the login is **refused** and no session is issued, because a session would carry
+the access the IdP just revoked. Steps that did apply before the failure are kept (the
+next successful login converges the rest). Each refusal is audited as a failed
+`auth.sso_reconcile_refused` event naming every step that failed and what had already
+been applied, and the browser is told the login was refused because the IdP's group or
+role assertion could not be applied.
+
+> **The last administrator.** If the IdP stops asserting the group (or mapped role) that
+> makes a user the install's **only** administrator, Keyorix's last-admin guard refuses
+> the removal and that user's SSO login stays refused — the IdP's revocation wins. This
+> is audited as `auth.sso_reconcile_last_admin_removal_refused`, logged with the two ways
+> back: re-add the user to the admin group at the IdP, or run
+> `keyorix-server admin recover-admin <user>` with the recovery key on the server host
+> (it works for an SSO-only account that never had a password: it issues a one-time
+> password), then create a second administrator. Keep at least two administrators, and
+> a recovery key, on an SSO-managed install.
+
+> **SAML: empty vs. absent groups attribute.** A groups attribute that is **present with
+> no values** means "this user is in no groups": every synced membership and mapped role
+> is removed. A groups attribute that is **absent** from the assertion is a no-op
+> (memberships and roles are left as they are), as for a missing OIDC claim — make sure
+> your IdP releases the attribute on every assertion.
 
 ## membership
 

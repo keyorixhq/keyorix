@@ -90,12 +90,12 @@ func displayVersionsTable(secret *apiclient.Secret, versions []apiclient.SecretV
 		fmt.Println("No versions found.")
 		return
 	}
-	fmt.Printf("%-8s %-10s %-20s\n", "VERSION", "READS", "CREATED")
+	fmt.Printf("%-8s %-10s %-20s\n", "VERSION", "READS*", "CREATED (UTC)")
 	fmt.Printf("%-8s %-10s %-20s\n", "--------", "----------", "--------------------")
 	for _, v := range versions {
 		created := ""
 		if v.CreatedAt != nil {
-			created = v.CreatedAt.Format("2006-01-02 15:04:05")
+			created = v.CreatedAt.UTC().Format("2006-01-02 15:04:05")
 		}
 		fmt.Printf("%-8d %-10d %-20s\n", derefSecretInt(v.VersionNumber), derefSecretInt(v.ReadCount), created)
 	}
@@ -108,9 +108,10 @@ func displayVersionsTable(secret *apiclient.Secret, versions []apiclient.SecretV
 		}
 		created := ""
 		if latest.CreatedAt != nil {
-			created = latest.CreatedAt.Format("2006-01-02 15:04:05")
+			created = latest.CreatedAt.UTC().Format("2006-01-02 15:04:05")
 		}
 		fmt.Printf("\nLatest Version: %d (Created: %s)\n", derefSecretInt(latest.VersionNumber), created)
+		fmt.Println("* READS counts reads against a --max-reads limit only (0 when none is set); every read is listed by `keyorix secret access-log`.")
 	}
 }
 
@@ -345,7 +346,7 @@ var versionCommentListCmd = &cobra.Command{
 		for _, c := range comments {
 			when := ""
 			if c.CreatedAt != nil {
-				when = c.CreatedAt.Format("2006-01-02 15:04:05")
+				when = c.CreatedAt.UTC().Format("2006-01-02 15:04:05")
 			}
 			fmt.Printf("  [%d] %s (%s): %s\n", derefSecretInt(c.Id), derefStr(c.Username), when, derefStr(c.Comment))
 		}

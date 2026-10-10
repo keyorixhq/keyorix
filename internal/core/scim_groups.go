@@ -318,16 +318,31 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 // per-role resolution error (#G17-style: a lookup failure must not be indistinguishable
 // from a legitimate negative result) — so an inability to verify never opens the grant.
 func (c *KeyorixCore) scimGroupConfersAdmin(ctx context.Context, groupID uint) bool {
+	confers, err := c.idpGroupConfersAdminVerdict(ctx, groupID)
+	return confers || err != nil
+}
+
+// idpGroupConfersAdminVerdict is scimGroupConfersAdmin with a lookup failure
+// kept apart from the verdict (err != nil: nothing decided). See
+// idpAutoGrantEscalationVerdict for why SSO reconcile needs the difference.
+// A role that IS an escalation decides the answer even if a sibling role's
+// lookup failed: "confers admin" is already known, so the error is moot.
+func (c *KeyorixCore) idpGroupConfersAdminVerdict(ctx context.Context, groupID uint) (bool, error) {
 	roles, err := c.storage.GetGroupRoles(ctx, groupID)
 	if err != nil {
-		return true
+		return false, fmt.Errorf("resolving group %d's roles: %w", groupID, err)
 	}
+	var firstErr error
 	for _, r := range roles {
-		if c.idpAutoGrantOfRoleIsEscalation(ctx, r.ID, r.Name) {
-			return true
+		escalation, verr := c.idpAutoGrantEscalationVerdict(ctx, r.ID, r.Name)
+		if escalation {
+			return true, nil
+		}
+		if verr != nil && firstErr == nil {
+			firstErr = verr
 		}
 	}
-	return false
+	return false, firstErr
 }
 
 func buildSCIMMemberMaps(memberIDs []uint, current []*models.User) (want, have map[uint]bool) {
