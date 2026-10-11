@@ -379,12 +379,7 @@ func TestConfigSurface_RatchetCatchesACountPreservingSwap(t *testing.T) {
 // derivedFieldExemptions are derived (yaml:"-") Config fields that no registry
 // entry claims through DerivedInputs, each with the reason. Same contract as
 // sweepExemptions: a claim a reviewer can check at its source.
-var derivedFieldExemptions = map[string]string{
-	"security.RequireMFAImplicitDefault": "security.require_mfa has no InsecureSettingsRegistry entry at all yet " +
-		"(#2986); its implicit/grace states are reported by server/admin's collectRequireMFAPosture and " +
-		"server/main.go's logWarnOnImplicitRequireMFADefault, NOT by the registry. Remove when #2986 is fixed.",
-	"security.RequireMFAUpgradeGrace": "see security.RequireMFAImplicitDefault (#2986). Remove when #2986 is fixed.",
-}
+var derivedFieldExemptions = map[string]string{}
 
 // configDerivedFields returns every yaml:"-" field reachable from Config, as
 // <yaml path of its parent>.<GoFieldName> -- the spelling DerivedInputs uses.

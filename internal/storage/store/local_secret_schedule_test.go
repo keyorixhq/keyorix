@@ -6,11 +6,10 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -19,18 +18,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-var schedStoreCounter atomic.Uint64
-
 // newScheduleStore returns a LocalStorage + DB for schedule store tests,
 // with the SecretAccessSchedule (and SecretNode, for FK) tables migrated
 // and a seed SecretNode inserted.
 func newScheduleStore(t *testing.T) (*LocalStorage, *gorm.DB, uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := schedStoreCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxstore_sched_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localsecretschedule_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.SecretAccessSchedule{}))
 
 	s := &models.SecretNode{ProjectID: 1, EnvironmentID: 1, Name: "sched-store-secret", IsSecret: true, Status: "active"}

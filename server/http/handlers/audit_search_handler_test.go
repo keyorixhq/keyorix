@@ -6,16 +6,14 @@ package handlers
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -23,6 +21,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // failingAuditSearchStore wraps LocalStorage and fails every GetAuditLogs call
@@ -35,17 +34,12 @@ func (s *failingAuditSearchStore) GetAuditLogs(_ context.Context, _ *storage.Aud
 	return nil, 0, errors.New("simulated audit log outage")
 }
 
-var auditSearchHandlerDBCounter atomic.Int64
-
 // freshAuditSearchCore opens a fresh SQLite DB with all tables needed for the
 // audit search handler tests and returns the core + raw DB for seeding.
 func freshAuditSearchCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := auditSearchHandlerDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhdlr_auditsearch_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhdlr_auditsearch_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},

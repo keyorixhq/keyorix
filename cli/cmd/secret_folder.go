@@ -70,7 +70,7 @@ func runSecretFolderCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create folder: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to create folder: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to create folder", resp.StatusCode(), resp.Body)
 	}
 	printFolder(resp.JSON200.Data)
 	return nil
@@ -126,7 +126,7 @@ func runSecretFolderList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list folders: %w", err)
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("failed to list folders: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list folders", resp.StatusCode(), resp.Body)
 	}
 	printFolderList(derefSecretSlice(resp.JSON200.Data))
 	return nil
@@ -202,7 +202,7 @@ func runSecretFolderDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete folder: %w", err)
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("failed to delete folder: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to delete folder", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Folder %d deleted.\n", secretFolderDeleteID)
 	return nil
