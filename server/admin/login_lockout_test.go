@@ -2,7 +2,6 @@ package admin
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	storelib "github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // newClearLockoutTestDB is one in-memory database with the tables
@@ -24,12 +24,8 @@ import (
 func newClearLockoutTestDB(t *testing.T) (*gorm.DB, *storelib.LocalStorage) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:clear_lockout_%d?mode=memory&cache=shared", recoverAdminTestDBSeq.Add(1))), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	t.Cleanup(func() { _ = sqlDB.Close() })
+	// Unique DB, one connection, closed on cleanup (#3009's fixture rule).
+	db := sqlitetest.OpenWithDialector(t, "clear_lockout_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.LoginAttempt{}, &models.AuditEvent{}, &models.AuditCheckpoint{}))
 
 	locked := time.Now().Add(time.Hour)

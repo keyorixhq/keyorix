@@ -10,6 +10,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
@@ -125,7 +126,7 @@ var ErrLoginPostVerdict = errors.New("login denied by a storage error after the 
 // cookies, and a failure there has to count toward the lockout exactly like a
 // wrong password (see LoginCompletion).
 func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, error) {
-	session, user, _, lc, err := c.loginPending(ctx, req, false)
+	session, user, lc, err := c.LoginPending(ctx, req)
 	if err != nil {
 		return nil, user, err
 	}
@@ -140,26 +141,71 @@ func (c *KeyorixCore) Login(ctx context.Context, req *LoginRequest) (*models.Ses
 // found, which is what makes a post-verdict fault indistinguishable from a
 // wrong password in lockout state as well as in the response (#2894).
 //
-// It also returns the response identity, resolved BEFORE the session is
-// minted (#2844, the #2841 ordering the MFA and WebAuthn logins use): the HTTP
-// handler used to read it after this returned, and a panic in that read left a
-// live session the client never received. An identity-read failure is a
-// post-verdict denial like any other (denyAfterCredentialMatched).
-//
 // On an error return the user may still be non-nil (it is, for every
 // post-verdict failure) so a transport can name the account in an audit event;
 // the session is always nil and no completion is handed back, because the
 // accounting has already been settled here.
-func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
-	return c.loginPending(ctx, req, true)
+func (c *KeyorixCore) LoginPending(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, *LoginCompletion, error) {
+	user, err := c.authenticatePasswordLogin(ctx, req)
+	if err != nil {
+		return nil, user, nil, err
+	}
+	return c.mintPasswordLogin(ctx, req, user)
 }
 
-// loginPending is LoginPending; withIdentity=false skips the identity read for
-// Login, whose callers build no response from it.
-func (c *KeyorixCore) loginPending(ctx context.Context, req *LoginRequest, withIdentity bool) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
+// LoginWithIdentity is Login for a caller that also needs the response
+// identity (roles and permissions). It resolves the identity BEFORE minting
+// the session, the same ordering the MFA and WebAuthn logins use (#2841), so
+// nothing fallible runs after the session is written and a login reported as
+// failed never leaves one behind (#2844: the HTTP handler used to read the
+// identity after Login returned, and a panic in that read left a live session
+// the client never received).
+//
+// Convenience wrapper over LoginWithIdentityPending; every TRANSPORT must use
+// the Pending form (#2894).
+func (c *KeyorixCore) LoginWithIdentity(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, UserIdentity, error) {
+	session, user, identity, lc, err := c.LoginWithIdentityPending(ctx, req)
+	if err != nil {
+		return nil, user, UserIdentity{}, err
+	}
+	lc.Succeeded(ctx)
+	return session, user, identity, nil
+}
+
+// LoginWithIdentityPending is LoginWithIdentity with the lockout accounting
+// left open, exactly as LoginPending is for Login (#2894). The HTTP login uses
+// it: the identity read is post-verdict (the password already matched), so a
+// failure there is counted like a wrong password and wrapped with
+// ErrLoginPostVerdict (ErrLoginIdentityUnavailable stays in the chain), and the
+// transport answers it byte-identically to a wrong password.
+func (c *KeyorixCore) LoginWithIdentityPending(ctx context.Context, req *LoginRequest) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
+	user, err := c.authenticatePasswordLogin(ctx, req)
+	if err != nil {
+		return nil, user, UserIdentity{}, nil, err
+	}
+	identity, err := c.resolveLoginIdentityBeforeMint(ctx, user.ID)
+	if err != nil {
+		return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
+	}
+	session, user, lc, err := c.mintPasswordLogin(ctx, req, user)
+	if err != nil {
+		return nil, user, UserIdentity{}, nil, err
+	}
+	return session, user, identity, lc, nil
+}
+
+// authenticatePasswordLogin is everything Login does before the session is
+// minted. On ErrMFARequired, and on every post-verdict failure
+// (ErrLoginPostVerdict, already counted toward the lockout), it returns the user
+// alongside the error: the caller needs it to start the challenge or to name
+// the account in auth.login_error. On any other error the user is nil.
+//
+// It deliberately does NOT clear the failed-login counter: the login is not
+// delivered yet. See LoginCompletion.
+func (c *KeyorixCore) authenticatePasswordLogin(ctx context.Context, req *LoginRequest) (*models.User, error) {
 	user, err := c.VerifyPasswordCredentials(ctx, req.Username, req.Password)
 	if err != nil {
-		return nil, nil, UserIdentity{}, nil, err
+		return nil, err
 	}
 	// Enforce the password max-age policy: if the password has expired, gate the
 	// account to password_reset_required NOW so the middleware blocks API access
@@ -172,7 +218,7 @@ func (c *KeyorixCore) loginPending(ctx context.Context, req *LoginRequest, withI
 		// toward the lockout exactly as a wrong password would — the response the
 		// caller builds is already identical either way (#2888), so leaving the
 		// counter untouched here would make a correct password the CHEAPER probe.
-		return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
+		return user, c.denyAfterCredentialMatched(ctx, user, err)
 	}
 	// Accounts with any second factor (TOTP or a passkey) get no session from the
 	// password step — the caller must complete it (CreateMFAChallenge →
@@ -184,7 +230,7 @@ func (c *KeyorixCore) loginPending(ctx context.Context, req *LoginRequest, withI
 	// the WebAuthn Finish* functions each do their own clear once the second
 	// factor actually succeeds).
 	if user.MFAEnabled || user.WebAuthnEnabled {
-		return nil, user, UserIdentity{}, nil, ErrMFARequired
+		return user, ErrMFARequired
 	}
 	// No second factor configured — the password step IS the full authentication.
 	// Re-check the lock state under the same serialization recordFailedLogin uses
@@ -194,22 +240,28 @@ func (c *KeyorixCore) loginPending(ctx context.Context, req *LoginRequest, withI
 	// (TOCTOU) — never trust that stale snapshot alone. The accumulated failure
 	// state is deliberately NOT cleared here; see LoginCompletion.
 	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
-		return nil, user, UserIdentity{}, nil, err
+		return user, err
 	}
-	// #2844: the last fallible-and-reported read, before the session is written.
-	var identity UserIdentity
-	if withIdentity {
-		if identity, err = c.resolveLoginIdentityBeforeMint(ctx, user.ID); err != nil {
-			return nil, user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, user, err)
-		}
-	}
+	return user, nil
+}
+
+// mintPasswordLogin mints the session for a password login whose credential
+// (and, for LoginWithIdentityPending, identity) is settled. A mint failure is
+// post-verdict (#2894): counted exactly like a wrong password and wrapped with
+// ErrLoginPostVerdict. That includes a suspend landing between the password
+// check and the insert, which the owner re-check inside CreateSession (#2701)
+// now refuses as a storage error.
+func (c *KeyorixCore) mintPasswordLogin(ctx context.Context, req *LoginRequest, user *models.User) (*models.Session, *models.User, *LoginCompletion, error) {
 	lc := c.newLoginCompletion(user)
-	created, err := c.mintSession(ctx, user.ID, req.UserAgent, req.IPAddress)
+	// #3024: an account that owes both setup steps (restricted AND no second factor
+	// under security.require_mfa) gets a setup-only session: short-lived, confined to
+	// the setup steps, revoked once they are done (account_setup.go).
+	created, err := c.mintSessionWith(ctx, user.ID, req.UserAgent, req.IPAddress, c.needsSetupSession(user))
 	if err != nil {
 		lc.Failed(ctx)
-		return nil, user, UserIdentity{}, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
+		return nil, user, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
-	return created, user, identity, lc, nil
+	return created, user, lc, nil
 }
 
 // denyAfterCredentialMatched settles the lockout accounting for a login denied
@@ -234,6 +286,13 @@ func (c *KeyorixCore) denyAfterCredentialMatched(ctx context.Context, user *mode
 // Shared by Login and the setup-token consume flow (auto-login) so session
 // issuance — token generation, expiry, and the captured device fields — stays uniform.
 func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, ip string) (*models.Session, error) {
+	return c.mintSessionWith(ctx, userID, userAgent, ip, false)
+}
+
+// mintSessionWith is mintSession with the setup-only flag (#3024): a setup-only
+// session's whole life is capped at SetupSessionTTL from now, whatever the
+// configured access/absolute TTLs, and the cap is carried through every refresh.
+func (c *KeyorixCore) mintSessionWith(ctx context.Context, userID uint, userAgent, ip string, setupOnly bool) (*models.Session, error) {
 	token, err := generateSecureToken()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate session token: %w", err)
@@ -265,6 +324,9 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 		}
 		session.AbsoluteExpiresAt = &absolute
 	}
+	if setupOnly {
+		capSetupSession(session, now)
+	}
 	// A failed insert may still have committed: createSession delivers the row
 	// if it landed instead of reporting a failed login over a live session
 	// (#2844). See session_undelivered.go.
@@ -284,6 +346,20 @@ func (c *KeyorixCore) mintSession(ctx context.Context, userID uint, userAgent, i
 		return c.storage.EnforceSessionLimit(ctx, userID, maxSessionsPerUser)
 	})
 	return created, nil
+}
+
+// capSetupSession clamps a setup-only session's access window and absolute
+// ceiling to SetupSessionTTL from now, never lengthening an earlier ceiling.
+func capSetupSession(session *models.Session, now time.Time) {
+	ceiling := now.Add(SetupSessionTTL)
+	if session.AbsoluteExpiresAt == nil || session.AbsoluteExpiresAt.After(ceiling) {
+		session.AbsoluteExpiresAt = &ceiling
+	}
+	if session.ExpiresAt == nil || session.ExpiresAt.After(*session.AbsoluteExpiresAt) {
+		exp := *session.AbsoluteExpiresAt
+		session.ExpiresAt = &exp
+	}
+	session.SetupOnly = true
 }
 
 // maxSessionsPerUser caps a user's concurrent sessions; the oldest beyond this are
@@ -429,6 +505,15 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 		LastSeenAt:        &now,
 		ExpiresAt:         &expiresAt,
 		AbsoluteExpiresAt: old.AbsoluteExpiresAt,
+		// #3024: a setup-only session stays one through every rotation, or a refresh
+		// would launder it into a full session. A session whose account has since come
+		// to owe both setup steps (e.g. an admin forced a reset on a factor-less user
+		// while it was live) becomes one here, capped from now — the setup gate sends
+		// such a session through refresh/re-login instead of serving it.
+		SetupOnly: old.SetupOnly || c.needsSetupSession(user),
+	}
+	if session.SetupOnly && !old.SetupOnly {
+		capSetupSession(session, now)
 	}
 	created, won, err := c.storage.RotateSession(ctx, old.ID, session, now)
 	if err != nil {
@@ -785,6 +870,70 @@ func (c *KeyorixCore) SessionLiveForToken(ctx context.Context, sessionID uint, t
 	return true, nil
 }
 
+// SessionAuthFacts is what a transport needs from the authenticating session's
+// own row once ValidateSessionToken has accepted the token: which row it is (for
+// the per-request liveness re-check, #G18), whether it is a setup-only session
+// (#3024), who is impersonating through it, and when it expires (F-TOK-1).
+type SessionAuthFacts struct {
+	SessionID       uint
+	SetupOnly       bool
+	ImpersonatedBy  *uint
+	EffectiveExpiry *time.Time
+}
+
+// EventSessionFactsUnavailable audits a request refused because its session row
+// could not be re-read after the token validated (ResolveSessionAuthFacts).
+const EventSessionFactsUnavailable = "auth.session_facts_unavailable" // #nosec G101 -- audit event type, not a credential
+
+// ErrSessionFactsUnavailable is ResolveSessionAuthFacts' error: the transports
+// refuse the request with their generic "temporarily unavailable" answer.
+var ErrSessionFactsUnavailable = errors.New("session facts unavailable")
+
+// ResolveSessionAuthFacts reads the session behind an already-validated session
+// token ONCE and returns every per-session fact the HTTP middleware and the gRPC
+// interceptor act on. An error is the fail-closed side: each of these facts
+// restricts the caller (setup-only confinement, impersonation guards, the
+// session-liveness re-check, the cache-lifetime clamp), so a request whose
+// facts could not be read must be refused, never served with them defaulted to
+// "no restriction" (#3041 review: a failed read used to leave SetupOnly false
+// and cache it, so a setup-only session racing its own revocation got full
+// access). The refusal is logged and audited under userID; transport names the
+// caller ("http"/"grpc"). A revoked session (not found) takes this path too: the
+// retry then fails validation with an ordinary 401.
+func (c *KeyorixCore) ResolveSessionAuthFacts(ctx context.Context, userID uint, token, transport string) (*SessionAuthFacts, error) {
+	session, err := c.getSessionRecovering(ctx, token)
+	if err == nil && session == nil {
+		err = errors.New("no session row")
+	}
+	if err == nil && session.UserID != userID {
+		err = fmt.Errorf("session belongs to user %d", session.UserID)
+	}
+	if err != nil {
+		log.Printf("SECURITY: %s request by user %d refused: its session could not be re-read after validation (%v)", transport, userID, err)
+		c.writeAuditEventFull(ctx, EventSessionFactsUnavailable, &userID, nil, nil, "",
+			fmt.Sprintf("a %s request by user %d was refused: its session could not be re-read after the token validated (%v), so its restrictions could not be applied", transport, userID, err))
+		return nil, ErrSessionFactsUnavailable
+	}
+	facts := &SessionAuthFacts{SessionID: session.ID, SetupOnly: session.SetupOnly, ImpersonatedBy: session.ImpersonatedBy}
+	for _, t := range []*time.Time{session.ExpiresAt, session.AbsoluteExpiresAt} {
+		if t != nil && (facts.EffectiveExpiry == nil || t.Before(*facts.EffectiveExpiry)) {
+			facts.EffectiveExpiry = t
+		}
+	}
+	return facts, nil
+}
+
+// getSessionRecovering is storage.GetSession with a panic turned into an error,
+// so ResolveSessionAuthFacts refuses rather than crashing the request.
+func (c *KeyorixCore) getSessionRecovering(ctx context.Context, token string) (s *models.Session, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s, err = nil, fmt.Errorf("session lookup panicked: %v", r)
+		}
+	}()
+	return c.storage.GetSession(ctx, token)
+}
+
 // SessionEffectiveExpiry returns the earliest of a session's idle-expiry (ExpiresAt)
 // and absolute-expiry (AbsoluteExpiresAt), or nil when the session has neither or
 // cannot be resolved. The auth middleware calls this on the SLOW validation path only
@@ -841,7 +990,7 @@ func (c *KeyorixCore) AccountStillUsable(ctx context.Context, userID uint) (bool
 // passed (the account isn't blocked) but the CACHED UserContext's
 // AccountState/Restricted — fixed at the slow path's last fill — stayed
 // whatever it was then. A transition into a restricted-but-not-blocked state
-// was invisible to EnforceAccountRestriction on a cache hit until the entry's
+// was invisible to EnforceAccountSetup on a cache hit until the entry's
 // own eviction (whether via that state-change's own invalidateTokenCache call,
 // or the TTL) actually landed — the same race SHAPE as the session-liveness
 // bug this PR fixes elsewhere, not merely a bounded 30s lag: a request served

@@ -204,13 +204,13 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 	// (never a real credential guess) need not consume a slot.
 	slot := h.reserveLoginAttempt(r.Context(), ip)
 
-	// LoginPending, not Login: an HTTP login is not finished when core returns a
-	// session — the cookies still have to be set, and the lockout accounting is
-	// committed only once the session is delivered (#2894). The identity comes
-	// back with the session, resolved BEFORE it was written (#2844, the #2841
-	// ordering): reading it here afterwards left a live session behind when
-	// that read panicked. See core.LoginCompletion.
-	session, user, identity, lc, err := h.coreService.LoginPending(r.Context(), &core.LoginRequest{
+	// LoginWithIdentityPending: the response identity is resolved BEFORE the
+	// session is written (#2844, the #2841 ordering) — reading it here afterwards
+	// left a live session behind when that read panicked — and the lockout
+	// accounting stays open until the response is built (#2894), so a fault after
+	// the password matched costs the attacker the same lockout progress a wrong
+	// password does. See core.LoginCompletion.
+	session, user, identity, lc, err := h.coreService.LoginWithIdentityPending(r.Context(), &core.LoginRequest{
 		Username:  body.Username,
 		Password:  body.Password,
 		UserAgent: r.Header.Get(hdrUserAgent),
@@ -230,7 +230,9 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 				// 500 here, versus the 401 a wrong password gets below, would confirm
 				// the password was right during any CreateMFAChallenge storage
 				// hiccup. Must look exactly like a wrong password to the client;
-				// LogAuthError still records the real reason for an operator.
+				// LogAuthError still records the real reason for an operator. This also
+				// covers RESIL-1's write-gate contention (#2998): a 503 here would
+				// confirm the guess just as a 500 would.
 				//
 				// #2894: and it must not be cheaper in LOCKOUT state either. Login
 				// deliberately leaves the counter alone on the ErrMFARequired branch
@@ -254,14 +256,15 @@ func (h *AuthHandler) Login(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// #2894: a storage fault AFTER the password matched (the password-expiry
-		// gate, the identity read, or the session mint) is NOT a wrong
-		// credential, and must not be audited as one -- auth.login_failed would
-		// tell an operator a password was guessed wrong when it was in fact
-		// correct, hiding the real incident. core wraps those with
-		// ErrLoginPostVerdict for exactly this, and has already counted them
-		// toward the lockout. The RESPONSE stays byte-identical either way, and
-		// both audit writes are async (goSafe) so this branch is not measurably
-		// slower than the wrong-password one.
+		// gate, or the session mint) is NOT a wrong credential, and must not be
+		// audited as one -- auth.login_failed would tell an operator a password was
+		// guessed wrong when it was in fact correct, hiding the real incident.
+		// The identity read (ErrLoginIdentityUnavailable, #2844) is post-verdict too:
+		// it used to answer a distinct 500 here, which confirmed the password.
+		// core wraps those with ErrLoginPostVerdict for exactly this, and has
+		// already counted them toward the lockout. The RESPONSE stays byte-identical
+		// either way, and both audit writes are async (goSafe) so this branch is not
+		// measurably slower than the wrong-password one.
 		if errors.Is(err, core.ErrLoginPostVerdict) {
 			goSafe(func() { h.coreService.LogAuthError(context.Background(), body.Username, ip, err) }) // #nosec G118
 		} else {
@@ -346,28 +349,30 @@ func (h *AuthHandler) loginResponseFromIdentity(session *models.Session, user *m
 // the caller stops without setting cookies or logging the login as successful
 // (#2412).
 //
-// Its only caller is ConsumeSetup. Login, VerifyMFA, FinishWebAuthnLogin and
-// FinishWebAuthnPasswordlessLogin use completeLoginWithIdentity: their core
-// functions resolve the identity before minting, so nothing fallible runs after
-// the session is written (#2841, #2844). ConsumeSetup writes only the session
-// after its last fallible step, so the compensation here is complete for it.
-//
-// #2888 (#2740 option C): this used to write its OWN 500 "Login could not be
-// completed" response directly. Its caller reaches this point only once the
-// token has ALREADY been confirmed correct, so a 500 here -- distinct from the
-// caller's own failure response -- was a clean oracle. It no longer writes
-// anything; the caller maps a non-nil error to EXACTLY its own failure response
-// (same status, body, headers). LogAuthError (internal/core/audit.go) still
-// records the real reason for an operator.
-//
-// #2894: lc commits the login's LOCKOUT accounting; it may be nil for a flow with
-// no per-account lockout stake (the setup-token consume path) — both methods
-// are nil-safe.
+// Its only caller is now ConsumeSetup. The other four (Login, VerifyMFA,
+// FinishWebAuthnLogin, FinishWebAuthnPasswordlessLogin) use
+// completeLoginWithIdentity: their core functions resolve the identity before
+// minting, so nothing fallible runs after the session is written (#2841,
+// #2844). ConsumeSetup writes only the session after its last fallible step, so
+// the compensation here is complete for it.
 //
 // The revoke also runs when the identity read PANICS (#2844): before, only an
 // error was compensated, and a panic unwound past this function to the
 // recovery middleware's 500 with the session still live. The panic is re-raised
 // after the revoke, so the caller-visible response is unchanged.
+//
+// #2888 (#2740 option C): this used to write its OWN 500 "Login could not be
+// completed" response directly. Its caller reaches this point only once the
+// setup token has ALREADY been confirmed valid, so a 500 here -- distinct from
+// the caller's own generic failure response -- was a clean oracle. It no
+// longer writes anything; the caller maps a non-nil error to EXACTLY its own
+// failure response (same status, body, headers). LogAuthError
+// (internal/core/audit.go) still records the real reason for an operator.
+//
+// #2894: lc is the login's LOCKOUT accounting: lc.Failed() on the error branch,
+// lc.Succeeded() once the response is built. lc may be nil for a flow with no
+// per-account lockout stake (the setup-token consume path) — both methods are
+// nil-safe.
 func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, session *models.Session, user *models.User, lc *core.LoginCompletion) (loginResponseBody, error) {
 	built := false
 	defer func() {
@@ -376,7 +381,6 @@ func (h *AuthHandler) completeLogin(w http.ResponseWriter, r *http.Request, sess
 		}
 		if p := recover(); p != nil {
 			h.revokeUndeliveredLogin(r.Context(), session, user, fmt.Sprint(p))
-			lc.Failed(r.Context())
 			panic(p)
 		}
 	}()
@@ -506,7 +510,8 @@ func (h *AuthHandler) ConsumeSetup(w http.ResponseWriter, r *http.Request) {
 			// only way ErrMFARequired is reached here. A distinct error for a
 			// CreateMFAChallenge storage hiccup, versus the generic "could not
 			// be completed" every other failure gets below, would reveal that
-			// this specific token was genuinely valid. Must look identical.
+			// this specific token was genuinely valid. Must look identical. This
+			// also covers RESIL-1's write-gate contention (#2998).
 			goSafe(func() { h.coreService.LogAuthError(context.Background(), result.User.Username, ip, cerr) }) // #nosec G118
 			sendError(w, "BadRequest", "This setup link could not be completed. It may be invalid or expired — ask your administrator for a new one.", http.StatusBadRequest, nil)
 			return
@@ -792,10 +797,34 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		sendError(w, "BadRequest", clientSafe(err), http.StatusBadRequest, nil)
 		return
 	}
-	// Evict the cached identity so a restriction cleared by this change (ADR-025)
+	// Drop the cached identity so a restriction cleared by this change (ADR-025)
 	// takes effect on the next request instead of lingering for the cache TTL.
-	middleware.InvalidateTokenCache(token)
-	sendSuccess(w, nil, "Password changed")
+	// Clear, never tombstone: this session is the one ChangePassword just KEPT, and
+	// a tombstone 401'd it for invalidTokenTTL right after the change (#3024 found
+	// it: the password-first setup order died on its next step; same bug class as
+	// #2978 for MFA activation). A stale restricted entry is only over-restrictive.
+	middleware.ClearTokenCacheForToken(token)
+	if h.endSetupSessionIfComplete(w, r, userCtx.UserID, token) {
+		sendSuccess(w, map[string]interface{}{"reauthentication_required": true},
+			"Password changed. Account setup is complete: sign in again with your new password and second factor.")
+		return
+	}
+	sendSuccess(w, map[string]interface{}{"reauthentication_required": false}, "Password changed")
+}
+
+// endSetupSessionIfComplete ends a setup-only session once the step this request
+// just completed was the last one owed (#3024, core.EndSetupSessionIfComplete),
+// clearing the session/CSRF cookies of a browser caller too. Reports whether the
+// session ended, for the response's reauthentication_required.
+func (h *AuthHandler) endSetupSessionIfComplete(w http.ResponseWriter, r *http.Request, userID uint, token string) bool {
+	if !h.coreService.EndSetupSessionIfComplete(r.Context(), userID, token) {
+		return false
+	}
+	if _, err := r.Cookie(middleware.SessionCookieName); err == nil {
+		middleware.ClearSessionCookie(w, h.tlsEnabled)
+		middleware.ClearCSRFCookie(w, h.tlsEnabled)
+	}
+	return true
 }
 
 // sessionResponse is the safe DTO for a session — never exposes the token.

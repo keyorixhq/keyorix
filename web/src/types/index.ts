@@ -186,10 +186,14 @@ export interface DashboardStats {
 
 export interface ActivityItem {
     id: number;
-    type: 'created' | 'updated' | 'shared' | 'accessed' | 'versions_listed';
+    type: 'created' | 'updated' | 'shared' | 'accessed' | 'versions_listed' | 'metadata_read' | (string & {});
     secretName: string;
     timestamp: string;
     actor: string;
+    /** Raw audit event type, e.g. "secret.dependency_invalidated" (absent on older servers). */
+    eventType?: string;
+    /** Readable phrase to show after the actor (absent on older servers). */
+    label?: string;
 }
 
 // Navigation types
@@ -224,6 +228,9 @@ export interface ApiError {
     error: string;
     message: string;
     details?: Record<string, unknown> | null;
+    // On a 403 from the account-setup gate (#3024): the setup steps still owed
+    // ("change_password", "enroll_mfa").
+    pending_steps?: string[];
 }
 
 // Form types

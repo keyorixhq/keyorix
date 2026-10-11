@@ -59,8 +59,8 @@ var allowedLockoutAccountingSites = []clearSite{
 		why: "same as CompleteSSO."},
 
 	// --- the no-clear TOCTOU re-check ---
-	{fn: "loginPending", callee: "recheckLockAfterCredentialMatched",
-		why: "re-check only; the clear is deferred to the returned LoginCompletion. The identity read that follows (#2844) counts its failure via denyAfterCredentialMatched."},
+	{fn: "authenticatePasswordLogin", callee: "recheckLockAfterCredentialMatched",
+		why: "re-check only (shared by LoginPending and LoginWithIdentityPending); the clear is deferred to the LoginCompletion mintPasswordLogin returns, and the identity read in between counts its failure via denyAfterCredentialMatched."},
 	{fn: "VerifyMFACredentials", callee: "recheckLockAfterCredentialMatched",
 		why: "re-check only; VerifyMFALoginPending's LoginCompletion owns the clear."},
 	{fn: "FinishWebAuthnLoginPending", callee: "recheckLockAfterCredentialMatched",

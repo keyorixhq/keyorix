@@ -8,10 +8,12 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -20,6 +22,15 @@ func (h *DashboardHandler) TakeComplianceSnapshot(w http.ResponseWriter, r *http
 	snap, err := h.coreService.TakeComplianceSnapshot(r.Context())
 	if err != nil {
 		log.Printf("Error taking compliance snapshot: %v", err)
+		// Fail closed (#2834): a degraded posture is never persisted. No
+		// compliance.snapshot_taken audit event is written on any failure, matching
+		// this endpoint's existing failure path (log + error response only).
+		if errors.Is(err, core.ErrCompliancePostureDegraded) {
+			sendError(w, "SnapshotDegraded",
+				"Compliance snapshot not taken: some posture data could not be read ("+err.Error()+")",
+				http.StatusServiceUnavailable, nil)
+			return
+		}
 		sendError(w, "InternalError", "Failed to take compliance snapshot", http.StatusInternalServerError, nil)
 		return
 	}

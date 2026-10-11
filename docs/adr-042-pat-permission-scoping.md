@@ -148,3 +148,47 @@ machine.
   chosen project) is the remaining UI surface for `environment_scope`.
 - **Scope presets** (e.g. a "read-only" macro expanding to the read permissions).
 - ~~CLI flags on token creation~~ — **shipped**: `keyorix pat create --scope … --project-id … --environment-id …` (plus `pat list` / `pat revoke`).
+
+## Addendum (2026-10-11): reads decided outside the chokepoint (PAT-GUARD-1)
+
+"Every authorization path funnels through `Authorize`" held for permission
+checks, not for every decision about what a token may see. Reads that decide
+visibility themselves — the personal secret set (owned ∪ shared ∪ ACL-granted),
+the notification feed, the secret access-request family (`requireAdminAuthorityAt`),
+`CheckSecretPermission`'s owner/share/ACL paths — and PAT creation itself never
+reached it, so a restricted token saw (and in two cases changed) data outside its
+restriction. Each now applies the restriction at the row's own scope
+(`internal/core/pat_restriction_listing.go`, `INV-CORE-pat-restriction-outside-authorize`),
+and a restricted PAT cannot create a PAT. The claim is now machine-checked rather than
+argued: `TestEveryGETRouteHonoursPATRestriction` (every GET route) and
+`TestEveryGRPCReadHonoursPATRestriction` (every unary read RPC) call the whole read
+surface with restricted tokens against a canary project and fail on any disclosure.
+
+## Addendum (2026-10-11): self-service writes (PAT-GUARD-2)
+
+Decided by Andrei on 2026-10-11, for the two ungated self-service writes the
+PAT-GUARD-1 inventory reviewed and left open:
+
+- **Break-glass activation is refused for a restricted PAT.** `POST
+  /projects/{id}/break-glass` and gRPC `BreakGlassService.ActivateBreakGlass` are
+  deliberately not RBAC-gated, so the restriction never reaches them through
+  `Authorize`, and they grant the token's owner an emergency role at a project. A
+  token confined below its owner must not be able to raise its owner's privileges,
+  whatever the restriction's dimension (project, environment, permissions or CIDR).
+  `ActivateBreakGlass` refuses any request carrying a restriction before any other
+  check (`ErrRestrictedPATCannotBreakGlass`): HTTP 403, gRPC `PermissionDenied`, no
+  activation recorded — the same shape as the PAT-mint refusal above. Sessions,
+  machine tokens and unrestricted PATs are unchanged.
+- **Revoking the owner's own tokens and sessions stays allowed for a restricted
+  PAT.** `DELETE /auth/tokens/{id}` and `DELETE /auth/sessions/{id}` act on the
+  caller's own credentials only (another user's id is a 404) and only ever reduce
+  access; whoever holds a restricted token must be able to kill a leaked sibling
+  credential with it. There is no gRPC equivalent.
+
+Guarded by `server/http` `TestPATRestriction_RestrictedPATCannotActivateBreakGlass`
+and `TestPATRestriction_RestrictedPATRevokesOnlyOwnTokensAndSessions`, and
+`server/grpc` `TestGRPCPATRestriction_RestrictedPATCannotActivateBreakGlass`, over
+every restricted persona of the PAT-GUARD-1 fixture (a project-only owner and the
+global admin), with unrestricted controls. The other ungated self-service writes
+(profile, password, MFA and WebAuthn enrolment, project access requests) are not
+decided by this addendum.

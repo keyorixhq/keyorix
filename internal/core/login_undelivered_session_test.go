@@ -146,7 +146,7 @@ func TestLogin_SessionWritePanicsAfterCommit_RevokesTheRowAndRepanics(t *testing
 	assert.EqualValues(t, 1, auditEventCount(t, st, EventUndeliveredSessionRevoked))
 }
 
-func TestLoginPending_IdentityReadPanic_LeavesNoSession(t *testing.T) {
+func TestLoginWithIdentity_IdentityReadPanic_LeavesNoSession(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	before := len(adminSessions(t, st))
@@ -154,20 +154,19 @@ func TestLoginPending_IdentityReadPanic_LeavesNoSession(t *testing.T) {
 
 	func() {
 		defer func() { assert.NotNil(t, recover()) }()
-		_, _, _, _, _ = c.LoginPending(context.Background(), &LoginRequest{Username: "admin", Password: undeliveredTestPassword})
+		_, _, _, _ = c.LoginWithIdentity(context.Background(), &LoginRequest{Username: "admin", Password: undeliveredTestPassword})
 	}()
 
 	assert.Len(t, adminSessions(t, st), before,
 		"the identity read runs before the session is written, so a panic in it can leave nothing behind")
 }
 
-func TestLoginPending_ReturnsTheIdentityOfASuccessfulLogin(t *testing.T) {
+func TestLoginWithIdentity_ReturnsTheIdentityOfASuccessfulLogin(t *testing.T) {
 	t.Parallel()
 	c, _ := newBootstrappedCore(t)
-	session, user, identity, lc, err := c.LoginPending(context.Background(), &LoginRequest{Username: "admin", Password: undeliveredTestPassword})
+	session, user, identity, err := c.LoginWithIdentity(context.Background(), &LoginRequest{Username: "admin", Password: undeliveredTestPassword})
 	require.NoError(t, err)
 	require.NotNil(t, session)
-	lc.Succeeded(context.Background())
 	want, err := c.GetUserIdentity(context.Background(), user.ID)
 	require.NoError(t, err)
 	assert.Equal(t, want, identity)

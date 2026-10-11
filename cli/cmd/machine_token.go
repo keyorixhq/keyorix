@@ -46,9 +46,19 @@ var machineTokenListCmd = &cobra.Command{
 var machineTokenRevokeCmd = &cobra.Command{
 	Use:          "revoke <name|id> <token-id>",
 	Short:        "Revoke a machine identity token",
-	Args:         cobra.ExactArgs(2),
+	Args:         machineTokenRevokeArgs,
 	SilenceUsage: true,
 	RunE:         runMachineTokenRevoke,
+}
+
+// machineTokenRevokeArgs replaces cobra.ExactArgs(2), whose "accepts 2 arg(s),
+// received 1" left a presenter guessing which two (#2981).
+func machineTokenRevokeArgs(_ *cobra.Command, args []string) error {
+	if len(args) == 2 {
+		return nil
+	}
+	return fmt.Errorf("revoke takes the machine identity AND the token id: `keyorix machine token revoke <name|id> <token-id>` "+
+		"(got %d argument(s)); list a machine's token ids with `keyorix machine token list <name|id>`", len(args))
 }
 
 func init() {
@@ -95,7 +105,7 @@ func runMachineTokenIssue(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to issue machine token: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to issue machine token: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to issue machine token", resp.StatusCode(), resp.Body)
 	}
 	data := *resp.JSON201.Data
 	fmt.Println("Machine token issued. Copy it now — it will not be shown again.")
@@ -130,7 +140,7 @@ func runMachineTokenList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list machine tokens: %w", err)
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("failed to list machine tokens: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list machine tokens", resp.StatusCode(), resp.Body)
 	}
 	var rows []apiclient.MachineToken
 	if resp.JSON200 != nil && resp.JSON200.Data != nil && resp.JSON200.Data.Tokens != nil {
@@ -192,7 +202,7 @@ func runMachineTokenRevoke(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to revoke machine token: %w", err)
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("failed to revoke machine token: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to revoke machine token", resp.StatusCode(), resp.Body)
 	}
 	fmt.Println("Machine token revoked.")
 	return nil

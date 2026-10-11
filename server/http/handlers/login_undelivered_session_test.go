@@ -111,8 +111,11 @@ func TestConsumeSetup_IdentityReadError_StillLeavesNoSession(t *testing.T) {
 	w, uid, panicked := consumeSetupFor(t, h, c, adminID, "undeliverederr")
 	require.True(t, fs.Fired())
 	require.Nil(t, panicked)
-	// #2888: byte-identical to ConsumeSetup's generic failure (not a 500).
+	// #2894/#2888: the token was already accepted, so this failure answers
+	// exactly like the endpoint's generic setup failure, not a distinguishable
+	// 500 "Login could not be completed".
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-	assert.Contains(t, w.Body.String(), "This setup link could not be completed", "the client response for this failure is unchanged")
+	assert.Contains(t, w.Body.String(), "This setup link could not be completed", "same response as the generic setup failure")
+	assert.NotContains(t, w.Body.String(), errLoginIncomplete)
 	assert.Zero(t, countSessions(t, st, uid))
 }
