@@ -15,9 +15,7 @@ package faultops
 // design"). An expiring bug tolerance over intended behaviour can only be
 // re-filed forever. It now sits in a mechanism whose rows assert
 // by-design-ness and are required to cite the production comment and the
-// proving test that establish it. (Since ORPHAN-2 it is covered by the op's
-// consumeFirstExemptions entry instead, which also covers the panic and
-// effect-then-error kinds; see the tombstone in oracleAByDesignErrors.)
+// proving test that establish it.
 //
 // (#2554's row — REST PATCH /api/v1/secrets/{id}/classification,
 // CreateSecretAccessLog, panic, nth 1 — is GONE, not expired. Its entry
