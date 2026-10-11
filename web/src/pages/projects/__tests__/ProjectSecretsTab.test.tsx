@@ -170,6 +170,16 @@ beforeEach(() => {
     window.history.pushState({}, '', '/');
 });
 
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+});
+
 describe('ProjectSecretsTab — environment selection', () => {
     it('defaults to the production environment when present', () => {
         envState.data = twoEnvs;
@@ -731,3 +741,25 @@ describe('ProjectSecretsTab — rotate modal extras', () => {
 // is no legitimate UI path — only a synthetic mock of `useProjectSecrets` calling
 // `openModal` with no data, which the app itself never does — that would exercise
 // the early-return branch, so it's left uncovered rather than fabricated.
+
+describe('ProjectSecretsTab permission-aware controls (DEMO-UI-1)', () => {
+    it('offers no New Secret / create prompt to a read-only user', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        render(<ProjectSecretsTab projectId={1} />);
+        expect(screen.getByText('No secrets in production')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /new secret/i })).not.toBeInTheDocument();
+        expect(screen.queryByText('Create your first secret in this environment.')).not.toBeInTheDocument();
+    });
+
+    it('offers New Secret to a user who can write', () => {
+        render(<ProjectSecretsTab projectId={1} />);
+        expect(screen.getAllByRole('button', { name: /new secret/i }).length).toBeGreaterThan(0);
+    });
+});

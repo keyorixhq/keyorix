@@ -25,6 +25,7 @@ func TestAnomalyIndexes_Postgres_CreatedOnUpgrade(t *testing.T) {
 		"idx_anomaly_alerts_dedup",
 		"idx_secret_access_logs_secret_time",
 		"idx_secret_access_logs_access_time",
+		"idx_secret_access_logs_secret_action",
 	}
 	for _, idx := range indexes {
 		require.True(t, indexExists(db, idx), "fresh install must have %s", idx)

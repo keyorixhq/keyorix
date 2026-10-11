@@ -53,7 +53,7 @@ func runSecretRotate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("rotate secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("rotate secret", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Secret %d rotated successfully.\n", rotateID)
 	return nil
@@ -98,7 +98,7 @@ func runSecretRotationSimulate(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("simulate rotation: HTTP %d", resp.StatusCode())
+		return httpStatusError("simulate rotation", resp.StatusCode(), resp.Body)
 	}
 	printRotationDryRunResult(resp.JSON200.Data)
 	return nil
@@ -186,7 +186,7 @@ func runSecretAutoRotate(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("set auto-rotate: HTTP %d", resp.StatusCode())
+		return httpStatusError("set auto-rotate", resp.StatusCode(), resp.Body)
 	}
 	if autoRotateOff {
 		fmt.Printf("Auto-rotation disabled for secret %d.\n", autoRotateID)

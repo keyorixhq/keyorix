@@ -5,12 +5,11 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -19,16 +18,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-var auditSearchTestCounter atomic.Int64
-
 // newAuditSearchStore opens a uniquely-named in-memory SQLite DB and migrates
 // audit_events + users (needed for the ActorUsername subquery join).
 func newAuditSearchStore(t *testing.T) (*LocalStorage, *gorm.DB) {
 	t.Helper()
-	n := auditSearchTestCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxauditsearch_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localauditsearch_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},

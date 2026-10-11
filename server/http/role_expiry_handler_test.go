@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -35,8 +35,7 @@ func newRoleExpiryEnv(t *testing.T) *roleExpiryTestEnv {
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
 
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("")), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))

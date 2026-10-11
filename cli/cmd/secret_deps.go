@@ -46,7 +46,7 @@ var secretDepsListCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("list secret dependencies: HTTP %d", resp.StatusCode())
+			return httpStatusError("list secret dependencies", resp.StatusCode(), resp.Body)
 		}
 		printSecretDependencies(resp.JSON200.Data)
 		return nil
@@ -80,7 +80,7 @@ var secretDepsAddCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("add secret dependency: HTTP %d", resp.StatusCode())
+			return httpStatusError("add secret dependency", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Added: secret %d now depends on secret %d (edge %d).\n", id, dependsOn, derefSecretInt(resp.JSON200.Data.Id))
 		return nil
@@ -116,7 +116,7 @@ var secretDepsRemoveCmd = &cobra.Command{
 		// This check previously required 204, so it reported failure on every
 		// successful removal.
 		if resp.StatusCode() != 200 {
-			return fmt.Errorf("remove secret dependency: HTTP %d", resp.StatusCode())
+			return httpStatusError("remove secret dependency", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Removed dependency edge %d from secret %d.\n", edgeID, id)
 		return nil
@@ -142,7 +142,7 @@ var secretDepsImpactCmd = &cobra.Command{
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret impact: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret impact", resp.StatusCode(), resp.Body)
 		}
 		printSecretImpact(resp.JSON200.Data)
 		return nil

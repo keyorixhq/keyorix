@@ -19,10 +19,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -31,12 +29,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
-
-var s15DBCounter atomic.Int64
 
 // freshSecretFixtureS15 builds an isolated named in-memory SQLite DB, migrates
 // all required schemas, seeds user 1 as system_admin, seeds a project and
@@ -45,10 +42,7 @@ var s15DBCounter atomic.Int64
 func freshSecretFixtureS15(t *testing.T) (*SecretHandler, *core.KeyorixCore, *models.SecretNode, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s15DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s15_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_s15_")
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)

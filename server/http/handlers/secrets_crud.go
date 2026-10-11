@@ -5,6 +5,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -296,7 +297,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		return
 	}
 
-	var response interface{} = newSecretNodeWire(secret)
+	var response interface{}
 	valueIncluded := r.URL.Query().Get("include_value") == "true" //nolint:goconst
 	if valueIncluded {
 		var value []byte
@@ -330,10 +331,27 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			h.sendError(w, "InternalError", "Failed to record audit trail", http.StatusInternalServerError, nil)
 			return
 		}
-		response = map[string]interface{}{"secret": newSecretNodeWire(secret), "value": string(value)}
+		response = map[string]interface{}{"secret": h.secretWireWithTotalReads(r.Context(), secret), "value": string(value)}
+	} else {
+		response = h.secretWireWithTotalReads(r.Context(), secret)
 	}
 
 	h.sendSuccess(w, response, "")
+}
+
+// secretWireWithTotalReads is newSecretNodeWire plus total_reads, the secret's
+// lifetime value-read count (core.SecretTotalReads), for the single-secret GETs.
+// Display only: if the count cannot be read the field is omitted and the
+// response is otherwise unchanged. On a value read it is computed after that
+// read's own audit + access-log write, so it includes this read.
+func (h *SecretHandler) secretWireWithTotalReads(ctx context.Context, secret *models.SecretNode) secretNodeWire {
+	w := newSecretNodeWire(secret)
+	if n, err := h.coreService.SecretTotalReads(ctx, secret.ID); err == nil {
+		w.TotalReads = &n
+	} else {
+		log.Printf("total_reads for secret %d unavailable: %v", secret.ID, err)
+	}
+	return w
 }
 
 // GetSecretByName handles GET /api/v1/secrets/by-name?name=X&project_id=Y&environment_id=Z
@@ -401,6 +419,8 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 		}
 	}) // #nosec G118
 
+	// No total_reads here: this lookup is itself audited as a secret.read (async, above),
+	// so a count would be non-deterministic and would include non-value reads.
 	h.sendSuccess(w, newSecretNodeWire(secret), "")
 }
 

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -1122,19 +1123,19 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 // notifyApprovalProgress alerts the project's approvers that a request needs more
 // sign-offs (best-effort).
 func (c *KeyorixCore) notifyApprovalProgress(ctx context.Context, req *models.AccessRequest, received, required int) {
-	members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
-	if err != nil {
-		return
+	recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID) // partial result still notified (best-effort)
+	if rerr != nil {
+		log.Printf("SECURITY: notifyApprovalProgress: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", req.ProjectID, len(recipients), rerr)
 	}
 	pid := req.ProjectID
 	label := c.projectLabel(ctx, req.ProjectID)
 	link := fmt.Sprintf("/projects/%d", req.ProjectID)
 	msg := fmt.Sprintf("Access request %d for %s has %d of %d approvals — another approver is needed.", req.ID, label, received, required)
-	for _, mbr := range members {
-		if mbr.UserID == req.UserID || !isApproverRole(mbr.RoleName) {
+	for _, uid := range recipients {
+		if uid == req.UserID {
 			continue
 		}
-		c.notify(ctx, mbr.UserID, NotificationAccessRequested, "Access request needs another approval", msg, &pid, link)
+		c.notify(ctx, uid, NotificationAccessRequested, "Access request needs another approval", msg, &pid, link)
 	}
 }
 

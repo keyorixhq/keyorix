@@ -141,6 +141,24 @@ const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.
     }
 };
 
+// axios words every non-2xx as "Request failed with status code N". That string reaches
+// users through any `error.message` a dialog renders (the 13 sites SHARE-2 moved to
+// apiErrorMessage, and every one nobody has found yet). Replace it once, here, with the
+// server's own reason when the body carries one; for a bare 403 say what is true: the
+// action is not permitted and the server gave no reason.
+const AXIOS_GENERIC_MESSAGE = /^Request failed with status code \d+$/;
+export const NO_PERMISSION_MESSAGE = 'You do not have permission to do this. Ask a project admin for access.';
+
+export const humanizeRefusal = (error: AxiosError): void => {
+    if (!AXIOS_GENERIC_MESSAGE.test(error.message ?? '')) return;
+    const data = error.response?.data as { message?: unknown; error?: unknown } | undefined;
+    if (typeof data?.message === 'string' && data.message) {
+        error.message = data.message;
+    } else if (error.response?.status === 403) {
+        error.message = NO_PERMISSION_MESSAGE;
+    }
+};
+
 const handleErrorByStatus = async (
     error: AxiosError,
     authStore: ReturnType<typeof useAuthStore.getState>
@@ -175,6 +193,7 @@ apiClient.interceptors.response.use(
             return result;
         }
 
+        humanizeRefusal(error);
         throw error;
     }
 );
@@ -188,7 +207,11 @@ export const makeAuthenticatedRequest = async <T>(reqConfig: AxiosRequestConfig)
 // the server's `message` (e.g. a validation reason like "secret value is a known weak
 // or placeholder value") over the `error` type code. Use this where the message is
 // shown to the user; handleApiError keeps its legacy code-first ordering.
-export const apiErrorMessage = (error: unknown): string => {
+// apiErrorMessage is what a dialog shows for a failed request: the server's own
+// reason (`message`, else `error`) when there is one, so a refusal reads e.g. "You
+// can't edit this secret: ..." instead of axios's "Request failed with status code
+// 403"; otherwise the Error's message; otherwise `fallback`.
+export const apiErrorMessage = (error: unknown, fallback = 'An unexpected error occurred'): string => {
     if (axios.isAxiosError(error)) {
         const data = error.response?.data as { message?: string; error?: string } | undefined;
         if (data?.message) return data.message;
@@ -196,7 +219,7 @@ export const apiErrorMessage = (error: unknown): string => {
         if (error.message) return error.message;
     }
     if (error instanceof Error) return error.message;
-    return 'An unexpected error occurred';
+    return fallback;
 };
 
 export const handleApiError = (error: unknown): string => {

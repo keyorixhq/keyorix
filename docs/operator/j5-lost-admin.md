@@ -74,7 +74,7 @@ to be running when you do this.
 ## 3. Restart the server, then log in with the one-time password
 
 ```bash
-keyorix-server --config ./keyorix.yaml
+KEYORIX_CONFIG_PATH=./keyorix.yaml keyorix-server     # the server has no --config flag
 keyorix login --server http://localhost:8080 --username admin --password '_M2vVfCk4K*6%x4v7uKt'
 ```
 
@@ -82,6 +82,16 @@ Expected: `Logged in to http://localhost:8080 as admin.` The account is still
 `password_reset_required`, so every OTHER endpoint returns `403` until you actually
 change it — confirmed live: `keyorix secret list` right after this login returns
 `Error: failed to list secrets: HTTP 403`.
+
+> **KNOWN BLOCKER (#3024) with the default `security.require_mfa: true`.** The
+> recovery clears the admin's MFA enrolment (step 2). On a default config the
+> next step then fails: `change-password` returns `MFAEnrollmentRequired`, and
+> `mfa enroll` returns `PasswordChangeRequired` — each waits for the other, so the
+> recovered admin cannot finish. Observed on `main` 12d5dbcb (SQLite). Do not work
+> around it with `require_mfa: false`. Until it is fixed, the way out is to restore
+> a backup taken while the admin still had MFA (`admin restore --allow-rollback`,
+> then sign in with the TOTP code or a recovery code). This page's transcript was
+> recorded before MFA became the default.
 
 ## 4. Set a real password
 
