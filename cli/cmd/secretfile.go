@@ -5,7 +5,7 @@
 // This is deliberately a small copy of internal/secretenv's rules, not an import:
 // this module must not depend on the main module (ADR-108 Decision A, enforced by
 // cli/internal/depguard). Keep the two in step:
-//   - NAME_FILE set -> read the file, strip ONE trailing "\n" or "\r\n".
+//   - NAME_FILE set -> read the file, strip ONE trailing "\n", "\r\n" or "\r".
 //   - NAME and NAME_FILE both set -> error (no precedence).
 //   - unreadable / empty / not a regular file / over 1 MiB -> error; never a
 //     fallback to NAME or a prompt.
@@ -80,12 +80,9 @@ func readCheckedSecretFile(path string) (string, error) {
 	if len(data) > maxSecretFileSize {
 		return "", fmt.Errorf("secret file is too large (limit %d bytes)", maxSecretFileSize)
 	}
-	v := string(data)
-	if strings.HasSuffix(v, "\r\n") {
-		v = v[:len(v)-2]
-	} else {
-		v = strings.TrimSuffix(v, "\n")
-	}
+	// One "\n", then one "\r": the server's rule (internal/secretenv) and
+	// --passphrase-file's.
+	v := strings.TrimSuffix(strings.TrimSuffix(string(data), "\n"), "\r")
 	if v == "" {
 		return "", fmt.Errorf("secret file is empty")
 	}
@@ -103,7 +100,7 @@ func checkSecretFileMode(info os.FileInfo) error {
 	mode := info.Mode()
 	perm := mode.Perm()
 	bad := func(why string) error {
-		return fmt.Errorf("secret file mode %04o is too open (%s) -- refusing to trust it; chmod 0600/0400, or mount it root-owned with a group the process belongs to and mode 0440", perm, why)
+		return fmt.Errorf("secret file mode %04o is too open (%s) -- refusing to trust it; chmod 0600/0400, or mount it owned by another user (e.g. root) with a group the process belongs to and mode 0440", perm, why)
 	}
 	switch {
 	case mode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0:

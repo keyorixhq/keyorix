@@ -102,8 +102,10 @@ bootstrap, `KEYORIX_ADMIN_PASSWORD_FILE`) to a path (Docker secrets mount under
 `/run/secrets/`, a Kubernetes Secret volume wherever you mount it). Setting both
 `X` and `X_FILE` is a startup error, not a precedence rule, and an unreadable or
 empty file stops the server. The master-password file must be `0600`/`0400` (or a
-root-owned `0440` mount in a group the container holds -- Kubernetes `fsGroup`,
-Docker `group_add`); a looser one is refused. Details and the full list of supported variables:
+`0440` mount owned by another user, e.g. root, in a group the container holds --
+Kubernetes `fsGroup`, Docker `group_add`); a looser one is refused. The container
+entrypoint passes `X_FILE` through to the server unchanged and never exports a
+value it read from a file. Details and the full list of supported variables:
 [CONFIGURATION.md](CONFIGURATION.md#secrets-from-files-name_file).
 
 Server configuration (storage, encryption paths, ports) lives in

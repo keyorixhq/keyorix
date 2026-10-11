@@ -65,9 +65,11 @@ entries, a rotation backend's `dsn_env`, and a Vault connector's `token_env`
 
 Rules (all enforced at startup; the server refuses to start rather than guess):
 
-- **`X_FILE` set:** the file is read and exactly one trailing newline (`\n` or
-  `\r\n`) is removed. Nothing else is trimmed -- no leading or trailing spaces, no
-  second newline -- so a secret may contain them. For
+- **`X_FILE` set:** the file is read and one line terminator is removed: one
+  trailing `\n`, then one trailing `\r` (so `\n`, `\r\n` or a lone `\r`). Nothing
+  else is trimmed -- no leading or trailing spaces, no second newline -- so a secret
+  may contain them. The container entrypoint and `keyorix system init` apply the
+  same rule. For
   `KEYORIX_MASTER_PASSWORD_FILE` this yields the same bytes as
   `--passphrase-file`, so both derive the same KEK. (The plain
   `KEYORIX_MASTER_PASSWORD` *environment variable* keeps its historical

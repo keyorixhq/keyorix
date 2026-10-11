@@ -134,12 +134,12 @@ func readSecretFile(path string, checkPerms bool) (string, error) {
 	return v, nil
 }
 
-// trimOneTerminator strips exactly one trailing "\n" or "\r\n".
+// trimOneTerminator strips one trailing "\n", then one trailing "\r": a "\n",
+// "\r\n" or lone "\r" terminator. That is exactly what --passphrase-file strips
+// (internal/crypto/passphrase.go), so KEYORIX_MASTER_PASSWORD_FILE and
+// --passphrase-file derive the same KEK from the same file.
 func trimOneTerminator(s string) string {
-	if strings.HasSuffix(s, "\r\n") {
-		return s[:len(s)-2]
-	}
-	return strings.TrimSuffix(s, "\n")
+	return strings.TrimSuffix(strings.TrimSuffix(s, "\n"), "\r")
 }
 
 // unwrapPathError drops the path prefix os errors carry (the caller already
@@ -192,7 +192,7 @@ func checkInfo(info os.FileInfo) error {
 	mode := info.Mode()
 	perm := mode.Perm()
 	bad := func(why string) error {
-		return fmt.Errorf("mode %04o is too open (%s) -- refusing to trust it; chmod 0600/0400, or mount it from the orchestrator root-owned with a group the process belongs to (fsGroup / group_add) and mode 0440", perm, why)
+		return fmt.Errorf("mode %04o is too open (%s) -- refusing to trust it; chmod 0600/0400, or mount it from the orchestrator owned by another user (e.g. root) with a group the process belongs to (fsGroup / group_add) and mode 0440", perm, why)
 	}
 	if mode&(os.ModeSetuid|os.ModeSetgid|os.ModeSticky) != 0 {
 		return bad("setuid/setgid/sticky bit")

@@ -121,7 +121,7 @@ func TestKeyMaterialFiles_StrictModesAccepted(t *testing.T) {
 // same bytes --passphrase-file yields, so both derive the same KEK. (The plain
 // environment variable keeps its historical whitespace trim.)
 func TestResolvePassphrase_FileTrimsExactlyOneNewlineLikePassphraseFile(t *testing.T) {
-	for _, content := range []string{"  pa ss  \n", "pass\r\n", "pass\n\n"} {
+	for _, content := range []string{"  pa ss  \n", "pass\r\n", "pass\n\n", "pass\r", "pass\n\r", "pass\r\r\n"} {
 		p := secretFile(t, content)
 		t.Setenv("KX_PASS_FILE", p)
 		fromEnvFile, err := ResolvePassphrase(PassphraseSource{}, "KX_PASS")

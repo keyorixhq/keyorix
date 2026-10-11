@@ -28,8 +28,10 @@ All notable changes to Keyorix are documented here. This project follows
   upgrade grace period they only warn. The container
   entrypoint (`KEYORIX_ADMIN_PASSWORD_FILE`, `KEYORIX_BOOTSTRAP_TOKEN_FILE`) and
   `keyorix system init` resolve `_FILE` too, so a `_FILE`-only deployment
-  auto-bootstraps. A file value has exactly one trailing newline stripped (same
-  bytes as `--passphrase-file`); the plain `KEYORIX_MASTER_PASSWORD` variable keeps
+  auto-bootstraps; the entrypoint never exports a value read from a file (the
+  server gets the `_FILE` path) and sends the bootstrap token in the request body,
+  not on wget's command line. A file value has one trailing `\n`, then one `\r`,
+  stripped (same bytes as `--passphrase-file`); the plain `KEYORIX_MASTER_PASSWORD` variable keeps
   its whitespace trim. See `docs/CONFIGURATION.md`.
 - **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
   baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
