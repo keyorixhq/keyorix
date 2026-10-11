@@ -411,25 +411,25 @@ describe('ShareSecretModal submission + lifecycle', () => {
 
     // The dialog is opened from a secrets-list row, and secretsApi.list maps every row with
     // `permissions: []` (the list endpoint returns no per-secret permissions). The dialog used to
-    // hide "Read & Write" unless secret.permissions held 'write', so for every real row it never
+    // hide the write option unless secret.permissions held 'write', so for every real row it never
     // offered it and a write share (the #2941 elevation) could not be created from the UI. The
     // server is the enforcement: POST /secrets/{id}/share needs secrets.write on the secret.
-    it('offers Read & Write for a list row, whose permissions array is empty', () => {
+    it('offers the write option for a list row, whose permissions array is empty', () => {
         const listRow: Secret = { ...secret, permissions: [] };
         render(<ShareSecretModal secret={listRow} isOpen onClose={() => {}} />);
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);
-        expect(optionLabels).toEqual(['Read Only', 'Read & Write']);
+        expect(optionLabels).toEqual(['Read Only', 'Read + update value/metadata, rotate']);
     });
 
-    it('offers Read & Write when the secret carries write', () => {
+    it('offers the write option when the secret carries write', () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);
-        expect(optionLabels).toContain('Read & Write');
+        expect(optionLabels).toContain('Read + update value/metadata, rotate');
     });
 
-    it('says what a Read & Write share grants and what it does not (#3001 allowlist)', () => {
+    it('says what a write share grants and what it does not (#3001 allowlist)', () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         expect(screen.getByText('The recipient can read this secret.')).toBeInTheDocument();
         fireEvent.change(screen.getByDisplayValue('Read Only'), { target: { value: 'write' } });
@@ -438,7 +438,10 @@ describe('ShareSecretModal submission + lifecycle', () => {
         expect(hint).toHaveTextContent(
             /Suspending, changing its expiry, moving, deleting, re-sharing or changing access still needs a project role/
         );
-        expect(screen.getByDisplayValue('Read & Write')).toHaveAttribute('aria-describedby', hint.id);
+        expect(screen.getByDisplayValue('Read + update value/metadata, rotate')).toHaveAttribute(
+            'aria-describedby',
+            hint.id
+        );
     });
 
     it('shows a success message, calls onSuccess, and auto-closes after a delay', async () => {
