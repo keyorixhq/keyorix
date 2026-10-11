@@ -65,6 +65,18 @@ services:
     restart: unless-stopped
     ports:
       - "8088:80"
+    environment:
+      # HSTS behind a TLS-terminating load balancer (docs/SELF_HOSTING.md). This
+      # nginx speaks plain http, so it sends Strict-Transport-Security ONLY for a
+      # request whose TCP peer is listed here AND which carries
+      # X-Forwarded-Proto=https; never for direct http, and never on the say-so of
+      # an untrusted client. Empty (default) = no proxy trusted = no HSTS. Keep it
+      # equal to the backend's server.http.trusted_proxies. Comma-separated IPs/CIDRs.
+      KEYORIX_WEB_TRUSTED_PROXIES: ${KEYORIX_WEB_TRUSTED_PROXIES:-}
+      # auto (default: on when trusted proxies are set) | on | off
+      KEYORIX_WEB_HSTS: ${KEYORIX_WEB_HSTS:-auto}
+      KEYORIX_WEB_HSTS_MAX_AGE: ${KEYORIX_WEB_HSTS_MAX_AGE:-31536000}
+      KEYORIX_WEB_HSTS_INCLUDE_SUBDOMAINS: ${KEYORIX_WEB_HSTS_INCLUDE_SUBDOMAINS:-true}
     depends_on:
       - backend
     # web/Dockerfile already bakes an image-level HEALTHCHECK (wget against

@@ -28,8 +28,20 @@ func TestHelmWebNginxSingleLayerHeadersAndNoPlainHTTPHSTS(t *testing.T) {
 	}
 	conf := string(out)
 
-	if m := regexp.MustCompile(`(?m)^\s*add_header\s+Strict-Transport-Security`).FindString(conf); m != "" {
-		t.Errorf("the chart's plain-http web nginx adds HSTS (%q); TLS terminates at the Ingress, which owns it", m)
+	// #3058: HSTS only via $keyorix_hsts (non-empty only for a trusted proxy that says
+	// X-Forwarded-Proto=https); with the default values (no web.trustedProxies) no
+	// peer is trusted and no HSTS value is defined. Behaviour: TestWebNginxHSTS_HelmChart.
+	stsRe := regexp.MustCompile(`(?m)^\s*add_header\s+Strict-Transport-Security\s+(\S+)\s+always;`)
+	if len(stsRe.FindAllString(conf, -1)) == 0 {
+		t.Error("the chart's web nginx never adds HSTS; it must for a trusted TLS-terminating proxy (#3058)")
+	}
+	for _, m := range stsRe.FindAllStringSubmatch(conf, -1) {
+		if m[1] != "$keyorix_hsts" {
+			t.Errorf("the chart's plain-http web nginx adds HSTS unconditionally (%q)", m[0])
+		}
+	}
+	if regexp.MustCompile(`(?m)^\s*"~`).MatchString(conf) || regexp.MustCompile(`(?m)^\s+[0-9a-fA-F:.]+(/\d+)?\s+1;`).MatchString(conf) {
+		t.Error("default values trust a proxy / define an HSTS value; web.trustedProxies must default to empty")
 	}
 
 	hidden := map[string]bool{}

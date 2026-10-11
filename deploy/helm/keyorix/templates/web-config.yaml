@@ -41,6 +41,9 @@ data:
         {{- end }}
       }
 
+      # HSTS only behind a trusted TLS-terminating proxy (web.trustedProxies).
+      {{- include "keyorix.web.hsts" . | nindent 6 }}
+
       # Baseline security headers. NOTE: nginx's add_header does not inherit into
       # any location block that defines its own add_header (see the comment on
       # keyorix.web.securityHeaders in _helpers.tpl) — every location below that

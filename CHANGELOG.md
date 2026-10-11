@@ -6,6 +6,13 @@ All notable changes to Keyorix are documented here. This project follows
 ## Unreleased
 
 ### Security
+- **HSTS behind a TLS-terminating load balancer** (#3058): the web nginx (compose
+  image and Helm chart) sends `Strict-Transport-Security` only for a request from a
+  configured trusted proxy (`KEYORIX_WEB_TRUSTED_PROXIES` / `web.trustedProxies`)
+  that carries `X-Forwarded-Proto: https`; never for direct http, never on the say-so
+  of an untrusted client. On by default once a trusted proxy is configured, off
+  otherwise. See docs/SELF_HOSTING.md §7. Guarded by a real-nginx test
+  (`deploy` `TestWebNginxHSTS_*`).
 - **The shipped compose stack and Helm chart run with
   `security.enable_file_permission_check` on** (ADR-112 default): key material and
   the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
