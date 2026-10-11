@@ -138,6 +138,49 @@ func TestListShares_DeniesGlobalScopeMFABypass(t *testing.T) {
 	require.Equal(t, http.StatusOK, w2.Code, "a session with MFA is allowed")
 }
 
+// memberOfEveryProjectStorage makes IsProjectMember true, so the owner-scoped list's
+// membership filter keeps the owner's shares and the aggregate MFA check is what
+// decides.
+type memberOfEveryProjectStorage struct {
+	corestorage.Storage
+}
+
+func (memberOfEveryProjectStorage) IsProjectMember(context.Context, uint, uint) (bool, error) {
+	return true, nil
+}
+
+// TestListOwnedShares_DeniesNoMFASessionOnMFARequiredProject: GET /shares/owned is
+// gated by the any-scope secrets.read check, which never applies a project's MFA
+// policy, so the handler must (shareViewsMFAAllowed). A session without MFA that owns a
+// share on an MFA-required project gets 403 ProjectMFARequired and no share data; a
+// session with MFA gets the list.
+func TestListOwnedShares_DeniesNoMFASessionOnMFARequiredProject(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{},
+		&models.ShareRecord{}, &models.User{}, &models.Group{}, &models.UserGroup{}))
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "guarded", RequireMFA: true}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "guarded-secret", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active", OwnerID: 1}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "auditor", Email: "auditor@example.com"}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 2, Username: "recipient", Email: "recipient@example.com"}).Error)
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: 1, OwnerID: 1, RecipientID: 2, IsGroup: false, Permission: "read"}).Error)
+	shareH, err := NewShareHandler(core.NewKeyorixCore(memberOfEveryProjectStorage{store.NewLocalStorage(db)}))
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	shareH.ListOwnedShares(w, sessionReq(1, false))
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), "ProjectMFARequired")
+	require.NotContains(t, w.Body.String(), `"secretId"`, "no share data may accompany the MFA refusal")
+
+	w2 := httptest.NewRecorder()
+	shareH.ListOwnedShares(w2, sessionReq(1, true))
+	require.Equal(t, http.StatusOK, w2.Code, "a session with MFA is allowed: %s", w2.Body.String())
+	require.Contains(t, w2.Body.String(), `"secretId":1`)
+}
+
 // erroringSecretsByIDsStorage makes the batched secret lookup fail (a transient
 // storage error), which is the only source of the project ids the share lists'
 // aggregate MFA check sees.
