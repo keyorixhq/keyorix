@@ -27,10 +27,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -39,12 +37,11 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ── DB helpers ─────────────────────────────────────────────────────────────────
-
-var s13SecretDBCounter atomic.Int64
 
 // freshSecretFixtureS13 builds an isolated named in-memory SQLite DB, migrates
 // ALL models (same set as freshCoreS12WithAdmin), seeds user 1 as system_admin,
@@ -53,10 +50,7 @@ var s13SecretDBCounter atomic.Int64
 func freshSecretFixtureS13(t *testing.T) (*SecretHandler, *core.KeyorixCore, *models.SecretNode, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s13SecretDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxsecret_s13_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxsecret_s13_")
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)

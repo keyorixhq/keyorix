@@ -21,8 +21,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"sort"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -50,6 +54,91 @@ var approverRoleNames = map[string]struct{}{
 func isApproverRole(roleName string) bool {
 	_, ok := approverRoleNames[roleName]
 	return ok
+}
+
+// projectAdminRecipients resolves "the project's admins" for every notifier that
+// addresses them (#2955, NOTIFY-1): the project's own approver-role members PLUS
+// every ACTIVE holder of an install-wide admin-bypass role -- directly or through
+// a group. Reading ListProjectMembers alone matches user_roles.project_id exactly,
+// so the install's global admin (the usual admin on a fresh install, who holds no
+// project-scoped row) was never considered and received nothing. A global admin
+// has admin authority on every project (requireAdminAuthorityAt), so they may
+// see anything a project admin may and are a project admin for alerting purposes.
+//
+// Every candidate -- approver-role project members AND install-wide admins -- is
+// vetted the same way: a deleted user, a deactivated one, or one whose login is
+// blocked (AccountLoginBlocked: suspended, deprovisioned, blank/unrecognised
+// state) is dropped, because nothing about the subject (secret names, anomaly
+// detail) may reach someone whose account is off. Admin-group members count only
+// through a GLOBAL (project_id=0) membership.
+//
+// Every notifier that notifies project admins MUST resolve them here -- the
+// guard in notify_recipients_guard_test.go fails any notify*/remind* function
+// that reads ListProjectMembers directly. Callers that must skip someone (the
+// requester of their own access request) filter the result.
+//
+// Returns each user once, in ascending ID order. On a partial failure it returns
+// the recipients it did resolve together with the error, so the caller can still
+// alert them and report the gap loudly (#166).
+func (c *KeyorixCore) projectAdminRecipients(ctx context.Context, projectID uint) ([]uint, error) {
+	// candidates: every user who might be a recipient. ONE vetting rule (an active
+	// account whose login is not blocked) is applied to all of them below.
+	candidates := map[uint]struct{}{}
+	var errs []error
+
+	members, err := c.storage.ListProjectMembers(ctx, projectID)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list project %d members: %w", projectID, err))
+	}
+	for _, m := range members {
+		if isApproverRole(m.RoleName) {
+			candidates[m.UserID] = struct{}{}
+		}
+	}
+
+	adminRoleIDs, err := c.adminBypassRoleIDSlice(ctx)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("resolve install-wide admins: %w", err))
+	} else if assignments, aerr := c.storage.ListGlobalAdminAssignmentsForUpdate(ctx, adminRoleIDs); aerr != nil {
+		// Read-only use outside any transaction: the Postgres row lock it takes is
+		// released immediately, and a stale read here only costs one alert.
+		errs = append(errs, fmt.Errorf("list install-wide admin grants: %w", aerr))
+	} else {
+		for _, a := range assignments {
+			switch a.PrincipalType {
+			case "user":
+				candidates[a.PrincipalID] = struct{}{}
+			case "group":
+				// The assignment is GLOBAL, so only members whose own membership is
+				// global (user_groups.project_id=0) inherit it. ListGroupMembers
+				// ignores that scope: a member scoped to another project would be
+				// told about every project (same rule as resolveGroupAdminMembers).
+				gm, gerr := c.storage.ListGroupMembersAt(ctx, a.PrincipalID, corestorage.Scope{})
+				if gerr != nil {
+					errs = append(errs, fmt.Errorf("list members of admin group %d: %w", a.PrincipalID, gerr))
+					continue
+				}
+				for _, u := range gm {
+					candidates[u.ID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	var ids []uint
+	for uid := range candidates {
+		u, uerr := c.storage.GetUser(ctx, uid)
+		switch {
+		case uerr != nil && corestorage.IsUserNotFound(uerr):
+			continue // deleted: not a recipient, not a failure
+		case uerr != nil:
+			errs = append(errs, fmt.Errorf("vet recipient %d: %w", uid, uerr))
+		case u != nil && u.IsActive && !AccountLoginBlocked(u.ID, u.AccountState):
+			ids = append(ids, uid)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, errors.Join(errs...)
 }
 
 // notify creates one in-app notification, best-effort (errors are swallowed so a
@@ -158,23 +247,21 @@ func (c *KeyorixCore) notifyMembershipActivated(ctx context.Context, m *models.P
 		&pid, link)
 }
 
-// notifyAccessRequested fans a new-request notification out to project approvers.
+// notifyAccessRequested fans a new-request notification out to the project's
+// admins (projectAdminRecipients: approver-role members + install-wide admins).
 func (c *KeyorixCore) notifyAccessRequested(ctx context.Context, req *models.AccessRequest) {
-	members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
-	if err != nil {
-		return
+	recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID) // partial result still notified (best-effort)
+	if rerr != nil {
+		log.Printf("SECURITY: notifyAccessRequested: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", req.ProjectID, len(recipients), rerr)
 	}
 	pid := req.ProjectID
 	label := c.projectLabel(ctx, req.ProjectID)
 	link := fmt.Sprintf("/projects/%d", req.ProjectID)
-	for _, mbr := range members {
-		if mbr.UserID == req.UserID {
+	for _, uid := range recipients {
+		if uid == req.UserID {
 			continue // don't notify the requester of their own request.
 		}
-		if !isApproverRole(mbr.RoleName) {
-			continue
-		}
-		c.notify(ctx, mbr.UserID, NotificationAccessRequested,
+		c.notify(ctx, uid, NotificationAccessRequested,
 			"New access request",
 			fmt.Sprintf("User %d requested %s access to %s.", req.UserID, req.SuggestedRole, label),
 			&pid, link)

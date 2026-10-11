@@ -5,11 +5,11 @@ package store_test
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,14 +18,9 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-var patExpiryStoreSeq atomic.Int64
-
 func newPatExpiryLocalDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	n := patExpiryStoreSeq.Add(1)
-	dsn := fmt.Sprintf("file:kx_pat_expiry_store_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localpatexpiry_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.PersonalAccessToken{}))
 	return db
 }

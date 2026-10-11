@@ -42,6 +42,16 @@ import (
 // does not depend on filesystem metadata at all.
 const keySetMtimeTolerance = 24 * time.Hour
 
+// allProviders returns the primary key provider followed by its fallbacks.
+// It deliberately appends without a precomputed capacity: a `1+len(...)`
+// size computation feeding make() is flagged by CodeQL as a possible
+// allocation-size overflow, and the saving is irrelevant for a handful of
+// providers.
+func allProviders(enc *config.EncryptionConfig) []config.KeyProviderConfig {
+	providers := []config.KeyProviderConfig{enc.KeyProvider}
+	return append(providers, enc.KeyProvider.Fallbacks...)
+}
+
 // RequiredKeyFilePaths returns every on-disk key-material path enc's config
 // requires to exist as a consistent set: the salt, the DEK, and (for the
 // primary provider and each fallback, one level — matching Registry's own
@@ -83,9 +93,7 @@ func RequiredKeyFilePaths(enc *config.EncryptionConfig, baseDir string) ([]strin
 	if err := add("DEK", enc.DEKPath); err != nil {
 		return nil, err
 	}
-	providers := make([]config.KeyProviderConfig, 0, 1+len(enc.KeyProvider.Fallbacks))
-	providers = append(providers, enc.KeyProvider)
-	providers = append(providers, enc.KeyProvider.Fallbacks...)
+	providers := allProviders(enc)
 	for i := range providers {
 		kp := &providers[i]
 		if writeCapableProviderTypes[kp.Type] {
@@ -168,9 +176,7 @@ func keyEstablishingGroups(enc *config.EncryptionConfig, baseDir string) ([]keyF
 		groups = append(groups, keyFileGroup{label: "KEK salt", paths: []string{saltFull}})
 	}
 
-	providers := make([]config.KeyProviderConfig, 0, 1+len(enc.KeyProvider.Fallbacks))
-	providers = append(providers, enc.KeyProvider)
-	providers = append(providers, enc.KeyProvider.Fallbacks...)
+	providers := allProviders(enc)
 	for i := range providers {
 		kp := &providers[i]
 		if writeCapableProviderTypes[kp.Type] {

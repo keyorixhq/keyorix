@@ -75,7 +75,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,20 +93,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/fuzzworld"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	keyorixgrpc "github.com/keyorixhq/keyorix/server/grpc"
 	grpcservices "github.com/keyorixhq/keyorix/server/grpc/services"
 )
 
 // --- world ------------------------------------------------------------
-
-var prMemDBSeq atomic.Int64
-
-// prUniqueMemDSN mirrors server/http's uniqueMemDSN (package-private there,
-// recreated here): a fresh shared-cache in-memory SQLite DB name per call so
-// concurrent/sequential fuzz worlds never collide.
-func prUniqueMemDSN() string {
-	return fmt.Sprintf("file:kxprfuzz_%d?mode=memory&cache=shared&_timeout=30000&_journal_mode=WAL", prMemDBSeq.Add(1))
-}
 
 // prPrincipalPassword is the shared login password for every non-admin
 // principal this world mints.
@@ -155,7 +146,8 @@ func buildPRWorld(f *testing.F) *prWorld {
 		f.Fatalf("i18n: %v", err)
 	}
 
-	gormDB := fuzzworld.OpenSQLite(f, prUniqueMemDSN(), 1)
+	// sqlitetest: private DB per world, single-connection pool, closed on cleanup.
+	gormDB := sqlitetest.Open(f, "kxprfuzz_")
 	fuzzworld.Bootstrap(f, gormDB)
 	if err := gormDB.AutoMigrate(models.AllTestModels()...); err != nil {
 		f.Fatalf("migrate test models: %v", err)

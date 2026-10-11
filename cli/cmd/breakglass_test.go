@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -50,9 +51,13 @@ func TestRunBGActivate_MatchesOldCLIOutputShape(t *testing.T) {
 			t.Fatalf("runBGActivate: %v", err)
 		}
 	})
+	// First line is the old CLI's, unchanged; #2981 adds the effect lines after it.
 	want := "Emergency access activated (id=42): role \"proj-dev\" until 2026-01-02T00:00:00Z.\n"
-	if out != want {
-		t.Fatalf("output = %q, want %q", out, want)
+	if !strings.HasPrefix(out, want) {
+		t.Fatalf("output = %q, want it to start with %q", out, want)
+	}
+	if !containsAll(out, `"proj-dev" is now granted to you on project 1`, "revoke --project-id 1 --activation-id 42") {
+		t.Fatalf("output lacks the effect lines: %q", out)
 	}
 }
 
