@@ -215,7 +215,7 @@ authorization call. Unrestricted PATs, sessions and machine tokens are unchanged
   regeneration and step-up, passkey register/delete and re-authentication, PAT
   creation, ending impersonation, marking notifications read, leaving a share
   (`DELETE /secrets/{id}/self-share`), project access requests (create, withdraw),
-  secret access requests (create, withdraw, approve/reject), break-glass (HTTP and
+  secret access requests (create, withdraw), break-glass (HTTP and
   gRPC). A step-up grant belongs to the user, not the token: the owner opens it
   from a session and a restricted PAT then reads under it.
 - **Allowed, each with its reason in the table:** revoking the owner's own PATs
@@ -223,7 +223,13 @@ authorization call. Unrestricted PATs, sessions and machine tokens are unchanged
   itself out); the four creates authorized inside the handler through `Authorize`
   at the body's scope (`POST /secrets`, `/folders`, `/rotation-policies`,
   `/dynamic-secrets/configs`), where the restriction already applies and refusing
-  would stop a restricted token creating anything inside its own restriction; and
+  would stop a restricted token creating anything inside its own restriction;
+  deciding a secret access request (`PUT /secret-access-requests/{requestId}`,
+  Andrei's follow-up decision of 2026-10-11), for parity with the gated sibling
+  `PUT /projects/{id}/access-requests/{requestId}`: core applies the restriction
+  (`roles.assign` at the request's own project) and then requires admin authority
+  there (`requireAccessRequestAuthorityAt`), so a token without `roles.assign` at
+  that project is refused by core and the request stays pending; and
   the pre-authentication and infrastructure routes outside `/api/v1`, which a PAT
   never authenticates.
 - **Family-wide guard.** `server/http` `TestEveryUngatedWriteDeclaresRestrictedPATPolicy`

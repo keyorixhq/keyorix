@@ -61,6 +61,10 @@ const (
 	reasonInHandlerAuthorize = "Permission-gated in substance: the handler authorizes through Authorize at the " +
 		"scope named in the body, which applies the restriction (a token confined elsewhere gets 403). " +
 		"Refusing it would stop a restricted token creating anything even inside its own restriction."
+	reasonSecretAccessRequestResolve = "Permission-gated in substance, like its sibling PUT /projects/{id}/access-requests/" +
+		"{requestId} (gated on roles.assign): Approve/RejectSecretAccessRequest call requireAccessRequestAuthorityAt, " +
+		"which applies the PAT restriction for roles.assign at the request's own project and then requires admin " +
+		"authority there, so a token without roles.assign at that project gets 403 from core."
 	reasonNotPATAuthenticated = "Not PAT-authenticated: outside /api/v1's Authentication middleware, so no " +
 		"request here carries a PAT restriction; its credential is "
 )
@@ -94,12 +98,11 @@ var restrictedPATUngatedWrites = map[string]RestrictedPATWritePolicy{
 	"POST /api/v1/notifications/{id}/read":          refusedSelfService,
 	"DELETE /api/v1/secrets/{id}/self-share":        refusedSelfService,
 
-	// Access the token does not hold: requesting, withdrawing, deciding, escalating.
+	// Access the token does not hold: requesting, withdrawing, escalating (deciding a secret access request is allowed below).
 	"POST /api/v1/projects/{id}/access-requests":                      refusedSelfService,
 	"POST /api/v1/projects/{id}/access-requests/{requestId}/withdraw": refusedSelfService,
 	"POST /api/v1/projects/{id}/break-glass":                          {Refusal: ErrRestrictedPATCannotBreakGlass},
 	"POST /api/v1/secret-access-requests":                             refusedSelfService,
-	"PUT /api/v1/secret-access-requests/{requestId}":                  refusedSelfService,
 	"POST /api/v1/secret-access-requests/{requestId}/withdraw":        refusedSelfService,
 	"/keyorix.v1.BreakGlassService/ActivateBreakGlass":                {Refusal: ErrRestrictedPATCannotBreakGlass},
 
@@ -107,6 +110,10 @@ var restrictedPATUngatedWrites = map[string]RestrictedPATWritePolicy{
 	"DELETE /api/v1/auth/tokens/{id}":    {Allowed: true, Reason: reasonOwnRevoke},
 	"DELETE /api/v1/auth/tokens/expired": {Allowed: true, Reason: reasonOwnRevoke + " Bulk form: the caller's own EXPIRED tokens only."},
 	"DELETE /api/v1/auth/sessions/{id}":  {Allowed: true, Reason: reasonOwnRevoke},
+
+	// Allowed: deciding a secret access request (Andrei's decision of 2026-10-11,
+	// parity with the permission-gated PUT /projects/{id}/access-requests/{requestId}).
+	"PUT /api/v1/secret-access-requests/{requestId}": {Allowed: true, Reason: reasonSecretAccessRequestResolve},
 
 	// Allowed: authorized inside the handler through Authorize.
 	"POST /api/v1/secrets":                 {Allowed: true, Reason: reasonInHandlerAuthorize},

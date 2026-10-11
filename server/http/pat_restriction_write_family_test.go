@@ -94,6 +94,8 @@ var restrictedPATAllowedCases = map[string]restrictedPATAllowedCase{
 	"POST /api/v1/rotation-policies":       allowedInScopeCreate("/api/v1/rotation-policies", `{"name":"%s","scope":"environment","project_id":%d,"environment_id":%d,"interval_days":30}`),
 	"POST /api/v1/dynamic-secrets/configs": allowedInScopeCreate("/api/v1/dynamic-secrets/configs", `{"name":"%s","project_id":%d,"environment_id":%d,"backend_type":"postgres","admin_dsn":"postgres://localhost/test"}`),
 	"POST /auth/login":                     allowedLoginWithRestrictedBearer,
+
+	"PUT /api/v1/secret-access-requests/{requestId}": allowedResolveSecretAccessRequest,
 }
 
 // TestEveryUngatedWriteDeclaresRestrictedPATPolicy is the family-wide guard (see
@@ -274,6 +276,42 @@ func allowedInScopeCreate(path, bodyFmt string) restrictedPATAllowedCase {
 				assert.NotContains(t, body, core.ErrRestrictedPATSelfServiceWrite.Error(), "refused by Authorize, not by the table")
 			}
 		}
+	}
+}
+
+// allowedResolveSecretAccessRequest: the request's approver is the owner (a
+// project_admin at the canary project). A restricted PAT WITHOUT roles.assign at
+// that project is refused by core (not by the restricted-PAT table) and the request
+// stays pending; one WITH roles.assign there succeeds. Core's own authority check is
+// unchanged for the unrestricted owner.
+func allowedResolveSecretAccessRequest(t *testing.T, w *patGuardWorld) {
+	ctx := context.Background()
+	for _, o := range patGuardOwners {
+		owner := w.userID(t, o.username)
+		res, err := w.core.CreateOwnPAT(ctx, owner, "g3-roles-assign-"+o.prefix, nil, []string{"roles.assign"}, w.canaryPID, 0, nil)
+		require.NoError(t, err)
+
+		// The fixture's pending request: the peer's, for this owner's canary secret.
+		req, err := w.core.GetSecretAccessRequest(ctx, w.accessRequests[o.prefix+"pending"], owner)
+		require.NoError(t, err)
+		require.Equal(t, core.AccessRequestPending, req.State, "fixture: a pending request to decide")
+		path := fmt.Sprintf("/api/v1/secret-access-requests/%d", req.ID)
+		body := []byte(`{"action":"approve"}`)
+
+		for _, persona := range patGuardRestrictedPersonas {
+			code, resp := w.do(t, http.MethodPut, w.tokens[o.prefix+persona], path, body)
+			assert.Equal(t, http.StatusForbidden, code, "%s: %s", persona, resp)
+			assert.NotContains(t, resp, core.ErrRestrictedPATSelfServiceWrite.Error(), "%s: refused by core, not by the table", persona)
+			got, gerr := w.core.GetSecretAccessRequest(ctx, req.ID, owner)
+			require.NoError(t, gerr)
+			assert.Equal(t, core.AccessRequestPending, got.State, "%s: a refused approval must leave the request pending", persona)
+		}
+
+		code, resp := w.do(t, http.MethodPut, res.PlainToken, path, body)
+		assert.Equal(t, http.StatusOK, code, "%s: restricted PAT with roles.assign at the request's project: %s", o.username, resp)
+		got, err := w.core.GetSecretAccessRequest(ctx, req.ID, owner)
+		require.NoError(t, err)
+		assert.Equal(t, core.AccessRequestApproved, got.State)
 	}
 }
 
