@@ -41,7 +41,7 @@ shares, and the audit trail are preserved. Requires secrets.write.`,
 			return err
 		}
 		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return fmt.Errorf("suspend secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("suspend secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Secret %d suspended -- value reads are now blocked.\n", secretSuspendID)
 		return nil
@@ -65,7 +65,7 @@ var secretResumeCmd = &cobra.Command{
 			return err
 		}
 		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return fmt.Errorf("resume secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("resume secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Secret %d resumed -- value reads are restored.\n", secretResumeID)
 		return nil
@@ -111,7 +111,7 @@ with 'secret restore --id <id>'. Requires secrets.read at the project scope.`,
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("list deleted secrets: HTTP %d", resp.StatusCode())
+			return httpStatusError("list deleted secrets", resp.StatusCode(), resp.Body)
 		}
 		rows := derefDeletedSecretSlice(resp.JSON200.Data.Deleted)
 		if len(rows) == 0 {
@@ -145,7 +145,7 @@ live list. Find restorable secrets with 'secret trash --project <id>'.`,
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("restore secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("restore secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Secret %d restored.\n", secretRestoreID)
 		return nil

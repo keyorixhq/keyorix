@@ -54,6 +54,7 @@ import (
 	kxstorage "github.com/keyorixhq/keyorix/internal/storage"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // orphanGuardAllowlist[TargetModel][ReferencingModel] = reason.
@@ -270,9 +271,7 @@ func TestOrphanReferenceGuard_EveryHardDeleteCascadesOrIsAllowlisted(t *testing.
 
 		name := fmt.Sprintf("%s.%s_references_%s", c.sourceModel, c.fieldName, c.targetModel)
 		t.Run(name, func(t *testing.T) {
-			dsn := "file::memory:?cache=shared"
-			db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-			require.NoError(t, err)
+			db := sqlitetest.OpenWithDialector(t, "orphanref_", sqlite.Open, &gorm.Config{})
 			require.NoError(t, kxstorage.MigrateExisting(db))
 			ls := store.NewLocalStorage(db)
 
@@ -363,9 +362,7 @@ func TestBulkOrCompoundDeleteTargetsAreAccountedFor(t *testing.T) {
 	candidates := deriveOrphanReferenceCandidates(t)
 	require.NotEmpty(t, candidates, "the reflection-derived reference map must not be empty -- see the sibling guard's identical check")
 
-	dsn := "file::memory:?cache=shared"
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "orphanbulk_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, kxstorage.MigrateExisting(db))
 	ls := store.NewLocalStorage(db)
 

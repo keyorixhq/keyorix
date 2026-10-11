@@ -33,6 +33,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/http/handlers"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/stretchr/testify/require"
@@ -125,7 +126,7 @@ func miepRunEvictionFailureCase(t *testing.T, arm func(*faultstorage.FaultyStora
 		Storage: config.StorageConfig{
 			Type: "local",
 			Database: config.DatabaseConfig{
-				Path: uniqueMemDSN("&_timeout=30000&_journal_mode=WAL"),
+				Path: sqlitetest.DSN("kxtest_"),
 			},
 		},
 	}
