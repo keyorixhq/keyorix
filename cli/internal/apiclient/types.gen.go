@@ -950,7 +950,7 @@ type Secret struct {
 	RotationRef            *string    `json:"rotation_ref,omitempty"`
 	Status                 *string    `json:"status,omitempty"`
 
-	// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads.
+	// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads.
 	TotalReads *int       `json:"total_reads,omitempty"`
 	Type       *string    `json:"type,omitempty"`
 	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
@@ -1061,7 +1061,7 @@ type SecretGetResult struct {
 	Secret *Secret `json:"secret,omitempty"`
 	Status *string `json:"status,omitempty"`
 
-	// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads.
+	// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads.
 	TotalReads *int       `json:"total_reads,omitempty"`
 	Type       *string    `json:"type,omitempty"`
 	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
@@ -1278,7 +1278,10 @@ type Error struct {
 	// Error Short error-type label, e.g. "NotFound", "BadRequest".
 	Error   *string `json:"error,omitempty"`
 	Message *string `json:"message,omitempty"`
-	Success *bool   `json:"success,omitempty"`
+
+	// PendingSteps Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order.
+	PendingSteps *[]string `json:"pending_steps,omitempty"`
+	Success      *bool     `json:"success,omitempty"`
 }
 
 // BulkApproveAccessRequestsJSONBody defines parameters for BulkApproveAccessRequests.
