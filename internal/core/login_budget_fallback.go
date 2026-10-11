@@ -19,13 +19,23 @@
 //     are kept. Many distinct (spoofed or rotating) addresses evict each other
 //     rather than exhaust memory; rotating addresses already defeats any per-IP
 //     limit, stored or not.
-//   - consulted IN ADDITION to the stored count: memory only ever holds
-//     attempts whose stored write failed, so OR-ing it in never double-counts,
+//   - consulted IN ADDITION to the stored count: the attempts added to it are
+//     those whose stored write failed, so adding them never double-counts,
 //     and leftover entries age out with the window after storage recovers. The
 //     counts are never merged into storage.
+//   - mirrored while degraded (#3023 review): a write that SUCCEEDS while the
+//     budget is on its fallback (any fallback within LoginWindow) is also
+//     noted in memory, flagged as mirrored. A COUNT that fails is then judged
+//     on memory including the mirrored attempts, so a budget whose count query
+//     fails while its inserts succeed still binds (it used to fail open:
+//     memory stayed empty and the IP was never limited). A count that works
+//     ignores mirrored attempts: they are in the stored count already.
 //   - releasable: a reservation taken here gets an id with loginFallbackIDBit
 //     set, which no stored row id can carry, so ReleaseLoginAttempt (a
-//     delivered login, #2936) refunds it here instead of in storage.
+//     delivered login, #2936) refunds it here instead of in storage. Such an
+//     id is meaningful only inside this process: it is never persisted to a
+//     row other replicas read (sharedLoginSlot), so a fallback slot held by an
+//     MFA challenge or a WebAuthn ceremony stays counted until it ages out.
 //
 // Every fallback is audited (EventLoginBudgetFallback, Success=false) and
 // counted (keyorix_login_budget_fallback_total). The client sees no
@@ -69,6 +79,12 @@ var loginBudgetFallbackTotal = promauto.NewCounter(prometheus.CounterOpts{
 type loginFallbackAttempt struct {
 	id uint
 	at time.Time
+	// mirrored marks an attempt whose stored write succeeded: counted only
+	// when the stored count cannot be read (IsLoginRateLimited).
+	mirrored bool
+	// storedID is the stored reservation a mirrored attempt belongs to (0 if
+	// none), so releasing that reservation releases the mirror.
+	storedID uint
 }
 
 type loginFallbackEntry struct {
@@ -84,15 +100,72 @@ type loginFallbackLimiter struct {
 	lru    *list.List               // front = most recently used; values *loginFallbackEntry
 	byIP   map[string]*list.Element // ip -> element in lru
 	byID   map[uint]string          // reservation id -> ip, for release
-	nextID uint
+	// byStored maps a mirrored attempt's stored reservation id to its own id.
+	byStored map[uint]uint
+	nextID   uint
+	// lastFallback is when the budget last fell back (zero: never); the
+	// budget counts as degraded while that lies within LoginWindow.
+	lastFallback time.Time
 }
 
 func newLoginFallbackLimiter(maxIPs int) *loginFallbackLimiter {
 	return &loginFallbackLimiter{
-		maxIPs: maxIPs,
-		lru:    list.New(),
-		byIP:   map[string]*list.Element{},
-		byID:   map[uint]string{},
+		maxIPs:   maxIPs,
+		lru:      list.New(),
+		byIP:     map[string]*list.Element{},
+		byID:     map[uint]string{},
+		byStored: map[uint]uint{},
+	}
+}
+
+// sharedLoginSlot is slotID as it may be persisted on a row every replica
+// reads and that outlives this process (mfa_challenges / web_authn_sessions
+// login_attempt_id): a stored reservation id as is, a fallback id never
+// (#3023 review). A fallback id names a per-process counter value: another
+// replica, or this one after a restart, releasing it would refund an unrelated
+// reservation of its own, and with the top bit set it does not fit a signed
+// 64-bit column (SQLite stores it negative and cannot read it back into a
+// uint; the MFA or passkey login then fails during the very outage the
+// fallback exists for). The fallback reservation simply stays counted until
+// it ages out of the window: the strict side.
+func sharedLoginSlot(slotID *uint) *uint {
+	if slotID == nil || *slotID&loginFallbackIDBit != 0 {
+		return nil
+	}
+	return slotID
+}
+
+// markDegraded notes that the budget fell back at now.
+func (f *loginFallbackLimiter) markDegraded(now time.Time) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.lastFallback = now
+}
+
+// degraded reports whether the budget fell back within LoginWindow of now.
+func (f *loginFallbackLimiter) degraded(now time.Time) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.lastFallback.IsZero() && now.Sub(f.lastFallback) <= LoginWindow
+}
+
+// mirrorIfDegraded notes a SUCCESSFUL stored write for ip in memory too while
+// the budget is degraded, so a count that fails can still be judged (see
+// IsLoginRateLimited). storedID, when non-zero, is the stored reservation the
+// mirror belongs to: releasing it releases the mirror as well.
+func (f *loginFallbackLimiter) mirrorIfDegraded(ip string, now time.Time, storedID uint) {
+	if !f.degraded(now) {
+		return
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	e := f.touch(ip)
+	f.prune(e, now.Add(-LoginWindow))
+	a := f.add(e, now)
+	a.mirrored = true
+	if storedID != 0 {
+		a.storedID = storedID
+		f.byStored[storedID] = a.id
 	}
 }
 
@@ -109,19 +182,34 @@ func (f *loginFallbackLimiter) reserve(ip string, now time.Time) uint {
 	defer f.mu.Unlock()
 	e := f.touch(ip)
 	f.prune(e, now.Add(-LoginWindow))
+	return f.add(e, now).id
+}
+
+// add appends one attempt at now to e, keeping at most loginFallbackMaxPerIP,
+// and returns it. Caller holds f.mu.
+func (f *loginFallbackLimiter) add(e *loginFallbackEntry, now time.Time) *loginFallbackAttempt {
 	f.nextID++
 	id := f.nextID | loginFallbackIDBit
 	e.attempts = append(e.attempts, loginFallbackAttempt{id: id, at: now})
-	f.byID[id] = ip
+	f.byID[id] = e.ip
 	if len(e.attempts) > loginFallbackMaxPerIP {
-		delete(f.byID, e.attempts[0].id)
+		f.forget(e.attempts[0])
 		e.attempts = e.attempts[1:]
 	}
-	return id
+	return &e.attempts[len(e.attempts)-1]
 }
 
-// count returns how many attempts ip has at or after since.
-func (f *loginFallbackLimiter) count(ip string, since time.Time) int {
+// forget drops a's index entries. Caller holds f.mu.
+func (f *loginFallbackLimiter) forget(a loginFallbackAttempt) {
+	delete(f.byID, a.id)
+	if a.storedID != 0 {
+		delete(f.byStored, a.storedID)
+	}
+}
+
+// count returns how many attempts ip has at or after since, mirrored ones
+// only when withMirrored is set.
+func (f *loginFallbackLimiter) count(ip string, since time.Time, withMirrored bool) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	el, ok := f.byIP[ip]
@@ -130,7 +218,13 @@ func (f *loginFallbackLimiter) count(ip string, since time.Time) int {
 	}
 	e := el.Value.(*loginFallbackEntry)
 	f.prune(e, since)
-	return len(e.attempts)
+	n := 0
+	for _, a := range e.attempts {
+		if withMirrored || !a.mirrored {
+			n++
+		}
+	}
+	return n
 }
 
 // release removes the reservation id, if this limiter still holds it.
@@ -149,9 +243,21 @@ func (f *loginFallbackLimiter) release(id uint) {
 	e := el.Value.(*loginFallbackEntry)
 	for i, a := range e.attempts {
 		if a.id == id {
+			f.forget(a)
 			e.attempts = append(e.attempts[:i], e.attempts[i+1:]...)
 			break
 		}
+	}
+}
+
+// releaseMirror removes the mirrored attempt bound to the stored reservation
+// storedID, if this limiter holds one.
+func (f *loginFallbackLimiter) releaseMirror(storedID uint) {
+	f.mu.Lock()
+	id, ok := f.byStored[storedID]
+	f.mu.Unlock()
+	if ok {
+		f.release(id)
 	}
 }
 
@@ -173,7 +279,7 @@ func (f *loginFallbackLimiter) touch(ip string) *loginFallbackEntry {
 		oldest := f.lru.Back()
 		oe := oldest.Value.(*loginFallbackEntry)
 		for _, a := range oe.attempts {
-			delete(f.byID, a.id)
+			f.forget(a)
 		}
 		delete(f.byIP, oe.ip)
 		f.lru.Remove(oldest)
@@ -188,7 +294,7 @@ func (f *loginFallbackLimiter) prune(e *loginFallbackEntry, since time.Time) {
 	keep := e.attempts[:0]
 	for _, a := range e.attempts {
 		if a.at.Before(since) {
-			delete(f.byID, a.id)
+			f.forget(a)
 			continue
 		}
 		keep = append(keep, a)
@@ -201,6 +307,7 @@ func (f *loginFallbackLimiter) prune(e *loginFallbackEntry, since time.Time) {
 // will usually fail too, which is why the metric exists.
 func (c *KeyorixCore) noteLoginBudgetFallback(ctx context.Context, op, ip string, err error) {
 	loginBudgetFallbackTotal.Inc()
+	c.loginBudgetFallback().markDegraded(c.now())
 	c.writeAuditEventFailed(ctx, EventLoginBudgetFallback, nil, nil, ip,
 		fmt.Sprintf("login rate limit %s for %s fell back to the in-memory limiter: LoginAttempt storage error: %v", op, ip, err))
 }

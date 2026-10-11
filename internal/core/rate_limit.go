@@ -60,18 +60,24 @@ const (
 // nor closed. Attempts the fallback recorded while storage writes were failing
 // count in addition to the stored ones, so they still bind after a partial
 // recovery, until they age out of the window.
+//
+// When the count fails, the fallback decides on everything it holds for ip,
+// mirrored attempts included (#3023 review): the inserts may still be
+// succeeding, and without the mirror nothing would ever reach memory, so the
+// IP would never be limited.
 func (c *KeyorixCore) IsLoginRateLimited(ctx context.Context, ip string) bool {
 	if ip == "" {
 		return false
 	}
 	ip = CanonicalIP(ip)
 	since := c.now().Add(-LoginWindow)
+	f := c.loginBudgetFallback()
 	n, err := c.storage.CountRecentLoginAttempts(ctx, ip, since)
 	if err != nil {
 		c.noteLoginBudgetFallback(ctx, "check", ip, err)
-		n = 0
+		return f.count(ip, since, true) >= LoginMaxAttempts
 	}
-	return n+int64(c.loginBudgetFallback().count(ip, since)) >= LoginMaxAttempts
+	return n+int64(f.count(ip, since, false)) >= LoginMaxAttempts
 }
 
 // RecordFailedLogin records a failed authentication attempt from an IP. A
@@ -85,7 +91,9 @@ func (c *KeyorixCore) RecordFailedLogin(ctx context.Context, ip string) {
 	if err := c.storage.RecordLoginAttempt(ctx, ip, c.now()); err != nil {
 		c.noteLoginBudgetFallback(ctx, "record", ip, err)
 		c.loginBudgetFallback().reserve(ip, c.now())
+		return
 	}
+	c.loginBudgetFallback().mirrorIfDegraded(ip, c.now(), 0)
 }
 
 // ReserveLoginAttempt is RecordFailedLogin's releasable counterpart: it
@@ -108,6 +116,7 @@ func (c *KeyorixCore) ReserveLoginAttempt(ctx context.Context, ip string) (id ui
 		c.noteLoginBudgetFallback(ctx, "reserve", ip, err)
 		return c.loginBudgetFallback().reserve(ip, c.now()), true
 	}
+	c.loginBudgetFallback().mirrorIfDegraded(ip, c.now(), id)
 	return id, true
 }
 
@@ -129,7 +138,13 @@ func (c *KeyorixCore) ReleaseLoginAttempt(ctx context.Context, id uint) {
 		return
 	}
 	besteffort.Run(ctx, "rate_limit.ReleaseLoginAttempt", func() error {
-		return c.storage.ReleaseLoginAttempt(ctx, id)
+		if err := c.storage.ReleaseLoginAttempt(ctx, id); err != nil {
+			return err
+		}
+		// The mirror goes only once the stored row is gone, so a failed
+		// release leaves both counted.
+		c.loginBudgetFallback().releaseMirror(id)
+		return nil
 	})
 }
 

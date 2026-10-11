@@ -182,7 +182,7 @@ func (c *KeyorixCore) storeWebAuthnSessionHoldingLoginSlot(ctx context.Context, 
 		Data:           data,
 		ExpiresAt:      c.now().Add(webauthnSessionTTL),
 		CreatedAt:      c.now(),
-		LoginAttemptID: slotID,
+		LoginAttemptID: sharedLoginSlot(slotID),
 	}); err != nil {
 		return "", err
 	}
