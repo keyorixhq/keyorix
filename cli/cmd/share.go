@@ -215,7 +215,7 @@ func runShareCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to share secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to share secret", resp.StatusCode(), resp.Body)
 	}
 	s := resp.JSON201.Data
 	fmt.Printf("✅ Secret shared successfully!\n")
@@ -240,7 +240,7 @@ func runShareList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("failed to list shares: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list shares", resp.StatusCode(), resp.Body)
 	}
 	var shares []apiclient.Share
 	if resp.JSON200.Data != nil && resp.JSON200.Data.Shares != nil {
@@ -287,7 +287,7 @@ func runShareUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to update share permission: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to update share permission", resp.StatusCode(), resp.Body)
 	}
 	s := resp.JSON200.Data
 	fmt.Printf("Share permission updated successfully!\n")
@@ -312,7 +312,7 @@ func runShareRevoke(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("failed to revoke share: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to revoke share", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Share revoked successfully!\n")
 	fmt.Printf("Share ID: %d\n", shareRevokeShareID)
@@ -333,7 +333,7 @@ func runShareSelfRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("remove self from share: HTTP %d", resp.StatusCode())
+		return httpStatusError("remove self from share", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Removed yourself from secret %d.\n", secretID)
 	return nil
@@ -352,7 +352,7 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("failed to list shared secrets: HTTP %d", resp.StatusCode())
+			return httpStatusError("failed to list shared secrets", resp.StatusCode(), resp.Body)
 		}
 		if resp.JSON200.Data != nil && resp.JSON200.Data.Secrets != nil {
 			secrets = *resp.JSON200.Data.Secrets
@@ -363,7 +363,7 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("failed to list shared secrets: HTTP %d", resp.StatusCode())
+			return httpStatusError("failed to list shared secrets", resp.StatusCode(), resp.Body)
 		}
 		if resp.JSON200.Data != nil && resp.JSON200.Data.Secrets != nil {
 			secrets = *resp.JSON200.Data.Secrets
@@ -392,7 +392,7 @@ func runGroupShares(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("failed to list group shares: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list group shares", resp.StatusCode(), resp.Body)
 	}
 	var shares []apiclient.Share
 	if resp.JSON200.Data != nil && resp.JSON200.Data.Shares != nil {

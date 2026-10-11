@@ -392,10 +392,6 @@ func TestConfigSurface_RatchetCatchesACountPreservingSwap(t *testing.T) {
 // entry claims through DerivedInputs, each with the reason. Same contract as
 // sweepExemptions: a claim a reviewer can check at its source.
 var derivedFieldExemptions = map[string]string{
-	"security.RequireMFAImplicitDefault": "security.require_mfa has no InsecureSettingsRegistry entry at all yet " +
-		"(#2986); its implicit/grace states are reported by server/admin's collectRequireMFAPosture and " +
-		"server/main.go's logWarnOnImplicitRequireMFADefault, NOT by the registry. Remove when #2986 is fixed.",
-	"security.RequireMFAUpgradeGrace": "see security.RequireMFAImplicitDefault (#2986). Remove when #2986 is fixed.",
 	"DeprecatedSettingWarnings": "text only: the start-up warnings resolveDeprecatedAliases collected for old keys " +
 		"it already translated to the current insecure_ key before decoding. It changes no setting's value or " +
 		"effect, so no InEffect/Value could depend on it (server/main.go warnDeprecatedSettingAliases only logs it).",

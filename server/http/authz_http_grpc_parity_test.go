@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
@@ -33,11 +33,7 @@ import (
 func TestAuthzParity_HTTPvsGRPC_Secrets(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
@@ -45,7 +41,7 @@ func TestAuthzParity_HTTPvsGRPC_Secrets(t *testing.T) {
 	// Bootstrap seeds the admin, the standard roles (incl. "viewer" = secrets.read) +
 	// permissions, and project 1 with its environments.
 	c.SetBootstrapToken("test-bootstrap-token")
-	_, err = c.BootstrapSystem(ctx, &core.BootstrapRequest{
+	_, err := c.BootstrapSystem(ctx, &core.BootstrapRequest{
 		Username: "admin", Email: "admin@example.com", Password: "Qr7#Kp2$Lm5@Vn9!", Token: "test-bootstrap-token",
 	})
 	require.NoError(t, err)

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -28,11 +28,10 @@ func TestIsUserNotFound_RealLocalStorage(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	defer i18n.ResetForTesting()
 
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.User{}))
 	local := store.NewLocalStorage(db)
-	_, err = local.GetUserByEmail(context.Background(), "ghost-does-not-exist@example.com")
+	_, err := local.GetUserByEmail(context.Background(), "ghost-does-not-exist@example.com")
 	require.Error(t, err)
 	assert.True(t, storage.IsUserNotFound(err), "a genuine LocalStorage miss must be detected; got: %v", err)
 }
