@@ -29,7 +29,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -41,12 +40,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
-
-// s25DBSeq makes each in-memory DB unique within the process, so that
-// repeated invocations of the same test (go test -count=N) don't attach to a
-// live leftover DB from a prior iteration.
-var s25DBSeq atomic.Int64
 
 // ─── local helpers ────────────────────────────────────────────────────────────
 
@@ -59,9 +54,7 @@ func s25ES(t *testing.T) *EncryptionService {
 
 func s25DB(t *testing.T) *gorm.DB {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_%s_%d:?mode=memory&cache=shared", t.Name(), s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "s25_")
 	require.NoError(t, db.AutoMigrate(
 		&models.Session{},
 		&models.APIToken{},
@@ -1035,9 +1028,7 @@ func TestSweepAPITokens_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_apitoken_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "s25_sweep_apitoken_close_")
 	require.NoError(t, db.AutoMigrate(&models.APIToken{}))
 
 	row := &models.APIToken{
@@ -1066,9 +1057,7 @@ func TestSweepAPIClients_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_apiclient_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "s25_sweep_apiclient_close_")
 	require.NoError(t, db.AutoMigrate(&models.APIClient{}))
 
 	row := &models.APIClient{
@@ -1099,9 +1088,7 @@ func TestSweepPasswordResets_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_pwreset_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "s25_sweep_pwreset_close_")
 	require.NoError(t, db.AutoMigrate(&models.PasswordReset{}))
 
 	row := &models.PasswordReset{
@@ -1133,9 +1120,7 @@ func TestSweepMFASecrets_UpdatesError(t *testing.T) {
 	metaBytes, err := json.Marshal(enc.Metadata)
 	require.NoError(t, err)
 
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_mfa_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "s25_sweep_mfa_close_")
 	require.NoError(t, db.AutoMigrate(&models.MFASecret{}))
 
 	row := &models.MFASecret{UserID: userID, SecretEnc: encBytes, SecretMeta: metaBytes}
@@ -1154,9 +1139,7 @@ func TestSweepMFASecrets_UpdatesError(t *testing.T) {
 func TestSweepDynamicSecretConfigs_UpdatesError(t *testing.T) {
 	es := s25ES(t)
 
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_dynconfig_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "s25_sweep_dynconfig_close_")
 	require.NoError(t, db.AutoMigrate(&models.DynamicSecretConfig{}))
 
 	row := &models.DynamicSecretConfig{Name: "close-cfg", ProjectID: 1, EnvironmentID: 2}
@@ -1186,9 +1169,7 @@ func TestSweepDynamicSecretConfigs_UpdatesError(t *testing.T) {
 func TestSweepDynamicSecretLeases_UpdatesError(t *testing.T) {
 	es := s25ES(t)
 
-	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file::s25_sweep_dynlease_close_%d?mode=memory&cache=shared", s25DBSeq.Add(1))),
-		&gorm.Config{Logger: logger.Discard})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "s25_sweep_dynlease_close_")
 	require.NoError(t, db.AutoMigrate(&models.DynamicSecretLease{}))
 
 	leaseID := "close-lease-s25"

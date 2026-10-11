@@ -71,7 +71,7 @@ func resolveRBACEnvironmentIDByName(ctx context.Context, client *apiclient.Clien
 		return 0, fmt.Errorf("failed to list environments: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Environments == nil {
-		return 0, fmt.Errorf("failed to list environments: HTTP %d", resp.StatusCode())
+		return 0, httpStatusError("failed to list environments", resp.StatusCode(), resp.Body)
 	}
 	for _, e := range *resp.JSON200.Data.Environments {
 		if e.Name != nil && strings.EqualFold(*e.Name, name) {
@@ -90,7 +90,7 @@ func resolveUserIDByEmail(ctx context.Context, client *apiclient.ClientWithRespo
 		return 0, fmt.Errorf("failed to list users: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Users == nil {
-		return 0, fmt.Errorf("failed to list users: HTTP %d", resp.StatusCode())
+		return 0, httpStatusError("failed to list users", resp.StatusCode(), resp.Body)
 	}
 	for _, u := range *resp.JSON200.Data.Users {
 		if u.Email != nil && strings.EqualFold(*u.Email, email) {
@@ -107,7 +107,7 @@ func fetchRoles(ctx context.Context, client *apiclient.ClientWithResponses) ([]a
 		return nil, fmt.Errorf("failed to list roles: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return nil, fmt.Errorf("failed to list roles: HTTP %d", resp.StatusCode())
+		return nil, httpStatusError("failed to list roles", resp.StatusCode(), resp.Body)
 	}
 	return derefRoleSlice(resp.JSON200.Data.Roles), nil
 }
@@ -133,7 +133,7 @@ func fetchUserRoles(ctx context.Context, client *apiclient.ClientWithResponses, 
 		return nil, fmt.Errorf("failed to get user roles: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return nil, fmt.Errorf("failed to get user roles: HTTP %d", resp.StatusCode())
+		return nil, httpStatusError("failed to get user roles", resp.StatusCode(), resp.Body)
 	}
 	return derefRoleRefSlice(resp.JSON200.Data.Roles), nil
 }
@@ -155,7 +155,7 @@ func userEffectivePermissions(ctx context.Context, client *apiclient.ClientWithR
 			return nil, fmt.Errorf("failed to get permissions for role %q: %w", derefStr(role.Name), err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return nil, fmt.Errorf("failed to get permissions for role %q: HTTP %d", derefStr(role.Name), resp.StatusCode())
+			return nil, httpStatusError(fmt.Sprintf("failed to get permissions for role %q", derefStr(role.Name)), resp.StatusCode(), resp.Body)
 		}
 		for _, p := range derefPermissionSlice(resp.JSON200.Data.Permissions) {
 			name := derefStr(p.Name)
@@ -285,7 +285,7 @@ func runRBACAssignRole(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
 	if resp.JSON201 == nil {
-		return fmt.Errorf("failed to assign role: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to assign role", resp.StatusCode(), resp.Body)
 	}
 	suffix := scopeSuffix(rbacAssignProject, rbacAssignEnv)
 	if rbacRoleTTL > 0 {
@@ -365,7 +365,7 @@ func runRBACRemoveRole(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to remove role: %w", err)
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("failed to remove role: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to remove role", resp.StatusCode(), resp.Body)
 	}
 	suffix := scopeSuffix(rbacRemoveProject, rbacRemoveEnv)
 	fmt.Printf("Successfully removed role '%s' from user '%s'%s\n", rbacRemoveRoleName, rbacRemoveUserEmail, suffix)

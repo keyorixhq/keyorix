@@ -90,7 +90,7 @@ func runMFAEnroll(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("contact %s: %w", serverURL, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Secret == "" {
-		return fmt.Errorf("MFA enrolment failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("MFA enrolment failed", resp.StatusCode(), resp.Body)
 	}
 	data := resp.JSON200.Data
 
@@ -150,7 +150,7 @@ func runMFAActivate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("contact %s: %w", serverURL, err)
 	}
 	if resp.StatusCode() != http.StatusOK || resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("MFA activation failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("MFA activation failed", resp.StatusCode(), resp.Body)
 	}
 
 	if reauthenticationRequired(resp.Body) {
@@ -203,7 +203,7 @@ func runMFAStepUp(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("contact %s: %w", serverURL, err)
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("MFA step-up failed: HTTP %d", resp.StatusCode())
+		return httpStatusError("MFA step-up failed", resp.StatusCode(), resp.Body)
 	}
 
 	fmt.Println("MFA step-up verified. Restricted secrets are accessible for 15 minutes.")

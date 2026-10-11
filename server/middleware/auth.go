@@ -442,38 +442,32 @@ func handleAuthRequest(next http.Handler, w http.ResponseWriter, r *http.Request
 	// impersonation resolution below) get extra slow-path handling.
 	isSessionToken := coreService != nil && !strings.HasPrefix(token, patTokenPrefix) && !strings.HasPrefix(token, machineTokenPrefix) && !looksLikeJWT(token)
 
-	// Resolve impersonation once, on the slow path, so it is cached with the identity.
-	if isSessionToken {
-		userCtx.ImpersonatedBy = coreService.SessionImpersonator(r.Context(), token)
-		// #G18 (mirrors the gRPC interceptor's identical pattern, server/grpc/
-		// interceptors/auth.go): capture the session's own row id so the cache-hit
-		// path can re-verify THIS SPECIFIC session is still live, not just the
-		// owning account (see UserContext.SessionID, serveAuthCacheHit). For an
-		// impersonation token this naturally resolves to the impersonation
-		// session's own row -- GetSession looks up whatever row the PRESENTED
-		// token hashes to, impersonation or not. Degrades to nil, not a request
-		// failure, on a lookup error: the token was already validated one line
-		// above by validateToken, so a second lookup failing here means a rare
-		// race with a concurrent revoke, not a real problem with this request --
-		// serveAuthCacheHit's nil-SessionID fallback (account-state-only) is
-		// exactly pre-fix behavior, not a new failure mode.
-		if sess, sessErr := coreService.Storage().GetSession(r.Context(), token); sessErr == nil {
-			id := sess.ID
-			userCtx.SessionID = &id
-			userCtx.SetupOnly = sess.SetupOnly
-		}
-	}
-
-	// F-TOK-1: clamp the positive cache entry to the session's own expiry. The session
-	// cache-hit branch (serveAuthCacheHit) re-checks only account state, NOT the session's
-	// ExpiresAt/AbsoluteExpiresAt — unlike the PAT/machine branches, which re-check expiry
-	// on every hit. Without this clamp an expired session would keep authenticating on cache
-	// hits for the rest of validTokenTTL. Clamping makes the entry expire with the session,
-	// forcing a slow-path re-validation (which DOES reject an expired session) at that point.
-	// Resolved on the slow path only — no per-hit cost. (2026-09-14 review.)
+	// Session tokens: every per-session fact (impersonation, the row id for
+	// #G18's cache-hit liveness re-check, the #3024 setup-only flag, the F-TOK-1
+	// expiry clamp) comes from ONE read of the session row, resolved on the slow
+	// path and cached with the identity. Fail closed if that read fails (#3041
+	// review): each fact restricts the caller, so defaulting them (not
+	// impersonating, not setup-only, no expiry clamp) and caching the result
+	// would serve a setup-only session racing its own revocation with full
+	// access. Like a transient validation failure: 503, nothing cached, no strike
+	// against the IP's brute-force budget; core logs and audits the refusal.
 	cacheExpiry := time.Now().Add(validTokenTTL)
 	if isSessionToken {
-		cacheExpiry = clampCacheExpiry(cacheExpiry, coreService.SessionEffectiveExpiry(r.Context(), token))
+		facts, err := coreService.ResolveSessionAuthFacts(r.Context(), userCtx.UserID, token, "http")
+		if err != nil {
+			serviceUnavailableResponse(w, "authentication temporarily unavailable, please retry")
+			return
+		}
+		id := facts.SessionID
+		userCtx.SessionID = &id
+		userCtx.SetupOnly = facts.SetupOnly
+		userCtx.ImpersonatedBy = facts.ImpersonatedBy
+		// F-TOK-1: clamp the positive cache entry to the session's own expiry. The
+		// session cache-hit branch (serveAuthCacheHit) re-checks only account state
+		// and liveness, NOT the session's ExpiresAt/AbsoluteExpiresAt, so without the
+		// clamp an expired session would keep authenticating on cache hits for the
+		// rest of validTokenTTL. (2026-09-14 review.)
+		cacheExpiry = clampCacheExpiry(cacheExpiry, facts.EffectiveExpiry)
 	}
 
 	// Cache the positive result (race-safe: dropped if revoked mid-validation).
