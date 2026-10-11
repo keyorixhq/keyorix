@@ -1,3 +1,5 @@
+import { formatDateTime } from '../../utils/datetime';
+import { apiErrorMessage } from '../../services/client';
 import React, { useState } from 'react';
 import {
     ShareIcon,
@@ -100,10 +102,6 @@ export const SharingManagementPage: React.FC = () => {
             return next;
         });
     const clearSelectedItems = () => setSelectedItems(new Set());
-    const formatDate = (d: string) =>
-        new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
-    const formatTime = (d: string) =>
-        new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 
     // State for filters and pagination
     const [filters, setFilters] = useState({
@@ -250,7 +248,10 @@ export const SharingManagementPage: React.FC = () => {
                 <Alert
                     type="error"
                     title="Failed to load shares"
-                    message="There was an error loading the sharing information. Please try again."
+                    message={apiErrorMessage(
+                        error,
+                        'There was an error loading the sharing information. Please try again.'
+                    )}
                 >
                     <Button variant="outline" size="sm" onClick={() => refetch()}>
                         Retry
@@ -372,10 +373,7 @@ export const SharingManagementPage: React.FC = () => {
                                     {share.createdBy}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
-                                    <div>
-                                        <div>{formatDate(share.createdAt)}</div>
-                                        <div className="text-xs">{formatTime(share.createdAt)}</div>
-                                    </div>
+                                    <div>{formatDateTime(share.createdAt)}</div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     {(() => {
@@ -677,7 +675,7 @@ export const SharingManagementPage: React.FC = () => {
                         />
                         {editShare?.expiresAt && editExpiry === 'keep' && (
                             <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                                Currently expires {new Date(editShare.expiresAt).toLocaleString()}.
+                                Currently expires {formatDateTime(editShare.expiresAt)}.
                             </p>
                         )}
                     </div>

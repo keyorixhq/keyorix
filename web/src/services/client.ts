@@ -141,6 +141,24 @@ const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.
     }
 };
 
+// axios words every non-2xx as "Request failed with status code N". That string reaches
+// users through any `error.message` a dialog renders (the 13 sites SHARE-2 moved to
+// apiErrorMessage, and every one nobody has found yet). Replace it once, here, with the
+// server's own reason when the body carries one; for a bare 403 say what is true: the
+// action is not permitted and the server gave no reason.
+const AXIOS_GENERIC_MESSAGE = /^Request failed with status code \d+$/;
+export const NO_PERMISSION_MESSAGE = 'You do not have permission to do this. Ask a project admin for access.';
+
+export const humanizeRefusal = (error: AxiosError): void => {
+    if (!AXIOS_GENERIC_MESSAGE.test(error.message ?? '')) return;
+    const data = error.response?.data as { message?: unknown; error?: unknown } | undefined;
+    if (typeof data?.message === 'string' && data.message) {
+        error.message = data.message;
+    } else if (error.response?.status === 403) {
+        error.message = NO_PERMISSION_MESSAGE;
+    }
+};
+
 const handleErrorByStatus = async (
     error: AxiosError,
     authStore: ReturnType<typeof useAuthStore.getState>
@@ -175,6 +193,7 @@ apiClient.interceptors.response.use(
             return result;
         }
 
+        humanizeRefusal(error);
         throw error;
     }
 );

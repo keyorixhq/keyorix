@@ -28,6 +28,7 @@ vi.mock('../../../features/admin', () => ({
 
 vi.mock('../../../services/client', () => ({
     apiClient: { get: (...args: any[]) => apiClientGet(...args) },
+    apiErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
 const entries = [
@@ -485,7 +486,7 @@ describe('AuditLogPage — unmapped event types, missing fields, and invalid tim
         render(<AuditLogPage />);
 
         const table = within(screen.getByRole('table'));
-        expect(table.getByText('custom.unmapped')).toBeInTheDocument();
+        expect(table.getByText('Custom unmapped')).toBeInTheDocument();
         expect(table.getByText('not-a-real-date')).toBeInTheDocument();
     });
 
