@@ -356,7 +356,7 @@ func (c *KeyorixCore) CreateMFAChallengeHoldingLoginSlot(ctx context.Context, us
 	}
 	if err := c.storage.CreateMFAChallenge(ctx, &models.MFAChallenge{
 		UserID: userID, TokenHash: sha256Hex(token), ExpiresAt: c.now().Add(mfaChallengeTTL), CreatedAt: c.now(),
-		LoginAttemptID: sharedLoginSlot(slotID),
+		LoginAttemptID: slotID,
 	}); err != nil {
 		return "", err
 	}

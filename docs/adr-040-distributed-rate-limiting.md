@@ -26,8 +26,7 @@ Move the limiter into the database so the count is shared across replicas.
   free-function limiter is replaced by thin `AuthHandler` methods that delegate
   here — every login surface (password, TOTP verify, WebAuthn second-factor, and
   passwordless) now shares one cluster-wide limit.
-- **Fail-open.** *(Superseded 2026-10-10: see the storage-error amendment below.)*
-  A storage error in `IsLoginRateLimited` returns `false` (allow).
+- **Fail-open.** A storage error in `IsLoginRateLimited` returns `false` (allow).
   Rate limiting is a *backstop* layered on the real password/passkey check, not the
   auth gate itself; a transient DB hiccup must not lock every user out. Recording
   is best-effort for the same reason.
@@ -51,43 +50,6 @@ that carries the flow forward; the step that delivers the session deletes those
 rows too, exactly once. A failed, expired or abandoned flow keeps every row it
 wrote. Host-side override:
 `keyorix-server admin clear-login-lockout --ip ADDR`.
-
-**Amendment (2026-10-10, AUTH-AUDIT-1; #3023 for the login budget, then every
-budget).** The fail-open bullet above is replaced. No auth budget fails open or
-closed on a storage error. Every budget goes through one shared limiter
-(`internal/core/auth_budget.go`):
-- the per-IP `login`, `password_reset` and `sso_begin` budgets in this table;
-- the per-account lockout (the user row's lockout columns), which is the only
-  bound on step-up and recovery-code guessing.
-
-The stored count stays primary. When it cannot be read or written, the attempt
-is counted in that budget's own bounded in-memory limiter, with the same limit and
-window and the same key (canonical client IP, or account id). The check adds the
-in-memory count to the stored one. Each fallback is audited `auth.rate_limit_error`
-and counted in `keyorix_auth_rate_limit_fallback_total{budget}`. The client sees
-the same response.
-
-The in-memory limiter is per process. During an outage each replica enforces its
-own copy. `security.auth_rate_limit_fallback.replicas` (default 1) divides every
-in-memory limit by the replica count, never below one attempt, so the cluster
-stays near the normal limit. Left at 1 with N replicas, the outage-time bound is
-up to N times the limit, which is still a bound, where fail-open had none. A
-stored count that could be read is cluster-wide already and keeps the normal
-limit.
-
-While the password-reset budget is on its fallback it is tighter: half the per-IP
-limit, plus a per-account cap on reset emails, refused silently so the response
-does not change. `/health` reports `auth_rate_limit: degraded` while any budget
-has fallen back within its window, and names no budget, key or address.
-
-After recovery the stored count is authoritative again. The in-memory attempts
-age out with the window and are never merged into the table.
-
-Guards: `TestAuthBudgetStorage_OnlyThroughTheSharedLimiter` (no `login_attempts`
-access outside the limiter) and `TestEveryAuthRoute_IsClassifiedAndBudgeted`
-(every `/auth/` route in `router.go` is budgeted, authenticated or explicitly
-exempt). `TestEveryAuthBudget_HoldsWithItsStorageDown` is the storage-fault sweep:
-every budgeted route still answers its normal 429, byte for byte.
 
 ## Why the write volume is acceptable
 
