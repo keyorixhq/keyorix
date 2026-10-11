@@ -76,6 +76,7 @@ var writeShareRouteMatrix = map[string]writeShareCase{
 	"POST /api/v1/secrets/{id}/restore":                            {body: `{}`},
 	"PUT /api/v1/shares/{id}":                                      {body: `{"permission":"write"}`},
 	"DELETE /api/v1/shares/{id}":                                   {},
+	"GET /api/v1/projects/{id}/share-recipients":                   {},
 	"POST /api/v1/projects":                                        {body: `{"name":"matrix-project"}`},
 	"PUT /api/v1/projects/{id}":                                    {body: `{"description":"x"}`},
 	"POST /api/v1/projects/{id}/environments":                      {body: `{"name":"matrix-env"}`},

@@ -117,7 +117,11 @@ See the [API Documentation](SECRET_SHARING_API.md) for programmatic access.
 #### Via Web Interface
 1. **Select Secret**: Navigate to the secret you want to share
 2. **Click Share**: Click the "Share" button
-3. **Choose Recipient**: Enter the username or select from suggestions
+3. **Choose Recipient**: Type a name, username or email and pick from the
+   suggestions. The suggestions are the active members of the secret's project,
+   because a share can only go to a project member. A project-only admin sees them
+   too; no global role is needed. If you have no role in the project that allows
+   sharing, the dialog says so instead of listing anyone.
 4. **Set Permission**: Choose "Read" or "Write" permission
 5. **Confirm**: Click "Share Secret" to complete
 
