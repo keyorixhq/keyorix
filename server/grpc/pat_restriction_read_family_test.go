@@ -161,6 +161,7 @@ func newGRPCPATGuardWorld(t *testing.T) *grpcPATGuardWorld {
 		mint("pat_decoy_env", nil, decoy.ID, decoyEnv.ID)
 		mint("pat_users_read_only", []string{"users.read"}, 0, 0)
 		mint("pat_secrets_read_decoy", []string{"secrets.read"}, decoy.ID, 0)
+		mint("pat_system_read_only", []string{"system.read"}, 0, 0)
 	}
 
 	srv, err := keyorixgrpc.NewServer(&config.Config{}, c)
@@ -240,7 +241,7 @@ func TestEveryGRPCReadHonoursPATRestriction(t *testing.T) {
 
 	var restricted []string
 	for _, owner := range []string{"", "admin_"} {
-		for _, p := range []string{"pat_decoy_project", "pat_decoy_env", "pat_users_read_only", "pat_secrets_read_decoy"} {
+		for _, p := range []string{"pat_decoy_project", "pat_decoy_env", "pat_users_read_only", "pat_secrets_read_decoy", "pat_system_read_only"} {
 			restricted = append(restricted, owner+p)
 		}
 	}

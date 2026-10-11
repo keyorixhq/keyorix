@@ -41,8 +41,9 @@
 //     shared with them (so they hold a notification naming it), has a pending
 //     secret access request of their own, and one awaiting their approval.
 //   - Restricted personas — the owner's PATs confined to the decoy project, to the
-//     decoy environment, to users.read only, and to secrets.read in the decoy
-//     project — call every GET route with every path parameter bound to each
+//     decoy environment, to users.read only, to secrets.read in the decoy
+//     project, and to system.read only (the gate of GET /dashboard/stats, whose
+//     expiring-secrets list and own-activity rows name secrets) — call every GET route with every path parameter bound to each
 //     canary object's id, with and without ?project_id/&environment_id naming the
 //     canary scope. A 2xx body containing the canary is a violation.
 //   - Non-vacuity: the SAME owner's session and unrestricted PAT must see the
@@ -106,6 +107,7 @@ var patGuardRestrictedPersonas = []string{
 	"pat_decoy_env",          // EnvironmentID: an environment of another project
 	"pat_users_read_only",    // Permissions: no secrets.read at all
 	"pat_secrets_read_decoy", // Permissions + ProjectID: the right permission, the wrong project
+	"pat_system_read_only",   // Permissions: system.read only, which passes the GET /dashboard/stats gate
 }
 
 // patGuardControlPersonas are the same owner unrestricted. They must SEE the canary.
@@ -177,9 +179,12 @@ func newPATGuardWorld(t *testing.T) *patGuardWorld {
 		prefix, username string
 		id               uint
 	}{{"", "pgowner", ownerID}, {"admin_", "testadmin", admin.ID}} {
+		// The owned secret expires inside the dashboard's 30-day window, so GET
+		// /dashboard/stats's expiring-secrets list names it for its creator.
+		expires := time.Now().UTC().Add(7 * 24 * time.Hour)
 		owned, serr := cs.CreateSecret(ctx, &core.CreateSecretRequest{
 			Name: patGuardCanary + "-" + o.username + "-secret", Value: []byte("v"), ProjectID: canary.ID,
-			EnvironmentID: canaryEnv.ID, Type: "password", CreatedBy: o.username, OwnerID: o.id,
+			EnvironmentID: canaryEnv.ID, Type: "password", CreatedBy: o.username, OwnerID: o.id, Expiration: &expires,
 		})
 		require.NoError(t, serr)
 		sharedTo, serr := cs.CreateSecret(ctx, &core.CreateSecretRequest{
@@ -220,6 +225,7 @@ func newPATGuardWorld(t *testing.T) *patGuardWorld {
 		mint("pat_decoy_env", nil, decoy.ID, decoyEnv.ID)
 		mint("pat_users_read_only", []string{"users.read"}, 0, 0)
 		mint("pat_secrets_read_decoy", []string{"secrets.read"}, decoy.ID, 0)
+		mint("pat_system_read_only", []string{"system.read"}, 0, 0)
 	}
 	return w
 }
@@ -409,7 +415,7 @@ func TestPATRestriction_SecretAccessRequestsHonourRestriction(t *testing.T) {
 				}
 			})
 		}
-		for _, p := range []string{"pat_decoy_project", "pat_decoy_env", "pat_users_read_only", "pat_secrets_read_decoy"} {
+		for _, p := range patGuardRestrictedPersonas {
 			persona := owner + p
 			t.Run(persona, func(t *testing.T) {
 				code, body := w.get(t, w.tokens[persona], "/api/v1/secret-access-requests")
@@ -432,7 +438,7 @@ func TestPATRestriction_SecretAccessRequestsHonourRestriction(t *testing.T) {
 			body := []byte(fmt.Sprintf(`{"secret_id":%d,"reason":"probe"}`, w.ownedSecret[owner]))
 			code, resp := w.do(t, http.MethodPost, w.tokens[owner+"pat_unrestricted"], "/api/v1/secret-access-requests", body)
 			require.NotEqual(t, http.StatusNotFound, code, "control: the unrestricted token can see the secret: %s", resp)
-			for _, p := range []string{"pat_decoy_project", "pat_decoy_env", "pat_users_read_only", "pat_secrets_read_decoy"} {
+			for _, p := range patGuardRestrictedPersonas {
 				code, resp = w.do(t, http.MethodPost, w.tokens[owner+p], "/api/v1/secret-access-requests", body)
 				assert.Equal(t, http.StatusNotFound, code, "%s: %s", owner+p, resp)
 			}
@@ -529,7 +535,7 @@ func TestEveryGETRouteHonoursPATRestriction(t *testing.T) {
 		"the unrestricted owner saw canary data on too few routes: the fixture is not exercising the surface")
 	for _, mustSee := range []string{
 		"/api/v1/secrets/", "/api/v1/notifications", "/api/v1/secret-access-requests",
-		"/api/v1/secret-access-requests/{requestId}",
+		"/api/v1/secret-access-requests/{requestId}", "/api/v1/dashboard/stats",
 	} {
 		assert.True(t, controlHits[mustSee], "positive control: the unrestricted owner must see canary data on GET %s", mustSee)
 	}

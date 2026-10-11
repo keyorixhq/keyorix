@@ -24,7 +24,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"slices"
 	"sort"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
@@ -395,24 +394,28 @@ func (c *KeyorixCore) notifySecretsReassigned(ctx context.Context, newOwnerID, a
 // A request authenticated by a restricted PAT sees only the notifications its
 // restriction allows (patAllowsNotification, PAT-GUARD-1): a notification names
 // project resources, and this feed is self-scoped, so no Authorize call ever
-// narrows it. The limit is applied after that filter so a restricted token still
-// gets up to limit visible rows.
+// narrows it. The narrowing is done in the query (patNotificationScope), so limit
+// counts visible rows: a restricted token gets up to limit of the rows it can see,
+// however many newer rows it cannot.
 func (c *KeyorixCore) ListNotifications(ctx context.Context, userID uint, unreadOnly bool, limit int) ([]*models.Notification, error) {
 	if patRestrictionFromContext(ctx) == nil {
 		return c.storage.ListNotifications(ctx, userID, unreadOnly, limit)
 	}
-	all, err := c.storage.ListNotifications(ctx, userID, unreadOnly, 0)
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
+		return []*models.Notification{}, nil
+	}
+	rows, err := c.storage.ListScopedNotifications(ctx, userID, scope, unreadOnly, limit)
 	if err != nil {
 		return nil, err
 	}
-	visible := make([]*models.Notification, 0, len(all))
-	for _, n := range all {
+	// Defence in depth: the scope is exact (see patNotificationScope), so this drops
+	// nothing; if the two ever disagree, the row is hidden, never shown.
+	visible := make([]*models.Notification, 0, len(rows))
+	for _, n := range rows {
 		if patAllowsNotification(ctx, n) {
 			visible = append(visible, n)
 		}
-	}
-	if limit > 0 && len(visible) > limit {
-		visible = visible[:limit]
 	}
 	return visible, nil
 }
@@ -424,47 +427,37 @@ func (c *KeyorixCore) UnreadNotificationCount(ctx context.Context, userID uint) 
 	if patRestrictionFromContext(ctx) == nil {
 		return c.storage.CountUnreadNotifications(ctx, userID)
 	}
-	visible, err := c.ListNotifications(ctx, userID, true, 0)
-	if err != nil {
-		return 0, err
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
+		return 0, nil
 	}
-	return int64(len(visible)), nil
+	return c.storage.CountUnreadScopedNotifications(ctx, userID, scope)
 }
 
 // MarkNotificationRead marks one of the user's notifications read (ownership-checked).
 // A restricted PAT gets the same not-found for a notification it cannot see as for
 // one that does not exist.
 func (c *KeyorixCore) MarkNotificationRead(ctx context.Context, id, userID uint) error {
-	if patRestrictionFromContext(ctx) != nil {
-		visible, err := c.ListNotifications(ctx, userID, false, 0)
-		if err != nil {
-			return err
-		}
-		if !slices.ContainsFunc(visible, func(n *models.Notification) bool { return n.ID == id }) {
-			// The storage layer's own wording for "no such (id, user) row".
-			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
-		}
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.MarkNotificationRead(ctx, id, userID)
 	}
-	return c.storage.MarkNotificationRead(ctx, id, userID)
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
+		// The storage layer's own wording for "no such (id, user) row".
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	return c.storage.MarkScopedNotificationRead(ctx, id, userID, scope)
 }
 
 // MarkAllNotificationsRead marks all of the user's notifications read — for a
-// restricted PAT, all of the ones it can see.
+// restricted PAT, all of the ones it can see (one UPDATE, so all or none).
 func (c *KeyorixCore) MarkAllNotificationsRead(ctx context.Context, userID uint) error {
 	if patRestrictionFromContext(ctx) == nil {
 		return c.storage.MarkAllNotificationsRead(ctx, userID)
 	}
-	visible, err := c.ListNotifications(ctx, userID, true, 0)
-	if err != nil {
-		return err
-	}
-	// One transaction: read-all either marks every visible notification or none.
-	return c.storage.WithTransaction(ctx, func(tx corestorage.Storage) error {
-		for _, n := range visible {
-			if err := tx.MarkNotificationRead(ctx, n.ID, userID); err != nil {
-				return err
-			}
-		}
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
 		return nil
-	})
+	}
+	return c.storage.MarkAllScopedNotificationsRead(ctx, userID, scope)
 }
