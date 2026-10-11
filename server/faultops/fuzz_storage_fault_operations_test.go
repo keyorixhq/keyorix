@@ -277,6 +277,12 @@ var opScopedBestEffortTables = []struct {
 	// exemption to apply. Empty (the zero value, every pre-existing entry)
 	// means no log-evidence check — unchanged behavior for those entries.
 	requireLogSubstring string
+	// pinnedKinds, when non-empty, are the fault kinds this entry was reviewed
+	// for, at call ordinal max(1, minNthCall).
+	// TestOpScopedBestEffort_PinnedEntriesAreLoadBearing drives each one through
+	// the real oracle and fails if the entry is dead. Empty for the entries that
+	// predate it (ORPHAN-2): they are not covered by that staleness check.
+	pinnedKinds []faultstorage.FaultKind
 }{
 	{op: "REST POST /api/v1/users/", method: "AssignRole", tables: []string{"UserRole"}},
 	{op: "REST POST /api/v1/users/", method: "GetRoleByName", tables: []string{"UserRole"}},
@@ -388,6 +394,23 @@ var opScopedBestEffortTables = []struct {
 	{op: "REST POST /api/v1/dynamic-secrets/leases/{leaseID}/revoke", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
 	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeLease", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
 	{op: "GRPC keyorix.v1.DynamicSecretService.RevokeAllLeases", method: "LogAuditEvent", tables: []string{"DynamicSecretLease", "AuditEvent"}},
+	// ORPHAN-2 (#2844 triage class D). FinishWebAuthnLogin's ambient
+	// MFAStepUpGrant is written AFTER the session, under besteffort.Run, and is
+	// best-effort by design: docs/atomicity-exempt.tsv's
+	// (*KeyorixCore).FinishWebAuthnLogin row ("trailing
+	// UpsertMFAStepupToken/CreateMFAStepUpGrant are best-effort UX convenience
+	// post-mint"), internal/core/webauthn.go's own comment ("Best-effort.
+	// ... Panic-safe as well as error-tolerant", #2844). When that write errors
+	// or panics, the login is still delivered, and the run differs from the
+	// fault-free reference ONLY by the missing grant row. Losing it costs the
+	// user a later step-up prompt for a restricted secret, never access.
+	// requireLogSubstring ties the exemption to besteffort.Run having actually
+	// absorbed THIS step (both its error and its panic log lines contain it).
+	{
+		op: "REST POST /auth/webauthn/login/finish", method: "CreateMFAStepUpGrant", tables: []string{"MFAStepUpGrant"},
+		requireLogSubstring: `best-effort step "webauthn.FinishWebAuthnLogin.CreateMFAStepUpGrant"`,
+		pinnedKinds:         []faultstorage.FaultKind{faultstorage.KindError, faultstorage.KindPanic},
+	},
 }
 
 func opScopedAcceptableByDesign(op, method string, nth int, diff []string, execLog string) bool {
@@ -1088,7 +1111,9 @@ var knownOpenTolerances = []knownOpenTolerance{
 	// design"). An expiring bug tolerance over intended behaviour can only be
 	// re-filed forever. It now sits in a mechanism whose rows assert
 	// by-design-ness and are required to cite the production comment and the
-	// proving test that establish it.
+	// proving test that establish it. (Since ORPHAN-2 it is covered by the op's
+	// consumeFirstExemptions entry instead, which also covers the panic and
+	// effect-then-error kinds; see the tombstone in oracleAByDesignErrors.)
 	//
 	// (#2554's row — REST PATCH /api/v1/secrets/{id}/classification,
 	// CreateSecretAccessLog, panic, nth 1 — is GONE, not expired. Its entry
@@ -1648,6 +1673,28 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 					"a sub-transition of the fault-free login's, no session minted", ssoClassCLedgerKey, label)
 				return
 			}
+			// ORPHAN-2 (#2844 class B): docs/atomicity-exempt.tsv's consume-first
+			// class, the same predicate as the error branch's fourth layer. An
+			// effect-then-error fault on a step AFTER the consume leaves the old
+			// state plus the declared single-use consumption, which is neither of
+			// (d)'s two states, and every table and column outside that
+			// consumption must still equal the pre-fault state.
+			// consume_first_oracle_test.go says what this does and does not verify.
+			if e, ok := consumeFirstAccountsForDiff(in); ok {
+				t.Logf("ACCEPTABLE-BY-DESIGN (consume-first, docs/atomicity-exempt.tsv class B, %s): %s: "+
+					"effect-then-error state is the pre-fault state plus this op's declared single-use consumption -- %s",
+					e.fn, label, e.why)
+				return
+			}
+			// ORPHAN-2 (#2880 class A): a post-verdict login row pins the whole
+			// wrong-credential outcome (response, counted, audited, class-B
+			// consumption); only such rows may name this kind, see
+			// oracleAByDesignError.wrongCredentialResponse.
+			if e := oracleAErrorByDesign(in, diffTables(in.before, in.after)); e != nil && e.wrongCredentialResponse != "" {
+				t.Logf("ACCEPTABLE-BY-DESIGN (#2880 post-verdict): %s: answered and accounted exactly like a wrong "+
+					"credential -- %s (proving test: %s)", label, e.designComment, e.provingTest)
+				return
+			}
 			report("d", nil, "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
@@ -1703,7 +1750,7 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 			// reviewed, names the production comment and the test that establish
 			// the design, and allowlists an EXACT table set — see
 			// oracle_a_by_design_test.go.
-			if e := oracleAErrorByDesign(in.op, in.method, in.kind, in.nth, diff); e != nil {
+			if e := oracleAErrorByDesign(in, diff); e != nil {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"deliberately keeps while reporting failure — %s (proving test: %s)",
 					label, diff, e.designComment, e.provingTest)
