@@ -92,6 +92,13 @@ type ActivityItem struct {
 	SecretName string    `json:"secretName"`
 	Timestamp  time.Time `json:"timestamp"`
 	Actor      string    `json:"actor"`
+	// EventType is the raw audit event type (e.g. "secret.dependency_invalidated"),
+	// always present. Type is the dashboard's short category for the events it
+	// styles ("accessed", "created", ...) and the raw type for the rest. Label is
+	// the readable phrase to show after the actor (ActivityLabel); clients show it
+	// instead of a raw type and keep EventType for a tooltip or JSON.
+	EventType string `json:"eventType"`
+	Label     string `json:"label"`
 }
 
 // ActivityFeed is the paginated response for the activity endpoint.
@@ -191,10 +198,7 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	if err != nil {
 		stats.degrade("recent_activity", err)
 	}
-	recent := make([]ActivityItem, 0, len(events))
-	for _, e := range events {
-		recent = append(recent, mapAuditEventToActivity(e, username))
-	}
+	recent := c.activityItems(ctx, events)
 
 	expiringSecrets, err := c.getExpiringSecrets(ctx, username)
 	if err != nil {
@@ -346,10 +350,7 @@ func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username
 		return &ActivityFeed{Items: []ActivityItem{}, Total: 0, Page: page, PageSize: pageSize}, nil
 	}
 
-	items := make([]ActivityItem, 0, len(events))
-	for _, e := range events {
-		items = append(items, mapAuditEventToActivity(e, username))
-	}
+	items := c.activityItems(ctx, events)
 
 	return &ActivityFeed{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
@@ -504,13 +505,79 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 		eventType = e.EventType
 	}
 
+	if activityNameFromSubject[e.EventType] {
+		secretName = "" // the description does not end in the secret's name; the feed looks it up
+	}
+
 	return ActivityItem{
 		ID:         e.ID,
 		Type:       eventType,
 		SecretName: secretName,
 		Timestamp:  e.EventTime,
 		Actor:      actor,
+		EventType:  e.EventType,
+		Label:      ActivityLabel(e.EventType),
 	}
+}
+
+// activityItems maps audit events to dashboard rows. Each row names the
+// principal that acted (system for events with no user), not the viewer, and
+// carries the subject secret's name where the event has one. Both are display
+// lookups; the audit rows are not touched.
+func (c *KeyorixCore) activityItems(ctx context.Context, events []*models.AuditEvent) []ActivityItem { // nosemgrep: keyorix-unbounded-bulk-slice-param -- events is an already-paginated GetAuditLogs result (PageSize-bounded), not a raw client-supplied array; the only per-item work is in-memory mapping, the lookups are batched
+	actors := c.ResolveUsernames(ctx, events)
+	secretNames := c.activitySecretNames(ctx, events)
+	items := make([]ActivityItem, 0, len(events))
+	for _, e := range events {
+		var uid uint
+		if e.UserID != nil {
+			uid = *e.UserID
+		}
+		item := mapAuditEventToActivity(e, actors[uid])
+		if e.SecretNodeID != nil && (item.SecretName == "" || activityNameFromSubject[e.EventType]) {
+			if name := secretNames[*e.SecretNodeID]; name != "" {
+				item.SecretName = name
+			}
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// activityNameFromSubject lists event types whose description is not of the form
+// "... secret <name>", so extractSecretName would return junk (or nothing); the
+// name comes from the event's SecretNodeID instead.
+var activityNameFromSubject = map[string]bool{
+	"secret.restored":               true,
+	"secret.dependency_added":       true,
+	"secret.dependency_removed":     true,
+	"secret.dependency_invalidated": true,
+	"secret.dependency_restored":    true,
+}
+
+// activitySecretNames batch-resolves the secret names for the events that have a
+// SecretNodeID. A secret that is gone (soft-deleted) simply has no entry.
+func (c *KeyorixCore) activitySecretNames(ctx context.Context, events []*models.AuditEvent) map[uint]string { // nosemgrep: keyorix-unbounded-bulk-slice-param -- events is an already-paginated GetAuditLogs result (PageSize-bounded), not a raw client-supplied array; the lookup is one batched GetSecretsByIDs call, not a per-item round trip
+	var ids []uint
+	seen := map[uint]bool{}
+	for _, e := range events {
+		if e.SecretNodeID != nil && !seen[*e.SecretNodeID] {
+			seen[*e.SecretNodeID] = true
+			ids = append(ids, *e.SecretNodeID)
+		}
+	}
+	names := map[uint]string{}
+	if len(ids) == 0 {
+		return names
+	}
+	secrets, err := c.storage.GetSecretsByIDs(ctx, ids)
+	if err != nil {
+		return names
+	}
+	for _, s := range secrets {
+		names[s.ID] = s.Name
+	}
+	return names
 }
 
 // extractSecretName pulls the secret name from audit description strings.
