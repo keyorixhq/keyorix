@@ -91,8 +91,8 @@ including `project_viewer`, does), the recipient keeps reading the secret after 
 share is revoked — the share was not what gave them access. To end their access,
 also remove the role (`keyorix rbac remove-role`). A `write` share does elevate a
 read-only role on that one secret (see the table above), and revoking it removes
-exactly that elevation. `keyorix secret access` lists owner and share access only,
-not role-derived access.
+exactly that elevation. `keyorix secret access` shows the effective level of each
+user, including role-derived access (see above).
 
 ## Getting Started
 
