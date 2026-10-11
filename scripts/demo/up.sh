@@ -13,14 +13,24 @@
 #
 # MFA: Keyorix ships with security.require_mfa ON (ADR-112) and the demo keeps
 # it on. After bootstrapping the admin this script therefore enrols TOTP for it
-# through the real API/CLI (`keyorix mfa enroll` + `mfa activate`, no database
+# through the real API (scripts/demo/lib.sh, shared with check.sh; no database
 # writes), prints the TOTP secret / otpauth URI (and a QR code when `qrencode`
 # is installed) for the presenter's authenticator app, and logs in with a valid
-# code before seeding.
+# code before seeding. Credentials reach the CLI via environment variables or
+# stdin only, never as command-line flags, so the presenter's output carries no
+# "passing --password on the command line is insecure" warnings.
 #
 # All-or-nothing seed: if anything fails between starting a fresh container
 # and writing .demo-2-state, the container and data volume are removed again
 # so the next run starts clean instead of finding a half-seeded system.
+#
+# Demo-only files this script leaves in the checkout (all gitignored):
+#   .demo-2-state                      what it prints (logins, TOTP key, token)
+#   .demo-2-cli-home/demo-secrets.env  0600, DEMO ONLY: the demo's fixed master
+#                                      passphrase as KEYORIX_DEMO_MASTER_PASSWORD,
+#                                      for docs/demo/GOLDEN-PATH.md's backup step
+# and one extra local image, keyorix-demo-sqlite:local (alpine + sqlite3), built
+# once so the tamper demo needs no network on stage.
 #
 # Idempotent: safe to re-run. If the demo is already up and seeded, it just
 # reprints the URL + logins (read from .demo-2-state, written on first run —
@@ -47,6 +57,9 @@ CONTAINER_NAME="${KEYORIX_DEMO_CONTAINER:-keyorix-demo}"
 VOLUME_NAME="${KEYORIX_DEMO_VOLUME:-keyorix-demo-data}"
 PORT="${KEYORIX_DEMO_PORT:-8080}"
 STATE_FILE="$REPO_ROOT/.demo-2-state"
+CLI_HOME="$REPO_ROOT/.demo-2-cli-home"
+SECRETS_ENV_FILE="$CLI_HOME/demo-secrets.env"
+SQLITE_TOOL_IMAGE="${KEYORIX_DEMO_SQLITE_IMAGE:-keyorix-demo-sqlite:local}"
 
 # Fixed, clearly-labeled demo credentials — not security-sensitive, this is a
 # throwaway local demo environment, not a real deployment. Fixed values make
@@ -68,6 +81,9 @@ info() { echo -e "${BLUE}  i${NC} $1"; }
 ok()   { echo -e "${GREEN}  ok${NC} $1"; }
 warn() { echo -e "${YELLOW}  !${NC} $1"; }
 
+# shellcheck source=scripts/demo/lib.sh
+. "$SCRIPT_DIR/lib.sh"
+
 REBUILD=false
 for arg in "$@"; do
   case "$arg" in
@@ -77,6 +93,7 @@ for arg in "$@"; do
 done
 
 command -v docker >/dev/null 2>&1 || { echo "docker is required" >&2; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo "python3 is required (JSON handling in scripts/demo/lib.sh)" >&2; exit 1; }
 
 CLI_BIN="$REPO_ROOT/bin/keyorix"
 if [ ! -x "$CLI_BIN" ]; then
@@ -104,6 +121,32 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1;
 else
   info "Reusing existing image $IMAGE_TAG (pass --rebuild to force a fresh build)"
 fi
+
+# The tamper demo in docs/demo/GOLDEN-PATH.md (section 6) edits the SQLite file
+# directly, which needs a sqlite3 binary the server image does not ship. Bake it
+# into a tiny helper image NOW (this is the script's online step, like the image
+# build above) so the demo itself needs no `apk add` and no network on stage.
+# Best-effort: without it only that one optional demo step is unavailable.
+if ! docker image inspect "$SQLITE_TOOL_IMAGE" >/dev/null 2>&1; then
+  step "Building the sqlite3 helper image for the tamper demo (needs network this one time)"
+  if printf 'FROM alpine\nRUN apk add --no-cache sqlite\n' | docker build -t "$SQLITE_TOOL_IMAGE" - >/dev/null 2>&1; then
+    ok "Built $SQLITE_TOOL_IMAGE"
+  else
+    warn "Could not build $SQLITE_TOOL_IMAGE (offline?). Everything else works; the tamper demo (GOLDEN-PATH section 6) needs it — re-run up.sh with network to build it."
+  fi
+fi
+
+# Demo-only: the fixed master passphrase, for GOLDEN-PATH's backup/restore step,
+# which references it by variable name (never the literal). Inside the
+# gitignored CLI-home dir, owner-only, and removed by down.sh --wipe.
+mkdir -p "$CLI_HOME"
+( umask 077
+  {
+    echo "# DEMO ONLY — throwaway local demo credential written by scripts/demo/up.sh."
+    echo "# Never reuse this value anywhere real. Source it: . $SECRETS_ENV_FILE"
+    echo "KEYORIX_DEMO_MASTER_PASSWORD='$MASTER_PASSWORD'"
+  } > "$SECRETS_ENV_FILE" )
+chmod 600 "$SECRETS_ENV_FILE"
 
 # ── Idempotent re-run: already seeded ──────────────────────────────────────
 if [ -f "$STATE_FILE" ] && docker ps --format '{{.Names}}' | grep -qx "$CONTAINER_NAME"; then
@@ -206,25 +249,21 @@ rm -f "$HOME/.keyorix/cli.yaml" 2>/dev/null || true
 SERVER_URL="http://localhost:${PORT}"
 
 step "Bootstrapping the admin account (public API, via 'keyorix system init')"
-"$CLI_BIN" system init --server "$SERVER_URL" \
-  --admin-username "$ADMIN_USER" --admin-email "$ADMIN_EMAIL" \
-  --admin-password "$ADMIN_PASSWORD" --bootstrap-token "$BOOTSTRAP_TOKEN" >/dev/null
-"$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" --password "$ADMIN_PASSWORD" >/dev/null
-ok "Admin bootstrapped and logged in"
+# Credentials travel in the environment (KEYORIX_ADMIN_PASSWORD / _BOOTSTRAP_TOKEN),
+# never as flags, so the CLI prints no "insecure on the command line" warnings.
+KEYORIX_ADMIN_PASSWORD="$ADMIN_PASSWORD" KEYORIX_BOOTSTRAP_TOKEN="$BOOTSTRAP_TOKEN" \
+  "$CLI_BIN" system init --server "$SERVER_URL" \
+  --admin-username "$ADMIN_USER" --admin-email "$ADMIN_EMAIL" >/dev/null
+ok "Admin bootstrapped"
 
 # security.require_mfa is ON (the secure default, kept for the demo): until the
-# admin enrols, every call except MFA enrolment is refused with HTTP 403.
+# admin enrols, every call except MFA enrolment is refused with HTTP 403. The
+# enrolment itself is shared with check.sh (scripts/demo/lib.sh, #3034).
 step "Enrolling TOTP for the demo admin (multi-factor authentication is required)"
-ENROLL_OUT="$("$CLI_BIN" mfa enroll)"
-MFA_URI="$(echo "$ENROLL_OUT" | grep -oE 'otpauth://[^[:space:]]+' | head -1 || true)"
-MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]' || true)"
-if [ -z "$MFA_SECRET" ] || [ -z "$MFA_URI" ]; then
-  echo "could not read the TOTP secret from 'keyorix mfa enroll' output:" >&2
-  echo "$ENROLL_OUT" >&2
-  exit 1
-fi
-ACTIVATE_OUT="$("$CLI_BIN" mfa activate --code "$("$TOTPGEN_BIN" "$MFA_SECRET")" --password "$ADMIN_PASSWORD" 2> >(grep -v '^Warning: --code' >&2))"
-RECOVERY_CODES="$(echo "$ACTIVATE_OUT" | grep -E '^  [A-Za-z0-9-]+$' | tr -d ' ' | paste -sd' ' - || true)"
+demo_enroll_mfa "$SERVER_URL" "$ADMIN_USER" "$ADMIN_PASSWORD" || { echo "MFA enrolment failed (see above)" >&2; exit 1; }
+MFA_SECRET="$DEMO_MFA_SECRET"
+MFA_URI="$DEMO_MFA_URI"
+RECOVERY_CODES="$DEMO_RECOVERY_CODES"
 
 echo
 echo -e "${YELLOW}  >>> ADD THIS TO YOUR AUTHENTICATOR APP NOW (shown once; the web login asks for a code) <<<${NC}"
@@ -238,10 +277,9 @@ fi
 [ -z "$RECOVERY_CODES" ] || echo "      Recovery codes (one use each): $RECOVERY_CODES"
 echo
 
-# Activation invalidates the pre-MFA session and consumes the current 30 s TOTP
-# step (anti-replay), so log in again with the NEXT step's code (+30 s).
-"$CLI_BIN" login --server "$SERVER_URL" --username "$ADMIN_USER" --password "$ADMIN_PASSWORD" \
-  --mfa-code "$("$TOTPGEN_BIN" "$MFA_SECRET" 30)" >/dev/null
+# The CLI authenticates from the environment from here on (session obtained by
+# the code login above); no stored password, no --password flags.
+export KEYORIX_SERVER="$SERVER_URL" KEYORIX_TOKEN="$DEMO_TOKEN"
 ok "Admin MFA enrolled (TOTP) and logged in with a code"
 
 step "Seeding org structure: 2 projects, 2 groups"
@@ -252,15 +290,29 @@ step "Seeding org structure: 2 projects, 2 groups"
 ok "3 projects (default, backend-api, mobile-app), 2 groups"
 
 step "Seeding a least-privilege user"
-"$CLI_BIN" user create --username alice --email alice@keyorix.demo --password "$ALICE_PASSWORD" >/dev/null
+KEYORIX_INITIAL_PASSWORD="$ALICE_PASSWORD" "$CLI_BIN" user create --username alice --email alice@keyorix.demo >/dev/null
 "$CLI_BIN" rbac assign-role --user alice@keyorix.demo --role project_viewer --project backend-api >/dev/null
 ok "alice: project_viewer on backend-api only"
 
 step "Seeding secrets with versions"
-"$CLI_BIN" secret create --name "stripe-api-key" --value "sk_test_demo_seed_v1" --project 1 --environment 1 >/dev/null
-"$CLI_BIN" secret rotate --id 1 --value "sk_test_demo_seed_v2" >/dev/null
-"$CLI_BIN" secret create --name "db-password" --value "demo-db-pass-v1" --project 2 --environment 4 >/dev/null
-ok "2 secrets, one with 2 versions"
+# Values go in via a relative file / stdin, never --value (which warns).
+seed_value_file="$CLI_HOME/.seed-value"
+create_secret() { # create_secret NAME VALUE PROJECT_ID ENVIRONMENT_ID
+  ( umask 077; printf '%s' "$2" > "$seed_value_file" )
+  "$CLI_BIN" secret create --name "$1" --from-file ".demo-2-cli-home/.seed-value" --project "$3" --environment "$4" >/dev/null
+  rm -f "$seed_value_file"
+}
+create_secret "stripe-api-key" "sk_test_demo_seed_v1" 1 1
+# rotate has no file flag; its stdin prompt writes "New secret value (hidden):" to
+# stderr, so keep stderr out of the presenter's output unless the command fails.
+printf '%s\n' "sk_test_demo_seed_v2" | "$CLI_BIN" secret rotate --id 1 >/dev/null 2>"$CLI_HOME/.rotate-err" \
+  || { cat "$CLI_HOME/.rotate-err" >&2; exit 1; }
+rm -f "$CLI_HOME/.rotate-err"
+create_secret "db-password" "demo-db-pass-v1" 2 4
+# The Secrets tab opens on Production: seed one there too so the presenter's
+# first view of backend-api is not empty (DEMO-WALK-3 finding 36).
+create_secret "payments-webhook-secret" "whsec_demo_seed_v1" 2 6
+ok "3 secrets (one with 2 versions); backend-api has one in Development and one in Production"
 
 step "Seeding a machine identity"
 "$CLI_BIN" machine create --name ci-app --project default --type ci >/dev/null
@@ -290,6 +342,8 @@ cat > "$STATE_FILE" <<EOF
                   the web UI makes her enrol her own TOTP at first login)
   Machine token:  $MACHINE_TOKEN
                   (ci-app, project_viewer on default — shown once, saved here)
+  Master passphrase (for the backup/restore step): DEMO-only, in
+                  .demo-2-cli-home/demo-secrets.env as KEYORIX_DEMO_MASTER_PASSWORD
 
   scripts/demo/down.sh to stop (keeps data); add --wipe to delete it.
 ======================================================================
