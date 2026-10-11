@@ -546,10 +546,30 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 	if req.UserID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
-	if _, err := c.EnforceSecretWritePermission(ctx, req.ID, req.UserID); err != nil {
+	if _, err := c.EnforceSecretActionPermission(ctx, req.ID, req.UserID, c.updateSecretAction(ctx, req)); err != nil {
 		return nil, err
 	}
 	return c.UpdateSecret(ctx, req)
+}
+
+// updateSecretAction classifies an update for the share allowlist: SecretActionUpdate
+// (value, type, description, metadata, tags) unless it CHANGES the expiry or the read
+// limit, which is SecretActionUpdateLifecycle. Re-sending the stored values is not a
+// change, so an edit form that echoes them back is still a plain update. If the
+// secret cannot be read the update is classified as lifecycle (not elevated): fail
+// closed, and the permission check that follows reports the read error anyway.
+func (c *KeyorixCore) updateSecretAction(ctx context.Context, req *UpdateSecretRequest) SecretAction {
+	cur, err := c.storage.GetSecret(ctx, req.ID)
+	if err != nil {
+		return SecretActionUpdateLifecycle
+	}
+	switch {
+	case req.ClearExpiration && cur.Expiration != nil,
+		req.Expiration != nil && (cur.Expiration == nil || !req.Expiration.Equal(*cur.Expiration)),
+		req.MaxReads != nil && (cur.MaxReads == nil || *req.MaxReads != *cur.MaxReads):
+		return SecretActionUpdateLifecycle
+	}
+	return SecretActionUpdate
 }
 
 // EventSecretRotateNoop is audited when RotateSecret is invoked with a value that is
@@ -722,7 +742,7 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	sid := id
-	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, fmt.Sprintf("secret %d restored", id))
+	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, c.auditRef(ctx, c.storage, auditKindSecret, id)+" restored")
 	// Emit an audit event for every dependency edge that is now re-active so
 	// operators know which rotation plans are unblocked (best-effort).
 	if secret != nil {
