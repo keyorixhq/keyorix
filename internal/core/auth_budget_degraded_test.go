@@ -74,10 +74,13 @@ func (loginAttemptsErrMock) RecordLoginAttempt(context.Context, string, time.Tim
 
 func TestPasswordReset_DuringFallbackCapsResetsPerAccount(t *testing.T) {
 	ctx := context.Background()
-	now := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
+	// The fake clock is read by RequestPasswordReset's background provisioning
+	// goroutine while this test advances it, so it must be synchronised.
+	var nowNanos atomic.Int64
+	nowNanos.Store(time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC).UnixNano())
 	ms := new(MockStorage)
 	c := NewKeyorixCore(loginAttemptsErrMock{ms})
-	c.now = func() time.Time { return now }
+	c.now = func() time.Time { return time.Unix(0, nowNanos.Load()).UTC() }
 	d := &countingDeliverer{each: make(chan struct{}, 16)}
 	c.SetCredentialDelivery(d, testBaseURL)
 	anyAudit(ms)
@@ -95,7 +98,7 @@ func TestPasswordReset_DuringFallbackCapsResetsPerAccount(t *testing.T) {
 		require.False(t, c.IsPasswordResetRateLimited(ctx, ip))
 		c.RecordPasswordResetAttempt(ctx, ip)
 		require.NoError(t, c.RequestPasswordReset(ctx, user.Email), "the response never changes")
-		now = now.Add(resendMinInterval + time.Second)
+		nowNanos.Add(int64(resendMinInterval + time.Second))
 	}
 	capped := PasswordResetMaxAttempts / 2
 	for i := 0; i < capped; i++ {
