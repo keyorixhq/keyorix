@@ -23,6 +23,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"gorm.io/gorm"
 )
@@ -393,7 +394,9 @@ func PrintProviderStatus(kp config.KeyProviderConfig) {
 		}
 	case "env":
 		fmt.Printf("  Env var: %s\n", kp.EnvVar)
-		if os.Getenv(kp.EnvVar) != "" {
+		if _, found, lerr := secretenv.Lookup(kp.EnvVar); lerr != nil {
+			fmt.Printf("  Status: env var misconfigured ❌ (%v)\n", lerr)
+		} else if found {
 			fmt.Println("  Status: env var set ✅")
 		} else {
 			fmt.Println("  Status: env var not set ❌")

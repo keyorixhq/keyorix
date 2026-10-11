@@ -10,6 +10,8 @@ import (
 	"log"
 	"os"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // kekShareMagic frames a KEK before splitting so a reconstruction can be checked:
@@ -161,8 +163,11 @@ func (p *ShamirKeyProvider) KEK() ([]byte, error) { // NOSONAR -- cognitive comp
 		if envVar == "" {
 			continue
 		}
-		val := os.Getenv(envVar)
-		if val == "" {
+		val, found, err := secretenv.Lookup(envVar) // also honours <env var>_FILE
+		if err != nil {
+			return nil, fmt.Errorf("shamir key provider: %w", err)
+		}
+		if !found {
 			return nil, fmt.Errorf("shamir key provider: env var %s is not set or empty", envVar)
 		}
 		share, err := decodeShare([]byte(val))

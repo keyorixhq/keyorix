@@ -108,6 +108,16 @@ const makeSecret = (overrides: Partial<Secret> = {}): Secret => ({
     ...overrides,
 });
 
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+});
+
 describe('SecretDetailView classification', () => {
     beforeEach(() => {
         vi.clearAllMocks();
@@ -1262,5 +1272,45 @@ describe('SecretDetailView header layout (#2977)', () => {
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.getByTestId('secret-header').className).toContain('flex-wrap');
         expect(screen.getByTestId('secret-meta').className).toContain('flex-wrap');
+    });
+});
+
+describe('SecretDetailView permission-aware controls (DEMO-UI-1)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+    });
+
+    it('a read-only user sees none of Edit / Rotate / Share / Copy / Suspend / Delete / Transfer', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        render(<SecretDetailView secret={makeSecret()} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        for (const name of [/^edit$/i, /^rotate$/i, /^share$/i, /^copy$/i, /^suspend$/i, /^delete$/i]) {
+            expect(actions.queryByRole('button', { name }), String(name)).not.toBeInTheDocument();
+        }
+        expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument();
+        // the secret itself still renders, so the assertions above are not vacuous
+        expect(screen.getByRole('heading', { name: 'db-password' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Classification')).toBeDisabled();
+        expect(screen.getByPlaceholderText('No description.')).toHaveAttribute('readonly');
+    });
+
+    it('a writer sees the write actions; Delete and Transfer follow secrets.delete', () => {
+        canState.value = { ...canState.value, admin: false, deleteSecrets: false };
+        render(<SecretDetailView secret={makeSecret()} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        for (const name of [/^edit$/i, /^rotate$/i, /^share$/i, /^suspend$/i]) {
+            expect(actions.getByRole('button', { name }), String(name)).toBeInTheDocument();
+        }
+        expect(actions.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
+        expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument();
     });
 });

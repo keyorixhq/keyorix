@@ -45,19 +45,29 @@ Returns the complete OpenAPI 3.0 specification for all endpoints.
 ## 🕒 **Conventions**
 
 ### Timestamps
-Timestamps are RFC 3339. Responses sent through the standard
-`{"success": true, "data": ...}` envelope convert every `time.Time` in `data`
-to UTC (for example `2026-10-10T01:53:40Z`; sub-second digits appear only when
-present), and `GET /api/v1/projects` reports `last_activity`/`deleted_at` in
-UTC. This is display only: stored values, including everything covered by the
-audit hash chain, are not changed. Query parameters that take a time
-(`start_time`, `end_time`, `since`) accept any RFC 3339 offset and are compared
-as instants.
+Every time in an API response is **UTC, RFC 3339** (for example
+`2026-10-10T01:53:40Z`; sub-second digits appear only when present), whatever
+zone the server runs in or the database stored:
 
-Not yet covered by that conversion (they use their own response helpers or a
-custom JSON encoding): the secrets, shares, rotation-policy and folder handlers,
-and `gorm.DeletedAt` fields. A guard over every endpoint is tracked separately;
-until it lands, do not rely on a `Z` suffix outside the cases above.
+- **REST:** every JSON body is written by one encoder that converts each
+  `time.Time` (including `deleted_at`) to UTC; CSV exports format their time
+  columns in UTC.
+- **gRPC:** times are `google.protobuf.Timestamp` (no zone, UTC by definition).
+  The one string time field, `SecretACLEntry.created_at`, is formatted in UTC.
+
+This is display only: stored values, including everything covered by the audit
+hash chain, are not changed. Free text is data, not a time field: an audit
+event's `description` and its stored `diff` are returned exactly as recorded,
+and may contain a time in another zone. Query parameters that take a time
+(`start_time`, `end_time`, `since`, `from`, `to`) accept any RFC 3339 offset and
+are compared as instants.
+
+Checked by `server/faultops` `TestUTCResponseGuard`. It runs the server in a
+non-UTC zone, seeds data, calls every GET route and every read RPC, and fails on
+any non-UTC time; routes it cannot drive are listed in the test with a reason.
+Structural tests in `server/http/handlers` and `server/grpc/services` stop a new
+encoder, an unreviewed `json.Marshaler` or a new string time field from slipping
+past it.
 
 ### Audit log actor kind
 `GET /api/v1/audit/logs`, `/audit/search`, `GET /api/v1/secrets/{id}/audit`,
@@ -183,6 +193,10 @@ Authorization: Bearer <token>
   "value": "decrypted-secret-value"
 }
 ```
+
+**Read counters:**
+- `total_reads`: the secret's lifetime read count, counted from the secret access log (rows with action `read`: one per value disclosure; metadata-only `GET /api/v1/secrets/by-name` lookups are logged as `secret.metadata_read` / action `metadata_read` and are not counted). Returned by `GET /api/v1/secrets/{id}` and `GET /api/v1/secrets/{id}/versions` (as `data.total_reads`); not included in listings or in `GET /api/v1/secrets/by-name`. On a value read, the count includes that read. The same figure is returned over gRPC (`Secret.total_reads` on `GetSecret`, `GetSecretVersionsResponse.total_reads`; absent on lists) and printed by `keyorix secret get` ("Total Reads") and `keyorix secret versions`. On an install upgraded from before #2970, version listings were logged as `read` rows too; those rows still count, so a lifetime total there is inflated by the number of earlier version listings.
+- `read_count` (and each version's `ReadCount`): only the reads charged against `max_reads`. It stays `0` for a secret without `max_reads`.
 
 ### Update Secret
 ```http
@@ -425,6 +439,28 @@ note near the top of this document):
 - `NotFound` - Requested resource doesn't exist
 - `ConflictError` - Resource with same identifier exists
 - `InternalError` - Server-side error
+- `ServiceUnavailable` - Temporarily unable to take the request; retry after the `Retry-After` interval (see below)
+
+### HTTP status codes for overload and contention
+
+| Status | `error` | Headers | Meaning | Client action |
+|--------|---------|---------|---------|---------------|
+| `429` | `RateLimited` / `TooManyRequests` | `Retry-After` | **You** sent too much: a per-principal or per-IP rate limit or the login-attempt budget was exceeded. | Slow down; retry after `Retry-After`. |
+| `503` | `ServiceUnavailable` | `Retry-After` (seconds) | **The server** could not take a write right now: on SQLite deployments the single-writer lock was still busy after the 10 s wait bound (sustained write contention), or a transient storage fault kept a request from being authenticated. Fixed message, no internal detail. | Retry after `Retry-After`. Safe to retry idempotent requests blindly; for others, check state first. |
+| `500` | `InternalError` | — | An unexpected server failure not known to be transient. | Do not retry blindly; report with the request ID. |
+
+`429` is reserved for caller-caused overload; write-lock contention is the
+server's capacity, so it is a `503`. gRPC equivalents: rate limiting is
+`RESOURCE_EXHAUSTED`; write-lock contention is `UNAVAILABLE` with a
+`retry-after` trailer (seconds).
+
+A `503` from write contention means the request failed, not that nothing happened:
+a request that performs several write transactions may have committed an earlier
+one before a later one timed out.
+
+The `/auth/` endpoints (login, MFA, WebAuthn login, setup, password change) never
+return this `503`: a storage failure after a credential matched is answered as a
+wrong credential, so the response cannot confirm a guess.
 
 ## 🌍 **Multi-Language Support**
 
