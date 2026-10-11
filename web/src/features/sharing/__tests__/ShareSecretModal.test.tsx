@@ -342,17 +342,17 @@ describe('ShareSecretModal submission + lifecycle', () => {
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);
         expect(optionLabels).toEqual(['Read Only']);
-        expect(optionLabels).not.toContain('Read & Write');
+        expect(optionLabels).not.toContain('Read + update value/metadata, rotate');
     });
 
-    it('offers Read & Write when the sharer holds write on the secret', () => {
+    it('offers the update-value/metadata-and-rotate option when the sharer holds write on the secret', () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         const select = screen.getByDisplayValue('Read Only') as HTMLSelectElement;
         const optionLabels = Array.from(select.options).map((o) => o.textContent);
-        expect(optionLabels).toContain('Read & Write');
+        expect(optionLabels).toContain('Read + update value/metadata, rotate');
     });
 
-    it('says what a Read & Write share grants and what it does not (#3001 allowlist)', () => {
+    it('says what a write share grants and what it does not (#3001 allowlist)', () => {
         render(<ShareSecretModal secret={secret} isOpen onClose={() => {}} />);
         expect(screen.getByText('The recipient can read this secret.')).toBeInTheDocument();
         fireEvent.change(screen.getByDisplayValue('Read Only'), { target: { value: 'write' } });
@@ -361,7 +361,10 @@ describe('ShareSecretModal submission + lifecycle', () => {
         expect(hint).toHaveTextContent(
             /Suspending, changing its expiry, moving, deleting, re-sharing or changing access still needs a project role/
         );
-        expect(screen.getByDisplayValue('Read & Write')).toHaveAttribute('aria-describedby', hint.id);
+        expect(screen.getByDisplayValue('Read + update value/metadata, rotate')).toHaveAttribute(
+            'aria-describedby',
+            hint.id
+        );
     });
 
     it('shows a success message, calls onSuccess, and auto-closes after a delay', async () => {
