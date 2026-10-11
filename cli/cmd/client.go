@@ -187,8 +187,8 @@ const errCodeMFAEnrollmentRequired = "MFAEnrollmentRequired"
 func nextStepHint(eb apiErrorBody) string {
 	if eb.Error == errCodeMFAEnrollmentRequired {
 		return " Next step: this server requires multi-factor authentication. " +
-			"Enrol MFA with `keyorix mfa enroll`, then `keyorix mfa activate` (see `keyorix mfa --help`), " +
-			"then run `keyorix login` again and enter the authenticator code when it asks."
+			"Enrol MFA with `keyorix mfa enroll`, then `keyorix mfa activate`, " +
+			"then log in again with `keyorix login` (it prompts for the code)."
 	}
 	return ""
 }
