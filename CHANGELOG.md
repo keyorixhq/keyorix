@@ -3,38 +3,21 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+**Unreleased entries now live in `changelog.d/`** (one fragment file per PR; see
+`changelog.d/README.md`) and are assembled into this file at release time by
+`scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
+that section is the text written before the switch.
+
 ## Unreleased
 
 ### Security
-- **No auth rate limit fails open on a database error any more.** The per-IP
-  login, password-reset and SSO/SAML-begin budgets, and the per-account lockout,
-  used to stop counting whenever their storage failed. While the database (or
-  just its rate-limit table) was failing, brute-force and email-bombing limits
-  were off. The per-account lockout is the only bound on MFA step-up and
-  recovery-code guessing. Now each budget falls back to a bounded in-memory
-  limiter with the same limits, per server process. Each fallback writes an
-  `auth.rate_limit_error` audit event and increments
-  `keyorix_auth_rate_limit_fallback_total{budget}`, so alert on that metric.
-  `/health` also reports `"auth_rate_limit": "degraded"` while a fallback is in use.
-  During the outage, password reset is tighter: half the per-IP limit, and a cap on
-  reset emails per account. In HA, set the new
-  `security.auth_rate_limit_fallback.replicas` to your replica count so each
-  replica enforces its share. Clients see the same responses as before.
-- **Successful logins no longer use up the per-IP login budget** (#2936). The
-  budget (10 attempts per 15 minutes per IP, shared by the password, TOTP,
-  passkey and token-refresh endpoints) was charged for every request, success
-  or not, so a few ordinary MFA logins from one demo laptop, booth or office
-  network locked everyone behind it out with a 429 for 15 minutes, and a
-  restart did not help. A request that delivers a session now returns its slot,
-  and so does every earlier step of the same login (the password step of an MFA
-  login, a passkey `begin`), so a successful MFA or passkey login costs nothing;
-  a failed, expired or abandoned one keeps every slot it took. Failures count
-  exactly as before, including storage faults after a correct credential
-  (#2880), and the slot is still reserved before the credential check, so a
-  concurrent burst cannot outrun the budget. The count still survives a
-  restart. New audited host-side command
-  `keyorix-server admin clear-login-lockout --ip ADDR | --user ID` clears an
-  IP's budget and/or an account's login lockout (docs/SELF_HOSTING.md).
+- **HSTS behind a TLS-terminating load balancer** (#3058): the web nginx (compose
+  image and Helm chart) sends `Strict-Transport-Security` only for a request from a
+  configured trusted proxy (`KEYORIX_WEB_TRUSTED_PROXIES` / `web.trustedProxies`)
+  that carries `X-Forwarded-Proto: https`; never for direct http, never on the say-so
+  of an untrusted client. On by default once a trusted proxy is configured, off
+  otherwise. See docs/SELF_HOSTING.md §7. Guarded by a real-nginx test
+  (`deploy` `TestWebNginxHSTS_*`).
 - **A database fault during login no longer reveals that the password, TOTP
   code or passkey was correct.** Every login path (password, TOTP, WebAuthn
   second factor, passwordless, re-authentication, MFA step-up) already answered
@@ -197,6 +180,27 @@ All notable changes to Keyorix are documented here. This project follows
   password; prints one-time recovery codes). With `require_mfa` on, this is
   how a CLI-only operator gets past the first-login enrolment confinement;
   `keyorix login --mfa-code` completes later logins.
+- **16 security-weakening settings renamed to an `insecure_` prefix** (ADR-112,
+  secure-by-default baseline, item 2, part 3) —
+  `security.allow_unsafe_file_permissions`, `security.login_lockout.disabled`,
+  `security.recover_admin.keyless_mode`,
+  `audit.siem.allow_private_network_target`/`allow_insecure_transport`,
+  `evidence_delivery.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `notifications.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `dynamic_secrets.allow_private_network_targets`/`allow_insecure_transport`,
+  `storage.encryption.key_provider.kms_allow_context_fallback`/`allow_weaker_fallback`,
+  `sso.providers[].trust_asserted_email`,
+  `sso.providers[].saml.allow_idp_initiated` and `audit_checkpoints.disabled`.
+  **Upgrade note: every old name still works exactly as before.** It is a
+  deprecated alias, not a removal — the raw YAML is rewritten before the strict
+  decode, so nothing changes except that using an old name now logs a start-up
+  warning naming its replacement. Setting both names is not ambiguous: the new
+  one wins and a "both set" warning fires. The two key-provider settings are
+  also aliased **inside the `fallbacks:` chain**, where a config file using the
+  old name previously hit the strict decode's unknown-field check and the
+  server refused to start instead of warning.
+  Not renamed: the fourteen settings tracked in #2895, each of which needs a
+  polarity inversion or a non-boolean field restructured first.
 - **Every security-weakening setting is now registered, warned about and
   audited** (ADR-112, secure-by-default baseline, item 2 — the opt-out rule).
   `internal/config.InsecureSettingsRegistry` is the single enumeration of all
@@ -212,11 +216,10 @@ All notable changes to Keyorix are documented here. This project follows
   A **sweep of the whole config surface** (`insecure_settings_sweep_test.go`)
   is what keeps the registry honest: a setting whose name reads as an opt-out
   and that no entry covers fails CI by name, and a set ratchet over every
-  leaf setting fails on *any* config addition, removal or rename — because eight of the registered
+  leaf setting fails on *any* config addition, removal or rename — because seven of the registered
   weakenings (`membership.validation_mode`, `storage.database.ssl_mode`,
   `credential_delivery.mode`, the SMTP/email `tls` enums, `metrics_token`,
-  `max_request_body_bytes`, `sso.providers[].trust_asserted_email`) have names
-  no pattern list can recognise. Thirteen settings that cannot be renamed
+  `max_request_body_bytes`) have names no pattern list can recognise. Thirteen settings that cannot be renamed
   mechanically — each needing a polarity inversion of a load-bearing flag, or
   a non-boolean field restructured into a real boolean — are recorded as known
   exceptions with an owning tracking issue, and are covered by the warning,
