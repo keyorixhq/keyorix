@@ -33,7 +33,7 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	if !user.MFAEnabled {
-		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix auth mfa enroll' first")
+		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix mfa enroll' first")
 	}
 
 	// storageErr distinguishes a genuine storage-read/write failure from a
@@ -66,12 +66,23 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("invalid code")
 	}
 
+	// From here on the submitted code has been found CORRECT (and consumed). Every
+	// failure now is post-verdict (ErrLoginPostVerdict), which the handler answers
+	// byte-for-byte like a wrong code and never echoes (#2947): a different
+	// message (the raw storage error, "unable to verify account lock state",
+	// "failed to record MFA step-up") would confirm a correct guess and expose
+	// storage detail. The real cause goes to the server log; the denial is
+	// counted like a wrong code and audited mfa.error (#2894 review; the
+	// stepup/CreateMFAStepUpGrant row of oracleAByDesignErrors lists that
+	// AuditEvent).
+	//
 	// TOCTOU re-check only — the failure state is NOT cleared here (#2894): the
 	// step-up grant below is still to be written, and a fault there denies the
 	// step-up while leaving the counter at 0, making a CORRECT code the cheaper
 	// probe than a wrong one. See LoginCompletion.
 	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
 		if errors.Is(err, ErrLoginPostVerdict) {
+			log.Printf("SECURITY: MFA step-up for user %d: code verified but the lockout re-check failed (reported to the caller as an invalid code): %v", userID, err)
 			// Counted already; audited here, synchronously like the wrong-code
 			// branch's mfa.failed, so an operator sees the fault (#2894 review).
 			c.auditMFAError(ctx, userID, "stepup", err)
@@ -91,6 +102,7 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
 	}
 	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
+		log.Printf("SECURITY: MFA step-up for user %d: code verified but the grant could not be recorded (reported to the caller as an invalid code): %v", userID, err)
 		// #2894: the code already verified, so count this post-verdict storage
 		// fault exactly as a wrong code would be counted (recordFailedLogin above).
 		perr := c.denyAfterCredentialMatched(ctx, user, fmt.Errorf("failed to record MFA step-up: %w", err))

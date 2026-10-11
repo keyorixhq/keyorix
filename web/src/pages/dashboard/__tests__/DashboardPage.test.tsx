@@ -473,7 +473,7 @@ describe('DashboardPage — recent activity edge cases', () => {
         });
         render(<DashboardPage />);
         expect(screen.getByText('carol')).toBeInTheDocument();
-        expect(screen.getByText('custom_event')).toBeInTheDocument();
+        expect(screen.getByText('Custom event')).toBeInTheDocument();
     });
 
     it('renders a versions_listed activity as a listing, not the raw type or an access', () => {
@@ -492,6 +492,42 @@ describe('DashboardPage — recent activity edge cases', () => {
         expect(screen.queryByText(/versions_listed/)).not.toBeInTheDocument();
         expect(screen.queryByText(/accessed secret/)).not.toBeInTheDocument();
         expect(screen.getByText(/listed versions of secret/)).toHaveTextContent('listed versions of secret "db-pass"');
+    });
+});
+
+describe('DashboardPage — readable labels for server-labelled events (#2951)', () => {
+    it('shows the server label, keeps the raw event type as a tooltip, and no stray name', () => {
+        mockHooks({
+            activity: [
+                {
+                    id: 1,
+                    type: 'secret.dependency_invalidated',
+                    eventType: 'secret.dependency_invalidated',
+                    label: 'broke a dependency of secret',
+                    actor: 'bob',
+                    secretName: 'api-key',
+                    timestamp: '2026-01-01T10:00:00Z',
+                },
+                {
+                    id: 2,
+                    type: 'break_glass.revoked',
+                    eventType: 'break_glass.revoked',
+                    label: 'revoked break-glass access',
+                    actor: 'system',
+                    secretName: '',
+                    timestamp: '2026-01-01T10:01:00Z',
+                },
+            ],
+        });
+        render(<DashboardPage />);
+        expect(screen.queryByText(/secret\.dependency_invalidated/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/break_glass\.revoked/)).not.toBeInTheDocument();
+        const first = screen.getByText(/broke a dependency of secret/);
+        expect(first).toHaveTextContent('broke a dependency of secret "api-key"');
+        expect(first).toHaveAttribute('title', 'secret.dependency_invalidated');
+        const second = screen.getByText('revoked break-glass access');
+        expect(second).toHaveAttribute('title', 'break_glass.revoked');
+        expect(second).not.toHaveTextContent('""');
     });
 });
 

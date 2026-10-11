@@ -40,12 +40,34 @@ All notable changes to Keyorix are documented here. This project follows
   few milliseconds later in the request than before. A fault reading the
   account's roles after the password matched now also answers `401 Invalid
   credentials` instead of a distinguishable `500`. (#2894, #2888)
+- **The bundled Caddy (`tls` compose profile) no longer runs as root.** It runs as
+  uid:gid 65532 with only `NET_BIND_SERVICE`. A one-shot `caddy-init` service
+  chowns the existing `caddy_data` / `caddy_config` volumes first, so upgrading
+  an install whose Caddy volumes are root-owned needs no manual step and keeps
+  its certificates. `caddy-init` runs with `CHOWN` + `DAC_READ_SEARCH` so a
+  second run (Caddy's storage directories are `0700`) and an interrupted first
+  run succeed; it touches only the two Caddy volumes and only entries not already
+  owned by 65532. See `docs/SELF_HOSTING.md` §7.
+- **Every `tmpfs` (compose) and `emptyDir` (Helm) now has an explicit size limit**
+  (`size=` / `sizeLimit`), so a runaway writer cannot exhaust host memory or node
+  ephemeral storage. The backend's `/tmp` (64 MiB) also stages `admin restore`.
+- **The bundled PostgreSQL runs as the image's own uid, 70, in both compose and
+  the Helm chart** (`postgres:15-alpine`; the Debian-based images use 999). Compose
+  volumes were already owned by 70. **Helm upgrade note:** charts since v0.87.0 ran
+  the pod as 999 even on the alpine image, so an existing chart-created volume is
+  owned by 999 and the pod will not start (Postgres refuses a data directory it
+  does not own). Either `--set postgresql.runAsUser=999` to keep the old owner, or
+  `--set postgresql.migrateOwnership=true` for a one-time chown to 70 (opt-in: it
+  adds a root init container with only `CHOWN` + `DAC_READ_SEARCH`, which a Pod
+  Security "restricted" namespace rejects). Guarded by `deploy/hardening`, which
+  ties compose user, chart securityContext and image flavour together. See
+  `docs/UPGRADING.md` §5.
 - **The shipped compose stack and Helm chart run with
   `security.enable_file_permission_check` on** (ADR-112 default): key material and
   the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
   file only warns. Both configs omit the key on purpose, because an explicit `true`
-  would also audit that root/host-owned file strictly. A secret file now follows the
-  same upgrade grace period as the key files. Guarded by
+  would also audit that root/host-owned file strictly. A `*_FILE` secret that is not
+  key material follows the same upgrade grace period as the key files. Guarded by
   `deploy/hardening` `TestShipped{Compose,Helm}Config_FilePermissionCheckIsOn`.
 - **Every secret the server reads from the environment now also accepts
   `<NAME>_FILE`** (Docker secrets, Kubernetes Secret volumes): the master
@@ -53,8 +75,20 @@ All notable changes to Keyorix are documented here. This project follows
   the operator-named KEK, Shamir-share, rotation-DSN and Vault-token variables.
   Setting both `X` and `X_FILE`, or pointing `X_FILE` at an unreadable or empty
   file, stops the server at startup; the value and the file contents are never
-  logged; the file-permission check refuses a secret file that is accessible to
-  other users or writable by its group. See `docs/CONFIGURATION.md`.
+  logged. File permissions: the master password, KEK and Shamir-share files are
+  **always refused** unless `0600`/`0400` (the key-material rule) -- the one
+  exception is a group-readable file the running user does not own whose group the
+  process holds (a Kubernetes Secret volume with `fsGroup`, a Docker secret with
+  `group_add`); every other secret file follows
+  `security.enable_file_permission_check` (refuse) / warn, and during the ADR-112
+  upgrade grace period they only warn. The container
+  entrypoint (`KEYORIX_ADMIN_PASSWORD_FILE`, `KEYORIX_BOOTSTRAP_TOKEN_FILE`) and
+  `keyorix system init` resolve `_FILE` too, so a `_FILE`-only deployment
+  auto-bootstraps; the entrypoint never exports a value read from a file (the
+  server gets the `_FILE` path) and sends the bootstrap token in the request body,
+  not on wget's command line. A file value has one trailing `\n`, then one `\r`,
+  stripped (same bytes as `--passphrase-file`); the plain `KEYORIX_MASTER_PASSWORD` variable keeps
+  its whitespace trim. See `docs/CONFIGURATION.md`.
 - **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
   baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
   1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD
