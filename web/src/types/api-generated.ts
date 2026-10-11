@@ -2400,7 +2400,7 @@ export interface paths {
         };
         /**
          * List who can read a secret
-         * @description Effective access list -- every user who can read the secret, with their EFFECTIVE permission and how it was granted. For a project member the level is max(role permission, active share permission), so a share that elevates a role shows as the higher level; `grants` lists every grant behind it. Expired shares and shares to users who are not project members grant nothing and are not listed. Holders of a global role (global admins) have implicit access and are not enumerated. Members who hold access only through a role are listed only when the caller holds users.read at the project (the gate of GET /projects/{id}/members); otherwise they are left out and the response is flagged `degraded`.
+         * @description Effective access list -- every user who can read the secret, with their EFFECTIVE permission and how it was granted. For a project member the level is max(role permission, active share permission), so a share that elevates a role shows as the higher level; `grants` lists every grant behind it. Expired shares and shares to users who are not project members grant nothing and are not listed. Holders of a global role (global admins) have implicit access and are not enumerated. An owner who is no longer a project member is not listed as owner. Project roles (role grants, and members who hold access only through a role) are shown only when the caller holds users.read at the project (the gate of GET /projects/{id}/members); per-secret ACL holders and acl grants only when the caller passes secrets.manage on the secret (the gate of GET /secrets/{id}/acl). A withheld part is left out and the response is flagged `degraded`.
          */
         get: operations["listAccessors"];
         put?: never;
@@ -5635,7 +5635,7 @@ export interface components {
             permission?: string;
             /** @description The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>. */
             source?: string;
-            /** @description Every grant the user holds on the secret with its level, e.g. role:read, direct_share:write. */
+            /** @description Every grant the user holds on the secret as source:level, e.g. owner:owner, role:read, direct_share:write. */
             grants?: string[];
         };
         /** @description One read event from a secret's access log (server/http/handlers/secrets_access_history.go's secretAccessLogEntry -- a snake_case DTO, not the raw internal/storage/models.SecretAccessLog). ip_address/user_agent are present only when the caller separately holds audit.read (see the route's own description); an ordinary secrets.read-only caller never sees another user's originating IP. */

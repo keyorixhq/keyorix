@@ -73,7 +73,9 @@ permission on the shared secret is the **higher** of the two:
 `keyorix secret access --id N` (and the API's `GET /secrets/{id}/access`) shows
 each user's **effective** level on the secret, the grant that gives it, and every
 grant they hold. A viewer elevated by a write share shows as `write`, from
-`direct_share`, with grants `role:read, direct_share:write`.
+`direct_share`, with grants `role:read, direct_share:write`. Role grants need
+`users.read` at the project and ACL grants need `secrets.manage` on the secret;
+without them those grants are left out and the report says it is incomplete.
 
 If a share is refused, the error says why: "you are not a member of this
 secret's project" (the owner needs a project role) or "the recipient is not a

@@ -134,20 +134,35 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 	// GET /projects/{id}/members) gets it here; a secrets.read-only caller keeps the
 	// owner, share and ACL listing and sees the gap flagged, never a roster they could
 	// not otherwise read.
+	// The same gate withholds each listed user's role level (the role: grants): a
+	// member's project role is roster content too.
+	var view accessReportView
 	if canRoster, err := c.Authorize(ctx, actorID, "users.read", Scope{ProjectID: secret.ProjectID}); err != nil {
 		result.degrade("project_members", err)
 	} else if !canRoster {
-		result.degrade("project_members", errors.New("project members are not listed: the caller lacks users.read in the project"))
+		result.degrade("project_members", errors.New("project members are not listed and role grants are omitted: the caller lacks users.read in the project"))
 	} else if members, err := c.shareRecipientCandidates(ctx, secret.ProjectID); err != nil {
+		view.roles = true
 		result.degrade("project_members", err)
 	} else {
+		view.roles = true
 		for _, id := range members {
 			addCandidate(id)
 		}
 	}
-	if acls, err := c.storage.ListSecretACLs(ctx, secretID); err != nil {
+	// Per-secret ACL holders and their acl: grants are what GET /secrets/{id}/acl
+	// returns, and that route requires secrets.manage on the secret. Only a caller
+	// who would pass that gate (the same AuthorizeSecret decision, with the caller's
+	// PAT restriction) gets them here; anyone else sees the gap flagged.
+	if canACL, err := c.AuthorizeSecret(ctx, actorID, secretID, permSecretsManage); err != nil {
+		result.degrade("secret_acls", err)
+	} else if !canACL {
+		result.degrade("secret_acls", errors.New("per-secret ACL holders are not listed and acl grants are omitted: the caller lacks secrets.manage on the secret"))
+	} else if acls, err := c.storage.ListSecretACLs(ctx, secretID); err != nil {
+		view.acls = true
 		result.degrade("secret_acls", err)
 	} else {
+		view.acls = true
 		for _, a := range acls {
 			addCandidate(a.UserID)
 		}
@@ -155,7 +170,7 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 
 	out := make([]SecretAccessor, 0, len(candidates))
 	for _, uid := range candidates {
-		acc, ok := c.effectiveSecretAccess(ctx, secret, uid, groupNameByShare, result)
+		acc, ok := c.effectiveSecretAccess(ctx, secret, uid, groupNameByShare, view, result)
 		if !ok {
 			continue
 		}
@@ -173,10 +188,34 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 	return result, nil
 }
 
-// effectiveSecretAccess computes one user's grants on secret. ok is false when the
-// user has none. A resolution error degrades the report (the user may be missing or
-// under-counted) instead of failing it.
-func (c *KeyorixCore) effectiveSecretAccess(ctx context.Context, secret *models.SecretNode, uid uint, groupNameByShare map[uint]string, result *SecretAccessorsResult) (SecretAccessor, bool) {
+// accessReportView is what the caller of ListSecretAccessors may see beyond the
+// owner and the shares: roles (users.read at the project) and acls (secrets.manage
+// on the secret). A term the caller may not see is neither evaluated nor reported.
+type accessReportView struct {
+	roles, acls bool
+}
+
+// strongestSecretTerm grants the strongest level, write before read, that has reports for
+// one term of the effective level (the role or the ACL). A resolution error
+// degrades the report under source:user=<id> and grants nothing.
+func strongestSecretTerm(has func(perm string) (bool, error), source string, uid uint, grant func(level, source string), result *SecretAccessorsResult) {
+	for _, lvl := range []struct{ perm, level string }{{permSecretsWrite, "write"}, {permSecretsRead, "read"}} {
+		ok, err := has(lvl.perm)
+		if err != nil {
+			result.degrade(fmt.Sprintf("%s:user=%d", source, uid), err)
+			return
+		}
+		if ok {
+			grant(lvl.level, source)
+			return
+		}
+	}
+}
+
+// effectiveSecretAccess computes one user's grants on secret, limited to the terms
+// view allows. ok is false when the user has none. A resolution error degrades the
+// report (the user may be missing or under-counted) instead of failing it.
+func (c *KeyorixCore) effectiveSecretAccess(ctx context.Context, secret *models.SecretNode, uid uint, groupNameByShare map[uint]string, view accessReportView, result *SecretAccessorsResult) (SecretAccessor, bool) {
 	acc := SecretAccessor{UserID: uid, Grants: []string{}}
 	grant := func(level, source string) {
 		acc.Grants = append(acc.Grants, source+":"+level)
@@ -184,32 +223,19 @@ func (c *KeyorixCore) effectiveSecretAccess(ctx context.Context, secret *models.
 			acc.Permission, acc.Source = level, source
 		}
 	}
-	if secret.OwnerID == uid {
-		acc.Permission, acc.Source = "owner", "owner"
-		acc.Grants = append(acc.Grants, "owner")
+	// Owner authority needs the owner to still be a live project member, exactly as
+	// enforcement decides it (RBAC-001): a departed owner's OwnerID tag grants nothing.
+	if live, err := c.requireLiveOwnerAuthority(ctx, secret, uid); err != nil {
+		result.degrade(fmt.Sprintf("owner:user=%d", uid), err)
+	} else if live {
+		grant("owner", "owner")
 	}
 	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	for _, lvl := range []struct{ perm, level string }{{permSecretsWrite, "write"}, {permSecretsRead, "read"}} {
-		ok, err := c.principalHasScopedPermission(ctx, uid, lvl.perm, scope)
-		if err != nil {
-			result.degrade(fmt.Sprintf("role:user=%d", uid), err)
-			break
-		}
-		if ok {
-			grant(lvl.level, "role")
-			break
-		}
+	if view.roles {
+		strongestSecretTerm(func(perm string) (bool, error) { return c.principalHasScopedPermission(ctx, uid, perm, scope) }, "role", uid, grant, result)
 	}
-	for _, lvl := range []struct{ perm, level string }{{permSecretsWrite, "write"}, {permSecretsRead, "read"}} {
-		ok, err := c.HasSecretACL(ctx, uid, secret.ID, lvl.perm)
-		if err != nil {
-			result.degrade(fmt.Sprintf("acl:user=%d", uid), err)
-			break
-		}
-		if ok {
-			grant(lvl.level, "acl")
-			break
-		}
+	if view.acls {
+		strongestSecretTerm(func(perm string) (bool, error) { return c.HasSecretACL(ctx, uid, secret.ID, perm) }, "acl", uid, grant, result)
 	}
 	// A write share elevates only the #3001 allowlist; SecretActionUpdate is on it, so a
 	// share-sourced "write" here means "update value/metadata, rotate", not full

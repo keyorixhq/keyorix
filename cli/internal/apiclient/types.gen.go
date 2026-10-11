@@ -996,7 +996,7 @@ type SecretAccessSchedule struct {
 
 // SecretAccessor One entry in a secret's effective access list.
 type SecretAccessor struct {
-	// Grants Every grant the user holds on the secret with its level, e.g. role:read, direct_share:write.
+	// Grants Every grant the user holds on the secret as source:level, e.g. owner:owner, role:read, direct_share:write.
 	Grants *[]string `json:"grants,omitempty"`
 
 	// Permission Effective level: read, write or owner.
