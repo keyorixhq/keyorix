@@ -3690,14 +3690,19 @@ paths:
         of GET /projects/{id}/members); per-secret ACL holders and acl grants only when
         the caller passes secrets.manage on the secret (the gate of
         GET /secrets/{id}/acl). A withheld part is left out and the response is
-        flagged `degraded`.
+        flagged `degraded`, as is a lookup that failed; a degraded list is an
+        under-count, never complete. A caller without users.read can still tell that
+        a listed share recipient or the owner is a project member (a share to a
+        non-member is not listed). Deactivated or suspended accounts that still hold a
+        grant are listed on purpose: the grant applies again if the account is
+        reactivated.
       operationId: listAccessors
       security: [{bearerAuth: []}]
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
         '200':
-          description: Envelope `{data, message}`. `data` is `{accessors}`.
+          description: Envelope `{data, message}`. `data` is `{accessors, total, degraded, degraded_reasons}`.
           content:
             application/json:
               schema:
@@ -3707,6 +3712,18 @@ paths:
                     type: object
                     properties:
                       accessors: {type: array, items: {$ref: '#/components/schemas/SecretAccessor'}}
+                      total: {type: integer, description: Number of accessors listed.}
+                      degraded:
+                        type: boolean
+                        description: >-
+                          True when the list is incomplete: part of it was withheld from
+                          this caller (project roles, ACL holders) or a lookup failed.
+                          `accessors` is then an under-count. Clients must show it.
+                      degraded_reasons:
+                        type: array
+                        nullable: true
+                        items: {type: string}
+                        description: "One entry per gap, in the form `area: reason`; null when the list is complete."
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}

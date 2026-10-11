@@ -31,6 +31,8 @@ type SecretAccessor struct {
 	Source string `json:"source"`
 	// Grants lists every grant the user holds on the secret with its level, e.g.
 	// ["role:read", "direct_share:write"], so a share that elevates a role is visible.
+	// Every applying share is its own entry (a direct and a group share both appear).
+	// Role and ACL terms appear only to a caller who may see them (accessReportView).
 	Grants []string `json:"grants"`
 }
 
@@ -71,12 +73,23 @@ var permissionRank = map[string]int{"read": 1, "write": 2, "owner": 3}
 // project's members (direct or group role grants) and the per-secret ACL holders.
 // Each candidate's level is computed from the same terms AuthorizeSecret decides with
 // — role at the secret's scope, per-secret ACL, and the share term with its
-// membership rule (sharePermissionFor) — so a share to a non-member, or an expired
-// one, is not listed, and a share that elevates a role shows as the higher level.
+// membership rule (reportShareGrants, the rules of sharePermissionFor applied to the
+// shares loaded once) — so a share to a non-member, or an expired one, is not listed,
+// and a share that elevates a role shows as the higher level.
 // It evaluates other users, so the caller's PAT restriction does not apply
 // (principalHasScopedPermission), and nothing is audited: this is a report, not an
 // access. Not listed: holders of a GLOBAL role (global admins have implicit access)
 // and ACLs inherited from a parent folder.
+//
+// Known, accepted disclosures (documented in docs/SECRET_SHARING_API.md §9):
+//   - Even without users.read, the caller can tell that a listed share recipient (or
+//     the owner) is a project member, because a share to a non-member grants nothing
+//     and is omitted. The roster gate withholds the role-holder list, not the
+//     membership of users the caller already sees through a share or ownership.
+//   - A deactivated (or suspended) account that still holds a role, share or ACL is
+//     listed, on purpose: the report shows the grants on the secret, which take effect
+//     again if the account is reactivated, so an access review must see them. Account
+//     status is shown by the user routes, not here.
 func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID uint) (*SecretAccessorsResult, error) { // NOSONAR -- cognitive complexity, suppress go:S3776
 	if _, err := c.EnforceSecretReadPermission(ctx, secretID, actorID); err != nil {
 		return nil, err
@@ -104,8 +117,11 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
+	// Loaded once: each candidate's share term is evaluated from this list
+	// (reportShareGrants), not by re-reading the shares per user.
+	shares = activeShares(shares, c.shareEffectiveNow())
 	groupNameByShare := map[uint]string{}
-	for _, sh := range activeShares(shares, c.shareEffectiveNow()) {
+	for _, sh := range shares {
 		if !sh.IsGroup {
 			addCandidate(sh.RecipientID)
 			continue
@@ -170,7 +186,7 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 
 	out := make([]SecretAccessor, 0, len(candidates))
 	for _, uid := range candidates {
-		acc, ok := c.effectiveSecretAccess(ctx, secret, uid, groupNameByShare, view, result)
+		acc, ok := c.effectiveSecretAccess(ctx, secret, uid, shares, groupNameByShare, view, result)
 		if !ok {
 			continue
 		}
@@ -215,10 +231,16 @@ func strongestSecretTerm(has func(perm string) (bool, error), source string, uid
 // effectiveSecretAccess computes one user's grants on secret, limited to the terms
 // view allows. ok is false when the user has none. A resolution error degrades the
 // report (the user may be missing or under-counted) instead of failing it.
-func (c *KeyorixCore) effectiveSecretAccess(ctx context.Context, secret *models.SecretNode, uid uint, groupNameByShare map[uint]string, view accessReportView, result *SecretAccessorsResult) (SecretAccessor, bool) {
+func (c *KeyorixCore) effectiveSecretAccess(ctx context.Context, secret *models.SecretNode, uid uint, shares []*models.ShareRecord, groupNameByShare map[uint]string, view accessReportView, result *SecretAccessorsResult) (SecretAccessor, bool) {
 	acc := SecretAccessor{UserID: uid, Grants: []string{}}
+	seen := map[string]bool{}
 	grant := func(level, source string) {
-		acc.Grants = append(acc.Grants, source+":"+level)
+		g := source + ":" + level
+		if seen[g] {
+			return // e.g. two share rows of the same level and source
+		}
+		seen[g] = true
+		acc.Grants = append(acc.Grants, g)
 		if permissionRank[level] > permissionRank[acc.Permission] {
 			acc.Permission, acc.Source = level, source
 		}
@@ -237,26 +259,75 @@ func (c *KeyorixCore) effectiveSecretAccess(ctx context.Context, secret *models.
 	if view.acls {
 		strongestSecretTerm(func(perm string) (bool, error) { return c.HasSecretACL(ctx, uid, secret.ID, perm) }, "acl", uid, grant, result)
 	}
-	// A write share elevates only the #3001 allowlist; SecretActionUpdate is on it, so a
-	// share-sourced "write" here means "update value/metadata, rotate", not full
-	// secrets.write. A read share ignores the action.
-	for _, need := range []PermissionLevel{PermissionWrite, PermissionRead} {
-		g, err := c.sharePermissionFor(ctx, uid, secret.ID, secret.ProjectID, need, SecretActionUpdate)
-		if err != nil {
-			result.degrade(fmt.Sprintf("share:user=%d", uid), err)
-			break
-		}
-		if g.Level == PermissionNone {
+	c.reportShareGrants(ctx, secret, uid, shares, groupNameByShare, grant, result)
+	return acc, acc.Permission != ""
+}
+
+// reportShareGrants adds every share that applies to uid, each as its own grant, from
+// the active shares ListSecretAccessors loaded once. It applies exactly the rules of the
+// share term (activeShareGrant): a direct share counts for its recipient; a group share
+// counts when uid's membership of the group is global or scoped to the secret's project
+// (GetUserGroupsAt, as CheckGroupPermissions); a stored level other than read/write
+// grants nothing (shareLevel); and no share applies to a user who is not a project
+// member. A write share elevates only the #3001 allowlist; SecretActionUpdate is on it,
+// so a share-sourced "write" means "update value/metadata, rotate", not full
+// secrets.write. TestListSecretAccessors_ShareGrantsMatchDecisionTerm checks the
+// strongest grant here against sharePermissionFor for every user.
+//
+// Unlike enforcement, which treats a failed group lookup as "no group share" (the share
+// term only adds access), a report must not present that as complete: the failure
+// degrades the report under group_share:user=<id>.
+func (c *KeyorixCore) reportShareGrants(ctx context.Context, secret *models.SecretNode, uid uint, shares []*models.ShareRecord, groupNameByShare map[uint]string, grant func(level, source string), result *SecretAccessorsResult) {
+	type shareTerm struct{ level, source string }
+	var found []shareTerm
+	hasGroupShare := false
+	for _, sh := range shares {
+		if sh.IsGroup {
+			hasGroupShare = true
 			continue
 		}
-		source := g.Source
-		if g.Source == "group_share" && g.ShareID != nil {
-			if name, ok := groupNameByShare[*g.ShareID]; ok {
-				source = "group_share:" + name
+		if sh.RecipientID == uid {
+			if lvl := shareLevel(sh.Permission); lvl != PermissionNone {
+				found = append(found, shareTerm{string(lvl), "direct_share"})
 			}
 		}
-		grant(string(g.Level), source)
-		break
 	}
-	return acc, acc.Permission != ""
+	if hasGroupShare {
+		groups, err := c.storage.GetUserGroupsAt(ctx, uid, Scope{ProjectID: secret.ProjectID})
+		if err != nil {
+			result.degrade(fmt.Sprintf("group_share:user=%d", uid), err)
+		} else {
+			inGroup := make(map[uint]bool, len(groups))
+			for _, g := range groups {
+				inGroup[g.ID] = true
+			}
+			for _, sh := range shares {
+				if !sh.IsGroup || !inGroup[sh.RecipientID] {
+					continue
+				}
+				if lvl := shareLevel(sh.Permission); lvl != PermissionNone {
+					source := "group_share"
+					if name, ok := groupNameByShare[sh.ID]; ok {
+						source = "group_share:" + name
+					}
+					found = append(found, shareTerm{string(lvl), source})
+				}
+			}
+		}
+	}
+	if len(found) == 0 {
+		return
+	}
+	// Shares never apply to a non-member, checked last as activeShareGrant does.
+	member, err := c.IsProjectMember(ctx, uid, secret.ProjectID)
+	if err != nil {
+		result.degrade(fmt.Sprintf("share:user=%d", uid), err)
+		return
+	}
+	if !member {
+		return
+	}
+	for _, f := range found {
+		grant(f.level, f.source)
+	}
 }

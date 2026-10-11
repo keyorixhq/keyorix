@@ -75,7 +75,12 @@ each user's **effective** level on the secret, the grant that gives it, and ever
 grant they hold. A viewer elevated by a write share shows as `write`, from
 `direct_share`, with grants `role:read, direct_share:write`. Role grants need
 `users.read` at the project and ACL grants need `secrets.manage` on the secret;
-without them those grants are left out and the report says it is incomplete.
+without them those grants are left out and the report says it is incomplete: the
+CLI prints `WARNING: this list is incomplete` with the reasons, and the web panel
+shows a "This list is incomplete" banner. No built-in project role holds
+`secrets.manage`, so project members normally see that warning. Deactivated
+accounts that still hold a grant are listed on purpose, because the grant applies
+again if the account is reactivated.
 
 If a share is refused, the error says why: "you are not a member of this
 secret's project" (the owner needs a project role) or "the recipient is not a

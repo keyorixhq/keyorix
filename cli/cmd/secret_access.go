@@ -39,21 +39,39 @@ implicit access and are not listed. Requires secrets.read.`,
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
 			return httpStatusError("list accessors", resp.StatusCode(), resp.Body)
 		}
-		rows := derefSecretAccessorSlice(resp.JSON200.Data.Accessors)
+		data := resp.JSON200.Data
+		rows := derefSecretAccessorSlice(data.Accessors)
 		if len(rows) == 0 {
 			fmt.Println("No accessors.")
-			return nil
-		}
-		fmt.Printf("%-24s %-10s %-24s %s\n", "USER", "PERMISSION", "SOURCE", "GRANTS")
-		for _, r := range rows {
-			grants := "-"
-			if r.Grants != nil && len(*r.Grants) > 0 {
-				grants = strings.Join(*r.Grants, ", ")
+		} else {
+			fmt.Printf("%-24s %-10s %-24s %s\n", "USER", "PERMISSION", "SOURCE", "GRANTS")
+			for _, r := range rows {
+				grants := "-"
+				if r.Grants != nil && len(*r.Grants) > 0 {
+					grants = strings.Join(*r.Grants, ", ")
+				}
+				fmt.Printf("%-24s %-10s %-24s %s\n", derefStr(r.Username), derefStr(r.Permission), derefStr(r.Source), grants)
 			}
-			fmt.Printf("%-24s %-10s %-24s %s\n", derefStr(r.Username), derefStr(r.Permission), derefStr(r.Source), grants)
 		}
+		printAccessListDegraded(data.Degraded, data.DegradedReasons)
 		return nil
 	},
+}
+
+// printAccessListDegraded warns that the list is incomplete (an under-count: part of it
+// was withheld from this caller, or a lookup failed), with the server's reasons, so a
+// shortened list is never read as the full set of accessors.
+func printAccessListDegraded(degraded *bool, reasons *[]string) {
+	if degraded == nil || !*degraded {
+		return
+	}
+	fmt.Println()
+	fmt.Println("WARNING: this list is incomplete; more users may have access than are shown.")
+	if reasons != nil {
+		for _, r := range *reasons {
+			fmt.Printf("  - %s\n", r)
+		}
+	}
 }
 
 var (
