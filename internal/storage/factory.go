@@ -1371,6 +1371,12 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_access_time ON secret_access_logs (access_time, secret_node_id)"); err != nil {
 			return err
 		}
+		// (secret_node_id, action) answers a secret's lifetime read count
+		// (total_reads, core.SecretTotalReads) from the index alone; with only the
+		// (secret_node_id, access_time) index it needed a heap lookup per row.
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_secret_action ON secret_access_logs (secret_node_id, action)"); err != nil {
+			return err
+		}
 	}
 
 	// Track last successful login per user (nil = never logged in).
@@ -1522,6 +1528,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 		if !columnExists(db, "sessions", "impersonation_started_at") {
 			if err := exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
+		}
+		// #3024: setup-only sessions (restricted, factor-less account under
+		// security.require_mfa). false on legacy rows = an ordinary session.
+		if !columnExists(db, "sessions", "setup_only") {
+			if err := exec("ALTER TABLE sessions ADD COLUMN setup_only BOOLEAN NOT NULL DEFAULT false"); err != nil {
 				return err
 			}
 		}

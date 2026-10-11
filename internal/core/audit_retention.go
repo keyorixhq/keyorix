@@ -86,7 +86,7 @@ func (c *KeyorixCore) PurgeAuditLogs(ctx context.Context, cfg AuditLogRetentionC
 	}
 	c.writeAuditEventFull(ctx, "system.audit_purge", actor, nil, nil, "",
 		fmt.Sprintf("audit log retention purge: removed %d event(s) older than %d days (cutoff %s)",
-			n, cfg.RetentionDays, cutoff.Format(time.RFC3339)))
+			n, cfg.RetentionDays, cutoff.UTC().Format(time.RFC3339)))
 
 	return &PurgeAuditLogsResult{DeletedCount: n, CutoffTime: cutoff}, nil
 }

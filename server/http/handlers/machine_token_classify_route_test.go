@@ -28,20 +28,19 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 )
 
 func TestClassifyMachineToken_Route_PersistsLabel_2696(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	db, err := gorm.Open(sqlite.Open("file:kxclassify2696?mode=memory&cache=shared&_timeout=30000"), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithConfig(t, "kxclassify2696_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.Project{}, &models.MachineIdentity{}, &models.MachineIdentityCredential{},
 		&models.AuditEvent{},

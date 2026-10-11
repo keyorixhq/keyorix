@@ -3,12 +3,11 @@ package core
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -19,20 +18,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// purgeTestDBSeq makes each in-memory DB unique within the process so that
-// repeated invocations of the same test (e.g. `go test -count=N`) don't
-// attach to the same SQLite shared-cache in-memory database as a prior
-// iteration and see its leftover rows.
-var purgeTestDBSeq atomic.Int64
-
 // newPurgeTestCore opens a fresh in-memory SQLite DB, migrates AuditEvent and
 // LegalHold (needed by the legalHoldGuard that PurgeAuditLogs now calls),
 // and returns a KeyorixCore with a fixed clock so retention cutoffs are stable.
 func newPurgeTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kx_purge_%d?mode=memory&cache=shared&_busy_timeout=5000", purgeTestDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "auditlogretention_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.LegalHold{}))
 	fixed := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	c := NewKeyorixCore(store.NewLocalStorage(db))

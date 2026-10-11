@@ -21,13 +21,11 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
-	"gorm.io/gorm"
-
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // ── local setup helpers ───────────────────────────────────────────────────────
@@ -42,10 +40,7 @@ func setupSCIMTestS16(t *testing.T) *SCIMHandler {
 func newSecretHandlerS16(t *testing.T) *SecretHandler {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s12DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s16_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_s16_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},

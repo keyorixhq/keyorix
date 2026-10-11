@@ -6,14 +6,36 @@ command below is checked against the CLI's own flag definitions by
 `cli/cmd/quickstart_commands_test.go`; every `keyorix-server admin ...` command is
 checked the same way by `server/admin/quickstart_commands_test.go`.
 
-## Build
+## Get the binaries
+
+**From a release (no toolchain needed).** Each GitHub release publishes bare
+binaries, not tarballs: `keyorix-server_linux_amd64` (API server),
+`keyorix_linux_amd64` (CLI), the `-airgap` server variant, and `checksums.txt`
+(signed: `checksums.txt.sig` / `.pem`, verify with `cosign`). `install.sh` from the
+README installs only the CLI. For the server:
+
+```bash
+V=v0.95.3   # the release you want
+curl -fsSLO https://github.com/keyorixhq/keyorix/releases/download/$V/keyorix-server_linux_amd64
+curl -fsSLO https://github.com/keyorixhq/keyorix/releases/download/$V/checksums.txt
+sha256sum -c --ignore-missing checksums.txt && chmod +x keyorix-server_linux_amd64
+```
+
+A release binary is the release's own behaviour: this page tracks `main`, so a
+command below can be newer than the release (for example `keyorix mfa enroll`
+does not exist in v0.95.3). `keyorix-server` has no `--version` or `--config`
+flag (the server reads `KEYORIX_CONFIG_PATH`, else `./keyorix.yaml`; only the
+`keyorix-server admin ...` subcommands take `--config`); the CLI has
+`keyorix version`.
+
+**From source.**
 
 ```bash
 make build
 ```
 
 Produces `./bin/keyorix` (CLI) and `./bin/keyorix-server` (API server).
-Go 1.23+ and a C toolchain for SQLite are the only requirements.
+Go 1.27+ (see `go.mod`) and a C toolchain for SQLite are the only requirements.
 
 `make build` does **not** include the web UI: the server then logs
 `Web UI not bundled in this build; serving API only` and shows a placeholder page
@@ -114,6 +136,16 @@ generates and logs a random token instead — pass that one to `--bootstrap-toke
 TLS is off in the generated config. Turn it on, or front the server with a
 TLS-terminating proxy, before anything reaches a network you do not control.
 `security.require_transport_tls` makes that failure loud instead of silent.
+The generated config also leaves API rate limiting and the `/metrics` token off,
+so `keyorix-server admin validate --posture` reports three deviations on it;
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#hardening-the-generated-config-clearing-the-posture-report)
+lists the keys that clear them.
+
+**CLI against a TLS server with a private CA or self-signed certificate.** The
+CLI trusts the OS store only. Point it at your CA with the standard
+`SSL_CERT_FILE=/path/to/ca.pem` environment variable (Linux/macOS) rather than
+turning verification off (`tls_verify: false`). For the bundled Caddy `tls`
+profile the CA is `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`.
 
 What you will see on first start, and what it means:
 
@@ -156,9 +188,10 @@ Enrol once, right after the first login:
 
 In the web UI the same step is Profile → Security → Enable (TOTP) or a passkey.
 
-Save the recovery codes `mfa activate` prints — they are shown once. Enabling
-MFA invalidates the session from the first `login` above, so log in again;
-`login` now asks for a code after the password — or pass one non-interactively:
+Save the recovery codes `mfa activate` prints — they are shown once. The session
+you activated from stays signed in (every *other* session is signed out), so the
+commands below work immediately; the next `login` asks for a code after the
+password — or pass one non-interactively:
 
 ```bash
 ./bin/keyorix login --server http://localhost:8080 \
@@ -187,16 +220,19 @@ created right away:
 ```
 
 New secrets default to project `1`, environment `1`. Create another project for
-anything that needs its own environments:
+anything that needs its own environments. Every project gets its **own** three
+environments with new IDs (project 2's are 4/5/6, not 1/2/3), and using another
+project's environment ID fails with a bare `HTTP 422`, so list them first:
 
 ```bash
 ./bin/keyorix project create --name "my-project"
+./bin/keyorix project env list --project 2     # development 4, staging 5, production 6
 
 ./bin/keyorix secret create --name "db-password" --value "..." \
-  --project 2 --environment 3 --description "primary read-write user"
+  --project 2 --environment 6 --description "primary read-write user"
 
 # Or address one by reference instead of ID
-./bin/keyorix secret get --ref myproject/production/db-password
+./bin/keyorix secret get --ref my-project/production/db-password
 ```
 
 Useful on create: `--max-reads N` (burn after N reads), `--expires` (RFC3339),
@@ -280,8 +316,9 @@ encryption key rotation, config/database maintenance — are
 new-command table.
 
 - **Configuration reference:** [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)
-- **Deployment:** [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md), and
-  `server/config/production.yaml` as a starting config
+- **Deployment:** [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) (Docker Compose
+  + Postgres, TLS, backup/restore, upgrades), and `server/config/production.yaml`
+  as a starting config
 - **API:** [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 - **Security model:** [`docs/SECURITY.md`](docs/SECURITY.md)
 - **Migrating from the old CLI:** [`docs/cli-migration.md`](docs/cli-migration.md)

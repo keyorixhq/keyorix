@@ -1256,11 +1256,11 @@ func (l *DynamicSecretLease) BeforeSave(_ *gorm.DB) error {
 // installs gain them via migrateDatabase's CREATE INDEX IF NOT EXISTS block.
 type SecretAccessLog struct {
 	ID              uint `gorm:"primaryKey"`
-	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2"`
+	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2;index:idx_secret_access_logs_secret_action,priority:1"`
 	SecretVersionID uint
 	AccessedBy      string
 	AccessTime      time.Time `gorm:"index:idx_secret_access_logs_secret_time,priority:2;index:idx_secret_access_logs_access_time,priority:1"`
-	Action          string
+	Action          string    `gorm:"index:idx_secret_access_logs_secret_action,priority:2"`
 	IPAddress       string
 	UserAgent       string
 }
@@ -1327,6 +1327,16 @@ type Session struct {
 	// are still swept up by CleanupExpiredSessions once their (unextended) ExpiresAt
 	// passes, so they don't accumulate indefinitely.
 	RotatedAt *time.Time
+
+	// SetupOnly marks a session minted for an account that must still both set a
+	// password and enrol a second factor before it may do anything (#3024: a
+	// recovered admin, a one-time-password or forced-reset user, under
+	// security.require_mfa). Such a session can reach only those setup steps,
+	// never full access: core.EndSetupSessionIfComplete revokes it once nothing
+	// is pending, so the account's next login is a normal MFA login. Set once at
+	// mint (or on refresh of a session whose account is in that state), carried
+	// through every refresh, never cleared.
+	SetupOnly bool `gorm:"not null;default:false"`
 }
 
 // BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are

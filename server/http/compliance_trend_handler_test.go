@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -35,12 +35,8 @@ type complianceTrendSetup struct {
 // alongside all the standard models required by the real router.
 func newComplianceTrendCore(t *testing.T) complianceTrendSetup {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	err = db.AutoMigrate(
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
+	err := db.AutoMigrate(
 		&models.SecretNode{},
 		&models.SecretVersion{},
 		&models.User{},

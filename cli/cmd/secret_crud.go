@@ -146,7 +146,7 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create secret: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to create secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to create secret", resp.StatusCode(), resp.Body)
 	}
 	printCreatedSecret(resp.JSON201.Data)
 	return nil
@@ -227,7 +227,7 @@ func runSecretGet(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("get secret by ref: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret by ref: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret by ref", resp.StatusCode(), resp.Body)
 		}
 		displaySecret(resp.JSON200.Data.Secret, derefStr(resp.JSON200.Data.Value), showValue)
 		return nil
@@ -250,7 +250,7 @@ func runSecretGetByID(ctx context.Context, client *apiclient.ClientWithResponses
 		return fmt.Errorf("get secret: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("get secret", resp.StatusCode(), resp.Body)
 	}
 	d := resp.JSON200.Data
 	if showValue && d.Secret != nil {
@@ -269,7 +269,7 @@ func runSecretGetByName(ctx context.Context, client *apiclient.ClientWithRespons
 		return fmt.Errorf("list secrets: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("list secrets: HTTP %d", resp.StatusCode())
+		return httpStatusError("list secrets", resp.StatusCode(), resp.Body)
 	}
 	var found *apiclient.SecretListEntry
 	for _, s := range derefSecretListEntrySlice(resp.JSON200.Data.Secrets) {
@@ -282,18 +282,25 @@ func runSecretGetByName(ctx context.Context, client *apiclient.ClientWithRespons
 	if found == nil {
 		return fmt.Errorf("secret %q not found", secretGetName)
 	}
+	id := derefSecretInt(found.Id)
 	if !showValue {
+		// The list omits total_reads; a metadata read by id (no value, so no read is
+		// recorded) carries it. Fall back to the list entry if that fetch fails.
+		f := false
+		if mresp, merr := client.GetSecretWithResponse(ctx, id, &apiclient.GetSecretParams{IncludeValue: &f}); merr == nil && mresp.JSON200 != nil && mresp.JSON200.Data != nil {
+			displaySecret(secretGetResultToSecret(mresp.JSON200.Data), "", false)
+			return nil
+		}
 		displaySecret(secretListEntryToSecret(found), "", false)
 		return nil
 	}
-	id := derefSecretInt(found.Id)
 	t := true
 	vresp, err := client.GetSecretWithResponse(ctx, id, &apiclient.GetSecretParams{IncludeValue: &t})
 	if err != nil {
 		return fmt.Errorf("get secret value: %w", err)
 	}
 	if vresp.JSON200 == nil || vresp.JSON200.Data == nil {
-		return fmt.Errorf("get secret value: HTTP %d", vresp.StatusCode())
+		return httpStatusError("get secret value", vresp.StatusCode(), vresp.Body)
 	}
 	d := vresp.JSON200.Data
 	if d.Secret != nil {
@@ -331,6 +338,10 @@ func displaySecret(s *apiclient.Secret, value string, showValue bool) {
 	if s.MaxReads != nil {
 		fmt.Printf("Max Reads:   %d\n", *s.MaxReads)
 	}
+	if s.TotalReads != nil {
+		// Lifetime value reads (the server's access-log count), not the max_reads counter.
+		fmt.Printf("Total Reads: %d\n", *s.TotalReads)
+	}
 	if s.Expiration != nil {
 		fmt.Printf("Expires:     %s\n", s.Expiration.UTC().Format("2006-01-02 15:04:05 UTC"))
 		if time.Now().After(*s.Expiration) {
@@ -363,7 +374,7 @@ func secretGetResultToSecret(d *apiclient.SecretGetResult) *apiclient.Secret {
 		MaxReads: d.MaxReads, ReadCount: d.ReadCount, Expiration: d.Expiration,
 		Classification: d.Classification, Status: d.Status, CreatedBy: d.CreatedBy,
 		OwnerId: d.OwnerId, IsShared: d.IsShared, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
-		LastRotatedAt: d.LastRotatedAt,
+		LastRotatedAt: d.LastRotatedAt, TotalReads: d.TotalReads,
 	}
 }
 
@@ -461,7 +472,7 @@ func runSecretUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update secret: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to update secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to update secret", resp.StatusCode(), resp.Body)
 	}
 	s := resp.JSON200.Data
 	fmt.Println("Secret updated successfully!")
@@ -558,7 +569,7 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 	case derr != nil:
 		return fmt.Errorf("could not check what depends on secret %d (use --force to delete anyway): %w", secretID, derr)
 	default:
-		return fmt.Errorf("could not check what depends on secret %d (use --force to delete anyway): HTTP %d", secretID, depResp.StatusCode())
+		return httpStatusError(fmt.Sprintf("could not check what depends on secret %d (use --force to delete anyway)", secretID), depResp.StatusCode(), depResp.Body)
 	}
 
 	if len(dependents) > 0 && !secretDeleteForce {
@@ -597,7 +608,7 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete secret: %w", err)
 	}
 	if dresp.StatusCode() != 204 {
-		return fmt.Errorf("failed to delete secret: HTTP %d", dresp.StatusCode())
+		return httpStatusError("failed to delete secret", dresp.StatusCode(), dresp.Body)
 	}
 	rawPurgeAt := ""
 	if dresp.HTTPResponse != nil {
@@ -687,7 +698,7 @@ func findRemoteSecretByName(ctx context.Context, client *apiclient.ClientWithRes
 		return 0, "", fmt.Errorf("secret not found: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return 0, "", fmt.Errorf("secret not found: HTTP %d", resp.StatusCode())
+		return 0, "", httpStatusError("secret not found", resp.StatusCode(), resp.Body)
 	}
 	var matches []apiclient.SecretListEntry
 	for _, s := range derefSecretListEntrySlice(resp.JSON200.Data.Secrets) {
@@ -786,7 +797,7 @@ func runSecretList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list secrets: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to list secrets: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list secrets", resp.StatusCode(), resp.Body)
 	}
 	secrets := derefSecretListEntrySlice(resp.JSON200.Data.Secrets)
 	total := int64(derefSecretInt(resp.JSON200.Data.Total))
