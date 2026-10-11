@@ -16858,7 +16858,16 @@ func (r VerifyAuditChainResponse) StatusCode() int {
 type ChangePasswordResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
+	JSON200      *struct {
+		Data *struct {
+			// ReauthenticationRequired True when this change finished account setup and the calling session was ended (#3024).
+			ReauthenticationRequired *bool `json:"reauthentication_required,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -16882,7 +16891,9 @@ type ActivateMFAResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *struct {
 		Data *struct {
-			RecoveryCodes []string `json:"recovery_codes"`
+			// ReauthenticationRequired True when this activation finished account setup in a setup-only session and that session was ended (#3024); otherwise the calling session stays signed in.
+			ReauthenticationRequired *bool    `json:"reauthentication_required,omitempty"`
+			RecoveryCodes            []string `json:"recovery_codes"`
 		} `json:"data,omitempty"`
 		Message *string `json:"message,omitempty"`
 	}
@@ -18287,6 +18298,7 @@ type CreateNotificationChannelResponse struct {
 	JSON400      *Error
 	JSON401      *Error
 	JSON403      *Error
+	JSON409      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -21831,7 +21843,9 @@ type GetSecretVersionsResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *struct {
 		Data *struct {
-			Versions *[]SecretVersion `json:"versions,omitempty"`
+			// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads.
+			TotalReads *int             `json:"total_reads,omitempty"`
+			Versions   *[]SecretVersion `json:"versions,omitempty"`
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -26433,12 +26447,39 @@ func ParseChangePasswordResponse(rsp *http.Response) (*ChangePasswordResponse, e
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				// ReauthenticationRequired True when this change finished account setup and the calling session was ended (#3024).
+				ReauthenticationRequired *bool `json:"reauthentication_required,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -26462,7 +26503,9 @@ func ParseActivateMFAResponse(rsp *http.Response) (*ActivateMFAResponse, error) 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
 			Data *struct {
-				RecoveryCodes []string `json:"recovery_codes"`
+				// ReauthenticationRequired True when this activation finished account setup in a setup-only session and that session was ended (#3024); otherwise the calling session stays signed in.
+				ReauthenticationRequired *bool    `json:"reauthentication_required,omitempty"`
+				RecoveryCodes            []string `json:"recovery_codes"`
 			} `json:"data,omitempty"`
 			Message *string `json:"message,omitempty"`
 		}
@@ -28672,6 +28715,13 @@ func ParseCreateNotificationChannelResponse(rsp *http.Response) (*CreateNotifica
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 
@@ -34853,7 +34903,9 @@ func ParseGetSecretVersionsResponse(rsp *http.Response) (*GetSecretVersionsRespo
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
 			Data *struct {
-				Versions *[]SecretVersion `json:"versions,omitempty"`
+				// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads.
+				TotalReads *int             `json:"total_reads,omitempty"`
+				Versions   *[]SecretVersion `json:"versions,omitempty"`
 			} `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
