@@ -12,11 +12,22 @@ import (
 	"context"
 	"log"
 	"math/rand/v2"
+	"sync"
 	"time"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
+
+// schedulerTrackingKey carries the *sync.WaitGroup that startSchedulers waits on.
+type schedulerTrackingKey struct{}
+
+// withSchedulerTracking returns ctx carrying wg: every scheduler goroutine that
+// runSchedulerAfter starts under the returned context is counted in wg until it
+// exits.
+func withSchedulerTracking(ctx context.Context, wg *sync.WaitGroup) context.Context {
+	return context.WithValue(ctx, schedulerTrackingKey{}, wg)
+}
 
 // runScheduler starts a named scheduler goroutine: it runs tick once immediately, then
 // every interval until ctx is cancelled. Each tick's outcome and (when it actually
@@ -30,7 +41,14 @@ func runScheduler(ctx context.Context, name string, interval time.Duration, tick
 // that first one. Cancelling ctx during the delay exits without ever ticking.
 func runSchedulerAfter(ctx context.Context, name string, interval, firstDelay time.Duration, tick func() middleware.SchedulerOutcome) {
 	middleware.RegisterScheduler(name)
+	tracked, _ := ctx.Value(schedulerTrackingKey{}).(*sync.WaitGroup)
+	if tracked != nil {
+		tracked.Add(1)
+	}
 	go func() {
+		if tracked != nil {
+			defer tracked.Done()
+		}
 		if firstDelay > 0 {
 			timer := time.NewTimer(firstDelay)
 			select {

@@ -53,7 +53,7 @@ func runRBACAuditLogs(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to retrieve RBAC audit logs: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to retrieve RBAC audit logs: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to retrieve RBAC audit logs", resp.StatusCode(), resp.Body)
 	}
 	logs := derefRBACAuditLogSlice(resp.JSON200.Data.Logs)
 	total := derefInt(resp.JSON200.Data.Total)
@@ -196,7 +196,7 @@ func fetchRBACExportMatrix(ctx context.Context, client *apiclient.ClientWithResp
 			return nil, fmt.Errorf("failed to fetch permission matrix (CSV): %w", err)
 		}
 		if resp.HTTPResponse == nil || resp.HTTPResponse.StatusCode != 200 {
-			return nil, fmt.Errorf("failed to fetch permission matrix (CSV): HTTP %d", resp.StatusCode())
+			return nil, httpStatusError("failed to fetch permission matrix (CSV)", resp.StatusCode(), resp.Body)
 		}
 		body := resp.Body
 		return func(out io.Writer) error {
@@ -210,7 +210,7 @@ func fetchRBACExportMatrix(ctx context.Context, client *apiclient.ClientWithResp
 		return nil, fmt.Errorf("failed to fetch permission matrix: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return nil, fmt.Errorf("failed to fetch permission matrix: HTTP %d", resp.StatusCode())
+		return nil, httpStatusError("failed to fetch permission matrix", resp.StatusCode(), resp.Body)
 	}
 	rows := derefPermissionMatrixRowSlice(resp.JSON200.Data.Rows)
 	return func(out io.Writer) error {

@@ -70,6 +70,11 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// be bounded over HTTP. Streams are intentionally exempt (StreamAuditLogs is
 			// long-lived), so the stream chain carries no timeout.
 			interceptors.TimeoutInterceptor(grpcUnaryTimeout),
+			// RESIL-1 (#2637 follow-up): a handler whose write timed out on the SQLite
+			// write gate answers codes.Unavailable + retry-after instead of Internal.
+			// Inside Timeout (sees the handlers' context), outside Auth so it needs no
+			// principal; Metrics/Logging above record the converted status.
+			interceptors.WriteContentionInterceptor(),
 			interceptors.AuthInterceptor(coreService, cfg.Security.RequireMFA),
 			// Per-principal token-bucket rate limit mirroring the HTTP PrincipalRateLimit
 			// middleware so an authenticated caller cannot bypass the rate limit by

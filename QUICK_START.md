@@ -6,14 +6,36 @@ command below is checked against the CLI's own flag definitions by
 `cli/cmd/quickstart_commands_test.go`; every `keyorix-server admin ...` command is
 checked the same way by `server/admin/quickstart_commands_test.go`.
 
-## Build
+## Get the binaries
+
+**From a release (no toolchain needed).** Each GitHub release publishes bare
+binaries, not tarballs: `keyorix-server_linux_amd64` (API server),
+`keyorix_linux_amd64` (CLI), the `-airgap` server variant, and `checksums.txt`
+(signed: `checksums.txt.sig` / `.pem`, verify with `cosign`). `install.sh` from the
+README installs only the CLI. For the server:
+
+```bash
+V=v0.95.3   # the release you want
+curl -fsSLO https://github.com/keyorixhq/keyorix/releases/download/$V/keyorix-server_linux_amd64
+curl -fsSLO https://github.com/keyorixhq/keyorix/releases/download/$V/checksums.txt
+sha256sum -c --ignore-missing checksums.txt && chmod +x keyorix-server_linux_amd64
+```
+
+A release binary is the release's own behaviour: this page tracks `main`, so a
+command below can be newer than the release (for example `keyorix mfa enroll`
+does not exist in v0.95.3). `keyorix-server` has no `--version` or `--config`
+flag (the server reads `KEYORIX_CONFIG_PATH`, else `./keyorix.yaml`; only the
+`keyorix-server admin ...` subcommands take `--config`); the CLI has
+`keyorix version`.
+
+**From source.**
 
 ```bash
 make build
 ```
 
 Produces `./bin/keyorix` (CLI) and `./bin/keyorix-server` (API server).
-Go 1.23+ and a C toolchain for SQLite are the only requirements.
+Go 1.27+ (see `go.mod`) and a C toolchain for SQLite are the only requirements.
 
 `make build` does **not** include the web UI: the server then logs
 `Web UI not bundled in this build; serving API only` and shows a placeholder page
@@ -85,11 +107,18 @@ admin account and default workspace with `keyorix system init --server`:
 export KEYORIX_BOOTSTRAP_TOKEN='choose-a-bootstrap-token'
 KEYORIX_CONFIG_PATH=./keyorix.yaml ./bin/keyorix-server &
 
+# The admin password and bootstrap token come from the environment (or, if
+# KEYORIX_ADMIN_PASSWORD is unset, an interactive prompt) — never from flags.
+read -r -s -p 'Admin password: ' KEYORIX_ADMIN_PASSWORD; echo
+export KEYORIX_ADMIN_PASSWORD
 ./bin/keyorix system init --server http://localhost:8080 \
-  --admin-username admin --admin-email admin@keyorix.local \
-  --admin-password 'Correct-Horse-Battery9' \
-  --bootstrap-token "$KEYORIX_BOOTSTRAP_TOKEN"
+  --admin-username admin --admin-email admin@keyorix.local
 ```
+
+> **Why no `--admin-password` / `--password` / `--value` flags?** Anything on a
+> command line is visible to other local users (`ps`, `/proc`) and saved in shell
+> history, and the CLI itself prints a warning when you do it. The examples here
+> use the prompt, environment-variable or file forms instead.
 
 Two things about this command are not obvious from `--help` alone:
 
@@ -104,7 +133,8 @@ reports `already_initialized` on every call after the first. It creates the
 admin user, default RBAC roles, and a default workspace (a project with three
 seeded environments — development, staging, production — as IDs 1/2/3) in one
 call. Without `KEYORIX_BOOTSTRAP_TOKEN` set before the server starts, the server
-generates and logs a random token instead — pass that one to `--bootstrap-token`.
+generates and logs a random token instead — export that one as
+`KEYORIX_BOOTSTRAP_TOKEN` before running `system init`.
 
 - Health: <http://localhost:8080/health>
 - OpenAPI spec: <http://localhost:8080/openapi.yaml> — only when
@@ -114,6 +144,16 @@ generates and logs a random token instead — pass that one to `--bootstrap-toke
 TLS is off in the generated config. Turn it on, or front the server with a
 TLS-terminating proxy, before anything reaches a network you do not control.
 `security.require_transport_tls` makes that failure loud instead of silent.
+The generated config also leaves API rate limiting and the `/metrics` token off,
+so `keyorix-server admin validate --posture` reports three deviations on it;
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#hardening-the-generated-config-clearing-the-posture-report)
+lists the keys that clear them.
+
+**CLI against a TLS server with a private CA or self-signed certificate.** The
+CLI trusts the OS store only. Point it at your CA with the standard
+`SSL_CERT_FILE=/path/to/ca.pem` environment variable (Linux/macOS) rather than
+turning verification off (`tls_verify: false`). For the bundled Caddy `tls`
+profile the CA is `docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`.
 
 What you will see on first start, and what it means:
 
@@ -134,8 +174,8 @@ For Postgres instead of SQLite, `docker compose up -d postgres` starts one, and
 ## Log in
 
 ```bash
-./bin/keyorix login --server http://localhost:8080 \
-  --username admin --password 'Correct-Horse-Battery9'
+./bin/keyorix login --server http://localhost:8080 --username admin
+# Password: (typed at the no-echo prompt)
 ```
 
 Stores the session token (and server URL) at the CLI's one credential-file
@@ -156,19 +196,15 @@ Enrol once, right after the first login:
 
 In the web UI the same step is Profile → Security → Enable (TOTP) or a passkey.
 
-Save the recovery codes `mfa activate` prints — they are shown once. Enabling
-MFA invalidates the session from the first `login` above, so log in again;
-`login` now asks for a code after the password — or pass one non-interactively:
-
-```bash
-./bin/keyorix login --server http://localhost:8080 \
-  --username admin --password 'Correct-Horse-Battery9' --mfa-code 123456
-```
-
-An unused recovery code works there too. Either is used for that one request:
-only the session token is stored. An account whose only second factor is a
-WebAuthn passkey cannot complete a CLI login — sign in with the web UI and use a
-personal access token (`KEYORIX_TOKEN`) for CLI work instead.
+Save the recovery codes `mfa activate` prints — they are shown once. The session
+you activated from stays signed in (every *other* session is signed out), so the
+commands below work immediately; the next `login` asks for a code after the
+password; type the authenticator code there (an unused recovery code works too).
+Either is used for that one request: only the session token is stored. For
+non-interactive use, log in once and use a personal access token
+(`KEYORIX_TOKEN`) instead of scripting the password and code. An account whose
+only second factor is a WebAuthn passkey cannot complete a CLI login — sign in
+with the web UI and use a personal access token for CLI work.
 
 (To opt out, set `security.require_mfa: false` explicitly in the config.)
 
@@ -179,7 +215,7 @@ seeded project `1` with environments `1`/`2`/`3` above, so new secrets can be
 created right away:
 
 ```bash
-./bin/keyorix secret create --name "stripe-api-key" --value "sk_test_..."
+./bin/keyorix secret create --name "stripe-api-key" --interactive   # value typed at a hidden prompt
 ./bin/keyorix secret create --name "deploy-key" --from-file ~/.ssh/id_ed25519
 ./bin/keyorix secret list
 ./bin/keyorix secret get --id 1               # metadata only
@@ -187,21 +223,24 @@ created right away:
 ```
 
 New secrets default to project `1`, environment `1`. Create another project for
-anything that needs its own environments:
+anything that needs its own environments. Every project gets its **own** three
+environments with new IDs (project 2's are 4/5/6, not 1/2/3), and using another
+project's environment ID fails with a bare `HTTP 422`, so list them first:
 
 ```bash
 ./bin/keyorix project create --name "my-project"
+./bin/keyorix project env list --project 2     # development 4, staging 5, production 6
 
-./bin/keyorix secret create --name "db-password" --value "..." \
-  --project 2 --environment 3 --description "primary read-write user"
+./bin/keyorix secret create --name "db-password" --interactive \
+  --project 2 --environment 6 --description "primary read-write user"
 
 # Or address one by reference instead of ID
-./bin/keyorix secret get --ref myproject/production/db-password
+./bin/keyorix secret get --ref my-project/production/db-password
 ```
 
 Useful on create: `--max-reads N` (burn after N reads), `--expires` (RFC3339),
-`--type`, `--description`, `--interactive` (hidden-prompt value instead of
-`--value` on the command line).
+`--type`, `--description`, `--interactive` (hidden-prompt value) and
+`--from-file` — rather than `--value`, which puts the secret on the command line.
 
 Export everything in a project/environment at once — the same call the
 [GitHub Action](integrations/github-action/README.md) makes:
@@ -239,6 +278,29 @@ takes exactly that away again. See
 `--ttl` (a Go duration) and `--expires` (RFC3339) are mutually exclusive; either
 makes the share time-bound, which is usually what you want for access granted
 during an incident.
+
+### A share does not override the recipient's role
+
+Access to a secret is the **union** of every way the user has it: owner, a direct
+share, a group share, a per-secret ACL, or a role on the secret's project. A share
+adds a path; revoking it removes only that path.
+
+Because the recipient must already hold a role in the project to receive a share
+(above), a recipient with `project_viewer` can read every secret in the project
+through that role. So `share revoke` removes the share record — `share list` and
+the audit log (`share.revoked`) show it — but **alice keeps read access** until her
+role is removed too (`rbac remove-role`). Do not rely on a `write` share to let a
+read-only role edit a secret: when tried (`share create --permission write`, then
+`secret update` as a `project_viewer`) the update was still refused (#2941).
+
+To demonstrate access actually disappearing, remove the role:
+
+```bash
+./bin/keyorix rbac remove-role --user alice@keyorix.local --role project_viewer --project default
+```
+
+`secret access --id 1` lists the owner and the direct and group shares; it does not
+list access that comes from a role.
 
 ## Giving a machine (CI/app) access
 
@@ -285,8 +347,9 @@ encryption key rotation, config/database maintenance — are
 new-command table.
 
 - **Configuration reference:** [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)
-- **Deployment:** [`DEPLOYMENT_GUIDE.md`](DEPLOYMENT_GUIDE.md), and
-  `server/config/production.yaml` as a starting config
+- **Deployment:** [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) (Docker Compose
+  + Postgres, TLS, backup/restore, upgrades), and `server/config/production.yaml`
+  as a starting config
 - **API:** [`docs/API_REFERENCE.md`](docs/API_REFERENCE.md)
 - **Security model:** [`docs/SECURITY.md`](docs/SECURITY.md)
 - **Migrating from the old CLI:** [`docs/cli-migration.md`](docs/cli-migration.md)

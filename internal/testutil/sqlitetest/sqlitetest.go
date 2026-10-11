@@ -78,7 +78,18 @@ func Open(tb testing.TB, prefix string) *gorm.DB {
 // only thing the caller gets to choose.
 func OpenWithConfig(tb testing.TB, prefix string, cfg *gorm.Config) *gorm.DB {
 	tb.Helper()
-	db, err := gorm.Open(sqlite.Open(DSN(prefix)), cfg)
+	return OpenWithDialector(tb, prefix, sqlite.Open, cfg)
+}
+
+// OpenWithDialector is OpenWithConfig for a caller whose tests must run on a
+// different GORM dialector than gorm.io/driver/sqlite — in practice
+// internal/storage/sqlitedialect (modernc.org/sqlite), the dialect production
+// uses, whose error translator and migrator the tests under internal/storage,
+// internal/core and server/admin exercise. open receives the unique DSN and
+// returns the dialector; the pool cap and the cleanup are identical.
+func OpenWithDialector(tb testing.TB, prefix string, open func(dsn string) gorm.Dialector, cfg *gorm.Config) *gorm.DB {
+	tb.Helper()
+	db, err := gorm.Open(open(DSN(prefix)), cfg)
 	if err != nil {
 		tb.Fatalf("sqlitetest: open in-memory sqlite: %v", err)
 	}

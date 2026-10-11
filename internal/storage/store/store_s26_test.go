@@ -52,12 +52,11 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -66,18 +65,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// s26DBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s26DBSeq atomic.Int64
-
 // newS26Store opens a unique in-memory SQLite DB with the requested models
 // auto-migrated. The "_s26" suffix in the DSN prevents collisions with other
 // test files that use the same test-name-keyed DSN pattern.
 func newS26Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s26_%d?mode=memory&cache=shared", t.Name(), s26DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores26_", sqlite.Open, &gorm.Config{})
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}

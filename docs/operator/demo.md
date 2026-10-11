@@ -120,10 +120,32 @@ alice (recipient ID 2) with `read` permission.
 (Skipping the two `rbac assign-role` lines makes `share create` refuse with
 the reason: you, or alice, are not a member of the secret's project.)
 
-A share can also lift a member's access on that one secret: share with
-`--permission write` and alice, a `project_viewer`, can `secret update --id 1`
-(value, metadata, rotate; not suspend, move or anything else a role would grant);
-`share revoke` takes exactly that away again while her role's read stays.
+**What the share does, and what revoking shows.** alice must already hold a
+project role to receive a share, and with `project_viewer` she can read the
+secret through that role. Access is the union of owner, shares, ACLs and roles, so
+a `read` share is an *additional* path:
+
+```bash
+./bin/keyorix share revoke --share-id 1     # the share record is gone (share list is empty)
+# alice can STILL read secret 1: her project_viewer role grants it.
+./bin/keyorix rbac remove-role --user alice@keyorix.local --role project_viewer --project default
+# NOW alice's access is gone.
+```
+
+Demo it in that order: share, `share list`, revoke (the record and the
+`share.revoked` audit event are the visible effect), then remove the role to show
+access actually ending. Do not present "revoke the share" alone as the moment alice
+loses access.
+
+A `write` share is different: share with `--permission write` and alice, a
+`project_viewer`, can `secret update --id 1` (value, metadata, rotate; not
+suspend, move or anything else a role would grant); `share revoke` takes exactly
+that away again while her role's read stays.
+
+(Skipping the two `rbac assign-role` lines and going straight to
+`share create` is what QUICK_START.md's own sharing example currently shows
+— it fails with a bare `HTTP 403` and no explanation. Filed for a fix; use
+the four commands above until it lands.)
 
 ## 5. Give an app access, then revoke it (2 min)
 
