@@ -103,8 +103,12 @@ func requirePurgedSecretLeavesOnlyHistory(t *testing.T, db *gorm.DB, s purgeRefs
 		require.Zero(t, n, "%s.%s still references the purged secret", c.Table, c.Column)
 	}
 	for _, h := range backupfmt.HistoricalReferences() {
+		id := s.purgedID
+		if h.Parent == "secret_versions" {
+			id = s.purgedVersionID
+		}
 		var n int64
-		require.NoError(t, db.Table(h.Table).Where(h.Column+" = ?", s.purgedID).Count(&n).Error)
+		require.NoError(t, db.Table(h.Table).Where(h.Column+" = ?", id).Count(&n).Error)
 		require.EqualValues(t, 1, n, "%s.%s: the historical row must survive the purge and the restore", h.Table, h.Column)
 	}
 }

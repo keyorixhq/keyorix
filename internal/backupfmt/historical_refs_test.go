@@ -24,15 +24,18 @@ func TestCheckDanglingReferences_SkipsExactlyTheHistoricalColumns(t *testing.T) 
 	require.True(t, derived, "audit_events.secret_node_id -> secret_nodes must be a derived edge, or the skip proves nothing")
 
 	db := openTestDB(t)
-	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.AuditEvent{}, &models.SecretAccessLog{}))
+	require.NoError(t, db.AutoMigrate(&models.SecretNode{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}))
 	missing := uint(99999)
 	require.NoError(t, db.Create(&models.AuditEvent{EventType: "secret.read", SecretNodeID: &missing}).Error)
+	// Historical: kept after a purge, so not dangling.
 	require.NoError(t, db.Create(&models.SecretAccessLog{SecretNodeID: missing, Action: "read"}).Error)
+	// Mutable: the purge cascades it, so a survivor is dangling.
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: missing, OwnerID: 1, RecipientID: 2, Permission: "read"}).Error)
 
-	got, err := CheckDanglingReferences(db, []any{&models.SecretNode{}, &models.AuditEvent{}, &models.SecretAccessLog{}})
+	got, err := CheckDanglingReferences(db, []any{&models.SecretNode{}, &models.AuditEvent{}, &models.SecretAccessLog{}, &models.ShareRecord{}})
 	require.NoError(t, err)
-	require.Len(t, got, 1, "only the mutable secret_access_logs row is dangling: %+v", got)
-	require.Equal(t, "secret_access_logs", got[0].Table)
-	require.Equal(t, "secret_node_id", got[0].Column)
+	require.Len(t, got, 1, "only the mutable share_records row is dangling: %+v", got)
+	require.Equal(t, "share_records", got[0].Table)
+	require.Equal(t, "secret_id", got[0].Column)
 	require.Equal(t, missing, got[0].MissingID)
 }

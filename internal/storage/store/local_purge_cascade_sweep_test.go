@@ -123,9 +123,11 @@ func newPurgeSecretsFixture(t *testing.T, extraModels ...any) *LocalStorage {
 
 func TestPurgeDeletedSecretsBefore_SecretVersionDeleteFails(t *testing.T) {
 	t.Parallel()
-	ls := newPurgeSecretsFixture(t)
+	// Every cascade table exists, so the cascade succeeds and the failure is the
+	// secret_versions delete the test is named for, not a missing cascade table.
+	ls := newPurgeSecretsFixture(t, secretPurgeCascadeModels()...)
 	_, err := ls.PurgeDeletedSecretsBefore(context.Background(), time.Now())
-	require.Error(t, err)
+	require.ErrorContains(t, err, "secret_versions")
 }
 
 func TestPurgeDeletedSecretsBefore_SecretDependencyDeleteFails(t *testing.T) {
