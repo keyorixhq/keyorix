@@ -35,9 +35,11 @@ const LegacyOneTimePasswordGrace = 24 * time.Hour
 // pending_first_login is not touched: those accounts hold a random unusable
 // password, and the credential is a setup link with its own expiry.
 //
-// NOT idempotent by design: it must run exactly once, in the same transaction that
-// adds the column (factory.go). Re-running it on a later boot would put an expiry on
-// accounts forced into a reset after the upgrade.
+// NOT idempotent by design: it must run exactly once, per legacy data set: in the
+// same transaction that adds the column (factory.go), or, for a restored pre-expiry
+// archive, in the transaction that loads it (BackfillLegacyOneTimePasswordExpiry).
+// Re-running it on a later boot would put an expiry on accounts forced into a reset
+// after the upgrade.
 func backfillLegacyOneTimePasswordExpiry(tx *gorm.DB, now time.Time) error {
 	res := tx.Exec(
 		"UPDATE users SET one_time_password_expires_at = ? WHERE account_state = ? AND deleted_at IS NULL",

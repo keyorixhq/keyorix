@@ -48,9 +48,21 @@ func TestLogin_ExpiredOneTimePassword_SameResponseAsWrongPassword(t *testing.T) 
 			assert.Equal(t, http.StatusUnauthorized, wrong.status)
 			assert.Equal(t, wrong.status, expired.status, "expired one-time password must get the wrong-password status")
 			assert.Equal(t, wrong.raw, expired.raw, "expired one-time password must get the wrong-password body")
+			assert.Equal(t, comparableHeaders(wrong.header), comparableHeaders(expired.header),
+				"expired one-time password must get the wrong-password headers (Retry-After, Set-Cookie, WWW-Authenticate, ...)")
 			assert.Nil(t, expired.data()["token"], "no session for an expired one-time password")
 		})
 	}
+}
+
+// comparableHeaders drops the headers that legitimately differ between two
+// otherwise identical responses (time, per-request ids).
+func comparableHeaders(h http.Header) http.Header {
+	out := h.Clone()
+	for _, k := range []string{"Date", "X-Request-Id", "X-Request-ID", "Traceparent"} {
+		out.Del(k)
+	}
+	return out
 }
 
 // A password the user chose themselves is never subject to the one-time expiry,

@@ -17105,6 +17105,7 @@ type CreatePATResponse struct {
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
+	JSON403 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -20966,6 +20967,15 @@ type ListAccessorsResponse struct {
 	JSON200      *struct {
 		Data *struct {
 			Accessors *[]SecretAccessor `json:"accessors,omitempty"`
+
+			// Degraded True when the list is incomplete: part of it was withheld from this caller (project roles, ACL holders) or a lookup failed. `accessors` is then an under-count. Clients must show it.
+			Degraded *bool `json:"degraded,omitempty"`
+
+			// DegradedReasons One entry per gap, in the form `area: reason`; null when the list is complete.
+			DegradedReasons *[]string `json:"degraded_reasons"`
+
+			// Total Number of accessors listed.
+			Total *int `json:"total,omitempty"`
 		} `json:"data,omitempty"`
 	}
 	JSON401 *Error
@@ -26816,6 +26826,13 @@ func ParseCreatePATResponse(rsp *http.Response) (*CreatePATResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -33311,6 +33328,15 @@ func ParseListAccessorsResponse(rsp *http.Response) (*ListAccessorsResponse, err
 		var dest struct {
 			Data *struct {
 				Accessors *[]SecretAccessor `json:"accessors,omitempty"`
+
+				// Degraded True when the list is incomplete: part of it was withheld from this caller (project roles, ACL holders) or a lookup failed. `accessors` is then an under-count. Clients must show it.
+				Degraded *bool `json:"degraded,omitempty"`
+
+				// DegradedReasons One entry per gap, in the form `area: reason`; null when the list is complete.
+				DegradedReasons *[]string `json:"degraded_reasons"`
+
+				// Total Number of accessors listed.
+				Total *int `json:"total,omitempty"`
 			} `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

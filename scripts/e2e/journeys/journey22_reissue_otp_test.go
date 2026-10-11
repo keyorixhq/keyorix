@@ -36,10 +36,15 @@ func TestJourney_AdminReissuesOneTimePassword(t *testing.T) {
 		chosenPw   = "Copper-Willow-47-Summit!"
 		finalPw    = "Heron-Basalt-58-Lantern!"
 	)
-	adminToken := adminLogin(t, s, adminUser, harness.BootstrapAdminPassword)
+	// The harness runs under the shipped security.require_mfa default: the admin
+	// enrols a TOTP factor first. (Journey budget: 10 password logins per IP per 15 min.)
+	requireMFAEnrolmentPremise(t, s, adminUser, harness.BootstrapAdminPassword)
+	adminToken, adminFactor := enrolTOTPFactor(t, s, adminUser, harness.BootstrapAdminPassword)
 	aEnv := adminEnv(s, adminToken)
 
-	// A colleague with an ordinary, chosen password and a live session.
+	// A colleague with an ordinary, chosen password, an enrolled second factor and a
+	// live session: first login with the admin-created one-time password, choose a
+	// password, enrol (the setup session of #3024/#3041), then log in normally.
 	created := runCLI(t, cliBin, aEnv, "user", "create", "--username", user, "--email", userEmail, "--one-time-password")
 	first := reissuedOTPRe.FindStringSubmatch(created)
 	if first == nil {
@@ -48,7 +53,8 @@ func TestJourney_AdminReissuesOneTimePassword(t *testing.T) {
 	firstToken := adminLogin(t, s, user, first[1])
 	restExpect(t, s, firstToken, http.MethodPost, "/api/v1/auth/change-password",
 		map[string]string{"current_password": first[1], "new_password": chosenPw}, http.StatusOK)
-	liveToken := adminLogin(t, s, user, chosenPw)
+	userFactor := enrolTOTPOnSession(t, s, firstToken, chosenPw)
+	liveToken := loginWithTOTP(t, s, user, chosenPw, userFactor)
 	restExpect(t, s, liveToken, http.MethodGet, "/api/v1/auth/profile", nil, http.StatusOK)
 
 	// ── 1. the admin reissues; the password and expiry are printed ────────────────
@@ -75,7 +81,9 @@ func TestJourney_AdminReissuesOneTimePassword(t *testing.T) {
 	}
 
 	// ── 3. the new password logs in, confined to the password change ──────────────
-	restricted := adminLogin(t, s, user, newOTP)
+	// The enrolled second factor is kept (a reissue must not strip MFA): the login
+	// still asks for the code.
+	restricted := loginWithTOTP(t, s, user, newOTP, userFactor)
 	if denied := restCall(t, s, restricted, http.MethodGet, "/api/v1/projects", nil); denied.StatusCode != http.StatusForbidden {
 		t.Fatalf("a reissued-OTP session must be confined: want 403, got %d: %s", denied.StatusCode, denied.Raw)
 	}
@@ -83,7 +91,7 @@ func TestJourney_AdminReissuesOneTimePassword(t *testing.T) {
 	// ── 4. the user chooses a real password and is a normal user again ────────────
 	restExpect(t, s, restricted, http.MethodPost, "/api/v1/auth/change-password",
 		map[string]string{"current_password": newOTP, "new_password": finalPw}, http.StatusOK)
-	normal := adminLogin(t, s, user, finalPw)
+	normal := loginWithTOTP(t, s, user, finalPw, userFactor)
 	restExpect(t, s, normal, http.MethodGet, "/api/v1/auth/profile", nil, http.StatusOK)
 
 	// ── 5. refusals ───────────────────────────────────────────────────────────────
@@ -100,7 +108,7 @@ func TestJourney_AdminReissuesOneTimePassword(t *testing.T) {
 		t.Fatalf("a refused reissue must print no password:\n%s", self)
 	}
 	// The admin's own password is untouched.
-	adminLogin(t, s, adminUser, harness.BootstrapAdminPassword)
+	loginWithTOTP(t, s, adminUser, harness.BootstrapAdminPassword, adminFactor)
 	// An unknown user.
 	runCLIExpectErr(t, cliBin, aEnv, "user", "reissue-one-time-password", "99999")
 

@@ -54,7 +54,38 @@ func TestOneTimePassword_ExpiredIsRefusedLikeAWrongPassword(t *testing.T) {
 	// No new oracle: the caller-visible error is byte-for-byte the wrong-password one.
 	assert.Equal(t, wrongErr.Error(), expiredErr.Error())
 	assert.Equal(t, "invalid credentials", expiredErr.Error())
-	// ...but the server records why, once per expired attempt.
+	// ...but the server records why, once per expired attempt (the write is async).
+	DrainBackgroundGoroutines()
+	assert.EqualValues(t, 1, countAudit(t, db, EventOneTimePasswordExpired))
+}
+
+// The expired branch must not do the audit insert on the login path: a synchronous
+// hash-chained write there only (the wrong-password branch has none) would make an
+// expired one-time password measurably slower than a wrong one.
+func TestOneTimePassword_ExpiredAuditDoesNotBlockTheLoginPath(t *testing.T) {
+	c, db, clock := newLockoutTestCore(t, true)
+	setOTPExpiry(t, db, clock.Add(time.Hour))
+	*clock = clock.Add(time.Hour + time.Second)
+
+	release := make(chan struct{})
+	require.NoError(t, db.Callback().Create().Before("gorm:begin_transaction").
+		Register("test:block_otp_expired_audit", func(tx *gorm.DB) {
+			if tx.Statement.Table == "audit_events" {
+				<-release
+			}
+		}))
+
+	done := make(chan error, 1)
+	go func() { done <- login(c, lockoutTestPassword) }()
+	select {
+	case err := <-done:
+		require.EqualError(t, err, "invalid credentials")
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("the expired-OTP refusal waited for its audit write: it is synchronous on the login path")
+	}
+	close(release)
+	DrainBackgroundGoroutines()
 	assert.EqualValues(t, 1, countAudit(t, db, EventOneTimePasswordExpired))
 }
 

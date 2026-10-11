@@ -121,6 +121,7 @@ func TestPerformRecoverAdmin_OneTimePasswordExpiry_RefusedAtLoginAfterExpiry(t *
 		t.Errorf("expired-password error %q differs from wrong-password error %q: that is an oracle", expiredErr, wrongErr)
 	}
 
+	core.DrainBackgroundGoroutines() // the expired-OTP audit is written asynchronously
 	action := core.EventOneTimePasswordExpired
 	events, _, err := store.GetAuditLogs(ctx, &storage.AuditFilter{Action: &action, PageSize: 10})
 	if err != nil {
