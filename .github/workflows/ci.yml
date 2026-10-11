@@ -1724,17 +1724,24 @@ jobs:
               -H 'Content-Type: application/json' \
               -d "$body" | \
               jq -r '.data.mfa_challenge')
-            [ -n "$challenge" ] && [ "$challenge" != "null" ] || { echo "login did not return an MFA challenge" >&2; exit 1; }
+            if [ -z "$challenge" ] || [ "$challenge" = "null" ]; then
+              echo "login did not return an MFA challenge" >&2
+              exit 1
+            fi
             code=$(./bin/totpgen "$totp_key" 30)
             verify=$(jq -n --arg c "$challenge" --arg k "$code" '{mfa_challenge:$c,code:$k}')
             TOKEN=$(curl -s -X POST http://localhost:8080/auth/mfa/verify \
               -H 'Content-Type: application/json' \
               -d "$verify" | \
               jq -r '.data.token')
-            [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ] && break
+            if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+              break
+            fi
             TOKEN=""
             echo "MFA verify attempt $attempt/3 refused (TOTP step still in use); waiting for the next step" >&2
-            [ "$attempt" -lt 3 ] && sleep 31
+            if [ "$attempt" -lt 3 ]; then
+              sleep 31
+            fi
           done
           [ -n "$TOKEN" ] || { echo "MFA verify did not return a session token" >&2; exit 1; }
           projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
