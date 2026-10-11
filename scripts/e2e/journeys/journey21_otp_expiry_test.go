@@ -50,7 +50,7 @@ func parseOTPExpiry(t *testing.T, out string) time.Time {
 // Red on the previous behaviour: step 1 has no Expires line and step 3 logs in.
 func TestJourney_RecoverAdminOneTimePasswordExpires(t *testing.T) {
 	serverBin, cliBin := harness.BuildBinaries(t)
-	s := harness.StartServer(t, serverBin, harness.DBBackend{Name: "sqlite-otp-expiry", KeepMFADefault: true})
+	s := harness.StartServer(t, serverBin, harness.DBBackend{Name: "sqlite-otp-expiry"})
 	t.Cleanup(s.Close)
 
 	const (
