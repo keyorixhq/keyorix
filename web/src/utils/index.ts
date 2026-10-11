@@ -56,9 +56,10 @@ export function formatRelativeTime(dateString: string): string {
     const diffInSeconds = Math.floor((now.getTime() - date.getTime()) / 1000);
 
     if (diffInSeconds < 60) return 'just now';
-    if (diffInSeconds < 3600) return `${Math.floor(diffInSeconds / 60)} minutes ago`;
-    if (diffInSeconds < 86400) return `${Math.floor(diffInSeconds / 3600)} hours ago`;
-    if (diffInSeconds < 2592000) return `${Math.floor(diffInSeconds / 86400)} days ago`;
+    const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? '' : 's'} ago`;
+    if (diffInSeconds < 3600) return plural(Math.floor(diffInSeconds / 60), 'minute');
+    if (diffInSeconds < 86400) return plural(Math.floor(diffInSeconds / 3600), 'hour');
+    if (diffInSeconds < 2592000) return plural(Math.floor(diffInSeconds / 86400), 'day');
 
     return formatDate(dateString);
 }

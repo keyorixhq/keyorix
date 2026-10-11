@@ -508,6 +508,9 @@ func TestCountStaleMachineIdentitiesByProject_S27b_HappyPath(t *testing.T) {
 // (RowsAffected==1) creates the new session and returns (created, true, nil).
 func TestRotateSession_S27b_WinsRace(t *testing.T) {
 	ls := newS27bStore(t, &models.Session{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 	now := time.Now()
 

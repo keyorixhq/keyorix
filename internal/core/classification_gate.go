@@ -312,7 +312,7 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 	// ceiling requireAuthorityForRole applies to an admin-role grant — there is no
 	// weaker "roles.assign"-shaped permission that fits (this grants no role at
 	// all), so the bar is set at the ceiling rather than invented lower.
-	if err := c.requireAdminAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
+	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
 		return nil, fmt.Errorf("only an administrator can approve access to a restricted secret: %w", err)
 	}
 	now := c.now()
@@ -354,9 +354,12 @@ func (c *KeyorixCore) GetSecretAccessRequest(ctx context.Context, requestID, act
 		return nil, notFound
 	}
 	if req.UserID == actorID {
+		if !patAllowsOwnAccessRequest(ctx, req) {
+			return nil, notFound
+		}
 		return req, nil
 	}
-	if err := c.requireAdminAuthorityAt(ctx, actorID, req.ProjectID); err != nil {
+	if err := c.requireAccessRequestAuthorityAt(ctx, actorID, req.ProjectID); err != nil {
 		return nil, notFound
 	}
 	return req, nil
@@ -381,7 +384,7 @@ func (c *KeyorixCore) RejectSecretAccessRequest(ctx context.Context, requestID, 
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be rejected (state is %s)", req.State)
 	}
-	if err := c.requireAdminAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
+	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
 		return nil, fmt.Errorf("only an administrator can reject access to a restricted secret: %w", err)
 	}
 	return c.RejectAccessRequest(ctx, req.ProjectID, requestID, approverID, approverMachineID, reason)
@@ -412,7 +415,9 @@ func (c *KeyorixCore) ListSecretAccessRequestsForUser(ctx context.Context, userI
 				continue
 			}
 			if req.UserID == userID {
-				mine = append(mine, req)
+				if patAllowsOwnAccessRequest(ctx, req) {
+					mine = append(mine, req)
+				}
 				continue
 			}
 			if req.State != AccessRequestPending {
@@ -420,7 +425,7 @@ func (c *KeyorixCore) ListSecretAccessRequestsForUser(ctx context.Context, userI
 			}
 			isAdmin, ok := adminAt[p.ID]
 			if !ok {
-				isAdmin = c.requireAdminAuthorityAt(ctx, userID, p.ID) == nil
+				isAdmin = c.requireAccessRequestAuthorityAt(ctx, userID, p.ID) == nil
 				adminAt[p.ID] = isAdmin
 			}
 			if isAdmin {
@@ -479,22 +484,20 @@ func (c *KeyorixCore) notifySecretAccessRequested(ctx context.Context, req *mode
 	// the HTTP layer would report the whole request as failed even though it
 	// succeeded (docs/findings/2026-09-24-FINDING-secret-access-request-notify-panic.md).
 	besteffort.Run(ctx, "classification_gate.notifySecretAccessRequested", func() error {
-		members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
-		if err != nil {
-			return err
-		}
+		recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID)
 		pid := req.ProjectID
 		link := fmt.Sprintf("/projects/%d", req.ProjectID)
-		for _, mbr := range members {
-			if mbr.UserID == req.UserID || !isApproverRole(mbr.RoleName) {
+		// Notify whoever WAS resolved even when part of the resolution failed.
+		for _, uid := range recipients {
+			if uid == req.UserID {
 				continue
 			}
-			c.notify(ctx, mbr.UserID, NotificationAccessRequested,
+			c.notify(ctx, uid, NotificationAccessRequested,
 				"New secret access request",
 				fmt.Sprintf("User %d requested access to read secret %q.", req.UserID, secret.Name),
 				&pid, link)
 		}
-		return nil
+		return rerr
 	})
 }
 
