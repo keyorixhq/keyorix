@@ -426,16 +426,14 @@ func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 // whole session family is revoked.
 const EventSessionReuseDetected = "auth.session_reuse_detected" // #nosec G101 -- audit event type, not a credential
 
-// ErrRefreshNotEvaluated is wrapped by RefreshSession when a storage read the
-// token verdict depends on fails before any verdict is reached: the session
-// lookup (other than a definitive "no such session") or the owner lookup that
-// gates the account state. The refresh is still refused, but no token was
-// judged, so the HTTP handler releases the per-IP login-attempt slot it
-// reserved instead of counting a guess (the #2880 rule, same class as
-// ErrWebAuthnLoginNotEvaluated). A storage fault AFTER the verdict (the
-// rotation, the reuse revocation, the dead-session delete) is deliberately NOT
-// wrapped in it: those keep the slot, so a valid token is never cheaper than a
-// wrong one.
+// ErrRefreshNotEvaluated is wrapped by RefreshSession when the session lookup
+// (GetSessionAny, other than a definitive "no such session") fails: no token was
+// found, so none was judged, and the HTTP handler releases the per-IP
+// login-attempt slot it reserved instead of counting a guess (the #2880 rule,
+// same class as ErrWebAuthnLoginNotEvaluated). A storage fault AFTER the token
+// matched a live session (the owner read GetUser, the rotation, the reuse
+// revocation, the dead-session delete) is deliberately NOT wrapped in it: those
+// keep the slot, so a valid token is never cheaper than a wrong one.
 var ErrRefreshNotEvaluated = errors.New("session refresh not evaluated: storage lookup failed")
 
 // RefreshSession rotates an existing session to a new token with a fresh access
@@ -501,7 +499,11 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	user, err := c.storage.GetUser(ctx, old.UserID)
 	if err != nil {
 		if !storage.IsUserNotFound(err) {
-			return nil, fmt.Errorf("%w: reading the account: %w", ErrRefreshNotEvaluated, err)
+			// POST-verdict: GetSessionAny matched a live token and the reuse, ceiling
+			// and impersonation verdicts above already ran, so this fault is
+			// deliberately NOT ErrRefreshNotEvaluated. The handler keeps the slot: a
+			// correct token must never be cheaper than a wrong one (#2880).
+			return nil, fmt.Errorf("failed to read account: %w", err)
 		}
 		return nil, fmt.Errorf("user not found")
 	}

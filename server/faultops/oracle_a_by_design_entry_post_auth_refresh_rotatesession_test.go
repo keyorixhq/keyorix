@@ -11,9 +11,10 @@ func init() {
 	// live session. RotateSession runs only after RefreshSession found the token,
 	// saw it unrotated, inside its absolute ceiling, not impersonated, and its
 	// owner active -- every refusal before that is a verdict. The row is pinned to
-	// this one method and kind. The PRE-verdict reads (GetSessionAny, GetUser) are
-	// NOT covered: they release the slot (core.ErrRefreshNotEvaluated) and leave no
-	// diff, and a diff there would fail oracle (a) loudly.
+	// this one method and kind. The one PRE-verdict read (GetSessionAny) is NOT
+	// covered: it releases the slot (core.ErrRefreshNotEvaluated) and leaves no
+	// diff, and a diff there would fail oracle (a) loudly. The owner read GetUser
+	// is post-verdict too and has its own row (post_auth_refresh_getuser).
 	registerOracleAByDesign("post_auth_refresh_rotatesession", oracleAByDesignError{
 		op:     "REST POST /auth/refresh",
 		method: "RotateSession",
@@ -22,8 +23,8 @@ func init() {
 		tables: []string{"LoginAttempt"},
 		designComment: "internal/core/auth.go RefreshSession: RotateSession runs after the token was found, " +
 			"unrotated, inside its ceiling and its owner active -- the token verdict -- and its error is " +
-			"\"failed to rotate session\", not ErrRefreshNotEvaluated (which wraps only the GetSessionAny/GetUser " +
-			"reads before the verdict); server/http/handlers/auth.go RefreshToken returns the per-IP slot " +
+			"\"failed to rotate session\", not ErrRefreshNotEvaluated (which wraps only the GetSessionAny " +
+			"lookup before the verdict); server/http/handlers/auth.go RefreshToken returns the per-IP slot " +
 			"only for a DELIVERED session (returnLoginSlot, #2936) and for ErrRefreshNotEvaluated",
 		provingTest: "server/http/handlers/TestRefresh_RotateSessionFaultKeepsSlotAndMatchesFailureShape " +
 			"(slot kept, response byte-identical to a wrong token's); " +

@@ -6,12 +6,14 @@
 // (nothing was evaluated, so it was not a guess), and a storage fault AFTER the
 // verdict keeps the slot (a valid token must never be cheaper than a wrong one).
 // For refresh the "credential" is the session token, and the verdict is reached
-// once the token's session AND its owner have been read:
+// once the token's session has been found:
 //
 //	GetSessionAny   pre-verdict  (token not yet found or judged)
-//	GetUser         pre-verdict  (account gate not yet evaluated)
-//	everything else post-verdict (RotateSession, the reuse-revocation calls, the
-//	                              DeleteSession of a dead session)
+//	everything else post-verdict (GetUser -- the owner read runs after the token
+//	                              matched a live session and the reuse/ceiling/
+//	                              impersonation verdicts --, RotateSession, the
+//	                              reuse-revocation calls, the DeleteSession of a
+//	                              dead session)
 //
 // The table test derives the calls refresh really makes in three scenarios and
 // fails on a method it has not classified, so a new storage call in
@@ -43,7 +45,7 @@ const (
 // refreshStorageCalls classifies every storage method /auth/refresh can reach.
 var refreshStorageCalls = map[string]refreshClass{
 	"GetSessionAny":                  refreshPreVerdict,
-	"GetUser":                        refreshPreVerdict,
+	"GetUser":                        refreshPostVerdict,
 	"RotateSession":                  refreshPostVerdict,
 	"DeleteSession":                  refreshPostVerdict,
 	"ListSessionTokenHashesByFamily": refreshPostVerdict,
@@ -207,7 +209,7 @@ func TestRefresh_StorageFaultSlotPolicy(t *testing.T) {
 
 // A pre-verdict fault must leave the token usable: the retry succeeds.
 func TestRefresh_PreVerdictFaultLeavesTokenUsable(t *testing.T) {
-	for _, m := range []string{"GetSessionAny", "GetUser"} {
+	for _, m := range []string{"GetSessionAny"} {
 		m := m
 		t.Run(m, func(t *testing.T) {
 			e := newLockoutOracleEnv(t)
@@ -240,4 +242,28 @@ func TestRefresh_RotateSessionFaultKeepsSlotAndMatchesFailureShape(t *testing.T)
 	assert.Equal(t, ctrlBody, w.Body.String(), "response must match the non-fault failure shape byte for byte")
 	assert.EqualValues(t, ctrlSlots, e.slots(t), "a storage fault after the token verdict keeps the per-IP slot (#2880)")
 	assert.Empty(t, w.Result().Header.Get("Set-Cookie"), "no session cookie may be issued")
+}
+
+// The by-design row's handler proof for the owner read: GetUser runs AFTER
+// GetSessionAny matched a live token and after the reuse/ceiling/impersonation
+// verdicts, so a fault there keeps the slot and answers like a wrong token (a
+// correct credential is never cheaper than a wrong one, #2880). Pinned by
+// server/faultops oracleAByDesignErrors (REST POST /auth/refresh, GetUser#1/error).
+func TestRefresh_GetUserFaultKeepsSlotAndMatchesFailureShape(t *testing.T) {
+	ctrlCode, ctrlBody, ctrlSlots := deadTokenControl(t)
+
+	e := newLockoutOracleEnv(t)
+	tok := e.loginToken(t)
+	require.Zero(t, e.slots(t), "setup: a delivered login leaves no slot")
+	e.fs.Arm(&faultstorage.FaultSpec{Method: "GetUser", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+	w := e.postRefresh(tok)
+	require.True(t, e.fs.Fired(), "the GetUser fault must have fired")
+	e.fs.Arm(nil)
+
+	assert.Equal(t, ctrlCode, w.Code)
+	assert.Equal(t, ctrlBody, w.Body.String(), "response must match the non-fault failure shape byte for byte")
+	assert.EqualValues(t, ctrlSlots, e.slots(t), "an owner-read fault after the token matched keeps the per-IP slot (#2880)")
+	assert.Empty(t, w.Result().Header.Get("Set-Cookie"), "no session cookie may be issued")
+	// Nothing was written to the session: the token is still usable on retry.
+	assert.Equal(t, http.StatusOK, e.postRefresh(tok).Code)
 }
