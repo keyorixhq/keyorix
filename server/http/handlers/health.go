@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"net/http"
 	"os"
 	"time"
@@ -65,7 +64,7 @@ func writeHealth(w http.ResponseWriter, authRateLimitDegraded func() bool) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-cache")
 
-	if err := json.NewEncoder(w).Encode(health); err != nil {
+	if err := encodeJSONResponse(w, health); err != nil {
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
 }
