@@ -353,7 +353,7 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		Name:          "security.insecure_disable_mfa_requirement",
 		SourcePaths:   []string{"security.require_mfa"},
 		DerivedInputs: []string{"security.RequireMFAImplicitDefault", "security.RequireMFAUpgradeGrace"},
-		Describe:      "polarity-inverted rename of security.require_mfa -- interactive logins do not require a second factor: off (require_mfa: false written in the config) or, in the ADR-112 upgrade grace period (grace-not-enforced), not enforced yet",
+		Describe:      "interactive logins do not require a second factor: off (require_mfa: false written in the config) or, in the ADR-112 upgrade grace period (grace-not-enforced), not enforced yet",
 		InEffect:      func(c *Config) bool { return c.Security.RequireMFAState().Weakened() },
 		Value:         func(c *Config) string { return string(c.Security.RequireMFAState()) },
 	},
