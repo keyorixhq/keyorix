@@ -49,10 +49,14 @@ spec:
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
-        {{- if .Values.secureBaseline.enabled }}
-        # Secret volume files are root-owned; group 1001 lets prepare-files read them.
+        # Also lets prepare-files (secureBaseline) read the root-owned Secret
+        # volume files via group 1001.
+        # The keys PVC must be writable by uid 1001: most provisioners (local-path,
+        # hostPath, NFS) hand out a root-owned directory, and without fsGroup the
+        # server cannot create data.key/kek.salt on first boot. Files the server
+        # creates stay 0600 (internal/encryption), so group access is not widened.
         fsGroup: 1001
-        {{- end }}
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       {{- if .Values.secureBaseline.enabled }}
@@ -214,10 +218,12 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "keyorix.server.fullname" . }}-keys
           {{- else }}
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 16Mi
           {{- end }}
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 64Mi
         {{- if .Values.secureBaseline.enabled }}
         - name: run
           emptyDir:

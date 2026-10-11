@@ -102,8 +102,8 @@ COPY --from=builder /app/server/entrypoint.sh .
 # named volume mounted there starts with this ownership and mode
 # (docker-compose.secure.yml, SECURE-DEFAULT-1).
 RUN chmod +x entrypoint.sh && \
-    mkdir -p data keys tls tls-public && chmod 700 tls && chmod 755 tls-public && \
-    chown -R keyorix:keyorix /app
+    mkdir -p data keys tls tls-public && chown -R keyorix:keyorix /app && \
+    chmod 0700 data keys tls && chmod 755 tls-public
 USER 1001:1001
 EXPOSE 8080
 # KEYORIX_LOCAL_URL / KEYORIX_LOCAL_CA_FILE: see entrypoint.sh (https + the
