@@ -13,7 +13,7 @@
   nil, so the slot stays counted). A COUNT that fails while writes succeed still
   binds: a successful write made while the budget is degraded is mirrored in
   memory, and a failed count is judged on memory including mirrors (a working
-  count ignores them, so nothing is counted twice) (#3032 review).
+  count ignores them, so nothing is counted twice) (#3023, #3029, #3032 reviews).
   Memory is bounded (`authFallbackMaxKeys` keys per budget, LRU; per-key attempts
   capped). Every fallback is audited `auth.rate_limit_error` (Success=false) and
   counted (`keyorix_auth_rate_limit_fallback_total{budget="login"}`); the client
@@ -24,6 +24,8 @@
   `_RecoveredStorageIsAuthoritativeAgain`, `_NoFaultNoChange`, `_IsAuditedAndCounted`,
   `_BoundedUnderManyDistinctIPs`), `auth_budget_review_test.go`
   (`TestAuthBudget_CountOnlyFailureStillBinds`, `_CountOnlyFailure_RecoveryDoesNotDoubleCount`,
+  `_CountOnlyFailure_MirrorAgesOutWithTheWindow`, `_CountOnlyFailure_DeliveredLoginReleasesItsMirror`,
   `TestFallbackLoginSlot_IsNeverPersistedToSharedRows`,
-  `_ReleaseOnAnotherReplicaRefundsNothingThere`) and
-  `server/http/handlers/login_budget_fallback_http_test.go`.
+  `_ReleaseOnAnotherReplicaRefundsNothingThere`),
+  `server/http/handlers/login_budget_fallback_http_test.go` and
+  `login_budget_fallback_slot_http_test.go`.

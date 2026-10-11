@@ -34,12 +34,19 @@
 //     inside the window, capped at 4x the limit. Many distinct (spoofed or
 //     rotating) addresses evict each other rather than exhaust memory, and
 //     cannot evict another budget's entries (an account's in-memory lock is
-//     not displaced by an IP flood).
+//     not displaced by an IP flood). Within account_lockout itself, eviction
+//     CAN drop an account's in-memory lock (#3029 review): that takes failed
+//     attempts against authFallbackMaxKeys other, real accounts (a failure is
+//     counted only against an existing user id) after the target's last
+//     touch, all inside one outage, each of them also spending the per-IP
+//     login budget. The trade-off is deliberate: an unbounded map would let
+//     the same outage exhaust memory. Pinned by
+//     TestAccountLockoutFallback_LockSurvivesUpToTheKeyBound.
 //   - consulted IN ADDITION to the stored count: the attempts added to it are
 //     those whose stored write failed, so adding them never double-counts,
 //     and leftover entries age out with the window after storage recovers. The
 //     counts are never merged into storage.
-//   - mirrored while degraded (#3032 review): a write that SUCCEEDS while the
+//   - mirrored while degraded (#3023, #3029, #3032 reviews): a write that SUCCEEDS while the
 //     budget is on its fallback is also noted in memory, flagged as mirrored.
 //     A COUNT that fails is then judged on memory including the mirrored
 //     attempts, so a budget whose count query fails while its inserts succeed
@@ -195,7 +202,7 @@ func (c *KeyorixCore) budgetDegraded(b authBudget) bool {
 // against the fallback limit. A stored count that cannot be read counts as 0.
 //
 // When the count fails, the fallback decides on everything it holds for key,
-// mirrored attempts included (#3032 review): the inserts may still be
+// mirrored attempts included (#3023, #3029, #3032 reviews): the inserts may still be
 // succeeding, and without the mirror nothing would ever reach memory.
 func (c *KeyorixCore) budgetLimited(ctx context.Context, b authBudget, key string) bool {
 	since := c.now().Add(-b.window)
@@ -258,7 +265,7 @@ func (c *KeyorixCore) budgetReleaseStored(ctx context.Context, b authBudget, id 
 // sharedLoginSlot is slotID as it may be persisted on a row every replica
 // reads and that outlives this process (mfa_challenges / web_authn_sessions
 // login_attempt_id): a stored reservation id as is, a fallback id never
-// (#3032 review). A fallback id names a per-process counter value: another
+// (#3023, #3029, #3032 reviews). A fallback id names a per-process counter value: another
 // replica, or this one after a restart, releasing it would refund an unrelated
 // reservation of its own, and it does not fit a signed 64-bit column. The
 // fallback reservation then simply stays counted until it ages out of the

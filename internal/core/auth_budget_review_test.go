@@ -1,13 +1,17 @@
-// auth_budget_review_test.go — the two #3032 review findings (MERGE-MASTER,
-// CHANGES REQUESTED; REBASE-12):
+// auth_budget_review_test.go — the two review findings raised on #3023 (at
+// 670e1163), #3029 (at bf0ff420) and #3032 (MERGE-MASTER, CHANGES REQUESTED):
 //
 //  1. budgetLimited failed OPEN when only the COUNT query failed: memory held
 //     only attempts whose stored WRITE failed, so with the count down and the
-//     insert up nothing ever reached memory and the budget never bound.
+//     insert up nothing ever reached memory and the budget never bound
+//     (login, password_reset, sso_begin). loginAttemptsDownStub fails every
+//     method together, so it could not show this; countOnlyDownStub fails the
+//     count alone.
 //  2. a fallback reservation id (a per-process counter with authFallbackIDBit
 //     set) was persisted into the shared mfa_challenges / web_authn_sessions
-//     login_attempt_id columns, so a release on another replica (or after a
-//     restart) refunded an unrelated in-memory reservation there.
+//     login_attempt_id columns: the row could not be read back (SQLite stores
+//     it negative), and a release on another replica (or after a restart)
+//     refunded an unrelated in-memory reservation there.
 package core
 
 import (
@@ -204,4 +208,45 @@ func TestFallbackLoginSlot_ReleaseOnAnotherReplicaRefundsNothingThere(t *testing
 	}
 	after := b.authBudgetFallback(loginBudget).count("192.0.2.77", since, true)
 	assert.Equal(t, before, after, "replica B refunded an unrelated IP's reservation using replica A's fallback id")
+}
+
+// TestAuthBudget_CountOnlyFailure_MirrorAgesOutWithTheWindow: the mirrored
+// attempts are bound by the same window, so an IP refused on them is allowed
+// again once they age out, as with every other fallback attempt.
+func TestAuthBudget_CountOnlyFailure_MirrorAgesOutWithTheWindow(t *testing.T) {
+	ctx := context.Background()
+	c, stub, _ := newCountOnlyDownCore(t)
+	stub.down = true
+	const ip = "198.51.100.9"
+	base := c.now()
+	for i := 0; i < LoginMaxAttempts; i++ {
+		require.False(t, c.IsLoginRateLimited(ctx, ip))
+		c.RecordFailedLogin(ctx, ip)
+	}
+	require.True(t, c.IsLoginRateLimited(ctx, ip))
+	later := base.Add(LoginWindow + time.Minute)
+	c.now = func() time.Time { return later }
+	assert.False(t, c.IsLoginRateLimited(ctx, ip), "mirrored attempts age out with the window")
+}
+
+// TestAuthBudget_CountOnlyFailure_DeliveredLoginReleasesItsMirror keeps
+// #2936's "count failures only" while the count is down: a delivered login's
+// release refunds the stored row AND its mirror, so successful logins do not
+// fill the in-memory budget.
+func TestAuthBudget_CountOnlyFailure_DeliveredLoginReleasesItsMirror(t *testing.T) {
+	ctx := context.Background()
+	c, stub, db := newCountOnlyDownCore(t)
+	const ip = "198.51.100.10"
+	stub.down = true
+	for i := 0; i < 2*LoginMaxAttempts; i++ {
+		require.False(t, c.IsLoginRateLimited(ctx, ip), "delivered login %d must not be refused", i+1)
+		id, ok := c.ReserveLoginAttempt(ctx, ip)
+		require.True(t, ok)
+		require.Zero(t, id&authFallbackIDBit, "calibration: the write works, so the id is a stored one")
+		c.ReleaseLoginAttempt(ctx, id)
+	}
+	var stored int64
+	require.NoError(t, db.Model(&models.LoginAttempt{}).Count(&stored).Error)
+	assert.Zero(t, stored)
+	assert.Zero(t, c.authBudgetFallback(loginBudget).count(ip, c.now().Add(-LoginWindow), true), "every mirror went with its stored row")
 }

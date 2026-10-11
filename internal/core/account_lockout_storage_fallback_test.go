@@ -174,3 +174,29 @@ func TestAuthBudgetFallback_BudgetsDoNotEvictEachOther(t *testing.T) {
 	assert.LessOrEqual(t, c.authBudgetFallback(loginBudget).size(), authFallbackMaxKeys)
 	assert.True(t, c.budgetFallbackLimited(acct, accountBudgetKey(1)), "an IP flood on the login budget must not unlock an account")
 }
+
+// TestAccountLockoutFallback_LockSurvivesUpToTheKeyBound pins the bound the
+// auth_budget.go header documents for account_lockout's own LRU (#3029 review
+// point 3): an account locked in memory stays locked while failures land on up
+// to authFallbackMaxKeys-1 other accounts, and the limiter never grows past
+// authFallbackMaxKeys. Dropping the lock needs authFallbackMaxKeys distinct
+// real accounts failing inside one outage, each also spending the per-IP
+// login budget.
+func TestAccountLockoutFallback_LockSurvivesUpToTheKeyBound(t *testing.T) {
+	t.Parallel()
+	c, _, _ := newMFATestCore(t)
+	c.loginLockout = fallbackLockoutPolicy
+	now := c.now()
+	acct := c.accountBudget()
+	f := c.authBudgetFallback(acct)
+	for i := 0; i < fallbackLockoutPolicy.MaxAttempts; i++ {
+		f.reserve(accountBudgetKey(1), now, acct.window, 4*acct.limit)
+	}
+	require.True(t, c.budgetFallbackLimited(acct, accountBudgetKey(1)))
+	for uid := uint(2); uid <= authFallbackMaxKeys; uid++ { // authFallbackMaxKeys-1 other accounts
+		f.reserve(accountBudgetKey(uid), now, acct.window, 4*acct.limit)
+	}
+	assert.Equal(t, authFallbackMaxKeys, f.size(), "the limiter is full but not over its bound")
+	assert.True(t, c.budgetFallbackLimited(acct, accountBudgetKey(1)),
+		"failures on fewer than authFallbackMaxKeys other accounts must not unlock an account")
+}
