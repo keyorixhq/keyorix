@@ -24,9 +24,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -389,21 +391,80 @@ func (c *KeyorixCore) notifySecretsReassigned(ctx context.Context, newOwnerID, a
 // ── Self-scoped reads/writes (the authenticated user) ───────────────────────
 
 // ListNotifications returns the user's notifications, newest first.
+//
+// A request authenticated by a restricted PAT sees only the notifications its
+// restriction allows (patAllowsNotification, PAT-GUARD-1): a notification names
+// project resources, and this feed is self-scoped, so no Authorize call ever
+// narrows it. The limit is applied after that filter so a restricted token still
+// gets up to limit visible rows.
 func (c *KeyorixCore) ListNotifications(ctx context.Context, userID uint, unreadOnly bool, limit int) ([]*models.Notification, error) {
-	return c.storage.ListNotifications(ctx, userID, unreadOnly, limit)
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.ListNotifications(ctx, userID, unreadOnly, limit)
+	}
+	all, err := c.storage.ListNotifications(ctx, userID, unreadOnly, 0)
+	if err != nil {
+		return nil, err
+	}
+	visible := make([]*models.Notification, 0, len(all))
+	for _, n := range all {
+		if patAllowsNotification(ctx, n) {
+			visible = append(visible, n)
+		}
+	}
+	if limit > 0 && len(visible) > limit {
+		visible = visible[:limit]
+	}
+	return visible, nil
 }
 
-// UnreadNotificationCount returns how many unread notifications the user has.
+// UnreadNotificationCount returns how many unread notifications the user has —
+// for a restricted PAT, how many of the ones it can see, so the badge count and
+// the list agree.
 func (c *KeyorixCore) UnreadNotificationCount(ctx context.Context, userID uint) (int64, error) {
-	return c.storage.CountUnreadNotifications(ctx, userID)
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.CountUnreadNotifications(ctx, userID)
+	}
+	visible, err := c.ListNotifications(ctx, userID, true, 0)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(visible)), nil
 }
 
 // MarkNotificationRead marks one of the user's notifications read (ownership-checked).
+// A restricted PAT gets the same not-found for a notification it cannot see as for
+// one that does not exist.
 func (c *KeyorixCore) MarkNotificationRead(ctx context.Context, id, userID uint) error {
+	if patRestrictionFromContext(ctx) != nil {
+		visible, err := c.ListNotifications(ctx, userID, false, 0)
+		if err != nil {
+			return err
+		}
+		if !slices.ContainsFunc(visible, func(n *models.Notification) bool { return n.ID == id }) {
+			// The storage layer's own wording for "no such (id, user) row".
+			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		}
+	}
 	return c.storage.MarkNotificationRead(ctx, id, userID)
 }
 
-// MarkAllNotificationsRead marks all of the user's notifications read.
+// MarkAllNotificationsRead marks all of the user's notifications read — for a
+// restricted PAT, all of the ones it can see.
 func (c *KeyorixCore) MarkAllNotificationsRead(ctx context.Context, userID uint) error {
-	return c.storage.MarkAllNotificationsRead(ctx, userID)
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.MarkAllNotificationsRead(ctx, userID)
+	}
+	visible, err := c.ListNotifications(ctx, userID, true, 0)
+	if err != nil {
+		return err
+	}
+	// One transaction: read-all either marks every visible notification or none.
+	return c.storage.WithTransaction(ctx, func(tx corestorage.Storage) error {
+		for _, n := range visible {
+			if err := tx.MarkNotificationRead(ctx, n.ID, userID); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
