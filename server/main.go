@@ -2558,16 +2558,6 @@ func bindScopeNote(host string) string {
 	return " (non-loopback interface: reachable from the network)"
 }
 
-// resolveOutboundIP returns the machine's preferred outbound IP address.
-func resolveOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80") // NOSONAR -- well-known UDP probe target; no data is sent, used only to resolve the local outbound interface
-	if err != nil {
-		return "127.0.0.1" // NOSONAR -- default bind address, not sensitive
-	}
-	defer conn.Close() //nolint:errcheck
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
-}
-
 // oidcDiscovery is the subset of an OIDC discovery document we need.
 type oidcDiscovery struct {
 	Issuer                string `json:"issuer"`
