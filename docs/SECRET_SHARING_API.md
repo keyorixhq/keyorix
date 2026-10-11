@@ -390,8 +390,30 @@ gate of the route that would otherwise show them:
 
 When either part is withheld it is left out and the response is flagged `degraded`
 with a `project_members` or `secret_acls` reason, so the list is an under-count,
-never presented as complete.
+never presented as complete. A lookup that fails (a group's members, a user's group
+memberships, a role or ACL check) degrades the report the same way. No built-in
+project role holds `secrets.manage`, so a project member's report is normally
+degraded with a `secret_acls` reason. `keyorix secret access` prints
+`WARNING: this list is incomplete` with the reasons, and the web panel shows a
+"This list is incomplete" banner with them.
 
+The response is `{accessors, total, degraded, degraded_reasons}`.
+
+`grants` holds every share that applies, not only the strongest: a user with a
+direct read share and a group write share shows `direct_share:read` and
+`group_share:<group>:write`. The share term follows enforcement exactly (direct
+shares, group shares through a membership that is global or scoped to the secret's
+project, read/write levels only, project members only).
+
+What the report still reveals, by design:
+
+- Without `users.read`, a caller can still tell that a listed share recipient, or
+  the owner, is a member of the project: a share to a non-member grants nothing and
+  is not listed. The roster gate withholds the list of role holders, not the
+  membership of users the caller already sees through a share or ownership.
+- Deactivated or suspended accounts that still hold a role, share or ACL are
+  listed. Their grants apply again if the account is reactivated, so an access
+  review needs to see them. Account status is shown by the user routes, not here.
 
 ### 10. List Shares You Created (owner-scoped)
 

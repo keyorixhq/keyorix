@@ -142,6 +142,15 @@ export interface SecretAccessor {
     grants?: string[];
 }
 
+// SecretAccessReport is GET /secrets/{id}/access. When degraded is true the list is an
+// under-count (part of it was withheld from this caller, or a lookup failed), and the
+// UI must say so.
+export interface SecretAccessReport {
+    accessors: SecretAccessor[];
+    degraded: boolean;
+    degradedReasons: string[];
+}
+
 export interface Recipient {
     id: number;
     name: string;

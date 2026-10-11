@@ -560,3 +560,214 @@ func TestListSecretAccessors_OwnerNeedsLiveMembership(t *testing.T) {
 	assert.Equal(t, "owner", byName["live"].Source)
 	assert.Equal(t, []string{"owner:owner"}, byName["live"].Grants)
 }
+
+// TestListSecretAccessors_ListsEveryShareGrant: Grants is documented as every grant the
+// user holds, so a user with a direct read share AND a group write share shows both,
+// not only the strongest share.
+func TestListSecretAccessors_ListsEveryShareGrant(t *testing.T) {
+	t.Parallel()
+	db, c, now := accessListFixture(t)
+	for _, u := range []models.User{
+		{ID: 1, Username: "owner", Email: "o@t.com"}, // role3: the caller, full view
+		{ID: 2, Username: "alice", Email: "a@t.com"}, // role4 member, in group platform
+	} {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 3, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 4, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "platform"}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 10}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 10, RoleID: 4, ProjectID: 1}).Error)
+	ctx := context.Background()
+	secret, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+	_, err = c.ShareSecret(ctx, &ShareSecretRequest{SecretID: secret.ID, RecipientID: 2, Permission: "read", SharedBy: 1})
+	require.NoError(t, err)
+	_, err = c.ShareSecretWithGroup(ctx, &GroupShareSecretRequest{SecretID: secret.ID, GroupID: 10, Permission: "write", SharedBy: 1})
+	require.NoError(t, err)
+
+	result, err := c.ListSecretAccessors(ctx, secret.ID, 1)
+	require.NoError(t, err)
+	require.False(t, result.Degraded, result.DegradedReasons)
+	var alice *SecretAccessor
+	for i := range result.Accessors {
+		if result.Accessors[i].Username == "alice" {
+			alice = &result.Accessors[i]
+		}
+	}
+	require.NotNil(t, alice)
+	assert.Equal(t, "write", alice.Permission)
+	assert.Equal(t, "group_share:platform", alice.Source)
+	assert.ElementsMatch(t, []string{"direct_share:read", "group_share:platform:write"}, alice.Grants,
+		"every applying share is listed, not only the strongest")
+}
+
+// countingSharesStore counts ListSharesBySecret calls and fails GetUserGroupsAt for one
+// user (failGroupsFor; 0 = never).
+type countingSharesStore struct {
+	*store.LocalStorage
+	shareLists    int
+	failGroupsFor uint
+}
+
+func (s *countingSharesStore) ListSharesBySecret(ctx context.Context, secretID uint, now time.Time) ([]*models.ShareRecord, error) {
+	s.shareLists++
+	return s.LocalStorage.ListSharesBySecret(ctx, secretID, now)
+}
+
+func (s *countingSharesStore) GetUserGroupsAt(ctx context.Context, userID uint, scope Scope) ([]*models.Group, error) {
+	if s.failGroupsFor != 0 && userID == s.failGroupsFor {
+		return nil, errors.New("simulated: group lookup failed")
+	}
+	return s.LocalStorage.GetUserGroupsAt(ctx, userID, scope)
+}
+
+// shareReportFixture: owner (1, role3, the caller), members 2..n+1 (role4) all in group
+// 10 (role4 in the project), a group read share and a direct write share to user 2.
+func shareReportFixture(t *testing.T, n int, wrap func(*store.LocalStorage) *countingSharesStore) (*KeyorixCore, *countingSharesStore, uint) {
+	t.Helper()
+	db, base, now := accessListFixture(t)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 3, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 10, Name: "platform"}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: 10, RoleID: 4, ProjectID: 1}).Error)
+	for i := 0; i < n; i++ {
+		id := uint(2 + i)
+		require.NoError(t, db.Create(&models.User{ID: id, Username: fmt.Sprintf("u%02d", id), Email: fmt.Sprintf("u%d@t.com", id)}).Error)
+		require.NoError(t, db.Create(&models.UserRole{UserID: id, RoleID: 4, ProjectID: 1}).Error)
+		require.NoError(t, db.Create(&models.UserGroup{UserID: id, GroupID: 10}).Error)
+	}
+	ctx := context.Background()
+	secret, err := base.storage.CreateSecret(ctx, &models.SecretNode{Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secret.ID, OwnerID: 1, RecipientID: 10, IsGroup: true, Permission: "read"}).Error)
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secret.ID, OwnerID: 1, RecipientID: 2, Permission: "write"}).Error)
+	st := wrap(base.storage.(*store.LocalStorage))
+	return &KeyorixCore{storage: st, now: base.now}, st, secret.ID
+}
+
+// TestListSecretAccessors_LoadsSharesOnce: the report reads the secret's shares once,
+// not once (or twice) per listed user, so its cost no longer multiplies the share
+// lookups by the project size.
+func TestListSecretAccessors_LoadsSharesOnce(t *testing.T) {
+	t.Parallel()
+	c, st, secretID := shareReportFixture(t, 8, func(l *store.LocalStorage) *countingSharesStore {
+		return &countingSharesStore{LocalStorage: l}
+	})
+	result, err := c.ListSecretAccessors(context.Background(), secretID, 1)
+	require.NoError(t, err)
+	require.False(t, result.Degraded, result.DegradedReasons)
+	require.Len(t, result.Accessors, 9)
+	assert.Equal(t, 1, st.shareLists, "ListSharesBySecret must be called once for the whole report")
+}
+
+// TestListSecretAccessors_DegradedOnGroupShareLookupError: enforcement treats a failed
+// group lookup as "no group share" (the share term only adds access), but the report
+// must not then look complete: the user is under-counted, so the report is degraded.
+func TestListSecretAccessors_DegradedOnGroupShareLookupError(t *testing.T) {
+	t.Parallel()
+	c, _, secretID := shareReportFixture(t, 2, func(l *store.LocalStorage) *countingSharesStore {
+		return &countingSharesStore{LocalStorage: l, failGroupsFor: 3}
+	})
+	result, err := c.ListSecretAccessors(context.Background(), secretID, 1)
+	require.NoError(t, err)
+	assert.True(t, result.Degraded, "a failed group-share lookup must flip Degraded")
+	assert.True(t, hasGrantPrefix(result.DegradedReasons, "group_share:user=3"), result.DegradedReasons)
+}
+
+// TestListSecretAccessors_ShareGrantsMatchDecisionTerm is the guard that the report's
+// share evaluation (reportShareGrants, computed from shares loaded once) cannot drift
+// from the share term enforcement uses: for every user, the strongest share grant
+// listed equals what sharePermissionFor grants (write for the allowlisted
+// SecretActionUpdate, else read, else nothing). Cases: direct read/write, group share
+// through a global and a project-scoped membership, a membership scoped to ANOTHER
+// project, a share to a non-member, an expired share and a corrupt stored level.
+func TestListSecretAccessors_ShareGrantsMatchDecisionTerm(t *testing.T) {
+	t.Parallel()
+	db, c, now := accessListFixture(t)
+	users := []models.User{
+		{ID: 1, Username: "owner", Email: "o@t.com"},    // role3: the caller
+		{ID: 2, Username: "dread", Email: "2@t.com"},    // direct read
+		{ID: 3, Username: "dwrite", Email: "3@t.com"},   // direct write
+		{ID: 4, Username: "gglobal", Email: "4@t.com"},  // group A (write share), global membership
+		{ID: 5, Username: "gscoped", Email: "5@t.com"},  // group B (read share), membership scoped to project 1
+		{ID: 6, Username: "gother", Email: "6@t.com"},   // group A, membership scoped to project 2
+		{ID: 7, Username: "outsider", Email: "7@t.com"}, // direct write share, not a member
+		{ID: 8, Username: "expired", Email: "8@t.com"},  // expired direct write share
+		{ID: 9, Username: "corrupt", Email: "9@t.com"},  // direct share with stored level "owner"
+		{ID: 10, Username: "both", Email: "10@t.com"},   // direct read + group A write
+		{ID: 11, Username: "plain", Email: "11@t.com"},  // member, no share
+	}
+	for _, u := range users {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 3, ProjectID: 1}).Error)
+	for _, uid := range []uint{2, 3, 4, 5, 6, 8, 9, 10, 11} {
+		require.NoError(t, db.Create(&models.UserRole{UserID: uid, RoleID: 4, ProjectID: 1}).Error)
+	}
+	require.NoError(t, db.Create(&models.Group{ID: 20, Name: "ga"}).Error)
+	require.NoError(t, db.Create(&models.Group{ID: 21, Name: "gb"}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 4, GroupID: 20}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 5, GroupID: 21, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 6, GroupID: 20, ProjectID: 2}).Error)
+	require.NoError(t, db.Create(&models.UserGroup{UserID: 10, GroupID: 20}).Error)
+
+	ctx := context.Background()
+	secret, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+	past := now.Add(-time.Hour)
+	for _, sh := range []models.ShareRecord{
+		{RecipientID: 2, Permission: "read"},
+		{RecipientID: 3, Permission: "write"},
+		{RecipientID: 20, IsGroup: true, Permission: "write"},
+		{RecipientID: 21, IsGroup: true, Permission: "read"},
+		{RecipientID: 7, Permission: "write"},
+		{RecipientID: 8, Permission: "write", ExpiresAt: &past},
+		{RecipientID: 9, Permission: "owner"},
+		{RecipientID: 10, Permission: "read"},
+	} {
+		sh.SecretID, sh.OwnerID = secret.ID, 1
+		require.NoError(t, db.Create(&sh).Error)
+	}
+
+	result, err := c.ListSecretAccessors(ctx, secret.ID, 1)
+	require.NoError(t, err)
+	require.False(t, result.Degraded, result.DegradedReasons)
+	reported := map[uint]string{}
+	for _, a := range result.Accessors {
+		best := ""
+		for _, g := range a.Grants {
+			if !strings.HasPrefix(g, "direct_share") && !strings.HasPrefix(g, "group_share") {
+				continue
+			}
+			lvl := g[strings.LastIndex(g, ":")+1:]
+			if permissionRank[lvl] > permissionRank[best] {
+				best = lvl
+			}
+		}
+		reported[a.UserID] = best
+	}
+	for _, u := range users {
+		want := ""
+		for _, need := range []PermissionLevel{PermissionWrite, PermissionRead} {
+			g, err := c.sharePermissionFor(ctx, u.ID, secret.ID, secret.ProjectID, need, SecretActionUpdate)
+			require.NoError(t, err)
+			if g.Level != PermissionNone {
+				want = string(g.Level)
+				break
+			}
+		}
+		assert.Equal(t, want, reported[u.ID], "user %s: report's share level vs sharePermissionFor", u.Username)
+	}
+	// The fixture must exercise every outcome, or the comparison above proves little.
+	assert.Equal(t, map[uint]string{2: "read", 3: "write", 4: "write", 5: "read", 10: "write"},
+		func() map[uint]string {
+			m := map[uint]string{}
+			for id, l := range reported {
+				if l != "" {
+					m[id] = l
+				}
+			}
+			return m
+		}())
+}
