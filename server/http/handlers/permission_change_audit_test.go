@@ -2,14 +2,11 @@ package handlers
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -18,9 +15,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
-
-var permAuditDBSeq atomic.Int64
 
 // openPermChangeAuditDB opens a uniquely-named in-memory DB for permission-
 // change-audit handler tests. i18n is initialized (required by GetRole's not-
@@ -29,10 +25,7 @@ var permAuditDBSeq atomic.Int64
 func openPermChangeAuditDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := permAuditDBSeq.Add(1)
-	dsn := fmt.Sprintf("file:kx_perm_audit_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_perm_audit_")
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{},
 		&models.User{},
@@ -201,10 +194,7 @@ func TestGetPermissionChangeAudit_LimitParam(t *testing.T) {
 // Uses a DB with no audit_events table so GetAuditLogs returns an error.
 func TestGetPermissionChangeAudit_StorageError_500(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	n := permAuditDBSeq.Add(1)
-	dsn := fmt.Sprintf("file:kx_perm_audit_err_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_perm_audit_err_")
 	// Deliberately do NOT migrate AuditEvent — queries will fail.
 
 	h := NewDashboardHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))

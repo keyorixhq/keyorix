@@ -28,6 +28,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
@@ -50,9 +51,16 @@ type setupGateEnv struct {
 
 func newSetupGateEnv(t *testing.T) *setupGateEnv {
 	t.Helper()
+	return newSetupGateEnvWrapped(t, nil)
+}
+
+// newSetupGateEnvWrapped is newSetupGateEnv over a storage wrapper (see
+// newTestCoreWrapped).
+func newSetupGateEnvWrapped(t *testing.T, wrap func(storage.Storage) storage.Storage) *setupGateEnv {
+	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
-	c := newTestCore(t)
+	c := newTestCoreWrapped(t, wrap)
 	c.SetTokenCacheInvalidator(customMiddleware.InvalidateTokenCacheByHash)
 	c.SetTokenCacheClearer(customMiddleware.ClearTokenCacheIfCached)
 	enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "sg-dek.key", SaltPath: "sg-kek.salt"}, t.TempDir())

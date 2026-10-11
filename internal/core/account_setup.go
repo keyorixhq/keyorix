@@ -114,8 +114,17 @@ func (c *KeyorixCore) EndSetupSessionIfComplete(ctx context.Context, userID uint
 	}
 	// Every session, the caller's included (keepID 0): the setup session must not
 	// survive, and no other session of this account predates the setup.
-	_ = c.deleteSessionsForUserAndEvict(ctx, userID, 0, "")
+	outcome := "every session was revoked and the next login requires the second factor"
+	if err := c.deleteSessionsForUserAndEvict(ctx, userID, 0, ""); err != nil {
+		// deleteSessionsForUserAndEvict has logged and audited the failure
+		// (EventSessionRevocationFailed). The surviving session is still
+		// setup-only and owes nothing, which both transports refuse with a
+		// re-authentication answer (HTTP EnforceAccountSetup, gRPC
+		// enforceGRPCAccessPolicy), so it never gains full access; report true
+		// so the client is told to sign in again.
+		outcome = fmt.Sprintf("its sessions could not be revoked (%v); the setup-only session is refused on every endpoint until it expires", err)
+	}
 	c.writeAuditEventFull(ctx, EventAccountSetupCompleted, &userID, nil, nil, "",
-		fmt.Sprintf("user %d finished account setup in a setup-only session (%s); every session was revoked and the next login requires the second factor", userID, reason))
+		fmt.Sprintf("user %d finished account setup in a setup-only session (%s); %s", userID, reason, outcome))
 	return true
 }

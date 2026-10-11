@@ -215,7 +215,7 @@ func TestContractPR2_ListProjects(t *testing.T) {
 }
 
 func TestContractPR2_CreatePAT(t *testing.T) {
-	h := NewPATHandler(freshCoreS12(t))
+	h := NewPATHandler(freshCoreS12WithCredentialOwners(t, 1))
 	body, _ := json.Marshal(map[string]any{"name": "contract-pr2-token"})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/api/v1/auth/tokens", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -247,7 +247,7 @@ func TestContractPR2_PATHygiene(t *testing.T) {
 }
 
 func TestContractPR2_ListExpiredPATs(t *testing.T) {
-	c := freshCoreS12(t)
+	c := freshCoreS12WithCredentialOwners(t, 1)
 	h := NewPATExpiryHandler(c)
 	seedExpiredPAT(t, h, 1)
 

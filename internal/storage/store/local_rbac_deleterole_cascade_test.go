@@ -31,6 +31,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // newFullSchemaStore opens a shared-cache in-memory SQLite DB migrated with
@@ -40,8 +41,7 @@ import (
 // isn't reachable from this external test package).
 func newFullSchemaStore(t *testing.T) (*store.LocalStorage, *gorm.DB) {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open("file::memory:?cache=shared"), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "deleterolecascade_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, kxstorage.MigrateExisting(db))
 	return store.NewLocalStorage(db), db
 }

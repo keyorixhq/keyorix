@@ -26,9 +26,23 @@ secrets/audit — printing one ✅/❌ line per step and a final `DEMO READY` /
 brings up its own fresh SQLite instance, checks it, and tears it down. Pass
 `--keep` to leave that instance running for the actual demo instead of
 bringing up a second one by hand; `--postgres` checks the Postgres backend
-instead; `--ui`/`--offline` force the Playwright walk / the airgap-e2e
+instead (it brings up `docker-compose.yml` with the backend **and** the web UI
+built from this checkout — see "Which images does what" below); `--ui`/`--offline` force the Playwright walk / the airgap-e2e
 offline-guarantee leg on. Anything red here is a demo blocker — fix it (or
 pick a different flow) before you're in front of a customer, not during.
+
+### Which images does what
+
+| Path | Backend | Web UI |
+| --- | --- | --- |
+| `scripts/demo/up.sh` (SQLite) | `keyorix-demo:airgap`, built from this checkout | embedded in that same binary |
+| `scripts/demo/check.sh --postgres` | `keyorix-demo:airgap`, built from this checkout | `keyorix-demo-web:local`, built from `web/` of this checkout |
+| plain `docker compose up` (release / self-hosting) | pinned `ghcr.io/keyorixhq/keyorix-server:<release>` | pinned `ghcr.io/keyorixhq/keyorix-web:<release>` |
+
+The release pins in `docker-compose.yml` stay on a released pair (guarded by
+`deploy/compose_pins_test.go`); the demo check overlays both images with ones
+built from the checkout, because a released web UI does not match a `main`
+backend (login bounced to `/login?logout_error=1`, #3035).
 
 ## 0. Before you're on stage (~1 min)
 
@@ -39,9 +53,11 @@ git clone https://github.com/keyorixhq/keyorix.git && cd keyorix
 
 One command: builds a local air-gapped image with the web UI embedded,
 starts it, bootstraps an admin, and seeds a realistic org — 3 projects, 2
-groups, a least-privilege user, 2 secrets (one with 2 versions), a machine
+groups, a least-privilege user, 3 secrets (one with 2 versions; backend-api has one in Development and one in Production, so the Secrets tab is never empty), a machine
 identity, and a populated audit trail — through the public API/CLI only.
-Prints the URL and every login it just created. Re-running it is a no-op
+Prints the URL and every login it just created. It also builds a small
+`keyorix-demo-sqlite:local` helper image (alpine + `sqlite3`) once, while it
+still has network, for the tamper demo in section 6. Re-running it is a no-op
 (idempotent); `./scripts/demo/down.sh` stops it, `--wipe` resets it.
 
 **Multi-factor authentication is on, as in every default install**
@@ -131,13 +147,14 @@ curl -H "Authorization: Bearer <machine token from up.sh output>" http://localho
 ./bin/keyorix audit verify                 # Audit chain: VALID
 ```
 
-For the dramatic version (needs the container stopped and `sqlite3` on the
-host, pointed at the named volume):
+For the dramatic version (needs the container stopped; uses the
+`keyorix-demo-sqlite:local` helper image `up.sh` built, so there is **no
+network access and no `apk add` on stage**):
 
 ```sh
 docker stop keyorix-demo
-docker run --rm -v keyorix-demo-data:/data alpine sh -c \
-  "apk add --no-cache sqlite >/dev/null && sqlite3 /data/keyorix.db \"UPDATE audit_events SET description='TAMPERED' WHERE id=5;\""
+docker run --rm --network none -v keyorix-demo-data:/data keyorix-demo-sqlite:local \
+  sqlite3 /data/keyorix.db "UPDATE audit_events SET description='TAMPERED' WHERE id=5;"
 docker start keyorix-demo
 ./bin/keyorix audit verify                 # Audit chain: BROKEN, first broken id: 5
 ```
@@ -156,10 +173,15 @@ Postgres backend to show): on Postgres, `admin backup` now works **beside a
 running server**, no stop needed — fixed since DEMO-1 (#2602, merged via
 #2613).
 
+The demo's master passphrase is a throwaway, DEMO-only value that `up.sh`
+writes (mode 0600, gitignored) to `.demo-2-cli-home/demo-secrets.env` as
+`KEYORIX_DEMO_MASTER_PASSWORD`; load it into your shell first, never type it:
+
 ```sh
+. .demo-2-cli-home/demo-secrets.env
 docker stop keyorix-demo
 docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
-  -e KEYORIX_MASTER_PASSWORD='<from up.sh — see .demo-2-state>' \
+  -e KEYORIX_MASTER_PASSWORD="$KEYORIX_DEMO_MASTER_PASSWORD" \
   keyorix-demo:airgap /app/keyorix-server admin backup --output backup.tar.gz --config keyorix.yaml
 ```
 
@@ -170,7 +192,7 @@ docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
   keyorix-demo:airgap mv keyorix.db keyorix.db.pre-restore
 
 docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
-  -e KEYORIX_MASTER_PASSWORD='<same as above>' \
+  -e KEYORIX_MASTER_PASSWORD="$KEYORIX_DEMO_MASTER_PASSWORD" \
   keyorix-demo:airgap /app/keyorix-server admin restore \
   --input backup.tar.gz --config keyorix.yaml --overwrite-existing
 # --overwrite-existing: the key files are untouched (same host, same config)

@@ -94,6 +94,7 @@ var skipList = map[string]string{
 	"POST /api/v1/auth/mfa/enroll":                    "TOTP enrollment; would need a TOTP code computed from the returned secret to complete activate -- not yet automated here, see server/http/handlers/mfa_test.go for existing coverage",
 	"POST /api/v1/auth/mfa/activate":                  "depends on mfa/enroll above",
 	"POST /api/v1/auth/mfa/disable":                   "depends on mfa/enroll+activate above (nothing enrolled to disable)",
+	"POST /api/v1/auth/change-password":               "would revoke this driver's own session mid-run; driven by journey 20",
 	"GET /api/v1/auth/mfa/recovery-codes":             "depends on mfa/enroll+activate above",
 	"POST /api/v1/auth/mfa/recovery-codes/regenerate": "depends on mfa/enroll+activate above",
 	"POST /api/v1/auth/mfa/stepup":                    "depends on mfa/enroll+activate above (nothing to step up into)",
@@ -152,8 +153,6 @@ var skipList = map[string]string{
 	"POST /auth/password-reset": "requires an out-of-band emailed reset token this driver cannot receive",
 	"POST /auth/setup/consume":  "requires an out-of-band admin-issued setup token/link this driver cannot receive through this flow (user create in this driver goes through POST /api/v1/users directly, not the setup-token invite path)",
 	"GET /auth/setup/{token}":   "see setup/consume above",
-
-	"POST /api/v1/auth/change-password": "would change this driver's own admin credential mid-run and likely revoke its bearer session, breaking every later authenticated call in the same shared session -- needs a dedicated single-purpose test with its own session",
 
 	// risk-exceptions approve enforces dual control (approver must be a
 	// DIFFERENT system.write holder than the creator, internal/core's

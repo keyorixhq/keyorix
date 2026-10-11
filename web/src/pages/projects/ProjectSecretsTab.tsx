@@ -1,3 +1,5 @@
+import { apiErrorMessage } from '../../services/client';
+import { useCan } from '../../features/auth/useCan';
 import React from 'react';
 import { useSearchParams } from 'react-router';
 import {
@@ -20,6 +22,7 @@ import { useProjectSecrets } from '../../features/secrets/useProjectSecrets';
 import { ShareSecretModal } from '../../features/sharing';
 import { EnvironmentPills } from '../../features/projects/EnvironmentPills';
 import { useProjectEnvironments } from '../../features/projects/api';
+import { useDefaultEnvironment } from '../../features/projects/useDefaultEnvironment';
 import { generateSecret } from '../../utils';
 import { SECRET_TYPES } from '../../features/secrets/listConstants';
 import { SecretsDriftPanel } from './SecretsDriftPanel';
@@ -50,75 +53,80 @@ const SecretsToolbar: React.FC<SecretsToolbarProps> = ({
     clearSelected,
     onOpenDrift,
     onOpenRotationPlan,
-}) => (
-    <div className="flex flex-wrap items-center gap-3 mb-4">
-        {/* Search */}
-        <div className="relative flex-1 min-w-[200px]">
-            <MagnifyingGlassIcon
-                className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4"
-                style={{ color: 'var(--text-muted)' }}
-            />
-            <input
-                type="text"
-                value={list.search}
-                onChange={(e) => list.setSearch(e.target.value)}
-                placeholder="Search secrets…"
-                className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-hidden"
-                style={{
-                    backgroundColor: 'var(--bg-surface)',
-                    border: '1px solid var(--border)',
-                    color: 'var(--text-primary)',
-                }}
-            />
-        </div>
-
-        {/* Type filter */}
-        <div className="w-36">
-            <Select
-                value={list.typeFilter}
-                onChange={(e) => list.setTypeFilter(e.target.value as SecretType | 'all')}
-                options={SECRET_TYPES}
-            />
-        </div>
-
-        {/* Page size */}
-        <div className="w-28">
-            <Select
-                value={String(list.pagination.pageSize)}
-                onChange={(e) => list.handlePageSizeChange(Number(e.target.value))}
-                options={PAGE_SIZE_OPTIONS}
-            />
-        </div>
-
-        {/* Bulk actions */}
-        {selectedItems.size > 0 && (
-            <div className="flex items-center gap-2">
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {selectedItems.size} selected
-                </span>
-                <Button variant="ghost" size="sm" onClick={clearSelected}>
-                    Clear
-                </Button>
+}) => {
+    const can = useCan();
+    return (
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+            {/* Search */}
+            <div className="relative flex-1 min-w-[200px]">
+                <MagnifyingGlassIcon
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4"
+                    style={{ color: 'var(--text-muted)' }}
+                />
+                <input
+                    type="text"
+                    value={list.search}
+                    onChange={(e) => list.setSearch(e.target.value)}
+                    placeholder="Search secrets…"
+                    className="w-full pl-9 pr-4 py-2 rounded-lg text-sm outline-hidden"
+                    style={{
+                        backgroundColor: 'var(--bg-surface)',
+                        border: '1px solid var(--border)',
+                        color: 'var(--text-primary)',
+                    }}
+                />
             </div>
-        )}
 
-        {/* Drift & rotation reports (ADR-020: sub-actions of the Secrets mode, not their own tabs) */}
-        <Button variant="outline" size="sm" onClick={onOpenDrift} className="flex items-center">
-            <ArrowsRightLeftIcon className="h-4 w-4 mr-1" />
-            Check Drift
-        </Button>
-        <Button variant="outline" size="sm" onClick={onOpenRotationPlan} className="flex items-center">
-            <ArrowPathIcon className="h-4 w-4 mr-1" />
-            Rotation Plan
-        </Button>
+            {/* Type filter */}
+            <div className="w-36">
+                <Select
+                    value={list.typeFilter}
+                    onChange={(e) => list.setTypeFilter(e.target.value as SecretType | 'all')}
+                    options={SECRET_TYPES}
+                />
+            </div>
 
-        {/* New Secret */}
-        <Button onClick={() => list.openModal('create-secret')} className="flex items-center ml-auto">
-            <PlusIcon className="h-4 w-4 mr-1" />
-            New Secret
-        </Button>
-    </div>
-);
+            {/* Page size */}
+            <div className="w-28">
+                <Select
+                    value={String(list.pagination.pageSize)}
+                    onChange={(e) => list.handlePageSizeChange(Number(e.target.value))}
+                    options={PAGE_SIZE_OPTIONS}
+                />
+            </div>
+
+            {/* Bulk actions */}
+            {selectedItems.size > 0 && (
+                <div className="flex items-center gap-2">
+                    <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                        {selectedItems.size} selected
+                    </span>
+                    <Button variant="ghost" size="sm" onClick={clearSelected}>
+                        Clear
+                    </Button>
+                </div>
+            )}
+
+            {/* Drift & rotation reports (ADR-020: sub-actions of the Secrets mode, not their own tabs) */}
+            <Button variant="outline" size="sm" onClick={onOpenDrift} className="flex items-center">
+                <ArrowsRightLeftIcon className="h-4 w-4 mr-1" />
+                Check Drift
+            </Button>
+            <Button variant="outline" size="sm" onClick={onOpenRotationPlan} className="flex items-center">
+                <ArrowPathIcon className="h-4 w-4 mr-1" />
+                Rotation Plan
+            </Button>
+
+            {/* New Secret */}
+            {can.writeSecrets && (
+                <Button onClick={() => list.openModal('create-secret')} className="flex items-center ml-auto">
+                    <PlusIcon className="h-4 w-4 mr-1" />
+                    New Secret
+                </Button>
+            )}
+        </div>
+    );
+};
 
 interface SecretsTableContentProps {
     list: ProjectSecretsList;
@@ -139,6 +147,7 @@ const SecretsTableContent: React.FC<SecretsTableContentProps> = ({
     onView,
     reveal,
 }) => {
+    const canCreate = useCan().writeSecrets;
     if (list.isLoading) {
         return (
             <div className="p-8">
@@ -156,12 +165,12 @@ const SecretsTableContent: React.FC<SecretsTableContentProps> = ({
                         ? 'No secrets match your filters'
                         : `No secrets in ${activeEnvName}`}
                 </p>
-                {!(list.search || list.typeFilter !== 'all') && (
+                {!(list.search || list.typeFilter !== 'all') && canCreate && (
                     <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
                         Create your first secret in this environment.
                     </p>
                 )}
-                {!(list.search || list.typeFilter !== 'all') && (
+                {!(list.search || list.typeFilter !== 'all') && canCreate && (
                     <Button onClick={() => list.openModal('create-secret')}>
                         <PlusIcon className="h-4 w-4 mr-1" />
                         New Secret
@@ -701,27 +710,31 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
     // ── Environment selection ─────────────────────────────────────────────
     const { data: environments = [], isLoading: envsLoading } = useProjectEnvironments(projectId);
 
-    // Default to 'production' if present, otherwise first env
-    const defaultEnvName = React.useMemo(() => {
+    // With no ?env=, open on an environment that actually has secrets (production
+    // first); the production-or-first rule is only the fallback while counts load or
+    // when none can be read. See useDefaultEnvironment.
+    const { name: preferredEnvName } = useDefaultEnvironment(projectId, environments, !searchParams.get('env'));
+    const fallbackEnvName = React.useMemo(() => {
         if (environments.length === 0) return 'production';
         const prod = environments.find((e) => e.name.toLowerCase() === 'production');
         return prod?.name ?? environments[0]?.name ?? 'production';
     }, [environments]);
+    const defaultEnvName = preferredEnvName ?? fallbackEnvName;
 
     const activeEnvName = searchParams.get('env') ?? defaultEnvName;
 
-    // Set default env in URL once environments load and no param is set
+    // Set the default env in the URL once it is decided (counts loaded) and no param is set
     React.useEffect(() => {
-        if (environments.length > 0 && !searchParams.get('env')) {
+        if (environments.length > 0 && preferredEnvName && !searchParams.get('env')) {
             setSearchParams(
                 (prev) => {
-                    prev.set('env', defaultEnvName);
+                    prev.set('env', preferredEnvName);
                     return prev;
                 },
                 { replace: true }
             );
         }
-    }, [environments, defaultEnvName, searchParams, setSearchParams]);
+    }, [environments, preferredEnvName, searchParams, setSearchParams]);
 
     const activeEnv = environments.find((e) => e.name === activeEnvName) ?? null;
     const activeEnvId = activeEnv?.id ?? null;
@@ -798,7 +811,7 @@ export const ProjectSecretsTab: React.FC<ProjectSecretsTabProps> = ({ projectId 
             <Alert
                 type="error"
                 title="Failed to load secrets"
-                message="There was an error loading secrets for this project."
+                message={apiErrorMessage(list.error, 'There was an error loading secrets for this project.')}
             >
                 <Button variant="outline" size="sm" onClick={() => list.refetch()}>
                     Retry

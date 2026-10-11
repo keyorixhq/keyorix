@@ -78,12 +78,11 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -96,17 +95,11 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-// s27DBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s27DBSeq atomic.Int64
-
 // newS27Store opens a unique in-memory SQLite DB with the requested models
 // auto-migrated.
 func newS27Store(t *testing.T, mods ...interface{}) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s27_%d?mode=memory&cache=shared", t.Name(), s27DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores27_", sqlite.Open, &gorm.Config{})
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}
@@ -116,9 +109,7 @@ func newS27Store(t *testing.T, mods ...interface{}) *LocalStorage {
 // brokenS27Store returns a LocalStorage whose DB is closed so every query fails.
 func brokenS27Store(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s27broken_%d?mode=memory&cache=shared", t.Name(), s27DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores27_", sqlite.Open, &gorm.Config{})
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())

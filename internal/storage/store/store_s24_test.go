@@ -17,29 +17,22 @@ package store
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
-
-// s24DBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s24DBSeq atomic.Int64
 
 // newS24Store opens a unique in-memory SQLite DB and returns a LocalStorage.
 // Uses a "_s24" suffix in the DSN so test-name-based DSNs cannot collide with
 // other sweeps.
 func newS24Store(t *testing.T) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s24_%d?mode=memory&cache=shared", t.Name(), s24DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores24_", sqlite.Open, &gorm.Config{})
 	return NewLocalStorage(db)
 }
 

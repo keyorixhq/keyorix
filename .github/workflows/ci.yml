@@ -316,7 +316,7 @@ jobs:
           fi
           if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
             echo "demo_smoke_relevant=true" >> "$GITHUB_OUTPUT"
-          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(scripts/demo/|server/Dockerfile$|server/webui/)'; then
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(scripts/demo/|server/Dockerfile$|server/webui/|web/src/|server/http/)'; then
             echo "demo_smoke_relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "demo_smoke_relevant=false" >> "$GITHUB_OUTPUT"
@@ -1683,7 +1683,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version-file: go.mod
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11
@@ -1722,6 +1722,9 @@ jobs:
           out=$(./scripts/demo/up.sh)
           echo "$out"
           echo "$out" | grep -q "already running and seeded" || { echo "expected the idempotent no-op path, got a reseed" >&2; exit 1; }
+
+      - name: Demo readiness check (fast API-only leg -- DEMO-READY-1)
+        run: ./scripts/demo/check.sh --url http://localhost:8080 --no-ui
 
       - name: scripts/demo/down.sh
         run: ./scripts/demo/down.sh --wipe

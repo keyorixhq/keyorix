@@ -53,7 +53,7 @@ func TestStartSchedulers_MFAStepUpGrantPrune_RemovesExpiredRow(t *testing.T) {
 
 	schedCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startSchedulers(schedCtx, cfg, coreService)
+	startSchedulersForTest(t, schedCtx, cfg, coreService)
 
 	// startSchedulers only wires up the scheduler goroutines and returns
 	// immediately; give the mfa_stepup_grant_prune scheduler's first

@@ -67,7 +67,7 @@ func TestPATExpiry_ListExpiredPATs_NoExpiredPATs_ReturnsEmpty(t *testing.T) {
 }
 
 func TestPATExpiry_ListExpiredPATs_WithExpiredPAT_ReturnsList(t *testing.T) {
-	c := freshCoreS12(t)
+	c := freshCoreS12WithCredentialOwners(t, 1)
 	h := NewPATExpiryHandler(c)
 
 	// Seed an expired PAT for user 1.
@@ -86,7 +86,7 @@ func TestPATExpiry_ListExpiredPATs_WithExpiredPAT_ReturnsList(t *testing.T) {
 }
 
 func TestPATExpiry_ListExpiredPATs_OnlyOwnTokens(t *testing.T) {
-	h := NewPATExpiryHandler(freshCoreS12(t))
+	h := NewPATExpiryHandler(freshCoreS12WithCredentialOwners(t, 1, 2))
 
 	// User 2's expired PAT — must not appear when user 1 queries.
 	seedExpiredPAT(t, h, 2)
@@ -118,7 +118,7 @@ func TestPATExpiry_BulkRevokeExpiredPATs_NoneExpired_Returns204(t *testing.T) {
 }
 
 func TestPATExpiry_BulkRevokeExpiredPATs_RevokesExpiredTokens(t *testing.T) {
-	h := NewPATExpiryHandler(freshCoreS12(t))
+	h := NewPATExpiryHandler(freshCoreS12WithCredentialOwners(t, 1))
 	ctx := context.Background()
 
 	// Seed two expired PATs for user 1, then bulk-revoke.
