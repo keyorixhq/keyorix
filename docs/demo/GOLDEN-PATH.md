@@ -107,9 +107,11 @@ it either way:
 
 ```sh
 export HOME=./.demo-2-cli-home   # the isolated CLI credential store up.sh used
-./bin/keyorix login --server http://localhost:8080 --username alice --password '<from up.sh output>' \
-  --mfa-code <6-digit code>                # only once alice has enrolled her own TOTP (step 2);
-                                           # until then require_mfa confines her to the enrolment endpoints
+./bin/keyorix login --server http://localhost:8080 --username alice
+                                           # paste alice's password (from the up.sh output) at the hidden prompt;
+                                           # once she has enrolled her own TOTP (step 2) the CLI also prompts for
+                                           # the 6-digit code. Until then require_mfa confines her to the
+                                           # enrolment endpoints
 ./bin/keyorix secret list --project 2     # numeric ID — alice holds no deployment-wide role,
                                            # so a project NAME needs one; the CLI says so
                                            # and tells you the numeric ID to use instead
@@ -135,15 +137,15 @@ only an owner who is a member of the secret's project can share it (#2976).
 ./bin/keyorix share list --secret-id 2          # note the share ID
 
 # as alice (or in the web UI: open db-password, edit the value)
-./bin/keyorix secret update --id 2 --value demo-db-pass-v2   # works: the share elevates her on this secret
-./bin/keyorix secret suspend --id 2                          # 403: a share never lets her suspend it
+./bin/keyorix secret update --id 2 --interactive   # works: the share elevates her on this secret
+./bin/keyorix secret suspend --id 2                 # 403: a share never lets her suspend it
 
 # as admin
 ./bin/keyorix share revoke --share-id <id from share list>
 
 # as alice
-./bin/keyorix secret update --id 2 --value nope   # 403 again
-./bin/keyorix secret get --id 2 --show-value      # still works: her role's read was never the share's
+./bin/keyorix secret update --id 2 --interactive   # 403 again
+./bin/keyorix secret get --id 2 --show-value        # still works: her role's read was never the share's
 
 # as admin
 ./bin/keyorix audit logs --limit 5   # share_created, share_access_elevated, share_revoked, each naming the share ID
@@ -157,8 +159,9 @@ recipient is not a member"). A share never applies to a non-member.
 ## 4. An audited secret reveal (~1.5 min)
 
 ```sh
-./bin/keyorix login --server http://localhost:8080 --username admin --password '<from up.sh output>' \
-  --mfa-code <6-digit code from your authenticator app>
+./bin/keyorix login --server http://localhost:8080 --username admin
+# hidden prompts: the admin password (from the up.sh output), then the
+# 6-digit code from your authenticator app
 ./bin/keyorix secret get --id 1 --show-value       # stripe-api-key, already rotated to v2 by up.sh
 ./bin/keyorix audit logs --limit 3                 # the reveal is right there: secret.read
 ```
