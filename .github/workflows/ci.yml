@@ -59,9 +59,12 @@ permissions: {}
 # left ~20 approved PRs with an all-cancelled run reported as a build-and-test
 # failure. A push (synchronize), reopen, or the ci:full label still supersede
 # the in-flight run exactly as before.
+# Only pull_request runs are ever superseded. push to main, merge_group and
+# workflow_dispatch get a group of their own (run_id), so neither an in-flight
+# nor a queued run of those is cancelled by a newer one.
 concurrency:
-  group: ci-${{ github.ref }}${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:full') && format('-label-{0}', github.run_id) || (github.event_name == 'schedule' && format('-nightly-{0}', github.run_id)) || '' }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.run_id }}${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:full') && format('-label-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
@@ -520,19 +523,39 @@ jobs:
       - name: Assert every docs/adr-NNN-*.md number is unique
         run: ./scripts/check-adr-numbers.sh
 
+      # CHURN-1: unreleased entries are changelog.d/ fragments, assembled into
+      # CHANGELOG.md at release time. --check validates every fragment.
+      - name: Validate changelog.d/ fragments
+        run: ./scripts/changelog-assemble.sh --check
+
+      # NON-FAILING for now (about 30 open PRs still edit CHANGELOG.md directly).
+      # A hard check can follow once they have drained. Needs the base ref.
+      - name: Notice if the PR edits CHANGELOG.md directly
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          # HEAD is the PR merge commit, so a two-dot diff against the base tip
+          # is exactly the PR's own change; depth 1 of the base is enough.
+          git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}" || true
+          ./scripts/changelog-assemble.sh --notice
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
-      - name: Verify docs/security-closures.tsv is generated from security-closures.d/*.tsv
+      # docs/security-closures.tsv is no longer committed (generated from
+      # docs/security-closures.d/ on demand); this validates the fragments.
+      - name: Validate docs/security-closures.d/*.tsv fragments
         run: scripts/gen-security-closures-tsv.sh --check
 
       - name: Self-test the closure guard (must be able to go red)
         run: ./scripts/check-closures.sh --self-test
 
       # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
-      # docs/security-closures.tsv gate-skips here by design -- that is
+      # docs/security-closures.d/ gate-skips here by design -- that is
       # expected, not a failure (see the ledger's own header). The test-suite
       # job's `core` leg below runs this SAME script again, WITH the DSN, and
       # is what actually proves those rows.
@@ -560,7 +583,7 @@ jobs:
       # exits 0, and continue-on-error is set as a second, belt-and-suspenders
       # layer in case a future edit ever changes that). See the script's own
       # header for why an issue missing from this report is not proof nothing
-      # is owed, and docs/security-closures.tsv's header for the same caveat
+      # is owed, and docs/security-closures.d/HEADER.txt for the same caveat
       # on its `issue` column.
       - name: Report closed security-labeled issues the ledger doesn't cite (informational)
         continue-on-error: true
@@ -1120,7 +1143,7 @@ jobs:
 
       # This job is the ONLY one with a Postgres service container (see this
       # job's own KEYORIX_TEST_PG_DSN comment above), so it is the only place
-      # a pg-gated docs/security-closures.tsv row can ever be genuinely
+      # a pg-gated docs/security-closures.d/ row can ever be genuinely
       # proven rather than gate-skipped. Restricted to the `core` leg: every
       # pg-gated row today lives in ./internal/core, and running the full
       # ledger sweep once per leg would just repeat the same ~17-row check 15
@@ -1711,16 +1734,15 @@ jobs:
       - name: Verify the seed through the public API (not the database)
         run: |
           set -e
-          # Single source of truth: the demo admin password is the fixed
-          # constant scripts/demo/up.sh bootstrapped with; read it from there
-          # instead of repeating the literal in the workflow.
-          admin_pw=$(sed -n 's/^ADMIN_PASSWORD="\(.*\)"$/\1/p' scripts/demo/up.sh)
-          [ -n "$admin_pw" ] || { echo "could not read ADMIN_PASSWORD from scripts/demo/up.sh" >&2; exit 1; }
-          body=$(jq -n --arg p "$admin_pw" '{username:"admin",password:$p}')
-          TOKEN=$(curl -s -X POST http://localhost:8080/auth/login \
-            -H 'Content-Type: application/json' \
-            -d "$body" | \
-            jq -r '.data.token')
+          # up.sh enrols TOTP for the admin (#2982), so a password login needs a
+          # code, and every accepted code is single-use (anti-replay): a second
+          # login here replays up.sh's window (-> 401) or has to wait out a step,
+          # and every login AND MFA verify spends a slot of the per-IP budget
+          # (10 per 15 min) that up.sh (3) and the check.sh step below (6) already
+          # nearly use up (the 11th attempt is the 429). So reuse the admin
+          # session up.sh obtained with its code login instead of logging in again.
+          TOKEN=$(cat .demo-2-cli-home/.admin-session-token)
+          [ -n "$TOKEN" ] || { echo "up.sh left no admin session token in .demo-2-cli-home" >&2; exit 1; }
           projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
             jq -r '.data.projects | length')
           [ "$projects" = "3" ] || { echo "expected 3 seeded projects, got $projects" >&2; exit 1; }
@@ -1993,7 +2015,7 @@ jobs:
   # "moved out, not dropped" decision in docs/cli-split-inventory.md). The service container
   # makes internal/vaultsource's and internal/e2e's VAULT_ADDR-gated tests
   # (docs/design-keyorix-migrate.md's "Testing" section) actually run here as `default-ci`
-  # (docs/security-closures.tsv's verification tiers) rather than silently skip forever --
+  # (docs/security-closures.d/HEADER.txt's verification tiers) rather than silently skip forever --
   # the same failure mode CLAUDE.md's Postgres-container comment above documents for
   # KEYORIX_TEST_PG_DSN, avoided here by wiring the container from this job's first commit
   # instead of adding it later.

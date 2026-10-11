@@ -51,6 +51,8 @@ import { useCan, type Can } from '../auth/useCan';
 import { Textarea } from '../../components/ui/Textarea';
 import { parseServerDate } from '../../utils';
 import { eventLabel, accessActionLabel } from '../../utils/eventLabels';
+import { resolveAuditIds } from '../audit/auditNames';
+import { sharePermissionLabel } from '../../utils/sharePermission';
 import { formatDateTime } from '../../utils/datetime';
 
 const relativeFromNow = (d: string | Date): string => {
@@ -416,11 +418,7 @@ const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
                 <Alert
                     type="error"
                     title="Rollback failed"
-                    message={
-                        rollbackMutation.error instanceof Error
-                            ? rollbackMutation.error.message
-                            : 'An unexpected error occurred'
-                    }
+                    message={apiErrorMessage(rollbackMutation.error, 'An unexpected error occurred')}
                 />
             )}
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -479,7 +477,7 @@ const AccessorsPanel: React.FC<AccessorsPanelProps> = ({ accessors }) => {
                         <span
                             className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${getPermissionColor(a.permission)}`}
                         >
-                            {a.permission}
+                            {a.source === 'owner' ? a.permission : sharePermissionLabel(a.permission)}
                         </span>
                     </div>
                 ))}
@@ -643,9 +641,13 @@ const TagsEditPanel: React.FC<TagsEditPanelProps> = ({
 
 interface AuditTrailPanelProps {
     auditTrail: AuditEntry[] | undefined;
+    // This secret's own id and name: stored descriptions such as "secret 3 restored" carry
+    // only the id, and the one object every row here is about is already known.
+    secretId: number;
+    secretName: string;
 }
 
-const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail }) => {
+const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail, secretId, secretName }) => {
     if (!auditTrail || auditTrail.length === 0) return null;
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
@@ -663,7 +665,9 @@ const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail }) => {
                             </span>
                             {e.description && (
                                 <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                    {e.description}
+                                    {resolveAuditIds(e.description, {
+                                        secrets: new Map([[secretId, secretName]]),
+                                    })}
                                 </span>
                             )}
                             {e.actor_type === 'machine_identity' && (
@@ -1140,7 +1144,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                 readOnly={!can.writeSecrets}
             />
 
-            <AuditTrailPanel auditTrail={auditTrail} />
+            <AuditTrailPanel auditTrail={auditTrail} secretId={secret.id} secretName={secret.name} />
 
             <RiskScorePanel risk={risk} />
 
