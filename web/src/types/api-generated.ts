@@ -3202,7 +3202,7 @@ export interface paths {
         };
         /**
          * List the shares the caller created, in projects they are a member of
-         * @description The owner-scoped share list behind the Sharing Management page for a caller without global secrets.read (GET /api/v1/shares needs it). Returns only shares the caller created, and only on secrets in projects the caller is a member of now: after removal from a project its shares stop being listed (they are not revoked). Received shares are not listed, and holding global secrets.read does not add anyone else's shares. Requires secrets.read at the global scope or at one or more project scopes; machine identities are refused. Every refusal is the same 403 with a fixed reason. Same filters, paging and shape as GET /api/v1/shares. A read: no audit event, like GET /api/v1/shares.
+         * @description The owner-scoped share list behind the Sharing Management page for a caller without global secrets.read (GET /api/v1/shares needs it). Returns only shares the caller created, and only on secrets in projects the caller is a member of now: after removal from a project its shares stop being listed (they are not revoked). Received shares are not listed, and holding global secrets.read does not add anyone else's shares. Requires secrets.read at the global scope or at one or more project scopes; machine identities are refused. Every refusal is the same 403 with a fixed reason. Same filters, paging and shape as GET /api/v1/shares. A read: no audit event, like GET /api/v1/shares. A list over 10000 shares is refused with 422 ShareListOverCap (never truncated); pagination in core is a follow-up.
          */
         get: operations["listOwnedShares"];
         put?: never;
@@ -11532,6 +11532,7 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     listOwnedShares: {
@@ -11588,6 +11589,7 @@ export interface operations {
             };
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     updateSharePermission: {
