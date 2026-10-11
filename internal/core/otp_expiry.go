@@ -65,8 +65,16 @@ func (c *KeyorixCore) refuseExpiredOneTimePassword(ctx context.Context, user *mo
 	}
 	c.recordFailedLogin(ctx, user)
 	uid := user.ID
-	c.writeAuditEventFailed(ctx, EventOneTimePasswordExpired, &uid, nil, "",
-		fmt.Sprintf("login refused for user %d: the one-time password expired at %s",
-			uid, user.OneTimePasswordExpiresAt.UTC().Format(time.RFC3339)))
+	desc := fmt.Sprintf("login refused for user %d: the one-time password expired at %s",
+		uid, user.OneTimePasswordExpiresAt.UTC().Format(time.RFC3339))
+	// Asynchronous (goSafe), like the transport's auth.login_failed audit: a
+	// synchronous hash-chained insert here, on the expired branch only, would make it
+	// measurably slower than the wrong-password branch and turn the audit itself into
+	// the timing oracle this change exists to avoid (see denyAfterCredentialMatched).
+	// Detached so the write outlives the request context.
+	detached := DetachedAuditContext(ctx)
+	goSafe(func() {
+		c.writeAuditEventFailed(detached, EventOneTimePasswordExpired, &uid, nil, "", desc)
+	})
 	return true
 }

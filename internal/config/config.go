@@ -1092,12 +1092,13 @@ type SecurityConfig struct {
 	RecoverAdmin RecoverAdminConfig `yaml:"recover_admin"`
 	// RecoveryOneTimePasswordTTL is how long the one-time password printed by
 	// `keyorix-server admin recover-admin` stays valid, as a Go duration (e.g.
-	// "24h", "90m"). Empty, unparseable or non-positive means the 24h default;
-	// there is no way to configure "never expires" (OTP-EXPIRY-1).
+	// "24h", "90m"). Empty means the 24h default; a set value must be a duration
+	// in (0, MaxOneTimePasswordTTL] or Validate refuses it. There is no way to
+	// configure "never expires" (OTP-EXPIRY-1).
 	RecoveryOneTimePasswordTTL string `yaml:"recovery_one_time_password_ttl"`
 	// OneTimePasswordTTL is the same for admin-created one-time passwords
-	// (`keyorix user create --one-time-password`). Empty, unparseable or
-	// non-positive means the 72h default.
+	// (`keyorix user create --one-time-password`). Empty means the 72h default;
+	// the same range check applies.
 	OneTimePasswordTTL string `yaml:"one_time_password_ttl"`
 }
 
@@ -2695,6 +2696,38 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return err
 	}
 
+	if err := validateOneTimePasswordTTLs(c.Security); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// MaxOneTimePasswordTTL is the longest life a one-time password may be configured
+// with. A credential issued out-of-band that stays valid for longer is a standing
+// secret, which is what expiry exists to prevent.
+const MaxOneTimePasswordTTL = 7 * 24 * time.Hour
+
+// validateOneTimePasswordTTLs rejects a security.one_time_password_ttl /
+// security.recovery_one_time_password_ttl that is set but unusable, instead of
+// letting the getters fall back to the default and hide the typo (a "7d" is not a Go
+// duration: say "168h"). Empty is valid and means the default.
+func validateOneTimePasswordTTLs(s SecurityConfig) error {
+	for _, f := range []struct{ key, raw string }{
+		{"security.one_time_password_ttl", s.OneTimePasswordTTL},
+		{"security.recovery_one_time_password_ttl", s.RecoveryOneTimePasswordTTL},
+	} {
+		if f.raw == "" {
+			continue
+		}
+		d, err := time.ParseDuration(f.raw)
+		if err != nil {
+			return fmt.Errorf("%s: %q is not a Go duration (use e.g. \"24h\" or \"90m\"; days are written in hours, \"168h\" for 7 days)", f.key, f.raw)
+		}
+		if d <= 0 || d > MaxOneTimePasswordTTL {
+			return fmt.Errorf("%s: %q is outside the allowed range (greater than 0, at most %s)", f.key, f.raw, MaxOneTimePasswordTTL)
+		}
+	}
 	return nil
 }
 
