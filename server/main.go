@@ -2084,7 +2084,7 @@ func runStartupValidation(cfg *config.Config) error {
 		// "run automatically" had no signal that they hadn't opted in. enforceKeyFilePermissions
 		// (called separately, right after this) still runs unconditionally as the lighter-weight
 		// backstop, so this is visibility only, not a behavior change.
-		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks (internal/startup.ValidateStartup) are SKIPPED. Set it true to enable them.")
+		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks are SKIPPED. Set it true to enable them.")
 		return nil
 	}
 	configPath := config.ResolvedPath("")
@@ -2324,7 +2324,10 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 func warnInsecureSettingsInEffect(cfg *config.Config) {
 	for _, s := range config.InsecureSettingsRegistry {
 		if s.InEffect(cfg) {
-			log.Printf("WARNING: %s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
+			// Name is a stable identifier, not always a key an operator can
+			// set today; SourcePaths are the config keys that actually
+			// control the state, so print them for the operator to act on.
+			log.Printf("WARNING: %s is in effect (%s; config: %s) — %s", s.Name, s.Value(cfg), strings.Join(s.SourcePaths, ", "), s.Describe)
 		}
 	}
 }
