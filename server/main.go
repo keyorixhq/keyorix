@@ -748,6 +748,10 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	coreService.SetAuthRateLimitFallbackReplicas(cfg.Security.AuthRateLimitFallback.GetReplicas())
 	log.Printf("Auth rate-limit storage fallback: limits divided by %d replica(s)", cfg.Security.AuthRateLimitFallback.GetReplicas())
 
+	// Admin-created one-time passwords expire (OTP-EXPIRY-1); the recover-admin
+	// password's lifetime is read by that command itself, from the same section.
+	coreService.SetOneTimePasswordTTL(cfg.Security.GetOneTimePasswordTTL())
+
 	// Apply per-account login lockout (brute-force protection, distinct from and
 	// complementary to the per-IP rate limiter, which distributed guessing can evade).
 	// Enabled BY DEFAULT — a secrets-manager login must resist online guessing out of
