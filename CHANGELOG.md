@@ -3,9 +3,62 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+**Unreleased entries now live in `changelog.d/`** (one fragment file per PR; see
+`changelog.d/README.md`) and are assembled into this file at release time by
+`scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
+that section is the text written before the switch.
+
 ## Unreleased
 
 ### Security
+- **HSTS behind a TLS-terminating load balancer** (#3058): the web nginx (compose
+  image and Helm chart) sends `Strict-Transport-Security` only for a request from a
+  configured trusted proxy (`KEYORIX_WEB_TRUSTED_PROXIES` / `web.trustedProxies`)
+  that carries `X-Forwarded-Proto: https`; never for direct http, never on the say-so
+  of an untrusted client. On by default once a trusted proxy is configured, off
+  otherwise. See docs/SELF_HOSTING.md §7. Guarded by a real-nginx test
+  (`deploy` `TestWebNginxHSTS_*`).
+- **A database fault during login no longer reveals that the password, TOTP
+  code or passkey was correct.** Every login path (password, TOTP, WebAuthn
+  second factor, passwordless, re-authentication, MFA step-up) already answered
+  a storage failure *after* the credential matched with the same response a
+  wrong credential gets. The account's **lockout state** now matches too: the
+  failed-attempt counter is cleared only once the login has actually been
+  delivered, and a post-match failure counts as an attempt. Previously the
+  counter was reset on the way to the failure, so an attacker at one attempt
+  short of the lockout threshold could tell a correct password from a wrong one
+  by whether the account locked. Audit logging distinguishes the two for
+  operators — `auth.login_error` (the credential was right; a storage fault
+  denied the login) versus `auth.login_failed` (a wrong credential) — and
+  `/auth/mfa/verify` now writes `auth.login_error` for this case instead of
+  nothing at all. Visible effects: a login denied by a transient storage fault
+  now counts toward the per-account lockout, so a sustained database problem can
+  lock accounts whose owners typed the right password; and the counter is reset a
+  few milliseconds later in the request than before. A fault reading the
+  account's roles after the password matched now also answers `401 Invalid
+  credentials` instead of a distinguishable `500`. (#2894, #2888)
+- **The bundled Caddy (`tls` compose profile) no longer runs as root.** It runs as
+  uid:gid 65532 with only `NET_BIND_SERVICE`. A one-shot `caddy-init` service
+  chowns the existing `caddy_data` / `caddy_config` volumes first, so upgrading
+  an install whose Caddy volumes are root-owned needs no manual step and keeps
+  its certificates. `caddy-init` runs with `CHOWN` + `DAC_READ_SEARCH` so a
+  second run (Caddy's storage directories are `0700`) and an interrupted first
+  run succeed; it touches only the two Caddy volumes and only entries not already
+  owned by 65532. See `docs/SELF_HOSTING.md` §7.
+- **Every `tmpfs` (compose) and `emptyDir` (Helm) now has an explicit size limit**
+  (`size=` / `sizeLimit`), so a runaway writer cannot exhaust host memory or node
+  ephemeral storage. The backend's `/tmp` (64 MiB) also stages `admin restore`.
+- **The bundled PostgreSQL runs as the image's own uid, 70, in both compose and
+  the Helm chart** (`postgres:15-alpine`; the Debian-based images use 999). Compose
+  volumes were already owned by 70. **Helm upgrade note:** charts since v0.87.0 ran
+  the pod as 999 even on the alpine image, so an existing chart-created volume is
+  owned by 999 and the pod will not start (Postgres refuses a data directory it
+  does not own). Either `--set postgresql.runAsUser=999` to keep the old owner, or
+  `--set postgresql.migrateOwnership=true` for a one-time chown to 70 (opt-in: it
+  adds a root init container with only `CHOWN` + `DAC_READ_SEARCH`, which a Pod
+  Security "restricted" namespace rejects). Guarded by `deploy/hardening`, which
+  ties compose user, chart securityContext and image flavour together. See
+  `docs/UPGRADING.md` §5.
 - **The shipped compose stack and Helm chart run with
   `security.enable_file_permission_check` on** (ADR-112 default): key material and
   the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
@@ -127,6 +180,27 @@ All notable changes to Keyorix are documented here. This project follows
   password; prints one-time recovery codes). With `require_mfa` on, this is
   how a CLI-only operator gets past the first-login enrolment confinement;
   `keyorix login --mfa-code` completes later logins.
+- **16 security-weakening settings renamed to an `insecure_` prefix** (ADR-112,
+  secure-by-default baseline, item 2, part 3) —
+  `security.allow_unsafe_file_permissions`, `security.login_lockout.disabled`,
+  `security.recover_admin.keyless_mode`,
+  `audit.siem.allow_private_network_target`/`allow_insecure_transport`,
+  `evidence_delivery.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `notifications.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `dynamic_secrets.allow_private_network_targets`/`allow_insecure_transport`,
+  `storage.encryption.key_provider.kms_allow_context_fallback`/`allow_weaker_fallback`,
+  `sso.providers[].trust_asserted_email`,
+  `sso.providers[].saml.allow_idp_initiated` and `audit_checkpoints.disabled`.
+  **Upgrade note: every old name still works exactly as before.** It is a
+  deprecated alias, not a removal — the raw YAML is rewritten before the strict
+  decode, so nothing changes except that using an old name now logs a start-up
+  warning naming its replacement. Setting both names is not ambiguous: the new
+  one wins and a "both set" warning fires. The two key-provider settings are
+  also aliased **inside the `fallbacks:` chain**, where a config file using the
+  old name previously hit the strict decode's unknown-field check and the
+  server refused to start instead of warning.
+  Not renamed: the fourteen settings tracked in #2895, each of which needs a
+  polarity inversion or a non-boolean field restructured first.
 - **Every security-weakening setting is now registered, warned about and
   audited** (ADR-112, secure-by-default baseline, item 2 — the opt-out rule).
   `internal/config.InsecureSettingsRegistry` is the single enumeration of all
@@ -142,11 +216,10 @@ All notable changes to Keyorix are documented here. This project follows
   A **sweep of the whole config surface** (`insecure_settings_sweep_test.go`)
   is what keeps the registry honest: a setting whose name reads as an opt-out
   and that no entry covers fails CI by name, and a set ratchet over every
-  leaf setting fails on *any* config addition, removal or rename — because eight of the registered
+  leaf setting fails on *any* config addition, removal or rename — because seven of the registered
   weakenings (`membership.validation_mode`, `storage.database.ssl_mode`,
   `credential_delivery.mode`, the SMTP/email `tls` enums, `metrics_token`,
-  `max_request_body_bytes`, `sso.providers[].trust_asserted_email`) have names
-  no pattern list can recognise. Thirteen settings that cannot be renamed
+  `max_request_body_bytes`) have names no pattern list can recognise. Thirteen settings that cannot be renamed
   mechanically — each needing a polarity inversion of a load-bearing flag, or
   a non-boolean field restructured into a real boolean — are recorded as known
   exceptions with an owning tracking issue, and are covered by the warning,

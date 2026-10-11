@@ -43,7 +43,8 @@ single binary and Compose + Postgres): a secret written by v0.95.3 reads back
 unchanged, `admin verify-audit` is VALID, and the first start logs
 `ADR-112 grace period: security.require_mfa now defaults to true, but this is an
 upgraded deployment` — MFA is not enforced yet and `admin validate --posture`
-counts it as a deviation until each admin enrols (`keyorix mfa enroll` /
+(run with the server stopped, like every `admin` command) counts it as a
+deviation until each admin enrols (`keyorix mfa enroll` /
 `activate`; the v0.95.3 CLI has no `mfa enroll`, so use the new CLI or the web
 UI) and `security.require_mfa: true` is set explicitly. Back up with the *old*
 release's tooling before swapping: on the v0.95.3 Compose image
@@ -166,6 +167,22 @@ skip.
   (e.g. containing the admin username) no longer leaves the database
   half-seeded. The whole bootstrap runs in one transaction, so a rejected
   attempt writes nothing and retrying with a corrected password just works.
+- **Bundled PostgreSQL uid (70 on the alpine image).** The chart now runs the
+  bundled Postgres as the uid of its image, `postgresql.runAsUser` (default
+  `70`, what `postgres:15-alpine` and `docker-compose.yml` use). Charts since
+  v0.87.0 ran it as `999`, so a data volume they created is owned by `999`, and
+  Postgres refuses to start on a data directory it does not own (the pod
+  CrashLoops with `data directory ... has wrong ownership`). Pick one on the
+  `helm upgrade` that introduces this chart:
+  - `--set postgresql.runAsUser=999` -- keep running as the volume's owner (no
+    change to the volume; a Debian-based `postgres:*` image also needs 999); or
+  - `--set postgresql.migrateOwnership=true` -- a one-time, opt-in init container
+    chowns the volume to `runAsUser`. It runs as root with only `CHOWN` and
+    `DAC_READ_SEARCH`, touches only the data volume and only entries not already
+    owned by `runAsUser`, and is a no-op on later starts (remove the flag again
+    once migrated). A Pod Security "restricted" namespace rejects it. Rolling
+    back to an older chart afterwards needs the volume chowned back to `999`.
+  Compose volumes need nothing: the compose stack always ran as `70`.
 
 **VERIFIED** — real `helm install` and `helm upgrade` against a kind
 cluster with locally built server/web images: the password-length gate
