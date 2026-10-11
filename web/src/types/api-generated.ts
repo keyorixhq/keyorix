@@ -5078,7 +5078,7 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
-            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
             total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
@@ -5491,7 +5491,7 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
-            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
             total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
