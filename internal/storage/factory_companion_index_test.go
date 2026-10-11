@@ -44,6 +44,8 @@ func TestCompanionIndexes_CreatedOnUpgrade(t *testing.T) {
 		{"anomaly_alerts dedup (composite)", "idx_anomaly_alerts_dedup"},
 		{"secret_access_logs (secret_node_id, access_time)", "idx_secret_access_logs_secret_time"},
 		{"secret_access_logs.access_time", "idx_secret_access_logs_access_time"},
+		// total_reads: a secret's lifetime read count, answered from the index alone.
+		{"secret_access_logs (secret_node_id, action)", "idx_secret_access_logs_secret_action"},
 		// ADR-029 tamper-evidence hash chain — the highest-stakes case: VerifyAuditChain
 		// is a security control, and an unindexed prev_hash/entry_hash lookup degrading
 		// to a full table scan as audit_events grows risks the check being skipped

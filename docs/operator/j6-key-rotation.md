@@ -69,10 +69,10 @@ not a problem.
 ## Verify nothing broke
 
 ```bash
-keyorix-server --config ./keyorix.yaml   # restart with the NEW passphrase after rotate-kek
+KEYORIX_MASTER_PASSWORD='<new passphrase>' KEYORIX_CONFIG_PATH=./keyorix.yaml keyorix-server   # restart with the NEW passphrase after rotate-kek (the server has no --config flag)
 keyorix secret get --id <id> --show-value
 keyorix audit logs --limit 20
 ```
 
 The secret's value should be unchanged, and `audit logs` should show an
-`admin.encryption.rotate` (or `.rotate-kek`) event with the timestamp of your rotation.
+`admin.encryption.rotate` (or `admin.encryption.rotate_kek`) event with the timestamp of your rotation.

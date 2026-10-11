@@ -123,3 +123,55 @@ func TestMFAStepUpHandler_PostMatchStorageError_IndistinguishableFromWrongCode(t
 	assert.Equal(t, wrong.Code, post.Code, "a post-match storage error must not be distinguishable from a wrong code by status")
 	assert.Equal(t, wrong.Body.String(), post.Body.String(), "a post-match storage error must not be distinguishable from a wrong code by body")
 }
+
+// Review of #2947 (MERGE-MASTER): VerifyMFAStepUp returned raw storage errors from
+// the steps AFTER the code matched (the login-lockout re-check's LockUserForUpdate /
+// UpdateLoginLockoutState, and CreateMFAStepUpGrant). Those reached the handler's
+// generic branch as a 401 carrying err.Error(): distinguishable from a wrong code,
+// and now printed by the CLI. Every post-match storage fault must answer exactly
+// like a wrong code.
+func TestMFAStepUpHandler_EveryPostMatchStorageFault_IndistinguishableFromWrongCode(t *testing.T) {
+	for _, method := range []string{"MarkTOTPStepUsed", "LockUserForUpdate", "UpdateLoginLockoutState", "CreateMFAStepUpGrant"} {
+		t.Run(method, func(t *testing.T) {
+			require.NoError(t, i18n.Initialize(&config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}))
+			db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+			require.NoError(t, err)
+			require.NoError(t, db.AutoMigrate(
+				&models.User{}, &models.MFASecret{}, &models.MFARecoveryCode{},
+				&models.MFAChallenge{}, &models.Session{}, &models.AuditEvent{},
+				&models.MFAStepupToken{}, &models.MFAStepUpGrant{},
+			))
+			hash, err := bcrypt.GenerateFromPassword([]byte(stepUpTestPassword), bcrypt.MinCost)
+			require.NoError(t, err)
+			require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", Email: "a@b.com",
+				PasswordHash: string(hash), AccountState: "active"}).Error)
+			enc := encryption.NewService(&config.EncryptionConfig{Enabled: true, DEKPath: "dek.key", SaltPath: "kek.salt"}, t.TempDir())
+			require.NoError(t, enc.Initialize("test-passphrase"))
+			fs := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
+			coreService := core.NewKeyorixCore(fs)
+			coreService.SetAuthEncryptor(enc)
+			// Lockout on, so the re-check actually runs LockUserForUpdate.
+			coreService.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
+				Enabled: true, MaxAttempts: 10, Window: 15 * time.Minute, BaseCooldown: time.Minute, MaxCooldown: time.Hour,
+			})
+			h := NewAuthHandler(coreService, false)
+			secret, _ := activateMFAForStepUpTest(t, coreService)
+
+			// The reference wrong code also leaves one recorded failed attempt, so the
+			// later success has state to clear (UpdateLoginLockoutState is reached).
+			wrong := httptest.NewRecorder()
+			h.MFAStepUp(wrong, postJSON("/api/v1/auth/mfa/stepup", map[string]string{"code": "000000"}, 1))
+			require.Equal(t, http.StatusUnauthorized, wrong.Code, wrong.Body.String())
+
+			code, err := totp.GenerateCode(secret, time.Now())
+			require.NoError(t, err)
+			fs.Arm(&faultstorage.FaultSpec{Method: method, NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+			post := httptest.NewRecorder()
+			h.MFAStepUp(post, postJSON("/api/v1/auth/mfa/stepup", map[string]string{"code": code}, 1))
+			require.True(t, fs.Fired(), "the armed %s fault must have fired", method)
+
+			assert.Equal(t, wrong.Code, post.Code, "a post-match %s failure must not be distinguishable from a wrong code by status", method)
+			assert.Equal(t, wrong.Body.String(), post.Body.String(), "a post-match %s failure must not be distinguishable from a wrong code by body (and must not echo the storage error)", method)
+		})
+	}
+}

@@ -53,6 +53,11 @@ func (s *breakGlassNotifyPanicSpy) ListGlobalAdminAssignmentsForUpdate(_ context
 	return nil, nil
 }
 
+// projectAdminRecipients vets every candidate's account (active, login not blocked).
+func (s *breakGlassNotifyPanicSpy) GetUser(_ context.Context, id uint) (*models.User, error) {
+	return &models.User{ID: id, IsActive: true, AccountState: AccountActive}, nil
+}
+
 func (s *breakGlassNotifyPanicSpy) CreateNotification(_ context.Context, n *models.Notification) (*models.Notification, error) {
 	if s.panicOnNotification {
 		panic("simulated CreateNotification panic")

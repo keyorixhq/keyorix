@@ -72,3 +72,39 @@ func TestNginxConfSecurityHeadersMatchGoMiddleware(t *testing.T) {
 		assert.Contains(t, csp, "frame-ancestors 'none'", "CSP must explicitly set frame-ancestors 'none': %q", csp)
 	}
 }
+
+// TestNginxConfSingleLayerHeadersAndNoPlainHTTPHSTS guards two properties of
+// the compose stack's web tier found in DEMO-WALK-3 (finding 23):
+//
+//  1. HSTS is never sent by this plain-HTTP nginx. HSTS over http:// is wrong;
+//     the TLS terminator (Caddyfile) or the backend (only when it serves TLS,
+//     SecurityHeaders(tlsEnabled)) owns it.
+//  2. Every security header nginx adds at server scope is hidden from the
+//     proxied backend response with proxy_hide_header, so API responses carry
+//     each header exactly once (the backend adds the same set itself).
+//
+// It checks the config text, not a running nginx: it cannot see a header the
+// backend starts sending that is not in the list below.
+func TestNginxConfSingleLayerHeadersAndNoPlainHTTPHSTS(t *testing.T) {
+	data, err := os.ReadFile("../../web/nginx.conf") // #nosec G304 -- fixed relative path to a repo file
+	require.NoError(t, err)
+	conf := string(data)
+
+	assert.NotRegexp(t, regexp.MustCompile(`(?m)^\s*add_header\s+Strict-Transport-Security`), conf,
+		"web/nginx.conf serves plain HTTP and must not add HSTS (Caddyfile owns it)")
+
+	addRe := regexp.MustCompile(`(?m)^\s*add_header\s+([A-Za-z-]+)\s`)
+	hideRe := regexp.MustCompile(`(?m)^\s*proxy_hide_header\s+([A-Za-z-]+);`)
+	hidden := map[string]bool{}
+	for _, m := range hideRe.FindAllStringSubmatch(conf, -1) {
+		hidden[m[1]] = true
+	}
+	for _, m := range addRe.FindAllStringSubmatch(conf, -1) {
+		name := m[1]
+		if name == "Cache-Control" { // varies per response; the backend's API Cache-Control must pass through
+			continue
+		}
+		assert.True(t, hidden[name], "nginx adds %s but does not proxy_hide_header it: proxied API responses would carry it twice", name)
+	}
+	assert.True(t, hidden["Strict-Transport-Security"], "a backend HSTS must not leak through the plain-HTTP proxy")
+}

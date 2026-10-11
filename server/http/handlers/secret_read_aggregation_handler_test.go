@@ -7,11 +7,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -21,19 +19,15 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
-
-var secretReadAggDBCounter atomic.Int64
 
 // newSecretReadAggCore opens a fresh in-memory SQLite DB with all tables needed
 // by the read-aggregation handler and returns the core + raw DB for seeding.
 func newSecretReadAggCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := secretReadAggDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhdlr_readagg_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhdlr_readagg_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
@@ -203,10 +197,7 @@ func (s *failingReadAggStore) GetSecretReadCounts(_ context.Context, _ uint, _, 
 
 func TestGetSecretReadSummary_StorageError(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
-	n := secretReadAggDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhdlr_readagg_fail_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhdlr_readagg_fail_")
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}))
 
 	c := core.NewKeyorixCore(&failingReadAggStore{store.NewLocalStorage(db)})

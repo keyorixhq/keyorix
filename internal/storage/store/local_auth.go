@@ -43,10 +43,19 @@ func (ls *LocalStorage) CreateSession(ctx context.Context, session *models.Sessi
 	// (it must reach the client) but keep it out of the row; the column holds the hash.
 	plaintext := session.SessionToken
 	session.SessionToken = hashSessionToken(plaintext)
-	err := ls.db.WithContext(ctx).Create(session).Error
+	// #2701: insert and re-check the owner's liveness in ONE transaction — see
+	// CreatePersonalAccessToken's doc comment. Without it a session committed
+	// after a suspend's DeleteSessionsForUserExcept swept the table, and became
+	// usable again the moment the account was reactivated, up to its own expiry.
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(session).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return requireLiveCredentialOwner(tx, session.UserID)
+	})
 	session.SessionToken = plaintext // restore for the caller (transient, never re-stored)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return nil, err
 	}
 	return session, nil
 }
@@ -114,6 +123,13 @@ func (ls *LocalStorage) RotateSession(ctx context.Context, oldID uint, newSessio
 		plaintext := newSession.SessionToken
 		newSession.SessionToken = hashSessionToken(plaintext)
 		if err := tx.Create(newSession).Error; err != nil {
+			return err
+		}
+		// #2701: the rotated-in session is a fresh credential row, so it needs
+		// the same owner re-check its sibling insert does. The rotation's own
+		// CAS on rotated_at serializes it against another rotation, not against
+		// a credential sweep.
+		if err := requireLiveCredentialOwner(tx, newSession.UserID); err != nil {
 			return err
 		}
 		newSession.SessionToken = plaintext
@@ -262,11 +278,51 @@ func (ls *LocalStorage) CleanupExpiredSessions(ctx context.Context) error {
 
 // --- Personal Access Tokens (ADR-027) ---
 
+// CreatePersonalAccessToken inserts a PAT and, in the same transaction, re-reads
+// its owning user with lockLiveParent — still active, still in a login-capable
+// account_state — rolling back if it is not (#2701, INV-STORE-21).
+//
+// Every path that revokes a user's credentials (setAccountState's
+// blocked-state sweep, DeleteUser, DeprovisionSCIMUser) row-locks the user
+// FIRST and only then runs RevokeAllPersonalAccessTokensForUser, which is what
+// makes the write-then-check ordering sound here: either the sweep's snapshot
+// includes this row, or this re-check blocks on the sweep's lock and then sees
+// the blocked state. Without it the INSERT committed with revoked=false after a
+// sweep that was audited as complete — and because ReactivateUser revokes
+// nothing, the routine suspend → investigate → reactivate sequence handed the
+// credential back.
 func (ls *LocalStorage) CreatePersonalAccessToken(ctx context.Context, t *models.PersonalAccessToken) (*models.PersonalAccessToken, error) {
-	if err := ls.db.WithContext(ctx).Create(t).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(t).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		return requireLiveCredentialOwner(tx, t.UserID)
+	})
+	if err != nil {
+		return nil, err
 	}
 	return t, nil
+}
+
+// requireLiveCredentialOwner is the shared child-under-live-parent re-check for
+// the two credential tables a suspend/deactivate/delete sweeps. It is one
+// function rather than two call sites so the predicate — and in particular the
+// account_state list — cannot drift between the PAT path and the session path.
+//
+// loginCapableAccountStates is the SQL counterpart of core.AccountLoginBlocked.
+// They are kept in step by TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked
+// (internal/core), which is why this reuses that exact slice rather than
+// introducing a second list for the same predicate.
+func requireLiveCredentialOwner(tx *gorm.DB, userID uint) error {
+	live, err := lockLiveParent(tx, &models.User{},
+		"id = ? AND is_active = ? AND account_state IN ?", userID, true, loginCapableAccountStates)
+	if err != nil {
+		return err
+	}
+	if !live {
+		return fmt.Errorf("%s", i18n.T("ErrorUserNotFound", nil))
+	}
+	return nil
 }
 
 func (ls *LocalStorage) ListPersonalAccessTokensByUser(ctx context.Context, userID uint) ([]*models.PersonalAccessToken, error) {
