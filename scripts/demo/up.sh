@@ -286,6 +286,10 @@ export KEYORIX_SERVER="$SERVER_URL" KEYORIX_TOKEN="$DEMO_TOKEN"
 if [ -n "${KEYORIX_DEMO_SESSION_OUT:-}" ]; then
   ( umask 077; printf '%s' "$DEMO_TOKEN" > "$KEYORIX_DEMO_SESSION_OUT" )
 fi
+# Demo only, 0600, removed by down.sh --wipe with the rest of CLI_HOME: lets the
+# CI seed check reuse this session instead of spending two more slots of the
+# per-IP login budget (10 per 15 min, each login AND each MFA verify counts).
+( umask 077; printf '%s' "$DEMO_TOKEN" > "$CLI_HOME/.admin-session-token" )
 ok "Admin MFA enrolled (TOTP) and logged in with a code"
 
 step "Seeding org structure: 2 projects, 2 groups"
