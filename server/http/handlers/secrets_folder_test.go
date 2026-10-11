@@ -14,10 +14,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -26,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -41,17 +40,12 @@ func decodeFolderListResponse(t *testing.T, body []byte) *secretListResponseWire
 	return wrapper.Data
 }
 
-var folderTestDBCounter atomic.Int64
-
 // freshFolderFixture builds an isolated named in-memory SQLite DB with a project,
 // environment, one system_admin user, and one folder node ready for use.
 func freshSecretFolderFixture(t *testing.T) (*SecretHandler, *core.KeyorixCore, *models.SecretNode, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := folderTestDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxsecfolder_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxsecfolder_")
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
@@ -145,9 +139,9 @@ func TestCreateSecret_WithParentID(t *testing.T) {
 
 	assert.Equal(t, http.StatusCreated, w.Code, "body: %s", w.Body.String())
 
-	// The create response wraps a secretNodeWire (snake_case) in "data".
+	// The create response wraps a SecretNodeWire (snake_case) in "data".
 	var resp struct {
-		Data *secretNodeWire `json:"data"`
+		Data *SecretNodeWire `json:"data"`
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	require.NotNil(t, resp.Data, "expected data in response")

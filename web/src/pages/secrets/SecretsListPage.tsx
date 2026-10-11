@@ -1,3 +1,4 @@
+import { useCan } from '../../features/auth/useCan';
 import React from 'react';
 import { useSearchParams } from 'react-router';
 import {
@@ -166,65 +167,72 @@ const SecretsPageHeader: React.FC<SecretsPageHeaderProps> = ({
     onBulkDelete,
     onClearSelection,
     onCreateClick,
-}) => (
-    <div className="flex items-center justify-between">
-        <div>
-            <h1 className="text-2xl font-semibold text-base-primary ">Secrets</h1>
-            <p className="mt-1 text-sm text-base-muted ">Manage your secrets and access controls</p>
+}) => {
+    const can = useCan();
+    return (
+        <div className="flex items-center justify-between">
+            <div>
+                <h1 className="text-2xl font-semibold text-base-primary ">Secrets</h1>
+                <p className="mt-1 text-sm text-base-muted ">Manage your secrets and access controls</p>
+            </div>
+            <div className="flex items-center space-x-3">
+                {selectedItems.size > 0 && (
+                    <div className="flex items-center space-x-2">
+                        <span className="text-sm text-base-muted">{selectedItems.size} selected</span>
+                        <Select
+                            aria-label="Classify selected"
+                            value=""
+                            disabled={bulkClassifyPending || !can.writeSecrets}
+                            onChange={(e) => {
+                                const level = e.target.value;
+                                if (!level) return;
+                                onBulkClassify(level);
+                            }}
+                            options={[
+                                { value: '', label: 'Classify as…' },
+                                { value: 'public', label: 'Public' },
+                                { value: 'internal', label: 'Internal' },
+                                { value: 'confidential', label: 'Confidential' },
+                                { value: 'restricted', label: 'Restricted' },
+                                { value: 'unclassified', label: 'Unclassified' },
+                            ]}
+                        />
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            title="Share each secret individually — bulk sharing is not supported"
+                        >
+                            <ShareIcon className="h-4 w-4 mr-1" />
+                            Share
+                        </Button>
+                        {can.deleteSecrets && (
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={onBulkDelete}
+                                disabled={selectedItems.size === 0}
+                                className="text-red-600 hover:text-red-700"
+                            >
+                                <TrashIcon className="h-4 w-4 mr-1" />
+                                Delete
+                            </Button>
+                        )}
+                        <Button variant="ghost" size="sm" onClick={onClearSelection}>
+                            Clear
+                        </Button>
+                    </div>
+                )}
+                {can.writeSecrets && (
+                    <Button data-testid="create-secret-button" onClick={onCreateClick} className="flex items-center">
+                        <PlusIcon className="h-4 w-4 mr-2" />
+                        New Secret
+                    </Button>
+                )}
+            </div>
         </div>
-        <div className="flex items-center space-x-3">
-            {selectedItems.size > 0 && (
-                <div className="flex items-center space-x-2">
-                    <span className="text-sm text-base-muted">{selectedItems.size} selected</span>
-                    <Select
-                        aria-label="Classify selected"
-                        value=""
-                        disabled={bulkClassifyPending}
-                        onChange={(e) => {
-                            const level = e.target.value;
-                            if (!level) return;
-                            onBulkClassify(level);
-                        }}
-                        options={[
-                            { value: '', label: 'Classify as…' },
-                            { value: 'public', label: 'Public' },
-                            { value: 'internal', label: 'Internal' },
-                            { value: 'confidential', label: 'Confidential' },
-                            { value: 'restricted', label: 'Restricted' },
-                            { value: 'unclassified', label: 'Unclassified' },
-                        ]}
-                    />
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        disabled
-                        title="Share each secret individually — bulk sharing is not supported"
-                    >
-                        <ShareIcon className="h-4 w-4 mr-1" />
-                        Share
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={onBulkDelete}
-                        disabled={selectedItems.size === 0}
-                        className="text-red-600 hover:text-red-700"
-                    >
-                        <TrashIcon className="h-4 w-4 mr-1" />
-                        Delete
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={onClearSelection}>
-                        Clear
-                    </Button>
-                </div>
-            )}
-            <Button data-testid="create-secret-button" onClick={onCreateClick} className="flex items-center">
-                <PlusIcon className="h-4 w-4 mr-2" />
-                New Secret
-            </Button>
-        </div>
-    </div>
-);
+    );
+};
 
 interface SecretsFilterBarProps {
     searchInput: string;
@@ -413,6 +421,7 @@ const SecretsTable: React.FC<SecretsTableProps> = ({
     pagination,
     onPageChange,
 }) => {
+    const canCreate = useCan().writeSecrets;
     if (isLoading) {
         return (
             <div className="p-8">
@@ -428,9 +437,11 @@ const SecretsTable: React.FC<SecretsTableProps> = ({
                 <p className="text-base-muted  mb-4">
                     {hasActiveFilters
                         ? 'Try adjusting your filters or search terms.'
-                        : 'Get started by creating your first secret.'}
+                        : canCreate
+                          ? 'Get started by creating your first secret.'
+                          : 'There are no secrets here that you can see.'}
                 </p>
-                {!hasActiveFilters && (
+                {!hasActiveFilters && canCreate && (
                     <Button data-testid="create-secret-button" onClick={onCreateClick}>
                         <PlusIcon className="h-4 w-4 mr-2" />
                         Create Secret
@@ -1250,7 +1261,7 @@ export const SecretsListPage: React.FC = () => {
                 <Alert
                     type="error"
                     title="Failed to load secrets"
-                    message="There was an error loading your secrets. Please try again."
+                    message={apiErrorMessage(list.error, 'There was an error loading your secrets. Please try again.')}
                 >
                     <Button variant="outline" size="sm" onClick={() => list.refetch()}>
                         Retry
