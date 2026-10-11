@@ -145,7 +145,9 @@ TLS is off in the generated config. Turn it on, or front the server with a
 TLS-terminating proxy, before anything reaches a network you do not control.
 `security.require_transport_tls` makes that failure loud instead of silent.
 The generated config also leaves API rate limiting and the `/metrics` token off,
-so `keyorix-server admin validate --posture` reports three deviations on it;
+so `keyorix-server admin validate --posture` reports three deviations on it
+(like every `admin` command it needs the database to itself: **stop the server
+first**, run it, then start the server again);
 [docs/CONFIGURATION.md](docs/CONFIGURATION.md#hardening-the-generated-config-clearing-the-posture-report)
 lists the keys that clear them.
 
@@ -216,11 +218,15 @@ created right away:
 
 ```bash
 ./bin/keyorix secret create --name "stripe-api-key" --interactive   # value typed at a hidden prompt
-./bin/keyorix secret create --name "deploy-key" --from-file ~/.ssh/id_ed25519
+./bin/keyorix secret create --name "deploy-key" --from-file ./deploy_key   # relative path; absolute paths and symlinks are refused
 ./bin/keyorix secret list
 ./bin/keyorix secret get --id 1               # metadata only
 ./bin/keyorix secret get --id 1 --show-value  # decrypted value
 ```
+
+`--from-file` reads a file from the current directory (copy the key there first),
+so delete that copy once the secret is stored: `shred -u ./deploy_key` on Linux,
+`rm -P ./deploy_key` on macOS, or `rm` on a disk you trust to be encrypted.
 
 New secrets default to project `1`, environment `1`. Create another project for
 anything that needs its own environments. Every project gets its **own** three
@@ -267,8 +273,13 @@ bootstrap is not enough:
 ```
 
 Skipping the two `rbac assign-role` lines and going straight to `share create`
-fails with a bare `HTTP 403` and no explanation — this is a known rough edge,
-tracked as a known gap below.
+is refused with the reason: the owner (or the recipient) is not a member of
+the secret's project. A share only applies to project members, and for them
+it can lift access on that one secret: a `project_viewer` shared with `write`
+can update its value and metadata and rotate it (nothing else: suspend, move,
+expiry changes and the like still need a project role), and revoking the share
+takes exactly that away again. See
+[the sharing guide](docs/SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
 
 `--ttl` (a Go duration) and `--expires` (RFC3339) are mutually exclusive; either
 makes the share time-bound, which is usually what you want for access granted
@@ -328,8 +339,8 @@ example including revocation.
 ## Known gaps
 
 - **Sharing requires an explicit project role on both owner and recipient**
-  (see "Sharing" above) — holding the global `admin` role is not enough, and
-  the failure mode (`HTTP 403`, no explanation) doesn't say so.
+  (see "Sharing" above) — holding the global `admin` role is not enough. The
+  refusal says which of the two is missing.
 
 ## What else is there
 

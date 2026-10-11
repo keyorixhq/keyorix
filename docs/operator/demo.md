@@ -41,9 +41,11 @@ export KEYORIX_BOOTSTRAP_TOKEN='choose-a-bootstrap-token'
 
 ./bin/keyorix system init --server http://localhost:8080 \
   --admin-username admin \
-  --admin-email admin@keyorix.local \
-  --bootstrap-token "$KEYORIX_BOOTSTRAP_TOKEN"
+  --admin-email admin@keyorix.local
 ```
+
+The CLI reads the bootstrap token from `KEYORIX_BOOTSTRAP_TOKEN` (exported above),
+so there is no `--bootstrap-token` argument to leak.
 
 Omitting `--admin-password` makes the CLI prompt for it interactively
 (hidden input) instead of putting it on the command line, where it would be
@@ -83,9 +85,13 @@ Enter `Correct-Horse-Battery9` (or whatever you chose in step 2) at the
 out of shell history and process listings.
 
 ```bash
-./bin/keyorix secret create --name my-first-secret --value "hello"
+./bin/keyorix secret create --name my-first-secret --interactive
 ./bin/keyorix secret get --id 1 --show-value
 ```
+
+Type `hello` at the hidden `Secret value` prompt (`--interactive` keeps the
+value out of shell history and process listings; `--from-file <path>` works
+too).
 
 Expected: `Logged in to http://localhost:8080 as admin.`, then a created-secret
 confirmation with `ID: 1`, then `Decrypted Value` / `hello`.
@@ -117,10 +123,13 @@ holding the global `admin` role from bootstrap is not enough:
 Expected: `✅ Secret shared successfully!`, then a one-row share list showing
 alice (recipient ID 2) with `read` permission.
 
-**What the share does — and what revoking shows.** alice must already hold a
+(Skipping the two `rbac assign-role` lines makes `share create` refuse with
+the reason: you, or alice, are not a member of the secret's project.)
+
+**What the share does, and what revoking shows.** alice must already hold a
 project role to receive a share, and with `project_viewer` she can read the
 secret through that role. Access is the union of owner, shares, ACLs and roles, so
-the share is an *additional* path:
+a `read` share is an *additional* path:
 
 ```bash
 ./bin/keyorix share revoke --share-id 1     # the share record is gone (share list is empty)
@@ -129,11 +138,15 @@ the share is an *additional* path:
 # NOW alice's access is gone.
 ```
 
-Demo it in that order: share → `share list` → revoke (the record and the
-`share.revoked` audit event are the visible effect) → remove the role to show
+Demo it in that order: share, `share list`, revoke (the record and the
+`share.revoked` audit event are the visible effect), then remove the role to show
 access actually ending. Do not present "revoke the share" alone as the moment alice
-loses access. (A recipient with no project role cannot be shared to at all:
-`share create` is refused until they are a member of the secret's project.)
+loses access.
+
+A `write` share is different: share with `--permission write` and alice, a
+`project_viewer`, can `secret update --id 1` (value, metadata, rotate; not
+suspend, move or anything else a role would grant); `share revoke` takes exactly
+that away again while her role's read stays.
 
 (Skipping the two `rbac assign-role` lines and going straight to
 `share create` is what QUICK_START.md's own sharing example currently shows
