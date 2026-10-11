@@ -3677,7 +3677,20 @@ paths:
     get:
       tags: [Secrets]
       summary: List who can read a secret
-      description: Effective access list -- every user who can read the secret, with their permission and how it was granted (owner, direct share, group share).
+      description: >-
+        Effective access list -- every user who can read the secret, with their EFFECTIVE
+        permission and how it was granted. For a project member the level is
+        max(role permission, active share permission), so a share that elevates a role
+        shows as the higher level; `grants` lists every grant behind it. Expired shares
+        and shares to users who are not project members grant nothing and are not
+        listed. Holders of a global role (global admins) have implicit access and are
+        not enumerated. An owner who is no longer a project member is not listed as
+        owner. Project roles (role grants, and members who hold access only through a
+        role) are shown only when the caller holds users.read at the project (the gate
+        of GET /projects/{id}/members); per-secret ACL holders and acl grants only when
+        the caller passes secrets.manage on the secret (the gate of
+        GET /secrets/{id}/acl). A withheld part is left out and the response is
+        flagged `degraded`.
       operationId: listAccessors
       security: [{bearerAuth: []}]
       parameters:
@@ -7403,6 +7416,12 @@ components:
       scheme: bearer
       description: |
         Session token, personal access token (kx_pat_…), or machine token (kx_machine_…).
+        A RESTRICTED personal access token (any scopes, project, environment or CIDR
+        restriction) is refused with 403 on every write that has no permission gate
+        (profile, password, MFA and passkeys, access requests, notifications,
+        break-glass, PAT creation, ...), except revoking the owner's own tokens and
+        sessions and the in-handler-authorized creates (ADR-042, PAT-GUARD-3; the
+        table is internal/core/pat_restriction_writes.go).
   responses:
     Error:
       description: >-
@@ -8093,12 +8112,16 @@ components:
         affected: {type: array, items: {$ref: '#/components/schemas/SecretImpactedSecret'}}
     SecretAccessor:
       type: object
-      description: One entry in a secret's effective access list (owner, direct share, or group share).
+      description: One entry in a secret's effective access list.
       properties:
         user_id: {type: integer}
         username: {type: string}
-        permission: {type: string}
-        source: {type: string, description: "How access was granted: owner, direct share, or group share."}
+        permission: {type: string, description: "Effective level: read, write or owner."}
+        source: {type: string, description: "The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>."}
+        grants:
+          type: array
+          description: "Every grant the user holds on the secret as source:level, e.g. owner:owner, role:read, direct_share:write."
+          items: {type: string}
     SecretAccessLogEntry:
       type: object
       description: >-

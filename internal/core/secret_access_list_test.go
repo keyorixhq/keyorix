@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +18,17 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
+// grantSecretsManage gives userID an extra project role holding secrets.manage, the
+// gate of GET /secrets/{id}/acl, so the report it asks for includes the ACL holders.
+func grantSecretsManage(t *testing.T, db *gorm.DB, userID uint) {
+	t.Helper()
+	p := &models.Permission{Name: "secrets.manage"}
+	require.NoError(t, db.Create(p).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 99, Name: "acl_manager", NameFolded: "acl_manager"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 99, PermissionID: p.ID}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: userID, RoleID: 99, ProjectID: 1}).Error)
+}
+
 func TestListSecretAccessors(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
@@ -27,7 +40,17 @@ func TestListSecretAccessors(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
 		&models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.GroupRole{},
+		// The role and ACL terms of the effective level (ListSecretAccessors) read these.
+		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
+		&models.RolePermission{}, &models.SecretACL{},
 	))
+	// Role 1 grants membership and no secret permission, so shares decide each level
+	// below. Like the built-in project roles it lets its holder read the project's
+	// members, which the report needs to list role-holders.
+	usersPerm := &models.Permission{Name: "users.read"}
+	require.NoError(t, db.Create(usersPerm).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "member", NameFolded: "member"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: usersPerm.ID}).Error)
 	// Users: 1 owner, 2 direct recipient, 3 & 4 group members, 5 expired-share recipient.
 	for _, u := range []models.User{
 		{ID: 1, Username: "owner", Email: "o@t.com"},
@@ -46,6 +69,7 @@ func TestListSecretAccessors(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 4, GroupID: 10}).Error)
 	// ShareSecretWithGroup verifies the group is scoped to the secret's project (1).
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 10, RoleID: 1, ProjectID: 1}).Error)
+	grantSecretsManage(t, db, 1)
 
 	now := time.Now()
 	st := store.NewLocalStorage(db)
@@ -100,7 +124,17 @@ func TestListSecretAccessors_StrongestGrantWins(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
 		&models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.GroupRole{},
+		// The role and ACL terms of the effective level (ListSecretAccessors) read these.
+		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
+		&models.RolePermission{}, &models.SecretACL{},
 	))
+	// Role 1 grants membership and no secret permission, so shares decide each level
+	// below. Like the built-in project roles it lets its holder read the project's
+	// members, which the report needs to list role-holders.
+	usersPerm := &models.Permission{Name: "users.read"}
+	require.NoError(t, db.Create(usersPerm).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "member", NameFolded: "member"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: usersPerm.ID}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "alice", Email: "a@t.com"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
@@ -109,6 +143,7 @@ func TestListSecretAccessors_StrongestGrantWins(t *testing.T) {
 	require.NoError(t, db.Create(&models.UserGroup{UserID: 2, GroupID: 10}).Error)
 	// ShareSecretWithGroup verifies the group is scoped to the secret's project (1).
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 10, RoleID: 1, ProjectID: 1}).Error)
+	grantSecretsManage(t, db, 1)
 
 	now := time.Now()
 	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
@@ -156,7 +191,17 @@ func TestListSecretAccessors_DegradedOnGroupMembersError(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
 		&models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.GroupRole{},
+		// The role and ACL terms of the effective level (ListSecretAccessors) read these.
+		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
+		&models.RolePermission{}, &models.SecretACL{},
 	))
+	// Role 1 grants membership and no secret permission, so shares decide each level
+	// below. Like the built-in project roles it lets its holder read the project's
+	// members, which the report needs to list role-holders.
+	usersPerm := &models.Permission{Name: "users.read"}
+	require.NoError(t, db.Create(usersPerm).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "member", NameFolded: "member"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: usersPerm.ID}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "o@t.com"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", Email: "b@t.com"}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
@@ -188,6 +233,330 @@ func TestListSecretAccessors_DegradedOnGroupMembersError(t *testing.T) {
 	for _, a := range result.Accessors {
 		byName[a.Username] = a
 	}
-	assert.NotContains(t, byName, "bob", "bob's group-share access must not silently appear as verified-absent")
+	// The group's expansion failed and is flagged above. bob is a project member through
+	// the group's role grant, which the report resolves separately from the failed
+	// expansion, and the group read share (the term AuthorizeSecret decides with) gives
+	// him read. He must be listed, unconditionally and at exactly that level: leaving
+	// him out would present a real accessor as verified-absent.
+	bob, ok := byName["bob"]
+	require.True(t, ok, "bob has real read access through the group share and must be listed")
+	assert.Equal(t, "read", bob.Permission)
+	assert.Equal(t, "group_share:platform", bob.Source)
 	assert.Contains(t, byName, "owner")
+}
+
+// TestListSecretAccessors_EffectiveIsMaxOfRoleAndShare: the report shows the EFFECTIVE
+// level, max(role, share) (#2941), and every grant behind it; a share to a user who
+// is not a project member grants nothing and is not listed.
+func TestListSecretAccessors_EffectiveIsMaxOfRoleAndShare(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
+		&models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
+		&models.RolePermission{}, &models.SecretACL{},
+	))
+	readPerm := &models.Permission{Name: "secrets.read"}
+	require.NoError(t, db.Create(readPerm).Error)
+	// Like the built-in project roles, the viewer can read the project's members.
+	usersPerm := &models.Permission{Name: "users.read"}
+	require.NoError(t, db.Create(usersPerm).Error)
+	viewer := &models.Role{ID: 1, Name: "project_viewer", NameFolded: "project_viewer"}
+	require.NoError(t, db.Create(viewer).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: viewer.ID, PermissionID: readPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: viewer.ID, PermissionID: usersPerm.ID}).Error)
+	for _, u := range []models.User{
+		{ID: 1, Username: "owner", Email: "o@t.com"},
+		{ID: 2, Username: "alice", Email: "a@t.com"}, // viewer + write share -> write
+		{ID: 3, Username: "bob", Email: "b@t.com"},   // viewer, no share -> read
+		{ID: 4, Username: "eve", Email: "e@t.com"},   // share row, not a member -> nothing
+	} {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	for _, uid := range []uint{1, 2, 3} {
+		require.NoError(t, db.Create(&models.UserRole{UserID: uid, RoleID: viewer.ID, ProjectID: 1}).Error)
+	}
+	grantSecretsManage(t, db, 1)
+
+	now := time.Now()
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	ctx := context.Background()
+	secret, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+	_, err = c.ShareSecret(ctx, &ShareSecretRequest{SecretID: secret.ID, RecipientID: 2, Permission: "write", SharedBy: 1})
+	require.NoError(t, err)
+	// A leftover share to a non-member (e.g. removed from the project after the share).
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secret.ID, OwnerID: 1, RecipientID: 4, Permission: "write"}).Error)
+
+	result, err := c.ListSecretAccessors(ctx, secret.ID, 1)
+	require.NoError(t, err)
+	require.False(t, result.Degraded, result.DegradedReasons)
+	byName := map[string]SecretAccessor{}
+	for _, a := range result.Accessors {
+		byName[a.Username] = a
+	}
+	assert.Equal(t, "write", byName["alice"].Permission, "a write share elevates the viewer role")
+	assert.Equal(t, "direct_share", byName["alice"].Source)
+	assert.ElementsMatch(t, []string{"role:read", "direct_share:write"}, byName["alice"].Grants)
+	assert.Equal(t, "read", byName["bob"].Permission, "a role alone is listed too")
+	assert.Equal(t, "role", byName["bob"].Source)
+	assert.Equal(t, "owner", byName["owner"].Permission)
+	assert.NotContains(t, byName, "eve", "a share to a non-member grants nothing")
+}
+
+// TestListSecretAccessors_RosterNeedsUsersRead: the report adds role-only members of
+// the project, which is the project's member roster. A caller who can read the secret
+// but cannot read the project's members (no users.read at the project) must not get
+// that roster through this report: the roster is withheld and the report is flagged
+// Degraded (an under-count), while owner, shares and ACL holders are still listed.
+func TestListSecretAccessors_RosterNeedsUsersRead(t *testing.T) {
+	t.Parallel()
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, _ := db.DB()
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
+		&models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
+		&models.RolePermission{}, &models.SecretACL{},
+	))
+	readPerm := &models.Permission{Name: "secrets.read"}
+	usersPerm := &models.Permission{Name: "users.read"}
+	require.NoError(t, db.Create(readPerm).Error)
+	require.NoError(t, db.Create(usersPerm).Error)
+	// Role 1: secrets.read only (a custom role). Role 2: secrets.read + users.read.
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "reader_only", NameFolded: "reader_only"}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "reader_dir", NameFolded: "reader_dir"}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 1, PermissionID: readPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: readPerm.ID}).Error)
+	require.NoError(t, db.Create(&models.RolePermission{RoleID: 2, PermissionID: usersPerm.ID}).Error)
+	for _, u := range []models.User{
+		{ID: 1, Username: "owner", Email: "o@t.com"},
+		{ID: 2, Username: "narrow", Email: "n@t.com"}, // secrets.read only: the caller
+		{ID: 3, Username: "bob", Email: "b@t.com"},    // role-only member
+		{ID: 4, Username: "wide", Email: "w@t.com"},   // secrets.read + users.read
+	} {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	for _, ur := range []models.UserRole{
+		{UserID: 1, RoleID: 1, ProjectID: 1}, {UserID: 2, RoleID: 1, ProjectID: 1},
+		{UserID: 3, RoleID: 1, ProjectID: 1}, {UserID: 4, RoleID: 2, ProjectID: 1},
+	} {
+		require.NoError(t, db.Create(&ur).Error)
+	}
+	// wide may also read the ACL holders, so its report is complete.
+	grantSecretsManage(t, db, 4)
+
+	now := time.Now()
+	c := &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}
+	ctx := context.Background()
+	secret, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+
+	names := func(r *SecretAccessorsResult) map[string]bool {
+		m := map[string]bool{}
+		for _, a := range r.Accessors {
+			m[a.Username] = true
+		}
+		return m
+	}
+
+	narrow, err := c.ListSecretAccessors(ctx, secret.ID, 2)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]bool{"owner": true}, names(narrow), "a caller without users.read gets no member roster")
+	assert.True(t, narrow.Degraded, "the withheld roster must be flagged, not look complete")
+	require.NotEmpty(t, narrow.DegradedReasons)
+	assert.Contains(t, narrow.DegradedReasons[0], "project_members")
+
+	wide, err := c.ListSecretAccessors(ctx, secret.ID, 4)
+	require.NoError(t, err)
+	assert.False(t, wide.Degraded, wide.DegradedReasons)
+	assert.Equal(t, map[string]bool{"owner": true, "narrow": true, "bob": true, "wide": true}, names(wide))
+}
+
+// accessListFixture is the shared schema and roles of the review-gate tests below:
+// role 1 secrets.read only, role 2 secrets.read + users.read, role 3 secrets.read +
+// users.read + secrets.manage (the gate of GET /secrets/{id}/acl), role 4 membership
+// with no permission.
+func accessListFixture(t *testing.T) (*gorm.DB, *KeyorixCore, time.Time) {
+	t.Helper()
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&models.SecretNode{}, &models.SecretVersion{}, &models.User{}, &models.ShareRecord{},
+		&models.Group{}, &models.UserGroup{}, &models.UserRole{}, &models.GroupRole{},
+		&models.Project{}, &models.Environment{}, &models.Role{}, &models.Permission{},
+		&models.RolePermission{}, &models.SecretACL{},
+	))
+	perms := map[string]uint{}
+	for _, name := range []string{"secrets.read", "users.read", "secrets.manage"} {
+		p := &models.Permission{Name: name}
+		require.NoError(t, db.Create(p).Error)
+		perms[name] = p.ID
+	}
+	for id, granted := range map[uint][]string{
+		1: {"secrets.read"},
+		2: {"secrets.read", "users.read"},
+		3: {"secrets.read", "users.read", "secrets.manage"},
+		4: nil,
+	} {
+		name := fmt.Sprintf("role%d", id)
+		require.NoError(t, db.Create(&models.Role{ID: id, Name: name, NameFolded: name}).Error)
+		for _, p := range granted {
+			require.NoError(t, db.Create(&models.RolePermission{RoleID: id, PermissionID: perms[p]}).Error)
+		}
+	}
+	now := time.Now()
+	return db, &KeyorixCore{storage: store.NewLocalStorage(db), now: func() time.Time { return now }}, now
+}
+
+func hasGrantPrefix(grants []string, prefix string) bool {
+	for _, g := range grants {
+		if strings.HasPrefix(g, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// TestListSecretAccessors_ACLHoldersNeedSecretsManage: per-secret ACL holders and their
+// acl: grants are the content of GET /secrets/{id}/acl, which requires secrets.manage.
+// A caller with secrets.read (and even users.read) but not secrets.manage must not get
+// them through this report: the ACL holder is not listed, no grant names an acl source,
+// and the report is flagged Degraded with a secret_acls reason. A secrets.manage caller
+// gets the holder with acl:read.
+func TestListSecretAccessors_ACLHoldersNeedSecretsManage(t *testing.T) {
+	t.Parallel()
+	db, c, now := accessListFixture(t)
+	for _, u := range []models.User{
+		{ID: 1, Username: "owner", Email: "o@t.com"},
+		{ID: 2, Username: "reader", Email: "r@t.com"},    // secrets.read + users.read: the caller
+		{ID: 3, Username: "manager", Email: "m@t.com"},   // + secrets.manage
+		{ID: 4, Username: "aclholder", Email: "a@t.com"}, // member without a secret role; ACL read
+	} {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	for _, ur := range []models.UserRole{
+		{UserID: 1, RoleID: 1, ProjectID: 1}, {UserID: 2, RoleID: 2, ProjectID: 1},
+		{UserID: 3, RoleID: 3, ProjectID: 1}, {UserID: 4, RoleID: 4, ProjectID: 1},
+	} {
+		require.NoError(t, db.Create(&ur).Error)
+	}
+	ctx := context.Background()
+	secret, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+	require.NoError(t, db.Create(&models.SecretACL{SecretID: secret.ID, UserID: 4, Permissions: `["secrets.read"]`, GrantedBy: 3}).Error)
+
+	reader, err := c.ListSecretAccessors(ctx, secret.ID, 2)
+	require.NoError(t, err)
+	for _, a := range reader.Accessors {
+		assert.NotEqual(t, "aclholder", a.Username, "an ACL holder must not be listed to a caller without secrets.manage")
+		assert.False(t, hasGrantPrefix(a.Grants, "acl:"), "no acl grant for a caller without secrets.manage: %s %v", a.Username, a.Grants)
+		assert.NotEqual(t, "acl", a.Source)
+	}
+	assert.True(t, reader.Degraded, "the withheld ACL listing must be flagged, not look complete")
+	assert.True(t, hasGrantPrefix(reader.DegradedReasons, "secret_acls"), reader.DegradedReasons)
+
+	manager, err := c.ListSecretAccessors(ctx, secret.ID, 3)
+	require.NoError(t, err)
+	assert.False(t, manager.Degraded, manager.DegradedReasons)
+	var holder *SecretAccessor
+	for i := range manager.Accessors {
+		if manager.Accessors[i].Username == "aclholder" {
+			holder = &manager.Accessors[i]
+		}
+	}
+	require.NotNil(t, holder, "a secrets.manage caller sees the ACL holder")
+	assert.Equal(t, "read", holder.Permission)
+	assert.Equal(t, "acl", holder.Source)
+	assert.Contains(t, holder.Grants, "acl:read")
+}
+
+// TestListSecretAccessors_NoRoleGrantsWithoutRoster: a caller without users.read at the
+// project is not given the member roster, so it must not learn members' project role
+// levels either. The owner and share recipients are still listed, but no grant names a
+// role source and no level comes from a role.
+func TestListSecretAccessors_NoRoleGrantsWithoutRoster(t *testing.T) {
+	t.Parallel()
+	db, c, now := accessListFixture(t)
+	for _, u := range []models.User{
+		{ID: 1, Username: "owner", Email: "o@t.com"},  // role1 (secrets.read)
+		{ID: 2, Username: "narrow", Email: "n@t.com"}, // role1: the caller
+		{ID: 3, Username: "alice", Email: "a@t.com"},  // role1 + a read share
+	} {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	for _, uid := range []uint{1, 2, 3} {
+		require.NoError(t, db.Create(&models.UserRole{UserID: uid, RoleID: 1, ProjectID: 1}).Error)
+	}
+	ctx := context.Background()
+	secret, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+	_, err = c.ShareSecret(ctx, &ShareSecretRequest{SecretID: secret.ID, RecipientID: 3, Permission: "read", SharedBy: 1})
+	require.NoError(t, err)
+
+	result, err := c.ListSecretAccessors(ctx, secret.ID, 2)
+	require.NoError(t, err)
+	assert.True(t, result.Degraded)
+	byName := map[string]SecretAccessor{}
+	for _, a := range result.Accessors {
+		byName[a.Username] = a
+		assert.False(t, hasGrantPrefix(a.Grants, "role:"), "no role grant without users.read: %s %v", a.Username, a.Grants)
+		assert.NotEqual(t, "role", a.Source)
+	}
+	require.Contains(t, byName, "alice", "a share recipient is still listed")
+	assert.Equal(t, []string{"direct_share:read"}, byName["alice"].Grants)
+	require.Contains(t, byName, "owner")
+	assert.Equal(t, []string{"owner:owner"}, byName["owner"].Grants)
+}
+
+// TestListSecretAccessors_OwnerNeedsLiveMembership: owner-level authority needs the
+// owner to still be a member of the secret's project (requireLiveOwnerAuthority,
+// RBAC-001), so a departed owner whose OwnerID tag remains is not reported as owner.
+// A live owner's grant is in the documented source:level form, owner:owner.
+func TestListSecretAccessors_OwnerNeedsLiveMembership(t *testing.T) {
+	t.Parallel()
+	db, c, now := accessListFixture(t)
+	for _, u := range []models.User{
+		{ID: 1, Username: "gone", Email: "g@t.com"},    // owner of s1, no longer a member
+		{ID: 2, Username: "manager", Email: "m@t.com"}, // role3: the caller
+		{ID: 3, Username: "live", Email: "l@t.com"},    // owner of s2, role4 member
+	} {
+		require.NoError(t, db.Create(&u).Error)
+	}
+	require.NoError(t, db.Create(&models.UserRole{UserID: 2, RoleID: 3, ProjectID: 1}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 3, RoleID: 4, ProjectID: 1}).Error)
+	ctx := context.Background()
+	s1, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s1", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 1, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+	s2, err := c.storage.CreateSecret(ctx, &models.SecretNode{Name: "s2", ProjectID: 1, EnvironmentID: 1, Type: "password", OwnerID: 3, IsSecret: true, CreatedAt: now, UpdatedAt: now})
+	require.NoError(t, err)
+
+	r1, err := c.ListSecretAccessors(ctx, s1.ID, 2)
+	require.NoError(t, err)
+	for _, a := range r1.Accessors {
+		assert.NotEqual(t, "gone", a.Username, "a departed owner holds no owner authority")
+	}
+
+	r2, err := c.ListSecretAccessors(ctx, s2.ID, 2)
+	require.NoError(t, err)
+	byName := map[string]SecretAccessor{}
+	for _, a := range r2.Accessors {
+		byName[a.Username] = a
+	}
+	require.Contains(t, byName, "live")
+	assert.Equal(t, "owner", byName["live"].Permission)
+	assert.Equal(t, "owner", byName["live"].Source)
+	assert.Equal(t, []string{"owner:owner"}, byName["live"].Grants)
 }

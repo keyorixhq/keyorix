@@ -375,9 +375,22 @@ project member, that is the higher of their role and any active share, so a shar
 that elevates a role shows as the higher level. `source` names the grant that
 gives the permission (`owner`, `role`, `acl`, `direct_share` or
 `group_share:<group>`). `grants` lists every grant the user holds, for example
-`["role:read", "direct_share:write"]`. Expired shares, and shares to users who are
-no longer project members, grant nothing and are not listed. Holders of a global
-role (global admins) have implicit access and are not listed.
+`["role:read", "direct_share:write"]`; a live owner's grant is `owner:owner`. An
+owner who is no longer a member of the secret's project has no owner authority and
+is not listed as owner. Expired shares, and shares to users who are no longer
+project members, grant nothing and are not listed. Holders of a global role (global
+admins) have implicit access and are not listed. Two parts of the report follow the
+gate of the route that would otherwise show them:
+
+- Project roles (`role:` grants, and members who hold access only through a role)
+  appear only if the caller holds `users.read` at the project (the gate of
+  `GET /projects/{id}/members`; every built-in project role has it).
+- Per-secret ACL holders and `acl:` grants appear only if the caller passes
+  `secrets.manage` on the secret (the gate of `GET /secrets/{id}/acl`).
+
+When either part is withheld it is left out and the response is flagged `degraded`
+with a `project_members` or `secret_acls` reason, so the list is an under-count,
+never presented as complete.
 
 
 ### 10. List Shares You Created (owner-scoped)

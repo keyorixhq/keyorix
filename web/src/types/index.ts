@@ -38,6 +38,11 @@ export interface Secret {
     environment: string;
     isShared: boolean;
     shareCount: number;
+    // The signed-in user's per-secret grant from the list response ('read' | 'write' for a
+    // share or ACL grant), '' / undefined when they hold none. A 'write' share elevates the
+    // user on this one secret even when their roles do not (the role union in useCan cannot
+    // see that), so Edit / Rotate follow it.
+    userPermission?: string;
     lastModified: string;
     owner: string;
     permissions: string[];
@@ -129,8 +134,12 @@ export interface SecretPolicy {
 export interface SecretAccessor {
     user_id: number;
     username: string;
+    // The EFFECTIVE level: for a project member, the higher of their role and any
+    // active share (#2941).
     permission: string; // read | write | owner
-    source: string; // owner | direct_share | group_share:<group>
+    source: string; // the grant giving it: owner | role | acl | direct_share | group_share:<group>
+    // Every grant the user holds on the secret, e.g. ['role:read', 'direct_share:write'].
+    grants?: string[];
 }
 
 export interface Recipient {
