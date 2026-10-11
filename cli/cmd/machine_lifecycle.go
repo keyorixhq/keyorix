@@ -100,7 +100,7 @@ func transitionMachine(client *apiclient.ClientWithResponses, projectID int, m a
 		return fmt.Errorf("failed to %s machine identity: %w", action, err)
 	}
 	if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-		return fmt.Errorf("failed to %s machine identity: HTTP %d", action, resp.StatusCode())
+		return httpStatusError(fmt.Sprintf("failed to %s machine identity", action), resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Machine identity %q → %s\n", derefStr(m.Name), targetStateLabel)
 	return nil

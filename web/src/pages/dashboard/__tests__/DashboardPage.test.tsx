@@ -72,6 +72,16 @@ afterEach(() => {
     useUIStore.setState({ theme: initialTheme });
 });
 
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+});
+
 describe('DashboardPage — header', () => {
     it('greets the user by their first name', () => {
         render(<DashboardPage />);
@@ -463,7 +473,61 @@ describe('DashboardPage — recent activity edge cases', () => {
         });
         render(<DashboardPage />);
         expect(screen.getByText('carol')).toBeInTheDocument();
-        expect(screen.getByText('custom_event')).toBeInTheDocument();
+        expect(screen.getByText('Custom event')).toBeInTheDocument();
+    });
+
+    it('renders a versions_listed activity as a listing, not the raw type or an access', () => {
+        mockHooks({
+            activity: [
+                {
+                    id: 1,
+                    type: 'versions_listed',
+                    actor: 'dave',
+                    secretName: 'db-pass',
+                    timestamp: '2026-01-01T10:00:00Z',
+                },
+            ],
+        });
+        render(<DashboardPage />);
+        expect(screen.queryByText(/versions_listed/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/accessed secret/)).not.toBeInTheDocument();
+        expect(screen.getByText(/listed versions of secret/)).toHaveTextContent('listed versions of secret "db-pass"');
+    });
+});
+
+describe('DashboardPage — readable labels for server-labelled events (#2951)', () => {
+    it('shows the server label, keeps the raw event type as a tooltip, and no stray name', () => {
+        mockHooks({
+            activity: [
+                {
+                    id: 1,
+                    type: 'secret.dependency_invalidated',
+                    eventType: 'secret.dependency_invalidated',
+                    label: 'broke a dependency of secret',
+                    actor: 'bob',
+                    secretName: 'api-key',
+                    timestamp: '2026-01-01T10:00:00Z',
+                },
+                {
+                    id: 2,
+                    type: 'break_glass.revoked',
+                    eventType: 'break_glass.revoked',
+                    label: 'revoked break-glass access',
+                    actor: 'system',
+                    secretName: '',
+                    timestamp: '2026-01-01T10:01:00Z',
+                },
+            ],
+        });
+        render(<DashboardPage />);
+        expect(screen.queryByText(/secret\.dependency_invalidated/)).not.toBeInTheDocument();
+        expect(screen.queryByText(/break_glass\.revoked/)).not.toBeInTheDocument();
+        const first = screen.getByText(/broke a dependency of secret/);
+        expect(first).toHaveTextContent('broke a dependency of secret "api-key"');
+        expect(first).toHaveAttribute('title', 'secret.dependency_invalidated');
+        const second = screen.getByText('revoked break-glass access');
+        expect(second).toHaveAttribute('title', 'break_glass.revoked');
+        expect(second).not.toHaveTextContent('""');
     });
 });
 
@@ -502,5 +566,42 @@ describe('DashboardPage — theme variants', () => {
         useUIStore.setState({ theme: 'system' });
         render(<DashboardPage />);
         expect(screen.getAllByText('Encryption').length).toBeGreaterThan(0);
+    });
+});
+
+describe('DashboardPage — tiles the user cannot see (DEMO-UI-1)', () => {
+    it('shows "Not visible to you" instead of zeros for audit- and admin-only tiles', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        mockHooks({ stats: { ...baseStats, activeUsers: 0, auditEvents30d: 0, failedAuthAttempts24h: 0 } });
+        render(<DashboardPage />);
+
+        for (const label of [
+            'Active Users',
+            'Audit Events (30d)',
+            'Security',
+            'Failed Auth (24h)',
+            'Inactive Users',
+            'Secret Reads (30d)',
+        ]) {
+            const card = screen.getByText(label).closest('.rounded-xl, .rounded-lg') as HTMLElement;
+            expect(within(card).getByText('Not visible to you'), label).toBeInTheDocument();
+            expect(within(card).getByText('—'), label).toBeInTheDocument();
+        }
+        // A tile the user can see still shows its number.
+        expect(screen.getByText('120')).toBeInTheDocument();
+        // Nothing claims "No active alerts" about data the user cannot see.
+        expect(screen.queryByText('No active alerts')).not.toBeInTheDocument();
+    });
+
+    it('shows real numbers to a user who can read audit and the user directory', () => {
+        render(<DashboardPage />);
+        expect(screen.queryByText('Not visible to you')).not.toBeInTheDocument();
     });
 });

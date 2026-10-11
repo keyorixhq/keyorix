@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -219,6 +220,10 @@ func (c *KeyorixCore) ActivateMFA(ctx context.Context, userID uint, code, passwo
 	// sees them). Best-effort: enrolment must not fail on a session-cleanup error.
 	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "activate_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
+	// #2978: the kept session's auth-cache entry still says MFAEnabled=false; clear
+	// it (delete-only, never a tombstone) so the next request re-reads the user
+	// instead of 403ing MFAEnrollmentRequired until the cache TTL lapses.
+	c.clearCachedTokens(keepHash)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.activated", &uid, nil, nil, "", fmt.Sprintf("user %s activated MFA", user.Username))
 	return codes, nil
@@ -259,6 +264,7 @@ func (c *KeyorixCore) DisableMFA(ctx context.Context, userID uint, codeOrPasswor
 	// Best-effort: disable must not fail on a cleanup error.
 	keepID, keepHash := c.resolveKeepSession(ctx, userID, keepSessionToken, "disable_mfa")
 	_ = c.deleteSessionsForUserAndEvict(ctx, userID, keepID, keepHash)
+	c.clearCachedTokens(keepHash) // #2978: same stale-MFAEnabled cache entry as ActivateMFA
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.disabled", &uid, nil, nil, "", fmt.Sprintf("user %s disabled MFA", user.Username))
 	return nil
@@ -537,8 +543,12 @@ func (c *KeyorixCore) VerifyMFALogin(ctx context.Context, challenge, code, userA
 	// Record the MFA step-up window when the classification gate requires it.
 	// Best-effort: a write failure does not block the login, but the user won't
 	// be able to read restricted secrets until they re-verify successfully.
+	// Panic-safe too: it runs after the session is written, so an escaping
+	// panic would report a failed login with a live session behind it (#2844).
 	if c.classificationRestrictedRequiresMFAStepUp {
-		_ = c.storage.UpsertMFAStepupToken(ctx, user.ID, c.now().Add(c.mfaStepUpWindow()))
+		besteffort.Run(ctx, "mfa.VerifyMFALogin.UpsertMFAStepupToken", func() error {
+			return c.storage.UpsertMFAStepupToken(ctx, user.ID, c.now().Add(c.mfaStepUpWindow()))
+		})
 	}
 	uid := user.ID
 	if usedRecovery {

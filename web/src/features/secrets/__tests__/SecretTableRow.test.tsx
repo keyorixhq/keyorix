@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { render, screen, within, fireEvent } from '../../../test/test-utils';
 import { SecretTableRow } from '../SecretTableRow';
 import { Secret } from '../../../types';
@@ -55,6 +55,16 @@ const renderRow = (props: Partial<React.ComponentProps<typeof SecretTableRow>> =
     };
 };
 
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+});
+
 describe('SecretTableRow', () => {
     afterEach(() => {
         // The uiStore is a real Zustand singleton (persist+devtools); restore the
@@ -66,10 +76,24 @@ describe('SecretTableRow', () => {
         renderRow();
         const row = screen.getByRole('row');
         expect(within(row).getByText('db-password')).toBeInTheDocument();
-        expect(within(row).getByText('password')).toBeInTheDocument();
+        expect(within(row).getByText('Password')).toBeInTheDocument();
         expect(within(row).getByText('production')).toBeInTheDocument();
         expect(within(row).getByText(formatDate(baseSecret.lastModified))).toBeInTheDocument();
         expect(within(row).getByText('by alice')).toBeInTheDocument();
+    });
+
+    // The list and project tables both put these headers over this row's
+    // cells; if the cells move, both headers must move with them (#2977).
+    it('renders its cells in header order: select, name, type, classification, environment, sharing, modified, actions', () => {
+        renderRow({ secret: { ...baseSecret, classification: 'confidential' } });
+        const cells = within(screen.getByRole('row')).getAllByRole('cell');
+        expect(cells).toHaveLength(8);
+        expect(cells[1]).toHaveTextContent('db-password');
+        expect(cells[2]).toHaveTextContent('Password');
+        expect(cells[3]).toHaveTextContent('Confidential');
+        expect(cells[4]).toHaveTextContent('production');
+        expect(cells[5]).toHaveTextContent('Private');
+        expect(cells[6]).toHaveTextContent('by alice');
     });
 
     it('defaults the environment cell to "production" when environment is empty', () => {
@@ -240,11 +264,11 @@ describe('SecretTableRow', () => {
     });
 
     it.each([
-        ['password', 'password'],
-        ['api_key', 'api_key'],
-        ['text', 'text'],
-        ['certificate', 'cert'],
-        ['json', 'json'],
+        ['password', 'Password'],
+        ['api_key', 'API Key'],
+        ['text', 'Text'],
+        ['certificate', 'Certificate'],
+        ['json', 'JSON'],
     ] as const)('renders the %s type badge with label "%s"', (type, label) => {
         renderRow({ secret: { ...baseSecret, type } });
         expect(screen.getByText(label)).toBeInTheDocument();
@@ -252,20 +276,20 @@ describe('SecretTableRow', () => {
 
     it('falls back to a generic badge (label = the raw type) for an unrecognized secret type', () => {
         renderRow({ secret: { ...baseSecret, type: 'mystery-type' as unknown as Secret['type'] } });
-        expect(screen.getByText('mystery-type')).toBeInTheDocument();
+        expect(screen.getByText('Mystery-type')).toBeInTheDocument();
     });
 
     it('uses the light-theme colors for the type badge when the theme is light', () => {
         useUIStore.setState({ theme: 'light' });
         renderRow({ secret: { ...baseSecret, type: 'password' } });
-        const badge = screen.getByText('password');
+        const badge = screen.getByText('Password');
         expect(badge.getAttribute('style')).toContain('rgb(224, 231, 255)'); // password's lightBg (#e0e7ff)
     });
 
     it('uses the dark-theme colors for the type badge when the theme is dark', () => {
         useUIStore.setState({ theme: 'dark' });
         renderRow({ secret: { ...baseSecret, type: 'password' } });
-        const badge = screen.getByText('password');
+        const badge = screen.getByText('Password');
         expect(badge.getAttribute('style')).toContain('rgba(99, 102, 241, 0.15)'); // password's darkBg
     });
 
@@ -273,7 +297,7 @@ describe('SecretTableRow', () => {
         vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: true } as MediaQueryList);
         useUIStore.setState({ theme: 'system' });
         renderRow({ secret: { ...baseSecret, type: 'password' } });
-        const badge = screen.getByText('password');
+        const badge = screen.getByText('Password');
         expect(badge.getAttribute('style')).toContain('rgba(99, 102, 241, 0.15)'); // password's darkBg
         vi.restoreAllMocks();
     });
@@ -282,7 +306,7 @@ describe('SecretTableRow', () => {
         vi.spyOn(window, 'matchMedia').mockReturnValue({ matches: false } as MediaQueryList);
         useUIStore.setState({ theme: 'system' });
         renderRow({ secret: { ...baseSecret, type: 'password' } });
-        const badge = screen.getByText('password');
+        const badge = screen.getByText('Password');
         expect(badge.getAttribute('style')).toContain('rgb(224, 231, 255)'); // password's lightBg (#e0e7ff)
         vi.restoreAllMocks();
     });
@@ -297,5 +321,33 @@ describe('SecretTableRow', () => {
             const { container } = renderRow({ secret: { ...baseSecret, tags: [payload] } });
             assertPayloadRenderedSafely(payload, container);
         });
+    });
+});
+
+describe('SecretTableRow permission-aware actions (DEMO-UI-1)', () => {
+    it('a read-only user sees View and Copy, and none of Edit / Rotate / Share / Delete', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        renderRow();
+        const row = screen.getByRole('row');
+        expect(within(row).getByTitle('View')).toBeInTheDocument();
+        expect(within(row).getByTitle('Copy value')).toBeInTheDocument();
+        for (const title of ['Edit', 'Rotate', 'Share', 'Delete']) {
+            expect(within(row).queryByTitle(title), title).not.toBeInTheDocument();
+        }
+    });
+
+    it('a writer who cannot delete keeps Edit / Rotate / Share but loses Delete', () => {
+        canState.value = { ...canState.value, admin: false, deleteSecrets: false };
+        renderRow();
+        const row = screen.getByRole('row');
+        for (const title of ['Edit', 'Rotate', 'Share']) expect(within(row).getByTitle(title)).toBeInTheDocument();
+        expect(within(row).queryByTitle('Delete')).not.toBeInTheDocument();
     });
 });

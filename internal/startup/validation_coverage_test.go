@@ -252,7 +252,7 @@ func TestValidateFilePermissions_HTTPTLSKeyTraversal(t *testing.T) {
 	cfg.Server.HTTP.TLS.CertFile = filepath.Join(dir, "server.crt") // safe cert path
 	cfg.Server.HTTP.TLS.KeyFile = traversal                         // unsafe key path
 
-	err := validateFilePermissions(cfg, "", false, &ValidationResult{})
+	err := validateFilePermissions(cfg, "", false, false, &ValidationResult{})
 	require.Error(t, err, "HTTP TLS key path with '..' must be rejected")
 	assert.Contains(t, err.Error(), "..")
 }
@@ -267,7 +267,7 @@ func TestValidateFilePermissions_GRPCTLSCertTraversal(t *testing.T) {
 	cfg.Server.GRPC.TLS.CertFile = traversal       // unsafe cert path
 	cfg.Server.GRPC.TLS.KeyFile = "/safe/key/path" // safe key path (won't be reached)
 
-	err := validateFilePermissions(cfg, "", false, &ValidationResult{})
+	err := validateFilePermissions(cfg, "", false, false, &ValidationResult{})
 	require.Error(t, err, "gRPC TLS cert path with '..' must be rejected")
 	assert.Contains(t, err.Error(), "..")
 }
@@ -287,7 +287,7 @@ func TestValidateFilePermissions_AutoFixViaConfigField(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Security.AutoFixFilePermissions = true // autoFix via config field, not forceAutoFix
 	result := &ValidationResult{}
-	err := validateFilePermissions(cfg, configPath, false, result)
+	err := validateFilePermissions(cfg, configPath, false, false, result)
 	require.NoError(t, err)
 	assert.Contains(t, result.Warnings, autoFixPermsNotice,
 		"autoFix via config field must append the auto-fix notice")

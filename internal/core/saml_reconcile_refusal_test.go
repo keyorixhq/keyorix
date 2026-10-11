@@ -16,19 +16,18 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // reconcileFaultStorage fails chosen reconcile writes/reads on a real store.
@@ -42,6 +41,15 @@ type reconcileFaultStorage struct {
 	// #2910 fuzzer finding: the escalation guard's own lookups.
 	failGetGroupRoles      bool
 	failGetRolePermissions bool
+	// #2910 fuzzer finding: the best-effort last-login stamp panicking.
+	panicUpdateLastLogin bool
+}
+
+func (s *reconcileFaultStorage) UpdateLastLogin(ctx context.Context, userID uint, at time.Time) error {
+	if s.panicUpdateLastLogin {
+		panic("injected fault: UpdateLastLogin")
+	}
+	return s.Storage.UpdateLastLogin(ctx, userID, at)
 }
 
 func (s *reconcileFaultStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*models.Role, error) {
@@ -94,8 +102,6 @@ type samlReconcileFixture struct {
 	fault *reconcileFaultStorage
 }
 
-var samlReconcileDBSeq atomic.Uint64
-
 // The SSO user every fixture logs in as: JIT-shaped (provider-scoped external
 // id, no password), id 7.
 const samlReconcileUserID = uint(7)
@@ -104,9 +110,7 @@ func newSAMLReconcileFixture(t *testing.T, info *ports.SAMLAssertion, groupRoleM
 	t.Helper()
 	// A named shared-cache in-memory DB, not ":memory:": every pooled
 	// connection to ":memory:" is its own empty database.
-	dsn := fmt.Sprintf("file:saml_reconcile_%d?mode=memory&cache=shared", samlReconcileDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithConfig(t, "samlreconcilerefusal_", &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	require.NoError(t, db.Create(&models.User{
 		ID: samlReconcileUserID, Username: "ada", UsernameFolded: "ada",

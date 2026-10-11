@@ -14,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/connect/connecttypes"
 	"github.com/keyorixhq/keyorix/internal/delivery"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"gopkg.in/yaml.v3"
 )
@@ -995,14 +996,76 @@ func DeriveMaxRequestBodySize(maxSecretSize int) int64 {
 	return int64(base64Size) + secretSizeEnvelopeHeadroomBytes
 }
 
+// ADR112FilePermEnforcedMarker and ADR112RequireMFAEnforcedMarker are the
+// system_metadata keys the server writes once a deployment has been enforced on
+// enable_file_permission_check / require_mfa (ADR-112): a deployment whose
+// database has users and no marker is an upgrade still inside that key's grace
+// period (server/adr112_grace.go). The value is the RFC 3339 time first recorded.
+const (
+	ADR112FilePermEnforcedMarker   = "adr112.file_permission_check.enforced"
+	ADR112RequireMFAEnforcedMarker = "adr112.require_mfa.enforced"
+)
+
 type SecurityConfig struct {
-	EnableFilePermissionCheck  bool `yaml:"enable_file_permission_check"`
-	AutoFixFilePermissions     bool `yaml:"auto_fix_file_permissions"`
-	AllowUnsafeFilePermissions bool `yaml:"allow_unsafe_file_permissions"`
+	// EnableFilePermissionCheck gates the file-permission/DEK-salt-size/database-
+	// reachability startup checks (internal/startup.ValidateStartup) and whether
+	// enforceKeyFilePermissions fails closed instead of warning. ADR-112: secure
+	// by default -- Load() resolves an ABSENT key to true (and records that in
+	// EnableFilePermissionCheckImplicitDefault below), not Go's bool zero value,
+	// so a fresh install enforces from its first start without anyone setting this.
+	EnableFilePermissionCheck bool `yaml:"enable_file_permission_check"`
+	// EnableFilePermissionCheckImplicitDefault records whether Load() set
+	// EnableFilePermissionCheck to true itself (the key was absent from the
+	// config file) rather than the operator writing it. Computed from the raw
+	// YAML (a plain bool can't tell "absent" from "explicitly false" apart --
+	// both decode to false); never itself read from YAML.
+	//
+	// Deliberately false-by-default (unlike an "...Explicit" flag would be):
+	// every caller that builds a *Config by hand instead of through Load() --
+	// test fixtures across this repo, any future one-off caller -- leaves this
+	// at Go's zero value, which must mean "treat EnableFilePermissionCheck as
+	// if the operator meant it," the strict pre-ADR-112 behavior, not silently
+	// downgrade a hand-set EnableFilePermissionCheck: true into the softened
+	// grace-period path below. Only Load() ever sets this true, and only when
+	// it also just set EnableFilePermissionCheck to true itself.
+	//
+	// An existing deployment relying on this implicit default gets a start-up
+	// warning and a softened, warn-instead-of-fail-closed response to a real
+	// problem the check finds, until it explicitly sets the key -- see
+	// server/main.go's runStartupValidation and enforceKeyFilePermissions.
+	EnableFilePermissionCheckImplicitDefault bool `yaml:"-"`
+	// EnableFilePermissionCheckUpgradeGrace is the narrower fact the grace
+	// period actually turns on: ImplicitDefault above AND this is an upgraded,
+	// pre-existing deployment (its database already has users) that has never
+	// yet booted clean under the check. Never set by Load(): only
+	// server/main.go's adr112UpgradeGraceEligible sets it, at boot, from the
+	// database itself. A fresh install (no database, or no users yet) and a
+	// deployment that already passed once (the adr112 system_metadata marker)
+	// leave it false and are enforced. False-by-default for the same reason as
+	// ImplicitDefault: a hand-built *Config must never land in the softened path.
+	EnableFilePermissionCheckUpgradeGrace bool `yaml:"-"`
+	AutoFixFilePermissions                bool `yaml:"auto_fix_file_permissions"`
+	AllowUnsafeFilePermissions            bool `yaml:"allow_unsafe_file_permissions"`
 	// RequireMFA mandates TOTP MFA for interactive login: a session-authenticated
 	// user without MFA enabled is confined to the MFA-enrolment endpoints until
 	// they enrol. Non-interactive credentials (PAT/machine/OIDC) are exempt.
+	// ADR-112: secure by default -- Load() resolves an ABSENT key to true (see
+	// RequireMFAImplicitDefault below), not Go's bool zero value.
 	RequireMFA bool `yaml:"require_mfa"`
+	// RequireMFAImplicitDefault is RequireMFA's counterpart to
+	// EnableFilePermissionCheckImplicitDefault above: true only when Load() set
+	// RequireMFA to true itself because the key was absent. False-by-default for
+	// the same reason -- a hand-built *Config with RequireMFA: true must not be
+	// read as "inherited the default." Never read from YAML.
+	RequireMFAImplicitDefault bool `yaml:"-"`
+	// RequireMFAUpgradeGrace is true when server/main.go's applyADR112UpgradeGrace
+	// found an UPGRADED deployment (its database already has users, and no
+	// adr112.require_mfa.enforced marker) relying on the implicit default, and so
+	// set RequireMFA back to false for this boot: ADR-112's grace period for MFA
+	// on upgrades, with a loud start-up warning, until the key is set explicitly.
+	// A fresh install is enforced and marked, so it never gets here. Never read
+	// from YAML; false on every hand-built *Config.
+	RequireMFAUpgradeGrace bool `yaml:"-"`
 	// LoginLockout configures per-account login lockout (brute-force protection):
 	// after MaxAttempts failed password logins within Window, the account is locked
 	// for an exponentially-backing-off cooldown. Distinct from (and complementary to)
@@ -1753,7 +1816,7 @@ func (c RotationBackendConfig) GetDSN() string {
 	if c.DSNEnv == "" {
 		return ""
 	}
-	return os.Getenv(c.DSNEnv)
+	return resolveSecret(c.DSNEnv, "") // also honours <DSNEnv>_FILE
 }
 
 // GetInterval returns the auto-rotation run interval (Go duration, e.g. "1h");
@@ -2103,12 +2166,106 @@ func (c PurgeConfig) GetInterval() time.Duration {
 	return 24 * time.Hour
 }
 
-// resolveSecret returns the value of envVar if set and non-empty, otherwise fallback.
+// resolveSecret returns the secret named envVar: the value of envVar, or the
+// contents of the file named by envVar+"_FILE" (Docker secrets / Kubernetes
+// Secret volumes), or fallback (the config-file value) when neither is set.
+//
+// A misconfiguration -- both set, or the file unreadable/empty -- returns ""
+// and NEVER the fallback: it must not quietly use a different credential than
+// the operator intended. The accessors that call this return a bare string, so
+// the error itself is reported by Config.ValidateSecretSources, which
+// Config.Validate runs at startup; the server refuses to boot on it.
 func resolveSecret(envVar, fallback string) string {
-	if v := os.Getenv(envVar); v != "" {
+	v, found, err := secretenv.Lookup(envVar)
+	if err != nil {
+		return ""
+	}
+	if found {
 		return v
 	}
 	return fallback
+}
+
+// SecretEnvVars lists every fixed-name secret the server resolves through
+// resolveSecret. Each also accepts <NAME>_FILE. Secrets whose variable name is
+// operator-chosen (SSO client secrets, key-provider and rotation/vault env
+// vars) are added by secretEnvNames. TestSecretEnvVars_CoversEveryResolveSecretCall
+// fails if a resolveSecret call is added without being listed here.
+//
+// KEYORIX_MASTER_PASSWORD (internal/crypto.ResolvePassphrase) and
+// KEYORIX_BOOTSTRAP_TOKEN (server/main.go) are also *_FILE-capable; they are
+// resolved outside this package and validated by their own callers, but listed
+// here so the file-permission check covers their files too.
+var SecretEnvVars = []string{
+	"KEYORIX_DB_PASSWORD",
+	"KEYORIX_API_KEY",
+	"KEYORIX_SIEM_TOKEN",
+	"KEYORIX_SMTP_PASSWORD",
+	"KEYORIX_EVIDENCE_WEBHOOK_TOKEN",
+	"KEYORIX_NOTIFY_SLACK_WEBHOOK",
+	"KEYORIX_NOTIFY_TEAMS_WEBHOOK",
+	"KEYORIX_NOTIFY_SMTP_PASSWORD",
+	"KEYORIX_NOTIFY_WEBHOOK_TOKEN",
+	"KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET",
+	"KEYORIX_SCIM_TOKEN",
+	"KEYORIX_MASTER_PASSWORD",
+	"KEYORIX_BOOTSTRAP_TOKEN",
+}
+
+// secretEnvNames returns SecretEnvVars plus the operator-named variables this
+// config points at.
+func (c *Config) secretEnvNames() []string {
+	names := append([]string(nil), SecretEnvVars...)
+	for _, p := range c.SSO.Providers {
+		names = append(names, "KEYORIX_SSO_"+strings.ToUpper(p.Name)+"_CLIENT_SECRET")
+	}
+	for _, b := range c.AutoRotation.Backends {
+		if b.DSNEnv != "" {
+			names = append(names, b.DSNEnv)
+		}
+	}
+	for _, cn := range c.Connect.Connectors {
+		if cn.Type == "vault" {
+			if cn.TokenEnv != "" {
+				names = append(names, cn.TokenEnv)
+			} else {
+				names = append(names, "VAULT_TOKEN")
+			}
+		}
+	}
+	kp := c.Storage.Encryption.KeyProvider
+	if kp.EnvVar != "" {
+		names = append(names, kp.EnvVar)
+	}
+	for _, e := range kp.ShamirShareEnv {
+		if e != "" {
+			names = append(names, e)
+		}
+	}
+	return names
+}
+
+// ValidateSecretSources resolves every secret source once and reports every
+// misconfiguration (both X and X_FILE set, unreadable/empty/oversized file) in
+// one error. Error text names variables and paths only, never a value. It does
+// not check file permissions; see SecretFilePaths and internal/startup.
+func (c *Config) ValidateSecretSources() error {
+	var problems []string
+	for _, n := range c.secretEnvNames() {
+		if _, _, err := secretenv.Lookup(n); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("secret source misconfigured: %s", strings.Join(problems, "; "))
+	}
+	return nil
+}
+
+// SecretFilePaths returns the files named by the <NAME>_FILE variables that are
+// set, for the file-permission check at startup.
+func (c *Config) SecretFilePaths() []string {
+	return secretenv.FilePaths(c.secretEnvNames()...)
 }
 
 const appRootDir = "."
@@ -2121,7 +2278,7 @@ const appRootDir = "."
 // through this helper rather than re-deriving the fallback chain themselves.
 func ResolvedPath(path string) string {
 	if path == "" {
-		path = resolveSecret("KEYORIX_CONFIG_PATH", "")
+		path = os.Getenv("KEYORIX_CONFIG_PATH") // a path, not a secret: no _FILE variant
 	}
 	if path == "" {
 		path = filepath.Join(appRootDir, "keyorix.yaml")
@@ -2171,6 +2328,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 	}
 
+	// ADR-112 secure-by-default: resolve the two inverted-default security keys
+	// against whether the operator actually wrote them, not Go's bool zero value.
+	explicit, err := explicitSecurityKeys(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to inspect config for explicit security keys: %w", err)
+	}
+	if !explicit["enable_file_permission_check"] {
+		cfg.Security.EnableFilePermissionCheck = true
+		cfg.Security.EnableFilePermissionCheckImplicitDefault = true
+	}
+	if !explicit["require_mfa"] {
+		cfg.Security.RequireMFA = true
+		cfg.Security.RequireMFAImplicitDefault = true
+	}
+
 	// server.http.domain/allowed_origins are the only fields documented (in
 	// server/config/production.yaml) as supporting ${VAR}/${VAR:-default} interpolation.
 	// Expansion is applied here, per-field, AFTER unmarshaling — not as a raw-bytes
@@ -2205,6 +2377,32 @@ func Load(path string) (*Config, error) {
 	cfg.Storage.Database.Path = resolvedDBPath
 
 	return &cfg, nil
+}
+
+// explicitSecurityKeys reports which top-level security.* keys the config file
+// actually wrote, as a set of lowercase YAML key names. Used by Load() to tell
+// "the operator explicitly set this bool to false" apart from "the operator
+// never mentioned this key, so it inherits a secure-by-default value" (ADR-112)
+// -- a distinction yaml.Unmarshal's own decode into SecurityConfig can't make,
+// since both cases leave the struct field at Go's false zero value. Re-parses
+// the same raw bytes Load() already decoded, this time into a generic map, so
+// it only needs to answer "was this key present," not reproduce the typed
+// decode. Deliberately permissive (no KnownFields, ignores a malformed/absent
+// security: block as "nothing explicit"): Load's own strict decode above has
+// already rejected a truly malformed document before this ever runs.
+func explicitSecurityKeys(data []byte) (map[string]bool, error) {
+	var raw struct {
+		Security map[string]interface{} `yaml:"security"`
+	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
+	if err := dec.Decode(&raw); err != nil && !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+	explicit := make(map[string]bool, len(raw.Security))
+	for k := range raw.Security {
+		explicit[k] = true
+	}
+	return explicit, nil
 }
 
 // resolveConfigRelativePath anchors a relative SQLite database path to
@@ -2300,6 +2498,12 @@ func LoadConfig() (*Config, error) {
 
 // Validate checks the configuration for required fields and correctness.
 func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppress go:S3776
+	// X and X_FILE both set, or an unreadable X_FILE, must stop the boot: the
+	// accessors return "" for those, which would otherwise surface later as a
+	// confusing connection failure (or, worse, an unauthenticated feature).
+	if err := c.ValidateSecretSources(); err != nil {
+		return err
+	}
 	if err := validateTLSMode("server.http.tls_mode", c.Server.HTTP.TLSMode); err != nil {
 		return err
 	}

@@ -27,7 +27,6 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"testing"
 	"time"
 
@@ -38,13 +37,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 func newPurgeIndependenceCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
-	dsn := fmt.Sprintf("file:kx_purge_indep_%d?mode=memory&cache=shared&_busy_timeout=5000", purgeTestDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "purgeindependence_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }

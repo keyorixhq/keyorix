@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -57,10 +58,7 @@ func downloadReleaseBinary(t *testing.T, tag string) string {
 			url, resp.StatusCode, tag)
 	}
 
-	dir, err := os.MkdirTemp("", "keyorix-e2e-upgrade-bin-*")
-	if err != nil {
-		t.Fatalf("create download tmpdir: %v", err)
-	}
+	dir := t.TempDir() // under $TMPDIR, removed when the test ends
 	binPath := filepath.Join(dir, "keyorix-server-old")
 	out, err := os.Create(binPath) // #nosec G304 -- fixed tmpdir path this function itself created
 	if err != nil {
@@ -103,11 +101,8 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 
 	backend := harness.DBBackend{Name: "sqlite-upgrade-from-" + fromTag}
 	dir := t.TempDir()
-	env := []string{
-		"HOME=" + dir,
-		"PATH=" + os.Getenv("PATH"),
-		"KEYORIX_MASTER_PASSWORD=e2e-upgrade-master-password",
-	}
+	env := append(harness.BaseServerEnv(dir),
+		"KEYORIX_MASTER_PASSWORD=e2e-upgrade-master-password")
 	configPath := "./keyorix.yaml"
 
 	runAdmin := func(binary string, args ...string) {
@@ -165,6 +160,16 @@ func TestAPISmoke_UpgradePath(t *testing.T) {
 	harness.StartBackgroundProcess(t, newSrv, serverEnv)
 	t.Cleanup(newSrv.Close)
 	harness.WaitHealthy(t, newSrv)
+
+	// ADR-112: the old release's config never set security.require_mfa, and its
+	// database already has users, so HEAD must boot it in the require_mfa grace
+	// period (warning, not enforced) rather than confine the existing admin to MFA
+	// enrolment -- the sweep below logs in as that admin without MFA.
+	if logBytes, err := os.ReadFile(newSrv.LogPath); err != nil {
+		t.Fatalf("read upgraded server log: %v", err)
+	} else if !strings.Contains(string(logBytes), "ADR-112 grace period: security.require_mfa") {
+		t.Fatalf("expected the ADR-112 require_mfa grace-period warning after upgrade; server log:\n%s", logBytes)
+	}
 
 	// The full happy-path sweep, logged in as the admin the OLD binary
 	// created -- proves every route this driver covers works against a

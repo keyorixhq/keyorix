@@ -357,6 +357,47 @@ run_group() {
     [ -f "$config_path" ] || fail "admin init did not create $config_path"
     sed -i.bak -E "s/port: \"8080\"/port: \"$server_port\"/" "$config_path"
     rm -f "$config_path.bak"
+    # ADR-112 item 1: security.require_mfa defaults on, which confines a session
+    # without MFA to the enrolment endpoints. Every spec here logs in as the
+    # shared bootstrap admin, whose MFA state is deliberately never touched (see
+    # mfa-login.spec.ts's header: enabling MFA is one-way and would make every
+    # other spec's admin login order-dependent). MFA enrolment and MFA login are
+    # driven through the real UI by mfa-login.spec.ts on throwaway users, and the
+    # default's confinement by scripts/smoke.sh (CLI) and the server tests. Opt
+    # out visibly here, for this harness only, by flipping the explicit
+    # `require_mfa: true` admin init writes (configs/keyorix.yaml.tpl).
+    sed -i.bak -E 's/^  require_mfa: true$/  require_mfa: false/' "$config_path"
+    rm -f "$config_path.bak"
+    grep -q '^  require_mfa: false$' "$config_path" ||
+        fail "could not set security.require_mfa: false in $config_path (did configs/keyorix.yaml.tpl change?)"
+
+    # A spec that needs the deployment policy security.require_mfa=true declares it
+    # with a line starting `// e2e-server: require_mfa=true` in its own file; its
+    # group (one spec per group, MAX_SPECS_PER_GROUP=1) then boots with that policy.
+    # Every other spec -- the default -- boots exactly as before, with require_mfa
+    # unset (false). The policy confines every interactive session of an account
+    # without MFA to the enrolment endpoints, so a group that sets it must not use
+    # the shared admin's Bearer token for fixtures (see seed_demo_data below).
+    local require_mfa=false spec
+    for spec in "${specs[@]}"; do
+        if grep -q '^// e2e-server: require_mfa=true' "$WEB_DIR/$spec"; then
+            require_mfa=true
+        fi
+    done
+    if [ "$require_mfa" = true ]; then
+        echo "==> [group $group_label] ${specs[*]} asks for security.require_mfa=true"
+        # Flip the explicit line back (never insert a second one: a duplicate
+        # require_mfa key is a parse error or last-wins, i.e. the policy silently off).
+        sed -i.bak -E 's/^  require_mfa: false$/  require_mfa: true/' "$config_path"
+        rm -f "$config_path.bak"
+    fi
+    # Exactly one require_mfa line, with the value this group asked for.
+    local want_mfa=false
+    [ "$require_mfa" = true ] && want_mfa=true
+    [ "$(grep -c '^[[:space:]]*require_mfa:' "$config_path")" = 1 ] ||
+        fail "[group $group_label] expected exactly one require_mfa line in $config_path"
+    grep -q "^  require_mfa: $want_mfa\$" "$config_path" ||
+        fail "[group $group_label] security.require_mfa is not $want_mfa in $config_path"
 
     echo "==> [group $group_label] keyorix-server admin encryption init"
     (cd "$smoke_dir" && "$SERVER_BIN" admin encryption init --config "$config_rel") ||
@@ -408,8 +449,15 @@ except Exception:
     print("")' "$smoke_dir/login-response.json")"
     [ -n "$token" ] ||
         fail "[group $group_label] POST /auth/login did not return a token: $(cat "$smoke_dir/login-response.json")"
-    seed_demo_data "$group_label" "$server_url" "$token" "$seed_project_name" \
-        "$lowpriv_username" "$lowpriv_password"
+    if [ "$require_mfa" = true ]; then
+        # This Bearer token is an interactive session of an account with no MFA, so
+        # the policy 403s every seeding call (MFAEnrollmentRequired). The spec that
+        # asked for the policy owns what it needs.
+        echo "==> [group $group_label] require_mfa group: skipping seed_demo_data"
+    else
+        seed_demo_data "$group_label" "$server_url" "$token" "$seed_project_name" \
+            "$lowpriv_username" "$lowpriv_password"
+    fi
 
     echo "==> [group $group_label] running Playwright specs against the real backend: ${specs[*]}"
     export HOME="$REAL_HOME"

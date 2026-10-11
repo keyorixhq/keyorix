@@ -47,6 +47,11 @@ var keptPaths = []string{
 	"/system/init",
 	// PR 2 (docs/cli-split-inventory.md §7) -- pat, auth (mfa/logout), machine.
 	"/api/v1/auth/mfa/stepup",
+	// ADR-112 item 1: require_mfa defaults on, so a fresh install's first admin
+	// is confined to MFA enrolment until it enrols -- `keyorix mfa enroll` and
+	// `keyorix mfa activate` are how the CLI does that.
+	"/api/v1/auth/mfa/enroll",
+	"/api/v1/auth/mfa/activate",
 	"/api/v1/auth/tokens",
 	"/api/v1/auth/tokens/{id}",
 	"/api/v1/auth/tokens/expired",

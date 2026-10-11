@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -120,7 +121,22 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
-	return secretNodeToProto(secret), nil
+	out := secretNodeToProto(secret)
+	out.TotalReads = s.totalReads(ctx, secret.ID)
+	return out, nil
+}
+
+// totalReads returns the secret's lifetime value-read count (core.SecretTotalReads,
+// the same figure the REST API reports as total_reads), or nil when it cannot be
+// computed: the field is optional, and a failed count must not fail a metadata read
+// (REST/gRPC parity, #2971).
+func (s *SecretGRPCService) totalReads(ctx context.Context, secretID uint) *int64 {
+	n, err := s.core.SecretTotalReads(ctx, secretID)
+	if err != nil {
+		log.Printf("total_reads for secret %d unavailable: %v", secretID, err)
+		return nil
+	}
+	return &n
 }
 
 // ListSecretDependencies returns a secret's direct dependencies and dependents
@@ -416,9 +432,12 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
-	// Audit as a secret read, mirroring the HTTP handler (secrets_versions.go) —
-	// without this, listing version history over gRPC left no secret.read event,
-	// an HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168).
+	// Audit the listing, mirroring the HTTP handler (secrets_versions.go) —
+	// without this, listing version history over gRPC left no audit event, an
+	// HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168). It is
+	// secret.versions_listed (with an access-log row of action "versions_list",
+	// which anomaly detection reads), not secret.read: no value is returned
+	// (AUDIT-UX-2, #2951).
 	// Plain, unauthorized read, matching the HTTP handler's own GetSecret (not
 	// GetSecretWithPermissionCheck) for this exact prefetch: authorizeSecretScoped
 	// above already authorized this read, and GetSecretVersionsWithPermissionCheck
@@ -429,7 +448,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if secret, sErr := s.core.GetSecret(ctx, uint(req.GetId())); sErr == nil && secret != nil {
 		auditCtx := core.DetachedAuditContext(ctx)
 		ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
-		if auditErr := s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
+		if auditErr := s.core.LogSecretVersionsListed(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
 			return nil, status.Error(codes.Internal, "failed to record audit trail")
 		}
 	}
@@ -441,7 +460,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 			ReadCount:     intToU32(v.ReadCount),
 		})
 	}
-	return &pb.GetSecretVersionsResponse{Versions: out}, nil
+	return &pb.GetSecretVersionsResponse{Versions: out, TotalReads: s.totalReads(ctx, uint(req.GetId()))}, nil
 }
 
 // GrantSecretACL grants (or updates) a per-secret ACL for a user.

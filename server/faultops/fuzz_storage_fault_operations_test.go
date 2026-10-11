@@ -634,6 +634,23 @@ func FuzzStorageFaultOperations(f *testing.F) {
 	if s := seedFor("GRPC keyorix.v1.RoleService.CreateRole", "GetRole", 1, 0); s != nil {
 		f.Add(s)
 	}
+	// #2910 (SSO-2): the SSO login ops' group/role reconcile, and the three
+	// defects the SSO fault sweep (zz_sso_reconcile_sweep_test.go) found in it:
+	// a failed group REVOCATION (the class-C refusal, accepted by
+	// ssoClassCAccountsForDiff), an undecided escalation guard (oracles a and c),
+	// and a panicking last-login stamp masking a completed login (oracle a).
+	if s := seedFor("REST GET /auth/sso/{provider}/callback", "RemoveUserFromGroup", 1, 0); s != nil {
+		f.Add(s)
+	}
+	if s := seedFor("REST GET /auth/sso/{provider}/callback", "GetRolePermissions", 1, 0); s != nil {
+		f.Add(s)
+	}
+	if s := seedFor("REST POST /auth/saml/{provider}/acs", "GetGroupRoles", 1, 0); s != nil {
+		f.Add(s)
+	}
+	if s := seedFor("REST POST /auth/saml/{provider}/acs", "UpdateLastLogin", 1, 1); s != nil {
+		f.Add(s)
+	}
 	// Harness completeness regression (REPLAY_HEX=c900cb0000): DynamicSecretLease.LeaseID
 	// is a random token (see snapshot_test.go's typeScopedPresenceOnlyFields entry, scoped to
 	// DynamicSecretLease so the exemption can never leak onto BreakGlassActivation.RoleName or
@@ -1104,34 +1121,9 @@ var knownOpenTolerances = []knownOpenTolerance{
 		tables:     []string{"LoginAttempt"},
 		findingDoc: "#2837",
 	},
-	// Also found by the same live run while working #2549, also confirmed
-	// PRE-EXISTING by byte-for-byte replay against unmodified origin/main, also
-	// not caused by #2549's change. Filed as #2834 (no prior issue found).
-	//
-	// buildClassificationPosture (internal/core/compliance_posture.go:714)
-	// degrades rather than fails when a sub-count read errors: the snapshot is
-	// PERSISTED with partial counts and the request reports success. The
-	// degradation is recorded (cp.degrade sets Degraded/DegradedReasons, and the
-	// persisted row carries DegradedControls), which is the same deliberate
-	// partial-snapshot-with-a-durable-marker shape OpenAccessReviewCampaign uses
-	// (#483) -- so this is PROBABLY acceptable-by-design and belongs in
-	// opScopedBestEffortTables with requireLogSubstring pinned to the degrade
-	// line. #2834 asks the compliance-posture owner to decide that; classifying
-	// another subsystem's behaviour as by-design without its owner is exactly the
-	// claim #2549 was filed about, so it is tolerated here rather than
-	// reclassified.
-	//
-	// method is NOT wildcarded even though the three sibling counts share the
-	// root cause: a wildcard would hide a future, genuinely different divergence
-	// on this op. tables is the one table, so anything else still fails. Remove
-	// when #2834 is resolved either way.
-	{
-		op: "REST POST /api/v1/compliance/snapshots", method: "CountDynamicSecretConfigsByClassification",
-		kind: faultstorage.KindError,
-		nth:  1, oracle: "a", issue: "#2834", expires: "2026-11-07",
-		tables:     []string{"CompliancePostureSnapshot"},
-		findingDoc: "#2834",
-	},
+	// (#2834 -- compliance snapshot persisting partial counts -- is FIXED: its two
+	// tolerances are gone. POST /api/v1/compliance/snapshots now fails closed on any
+	// degraded sub-rollup; guarded by compliance_snapshot_fail_closed_test.go.)
 	// (The third pre-existing finding from the same live runs — #2841, op="REST
 	// POST /auth/webauthn/login/finish", method=GetUserRoles, kind=error, nth 1,
 	// [AuditEvent LoginAttempt MFAStepUpGrant] — was tolerated here and is now
@@ -1538,6 +1530,10 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 	t.Helper()
 	label := fmt.Sprintf("op=%s fault=%s#%d/%s", in.op, in.method, in.nth, in.kind)
 
+	// Oracle (f), #2844: no undelivered session. Independent of every other
+	// oracle and of the tolerance tables. See undelivered_session_oracle_test.go.
+	checkNoUndeliveredSession(t, label, in)
+
 	report := func(oracle string, diff []string, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)
 		if known := matchingKnownOpen(in, oracle, diff); known != nil {
@@ -1640,6 +1636,12 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 					label)
 				return
 			}
+			// #2910 (SSO-2): same class-C rule as oracle (a)'s error branch.
+			if ssoClassCAccountsForDiff(in) {
+				t.Logf("ACCEPTABLE-BY-DESIGN (SSO class C, docs/atomicity-exempt.tsv %s): %s: effect-then-error state is "+
+					"a sub-transition of the fault-free login's, no session minted", ssoClassCLedgerKey, label)
+				return
+			}
 			report("d", nil, "%s: ORACLE (d) VIOLATION — effect-then-error state matches NEITHER the pre-fault "+
 				"state nor the fault-free reference state (a genuine partial/mixed commit, not just an "+
 				"ambiguous-but-consistent one). Differing tables vs before: %v; vs reference: %v",
@@ -1699,6 +1701,14 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 				t.Logf("ACCEPTABLE-BY-DESIGN: %s: state diverges only in %v, which this op/method pair "+
 					"deliberately keeps while reporting failure — %s (proving test: %s)",
 					label, diff, e.designComment, e.provingTest)
+				return
+			}
+			// Sixth layer, #2910 (SSO-2): the SSO login ops' class-C step set. Accepts only a
+			// change that is a sub-transition of the fault-free login's own change,
+			// with no session -- see zz_sso_class_c_oracle_test.go.
+			if ssoClassCAccountsForDiff(in) {
+				t.Logf("ACCEPTABLE-BY-DESIGN (SSO class C, docs/atomicity-exempt.tsv %s): %s: state diverges in %v, "+
+					"every change a sub-transition of the fault-free login's and no session minted", ssoClassCLedgerKey, label, diff)
 				return
 			}
 			report("a", diff, "%s: ORACLE (a) VIOLATION — reported an ERROR but logical state changed anyway "+

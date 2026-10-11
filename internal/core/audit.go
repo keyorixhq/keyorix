@@ -490,6 +490,86 @@ func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint,
 	return c.emitAuditWithAccessLog(ctx, event, accessLog)
 }
 
+// EventSecretVersionsListed is the audit event for listing a secret's version
+// history (GET /secrets/{id}/versions, gRPC GetSecretVersions). The listing
+// carries version numbers, timestamps and read counters, never a value
+// (SecretVersion.EncryptedValue is json:"-"), so it is not a secret.read:
+// secret.read, and every count keyed on it (read summaries, billing and usage
+// reads, dashboard "accessed"), means a value disclosure only (AUDIT-UX-2, #2951).
+const EventSecretVersionsListed = "secret.versions_listed"
+
+// AccessActionVersionsList is the secret_access_logs action written with
+// EventSecretVersionsListed. Not "read": read counts (total reads, most-accessed,
+// rotation risk) filter on action "read". Anomaly detection reads every action,
+// so who listed a secret's versions from where still feeds its baselines.
+const AccessActionVersionsList = "versions_list"
+
+// EventSecretMetadataRead is the audit event for a metadata-only secret lookup
+// (GET /secrets/by-name): the response carries the secret's metadata, never its
+// value, so it is not a secret.read (AUDIT-UX-3, same rule as
+// EventSecretVersionsListed).
+const EventSecretMetadataRead = "secret.metadata_read"
+
+// AccessActionMetadataRead is the secret_access_logs action written with
+// EventSecretMetadataRead. Not "read": read counts filter on action "read".
+// Anomaly detection reads every action, so metadata lookups still feed its
+// baselines.
+const AccessActionMetadataRead = "metadata_read"
+
+// LogSecretVersionsListed writes audit_events + secret_access_logs for a
+// version-history listing, as ONE atomic unit, and blocks until both are
+// durably committed: the same audit-before-response contract (and the same
+// writer) as LogSecretReadWithProject, which this replaces for the listing.
+// Returns an error if the write fails; the caller must not send the listing.
+func (c *KeyorixCore) LogSecretVersionsListed(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.logSecretMetadataAccess(ctx, EventSecretVersionsListed, AccessActionVersionsList,
+		fmt.Sprintf("User %s listed the versions of secret %s", username, secretName),
+		userID, secretID, projectID, username, ip, ua)
+}
+
+// LogSecretMetadataRead writes secret.metadata_read + an access-log row of
+// action "metadata_read" (atomically, like LogSecretVersionsListed) for a
+// metadata-only lookup by name.
+func (c *KeyorixCore) LogSecretMetadataRead(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.logSecretMetadataAccess(ctx, EventSecretMetadataRead, AccessActionMetadataRead,
+		fmt.Sprintf("User %s looked up secret %s", username, secretName),
+		userID, secretID, projectID, username, ip, ua)
+}
+
+// logSecretMetadataAccess is the shared atomic writer for metadata-only secret
+// access events (no value disclosed). The description must end in
+// " secret <name>" (the dashboard extracts the name from it).
+func (c *KeyorixCore) logSecretMetadataAccess(ctx context.Context, eventType, accessAction, description string, userID, secretID, projectID uint, username, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	uid, sid, pid := userID, secretID, projectID
+	t := true
+	event := &models.AuditEvent{
+		EventType:    eventType,
+		UserID:       &uid,
+		SecretNodeID: &sid,
+		ProjectID:    &pid,
+		IPAddress:    ip,
+		Description:  sanitizeAuditText(description),
+		Success:      &t,
+		EventTime:    time.Now(),
+		ActorType:    actorTypeFromContext(ctx),
+	}
+	if adminID, ok := impersonatorFromContext(ctx); ok {
+		a := adminID
+		event.ImpersonatedBy = &a
+		event.ActingAs = &uid
+		event.Impersonation = true
+	}
+	accessLog := &models.SecretAccessLog{
+		SecretNodeID: secretID,
+		AccessedBy:   username,
+		AccessTime:   time.Now(),
+		Action:       accessAction,
+		IPAddress:    ip,
+		UserAgent:    ua,
+	}
+	return c.emitAuditWithAccessLog(ctx, event, accessLog)
+}
+
 // LogSecretCreated writes audit_events + secret_access_logs for a secret creation.
 func (c *KeyorixCore) LogSecretCreated(ctx context.Context, userID uint, secretID uint, username, secretName, ip, ua string) {
 	uid, sid := userID, secretID

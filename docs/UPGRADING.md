@@ -23,17 +23,33 @@ valid, restorable v2 archive.
 
 ## 2. Upgrading from v0.95.x → v0.95.2
 
+(Latest release at the time of writing is v0.95.3; the steps are the same.)
+
 This is the normal, in-place upgrade path: same major/minor line, schema
 migrations run automatically and are additive.
 
 ```sh
-# Docker Compose
+# Docker Compose: docker-compose.yml pins the image tags, so edit the backend and
+# web tags to the target release first (otherwise `pull` fetches nothing new)
 docker compose pull
 docker compose up -d
 
 # Single binary
 # stop the old process, replace the binary, restart
 ```
+
+**What you will see when moving a v0.95.3 install to `main`** (verified, SQLite
+single binary and Compose + Postgres): a secret written by v0.95.3 reads back
+unchanged, `admin verify-audit` is VALID, and the first start logs
+`ADR-112 grace period: security.require_mfa now defaults to true, but this is an
+upgraded deployment` — MFA is not enforced yet and `admin validate --posture`
+counts it as a deviation until each admin enrols (`keyorix mfa enroll` /
+`activate`; the v0.95.3 CLI has no `mfa enroll`, so use the new CLI or the web
+UI) and `security.require_mfa: true` is set explicitly. Back up with the *old*
+release's tooling before swapping: on the v0.95.3 Compose image
+`admin backup` beside the live server fails with `failed to acquire the
+encryption key lock`; stop `backend` and use `docker compose run` (see
+SELF_HOSTING.md §5).
 
 Schema migrations run on boot. If a rolling multi-replica upgrade hits
 `database schema epoch N is newer than this binary's schema epoch M`, that's
@@ -110,10 +126,11 @@ skip.
   terms regardless of what happens to the target's keys afterward.
 - **What happens after `keyorix-server admin encryption rotate`:** this
   command rotates the **DEK** (the key that encrypts your data), not the
-  KEK — the KEK is derived from `KEYORIX_MASTER_PASSWORD`, which this
-  product has no supported "rotate" operation for at all (changing the
-  master password after first boot makes every stored secret
-  undecryptable; see `docs/SELF_HOSTING.md` §4). Since the backup manifest
+  KEK — the KEK is derived from `KEYORIX_MASTER_PASSWORD`. To change that
+  passphrase use `keyorix-server admin encryption rotate-kek`
+  ([operator/j6-key-rotation.md](operator/j6-key-rotation.md)); editing the
+  variable by hand makes every stored secret undecryptable (see
+  `docs/SELF_HOSTING.md` §4). Since the backup manifest
   signing key is HKDF-derived from the KEK alone — never the DEK — a DEK
   rotation does not change it, and does not retroactively affect any
   existing backup archive: an archive taken before the rotation carries its

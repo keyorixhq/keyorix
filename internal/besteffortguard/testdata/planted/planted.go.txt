@@ -193,7 +193,42 @@ func (s *svc) MustFlagDiscardOfRepanickingRecoverCallee() error {
 	return nil
 }
 
+// MustFlagDiscardedWriteAfterWrite: the discarded call is ITSELF a storage
+// write. Before the fix it became the "last write" anchor, so the discard sat
+// AT the anchor rather than after it and was never flagged -- exactly how
+// CreateUserWithAssignments' `_ = c.storage.AddPasswordHistory(...)` panicked
+// past a committed CreateUserWithRoleGrants (FuzzStorageFaultOperations,
+// GRPC UserService.CreateUser, AddPasswordHistory#1/panic).
+func (s *svc) MustFlagDiscardedWriteAfterWrite() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	_ = s.storage.CreateThing()
+	return nil
+}
+
 // --- NEGATIVES: each one must produce NO hit ---------------------------------
+
+// MustNotFlagDiscardedWriteProtectedByBestEffortRun: the same discarded
+// post-commit write, routed through besteffort.Run -- the fix.
+func (s *svc) MustNotFlagDiscardedWriteProtectedByBestEffortRun() error {
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	besteffort.Run("thing", func() { _ = s.storage.CreateThing() })
+	return nil
+}
+
+// MustNotFlagDiscardedWriteBeforeCheckedWrite: a discarded write followed by a
+// CHECKED write is before the last write, so it stays out of scope (the
+// scanner's documented textual "after the last write" rule, unchanged).
+func (s *svc) MustNotFlagDiscardedWriteBeforeCheckedWrite() error {
+	_ = s.storage.CreateThing()
+	if err := s.storage.CreateThing(); err != nil {
+		return err
+	}
+	return nil
+}
 
 // MustNotFlagDiscardBeforeWrite: the discard precedes the write, so no
 // already-committed write can be misreported by a panic in it.

@@ -2,9 +2,10 @@ package services
 
 import (
 	"context"
-	"strings"
+	"errors"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -110,16 +111,21 @@ func breakGlassToProto(a *models.BreakGlassActivation) *pb.BreakGlassActivation 
 }
 
 // breakGlassError maps a core error to a gRPC status, mirroring the HTTP status codes.
+//
+// #2905: classified by sentinel (errors.Is), never by matching err.Error(). That
+// text embeds i18n.T(...) output, so a text match only worked while the server
+// ran in English; under a locale that translates those prefixes a deliberate
+// PermissionDenied/NotFound silently became Internal. An error that carries no
+// sentinel is Internal whatever its words say.
 func breakGlassError(err error) error {
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, storage.ErrBreakGlassNotFound):
 		return status.Error(codes.NotFound, "break-glass activation not found") // GRPC-005: was msg — leaked storage error details
-	case strings.Contains(msg, "justification") || strings.Contains(msg, "required") || strings.Contains(msg, "invalid"):
+	case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 		return status.Error(codes.InvalidArgument, "invalid request") // GRPC-005: was msg — leaked minimum justification length
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
+	case errors.Is(err, core.ErrBreakGlassDisabled), errors.Is(err, core.ErrBreakGlassNotProjectMember):
 		return status.Error(codes.PermissionDenied, "access denied")
-	case strings.Contains(msg, "already revoked") || strings.Contains(msg, "not active") || strings.Contains(msg, "expired"):
+	case errors.Is(err, storage.ErrBreakGlassNotActive):
 		return status.Error(codes.FailedPrecondition, "activation is not in a valid state for this operation") // GRPC-005: was msg
 	default:
 		return status.Error(codes.Internal, "break-glass operation failed")

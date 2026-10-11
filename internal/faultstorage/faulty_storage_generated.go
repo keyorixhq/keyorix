@@ -2169,6 +2169,23 @@ func (w *FaultyStorage) EnforceSessionLimit(ctx context.Context, userID uint, ke
 	return w.real.EnforceSessionLimit(ctx, userID, keep)
 }
 
+func (w *FaultyStorage) ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (bool, error) {
+	fire, kind, injected := w.check("ExtendDynamicSecretLeaseExpiry")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ExtendDynamicSecretLeaseExpiry(ctx, leaseID, newExpiry)
+			return rv1, injected
+		}
+	}
+	return w.real.ExtendDynamicSecretLeaseExpiry(ctx, leaseID, newExpiry)
+}
+
 func (w *FaultyStorage) GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error) {
 	fire, kind, injected := w.check("GetAccessRequest")
 	if fire {
@@ -5788,6 +5805,23 @@ func (w *FaultyStorage) ReconcileExpiredBreakGlassActivation(ctx context.Context
 	return w.real.ReconcileExpiredBreakGlassActivation(ctx, projectID, userID)
 }
 
+func (w *FaultyStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID string, status string, revokeReason string, revokeError string, revokedAt *time.Time) (bool, error) {
+	fire, kind, injected := w.check("RecordDynamicSecretLeaseRevocation")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.RecordDynamicSecretLeaseRevocation(ctx, leaseID, status, revokeReason, revokeError, revokedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.RecordDynamicSecretLeaseRevocation(ctx, leaseID, status, revokeReason, revokeError, revokedAt)
+}
+
 func (w *FaultyStorage) RecordLoginAttempt(ctx context.Context, ip string, at time.Time) error {
 	fire, kind, injected := w.check("RecordLoginAttempt")
 	if fire {
@@ -6358,6 +6392,23 @@ func (w *FaultyStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id u
 		}
 	}
 	return w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
+}
+
+func (w *FaultyStorage) SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification string, toClassification string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("SetDynamicSecretConfigClassification")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.SetDynamicSecretConfigClassification(ctx, id, fromClassification, toClassification, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.SetDynamicSecretConfigClassification(ctx, id, fromClassification, toClassification, updatedAt)
 }
 
 func (w *FaultyStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification string, toClassification string) (bool, error) {
