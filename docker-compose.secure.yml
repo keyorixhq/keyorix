@@ -59,6 +59,11 @@ services:
     volumes:
       - ./web/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./deploy/compose/keyorix-backend.tls.conf:/etc/nginx/keyorix-backend.conf:ro
+      # nginx.conf includes /etc/nginx/keyorix/nginx-hsts.conf, which this script
+      # generates at start (tmpfs in docker-compose.yml). A web image older than
+      # the script (the pinned 0.95.3) would not start without it; for a newer one
+      # it is the same script. It must stay executable in the checkout.
+      - ./web/docker-entrypoint.d/40-keyorix-hsts.sh:/docker-entrypoint.d/40-keyorix-hsts.sh:ro
       - keyorix_tls_public:/etc/keyorix/tls:ro
 
 volumes:
