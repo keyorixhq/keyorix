@@ -78,7 +78,7 @@ chmod +x "$stub_bin/wget"
 # The single-quoted sed pattern intentionally matches the literal text
 # '$KEYORIX_ADMIN_PASSWORD' as it appears in entrypoint.sh; it must not expand.
 # shellcheck disable=SC2016
-block="$(sed -n '/^if \[ -n "\$KEYORIX_ADMIN_PASSWORD" \]; then$/,/^fi$/p' "$entrypoint")"
+block="$(sed -n '/^if \[ -n "\$_kx_admin_password" \]; then$/,/^fi$/p' "$entrypoint")"
 if [[ -z "$block" ]]; then
     echo "FAIL - could not locate the KEYORIX_ADMIN_PASSWORD bootstrap block in $entrypoint"
     exit 1
@@ -93,10 +93,10 @@ env -i \
     WGET_PAYLOAD_SNAPSHOT="$payload_snapshot" \
     WGET_PAYLOAD_PATH_FILE="$payload_path_file" \
     WGET_PAYLOAD_MODE_FILE="$payload_mode_file" \
-    KEYORIX_ADMIN_PASSWORD="$password" \
+    _kx_admin_password="$password" \
     KEYORIX_ADMIN_USERNAME="admin" \
     KEYORIX_ADMIN_EMAIL="admin@example.test" \
-    KEYORIX_BOOTSTRAP_TOKEN="test-bootstrap-token" \
+    _kx_bootstrap_token="test-bootstrap-token" \
     KEYORIX_LOCAL_URL="https://localhost:8080" \
     KEYORIX_LOCAL_CA_FILE="/app/tls/server.crt" \
     sh -c "$block"
@@ -119,6 +119,12 @@ if grep -qF -- "$password" "$argv_log"; then
     bad "admin password found in wget argv (this is the #241 leak)"
 else
     note "admin password absent from wget argv"
+fi
+
+if grep -qF -- "test-bootstrap-token" "$argv_log"; then
+    bad "bootstrap token found in wget argv"
+else
+    note "bootstrap token absent from wget argv"
 fi
 
 # --- ...but it must still reach the request body, via the --post-file. ---
