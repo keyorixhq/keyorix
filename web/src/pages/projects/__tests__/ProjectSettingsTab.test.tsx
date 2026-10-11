@@ -1105,6 +1105,18 @@ describe('ProjectSettingsTab — Recycle bin', () => {
         await waitFor(() => expect(mockPost).toHaveBeenCalledWith('/api/v1/secrets/31/restore', {}));
     });
 
+    it('does not overstate the purge guarantee: legacy rows without a stored date follow the live window', async () => {
+        mockGet.mockImplementation(() => Promise.resolve({ data: { data: { deleted: [] } } }));
+
+        render(<ProjectSettingsTab projectId={1} />);
+
+        expect(await screen.findByText('Recycle bin')).toBeInTheDocument();
+        expect(screen.queryByText(/never purged earlier/i)).not.toBeInTheDocument();
+        expect(
+            screen.getByText(/deleted before this date was recorded follow the current window/i)
+        ).toBeInTheDocument();
+    });
+
     it('shows the real purge date of each deleted secret, and none for a row without one', async () => {
         mockGet.mockImplementation((url: string) =>
             url.includes('/secrets/deleted')

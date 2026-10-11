@@ -62,7 +62,12 @@ const schemaEpochMetadataKey = "schema_epoch"
 // (TestMinCompatibleSchemaEpoch_WithinRange). A floor already recorded in the
 // database is never lowered by recordSchemaEpoch, so declaring a lower value
 // here cannot reopen a floor a newer binary raised.
-const minCompatibleSchemaEpoch = 1
+//
+// Currently 2: an epoch-1 binary's RestoreSecret/RestoreProject do not clear
+// secret_nodes.purge_at and its DeleteSecret does not re-stamp it, so a
+// restore + re-delete on an old replica would leave a stale date that the
+// epoch-2 purge job honours, hard-deleting before the date shown (#3021).
+const minCompatibleSchemaEpoch = 2
 
 // schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's
 // compatibility floor (minCompatibleSchemaEpoch) is recorded under. #nosec

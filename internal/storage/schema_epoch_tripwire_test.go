@@ -15,7 +15,8 @@
 // does it meets ADR-101 (decide minCompatibleSchemaEpoch) at the moment it matters.
 //
 // History: 1 -> 2 for secret_nodes.purge_at (#3021), an additive nullable column an
-// older binary neither reads nor needs, so minCompatibleSchemaEpoch stays 1.
+// older binary neither reads nor maintains. That is NOT safe (an epoch-1 restore/delete
+// leaves a stale purge_at), so minCompatibleSchemaEpoch is raised to 2.
 package storage
 
 import "testing"
@@ -30,8 +31,10 @@ func TestCurrentSchemaEpoch_Is2_SeeADR101(t *testing.T) {
 				"epoch bump -- do not just raise the constant here.",
 			currentSchemaEpoch)
 	}
-	if minCompatibleSchemaEpoch != 1 {
-		t.Fatalf("minCompatibleSchemaEpoch is %d; the purge_at column (epoch 2) is additive-and-safe, so the floor must stay 1 -- "+
-			"an older binary must keep booting against it (rolling upgrade, one-release rollback)", minCompatibleSchemaEpoch)
+	if minCompatibleSchemaEpoch != 2 {
+		t.Fatalf("minCompatibleSchemaEpoch is %d; the purge_at column (epoch 2) is NOT safe for an epoch-1 binary: its "+
+			"RestoreSecret/RestoreProject do not clear purge_at and its DeleteSecret does not re-stamp it, so a restore+re-delete "+
+			"on an old replica leaves a stale date and the new purge job hard-deletes before the date shown (irreversible). "+
+			"The floor must be 2 so epoch-1 binaries refuse to start (INV-STORE-secret-purge-never-before-shown-date)", minCompatibleSchemaEpoch)
 	}
 }

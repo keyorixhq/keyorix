@@ -75,3 +75,15 @@ would change under the operator, and a shortening would silently remove a secret
 UI had promised was restorable. Secrets deleted before this amendment have no frozen date
 and keep the live-config rule (their shown date is `deleted_at` + the current window).
 Invariant: `INV-STORE-secret-purge-never-before-shown-date`.
+
+**Mixed-version rollout (ADR-101).** An epoch-1 binary does not know `purge_at`: its
+`RestoreSecret`/`RestoreProject` do not clear it and its `DeleteSecret` does not re-stamp
+it. On a shared database a restore + re-delete on an old replica would leave the first
+deletion's date in place and the new purge job would hard-delete (irreversibly) before the
+date shown for the second deletion. The column is therefore NOT additive-and-safe, and
+`minCompatibleSchemaEpoch` is raised to 2 with this change: an epoch-1 binary refuses to
+start against a migrated database (`TestCurrentSchemaEpoch_Is2_SeeADR101`). Consequence:
+a rolling upgrade must not leave epoch-1 replicas running after the first epoch-2 replica
+migrates (they exit at their next start, and a one-release rollback is no longer possible
+without restoring the database). Secrets deleted before the upgrade have no `purge_at`
+and follow the live window, so the UI states that date can still move.

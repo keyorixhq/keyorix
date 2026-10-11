@@ -618,8 +618,9 @@ function renderRecycleBinSection({
                 Recycle bin
             </h2>
             <p className="text-xs mb-4" style={{ color: 'var(--text-muted)' }}>
-                Deleted secrets stay restorable until the date shown beside each one; they are never purged earlier.
-                Restore one to return it to the live list.
+                Deleted secrets stay restorable until the date shown beside each one; it is not moved earlier when the
+                retention window is shortened later. Secrets deleted before this date was recorded follow the current
+                window, so their date can still change. Restore one to return it to the live list.
             </p>
             <div
                 className="rounded-lg border"
