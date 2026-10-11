@@ -209,12 +209,27 @@ func (c *KeyorixCore) ListUserShareViews(ctx context.Context, userID uint) ([]Sh
 	if err != nil {
 		return nil, err
 	}
-	return c.shareViews(ctx, shares), nil
+	return c.shareViews(ctx, shares)
 }
+
+// maxShareViewBatchSize bounds how many share rows one list call enriches. The rows
+// come from storage (never a request payload), but enrichment does a user/group
+// lookup per distinct recipient and creator, and the CLI's embedded mode calls core
+// directly, so a very large share table would turn one list call into an unbounded
+// run of round trips (CWE-400). Same pattern as maxBulkAccessRequestBatchSize. The
+// list fails (500), never truncates: a silently shortened list would hide shares from
+// the page that revokes them.
+const maxShareViewBatchSize = 10000
+
+// errShareViewBatchTooLarge: the share list exceeds maxShareViewBatchSize.
+var errShareViewBatchTooLarge = fmt.Errorf("share list exceeds the maximum of %d shares per request", maxShareViewBatchSize)
 
 // shareViews enriches share records with recipient/creator display names, resolving
 // each user and group once.
-func (c *KeyorixCore) shareViews(ctx context.Context, shares []*models.ShareRecord) []ShareView { // NOSONAR -- cognitive complexity 17, suppress go:S3776
+func (c *KeyorixCore) shareViews(ctx context.Context, shares []*models.ShareRecord) ([]ShareView, error) { // NOSONAR -- cognitive complexity 17, suppress go:S3776
+	if len(shares) > maxShareViewBatchSize {
+		return nil, errShareViewBatchTooLarge
+	}
 	userNames := map[uint]string{}
 	resolveUser := func(id uint) string {
 		if id == 0 {
@@ -263,7 +278,7 @@ func (c *KeyorixCore) shareViews(ctx context.Context, shares []*models.ShareReco
 		}
 		views = append(views, v)
 	}
-	return views
+	return views, nil
 }
 
 // CheckSharePermission checks if a user has permission to access a secret.
