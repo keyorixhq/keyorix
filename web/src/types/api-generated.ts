@@ -259,7 +259,7 @@ export interface paths {
         put?: never;
         /**
          * Change own password (drops other sessions)
-         * @description Change the authenticated user's password; invalidates all other active sessions.
+         * @description Change the authenticated user's password; invalidates all other active sessions. In a setup-only session (an account that had to both replace a one-time password and enrol a second factor under security.require_mfa, #3024), the step that finishes setup also ends the calling session: data.reauthentication_required is then true and the next login is a normal two-step MFA login.
          */
         post: operations["changePassword"];
         delete?: never;
@@ -323,7 +323,7 @@ export interface paths {
         put?: never;
         /**
          * Create a personal access token (raw token returned once)
-         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once.
+         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once. A request authenticated by a restricted personal access token (any scopes, project, environment or CIDR restriction) is refused with 403, since the new token would not carry that restriction.
          */
         post: operations["createPAT"];
         delete?: never;
@@ -1067,7 +1067,7 @@ export interface paths {
         put?: never;
         /**
          * Activate break-glass emergency access (self-service)
-         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled.
+         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled, and always when the caller authenticated with a restricted personal access token (ADR-042).
          */
         post: operations["activateBreakGlass"];
         delete?: never;
@@ -5078,7 +5078,7 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
-            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
             total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
@@ -5491,7 +5491,7 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
-            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Counts secret_access_logs rows with action read, which today also include metadata-only by-name lookups (a known exception, see INV-CORE-secret-read-means-value-disclosure), so it can exceed the number of value disclosures. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
             total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
@@ -5983,6 +5983,8 @@ export interface components {
                     details?: {
                         [key: string]: unknown;
                     } | null;
+                    /** @description Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order. */
+                    pending_steps?: string[];
                 };
             };
         };
@@ -6397,9 +6399,19 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: {
+                            /** @description True when this change finished account setup and the calling session was ended (#3024). */
+                            reauthentication_required?: boolean;
+                        };
+                    };
+                };
             };
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listSessions: {
@@ -6507,6 +6519,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listExpiredPATs: {
@@ -6655,6 +6668,8 @@ export interface operations {
                         message?: string;
                         data?: {
                             recovery_codes: string[];
+                            /** @description True when this activation finished account setup in a setup-only session and that session was ended (#3024); otherwise the calling session stays signed in. */
+                            reauthentication_required?: boolean;
                         };
                     };
                 };

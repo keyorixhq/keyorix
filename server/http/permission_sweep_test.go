@@ -384,13 +384,13 @@ const (
 
 	// justSelfServiceOwnAccount covers the My Account / MFA / WebAuthn /
 	// sessions / PAT / notifications family inside /api/v1: authenticated (the
-	// group's Authentication/RequireCSRF/EnforceAccountRestriction/
-	// EnforceMFAEnrollment middleware all still apply), but acts ONLY on the
+	// group's Authentication/RequireCSRF/EnforceAccountSetup middleware all
+	// still apply), but acts ONLY on the
 	// calling principal's OWN account/session/token/notification, so no RBAC
 	// permission concept applies -- ADR-021/ADR-024/ADR-027 establish this
 	// whole family as authenticated-but-not-permission-gated by design.
 	justSelfServiceOwnAccount = "Self-service: authenticated (this whole route sits inside the /api/v1 group's " +
-		"Authentication/RequireCSRF/EnforceAccountRestriction/EnforceMFAEnrollment " +
+		"Authentication/RequireCSRF/EnforceAccountSetup " +
 		"middleware -- see router.go:304-325), but acts ONLY on the calling principal's " +
 		"OWN account/session/token/notification. ADR-021/ADR-024/ADR-027 establish this " +
 		"whole family (My Account, MFA/WebAuthn self-enrolment, session/PAT self-service, " +
@@ -532,7 +532,8 @@ var noPermissionGateAllowlist = map[string]string{
 		"instead by deployment config + a mandatory justification + full audit trail + automatic " +
 		"expiry (NIS2/DORA incident response). Blocked under impersonation (BlockWhenImpersonating) " +
 		"so an admin acting as a user cannot mint a durable emergency role grant attributed to the " +
-		"target. See router.go's own adjacent comment.",
+		"target. A restricted PAT is refused in core (ErrRestrictedPATCannotBreakGlass, ADR-042 " +
+		"addendum of 2026-10-11). See router.go's own adjacent comment.",
 
 	"GET /api/v1/projects": "GET /projects (ListProjects) performs its own authorization INSIDE the handler " +
 		"(#2780), exactly like GET /secrets below and for the same reason: the route used to require " +
