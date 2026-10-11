@@ -1,7 +1,8 @@
 ### Security
 - **No auth rate limit fails open on a database error any more.** The per-IP
   login, password-reset and SSO/SAML-begin budgets, and the per-account lockout,
-  used to stop counting whenever their storage failed. While the database (or
+  used to stop counting whenever their storage failed, including when only the
+  count query failed while inserts still worked. While the database (or
   just its rate-limit table) was failing, brute-force and email-bombing limits
   were off. The per-account lockout is the only bound on MFA step-up and
   recovery-code guessing. Now each budget falls back to a bounded in-memory
