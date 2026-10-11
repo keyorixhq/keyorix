@@ -558,7 +558,7 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 	case derr != nil:
 		return fmt.Errorf("could not check what depends on secret %d (use --force to delete anyway): %w", secretID, derr)
 	default:
-		return fmt.Errorf("could not check what depends on secret %d (use --force to delete anyway): HTTP %d", secretID, depResp.StatusCode())
+		return httpStatusError(fmt.Sprintf("could not check what depends on secret %d (use --force to delete anyway)", secretID), depResp.StatusCode(), depResp.Body)
 	}
 
 	if len(dependents) > 0 && !secretDeleteForce {
