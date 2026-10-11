@@ -8,11 +8,11 @@ package store
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -25,17 +25,11 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-// storeS3DBSeq makes each in-memory DB unique within the process, even
-// across repeated invocations of the same test (e.g. `go test -count=N`).
-var storeS3DBSeq atomic.Int64
-
 // newStoreS3 returns a LocalStorage over a unique in-memory SQLite database,
 // auto-migrated for a given set of GORM models.
 func newStoreS3(t *testing.T, name string, migrateModels ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:store_s3_%s_%d?mode=memory&cache=shared", name, storeS3DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores3_", sqlite.Open, &gorm.Config{})
 	if len(migrateModels) > 0 {
 		require.NoError(t, db.AutoMigrate(migrateModels...))
 	}
@@ -259,6 +253,9 @@ func TestSetupToken_CountSince(t *testing.T) {
 func TestDeleteSession(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "delete_session", &models.Session{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	future := time.Now().Add(time.Hour)
 
 	s, err := ls.CreateSession(ctx, &models.Session{UserID: 1, SessionToken: "tok-delete", ExpiresAt: &future})
@@ -273,6 +270,9 @@ func TestDeleteSession(t *testing.T) {
 func TestCleanupExpiredSessions(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "cleanup_sessions", &models.Session{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	past := time.Now().Add(-time.Hour)
 	future := time.Now().Add(time.Hour)
@@ -297,6 +297,9 @@ func TestCleanupExpiredSessions(t *testing.T) {
 func TestListSessionTokenHashesForUser(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "session_hashes_user", &models.Session{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	future := time.Now().Add(time.Hour)
 	admin := uint(5)
 
@@ -318,6 +321,9 @@ func TestListSessionTokenHashesForUser(t *testing.T) {
 func TestListActivePersonalAccessTokens(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "active_pats", &models.PersonalAccessToken{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	_, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
 		UserID: 1, Name: "active", TokenHash: "h-active", TokenPrefix: "kx_pat_a",
@@ -338,6 +344,9 @@ func TestListActivePersonalAccessTokens(t *testing.T) {
 func TestRevokeAllPersonalAccessTokensForUser(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "revoke_all_pats", &models.PersonalAccessToken{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	for i, hash := range []string{"h1", "h2", "h3"} {
 		_, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
@@ -365,6 +374,9 @@ func TestRevokeAllPersonalAccessTokensForUser(t *testing.T) {
 func TestTouchPersonalAccessToken(t *testing.T) {
 	ctx := context.Background()
 	ls := newStoreS3(t, "touch_pat", &models.PersonalAccessToken{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 
 	tok, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
 		UserID: 1, Name: "ci", TokenHash: "h-touch", TokenPrefix: "kx_pat_touch",

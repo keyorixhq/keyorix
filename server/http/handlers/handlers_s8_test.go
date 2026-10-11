@@ -10,28 +10,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-// s8DBCounter ensures every freshCoreS8 call gets a unique in-memory SQLite DSN.
-var s8DBCounter atomic.Int64
 
 // freshCoreS8 creates a brand-new in-memory SQLite DB (unique DSN per call).
 // Use this for tests that call BootstrapSystem, Login, or any other stateful
@@ -39,11 +34,8 @@ var s8DBCounter atomic.Int64
 func freshCoreS8(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s8DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s8_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
+	db := sqlitetest.Open(t, "kxhandlers_s8_")
+	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},

@@ -19,9 +19,19 @@ unreadable ciphertext; the keys without the database have nothing to unwrap.
 never have to separately track which key files go with which database
 snapshot.
 
-Only local/sqlite storage is covered by `admin backup`/`admin restore` today.
-For a Postgres-backed deployment, use `pg_dump`/`psql` directly — see
-[SELF_HOSTING.md §5](SELF_HOSTING.md).
+`admin backup`/`admin restore` cover both SQLite and PostgreSQL (backup format
+v2). The commands below are written for the single-binary SQLite case (stop the
+server first); for the Docker Compose + Postgres variants, including the
+`docker compose run` details, see [SELF_HOSTING.md §5](SELF_HOSTING.md).
+
+**Egress-blocked check (INSTALL-WALK-1, origin/main 12d5dbcb).** With the host
+firewall dropping every non-loopback packet from the server's user (single binary)
+and every packet leaving the compose bridge for outside the compose subnet
+(`iptables -I DOCKER-USER -s <subnet> ! -d <subnet> -j DROP`), both a SQLite
+single binary with TLS and the Compose + Postgres stack restarted, served logins
+and returned a stored secret, and the DROP rules' packet counters stayed at 0 over
+several minutes (including the anomaly-detection and checkpoint schedulers): the
+core product makes no outbound connection attempts.
 
 ## Routine backup
 
@@ -76,7 +86,12 @@ startup), or lower `audit_checkpoints.schedule` if you need one sooner.
 ## Restoring (drill, or the real thing)
 
 Restore into a **fresh, empty data directory**, with the **same config**
-(same key-material paths) the backup was taken from:
+(same key-material paths) the backup was taken from. Note the host's
+`.audit-highwater-witness` file lives *beside* the database: if you wipe only
+`keyorix.db*` and `keys/` on the same host and restore a backup that is behind the
+host's last state, restore refuses with "this backup's audit trail is N event(s)
+BEHIND" and needs `--allow-rollback` (a replacement host has no witness and is
+not checked, see SELF_HOSTING.md §5):
 
 ```sh
 keyorix-server admin restore --input /path/to/keyorix-backup-2026-09-25.tar.gz
@@ -124,7 +139,9 @@ keyorix-server admin verify-audit --json --anchor /path/to/checkpoint-2026-09-20
 Check `.verdict == "VALID"` and `.external_anchor.supplied == true` /
 `.external_anchor.authenticated == true` in the JSON output. `authenticated`
 additionally requires `--checkpoint-key-file` (the KEK-derived checkpoint
-signing key, extracted out of band — never the KEK or passphrase itself); a
+signing key, extracted out of band — never the KEK or passphrase itself; no
+documented command produces that file today, so in practice a drill sees
+`supplied: true, authenticated: false`); a
 supplied-but-unauthenticated anchor still cross-checks the chain's head/
 chained-event count against the external copy, just without cryptographic
 proof it came from this exact key. Read the full report's "What this run
@@ -209,7 +226,10 @@ you'd rather pre-build the image yourself and skip the build step entirely.
 
 ## Estimate: adding PostgreSQL support to `admin backup`/`admin restore`
 
-Not built — an estimate only (ADR-109 step 6, B7). Today, `admin backup`/`admin
+**Historical — this has since been built** (backup format v2 supports Postgres;
+see above and [SELF_HOSTING.md §5](SELF_HOSTING.md)). Kept for the design record.
+
+Not built at the time — an estimate only (ADR-109 step 6, B7). Then, `admin backup`/`admin
 restore` refuse non-sqlite storage outright (verified live: `admin backup`
 against a Postgres-backed install fails immediately with "admin backup only
 supports local/sqlite storage today ... for Postgres, back up with pg_dump

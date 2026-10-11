@@ -190,6 +190,7 @@ func TestCollectInsecureSettingsPosture_FullyHardenedConfigReportsZero(t *testin
 	cfg := &config.Config{}
 	cfg.Security.RequireTransportTLS = true
 	cfg.Security.EnableFilePermissionCheck = true
+	cfg.Security.RequireMFA = true // #2986: security.require_mfa is a registry entry now
 	cfg.Storage.Encryption.Enabled = true
 	cfg.Storage.Database.SSLMode = "require"
 	cfg.Membership.ValidationMode = "allowlist"
@@ -325,13 +326,47 @@ func TestCollectInsecureSettingsPosture_EveryPreviouslyExcludedEntryNowCounts(t 
 	report := &postureReport{}
 	collectInsecureSettingsPosture(cfg, nil, report)
 
+	// The set is pinned by NAME, not found by matching "NEEDS ANDREI" in Describe:
+	// that marker is prose, and once the naming decisions were settled (#2984)
+	// the Describe strings lost it, the old selection came back empty, and this
+	// test's premise check fired on an unchanged collector. Keying a security
+	// test on description text is the same unsound mechanism the collector's own
+	// doc comment rejects.
+	previouslyExcluded := map[string]bool{
+		"security.insecure_allow_cleartext_transport":                           true,
+		"security.insecure_skip_startup_validation":                             true,
+		"storage.encryption.key_provider.insecure_omit_shamir_commitment_check": true,
+		"storage.encryption.insecure_disable_encryption_at_rest":                true,
+		"membership.insecure_skip_membership_review":                            true,
+		"sso.providers.insecure_auto_provision_sso_users":                       true,
+		"sso.providers.insecure_auto_sync_sso_groups":                           true,
+		"server.insecure_allow_unauthenticated_metrics":                         true,
+		"server.insecure_disable_max_request_body_cap":                          true,
+		"storage.database.insecure_disable_database_tls":                        true,
+		"server.insecure_disable_api_ratelimit":                                 true,
+		"credential_delivery.insecure_allow_log_delivery":                       true,
+		"credential_delivery.insecure_allow_plaintext_smtp":                     true,
+	}
+	inRegistry := make(map[string]bool, len(config.InsecureSettingsRegistry))
 	var expected []string
+	var expectedPreviouslyExcluded int
 	for _, s := range config.InsecureSettingsRegistry {
-		if s.InEffect(cfg) && strings.Contains(s.Describe, "NEEDS ANDREI") {
+		inRegistry[s.Name] = true
+		// Every in-effect entry must count, not just the previously-excluded
+		// ones: that is what stops a future entry quietly joining an excluded set.
+		if s.InEffect(cfg) {
 			expected = append(expected, s.Name)
+			if previouslyExcluded[s.Name] {
+				expectedPreviouslyExcluded++
+			}
 		}
 	}
-	require.NotEmpty(t, expected, "test premise broken: expected the zero-value config to put several awaiting-decision settings in effect")
+	for name := range previouslyExcluded {
+		require.True(t, inRegistry[name],
+			"test premise broken: previously-excluded entry %s is no longer in InsecureSettingsRegistry (renamed? update this list)", name)
+	}
+	require.NotZero(t, expectedPreviouslyExcluded,
+		"test premise broken: expected the zero-value config to put several previously-excluded settings in effect, got in-effect=%v", expected)
 
 	counted := make(map[string]bool, len(report.deviations))
 	for _, d := range report.deviations {

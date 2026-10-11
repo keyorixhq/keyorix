@@ -11,47 +11,38 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// memDBSeq makes each in-memory test DB name unique.
-var memDBSeq atomic.Int64
-
-// uniqueMemDSN returns a uniquely-named shared-cache in-memory SQLite DSN. A fixed-name
-// "file::memory:?cache=shared" is ONE database for the whole process, so tests that use
-// it collide (e.g. one test's rows leak into another's), which makes them pass alone but
-// fail when run together. A unique name per call isolates each test's DB while keeping it
-// consistent across the connection pool. extra carries extra pragmas (e.g. "&_timeout=…").
-func uniqueMemDSN(extra string) string {
-	return fmt.Sprintf("file:kxtest_%d?mode=memory&cache=shared%s", memDBSeq.Add(1), extra)
-}
-
 // newTestCore creates a minimal *core.KeyorixCore backed by an in-memory SQLite DB.
 func newTestCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	return newTestCoreWrapped(t, nil)
+}
+
+// newTestCoreWrapped is newTestCore with the core built over wrap(the real
+// storage) — a fault-injecting wrapper — when wrap is non-nil.
+func newTestCoreWrapped(t *testing.T, wrap func(storage.Storage) storage.Storage) *core.KeyorixCore {
+	t.Helper()
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	// models.AllTestModels() is the single source of truth for the test schema —
 	// add new models there (internal/storage/models/all_models.go), not here.
-	err = db.AutoMigrate(models.AllTestModels()...)
+	err := db.AutoMigrate(models.AllTestModels()...)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
 	// same production migration path #309's TestConcurrency_InviteMember_
@@ -79,7 +70,11 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
 		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	var st storage.Storage = store.NewLocalStorage(db)
+	if wrap != nil {
+		st = wrap(st)
+	}
+	cs := core.NewKeyorixCore(st)
 	// ADR-109 step 3: internal/core no longer defaults to dynamic.New internally
 	// (that would mean importing internal/dynamic from production code) — wire it
 	// explicitly here, exactly as server/main.go's DefaultIntegrations does, so
