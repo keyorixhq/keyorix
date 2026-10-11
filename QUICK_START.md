@@ -171,6 +171,14 @@ generated. `curl` needs to be told about it too:
 `curl --cacert certs/server.crt https://localhost:8080/health`. A browser shows
 a warning for a self-signed certificate until you install a CA-issued one.
 
+`keyorix-server admin validate --posture` reports zero deviations on the
+generated config (like every `admin` command it needs the database to itself:
+**stop the server first**, run it, then start the server again). A `--dev`
+config is the relaxed one: TLS, API rate limiting and the `/metrics` token are
+off, so it reports three deviations;
+[docs/CONFIGURATION.md](docs/CONFIGURATION.md#hardening-an-older-config-clearing-the-posture-report)
+lists the keys that clear them.
+
 **CLI against a TLS server with a private CA or self-signed certificate.** By
 default the CLI trusts the OS store only. Name the CA (or the self-signed server
 certificate) with `keyorix config set ca_file <path>` (stored with your
@@ -241,11 +249,15 @@ created right away:
 
 ```bash
 ./bin/keyorix secret create --name "stripe-api-key" --interactive   # value typed at a hidden prompt
-./bin/keyorix secret create --name "deploy-key" --from-file ~/.ssh/id_ed25519
+./bin/keyorix secret create --name "deploy-key" --from-file ./deploy_key   # relative path; absolute paths and symlinks are refused
 ./bin/keyorix secret list
 ./bin/keyorix secret get --id 1               # metadata only
 ./bin/keyorix secret get --id 1 --show-value  # decrypted value
 ```
+
+`--from-file` reads a file from the current directory (copy the key there first),
+so delete that copy once the secret is stored: `shred -u ./deploy_key` on Linux,
+`rm -P ./deploy_key` on macOS, or `rm` on a disk you trust to be encrypted.
 
 New secrets default to project `1`, environment `1`. Create another project for
 anything that needs its own environments. Every project gets its **own** three
@@ -292,8 +304,13 @@ bootstrap is not enough:
 ```
 
 Skipping the two `rbac assign-role` lines and going straight to `share create`
-fails with a bare `HTTP 403` and no explanation — this is a known rough edge,
-tracked as a known gap below.
+is refused with the reason: the owner (or the recipient) is not a member of
+the secret's project. A share only applies to project members, and for them
+it can lift access on that one secret: a `project_viewer` shared with `write`
+can update its value and metadata and rotate it (nothing else: suspend, move,
+expiry changes and the like still need a project role), and revoking the share
+takes exactly that away again. See
+[the sharing guide](docs/SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
 
 `--ttl` (a Go duration) and `--expires` (RFC3339) are mutually exclusive; either
 makes the share time-bound, which is usually what you want for access granted
@@ -353,8 +370,8 @@ example including revocation.
 ## Known gaps
 
 - **Sharing requires an explicit project role on both owner and recipient**
-  (see "Sharing" above) — holding the global `admin` role is not enough, and
-  the failure mode (`HTTP 403`, no explanation) doesn't say so.
+  (see "Sharing" above) — holding the global `admin` role is not enough. The
+  refusal says which of the two is missing.
 
 ## What else is there
 

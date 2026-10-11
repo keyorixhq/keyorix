@@ -3,22 +3,40 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+**Unreleased entries now live in `changelog.d/`** (one fragment file per PR; see
+`changelog.d/README.md`) and are assembled into this file at release time by
+`scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
+that section is the text written before the switch.
+
 ## Unreleased
 
 ### Security
-- **`keyorix-server admin init` writes the secure baseline** (ADR-112 §4):
-  `admin validate --posture` reports zero deviations on a fresh install. TLS is
-  on and required, with a generated self-signed certificate
-  (`certs/server.crt`/`.key`); API rate limiting is on; `/metrics` requires a
-  generated token read from the new `server.http/grpc.metrics_token_file`
-  (`secrets/metrics_token`). All generated files are `0600` and never printed.
-  An existing config is not changed and nothing is generated for it.
-  `admin init --dev` writes the previous relaxed config, labelled DEV-ONLY.
-  Guarded by `server/admin_init_secure_baseline_test.go`.
-- **The CLI can trust a private CA or self-signed server certificate:**
-  `keyorix config set ca_file <path>`, `KEYORIX_CA_FILE`, or `--ca-file`. The
-  CLI then trusts exactly that file's certificates, the same on macOS and Linux
-  (`SSL_CERT_FILE` is ignored on macOS). `login` remembers the CA file it used.
+- **HSTS behind a TLS-terminating load balancer** (#3058): the web nginx (compose
+  image and Helm chart) sends `Strict-Transport-Security` only for a request from a
+  configured trusted proxy (`KEYORIX_WEB_TRUSTED_PROXIES` / `web.trustedProxies`)
+  that carries `X-Forwarded-Proto: https`; never for direct http, never on the say-so
+  of an untrusted client. On by default once a trusted proxy is configured, off
+  otherwise. See docs/SELF_HOSTING.md §7. Guarded by a real-nginx test
+  (`deploy` `TestWebNginxHSTS_*`).
+- **A database fault during login no longer reveals that the password, TOTP
+  code or passkey was correct.** Every login path (password, TOTP, WebAuthn
+  second factor, passwordless, re-authentication, MFA step-up) already answered
+  a storage failure *after* the credential matched with the same response a
+  wrong credential gets. The account's **lockout state** now matches too: the
+  failed-attempt counter is cleared only once the login has actually been
+  delivered, and a post-match failure counts as an attempt. Previously the
+  counter was reset on the way to the failure, so an attacker at one attempt
+  short of the lockout threshold could tell a correct password from a wrong one
+  by whether the account locked. Audit logging distinguishes the two for
+  operators — `auth.login_error` (the credential was right; a storage fault
+  denied the login) versus `auth.login_failed` (a wrong credential) — and
+  `/auth/mfa/verify` now writes `auth.login_error` for this case instead of
+  nothing at all. Visible effects: a login denied by a transient storage fault
+  now counts toward the per-account lockout, so a sustained database problem can
+  lock accounts whose owners typed the right password; and the counter is reset a
+  few milliseconds later in the request than before. A fault reading the
+  account's roles after the password matched now also answers `401 Invalid
+  credentials` instead of a distinguishable `500`. (#2894, #2888)
 - **The bundled Caddy (`tls` compose profile) no longer runs as root.** It runs as
   uid:gid 65532 with only `NET_BIND_SERVICE`. A one-shot `caddy-init` service
   chowns the existing `caddy_data` / `caddy_config` volumes first, so upgrading

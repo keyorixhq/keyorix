@@ -281,6 +281,12 @@ echo
 # The CLI authenticates from the environment from here on (session obtained by
 # the code login above); no stored password, no --password flags.
 export KEYORIX_SERVER="$SERVER_URL" KEYORIX_TOKEN="$DEMO_TOKEN"
+# check.sh asks for this session (KEYORIX_DEMO_SESSION_OUT=<file>) so its admin
+# checks don't spend two more of the 10-per-15-minute login attempts (#2956) on an
+# identical MFA login. Only written on request; 0600; check.sh deletes it.
+if [ -n "${KEYORIX_DEMO_SESSION_OUT:-}" ]; then
+  ( umask 077; printf '%s' "$DEMO_TOKEN" > "$KEYORIX_DEMO_SESSION_OUT" )
+fi
 # Demo only, 0600, removed by down.sh --wipe with the rest of CLI_HOME: lets the
 # CI seed check reuse this session instead of spending two more slots of the
 # per-IP login budget (10 per 15 min, each login AND each MFA verify counts).
@@ -290,9 +296,13 @@ ok "Admin MFA enrolled (TOTP) and logged in with a code"
 step "Seeding org structure: 2 projects, 2 groups"
 "$CLI_BIN" project create --name backend-api --description "Backend API" >/dev/null
 "$CLI_BIN" project create --name mobile-app --description "Mobile App" >/dev/null
+# A global role makes nobody a member of any project, and only an owner who is a
+# member of the secret's project may share it (#2976). Make the admin a member of
+# backend-api so the demo's share step works on db-password.
+"$CLI_BIN" rbac assign-role --user "$ADMIN_EMAIL" --role project_admin --project backend-api >/dev/null
 "$CLI_BIN" group create --name platform-team --description "Platform team" >/dev/null
 "$CLI_BIN" group create --name mobile-team --description "Mobile team" >/dev/null
-ok "3 projects (default, backend-api, mobile-app), 2 groups"
+ok "3 projects (default, backend-api, mobile-app), 2 groups; admin is project_admin on backend-api"
 
 step "Seeding a least-privilege user"
 KEYORIX_INITIAL_PASSWORD="$ALICE_PASSWORD" "$CLI_BIN" user create --username alice --email alice@keyorix.demo >/dev/null
