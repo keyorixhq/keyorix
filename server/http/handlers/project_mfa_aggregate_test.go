@@ -181,6 +181,40 @@ func TestListOwnedShares_DeniesNoMFASessionOnMFARequiredProject(t *testing.T) {
 	require.Contains(t, w2.Body.String(), `"secretId":1`)
 }
 
+// TestShareLists_OverCapIsTyped422: a share list over the 10000-share cap is refused
+// with a typed 422 (ShareListOverCap) and no share data, on both GET /shares/owned and
+// GET /shares, not a 500. Real pagination is a parked follow-up.
+func TestShareLists_OverCapIsTyped422(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&models.Project{}, &models.Environment{}, &models.SecretNode{},
+		&models.ShareRecord{}, &models.User{}, &models.Group{}, &models.UserGroup{}))
+	require.NoError(t, db.Create(&models.Project{ID: 1, Name: "p"}).Error)
+	require.NoError(t, db.Create(&models.Environment{ID: 1, ProjectID: 1, Name: "env1"}).Error)
+	require.NoError(t, db.Create(&models.SecretNode{ID: 1, Name: "s", ProjectID: 1, EnvironmentID: 1, IsSecret: true, Status: "active", OwnerID: 1}).Error)
+	require.NoError(t, db.Create(&models.User{ID: 1, Username: "owner", Email: "owner@example.com"}).Error)
+	const overCap = 10001 // core.maxShareViewBatchSize + 1
+	rows := make([]models.ShareRecord, overCap)
+	for i := range rows {
+		rows[i] = models.ShareRecord{SecretID: 1, OwnerID: 1, RecipientID: uint(i + 2), Permission: "read"}
+	}
+	require.NoError(t, db.CreateInBatches(rows, 500).Error)
+	shareH, err := NewShareHandler(core.NewKeyorixCore(memberOfEveryProjectStorage{store.NewLocalStorage(db)}))
+	require.NoError(t, err)
+
+	for name, list := range map[string]func(http.ResponseWriter, *http.Request){
+		"owned": shareH.ListOwnedShares,
+		"all":   shareH.ListShares,
+	} {
+		w := httptest.NewRecorder()
+		list(w, sessionReq(1, true))
+		require.Equal(t, http.StatusUnprocessableEntity, w.Code, "%s: %s", name, w.Body.String())
+		require.Contains(t, w.Body.String(), "ShareListOverCap", name)
+		require.NotContains(t, w.Body.String(), `"secretId"`, "%s: no share data on a refusal", name)
+	}
+}
+
 // erroringSecretsByIDsStorage makes the batched secret lookup fail (a transient
 // storage error), which is the only source of the project ids the share lists'
 // aggregate MFA check sees.

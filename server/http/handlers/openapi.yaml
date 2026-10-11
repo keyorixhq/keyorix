@@ -4851,6 +4851,7 @@ paths:
         '200':
           description: Envelope `{data, message}`. `data.shares` is the share records array.
         '401': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
   /api/v1/shares/owned:
     get:
       tags: [Shares]
@@ -4864,7 +4865,9 @@ paths:
         not add anyone else's shares. Requires secrets.read at the global scope or at
         one or more project scopes; machine identities are refused. Every refusal is
         the same 403 with a fixed reason. Same filters, paging and shape as
-        GET /api/v1/shares. A read: no audit event, like GET /api/v1/shares.
+        GET /api/v1/shares. A read: no audit event, like GET /api/v1/shares. A list over
+        10000 shares is refused with 422 ShareListOverCap (never truncated); pagination
+        in core is a follow-up.
       operationId: listOwnedShares
       security: [{bearerAuth: []}]
       parameters:
@@ -4909,6 +4912,7 @@ paths:
                       totalPages: {type: integer}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
   /api/v1/shares/{id}:
     put:
       tags: [Shares]

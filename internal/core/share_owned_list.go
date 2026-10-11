@@ -55,6 +55,9 @@ func (c *KeyorixCore) ListOwnedShareViews(ctx context.Context, actorType string,
 	if err != nil {
 		return nil, fmt.Errorf("owned share list: %w", err)
 	}
+	if shareFetchMayBeTruncated(owned) {
+		return nil, ErrShareListOverCap
+	}
 	visible, err := c.sharesInMemberProjects(ctx, actorID, owned)
 	if err != nil {
 		return nil, err

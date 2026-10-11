@@ -23,7 +23,7 @@ func TestShareViews_RefusesOversizedBatch(t *testing.T) {
 		over[i] = &models.ShareRecord{SecretID: 1, RecipientID: uint(i + 1), OwnerID: 1, Permission: "read"}
 	}
 	views, err := c.shareViews(ctx, over)
-	require.ErrorIs(t, err, errShareViewBatchTooLarge)
+	require.ErrorIs(t, err, ErrShareListOverCap)
 	assert.Nil(t, views)
 }
 

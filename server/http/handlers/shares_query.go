@@ -71,6 +71,10 @@ func (h *ShareHandler) ListShares(w http.ResponseWriter, r *http.Request) {
 	views, err := h.coreService.ListUserShareViews(r.Context(), userCtx.UserID)
 	if err != nil {
 		log.Printf("Error listing shares: %v", err)
+		if errors.Is(err, core.ErrShareListOverCap) {
+			h.sendError(w, "ShareListOverCap", err.Error(), http.StatusUnprocessableEntity, nil)
+			return
+		}
 		h.sendError(w, "InternalError", "Failed to list shares", http.StatusInternalServerError, nil)
 		return
 	}
@@ -104,6 +108,10 @@ func (h *ShareHandler) ListOwnedShares(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("Error listing owned shares: %v", err)
+		if errors.Is(err, core.ErrShareListOverCap) {
+			h.sendError(w, "ShareListOverCap", err.Error(), http.StatusUnprocessableEntity, nil)
+			return
+		}
 		h.sendError(w, "InternalError", "Failed to list shares", http.StatusInternalServerError, nil)
 		return
 	}
