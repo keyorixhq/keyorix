@@ -1718,43 +1718,19 @@ jobs:
           [ -n "$admin_pw" ] || { echo "could not read ADMIN_PASSWORD from scripts/demo/up.sh" >&2; exit 1; }
           # up.sh enrols TOTP for the admin (#2982), so a password login gets an
           # MFA challenge, not a token: answer it like an authenticator app would,
-          # with the key up.sh saved to .demo-2-state and the bin/totpgen it built
-          # (+30s step offset: up.sh just used the current window's code, and a
-          # reused code is rejected as a replay -- same as scripts/smoke.sh).
+          # with the key up.sh saved to .demo-2-state and the bin/totpgen it built.
+          # Every accepted TOTP code is single-use (anti-replay), and up.sh spent
+          # the current window's code seconds ago. scripts/demo/lib.sh's
+          # demo_login_mfa picks the next unused step from the step file up.sh
+          # wrote (waiting for the clock when it is ahead) and records the step
+          # it spends there, so the demo check.sh step below also starts after
+          # this one instead of replaying the same code (-> 401, then 429).
           totp_key=$(sed -n 's/^  Admin TOTP key: *\([A-Z2-7]*\)$/\1/p' .demo-2-state)
           [ -n "$totp_key" ] || { echo "could not read the admin TOTP key from .demo-2-state" >&2; exit 1; }
-          body=$(jq -n --arg p "$admin_pw" '{username:"admin",password:$p}')
-          # up.sh's last login used the NEXT step's code, and this step starts
-          # seconds later, usually inside the same 30 s window: the +30s code is
-          # then a replay and /auth/mfa/verify refuses it (reproduced on the e2e
-          # VM: fails 1 s after up.sh, passes once the step rolls over). Retry
-          # with a fresh challenge after the step has rolled over; 3 attempts
-          # stay well inside the login rate limit.
-          TOKEN=""
-          for attempt in 1 2 3; do
-            challenge=$(curl -s -X POST http://localhost:8080/auth/login \
-              -H 'Content-Type: application/json' \
-              -d "$body" | \
-              jq -r '.data.mfa_challenge')
-            if [ -z "$challenge" ] || [ "$challenge" = "null" ]; then
-              echo "login did not return an MFA challenge" >&2
-              exit 1
-            fi
-            code=$(./bin/totpgen "$totp_key" 30)
-            verify=$(jq -n --arg c "$challenge" --arg k "$code" '{mfa_challenge:$c,code:$k}')
-            TOKEN=$(curl -s -X POST http://localhost:8080/auth/mfa/verify \
-              -H 'Content-Type: application/json' \
-              -d "$verify" | \
-              jq -r '.data.token')
-            if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-              break
-            fi
-            TOKEN=""
-            echo "MFA verify attempt $attempt/3 refused (TOTP step still in use); waiting for the next step" >&2
-            if [ "$attempt" -lt 3 ]; then
-              sleep 31
-            fi
-          done
+          TOTPGEN_BIN="$PWD/bin/totpgen"
+          . scripts/demo/lib.sh
+          demo_login_mfa http://localhost:8080 admin "$admin_pw" "$totp_key"
+          TOKEN="$DEMO_TOKEN"
           [ -n "$TOKEN" ] || { echo "MFA verify did not return a session token" >&2; exit 1; }
           projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
             jq -r '.data.projects | length')
