@@ -9,6 +9,7 @@ import { Alert } from '../../components/ui/Alert';
 import { useShareSecret, searchShareRecipients } from './api';
 import { usersApi } from '../../services/users';
 import { apiErrorMessage } from '../../services/client';
+import { SHARE_WRITE_LABEL } from '../../utils/sharePermission';
 
 interface ShareSecretModalProps {
     secret: Secret;
@@ -35,7 +36,7 @@ interface UserOption {
 
 const ALL_PERMISSION_OPTIONS = [
     { value: 'read', label: 'Read Only' },
-    { value: 'write', label: 'Read & Write' },
+    { value: 'write', label: `Read + ${SHARE_WRITE_LABEL.toLowerCase()}` },
 ];
 
 // What each share level grants (server: core.secretActionShareElevates). A write
