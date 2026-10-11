@@ -51,7 +51,9 @@ Ns`, `Bootstrapping admin user` and `Admin bootstrap complete.` in
 `docker compose logs backend`. If you see the `ERROR:` lines instead, check that
 `KEYORIX_BOOTSTRAP_TOKEN` is set and matches, then fix `.env` and run
 `docker compose up -d` again (or create the admin by hand with
-`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local --bootstrap-token <KEYORIX_BOOTSTRAP_TOKEN>`).
+`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local`
+with `KEYORIX_BOOTSTRAP_TOKEN` exported in your shell: the CLI reads the token
+and prompts for the admin password; neither goes on the command line).
 `docker compose ps` shows `web` as `healthy`: its healthcheck probes
 `127.0.0.1` (busybox resolves `localhost` to IPv6 first and nginx listens on IPv4
 only).
@@ -398,6 +400,46 @@ older than this one are owned by `999`: see [UPGRADING.md](UPGRADING.md) §5.
 **Your own proxy.** Or terminate TLS at an existing Caddy/Traefik/nginx/LB in
 front of the `web` container: point it at `web:80` and forward
 `X-Forwarded-Proto: https`.
+
+### HSTS behind a TLS-terminating load balancer
+
+The `web` nginx itself only speaks plain HTTP, and `Strict-Transport-Security`
+over `http://` is wrong, so it sends HSTS **only** when the request came through
+a trusted proxy that says `X-Forwarded-Proto: https`. The header is never
+trusted from any other client, and never sent for direct HTTP. (The bundled
+Caddy profile adds its own HSTS; the backend adds it only when it serves TLS
+itself. API responses keep the backend's API CSP and every other security
+header exactly as before; only the `Strict-Transport-Security` decision is new.)
+
+| Setting (`.env`, passed to `web`) | Default | Meaning |
+|---|---|---|
+| `KEYORIX_WEB_TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs of the load balancer(s), **as `web` sees them** (the TCP peer address). Keep it equal to the backend's `server.http.trusted_proxies`. Empty = nothing trusted = no HSTS. |
+| `KEYORIX_WEB_HSTS` | `auto` | `auto`: on when trusted proxies are set; `on`: same; `off`: never send HSTS from `web`. |
+| `KEYORIX_WEB_HSTS_MAX_AGE` | `31536000` | `max-age` in seconds. |
+| `KEYORIX_WEB_HSTS_INCLUDE_SUBDOMAINS` | `true` | Adds `includeSubDomains`; `false` drops it. |
+
+Invalid values (anything that is not an IP/CIDR, a bad mode, a non-numeric
+`max-age`) stop the container at start rather than trusting more than intended.
+These variables need a `web` image that contains this feature (releases after
+0.95.3); older images ignore them and send no HSTS.
+
+Helm: `web.trustedProxies` (list of CIDRs; the address the web pod sees, i.e.
+the ingress-controller pods for an in-cluster ingress, not the cloud LB's public
+address), `web.hsts.mode` (`auto`|`on`|`off`; `on` without `web.trustedProxies`
+fails the render), `web.hsts.maxAge`, `web.hsts.includeSubDomains`. All default to
+"no HSTS from this layer". Example:
+
+```yaml
+web:
+  trustedProxies: ["10.42.0.0/16"]   # ingress-nginx pod CIDR
+```
+
+Check it with the proxy's address and header (a request from an untrusted
+address must show no `Strict-Transport-Security` even with the header forged):
+
+```sh
+curl -sI -H 'X-Forwarded-Proto: https' http://web-host/health | grep -i strict
+```
 
 The single-binary `keyorix-server` also supports TLS directly
 (`server.http.tls` in the config) for non-Docker deployments.

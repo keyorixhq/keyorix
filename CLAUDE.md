@@ -100,6 +100,14 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   even though the bare subcommand is guarded, since they never move HEAD.
   Respects `-C <path>` in the command being gated.
 
+- **Changelog: add a `changelog.d/` fragment, never edit `CHANGELOG.md`.** One file
+  per PR, `changelog.d/<PR-number>-<slug>.md` (or `<branch-slug>.md` before the PR
+  number exists), containing `### <Section>` heading(s) and the bullets exactly as they
+  would have appeared under "Unreleased". Format and sections: `changelog.d/README.md`;
+  `scripts/changelog-assemble.sh --check` validates. The maintainer assembles fragments
+  into `CHANGELOG.md` at release (`RELEASING.md`). Editing `CHANGELOG.md` directly
+  reintroduces the merge-main conflict churn this removed.
+
 ## Engineering practices
 
 Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
@@ -346,10 +354,12 @@ same idea applied to a mechanism already in front of you.
 
 - Add a file to `docs/security-closures.d/<claim_id>.tsv` (one row: claim id,
   package, proving test, **verification**, commit, **issue** — see
-  `docs/security-closures.d/README.md`), then run
-  `scripts/gen-security-closures-tsv.sh` and commit the regenerated
-  `docs/security-closures.tsv` alongside it — CI fails if it drifts. Added
-  2026-09-28 (C1) so two closure PRs open at once no longer conflict on one
+  `docs/security-closures.d/README.md`)
+  and commit just that file. `docs/security-closures.tsv` is a generated,
+  gitignored build artifact (never commit it): `scripts/check-closures.sh`
+  builds it from the fragments on every run, and CI runs
+  `scripts/gen-security-closures-tsv.sh --check` to validate the fragments.
+  Added 2026-09-28 (C1) so two closure PRs open at once no longer conflict on one
   shared file. `scripts/check-closures.sh` fails the build if the named test
   does not exist, or does not produce a `--- PASS` line in the environment its
   `verification` column claims. Verify by test, never by commit — this repo
@@ -415,8 +425,9 @@ by appending to the flat file** — appends to one shared file were the main
 reason approved PRs fell out of the merge queue on 2026-10-03/04. Existing
 rows stay in the flat files until the coordinator runs
 `scripts/ledgers/migrate-to-fragments.sh` in a quiet window; don't run it on a
-feature branch. `docs/security-closures.tsv` is different: it is generated
-from `docs/security-closures.d/` (see "Closing a security fix" above).
+feature branch. `docs/security-closures.tsv` is different: it is no longer
+committed at all, only built from `docs/security-closures.d/` on demand (see
+"Closing a security fix" above).
 
 ## Code-scanning alerts
 
