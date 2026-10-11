@@ -15,3 +15,6 @@
   `secureBaseline.enabled=true` the server, web and bundled-Postgres pods carry a
   `checksum/secure-baseline` annotation, so rotating the Secret (delete it,
   `helm upgrade`) rolls them.
+  `keyorix.docker.secure.yaml` sets `server.http.host: "0.0.0.0"` (the server's
+  default bind is 127.0.0.1 since #2939, which left the web container and the
+  health check unable to reach the TLS backend).
