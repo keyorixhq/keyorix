@@ -323,7 +323,7 @@ export interface paths {
         put?: never;
         /**
          * Create a personal access token (raw token returned once)
-         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once.
+         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once. A request authenticated by a restricted personal access token (any scopes, project, environment or CIDR restriction) is refused with 403, since the new token would not carry that restriction.
          */
         post: operations["createPAT"];
         delete?: never;
@@ -1067,7 +1067,7 @@ export interface paths {
         put?: never;
         /**
          * Activate break-glass emergency access (self-service)
-         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled.
+         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled, and always when the caller authenticated with a restricted personal access token (ADR-042).
          */
         post: operations["activateBreakGlass"];
         delete?: never;
@@ -6514,6 +6514,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listExpiredPATs: {

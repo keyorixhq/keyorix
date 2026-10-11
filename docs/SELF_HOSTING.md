@@ -39,15 +39,22 @@ Open **http://localhost:8088** and log in with the admin credentials you set in
 > backend spends on first-boot migrations and key derivation.
 
 **First boot check.** With `KEYORIX_ADMIN_PASSWORD` + `KEYORIX_BOOTSTRAP_TOKEN` set
-the backend creates the admin by calling `/system/init` once the server answers,
-but it only waits about 30 s. If first boot is slower than that (a loaded host)
-the log shows `Bootstrap call failed ... — continuing`, the container is
-healthy, and logging in returns `HTTP 401` (tracked in #3025). Look for
-`Server is ready` followed by `Bootstrapping admin user` in
-`docker compose logs backend`; if it is missing, create the admin by hand with
-`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local --bootstrap-token <KEYORIX_BOOTSTRAP_TOKEN>`.
-`docker compose ps` shows `web` as `(unhealthy)` on current images although it
-serves traffic (#3026).
+the backend creates the admin by calling `/system/init` as soon as the server
+answers `GET /health`. The entrypoint waits for that for up to
+`KEYORIX_READY_TIMEOUT` seconds (default 180, so a slow first boot on a loaded
+host is fine), then retries the bootstrap call up to `KEYORIX_BOOTSTRAP_ATTEMPTS`
+times (default 10, 3 s apart). It fails loudly: if the admin still cannot be
+created, the entrypoint logs `ERROR: admin bootstrap did not complete ...`, stops
+the server and exits non-zero, so the backend restarts instead of sitting
+"healthy" with no usable login. On success the log shows `Server is ready after
+Ns`, `Bootstrapping admin user` and `Admin bootstrap complete.` in
+`docker compose logs backend`. If you see the `ERROR:` lines instead, check that
+`KEYORIX_BOOTSTRAP_TOKEN` is set and matches, then fix `.env` and run
+`docker compose up -d` again (or create the admin by hand with
+`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local --bootstrap-token <KEYORIX_BOOTSTRAP_TOKEN>`).
+`docker compose ps` shows `web` as `healthy`: its healthcheck probes
+`127.0.0.1` (busybox resolves `localhost` to IPv6 first and nginx listens on IPv4
+only).
 
 **Using the CLI against the stack.** The backend's port is not published; the
 CLI talks to it through the web container's proxy:
@@ -58,9 +65,10 @@ login is confined to MFA enrolment, as in [QUICK_START.md](../QUICK_START.md#enr
 **Generate your admin recovery key now, before you need it.** If every admin
 account is ever locked out (lost password, lost MFA device), the only way back
 in is `keyorix-server admin recover-admin` on the server host — and by
-default it also requires this key (`security.recover_admin.keyless_mode` is an
+default it also requires this key (`security.recover_admin.insecure_keyless_admin_recovery`, formerly
+`keyless_mode`, is an
 explicit, less-secure opt-out documented in `configs/keyorix.yaml.tpl`, not the
-default, `security.recover_admin.keyless_mode: true` in server config opts
+default, `security.recover_admin.insecure_keyless_admin_recovery: true` in server config opts
 out). No key exists until you generate one. Like every `keyorix-server admin`
 command except a Postgres backup, it needs the database to itself — it holds
 the exclusive admin lock for the whole rotation, so a concurrent
@@ -91,7 +99,7 @@ with `openssl rand -base64 32`.
 | `KEYORIX_DB_PASSWORD`     | ✅       | PostgreSQL password (shared by `postgres` and `backend`). |
 | `KEYORIX_MASTER_PASSWORD` | ✅       | Passphrase the encryption KEK is derived from. **See the warning below.** |
 | `KEYORIX_ADMIN_PASSWORD`  | optional | If set, the first admin is created on first boot (idempotent). Leave blank to run `keyorix-server admin init` manually on the server host. |
-| `KEYORIX_BOOTSTRAP_TOKEN` | required if `KEYORIX_ADMIN_PASSWORD` is set | `/system/init` always requires a matching bootstrap token. Setting `KEYORIX_ADMIN_PASSWORD` without this silently skips admin creation (a WARN is logged, but the container still reports healthy). |
+| `KEYORIX_BOOTSTRAP_TOKEN` | required if `KEYORIX_ADMIN_PASSWORD` is set | `/system/init` always requires a matching bootstrap token. Setting `KEYORIX_ADMIN_PASSWORD` without this makes the backend exit at startup with an `ERROR:` message (it no longer skips admin creation silently); set the token, or unset the password and run `keyorix system init` by hand. |
 | `KEYORIX_ADMIN_USERNAME`  | optional | Defaults to `admin`. |
 | `KEYORIX_ADMIN_EMAIL`     | optional | Defaults to `admin@keyorix.local`. |
 
@@ -359,6 +367,33 @@ then `SSL_CERT_FILE=$PWD/caddy-root.crt keyorix login --server https://localhost
 (verified: login over `https://localhost` works, `http://localhost` answers 308). When running the `tls` profile,
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
+
+Caddy runs as uid:gid `65532` (not root), with every capability dropped except
+`NET_BIND_SERVICE` and a read-only root filesystem. Earlier releases ran it as
+root, so an existing `caddy_data` / `caddy_config` volume is root-owned. **Upgrading
+needs no manual step:** the one-shot `caddy-init` service (same profile) chowns
+both volumes to `65532:65532` before Caddy starts, and Caddy waits for it to
+complete. It is idempotent, so it also runs harmlessly on a fresh or
+already-migrated volume; the issued certificates and Caddy's internal CA are
+kept. `caddy-init` is the only container in the stack that runs as root, with
+only `CHOWN` and `DAC_READ_SEARCH` (read/search, not write: Caddy creates its
+storage directories `0700`, so once they belong to `65532` root could not open
+them on a second run without it) and no network. It touches only the two Caddy
+volumes, changes only entries not already owned by `65532:65532`, and exits.
+
+**Memory limits on scratch space.** Every `tmpfs` in the compose file has an
+explicit `size=` (`/tmp` 16-64 MiB, nginx cache 64 MiB, nginx logs 32 MiB, runtime
+dirs 1 MiB), and every `emptyDir` in the Helm chart has a `sizeLimit`, so a
+runaway writer fills its own capped mount instead of the host's RAM or the node's
+ephemeral storage. The backend's `/tmp` (64 MiB) also holds `admin restore`
+staging: raise that `size=` if you restore a backup larger than it.
+
+**PostgreSQL user.** The bundled `postgres:15-alpine` runs as uid:gid `70:70` in
+both the compose file and the Helm chart (the Debian-based `postgres:*` images use
+`999`; if you change the image flavour, change the uid in both places -- the Helm
+value is `postgresql.runAsUser`). Compose volumes from earlier releases are already
+owned by `70`, so that upgrade needs no `chown`. Helm volumes created by charts
+older than this one are owned by `999`: see [UPGRADING.md](UPGRADING.md) §5.
 
 **Your own proxy.** Or terminate TLS at an existing Caddy/Traefik/nginx/LB in
 front of the `web` container: point it at `web:80` and forward

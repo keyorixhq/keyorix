@@ -937,7 +937,7 @@ func (c *KeyorixCore) RevokeAllPersonalAccessTokensForUser(ctx context.Context, 
 	}
 	c.invalidateTokenCache(hashes...)
 	c.writeAuditEvent(ctx, EventUserCredentialsRevoked, actorPtr(actorID), nil,
-		fmt.Sprintf("revoked all personal access tokens for user %d", targetUserID))
+		fmt.Sprintf("revoked all personal access tokens for %s", c.auditRef(ctx, c.storage, auditKindUser, targetUserID)))
 	return hashes, nil
 }
 
@@ -956,7 +956,7 @@ func (c *KeyorixCore) DeleteSessionsForUserExcept(ctx context.Context, actorType
 	}
 	c.invalidateTokenCache(sessionHashes...)
 	c.writeAuditEvent(ctx, EventUserCredentialsRevoked, actorPtr(actorID), nil,
-		fmt.Sprintf("deleted sessions for user %d", targetUserID))
+		fmt.Sprintf("deleted sessions for %s", c.auditRef(ctx, c.storage, auditKindUser, targetUserID)))
 	return nil
 }
 
