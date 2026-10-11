@@ -126,7 +126,7 @@ func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string,
 // logRoleChangeOn is logRoleChange against an explicit audit target. ONE body,
 // two entry points.
 func (c *KeyorixCore) logRoleChangeOn(ctx context.Context, tgt auditTarget, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope, baselineBackfill bool) {
-	desc := fmt.Sprintf("role %d %s user %d", roleID, verb, targetUserID)
+	desc := fmt.Sprintf("%s %s %s", c.auditRef(ctx, tgt.st, auditKindRole, roleID), verb, c.auditRef(ctx, tgt.st, auditKindUser, targetUserID))
 	if baselineBackfill {
 		desc = fmt.Sprintf("%s reason=%s", desc, reasonBaselineRoleBackfill)
 	}
@@ -162,7 +162,7 @@ func (c *KeyorixCore) logGroupRoleChange(ctx context.Context, eventType, verb st
 // logGroupRoleChangeOn is logGroupRoleChange against an explicit audit target.
 // ONE body, two entry points.
 func (c *KeyorixCore) logGroupRoleChangeOn(ctx context.Context, tgt auditTarget, eventType, verb string, actorID, groupID, roleID uint, scope Scope) {
-	desc := fmt.Sprintf("role %d %s %d", roleID, verb, groupID)
+	desc := fmt.Sprintf("%s %s %s", c.auditRef(ctx, tgt.st, auditKindRole, roleID), verb, c.auditRefTail(ctx, tgt.st, auditKindGroup, groupID))
 	c.writeRBACAuditOn(ctx, tgt, eventType, desc, actorID, scope, rbacAuditDetail{
 		GroupID:       groupID,
 		RoleID:        roleID,
@@ -184,7 +184,7 @@ func (c *KeyorixCore) LogGroupMemberRemoved(ctx context.Context, actorID, userID
 }
 
 func (c *KeyorixCore) logGroupMemberChange(ctx context.Context, eventType, verb string, actorID, userID, groupID uint) {
-	desc := fmt.Sprintf("user %d %s %d", userID, verb, groupID)
+	desc := fmt.Sprintf("%s %s %s", c.auditRef(ctx, c.storage, auditKindUser, userID), verb, c.auditRefTail(ctx, c.storage, auditKindGroup, groupID))
 	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{
 		TargetUserID: userID,
 		GroupID:      groupID,
@@ -703,6 +703,21 @@ func (c *KeyorixCore) LogAuthLogin(ctx context.Context, userID uint, username, i
 func (c *KeyorixCore) LogAuthFailure(ctx context.Context, username, ip string) {
 	c.writeAuditEventFailed(ctx, "auth.login_failed", nil, nil, ip,
 		fmt.Sprintf("Failed login attempt for username: %s", username))
+}
+
+// LogAuthError writes an auth.login_error audit event (Success=false) —
+// distinct from auth.login_failed (#2888, mirroring mfa.go's
+// auditMFAFailed/auditMFAError split): this request's PASSWORD was already
+// confirmed correct, and a storage error afterward (resolving the identity
+// payload, creating an MFA challenge) is what actually denied the login, not
+// a wrong credential. The HTTP response to the client must stay byte-identical
+// to a genuine login_failed either way (#2740 option C: a storage error after
+// a credential matched must never confirm the match), so this distinction
+// exists ONLY for an operator reading the audit trail -- it changes nothing
+// the caller can observe.
+func (c *KeyorixCore) LogAuthError(ctx context.Context, username, ip string, err error) {
+	c.writeAuditEventFailed(ctx, "auth.login_error", nil, nil, ip,
+		fmt.Sprintf("Login for username %s denied by a storage error AFTER the password matched: %v", username, err))
 }
 
 // LogAuthLogout writes an auth.logout audit event.
