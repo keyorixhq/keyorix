@@ -79,20 +79,16 @@ If a share is refused, the error says why: "you are not a member of this
 secret's project" (the owner needs a project role) or "the recipient is not a
 member of this secret's project" (the recipient needs one).
 
-### Shares and project roles: how they combine
-
 A user's access to a secret is the **union** of every path that grants it: being the
 owner, a direct share, a group share, a per-secret ACL, and a role on the secret's
-project. A share *adds* a path; **revoking it removes only that path.**
-
-The recipient of a user share must already be a member of the secret's project (hold
-a role scoped to it). If that role already grants read (every built-in project role,
-including `project_viewer`, does), the recipient keeps reading the secret after the
-share is revoked — the share was not what gave them access. To end their access,
-also remove the role (`keyorix rbac remove-role`). A `write` share does elevate a
-read-only role on that one secret (see the table above), and revoking it removes
-exactly that elevation. `keyorix secret access` shows the effective level of each
-user, including role-derived access (see above).
+project. A share *adds* a path; **revoking it removes only that path.** If the
+recipient's project role already grants read (every built-in project role,
+including `project_viewer`, does), they keep reading the secret after the share is
+revoked: the share was not what gave them read. To end their access, also remove
+the role (`keyorix rbac remove-role`). A `write` share does elevate a read-only
+role on that one secret (see the table above), and revoking it removes exactly
+that elevation. `keyorix secret access` shows the effective level of each user,
+including role-derived access (see above).
 
 ## Getting Started
 
