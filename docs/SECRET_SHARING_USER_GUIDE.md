@@ -117,7 +117,11 @@ See the [API Documentation](SECRET_SHARING_API.md) for programmatic access.
 #### Via Web Interface
 1. **Select Secret**: Navigate to the secret you want to share
 2. **Click Share**: Click the "Share" button
-3. **Choose Recipient**: Enter the username or select from suggestions
+3. **Choose Recipient**: Type a name, username or email and pick from the
+   suggestions. The suggestions are the active members of the secret's project,
+   because a share can only go to a project member. A project-only admin sees them
+   too; no global role is needed. If you have no role in the project that allows
+   sharing, the dialog says so instead of listing anyone.
 4. **Set Permission**: Choose "Read" or "Write" permission
 5. **Confirm**: Click "Share Secret" to complete
 
@@ -347,14 +351,14 @@ keyorix secret versions --id 123
 
 #### Modifying Shared Secrets (Write Permission Required)
 ```bash
-# Update secret value
-keyorix secret update --id 123 --value "new-secret-value"
+# Update secret value (typed at a hidden prompt, so it never lands in shell history)
+keyorix secret update --id 123 --interactive
 
-# Update metadata
-keyorix secret update --id 123 --metadata key=value
+# Update secret value from a file (relative path, not a symlink)
+keyorix secret update --id 123 --from-file ./new-secret.txt
 
-# Add tags
-keyorix secret update --id 123 --tags production,database
+# Change the expiration
+keyorix secret update --id 123 --expires "2027-01-01T00:00:00Z"
 ```
 
 ### Understanding Sharing Context
