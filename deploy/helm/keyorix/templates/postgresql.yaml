@@ -70,6 +70,9 @@ spec:
         {{- include "keyorix.labels" . | nindent 8 }}
         app.kubernetes.io/component: postgresql
       annotations:
+        {{- if .Values.secureBaseline.enabled }}
+        checksum/secure-baseline: {{ include "keyorix.secureBaseline.checksum" . }}
+        {{- end }}
         # kube-score, each with an already-settled reason elsewhere:
         #   - container-security-context-user-group-id: fixed uid to match
         #     the official postgres:*-alpine image's own user (see the

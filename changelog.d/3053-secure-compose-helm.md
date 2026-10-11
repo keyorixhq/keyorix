@@ -10,3 +10,8 @@
   `keyorix-server admin init --secure-files` (generate only the files an
   existing config references); the server image's entrypoint is now its
   ENTRYPOINT (`docker run <image> <cmd>` runs `<cmd>` after the config copy).
+  `docker-compose.secure.yml` mounts a small private tmpfs at `/app/data` for
+  the config copy (the backend's root filesystem is read-only). With
+  `secureBaseline.enabled=true` the server, web and bundled-Postgres pods carry a
+  `checksum/secure-baseline` annotation, so rotating the Secret (delete it,
+  `helm upgrade`) rolls them.

@@ -19,6 +19,9 @@ spec:
         app.kubernetes.io/component: web
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/web-config.yaml") . | sha256sum }}
+        {{- if .Values.secureBaseline.enabled }}
+        checksum/secure-baseline: {{ include "keyorix.secureBaseline.checksum" . }}
+        {{- end }}
         # kube-score (helm-chart-policy CI job), each with an already-settled reason
         # elsewhere in this file/chart, not a fresh judgment call made here:
         #   - container-security-context-user-group-id: fixed uid 101 to match the

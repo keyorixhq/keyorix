@@ -32,6 +32,12 @@ services:
       KEYORIX_PUBLIC_CA_FILE: /app/tls-public/ca.crt
       KEYORIX_LOCAL_URL: https://localhost:8080
       KEYORIX_LOCAL_CA_FILE: /app/tls/server.crt
+    # The base backend is read_only: the private config copy (rewritten from the
+    # source at every start) needs a writable home. A small tmpfs owned by the
+    # image's uid 1001, 0700; nothing else lives in /app/data here.
+    # (deploy TestComposeSecureBackend_EntrypointWritesLandOnWritableMounts)
+    tmpfs:
+      - /app/data:mode=0700,uid=1001,gid=1001,size=1m
     volumes:
       # Replaces the stock mount at /app/keyorix.yaml (unused with
       # KEYORIX_CONFIG_PATH set): the entrypoint copies this one.

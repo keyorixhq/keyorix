@@ -30,6 +30,9 @@ spec:
         app.kubernetes.io/component: server
       annotations:
         checksum/config: {{ include (print $.Template.BasePath "/server-config.yaml") . | sha256sum }}
+        {{- if .Values.secureBaseline.enabled }}
+        checksum/secure-baseline: {{ include "keyorix.secureBaseline.checksum" . }}
+        {{- end }}
         # kube-score: container-security-context-user-group-id wants a UID/GID >
         # 10000; 1001 is fixed to match the server image's own "keyorix" user (see
         # the securityContext comment below) -- same already-reviewed tradeoff as
