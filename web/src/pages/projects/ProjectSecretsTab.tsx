@@ -1,4 +1,3 @@
-import { apiErrorMessage } from '../../services/client';
 import { useCan } from '../../features/auth/useCan';
 import React from 'react';
 import { useSearchParams } from 'react-router';
