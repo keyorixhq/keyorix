@@ -10,6 +10,7 @@ import {
     ClockIcon,
 } from '@heroicons/react/24/outline';
 import { Secret } from '../../types';
+import { useCan } from '../auth/useCan';
 import { classificationMeta } from './classification';
 
 const formatDate = (d: string | Date) =>
@@ -110,6 +111,7 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
     copiedId,
     copyErrorId,
 }) => {
+    const can = useCan();
     const copyIcon =
         copiedId === secret.id ? (
             <CheckIcon className="h-4 w-4 text-green-500" />
@@ -186,23 +188,27 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                     >
                         <EyeIcon className="h-4 w-4" />
                     </button>
-                    <button
-                        type="button"
-                        onClick={() => onEdit(secret)}
-                        title="Edit"
-                        className="p-1 text-base-muted hover:text-base-primary transition-colors"
-                    >
-                        <PencilIcon className="h-4 w-4" />
-                    </button>
-                    <button
-                        type="button"
-                        onClick={() => onRotate(secret)}
-                        title="Rotate"
-                        className="p-1 text-base-muted hover:text-green-600 transition-colors"
-                    >
-                        <ArrowPathIcon className="h-4 w-4" />
-                    </button>
-                    {onAutoRotate && (
+                    {can.writeSecrets && (
+                        <button
+                            type="button"
+                            onClick={() => onEdit(secret)}
+                            title="Edit"
+                            className="p-1 text-base-muted hover:text-base-primary transition-colors"
+                        >
+                            <PencilIcon className="h-4 w-4" />
+                        </button>
+                    )}
+                    {can.writeSecrets && (
+                        <button
+                            type="button"
+                            onClick={() => onRotate(secret)}
+                            title="Rotate"
+                            className="p-1 text-base-muted hover:text-green-600 transition-colors"
+                        >
+                            <ArrowPathIcon className="h-4 w-4" />
+                        </button>
+                    )}
+                    {onAutoRotate && can.writeSecrets && (
                         <button
                             type="button"
                             onClick={() => onAutoRotate(secret)}
@@ -212,14 +218,16 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                             <ClockIcon className="h-4 w-4" />
                         </button>
                     )}
-                    <button
-                        type="button"
-                        onClick={() => onShare(secret)}
-                        title="Share"
-                        className="p-1 text-base-muted hover:text-blue-600 transition-colors"
-                    >
-                        <ShareIcon className="h-4 w-4" />
-                    </button>
+                    {can.writeSecrets && (
+                        <button
+                            type="button"
+                            onClick={() => onShare(secret)}
+                            title="Share"
+                            className="p-1 text-base-muted hover:text-blue-600 transition-colors"
+                        >
+                            <ShareIcon className="h-4 w-4" />
+                        </button>
+                    )}
                     <button
                         type="button"
                         onClick={() => onCopy(secret)}
@@ -233,14 +241,16 @@ export const SecretTableRow: React.FC<SecretTableRowProps> = ({
                             copyIcon
                         )}
                     </button>
-                    <button
-                        type="button"
-                        onClick={() => onDelete(secret)}
-                        title="Delete"
-                        className="p-1 text-base-muted hover:text-red-600 transition-colors"
-                    >
-                        <TrashIcon className="h-4 w-4" />
-                    </button>
+                    {can.deleteSecrets && (
+                        <button
+                            type="button"
+                            onClick={() => onDelete(secret)}
+                            title="Delete"
+                            className="p-1 text-base-muted hover:text-red-600 transition-colors"
+                        >
+                            <TrashIcon className="h-4 w-4" />
+                        </button>
+                    )}
                 </div>
             </td>
         </tr>

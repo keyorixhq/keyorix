@@ -1,3 +1,5 @@
+import { useCan } from '../../features/auth/useCan';
+import { apiErrorMessage } from '../../services/client';
 import React, { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
@@ -202,10 +204,13 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
     const { data: members = [], isLoading, isError } = useProjectMembers(projectId);
     const { data: project } = useProject(projectId);
     const { user } = useAuthStore();
+    const can = useCan();
     const { data: usersResp } = useQuery({
         queryKey: ['users-list-members'],
         queryFn: () => usersApi.list({ pageSize: 200 }),
         staleTime: 60_000,
+        // The user directory is an admin read; asking as a plain member only produces a 403.
+        enabled: can.manageMembers,
     });
 
     const addMember = useAddProjectMember(projectId);
@@ -254,8 +259,7 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
             { userId: Number(newUserId), role: newRole },
             {
                 onSuccess: () => setNewUserId(''),
-                onError: (err: any) =>
-                    setError(err?.response?.data?.error ?? err?.response?.data?.message ?? 'Failed to add member.'),
+                onError: (err: unknown) => setError(apiErrorMessage(err, 'Failed to add member.')),
             }
         );
     };
@@ -278,15 +282,17 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                         existing users and assign a project role; create new user accounts from Access Control → Users.
                     </p>
                 </div>
-                <button
-                    type="button"
-                    onClick={() => setInviteOpen(true)}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium shrink-0"
-                    style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
-                >
-                    <EnvelopeIcon className="h-4 w-4" />
-                    Invite by email
-                </button>
+                {can.manageMembers && (
+                    <button
+                        type="button"
+                        onClick={() => setInviteOpen(true)}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium shrink-0"
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                    >
+                        <EnvelopeIcon className="h-4 w-4" />
+                        Invite by email
+                    </button>
+                )}
             </div>
 
             {error && (
@@ -299,47 +305,49 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
             )}
 
             {/* Add member */}
-            <div
-                className="rounded-lg border p-3 mb-4 flex flex-wrap items-center gap-2"
-                style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
-            >
-                <select
-                    value={newUserId}
-                    onChange={(e) => setNewUserId(e.target.value)}
-                    className="flex-1 min-w-[12rem] rounded-lg px-3 py-1.5 text-sm outline-hidden"
-                    style={selectStyle}
+            {can.manageMembers && (
+                <div
+                    className="rounded-lg border p-3 mb-4 flex flex-wrap items-center gap-2"
+                    style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-surface)' }}
                 >
-                    <option value="">Select a user to add…</option>
-                    {candidates.map((u: any) => (
-                        <option key={u.id} value={u.id}>
-                            {u.displayName ?? u.username}
-                            {u.email ? ` (${u.email})` : ''}
-                        </option>
-                    ))}
-                </select>
-                <select
-                    value={newRole}
-                    onChange={(e) => setNewRole(e.target.value)}
-                    className="rounded-lg px-3 py-1.5 text-sm outline-hidden"
-                    style={selectStyle}
-                >
-                    {PROJECT_ROLES.map((r) => (
-                        <option key={r} value={r}>
-                            {roleLabel(r)}
-                        </option>
-                    ))}
-                </select>
-                <button
-                    type="button"
-                    onClick={handleAdd}
-                    disabled={!newUserId || addMember.isPending}
-                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
-                    style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-                >
-                    <PlusIcon className="h-4 w-4" />
-                    Add
-                </button>
-            </div>
+                    <select
+                        value={newUserId}
+                        onChange={(e) => setNewUserId(e.target.value)}
+                        className="flex-1 min-w-[12rem] rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={selectStyle}
+                    >
+                        <option value="">Select a user to add…</option>
+                        {candidates.map((u: any) => (
+                            <option key={u.id} value={u.id}>
+                                {u.displayName ?? u.username}
+                                {u.email ? ` (${u.email})` : ''}
+                            </option>
+                        ))}
+                    </select>
+                    <select
+                        value={newRole}
+                        onChange={(e) => setNewRole(e.target.value)}
+                        className="rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={selectStyle}
+                    >
+                        {PROJECT_ROLES.map((r) => (
+                            <option key={r} value={r}>
+                                {roleLabel(r)}
+                            </option>
+                        ))}
+                    </select>
+                    <button
+                        type="button"
+                        onClick={handleAdd}
+                        disabled={!newUserId || addMember.isPending}
+                        className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-medium disabled:opacity-50"
+                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                    >
+                        <PlusIcon className="h-4 w-4" />
+                        Add
+                    </button>
+                </div>
+            )}
 
             {/* Role permissions reference (collapsible) */}
             <RoleLegend />
@@ -450,40 +458,55 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
                                                         {m.email}
                                                     </p>
                                                 </div>
-                                                <select
-                                                    value={m.roleName}
-                                                    onChange={(e) => {
-                                                        e.stopPropagation();
-                                                        updateRole.mutate({ userId: m.userId, role: e.target.value });
-                                                    }}
-                                                    onClick={(e) => e.stopPropagation()}
-                                                    disabled={updateRole.isPending}
-                                                    className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 pointer-events-auto"
-                                                    style={selectStyle}
-                                                >
-                                                    {/* Include the current role even if it's outside the standard set (e.g. a custom or system role). */}
-                                                    {!PROJECT_ROLES.includes(m.roleName as any) && (
-                                                        <option value={m.roleName}>{roleLabel(m.roleName)}</option>
-                                                    )}
-                                                    {PROJECT_ROLES.map((r) => (
-                                                        <option key={r} value={r}>
-                                                            {roleLabel(r)}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                                <button
-                                                    type="button"
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        handleRemoveMember(m);
-                                                    }}
-                                                    disabled={removeMember.isPending}
-                                                    className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0 pointer-events-auto"
-                                                    style={{ color: 'var(--error)' }}
-                                                    title="Remove from project"
-                                                >
-                                                    <TrashIcon className="h-4 w-4" />
-                                                </button>
+                                                {!can.manageMembers && (
+                                                    <span
+                                                        className="text-xs shrink-0"
+                                                        style={{ color: 'var(--text-muted)' }}
+                                                    >
+                                                        {roleLabel(m.roleName)}
+                                                    </span>
+                                                )}
+                                                {can.manageMembers && (
+                                                    <select
+                                                        value={m.roleName}
+                                                        onChange={(e) => {
+                                                            e.stopPropagation();
+                                                            updateRole.mutate({
+                                                                userId: m.userId,
+                                                                role: e.target.value,
+                                                            });
+                                                        }}
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        disabled={updateRole.isPending}
+                                                        className="rounded-lg px-2 py-1 text-xs outline-hidden shrink-0 pointer-events-auto"
+                                                        style={selectStyle}
+                                                    >
+                                                        {/* Include the current role even if it's outside the standard set (e.g. a custom or system role). */}
+                                                        {!PROJECT_ROLES.includes(m.roleName as any) && (
+                                                            <option value={m.roleName}>{roleLabel(m.roleName)}</option>
+                                                        )}
+                                                        {PROJECT_ROLES.map((r) => (
+                                                            <option key={r} value={r}>
+                                                                {roleLabel(r)}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                )}
+                                                {(can.manageMembers || m.userId === user?.id) && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleRemoveMember(m);
+                                                        }}
+                                                        disabled={removeMember.isPending}
+                                                        className="p-1.5 rounded-sm transition-colors hover:bg-red-50 disabled:opacity-50 shrink-0 pointer-events-auto"
+                                                        style={{ color: 'var(--error)' }}
+                                                        title="Remove from project"
+                                                    >
+                                                        <TrashIcon className="h-4 w-4" />
+                                                    </button>
+                                                )}
                                             </div>
                                         </li>
                                         {isExpanded && (
@@ -505,12 +528,12 @@ export const ProjectMembersTab: React.FC<ProjectMembersTabProps> = ({ projectId 
 
             {/* ADR-022: memberships stuck mid-onboarding (invited by email but not
                 yet stepped through to active — no role, not in the list above). */}
-            <PendingOnboardingSection projectId={projectId} users={allUsers} />
+            {can.manageMembers && <PendingOnboardingSection projectId={projectId} users={allUsers} />}
 
             {/* ADR-024: pending access requests + invitations (admin-only; the
                 queries 403 for non-admins and the sections render nothing). */}
-            <PendingAccessRequestsSection projectId={projectId} users={allUsers} />
-            <ProjectInvitationsSection projectId={projectId} />
+            {can.manageMembers && <PendingAccessRequestsSection projectId={projectId} users={allUsers} />}
+            {can.manageMembers && <ProjectInvitationsSection projectId={projectId} />}
 
             <InviteToProjectModal
                 isOpen={inviteOpen}
