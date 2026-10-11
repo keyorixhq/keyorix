@@ -40,6 +40,14 @@ func (ae *AuthEncryption) Initialize(passphrase string) error {
 	return ae.service.Initialize(passphrase)
 }
 
+// WrappedDEKExists reports whether the wrapped DEK file is already on disk, i.e.
+// whether Initialize will load existing key material rather than generate it.
+// Meant to be read BEFORE Initialize (#2915): IsInitialized is always false on a
+// freshly constructed AuthEncryption, so it cannot answer "was this already set up".
+func (ae *AuthEncryption) WrappedDEKExists() bool {
+	return ae.service.keyManager.wrappedDEKExists()
+}
+
 // AcquireSharedKeyLock takes the same cross-process shared DEK lock
 // (Service.AcquireSharedKeyLock, #196) the DEK-focused local CLI commands
 // (status/validate/fix-perms/upgrade-aad) already require, for the sibling

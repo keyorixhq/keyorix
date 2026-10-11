@@ -79,11 +79,17 @@ func (h *AuthHandler) FinishWebAuthnRegistration(w http.ResponseWriter, r *http.
 		h.writeWebAuthnErr(w, err)
 		return
 	}
+	message := "Passkey registered."
+	ended := h.endSetupSessionIfComplete(w, r, userCtx.UserID, extractBearerToken(r))
+	if ended {
+		message += " Account setup is complete: sign in again with your password and passkey."
+	}
 	sendSuccess(w, map[string]interface{}{
-		"id":         cred.ID,
-		"name":       cred.Name,
-		"created_at": cred.CreatedAt,
-	}, "Passkey registered.")
+		"id":                        cred.ID,
+		"name":                      cred.Name,
+		"created_at":                cred.CreatedAt,
+		"reauthentication_required": ended,
+	}, message)
 }
 
 // ListWebAuthnCredentials returns the caller's registered passkeys.
@@ -275,7 +281,12 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 	// deliberately NOT covered by this recover — the assertion was already evaluated by
 	// then, so the slot must stay counted exactly like a successful or failed evaluation
 	// would (same release-only-pre-verdict rule #2619 established for the error path).
-	session, user, err := h.finishWebAuthnLoginReleasingOnPanic(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed, reserved, attemptID)
+	//
+	// #2841: the wrapper forwards the response identity core now resolves BEFORE
+	// the session/grant/step-up-token writes, so there is exactly ONE call to
+	// FinishWebAuthnLogin on this path — re-reading the identity in the handler
+	// would reopen the very window this fix closed.
+	session, user, identity, lc, err := h.finishWebAuthnLoginReleasingOnPanic(r.Context(), body.Challenge, body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed, reserved, attemptID)
 	if err != nil {
 		if errors.Is(err, core.ErrWebAuthnLoginNotEvaluated) {
 			log.Printf("FinishWebAuthnLogin: %v", err)
@@ -290,13 +301,24 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 			sendError(w, "ServiceUnavailable", errMFAVerificationUnavailable, http.StatusServiceUnavailable, nil)
 			return
 		}
+		// #2894: a storage fault AFTER the assertion verified (the password-expiry
+		// gate, the identity read core now does before the session/grant writes
+		// (#2841), or the session mint) reaches here with the same 401 a failed
+		// assertion gets -- not the 500 completeLogin used to send for an identity
+		// failure, which would confirm the assertion verified (#2888) -- and core
+		// has already counted it toward the lockout the same way. Audit it as
+		// auth.login_error so an operator can still tell the two apart. user is
+		// non-nil for every post-verdict failure. The attempt reservation stays
+		// counted: unlike ErrWebAuthnLoginNotEvaluated, the assertion WAS
+		// evaluated (#2880).
+		if errors.Is(err, core.ErrLoginPostVerdict) && user != nil {
+			username := user.Username
+			goSafe(func() { h.coreService.LogAuthError(context.Background(), username, ip, err) }) // #nosec G118
+		}
 		sendError(w, "Unauthorized", "Assertion failed or challenge expired", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
-	if !ok {
-		return
-	}
+	resp := h.completeLoginWithIdentity(w, r, session, user, identity, lc)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118
@@ -307,7 +329,14 @@ func (h *AuthHandler) FinishWebAuthnLogin(w http.ResponseWriter, r *http.Request
 // finishWebAuthnLoginReleasingOnPanic calls core.FinishWebAuthnLogin, releasing the
 // reserved login-attempt slot and re-panicking unchanged if the call panics instead of
 // returning — see FinishWebAuthnLogin's call-site comment for why this exists.
-func (h *AuthHandler) finishWebAuthnLoginReleasingOnPanic(ctx context.Context, challenge, webAuthnSession, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData, reserved bool, attemptID uint) (session *models.Session, user *models.User, err error) {
+//
+// #2841: it forwards all of FinishWebAuthnLoginPending's results, including the
+// response identity core resolves before its session/grant/step-up-token writes.
+// The wrapper is deliberately transparent: it adds the release-on-panic side
+// effect and changes nothing else. The recover() re-panics with the ORIGINAL
+// value, so a panic is never converted into a "success" and never swallowed —
+// the slot is released and the panic continues to the Recovery middleware.
+func (h *AuthHandler) finishWebAuthnLoginReleasingOnPanic(ctx context.Context, challenge, webAuthnSession, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData, reserved bool, attemptID uint) (session *models.Session, user *models.User, identity core.UserIdentity, lc *core.LoginCompletion, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			if reserved {
@@ -316,7 +345,9 @@ func (h *AuthHandler) finishWebAuthnLoginReleasingOnPanic(ctx context.Context, c
 			panic(rec)
 		}
 	}()
-	return h.coreService.FinishWebAuthnLogin(ctx, challenge, webAuthnSession, userAgent, ip, parsed)
+	// Pending form: FinishWebAuthnLogin's own completeLoginWithIdentity call
+	// commits the accounting (#2894).
+	return h.coreService.FinishWebAuthnLoginPending(ctx, challenge, webAuthnSession, userAgent, ip, parsed)
 }
 
 // BeginWebAuthnPasswordlessLogin starts a usernameless passkey login. Public, no
@@ -371,15 +402,20 @@ func (h *AuthHandler) FinishWebAuthnPasswordlessLogin(w http.ResponseWriter, r *
 	// F2 (2026-09-20): reserve before the (slow) assertion verification — see
 	// reserveLoginAttempt's doc (reserved after decode+parse, matching Login).
 	h.reserveLoginAttempt(r.Context(), ip)
-	session, user, err := h.coreService.FinishWebAuthnPasswordlessLogin(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
+	session, user, identity, lc, err := h.coreService.FinishWebAuthnPasswordlessLoginPending(r.Context(), body.WebAuthnSession, r.Header.Get(hdrUserAgent), ip, parsed)
 	if err != nil {
+		// #2894: as in FinishWebAuthnLogin -- same 401 either way (including an
+		// identity-read failure, which core now does before its writes, #2841),
+		// and auth.login_error for the operator when the assertion had in fact
+		// already verified.
+		if errors.Is(err, core.ErrLoginPostVerdict) && user != nil {
+			username := user.Username
+			goSafe(func() { h.coreService.LogAuthError(context.Background(), username, ip, err) }) // #nosec G118
+		}
 		sendError(w, "Unauthorized", "Passwordless login failed", http.StatusUnauthorized, nil)
 		return
 	}
-	resp, ok := h.completeLogin(w, r, session, user)
-	if !ok {
-		return
-	}
+	resp := h.completeLoginWithIdentity(w, r, session, user, identity, lc)
 	goSafe(func() {
 		h.coreService.LogAuthLogin(context.Background(), user.ID, user.Username, ip, r.Header.Get(hdrUserAgent))
 	}) // #nosec G118

@@ -63,7 +63,7 @@ func TestVerifyMFALogin_CreateSessionFailure_ReleasesTOTPStepForRetry(t *testing
 
 	ch, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess, _, verr := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
+	sess, _, _, verr := c.VerifyMFALogin(ctx, ch, good, "ua", "9.9.9.9")
 	require.Error(t, verr, "a CreateSession failure must still refuse this login attempt")
 	require.Nil(t, sess)
 	require.False(t, stub.failNext, "the fault must actually have fired")
@@ -72,7 +72,7 @@ func TestVerifyMFALogin_CreateSessionFailure_ReleasesTOTPStepForRetry(t *testing
 	// accepted — no session was minted) must now succeed.
 	ch2, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
-	sess2, user, err := c.VerifyMFALogin(ctx, ch2, good, "ua", "9.9.9.9")
+	sess2, user, _, err := c.VerifyMFALogin(ctx, ch2, good, "ua", "9.9.9.9")
 	require.NoError(t, err, "the same code must be usable again once the storage hiccup clears")
 	require.NotNil(t, sess2)
 	assert.Equal(t, uint(1), user.ID)

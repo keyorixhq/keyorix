@@ -555,6 +555,25 @@ type Storage interface {
 	// revoke because of what a clock-derived State happens to read; only an
 	// already-'revoked' row is excluded.
 	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error
+	// ReviewBreakGlassActivation (ADR-112 §3, break-glass review item 5)
+	// atomically records a post-activation review -- reviewer, when, and an
+	// optional note -- via a single conditional UPDATE guarded on
+	// reviewed_at IS NULL, the same shape as RevokeBreakGlassActivation's
+	// guard, so two concurrent review submissions for the same activation
+	// cannot both "win": only the first is recorded, the second gets
+	// ErrBreakGlassAlreadyReviewed. This storage-layer primitive itself does
+	// not condition on active/expired/revoked state -- it records a review
+	// against whatever row id names. #2461 round 2: that is NOT the same as
+	// "a review is allowed at any state" -- core.ReviewBreakGlass, the only
+	// production caller, refuses a still-active activation BEFORE reaching
+	// here (ErrBreakGlassStillActive), so in practice this is only ever
+	// called once the activation has concluded.
+	ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error
+	// ListUnreviewedBreakGlassActivationsBefore returns every activation
+	// (across all projects) with reviewed_at still NULL and created_at at or
+	// before cutoff -- the posture report's (item 4) source for "open
+	// break-glass activations without review."
+	ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error)
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
@@ -738,6 +757,15 @@ type Storage interface {
 	// MarkNotificationRead marks one notification read, scoped to its owner.
 	MarkNotificationRead(ctx context.Context, id, userID uint) error
 	MarkAllNotificationsRead(ctx context.Context, userID uint) error
+	// The Scoped variants see only the user's notifications inside scope (see
+	// NotificationScope): the feed of a restricted personal access token. The
+	// narrowing is in the query, so limit and the count apply to the rows the token
+	// can see, not to a newest-N window of all of them (PAT-GUARD-1).
+	ListScopedNotifications(ctx context.Context, userID uint, scope NotificationScope, unreadOnly bool, limit int) ([]*models.Notification, error)
+	CountUnreadScopedNotifications(ctx context.Context, userID uint, scope NotificationScope) (int64, error)
+	// MarkScopedNotificationRead returns not-found for a notification outside scope.
+	MarkScopedNotificationRead(ctx context.Context, id, userID uint, scope NotificationScope) error
+	MarkAllScopedNotificationsRead(ctx context.Context, userID uint, scope NotificationScope) error
 	// ListUserProjectMemberships returns all membership rows for a single user,
 	// newest first (powers the per-user assignments view).
 	ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error)
@@ -1685,6 +1713,20 @@ type Storage interface {
 	// (a full-row Save) and wrote disabled=false back over a concurrent DeleteProject's
 	// #369 disable. Returns an error when no row matched.
 	SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error
+	// SetDynamicSecretConfigClassification persists ONLY the classification
+	// column (plus updated_at), and only if the row's CURRENT classification is
+	// still fromClassification (the value the caller read). matched=false (no
+	// error) means another classifier moved it; the caller must fail closed.
+	//
+	// ClassifyDynamicSecretConfig used the full-row UpdateDynamicSecretConfig
+	// (a bare Save) and therefore wrote `disabled=false` back over a concurrent
+	// SetDynamicSecretConfigEnabled(false) — the incident kill switch, which
+	// also revokes the config's live leases — so IssueLease could mint real
+	// database credentials again, with an audit trail reading "config_disabled"
+	// then only "classified" and nothing recording the re-enable (#2698). The
+	// same column is what DeleteProject's #369 cascade sets, so the same write
+	// also re-enabled a config under a deleted project.
+	SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification, toClassification string, updatedAt time.Time) (matched bool, err error)
 	// TransitionDynamicSecretConfigDisabled persists cfg's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND disabled = ?" — succeeding
 	// only if the row's CURRENT persisted disabled value still equals fromDisabled
@@ -1722,6 +1764,27 @@ type Storage interface {
 	// still live) — used to enforce the config's MaxActiveLeases ceiling.
 	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
 	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
+	// ExtendDynamicSecretLeaseExpiry persists ONLY expires_at, and only for a
+	// lease whose status is STILL "active": "UPDATE ... SET expires_at WHERE
+	// lease_id = ? AND status = 'active'". matched=false (no error) means the
+	// lease is no longer active (revoked, expired, or revoke_failed) and the
+	// renewal must be refused.
+	//
+	// RenewLease used the full-row UpdateDynamicSecretLease (a bare Save) and
+	// therefore wrote the stale Status/RevokeError/RevokedAt back (#2698): a
+	// concurrent successful RevokeLease became `active` again with a LATER
+	// expiry, so the row lied about a dead credential and kept holding a
+	// MaxActiveLeases slot until the sweep; a revoke that had recorded
+	// `revoke_failed` was erased outright, its error cleared. Renew is a no-op
+	// on several backends, so nothing downstream would have noticed.
+	ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (matched bool, err error)
+	// RecordDynamicSecretLeaseRevocation persists ONLY status, revoke_reason,
+	// revoke_error and revoked_at. Deliberately NOT conditional on the current
+	// status: it records what already happened to the credential at the
+	// backend, so it must land regardless of what else moved meanwhile — a
+	// lease whose target drop failed must never be left reading `active`.
+	// What it must not do is carry the caller's whole pre-read row with it.
+	RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID, status, revokeReason, revokeError string, revokedAt *time.Time) (matched bool, err error)
 	ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error)
 
 	CreateMFAChallenge(ctx context.Context, c *models.MFAChallenge) error
@@ -2175,6 +2238,13 @@ type MembershipCounts struct {
 }
 
 // AuditFilter defines filtering options for audit log queries
+// NotificationScope selects the notifications that carry a project: every such row
+// when ProjectID is 0, otherwise only that project's. A notification with no project
+// is never in any scope.
+type NotificationScope struct {
+	ProjectID uint
+}
+
 type AuditFilter struct {
 	ProjectID *uint
 	UserID    *uint

@@ -14,6 +14,36 @@ command, and most of DEMO-1's findings are fixed (MFA, least-privilege CLI
 access, live backup, fresh-volume restore). What's left open is smaller and
 listed below.
 
+## Before you're on stage: run the readiness check (~5 min)
+
+`make demo-check` (or `./scripts/demo/check.sh`) walks this exact script end
+to end through the public API/CLI only — health, both logins, least
+privilege, create/read/rotate/version-history, ACL, the machine-identity
+read, MFA, audit + chain verify, the posture report, secret-read p50 latency,
+and (if Playwright is installed) a real-backend UI walk of login/projects/
+secrets/audit — printing one ✅/❌ line per step and a final `DEMO READY` /
+`NOT READY: N problems`. Run it with no arguments the morning of a demo: it
+brings up its own fresh SQLite instance, checks it, and tears it down. Pass
+`--keep` to leave that instance running for the actual demo instead of
+bringing up a second one by hand; `--postgres` checks the Postgres backend
+instead (it brings up `docker-compose.yml` with the backend **and** the web UI
+built from this checkout — see "Which images does what" below); `--ui`/`--offline` force the Playwright walk / the airgap-e2e
+offline-guarantee leg on. Anything red here is a demo blocker — fix it (or
+pick a different flow) before you're in front of a customer, not during.
+
+### Which images does what
+
+| Path | Backend | Web UI |
+| --- | --- | --- |
+| `scripts/demo/up.sh` (SQLite) | `keyorix-demo:airgap`, built from this checkout | embedded in that same binary |
+| `scripts/demo/check.sh --postgres` | `keyorix-demo:airgap`, built from this checkout | `keyorix-demo-web:local`, built from `web/` of this checkout |
+| plain `docker compose up` (release / self-hosting) | pinned `ghcr.io/keyorixhq/keyorix-server:<release>` | pinned `ghcr.io/keyorixhq/keyorix-web:<release>` |
+
+The release pins in `docker-compose.yml` stay on a released pair (guarded by
+`deploy/compose_pins_test.go`); the demo check overlays both images with ones
+built from the checkout, because a released web UI does not match a `main`
+backend (login bounced to `/login?logout_error=1`, #3035).
+
 ## 0. Before you're on stage (~1 min)
 
 ```sh
@@ -23,10 +53,26 @@ git clone https://github.com/keyorixhq/keyorix.git && cd keyorix
 
 One command: builds a local air-gapped image with the web UI embedded,
 starts it, bootstraps an admin, and seeds a realistic org — 3 projects, 2
-groups, a least-privilege user, 2 secrets (one with 2 versions), a machine
+groups, a least-privilege user, 3 secrets (one with 2 versions; backend-api has one in Development and one in Production, so the Secrets tab is never empty), a machine
 identity, and a populated audit trail — through the public API/CLI only.
-Prints the URL and every login it just created. Re-running it is a no-op
+Prints the URL and every login it just created. It also builds a small
+`keyorix-demo-sqlite:local` helper image (alpine + `sqlite3`) once, while it
+still has network, for the tamper demo in section 6. Re-running it is a no-op
 (idempotent); `./scripts/demo/down.sh` stops it, `--wipe` resets it.
+
+**Multi-factor authentication is on, as in every default install**
+(`security.require_mfa`), and the demo keeps it on. `up.sh` therefore enrols
+TOTP for the demo admin through the real API (`keyorix mfa enroll` / `mfa
+activate`, no database writes) and prints a boxed **"ADD THIS TO YOUR
+AUTHENTICATOR APP NOW"** step with the setup key, the `otpauth://` URI, a QR
+code when `qrencode` is installed, and the recovery codes. Do that once, on
+the phone you will use on stage, before you start. The same details stay in
+`.demo-2-state` (re-printed by every re-run) so a lost key is recoverable
+while the demo exists.
+
+If any seeding step fails, `up.sh` removes the half-built container and data
+volume again and says so; fix the cause and re-run it. A volume left behind
+by an older interrupted run is replaced the same way.
 
 Say out loud: this exact container — same image, same binary — runs with
 **zero outbound network** the entire time, proven by `scripts/airgap-e2e.sh`
@@ -38,24 +84,21 @@ anchoring, tamper-detection, all offline. No cloud SDKs are linked in at all
 ## 1. Log in, show the dashboard (~1 min)
 
 Open the URL `up.sh` printed (default **http://localhost:8080**) and log in
-with the admin credentials it printed. Walk the dashboard: total secrets,
+with the admin credentials it printed plus the 6-digit code from your
+authenticator app. Walk the dashboard: total secrets,
 active users, audit events, security status.
 
 ## 2. MFA enrollment, live (~1.5 min)
 
-My Account -> Security -> Two-Factor Authentication -> **Enable**. Scan the
-QR/enter the setup key in any TOTP app, enter the 6-digit code and your
-password, confirm. Log out, log back in — the server now challenges for the
-code. This is now fully working end to end (was DEMO-1's #1 blocker,
-#2552 — fixed by #2466/#2467).
-
-Caveat worth knowing before you enable it on the account you'll keep using
-for the rest of the demo: the CLI doesn't support MFA login yet (#2737) —
-either demo MFA on a throwaway account, or disable it again afterward
-(Security -> Disable; **use a fresh TOTP code, not the password** — the
-password-only path is correctly rejected once MFA is enrolled, and a
-rejected attempt currently leaves the dialog stuck, #2738 — close and
-reopen it if that happens).
+The admin is already enrolled by `up.sh` (that is why the login above asked
+for a code). To show enrolment itself live, log in as **alice**: the server
+confines her to the security page (`/profile?tab=security&mfa=required`) until
+she enrols — scan the QR/enter the setup key in any TOTP app, enter the
+6-digit code and her password, confirm. Log out, log back in — the server now
+challenges for the code. (Disabling it again: Security -> Disable; **use a
+fresh TOTP code, not the password** — the password-only path is correctly
+rejected once MFA is enrolled, and a rejected attempt currently leaves the
+dialog stuck, #2738 — close and reopen it if that happens.)
 
 ## 3. Least privilege (~1 min)
 
@@ -64,7 +107,11 @@ it either way:
 
 ```sh
 export HOME=./.demo-2-cli-home   # the isolated CLI credential store up.sh used
-./bin/keyorix login --server http://localhost:8080 --username alice --password '<from up.sh output>'
+./bin/keyorix login --server http://localhost:8080 --username alice
+                                           # paste alice's password (from the up.sh output) at the hidden prompt;
+                                           # once she has enrolled her own TOTP (step 2) the CLI also prompts for
+                                           # the 6-digit code. Until then require_mfa confines her to the
+                                           # enrolment endpoints
 ./bin/keyorix secret list --project 2     # numeric ID — alice holds no deployment-wide role,
                                            # so a project NAME needs one; the CLI says so
                                            # and tells you the numeric ID to use instead
@@ -75,10 +122,46 @@ via the CLI, with a clear error pointing at the numeric-ID workaround when
 they use a name instead.) Or just log in as alice in the web UI and show
 `backend-api` is the only project she can see.
 
+## 3b. Share, then revoke: a share elevates one secret (~1.5 min)
+
+alice can read `db-password` (secret 2, in `backend-api`) through her
+`project_viewer` role, but she cannot change it. A `write` share lets her
+update that one secret's value and metadata and rotate it, nothing more: she
+still cannot suspend, move or re-share it (#2941, #3001). Revoking the share
+takes away exactly that and nothing else. `up.sh` makes the admin `project_admin` on `backend-api`, because
+only an owner who is a member of the secret's project can share it (#2976).
+
+```sh
+# as admin (alice is user 2)
+./bin/keyorix share create --secret-id 2 --recipient-id 2 --permission write
+./bin/keyorix share list --secret-id 2          # note the share ID
+
+# as alice (or in the web UI: open db-password, edit the value)
+./bin/keyorix secret update --id 2 --interactive   # (type the new value at the hidden prompt) works: the share elevates her on this secret
+./bin/keyorix secret suspend --id 2                          # 403: a share never lets her suspend it
+
+# as admin
+./bin/keyorix share revoke --share-id <id from share list>
+
+# as alice
+./bin/keyorix secret update --id 2 --interactive   # 403 again
+./bin/keyorix secret get --id 2 --show-value      # still works: her role's read was never the share's
+
+# as admin
+./bin/keyorix audit logs --limit 5   # share_created, share_access_elevated, share_revoked, each naming the share ID
+```
+
+If you skip the admin's project role, `share create` is refused with the
+reason ("you are not a member of this secret's project"); sharing with
+someone who holds no role in `backend-api` is refused the same way ("the
+recipient is not a member"). A share never applies to a non-member.
+
 ## 4. An audited secret reveal (~1.5 min)
 
 ```sh
-./bin/keyorix login --server http://localhost:8080 --username admin --password '<from up.sh output>'
+./bin/keyorix login --server http://localhost:8080 --username admin
+# hidden prompts: the admin password (from the up.sh output), then the
+# 6-digit code from your authenticator app
 ./bin/keyorix secret get --id 1 --show-value       # stripe-api-key, already rotated to v2 by up.sh
 ./bin/keyorix audit logs --limit 3                 # the reveal is right there: secret.read
 ```
@@ -101,13 +184,14 @@ curl -H "Authorization: Bearer <machine token from up.sh output>" http://localho
 ./bin/keyorix audit verify                 # Audit chain: VALID
 ```
 
-For the dramatic version (needs the container stopped and `sqlite3` on the
-host, pointed at the named volume):
+For the dramatic version (needs the container stopped; uses the
+`keyorix-demo-sqlite:local` helper image `up.sh` built, so there is **no
+network access and no `apk add` on stage**):
 
 ```sh
 docker stop keyorix-demo
-docker run --rm -v keyorix-demo-data:/data alpine sh -c \
-  "apk add --no-cache sqlite >/dev/null && sqlite3 /data/keyorix.db \"UPDATE audit_events SET description='TAMPERED' WHERE id=5;\""
+docker run --rm --network none -v keyorix-demo-data:/data keyorix-demo-sqlite:local \
+  sqlite3 /data/keyorix.db "UPDATE audit_events SET description='TAMPERED' WHERE id=5;"
 docker start keyorix-demo
 ./bin/keyorix audit verify                 # Audit chain: BROKEN, first broken id: 5
 ```
@@ -126,10 +210,15 @@ Postgres backend to show): on Postgres, `admin backup` now works **beside a
 running server**, no stop needed — fixed since DEMO-1 (#2602, merged via
 #2613).
 
+The demo's master passphrase is a throwaway, DEMO-only value that `up.sh`
+writes (mode 0600, gitignored) to `.demo-2-cli-home/demo-secrets.env` as
+`KEYORIX_DEMO_MASTER_PASSWORD`; load it into your shell first, never type it:
+
 ```sh
+. .demo-2-cli-home/demo-secrets.env
 docker stop keyorix-demo
 docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
-  -e KEYORIX_MASTER_PASSWORD='<from up.sh — see .demo-2-state>' \
+  -e KEYORIX_MASTER_PASSWORD="$KEYORIX_DEMO_MASTER_PASSWORD" \
   keyorix-demo:airgap /app/keyorix-server admin backup --output backup.tar.gz --config keyorix.yaml
 ```
 
@@ -140,7 +229,7 @@ docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
   keyorix-demo:airgap mv keyorix.db keyorix.db.pre-restore
 
 docker run --rm -v keyorix-demo-data:/app/data -w /app/data \
-  -e KEYORIX_MASTER_PASSWORD='<same as above>' \
+  -e KEYORIX_MASTER_PASSWORD="$KEYORIX_DEMO_MASTER_PASSWORD" \
   keyorix-demo:airgap /app/keyorix-server admin restore \
   --input backup.tar.gz --config keyorix.yaml --overwrite-existing
 # --overwrite-existing: the key files are untouched (same host, same config)
@@ -156,6 +245,24 @@ the real disaster-recovery scenario `--overwrite-existing` isn't — also now
 works, on both backends (was #2604); see `docs/AIRGAP_RUNBOOK.md` for that
 full drill rather than live here, since it needs a second volume and isn't
 worth the extra live-demo fragility for 10 minutes on stage.
+
+## Optional: emergency access (break-glass) (~1 min)
+
+Break-glass is **off by default** (secure default). `scripts/demo/up.sh` turns it
+on explicitly in the demo's `keyorix.yaml` (`break_glass.enabled: true`,
+emergency role `project_developer`); on any other install add that block yourself
+(see `docs/CONFIGURATION.md#break_glass`) and restart. A user must be a **member
+of the project** (a role scoped to it, e.g. `project_viewer`) to activate; it then
+lifts them to the emergency role for a limited time:
+
+```bash
+keyorix break-glass activate --project-id 1 --justification "prod incident INC-123" --ttl 1h
+keyorix break-glass list --project-id 1
+keyorix break-glass revoke --project-id 1 --activation-id <id>
+```
+
+If it is not enabled the command now says so (`break-glass is not enabled on this
+server; set break_glass.enabled`) instead of a bare `permission denied`.
 
 ## 8. Footprint (~30 sec) — close on the koi-pond pitch
 
@@ -186,10 +293,6 @@ soft-delete confirmation text (#2568), stale docker-compose image pins
 (#2601), wrong relative time on Projects list (#2553).
 
 **New, found while re-walking (DEMO-2, 2026-10-05):**
-- The CLI doesn't support MFA login at all — breaks with a misleading
-  "login failed: HTTP 200" the moment MFA is enabled on the account used
-  for CLI work — [#2737](https://github.com/keyorixhq/keyorix/issues/2737).
-  Demo MFA on a throwaway account, or disable it again before step 3.
 - The "Disable two-factor authentication" dialog hangs forever (no error
   shown) after one rejected attempt (e.g. password instead of a code), and
   survives closing/reopening — only a full page reload clears it —
@@ -203,6 +306,11 @@ soft-delete confirmation text (#2568), stale docker-compose image pins
   admin lock for the whole rotation
   ([#2540](https://github.com/keyorixhq/keyorix/issues/2540)). Stop the server
   (`docker stop keyorix-demo`) first, run it, then start the server again.
+- `admin recovery-key rotate` still refuses to run against a live server
+  (SQLite and Postgres) — [#2540](https://github.com/keyorixhq/keyorix/issues/2540)
+  was closed 2026-10-04 but the failure still reproduces on current `main`;
+  flagged on the issue for the coordinator to confirm. Stop the server (or
+  `docker stop keyorix-demo`) first if you want to demo it live.
 
 **Polish, safe to demo through:** none currently open that affect this
 script's own steps.

@@ -146,7 +146,7 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create secret: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to create secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to create secret", resp.StatusCode(), resp.Body)
 	}
 	printCreatedSecret(resp.JSON201.Data)
 	return nil
@@ -160,10 +160,10 @@ func printCreatedSecret(s *apiclient.Secret) {
 	fmt.Printf("Project:     %d\n", derefSecretInt(s.ProjectId))
 	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentId))
 	if s.CreatedAt != nil {
-		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("Created:     %s\n", s.CreatedAt.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 	if s.Expiration != nil {
-		fmt.Printf("Expires:     %s\n", s.Expiration.Format(time.RFC3339))
+		fmt.Printf("Expires:     %s\n", s.Expiration.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 }
 
@@ -227,7 +227,7 @@ func runSecretGet(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("get secret by ref: %w", err)
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("get secret by ref: HTTP %d", resp.StatusCode())
+			return httpStatusError("get secret by ref", resp.StatusCode(), resp.Body)
 		}
 		displaySecret(resp.JSON200.Data.Secret, derefStr(resp.JSON200.Data.Value), showValue)
 		return nil
@@ -250,7 +250,7 @@ func runSecretGetByID(ctx context.Context, client *apiclient.ClientWithResponses
 		return fmt.Errorf("get secret: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("get secret", resp.StatusCode(), resp.Body)
 	}
 	d := resp.JSON200.Data
 	if showValue && d.Secret != nil {
@@ -269,7 +269,7 @@ func runSecretGetByName(ctx context.Context, client *apiclient.ClientWithRespons
 		return fmt.Errorf("list secrets: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("list secrets: HTTP %d", resp.StatusCode())
+		return httpStatusError("list secrets", resp.StatusCode(), resp.Body)
 	}
 	var found *apiclient.SecretListEntry
 	for _, s := range derefSecretListEntrySlice(resp.JSON200.Data.Secrets) {
@@ -282,18 +282,25 @@ func runSecretGetByName(ctx context.Context, client *apiclient.ClientWithRespons
 	if found == nil {
 		return fmt.Errorf("secret %q not found", secretGetName)
 	}
+	id := derefSecretInt(found.Id)
 	if !showValue {
+		// The list omits total_reads; a metadata read by id (no value, so no read is
+		// recorded) carries it. Fall back to the list entry if that fetch fails.
+		f := false
+		if mresp, merr := client.GetSecretWithResponse(ctx, id, &apiclient.GetSecretParams{IncludeValue: &f}); merr == nil && mresp.JSON200 != nil && mresp.JSON200.Data != nil {
+			displaySecret(secretGetResultToSecret(mresp.JSON200.Data), "", false)
+			return nil
+		}
 		displaySecret(secretListEntryToSecret(found), "", false)
 		return nil
 	}
-	id := derefSecretInt(found.Id)
 	t := true
 	vresp, err := client.GetSecretWithResponse(ctx, id, &apiclient.GetSecretParams{IncludeValue: &t})
 	if err != nil {
 		return fmt.Errorf("get secret value: %w", err)
 	}
 	if vresp.JSON200 == nil || vresp.JSON200.Data == nil {
-		return fmt.Errorf("get secret value: HTTP %d", vresp.StatusCode())
+		return httpStatusError("get secret value", vresp.StatusCode(), vresp.Body)
 	}
 	d := vresp.JSON200.Data
 	if d.Secret != nil {
@@ -323,16 +330,20 @@ func displaySecret(s *apiclient.Secret, value string, showValue bool) {
 	fmt.Printf("Environment: %d\n", derefSecretInt(s.EnvironmentId))
 	fmt.Printf("Created By:  %s\n", derefStr(s.CreatedBy))
 	if s.CreatedAt != nil {
-		fmt.Printf("Created:     %s\n", s.CreatedAt.Format(time.RFC3339))
+		fmt.Printf("Created:     %s\n", s.CreatedAt.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 	if s.UpdatedAt != nil {
-		fmt.Printf("Updated:     %s\n", s.UpdatedAt.Format(time.RFC3339))
+		fmt.Printf("Updated:     %s\n", s.UpdatedAt.UTC().Format("2006-01-02 15:04:05 UTC"))
 	}
 	if s.MaxReads != nil {
 		fmt.Printf("Max Reads:   %d\n", *s.MaxReads)
 	}
+	if s.TotalReads != nil {
+		// Lifetime value reads (the server's access-log count), not the max_reads counter.
+		fmt.Printf("Total Reads: %d\n", *s.TotalReads)
+	}
 	if s.Expiration != nil {
-		fmt.Printf("Expires:     %s\n", s.Expiration.Format(time.RFC3339))
+		fmt.Printf("Expires:     %s\n", s.Expiration.UTC().Format("2006-01-02 15:04:05 UTC"))
 		if time.Now().After(*s.Expiration) {
 			fmt.Println("WARNING: secret is EXPIRED")
 		}
@@ -363,7 +374,7 @@ func secretGetResultToSecret(d *apiclient.SecretGetResult) *apiclient.Secret {
 		MaxReads: d.MaxReads, ReadCount: d.ReadCount, Expiration: d.Expiration,
 		Classification: d.Classification, Status: d.Status, CreatedBy: d.CreatedBy,
 		OwnerId: d.OwnerId, IsShared: d.IsShared, CreatedAt: d.CreatedAt, UpdatedAt: d.UpdatedAt,
-		LastRotatedAt: d.LastRotatedAt,
+		LastRotatedAt: d.LastRotatedAt, TotalReads: d.TotalReads,
 	}
 }
 
@@ -461,7 +472,7 @@ func runSecretUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to update secret: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to update secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to update secret", resp.StatusCode(), resp.Body)
 	}
 	s := resp.JSON200.Data
 	fmt.Println("Secret updated successfully!")
@@ -482,11 +493,12 @@ var (
 	secretDeleteProject int
 	secretDeleteEnv     int
 	secretDeleteForce   bool
+	secretDeleteFormat  string
 )
 
 var secretDeleteCmd = &cobra.Command{
 	Use:   "delete",
-	Short: "Delete a secret",
+	Short: "Delete a secret (soft-delete; restorable with 'secret restore')",
 	RunE:  runSecretDelete,
 }
 
@@ -495,7 +507,8 @@ func init() {
 	secretDeleteCmd.Flags().StringVar(&secretDeleteName, "name", "", "Secret name")
 	secretDeleteCmd.Flags().IntVar(&secretDeleteProject, "project", 1, "Project ID (required with --name)")
 	secretDeleteCmd.Flags().IntVar(&secretDeleteEnv, "environment", 1, "Environment ID (required with --name)")
-	secretDeleteCmd.Flags().BoolVar(&secretDeleteForce, "force", false, "Skip confirmation prompt")
+	secretDeleteCmd.Flags().BoolVar(&secretDeleteForce, "force", false, "Skip confirmation prompt, and delete even if other secrets depend on this one")
+	secretDeleteCmd.Flags().StringVar(&secretDeleteFormat, "format", "text", "Output format: text or json (json is non-interactive and requires --force)")
 	SecretCmd.AddCommand(secretDeleteCmd)
 }
 
@@ -527,9 +540,13 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 		secretID, secretName = id, name
 	}
 
-	fmt.Println("About to delete secret:")
-	fmt.Printf("ID: %d\n", secretID)
-	fmt.Printf("Name: %s\n", secretName)
+	jsonOut := secretDeleteFormat == "json"
+	if secretDeleteFormat != "json" && secretDeleteFormat != "text" {
+		return fmt.Errorf("unsupported format: %s (use 'text' or 'json')", secretDeleteFormat)
+	}
+	if jsonOut && !secretDeleteForce {
+		return fmt.Errorf("--format json is non-interactive: pass --force to confirm the deletion")
+	}
 
 	vresp, err := client.GetSecretVersionsWithResponse(ctx, secretID)
 	if err != nil {
@@ -539,13 +556,46 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 	if vresp.JSON200 != nil && vresp.JSON200.Data != nil {
 		versionCount = len(derefSecretVersionSlice(vresp.JSON200.Data.Versions))
 	}
-	fmt.Printf("Versions: %d\n", versionCount)
+
+	// Dependents (ADR-052): other secrets that declared a dependency on this
+	// one. Fail closed -- if the check itself fails, --force is required.
+	var dependents []apiclient.SecretDependencyEdge
+	depResp, derr := client.ListSecretDependenciesWithResponse(ctx, secretID)
+	switch {
+	case derr == nil && depResp.JSON200 != nil && depResp.JSON200.Data != nil:
+		dependents = derefSecretDependencyEdgeSlice(depResp.JSON200.Data.Dependents)
+	case secretDeleteForce:
+		fmt.Fprintf(os.Stderr, "warning: could not check dependents of secret %d; continuing because --force was given\n", secretID)
+	case derr != nil:
+		return fmt.Errorf("could not check what depends on secret %d (use --force to delete anyway): %w", secretID, derr)
+	default:
+		return httpStatusError(fmt.Sprintf("could not check what depends on secret %d (use --force to delete anyway)", secretID), depResp.StatusCode(), depResp.Body)
+	}
+
+	if len(dependents) > 0 && !secretDeleteForce {
+		// Unreachable in json mode (json requires --force), so text only.
+		fmt.Printf("Secret '%s' (ID: %d) has %d dependent secret(s):\n", secretName, secretID, len(dependents))
+		printDeleteDependents(dependents)
+		return fmt.Errorf("refusing to delete secret %d: %d secret(s) depend on it -- re-run with --force to delete anyway", secretID, len(dependents))
+	}
+
+	if !jsonOut {
+		fmt.Println("About to delete secret:")
+		fmt.Printf("ID: %d\n", secretID)
+		fmt.Printf("Name: %s\n", secretName)
+		fmt.Printf("Versions: %d\n", versionCount)
+		if len(dependents) > 0 {
+			fmt.Printf("WARNING: %d secret(s) depend on this one (--force given):\n", len(dependents))
+			printDeleteDependents(dependents)
+		}
+	}
 
 	if !secretDeleteForce {
 		fmt.Println()
 		fmt.Println("This soft-deletes the secret and all its versions -- it stops appearing in")
-		fmt.Println("normal listings immediately, and can be restored with 'keyorix secret restore'")
-		fmt.Println("until the retention window configured for this server expires.")
+		fmt.Println("normal listings immediately, and can be restored with")
+		fmt.Printf("'keyorix secret restore --id %d' until the server's soft-delete retention\n", secretID)
+		fmt.Println("window expires (default 30 days; set by the server operator).")
 		fmt.Println()
 		if !confirmSecretDeletion(secretName) {
 			fmt.Println("Deletion cancelled")
@@ -558,11 +608,55 @@ func runSecretDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to delete secret: %w", err)
 	}
 	if dresp.StatusCode() != 204 {
-		return fmt.Errorf("failed to delete secret: HTTP %d", dresp.StatusCode())
+		return httpStatusError("failed to delete secret", dresp.StatusCode(), dresp.Body)
 	}
-	fmt.Printf("Secret '%s' (ID: %d) deleted successfully\n", secretName, secretID)
-	fmt.Printf("%d version(s) were also deleted\n", versionCount)
+	if jsonOut {
+		return writeSecretDeleteJSON(secretDeleteResult{
+			ID: secretID, Name: secretName, Deleted: true, SoftDeleted: true, Versions: versionCount,
+			RestoreCommand: fmt.Sprintf("keyorix secret restore --id %d", secretID),
+			Dependents:     toDeleteDependents(dependents),
+		})
+	}
+	fmt.Printf("Secret '%s' (ID: %d) deleted (soft-delete)\n", secretName, secretID)
+	fmt.Printf("Its %d version(s) are kept, not destroyed; restore with: keyorix secret restore --id %d\n", versionCount, secretID)
+	fmt.Println("Restorable until the server's soft-delete retention window expires (default 30 days).")
 	return nil
+}
+
+// secretDeleteResult is the --format json shape of 'secret delete'.
+type secretDeleteResult struct {
+	ID             int                     `json:"id"`
+	Name           string                  `json:"name"`
+	Deleted        bool                    `json:"deleted"`
+	SoftDeleted    bool                    `json:"soft_deleted"`
+	Versions       int                     `json:"versions"`
+	RestoreCommand string                  `json:"restore_command,omitempty"`
+	Dependents     []secretDeleteDependent `json:"dependents"`
+}
+
+type secretDeleteDependent struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+func toDeleteDependents(edges []apiclient.SecretDependencyEdge) []secretDeleteDependent {
+	out := make([]secretDeleteDependent, 0, len(edges))
+	for _, e := range edges {
+		out = append(out, secretDeleteDependent{ID: derefSecretInt(e.SecretId), Name: derefStr(e.SecretName)})
+	}
+	return out
+}
+
+func printDeleteDependents(edges []apiclient.SecretDependencyEdge) {
+	for _, e := range edges {
+		fmt.Printf("  - %s (ID: %d)\n", derefStr(e.SecretName), derefSecretInt(e.SecretId))
+	}
+}
+
+func writeSecretDeleteJSON(r secretDeleteResult) error {
+	enc := json.NewEncoder(os.Stdout)
+	enc.SetIndent("", "  ")
+	return enc.Encode(r)
 }
 
 // findRemoteSecretByName resolves a secret name to its (ID, name) via the
@@ -579,7 +673,7 @@ func findRemoteSecretByName(ctx context.Context, client *apiclient.ClientWithRes
 		return 0, "", fmt.Errorf("secret not found: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return 0, "", fmt.Errorf("secret not found: HTTP %d", resp.StatusCode())
+		return 0, "", httpStatusError("secret not found", resp.StatusCode(), resp.Body)
 	}
 	var matches []apiclient.SecretListEntry
 	for _, s := range derefSecretListEntrySlice(resp.JSON200.Data.Secrets) {
@@ -678,10 +772,26 @@ func runSecretList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list secrets: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to list secrets: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list secrets", resp.StatusCode(), resp.Body)
 	}
 	secrets := derefSecretListEntrySlice(resp.JSON200.Data.Secrets)
 	total := int64(derefSecretInt(resp.JSON200.Data.Total))
+
+	// `truncated` means the server hit a bound while assembling this caller's
+	// multi-scope view, so `total` is a FLOOR. Say so rather than print it as a
+	// count — a quietly short number is the defect this flag was added to stop
+	// (#2780 follow-up). Only reachable without --project: every other list call in
+	// this CLI passes an explicit project and so takes the server's scoped branch,
+	// which is never truncated.
+	if resp.JSON200.Data.Truncated != nil && *resp.JSON200.Data.Truncated {
+		reason := derefStr(resp.JSON200.Data.TruncatedReason)
+		fmt.Fprintf(os.Stderr,
+			"warning: the server could not list every secret you can read, so the total below (%d) is a "+
+				"lower bound, not a count. Narrow the query with --project to get an exact listing.\n", total)
+		if reason != "" {
+			fmt.Fprintf(os.Stderr, "warning: %s\n", reason)
+		}
+	}
 
 	switch secretListFormat {
 	case "json":
@@ -718,20 +828,20 @@ func displaySecretsTable(secrets []apiclient.SecretListEntry, total int64, page,
 		return
 	}
 
-	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n", "ID", "NAME", "TYPE", "STATUS", "CREATED", "EXPIRES")
+	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n", "ID", "NAME", "TYPE", "STATUS", "CREATED (UTC)", "EXPIRES (UTC)")
 	fmt.Printf("%-5s %-20s %-12s %-8s %-20s %-20s\n",
 		"-----", "--------------------", "------------", "--------", "--------------------", "--------------------")
 	for _, s := range secrets {
 		expires := "Never"
 		if s.Expiration != nil {
-			expires = s.Expiration.Format("2006-01-02 15:04")
+			expires = s.Expiration.UTC().Format("2006-01-02 15:04")
 			if time.Now().After(*s.Expiration) {
 				expires += " (EXPIRED)"
 			}
 		}
 		created := ""
 		if s.CreatedAt != nil {
-			created = s.CreatedAt.Format("2006-01-02 15:04")
+			created = s.CreatedAt.UTC().Format("2006-01-02 15:04")
 		}
 		fmt.Printf("%-5d %-20s %-12s %-8s %-20s %-20s\n",
 			derefSecretInt(s.Id), truncateSecretString(derefStr(s.Name), 20), truncateSecretString(derefStr(s.Type), 12),

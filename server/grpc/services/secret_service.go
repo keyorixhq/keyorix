@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -120,7 +121,22 @@ func (s *SecretGRPCService) GetSecret(ctx context.Context, req *pb.GetSecretRequ
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
-	return secretNodeToProto(secret), nil
+	out := secretNodeToProto(secret)
+	out.TotalReads = s.totalReads(ctx, secret.ID)
+	return out, nil
+}
+
+// totalReads returns the secret's lifetime value-read count (core.SecretTotalReads,
+// the same figure the REST API reports as total_reads), or nil when it cannot be
+// computed: the field is optional, and a failed count must not fail a metadata read
+// (REST/gRPC parity, #2971).
+func (s *SecretGRPCService) totalReads(ctx context.Context, secretID uint) *int64 {
+	n, err := s.core.SecretTotalReads(ctx, secretID)
+	if err != nil {
+		log.Printf("total_reads for secret %d unavailable: %v", secretID, err)
+		return nil
+	}
+	return &n
 }
 
 // ListSecretDependencies returns a secret's direct dependencies and dependents
@@ -223,7 +239,7 @@ func (s *SecretGRPCService) UpdateSecret(ctx context.Context, req *pb.UpdateSecr
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite, core.SecretActionUpdate); err != nil {
 		return nil, err
 	}
 
@@ -323,7 +339,7 @@ func (s *SecretGRPCService) SetSecretAutoRotate(ctx context.Context, req *pb.Set
 	if req.GetId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, errIDRequired)
 	}
-	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite); err != nil {
+	if err := authorizeSecretScoped(ctx, s.core, user, uint(req.GetId()), permSecretsWrite, core.SecretActionSetAutoRotate); err != nil {
 		return nil, err
 	}
 	if err := s.core.SetSecretAutoRotate(ctx, uint(req.GetId()), core.AutoRotateSpec{
@@ -416,9 +432,12 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if err != nil {
 		return nil, mapSecretError(err)
 	}
-	// Audit as a secret read, mirroring the HTTP handler (secrets_versions.go) —
-	// without this, listing version history over gRPC left no secret.read event,
-	// an HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168).
+	// Audit the listing, mirroring the HTTP handler (secrets_versions.go) —
+	// without this, listing version history over gRPC left no audit event, an
+	// HTTP<->gRPC audit-parity gap invisible to anomaly detection (#168). It is
+	// secret.versions_listed (with an access-log row of action "versions_list",
+	// which anomaly detection reads), not secret.read: no value is returned
+	// (AUDIT-UX-2, #2951).
 	// Plain, unauthorized read, matching the HTTP handler's own GetSecret (not
 	// GetSecretWithPermissionCheck) for this exact prefetch: authorizeSecretScoped
 	// above already authorized this read, and GetSecretVersionsWithPermissionCheck
@@ -429,7 +448,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 	if secret, sErr := s.core.GetSecret(ctx, uint(req.GetId())); sErr == nil && secret != nil {
 		auditCtx := core.DetachedAuditContext(ctx)
 		ip, ua := interceptors.PeerIP(ctx), interceptors.ClientUserAgent(ctx)
-		if auditErr := s.core.LogSecretReadWithProject(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
+		if auditErr := s.core.LogSecretVersionsListed(auditCtx, user.UserID, uint(req.GetId()), secret.ProjectID, user.Username, secret.Name, ip, ua); auditErr != nil {
 			return nil, status.Error(codes.Internal, "failed to record audit trail")
 		}
 	}
@@ -441,7 +460,7 @@ func (s *SecretGRPCService) GetSecretVersions(ctx context.Context, req *pb.GetSe
 			ReadCount:     intToU32(v.ReadCount),
 		})
 	}
-	return &pb.GetSecretVersionsResponse{Versions: out}, nil
+	return &pb.GetSecretVersionsResponse{Versions: out, TotalReads: s.totalReads(ctx, uint(req.GetId()))}, nil
 }
 
 // GrantSecretACL grants (or updates) a per-secret ACL for a user.
@@ -577,13 +596,35 @@ func mapSecretACLError(err error) error {
 // project/tenant boundary without silently absorbing global-scope callers'
 // legitimate "doesn't exist" answer into a denial. The downstream
 // *WithPermissionCheck core calls still enforce ownership/share on top of this.
-func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string) error {
+//
+// The found-secret decision is core.AuthorizeSecretPrincipalForSecret — the SAME
+// per-secret check HTTP's RequireScopedSecretPermission makes (role, per-secret ACL,
+// and the #2941 share term) — not the role-only AuthorizePrincipal, which left a
+// share-elevated member or an ACL grantee allowed on HTTP and denied on gRPC.
+// share_authz_guard_test.go pins this.
+//
+// action (#3001 follow-up) names the secrets.write operation, as on HTTP: a write
+// share elevates only allowlisted actions, and a secrets.write call naming none gets
+// no elevation (share_authz_rpc_guard_test.go requires every one to name it). A
+// refusal for a caller whose share covers secrets.write but not this action says so;
+// that caller already knows the secret exists, so INV-GRPCSVC-02 is unaffected.
+func authorizeSecretScoped(ctx context.Context, cs *core.KeyorixCore, actor *interceptors.UserContext, secretID uint, perm string, action ...core.SecretAction) error {
+	var act core.SecretAction
+	if len(action) > 0 {
+		act = action[0]
+	}
 	secret, err := cs.Storage().GetSecret(ctx, secretID)
 	if err != nil {
 		return authorizeScopedTarget(ctx, cs, actor, perm, err, core.Scope{}, "secret not found")
 	}
-	scope := core.Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
-	return authorizeScopedTarget(ctx, cs, actor, perm, nil, scope, "")
+	decision, aerr := cs.AuthorizeSecretPrincipalForSecretAction(ctx, actor.ActorKind(), actor.PrincipalID(), secret, perm, act)
+	if aerr == nil && decision.ShareNotElevated {
+		return status.Error(codes.PermissionDenied, core.ShareActionNotElevatedMessage)
+	}
+	if aerr != nil || !decision.Allowed {
+		return status.Error(codes.PermissionDenied, "insufficient permissions")
+	}
+	return enforceProjectMFA(ctx, cs, actor, secret.ProjectID)
 }
 
 // mapSecretError translates core errors into gRPC status codes.
@@ -607,6 +648,10 @@ func mapSecretError(err error) error {
 	// the HTTP side's 409, see secrets_crud.go's sendUpdateSecretError).
 	if errors.Is(err, core.ErrSecretVersionContentionExhausted) {
 		return status.Error(codes.Aborted, "high write contention on this secret; retry the request")
+	}
+	// A write share covers the update but not its lifecycle change: core's fixed reason.
+	if reason, ok := core.ShareRefusalMessage(err); ok {
+		return status.Error(codes.PermissionDenied, reason)
 	}
 	msg := err.Error()
 	switch {

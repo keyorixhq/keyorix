@@ -33,7 +33,6 @@ server:
     # inside a container, or a LAN demo); put TLS in front of it first.
     # host: "127.0.0.1"
     port: "8080"
-    protocol_versions: ["1.1"]
     tls:
       # Enable TLS on HTTP
       enabled: false  # DEV-ONLY DEFAULT (#G36) — set true (or front with a TLS-
@@ -82,7 +81,6 @@ server:
     enabled: false
     # host: "127.0.0.1"  # same default and meaning as server.http.host
     port: "9090"
-    protocol_versions: ["1.0"]
     tls:
       enabled: false  # DEV-ONLY DEFAULT (#G36) — see server.http.tls.enabled above.
       cert_file: "certs/server.crt"
@@ -95,14 +93,14 @@ server:
       burst: 20
 
 storage:
-  type: sqlite  # options: sqlite, postgres
+  type: sqlite  # options: sqlite, postgres. For PostgreSQL change THIS line to "type: postgres" (the backend selector is storage.type, not a key under database:)
 
   database:
     # SQLite (default — zero infrastructure required)
     path: "keyorix.db"
 
-    # PostgreSQL (recommended for production)
-    # type: postgres
+    # PostgreSQL (recommended for production): set storage.type: postgres above, then
+    # uncomment ONE of the options below (and drop "path" — it is SQLite-only).
     # Option A — full DSN:
     # dsn: "host=localhost user=keyorix dbname=keyorix port=5432 sslmode=require"
     # Option B — field by field:
@@ -152,7 +150,12 @@ security:
   # Check file permission safety on startup
   enable_file_permission_check: true
   auto_fix_file_permissions: true
-  allow_unsafe_file_permissions: false
+  insecure_allow_unsafe_file_permissions: false
+  # Require a second factor (TOTP or passkey) for interactive login (ADR-112: on by
+  # default). The first admin login is confined to MFA enrolment until it enrols
+  # (`keyorix mfa enroll` / `keyorix mfa activate`, or Profile -> Security in the web
+  # UI). Tokens and machine credentials are unaffected.
+  require_mfa: true
   # DEV-ONLY DEFAULT (#G36/#G37) — with server.http/grpc.tls.enabled false above, a
   # cleartext listener normally only logs a loud startup WARNING. Set this true (and
   # enable tls, or front the listener with a TLS-terminating proxy) to fail closed
@@ -204,6 +207,17 @@ audit:
     token: ""
     # Skip TLS verification for self-signed SIEM endpoints (not recommended).
     insecure_skip_verify: false
+
+# Self-service emergency access ("break-glass"). OFF by default: until you enable
+# it, `keyorix break-glass activate` is refused with "break-glass is not enabled".
+# When on, a member of a project (a role scoped to that project) can grant
+# themselves emergency_role there for a limited time, with a justification; every
+# use is audited. See docs/CONFIGURATION.md#break_glass.
+# break_glass:
+#   enabled: true
+#   emergency_role: "project_developer"
+#   default_ttl: "4h"
+#   max_ttl: "24h"
 
 membership:
   # Project membership onboarding (ADR-022). validation_mode controls how a new

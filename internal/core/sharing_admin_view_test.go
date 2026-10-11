@@ -11,30 +11,24 @@ package core_test
 import (
 	"context"
 	"errors"
-	"fmt"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
-
-var sharedSecretsAdminViewDBCounter atomic.Int64
 
 // freshSharedSecretsAdminViewCore returns a KeyorixCore backed by a fresh,
 // uniquely-named in-memory SQLite DB with just the models this test file's
 // scenarios touch.
 func freshSharedSecretsAdminViewCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
-	n := sharedSecretsAdminViewDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxsharedsecretsadminview_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "sharingadminview_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},

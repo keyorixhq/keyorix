@@ -312,6 +312,22 @@ type KeyorixCore struct {
 	// ssoJWKS verifies their id_tokens. Empty = SSO disabled. Set via SetSSOProviders.
 	ssoProviders map[string]*SSOProvider
 	ssoJWKS      JWKSResolver
+	// unionPageSizeOverride lowers ListReadableSecrets' per-scope page bound
+	// (secret_readable_listing.go's maxUnionPageSize) so a test can drive the
+	// truncation path without seeding 100001 secrets. 0 = use the real bound; never
+	// set outside tests. A bound that can only be exercised by an unaffordable
+	// fixture is a bound nobody has watched behave — which is how its truncation
+	// came to be silent in the first place.
+	unionPageSizeOverride int
+	// listingMaxRowsOverride lowers the STORAGE row bound
+	// (secret_listing_query.go's secretListingMaxRows, 10000) for the same reason
+	// and with the same rules as unionPageSizeOverride above. It exists because the
+	// coordinator's review of #2874 found that bound was the one actually in force
+	// — convertToStorageFilter hard-codes it and discards the caller's paging — so
+	// every truncation test that only lowered unionPageSizeOverride was driving a
+	// bound that the storage clamp shadowed. 0 = use the real bound; never set
+	// outside tests.
+	listingMaxRowsOverride int
 	// membershipValidationMode is the ADR-022 install-level onboarding mode;
 	// "" = allowlist default. Set via SetMembershipValidationMode.
 	membershipValidationMode string
@@ -327,6 +343,11 @@ type KeyorixCore struct {
 	// sessionAbsoluteTTL caps total session lifetime from login — refresh never
 	// extends past it. 0 = no ceiling (refreshable indefinitely). Via SetSessionTTLs.
 	sessionAbsoluteTTL time.Duration
+	// deploymentRequiresMFA mirrors security.require_mfa (ADR-112), so session
+	// issuance can tell when a login must be a setup-only session (#3024,
+	// account_setup.go). Set by the HTTP router via SetRequireMFA, from the same
+	// config value that configures the setup gate.
+	deploymentRequiresMFA bool
 	// credentialDelivery transports setup links (ADR-028). nil = out-of-band: the
 	// link is returned to the caller. Set from config via SetCredentialDelivery.
 	credentialDelivery ports.CredentialDelivery

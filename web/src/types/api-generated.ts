@@ -259,7 +259,7 @@ export interface paths {
         put?: never;
         /**
          * Change own password (drops other sessions)
-         * @description Change the authenticated user's password; invalidates all other active sessions.
+         * @description Change the authenticated user's password; invalidates all other active sessions. In a setup-only session (an account that had to both replace a one-time password and enrol a second factor under security.require_mfa, #3024), the step that finishes setup also ends the calling session: data.reauthentication_required is then true and the next login is a normal two-step MFA login.
          */
         post: operations["changePassword"];
         delete?: never;
@@ -323,7 +323,7 @@ export interface paths {
         put?: never;
         /**
          * Create a personal access token (raw token returned once)
-         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once.
+         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once. A request authenticated by a restricted personal access token (any scopes, project, environment or CIDR restriction) is refused with 403, since the new token would not carry that restriction.
          */
         post: operations["createPAT"];
         delete?: never;
@@ -1067,7 +1067,7 @@ export interface paths {
         put?: never;
         /**
          * Activate break-glass emergency access (self-service)
-         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled.
+         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled, and always when the caller authenticated with a restricted personal access token (ADR-042).
          */
         post: operations["activateBreakGlass"];
         delete?: never;
@@ -1090,6 +1090,26 @@ export interface paths {
          * @description End an active emergency grant before its TTL — removes the role assignment and marks the activation revoked. Requires roles.assign.
          */
         post: operations["revokeBreakGlass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/share-recipients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search share recipients in a project
+         * @description The active members of the project that the caller could share a secret with, for the Share dialog. Requires secrets.write at the project's scope, and the caller must be a member of the project (the rule ShareSecret applies to a secret's owner) or hold global users.read. A project-only admin can therefore find recipients without the global users.read that GET /api/v1/users needs. Only members whose account is active are listed (not suspended, deprovisioned, deactivated or deleted), ordered by username. Each result carries id, username and display_name; email is included, and matched by q, only when the caller holds users.read at the project's scope. Every refusal is the same 403 with a fixed reason, whether or not the project exists.
+         */
+        get: operations["searchShareRecipients"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -5078,6 +5098,8 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
             classification?: string;
@@ -5489,6 +5511,8 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
             classification?: string;
@@ -5979,6 +6003,8 @@ export interface components {
                     details?: {
                         [key: string]: unknown;
                     } | null;
+                    /** @description Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order. */
+                    pending_steps?: string[];
                 };
             };
         };
@@ -6388,9 +6414,19 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: {
+                            /** @description True when this change finished account setup and the calling session was ended (#3024). */
+                            reauthentication_required?: boolean;
+                        };
+                    };
+                };
             };
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listSessions: {
@@ -6498,6 +6534,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listExpiredPATs: {
@@ -6646,6 +6683,8 @@ export interface operations {
                         message?: string;
                         data?: {
                             recovery_codes: string[];
+                            /** @description True when this activation finished account setup in a setup-only session and that session was ended (#3024); otherwise the calling session stays signed in. */
+                            reauthentication_required?: boolean;
                         };
                     };
                 };
@@ -7642,6 +7681,51 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    searchShareRecipients: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive prefix of the username, the display name (or any word of it) or, when visible, the email. Empty lists every recipient. */
+                q?: string;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope `{success, data}`. `data.recipients` is one page of results; `data.total` counts every match. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        success: boolean;
+                        data: {
+                            recipients: {
+                                /** Format: uint32 */
+                                id: number;
+                                username: string;
+                                display_name: string;
+                                /** @description Present only when the caller holds users.read at the project's scope. */
+                                email?: string;
+                            }[];
+                            total: number;
+                            page: number;
+                            page_size: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listProjectMembers: {
@@ -9323,10 +9407,15 @@ export interface operations {
                     "application/json": {
                         data?: {
                             secrets?: components["schemas"]["SecretListEntry"][];
+                            /** @description Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true. */
                             total?: number;
                             page?: number;
                             page_size?: number;
                             total_pages?: number;
+                            /** @description Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response. */
+                            truncated?: boolean;
+                            /** @description Names the bound and the scopes it affected. Absent unless truncated. */
+                            truncated_reason?: string;
                         };
                     };
                 };
@@ -10830,7 +10919,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `{data, message}`. `data.versions` is the version history array. */
+            /** @description Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime read count (access-log rows with action read). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10839,6 +10928,8 @@ export interface operations {
                     "application/json": {
                         data?: {
                             versions?: components["schemas"]["SecretVersion"][];
+                            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads. */
+                            total_reads?: number;
                         };
                     };
                 };
@@ -12201,6 +12292,8 @@ export interface operations {
                                 state?: "invited" | "identity_verified" | "provisioned" | "active" | "revoked";
                                 /** @description True when the membership comes only from a group grant. */
                                 via_group?: boolean;
+                                /** @description True when the project has been soft-deleted. The grant survives a soft-delete (RestoreProject reinstates it), so the membership is reported rather than hidden, but it is not counted by the per-user project tallies on GET /api/v1/users. */
+                                project_deleted?: boolean;
                             }[];
                         };
                     };
@@ -13643,6 +13736,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     getNotificationChannel: {
@@ -14430,7 +14524,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data: items[] (each: id, type, secretName, timestamp, actor), total, page, pageSize. */
+            /** @description Envelope {data, message}. data: items[] (each: id, type, eventType, label, secretName, timestamp, actor), total, page, pageSize. eventType is the raw audit event type; label is the readable phrase to show after the actor ("revoked break-glass access"); actor is who did it ("system" when no user did); secretName is empty for events with no subject secret. timestamp is UTC RFC 3339. */
             200: {
                 headers: {
                     [name: string]: unknown;

@@ -1,4 +1,11 @@
 environment: production
+# security.enable_file_permission_check is deliberately NOT set here. Since ADR-112
+# an absent key means TRUE: key material (the wrapped DEK and KEK salt, the SQLite
+# file, and the KEYORIX_*_FILE secret files) is checked strictly at every start, while
+# this bind-mounted config file (owned by the host user, not by the container's uid)
+# only produces a warning. Writing `enable_file_permission_check: true` here would
+# audit THIS file strictly too and the container would refuse to start.
+# deploy TestShippedComposeConfig_FilePermissionCheckIsOn pins this.
 server:
   http:
     enabled: true

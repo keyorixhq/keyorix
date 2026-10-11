@@ -345,7 +345,12 @@ paths:
     post:
       tags: [Auth]
       summary: Change own password (drops other sessions)
-      description: Change the authenticated user's password; invalidates all other active sessions.
+      description: >-
+        Change the authenticated user's password; invalidates all other active sessions.
+        In a setup-only session (an account that had to both replace a one-time password and
+        enrol a second factor under security.require_mfa, #3024), the step that finishes setup
+        also ends the calling session: data.reauthentication_required is then true and the
+        next login is a normal two-step MFA login.
       operationId: changePassword
       security: [{bearerAuth: []}]
       requestBody:
@@ -359,8 +364,23 @@ paths:
                 current_password: {type: string, format: password}
                 new_password: {type: string, format: password}
       responses:
-        '200': {description: Password changed}
+        '200':
+          description: Password changed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    properties:
+                      reauthentication_required:
+                        type: boolean
+                        description: True when this change finished account setup and the calling session was ended (#3024).
         '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/auth/sessions:
     get:
       tags: [Auth]
@@ -400,7 +420,7 @@ paths:
     post:
       tags: [Auth]
       summary: Create a personal access token (raw token returned once)
-      description: Create a personal access token with optional scopes and expiry; the raw token is returned only once.
+      description: Create a personal access token with optional scopes and expiry; the raw token is returned only once. A request authenticated by a restricted personal access token (any scopes, project, environment or CIDR restriction) is refused with 403, since the new token would not carry that restriction.
       operationId: createPAT
       security: [{bearerAuth: []}]
       requestBody:
@@ -431,6 +451,7 @@ paths:
                       token: {type: string, description: 'Plaintext token, shown only in this response'}
                       pat: {$ref: '#/components/schemas/PATToken'}
         '400': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/auth/tokens/expired:
     get:
       tags: [Auth]
@@ -552,6 +573,12 @@ paths:
                     required: [recovery_codes]
                     properties:
                       recovery_codes: {type: array, items: {type: string}}
+                      reauthentication_required:
+                        type: boolean
+                        description: >-
+                          True when this activation finished account setup in a setup-only session
+                          and that session was ended (#3024); otherwise the calling session stays
+                          signed in.
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
   /api/v1/auth/mfa/disable:
@@ -1340,7 +1367,8 @@ paths:
         time-bound (default + capped by server config), with a required written
         justification. NOT RBAC-gated — the controls are config-enablement, the
         justification, a loud audit (break_glass.activated) + admin alert, and
-        auto-expiry. Returns 403 when break-glass is disabled.
+        auto-expiry. Returns 403 when break-glass is disabled, and always when the
+        caller authenticated with a restricted personal access token (ADR-042).
       operationId: activateBreakGlass
       security: [{bearerAuth: []}]
       parameters:
@@ -1418,6 +1446,63 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
 
+  /api/v1/projects/{id}/share-recipients:
+    get:
+      tags: [Shares]
+      summary: Search share recipients in a project
+      description: >-
+        The active members of the project that the caller could share a secret with,
+        for the Share dialog. Requires secrets.write at the project's scope, and the
+        caller must be a member of the project (the rule ShareSecret applies to a
+        secret's owner) or hold global users.read. A project-only admin can therefore
+        find recipients without the global users.read that GET /api/v1/users needs.
+        Only members whose account is active are listed (not suspended, deprovisioned,
+        deactivated or deleted), ordered by username. Each result carries id, username
+        and display_name; email is included, and matched by q, only when the caller
+        holds users.read at the project's scope. Every refusal is the same 403 with a
+        fixed reason, whether or not the project exists.
+      operationId: searchShareRecipients
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
+        - name: q
+          in: query
+          required: false
+          description: Case-insensitive prefix of the username, the display name (or any word of it) or, when visible, the email. Empty lists every recipient.
+          schema: {type: string}
+        - {name: page, in: query, required: false, schema: {type: integer, minimum: 1, default: 1}}
+        - {name: page_size, in: query, required: false, schema: {type: integer, minimum: 1, maximum: 100, default: 20}}
+      responses:
+        '200':
+          description: Envelope `{success, data}`. `data.recipients` is one page of results; `data.total` counts every match.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: {type: boolean}
+                  data:
+                    type: object
+                    required: [recipients, total, page, page_size]
+                    properties:
+                      recipients:
+                        type: array
+                        items:
+                          type: object
+                          required: [id, username, display_name]
+                          additionalProperties: false
+                          properties:
+                            id: {type: integer, format: uint32}
+                            username: {type: string}
+                            display_name: {type: string}
+                            email: {type: string, description: Present only when the caller holds users.read at the project's scope.}
+                      total: {type: integer}
+                      page: {type: integer}
+                      page_size: {type: integer}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
   /api/v1/projects/{id}/members:
     get:
       tags: [Members]
@@ -2924,10 +3009,24 @@ paths:
                     type: object
                     properties:
                       secrets: {type: array, items: {$ref: '#/components/schemas/SecretListEntry'}}
-                      total: {type: integer}
+                      total:
+                        type: integer
+                        description: >-
+                          Every secret the caller can read under the requested filter. A FLOOR
+                          rather than a count when `truncated` is true.
                       page: {type: integer}
                       page_size: {type: integer}
                       total_pages: {type: integer}
+                      truncated:
+                        type: boolean
+                        description: >-
+                          Present and true only when assembling the caller's multi-scope union hit
+                          its per-scope bound, so `total` is a floor and later pages may be
+                          incomplete. A client must not present `total` as a complete count when
+                          this is set. Absent on an ordinary response.
+                      truncated_reason:
+                        type: string
+                        description: "Names the bound and the scopes it affected. Absent unless truncated."
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -4212,7 +4311,7 @@ paths:
         - {name: id, in: path, required: true, schema: {type: integer}}
       responses:
         '200':
-          description: Envelope `{data, message}`. `data.versions` is the version history array.
+          description: Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime read count (access-log rows with action read).
           content:
             application/json:
               schema:
@@ -4222,6 +4321,7 @@ paths:
                     type: object
                     properties:
                       versions: {type: array, items: {$ref: '#/components/schemas/SecretVersion'}}
+                      total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads."}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -5373,6 +5473,13 @@ paths:
                             via_group:
                               type: boolean
                               description: "True when the membership comes only from a group grant."
+                            project_deleted:
+                              type: boolean
+                              description: >-
+                                True when the project has been soft-deleted. The grant survives a
+                                soft-delete (RestoreProject reinstates it), so the membership is
+                                reported rather than hidden, but it is not counted by the per-user
+                                project tallies on GET /api/v1/users.
         '401': {$ref: '#/components/responses/Error'}
 
   /api/v1/users/{id}/shared-secrets:
@@ -6568,6 +6675,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
 
   /api/v1/notification-channels/{id}:
     parameters:
@@ -7224,8 +7332,11 @@ paths:
       responses:
         '200':
           description: >-
-            Envelope {data, message}. data: items[] (each: id, type, secretName, timestamp,
-            actor), total, page, pageSize.
+            Envelope {data, message}. data: items[] (each: id, type, eventType, label,
+            secretName, timestamp, actor), total, page, pageSize. eventType is the raw audit
+            event type; label is the readable phrase to show after the actor ("revoked
+            break-glass access"); actor is who did it ("system" when no user did);
+            secretName is empty for events with no subject secret. timestamp is UTC RFC 3339.
         '401': {$ref: '#/components/responses/Error'}
 components:
   securitySchemes:
@@ -7256,6 +7367,17 @@ components:
               error: {type: string, description: 'Short error-type label, e.g. "NotFound", "BadRequest".'}
               message: {type: string}
               details: {type: object, additionalProperties: true, nullable: true}
+              pending_steps:
+                type: array
+                items: {type: string}
+                description: >-
+                  Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or
+                  MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they
+                  are done only these are reachable -- change_password: POST
+                  /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll,
+                  /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET
+                  /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens
+                  both, in either order.
   schemas:
     # authLogin/authConsumeSetup/verifyMFALogin all return one of these two
     # shapes in `data`, disambiguated by presence of `mfa_required` -- never by
@@ -7334,6 +7456,7 @@ components:
         description: {type: string}
         max_reads: {type: integer, nullable: true}
         read_count: {type: integer}
+        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads."}
         expiration: {type: string, format: date-time, nullable: true}
         classification: {type: string}
         status: {type: string}
@@ -7772,6 +7895,7 @@ components:
         description: {type: string}
         max_reads: {type: integer, nullable: true}
         read_count: {type: integer}
+        total_reads: {type: integer, description: "Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id (including value reads) and omitted from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads."}
         expiration: {type: string, format: date-time, nullable: true}
         classification: {type: string}
         status: {type: string}

@@ -13,8 +13,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
-CONTAINER_NAME="keyorix-demo"
-VOLUME_NAME="keyorix-demo-data"
+CONTAINER_NAME="${KEYORIX_DEMO_CONTAINER:-keyorix-demo}"
+VOLUME_NAME="${KEYORIX_DEMO_VOLUME:-keyorix-demo-data}"
 STATE_FILE="$REPO_ROOT/.demo-2-state"
 
 WIPE=false

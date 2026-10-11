@@ -203,6 +203,19 @@ func loadAtomicityExemptions(t *testing.T, path string) map[string]bool {
 		if len(fields) < 3 {
 			t.Fatalf("atomicity guard: %s:%d: expected 3 tab-separated fields (function, class, reason), got %d: %q", path, i+1, len(fields), line)
 		}
+		// A duplicate key is rejected, not merged. Both readers of this ledger
+		// key on the function name and keep the LAST row, so a second plain row
+		// for an already-listed function silently RECLASSIFIES it -- and for a
+		// class-B function that breaks the oracle exemption resting on that class
+		// (server/faultops TestConsumeFirstExemptions_MatchAtomicityLedger
+		// requires B, and would start failing, or worse pass against the wrong
+		// row). A function needing a second, independent classification uses a
+		// key namespace instead ("AUDIT:", "JIT:" -- see the file's header).
+		if out[fields[0]] {
+			t.Fatalf("atomicity guard: %s:%d: duplicate entry for %q. Two rows for one function silently "+
+				"reclassify it in every reader of this ledger; give the second one its own key namespace "+
+				"(e.g. \"JIT:%s\") so it documents without shadowing", path, i+1, fields[0], fields[0])
+		}
 		out[fields[0]] = true
 	}
 	return out

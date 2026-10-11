@@ -46,13 +46,14 @@ import { Button } from '../../components/ui/Button';
 import { Spinner, Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
+import { apiErrorMessage } from '../../services/client';
+import { useCan, type Can } from '../auth/useCan';
 import { Textarea } from '../../components/ui/Textarea';
 import { parseServerDate } from '../../utils';
-
-const formatDate = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
-const formatTime = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
+import { eventLabel, accessActionLabel } from '../../utils/eventLabels';
+import { resolveAuditIds } from '../audit/auditNames';
+import { sharePermissionLabel } from '../../utils/sharePermission';
+import { formatDateTime } from '../../utils/datetime';
 
 const relativeFromNow = (d: string | Date): string => {
     const days = Math.floor((Date.now() - parseServerDate(d).getTime()) / 86_400_000);
@@ -65,24 +66,8 @@ const relativeFromNow = (d: string | Date): string => {
     return `${years} year${years === 1 ? '' : 's'} ago`;
 };
 
-// Human-readable label for an audit event_type; falls back to the raw type with the
-// "secret." prefix stripped so unknown/new events still render sensibly.
-const auditEventLabel = (eventType: string): string => {
-    const KNOWN: Record<string, string> = {
-        'secret.created': 'Created',
-        'secret.updated': 'Updated',
-        'secret.rotated': 'Rotated',
-        'secret.rolled_back': 'Rolled back',
-        'secret.suspended': 'Suspended',
-        'secret.resumed': 'Resumed',
-        'secret.shared': 'Shared',
-        'secret.unshared': 'Unshared',
-        'secret.owner_transferred': 'Owner transferred',
-        'secret.classified': 'Reclassified',
-        'secret.deleted': 'Deleted',
-    };
-    return KNOWN[eventType] ?? eventType.replace(/^secret\./, '').replaceAll('_', ' ');
-};
+// Inside a secret's own history the "secret." prefix is noise for events nobody curated a label for.
+const auditEventLabel = (eventType: string): string => eventLabel(eventType, 'secret.');
 
 const RISK_BAND_STYLE: Record<RiskBand, { label: string; color: string }> = {
     low: { label: 'Low risk', color: '#10b981' },
@@ -189,6 +174,7 @@ interface SecretDetailHeaderProps {
     onToggleSuspend: () => void;
     suspendTogglePending: boolean;
     onDelete?: ((secret: Secret) => void) | undefined;
+    can: Can;
 }
 
 const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
@@ -205,10 +191,11 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
     onToggleSuspend,
     suspendTogglePending,
     onDelete,
+    can,
 }) => (
-    <div className="flex items-start justify-between">
-        <div className="flex-1">
-            <div className="flex items-center space-x-3">
+    <div data-testid="secret-header" className="flex flex-wrap items-start justify-between gap-4">
+        <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
                 <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">{secret.name}</h2>
                 <span
                     className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getTypeColor(secret.type)}`}
@@ -234,7 +221,10 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
                 )}
             </div>
 
-            <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
+            <div
+                data-testid="secret-meta"
+                className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-gray-500 dark:text-gray-400"
+            >
                 <div className="flex items-center">
                     <MapPinIcon className="h-4 w-4 mr-1" />
                     {secret.environment || 'No environment'}
@@ -245,7 +235,7 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
                 </div>
                 <div className="flex items-center">
                     <ClockIcon className="h-4 w-4 mr-1" />
-                    {formatDate(secret.lastModified)} at {formatTime(secret.lastModified)}
+                    {formatDateTime(secret.lastModified)}
                 </div>
                 <div className="flex items-center">
                     <ArrowPathIcon className="h-4 w-4 mr-1" />
@@ -257,7 +247,8 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
                     <select
                         aria-label="Classification"
                         value={classification}
-                        disabled={classifyPending}
+                        disabled={classifyPending || !can.writeSecrets}
+                        title={can.writeSecrets ? undefined : 'You do not have permission to change the classification'}
                         onChange={(e) => onClassify(e.target.value)}
                         className="bg-transparent text-sm text-gray-500 dark:text-gray-400 border-0 focus:ring-0 cursor-pointer disabled:opacity-50"
                     >
@@ -269,52 +260,60 @@ const SecretDetailHeader: React.FC<SecretDetailHeaderProps> = ({
                     </select>
                 </label>
             </div>
-            <div className="mt-2">
-                <TransferOwnership secretId={secret.id} currentOwner={secret.owner} />
-            </div>
+            {can.deleteSecrets && (
+                <div className="mt-2">
+                    <TransferOwnership secretId={secret.id} currentOwner={secret.owner} />
+                </div>
+            )}
         </div>
 
-        <div className="flex items-center space-x-2">
-            <Button variant="outline" size="sm" onClick={() => onEdit?.(secret)}>
-                <PencilIcon className="h-4 w-4 mr-2" />
-                Edit
-            </Button>
-            <Button variant="outline" size="sm" onClick={onRotateClick}>
-                <ArrowPathIcon className="h-4 w-4 mr-2" />
-                Rotate
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => onShare?.(secret)}>
-                <ShareIcon className="h-4 w-4 mr-2" />
-                Share
-            </Button>
-            <Button
-                variant="outline"
-                size="sm"
-                onClick={onCopy}
-                disabled={copyPending}
-                title="Copy this secret into another environment (same project)"
-            >
-                <DocumentDuplicateIcon className="h-4 w-4 mr-2" />
-                Copy
-            </Button>
-            <Button
-                variant="outline"
-                size="sm"
-                onClick={onToggleSuspend}
-                disabled={suspendTogglePending}
-                className={suspended ? '' : 'text-amber-600 hover:text-amber-700'}
-            >
-                {suspended ? 'Resume' : 'Suspend'}
-            </Button>
-            <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onDelete?.(secret)}
-                className="text-red-600 hover:text-red-700"
-            >
-                <TrashIcon className="h-4 w-4 mr-2" />
-                Delete
-            </Button>
+        <div data-testid="secret-actions" className="flex flex-wrap items-center gap-2">
+            {can.writeSecrets && (
+                <>
+                    <Button variant="outline" size="sm" onClick={() => onEdit?.(secret)}>
+                        <PencilIcon className="h-4 w-4 mr-2" />
+                        Edit
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={onRotateClick}>
+                        <ArrowPathIcon className="h-4 w-4 mr-2" />
+                        Rotate
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => onShare?.(secret)}>
+                        <ShareIcon className="h-4 w-4 mr-2" />
+                        Share
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onCopy}
+                        disabled={copyPending}
+                        title="Copy this secret into another environment (same project)"
+                    >
+                        <DocumentDuplicateIcon className="h-4 w-4 mr-2" />
+                        Copy
+                    </Button>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={onToggleSuspend}
+                        disabled={suspendTogglePending}
+                        className={suspended ? '' : 'text-amber-600 hover:text-amber-700'}
+                    >
+                        {suspended ? 'Resume' : 'Suspend'}
+                    </Button>
+                </>
+            )}
+            {can.deleteSecrets && (
+                <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onDelete?.(secret)}
+                    className="text-red-600 hover:text-red-700"
+                >
+                    <TrashIcon className="h-4 w-4 mr-2" />
+                    Delete
+                </Button>
+            )}
         </div>
     </div>
 );
@@ -381,7 +380,7 @@ const SecretValuePanel: React.FC<SecretValuePanelProps> = ({
                 <Alert
                     type="error"
                     title="Failed to load secret value"
-                    message="There was an error loading the secret value. Please try again."
+                    message={apiErrorMessage(error, 'There was an error loading the secret value. Please try again.')}
                 />
             )}
 
@@ -401,6 +400,7 @@ interface VersionHistoryPanelProps {
     latestVersion: VersionItem | null;
     rollbackMutation: ReturnType<typeof useRollbackSecret>;
     onRollback: (version: number) => void;
+    canRollback: boolean;
 }
 
 const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
@@ -408,6 +408,7 @@ const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
     latestVersion,
     rollbackMutation,
     onRollback,
+    canRollback,
 }) => {
     if (!versions || versions.length <= 1 || !latestVersion) return null;
     return (
@@ -417,11 +418,7 @@ const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
                 <Alert
                     type="error"
                     title="Rollback failed"
-                    message={
-                        rollbackMutation.error instanceof Error
-                            ? rollbackMutation.error.message
-                            : 'An unexpected error occurred'
-                    }
+                    message={apiErrorMessage(rollbackMutation.error, 'An unexpected error occurred')}
                 />
             )}
             <div className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -438,11 +435,9 @@ const VersionHistoryPanel: React.FC<VersionHistoryPanelProps> = ({
                                         current
                                     </span>
                                 )}
-                                <span className="text-gray-500 dark:text-gray-400">
-                                    {new Date(v.CreatedAt).toLocaleString()}
-                                </span>
+                                <span className="text-gray-500 dark:text-gray-400">{formatDateTime(v.CreatedAt)}</span>
                             </div>
-                            {v.VersionNumber !== latestVersion.VersionNumber && (
+                            {canRollback && v.VersionNumber !== latestVersion.VersionNumber && (
                                 <Button
                                     variant="outline"
                                     size="sm"
@@ -482,7 +477,7 @@ const AccessorsPanel: React.FC<AccessorsPanelProps> = ({ accessors }) => {
                         <span
                             className={`px-1.5 py-0.5 rounded text-[10px] font-semibold ${getPermissionColor(a.permission)}`}
                         >
-                            {a.permission}
+                            {a.source === 'owner' ? a.permission : sharePermissionLabel(a.permission)}
                         </span>
                     </div>
                 ))}
@@ -513,13 +508,13 @@ const RecentAccessPanel: React.FC<RecentAccessPanelProps> = ({ accessLog }) => {
                                 {e.accessed_by || 'unknown'}
                             </span>
                             <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                {e.action}
+                                {accessActionLabel(e.action)}
                                 {e.ip_address ? ` · ${e.ip_address}` : ''}
                             </span>
                         </div>
                         <span
                             className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap"
-                            title={new Date(e.access_time).toLocaleString()}
+                            title={formatDateTime(e.access_time, { seconds: true })}
                         >
                             {relativeFromNow(e.access_time)}
                         </span>
@@ -538,9 +533,16 @@ interface DescriptionPanelProps {
     descDraft: string | null;
     setDescDraft: (v: string | null) => void;
     mutation: ReturnType<typeof useSetSecretDescription>;
+    readOnly: boolean;
 }
 
-const DescriptionPanel: React.FC<DescriptionPanelProps> = ({ description, descDraft, setDescDraft, mutation }) => (
+const DescriptionPanel: React.FC<DescriptionPanelProps> = ({
+    description,
+    descDraft,
+    setDescDraft,
+    mutation,
+    readOnly,
+}) => (
     <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Description</h3>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
@@ -550,6 +552,7 @@ const DescriptionPanel: React.FC<DescriptionPanelProps> = ({ description, descDr
             value={descDraft ?? description}
             onChange={(e) => setDescDraft(e.target.value)}
             disabled={mutation.isPending}
+            readOnly={readOnly}
             rows={3}
             maxLength={1024}
             placeholder="No description."
@@ -585,9 +588,17 @@ interface TagsEditPanelProps {
     setTagDraft: (v: string) => void;
     onTagKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;
     mutation: ReturnType<typeof useSetSecretTags>;
+    readOnly: boolean;
 }
 
-const TagsEditPanel: React.FC<TagsEditPanelProps> = ({ secretTags, tagDraft, setTagDraft, onTagKeyDown, mutation }) => (
+const TagsEditPanel: React.FC<TagsEditPanelProps> = ({
+    secretTags,
+    tagDraft,
+    setTagDraft,
+    onTagKeyDown,
+    mutation,
+    readOnly,
+}) => (
     <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
         <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-1">Tags</h3>
         <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
@@ -600,35 +611,43 @@ const TagsEditPanel: React.FC<TagsEditPanelProps> = ({ secretTags, tagDraft, set
                     className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200"
                 >
                     {t}
-                    <button
-                        type="button"
-                        aria-label={`Remove tag ${t}`}
-                        disabled={mutation.isPending}
-                        onClick={() => mutation.mutate(secretTags.filter((x) => x !== t))}
-                        className="text-gray-400 hover:text-red-500 disabled:opacity-50"
-                    >
-                        ×
-                    </button>
+                    {!readOnly && (
+                        <button
+                            type="button"
+                            aria-label={`Remove tag ${t}`}
+                            disabled={mutation.isPending}
+                            onClick={() => mutation.mutate(secretTags.filter((x) => x !== t))}
+                            className="text-gray-400 hover:text-red-500 disabled:opacity-50"
+                        >
+                            ×
+                        </button>
+                    )}
                 </span>
             ))}
             {secretTags.length === 0 && <span className="text-xs text-gray-400">No tags yet.</span>}
         </div>
-        <input
-            value={tagDraft}
-            onChange={(e) => setTagDraft(e.target.value)}
-            onKeyDown={onTagKeyDown}
-            disabled={mutation.isPending}
-            placeholder="Add a tag and press Enter…"
-            className="mt-3 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-900 dark:text-white disabled:opacity-50"
-        />
+        {!readOnly && (
+            <input
+                value={tagDraft}
+                onChange={(e) => setTagDraft(e.target.value)}
+                onKeyDown={onTagKeyDown}
+                disabled={mutation.isPending}
+                placeholder="Add a tag and press Enter…"
+                className="mt-3 w-full rounded-md border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-900 px-3 py-1.5 text-sm text-gray-900 dark:text-white disabled:opacity-50"
+            />
+        )}
     </div>
 );
 
 interface AuditTrailPanelProps {
     auditTrail: AuditEntry[] | undefined;
+    // This secret's own id and name: stored descriptions such as "secret 3 restored" carry
+    // only the id, and the one object every row here is about is already known.
+    secretId: number;
+    secretName: string;
 }
 
-const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail }) => {
+const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail, secretId, secretName }) => {
     if (!auditTrail || auditTrail.length === 0) return null;
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
@@ -646,7 +665,9 @@ const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail }) => {
                             </span>
                             {e.description && (
                                 <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
-                                    {e.description}
+                                    {resolveAuditIds(e.description, {
+                                        secrets: new Map([[secretId, secretName]]),
+                                    })}
                                 </span>
                             )}
                             {e.actor_type === 'machine_identity' && (
@@ -657,7 +678,7 @@ const AuditTrailPanel: React.FC<AuditTrailPanelProps> = ({ auditTrail }) => {
                         </div>
                         <span
                             className="text-xs text-gray-500 dark:text-gray-400 whitespace-nowrap"
-                            title={new Date(e.timestamp).toLocaleString()}
+                            title={formatDateTime(e.timestamp, { seconds: true })}
                         >
                             {relativeFromNow(e.timestamp)}
                         </span>
@@ -775,9 +796,10 @@ const MetadataPanel: React.FC<MetadataPanelProps> = ({ metadata }) => {
 interface SharingInfoPanelProps {
     secret: Secret;
     onShare?: ((secret: Secret) => void) | undefined;
+    canShare: boolean;
 }
 
-const SharingInfoPanel: React.FC<SharingInfoPanelProps> = ({ secret, onShare }) => {
+const SharingInfoPanel: React.FC<SharingInfoPanelProps> = ({ secret, onShare, canShare }) => {
     if (!secret.isShared) return null;
     return (
         <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
@@ -790,13 +812,17 @@ const SharingInfoPanel: React.FC<SharingInfoPanelProps> = ({ secret, onShare }) 
                     <p className="text-sm text-gray-900 dark:text-white">
                         This secret is shared with <span className="font-medium">{secret.shareCount}</span> recipients
                     </p>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        Click "Share" to manage sharing permissions
-                    </p>
+                    {canShare && (
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            Click "Share" to manage sharing permissions
+                        </p>
+                    )}
                 </div>
-                <Button variant="outline" size="sm" onClick={() => onShare?.(secret)}>
-                    Manage Shares
-                </Button>
+                {canShare && (
+                    <Button variant="outline" size="sm" onClick={() => onShare?.(secret)}>
+                        Manage Shares
+                    </Button>
+                )}
             </div>
         </div>
     );
@@ -865,7 +891,7 @@ const RotateSecretModal: React.FC<RotateSecretModalProps> = ({
                 <Alert
                     type="error"
                     title="Rotation failed"
-                    message="The secret could not be rotated. Please try again."
+                    message={apiErrorMessage(mutation.error, 'The secret could not be rotated.')}
                 />
             )}
 
@@ -902,10 +928,17 @@ interface SecretDetailViewProps {
 }
 
 export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEdit, onShare, onDelete, onClose }) => {
+    const can = useCan();
     const [showValue, setShowValue] = useState(false);
     const [copySuccess, setCopySuccess] = useState(false);
     const [showRotate, setShowRotate] = useState(false);
     const [rotateValue, setRotateValue] = useState('');
+
+    // `secret` is the snapshot the list handed over when this view opened, so
+    // it never learns about a rotation or rollback done in here. Remember the
+    // moment locally so the header stops saying "Never rotated" (#2977).
+    const [rotatedHereAt, setRotatedHereAt] = useState<string | null>(null);
+    const headerSecret = rotatedHereAt ? { ...secret, lastRotatedAt: rotatedHereAt } : secret;
 
     const [classification, setClassification] = useState<string>(secret.classification ?? '');
     const [status, setStatus] = useState<string>(secret.status ?? 'active');
@@ -980,7 +1013,12 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
 
     const handleRollback = (version: number) => {
         if (!window.confirm(`Roll back to version ${version}? Its value will be re-instated as a new version.`)) return;
-        rollbackMutation.mutate(version, { onSuccess: () => setShowValue(false) });
+        rollbackMutation.mutate(version, {
+            onSuccess: () => {
+                setShowValue(false);
+                setRotatedHereAt(new Date().toISOString());
+            },
+        });
     };
 
     // Optimistically reflect the new level; revert if the server rejects it.
@@ -1004,6 +1042,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
         rotateMutation.mutate(rotateValue, {
             onSuccess: () => {
                 setShowValue(false); // force a re-reveal so the new version is fetched
+                setRotatedHereAt(new Date().toISOString());
                 closeRotate();
             },
         });
@@ -1040,7 +1079,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
     return (
         <div className="space-y-6">
             <SecretDetailHeader
-                secret={secret}
+                secret={headerSecret}
                 classification={classification}
                 suspended={suspended}
                 classifyPending={classifyMutation.isPending}
@@ -1053,6 +1092,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                 onToggleSuspend={handleToggleSuspend}
                 suspendTogglePending={suspendMutation.isPending || resumeMutation.isPending}
                 onDelete={onDelete}
+                can={can}
             />
 
             {copyMsg && (
@@ -1080,6 +1120,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                 latestVersion={latestVersion}
                 rollbackMutation={rollbackMutation}
                 onRollback={handleRollback}
+                canRollback={can.writeSecrets}
             />
 
             <AccessorsPanel accessors={accessors} />
@@ -1091,6 +1132,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                 descDraft={descDraft}
                 setDescDraft={setDescDraft}
                 mutation={setDescription}
+                readOnly={!can.writeSecrets}
             />
 
             <TagsEditPanel
@@ -1099,9 +1141,10 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
                 setTagDraft={setTagDraft}
                 onTagKeyDown={handleTagKeyDown}
                 mutation={setTags}
+                readOnly={!can.writeSecrets}
             />
 
-            <AuditTrailPanel auditTrail={auditTrail} />
+            <AuditTrailPanel auditTrail={auditTrail} secretId={secret.id} secretName={secret.name} />
 
             <RiskScorePanel risk={risk} />
 
@@ -1112,7 +1155,7 @@ export const SecretDetailView: React.FC<SecretDetailViewProps> = ({ secret, onEd
 
             <MetadataPanel metadata={secret.metadata} />
 
-            <SharingInfoPanel secret={secret} onShare={onShare} />
+            <SharingInfoPanel secret={secret} onShare={onShare} canShare={can.writeSecrets} />
 
             <PermissionsPanel permissions={secret.permissions} />
 

@@ -1,3 +1,5 @@
+import { formatDateTime } from '../../utils/datetime';
+import { SHARE_WRITE_LABEL, sharePermissionLabel } from '../../utils/sharePermission';
 import React, { useState } from 'react';
 import {
     ShareIcon,
@@ -24,6 +26,7 @@ import { Loading } from '../../components/ui/Loading';
 import { Alert } from '../../components/ui/Alert';
 import { Modal } from '../../components/ui/Modal';
 import { Dialog } from '../../components/ui/Dialog';
+import { apiErrorMessage } from '../../services/client';
 
 const ITEMS_PER_PAGE = 20;
 
@@ -36,7 +39,7 @@ const RECIPIENT_TYPE_OPTIONS = [
 const PERMISSION_OPTIONS = [
     { value: 'all', label: 'All Permissions' },
     { value: 'read', label: 'Read Only' },
-    { value: 'write', label: 'Read & Write' },
+    { value: 'write', label: `Read + ${SHARE_WRITE_LABEL.toLowerCase()}` },
 ];
 
 // Expiry actions offered when editing an existing share.
@@ -99,10 +102,6 @@ export const SharingManagementPage: React.FC = () => {
             return next;
         });
     const clearSelectedItems = () => setSelectedItems(new Set());
-    const formatDate = (d: string) =>
-        new Intl.DateTimeFormat('en', { year: 'numeric', month: 'short', day: 'numeric' }).format(new Date(d));
-    const formatTime = (d: string) =>
-        new Intl.DateTimeFormat('en', { hour: '2-digit', minute: '2-digit' }).format(new Date(d));
 
     // State for filters and pagination
     const [filters, setFilters] = useState({
@@ -249,7 +248,10 @@ export const SharingManagementPage: React.FC = () => {
                 <Alert
                     type="error"
                     title="Failed to load shares"
-                    message="There was an error loading the sharing information. Please try again."
+                    message={apiErrorMessage(
+                        error,
+                        'There was an error loading the sharing information. Please try again.'
+                    )}
                 >
                     <Button variant="outline" size="sm" onClick={() => refetch()}>
                         Retry
@@ -364,17 +366,14 @@ export const SharingManagementPage: React.FC = () => {
                                                 : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
                                         }`}
                                     >
-                                        {share.permission === 'write' ? 'Read & Write' : 'Read Only'}
+                                        {sharePermissionLabel(share.permission)}
                                     </span>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
                                     {share.createdBy}
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-sm text-base-muted dark:text-base-muted">
-                                    <div>
-                                        <div>{formatDate(share.createdAt)}</div>
-                                        <div className="text-xs">{formatTime(share.createdAt)}</div>
-                                    </div>
+                                    <div>{formatDateTime(share.createdAt)}</div>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap">
                                     {(() => {
@@ -637,11 +636,7 @@ export const SharingManagementPage: React.FC = () => {
                         <Alert
                             type="error"
                             title="Error"
-                            message={
-                                updateShare.error instanceof Error
-                                    ? updateShare.error.message
-                                    : 'Failed to update share.'
-                            }
+                            message={apiErrorMessage(updateShare.error, 'Failed to update share.')}
                         />
                     )}
                     <div>
@@ -658,7 +653,7 @@ export const SharingManagementPage: React.FC = () => {
                             onChange={(e) => setEditPermission(e.target.value as 'read' | 'write')}
                             options={[
                                 { value: 'read', label: 'Read Only' },
-                                { value: 'write', label: 'Read & Write' },
+                                { value: 'write', label: `Read + ${SHARE_WRITE_LABEL.toLowerCase()}` },
                             ]}
                             disabled={updateShare.isPending}
                         />
@@ -680,7 +675,7 @@ export const SharingManagementPage: React.FC = () => {
                         />
                         {editShare?.expiresAt && editExpiry === 'keep' && (
                             <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-                                Currently expires {new Date(editShare.expiresAt).toLocaleString()}.
+                                Currently expires {formatDateTime(editShare.expiresAt)}.
                             </p>
                         )}
                     </div>

@@ -266,6 +266,7 @@ describe('usersApi ADR-025 lifecycle + views', () => {
                             roles: ['project_developer'],
                             state: 'active',
                             via_group: false,
+                            project_deleted: false,
                         },
                     ],
                 },
@@ -281,6 +282,7 @@ describe('usersApi ADR-025 lifecycle + views', () => {
                 roles: ['project_developer'],
                 state: 'active',
                 via_group: false,
+                project_deleted: false,
             },
         ]);
     });
@@ -290,7 +292,14 @@ describe('usersApi ADR-025 lifecycle + views', () => {
             data: {
                 data: {
                     memberships: [
-                        { ProjectID: 4, ProjectName: 'infra', Role: 'project_viewer', State: 'active', ViaGroup: true },
+                        {
+                            ProjectID: 4,
+                            ProjectName: 'infra',
+                            Role: 'project_viewer',
+                            State: 'active',
+                            ViaGroup: true,
+                            ProjectDeleted: true,
+                        },
                         {},
                     ],
                 },
@@ -306,6 +315,7 @@ describe('usersApi ADR-025 lifecycle + views', () => {
             roles: ['project_viewer'],
             state: 'active',
             via_group: true,
+            project_deleted: true,
         });
         // A fully sparse row has no role to fall back to, so roles is empty rather
         // than ['']: an empty list is honest, a list containing "" is not.
@@ -316,6 +326,7 @@ describe('usersApi ADR-025 lifecycle + views', () => {
             roles: [],
             state: '',
             via_group: false,
+            project_deleted: false,
         });
     });
 

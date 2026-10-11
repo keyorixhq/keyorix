@@ -28,6 +28,7 @@ vi.mock('../../../features/admin', () => ({
 
 vi.mock('../../../services/client', () => ({
     apiClient: { get: (...args: any[]) => apiClientGet(...args) },
+    apiErrorMessage: (_e: unknown, fallback: string) => fallback,
 }));
 
 const entries = [
@@ -125,6 +126,72 @@ describe('AuditLogPage — audit tab', () => {
 
         expect(screen.getByText('bob')).toBeInTheDocument();
         expect(screen.queryByText('alice')).not.toBeInTheDocument();
+    });
+
+    it('labels secret.versions_listed, offers it as a filter, and keeps it out of the "reads" view', () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    ...entries,
+                    {
+                        id: 4,
+                        event_type: 'secret.versions_listed',
+                        actor: 'dave',
+                        actor_type: 'user',
+                        description: 'User dave listed the versions of secret db',
+                        timestamp: '2026-01-16T10:00:00Z',
+                    },
+                ],
+                total: 4,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        render(<AuditLogPage />);
+        const table = within(screen.getByRole('table'));
+        expect(table.getByText('Versions listed')).toBeInTheDocument();
+        expect(table.queryByText('versions listed')).not.toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Filter by event type'), {
+            target: { value: 'secret.versions_listed' },
+        });
+        expect(screen.getByText('dave')).toBeInTheDocument();
+        expect(screen.queryByText('bob')).not.toBeInTheDocument();
+    });
+
+    it('labels secret.metadata_read and offers it as a filter', () => {
+        useAuditLog.mockReturnValue({
+            data: {
+                data: [
+                    ...entries,
+                    {
+                        id: 5,
+                        event_type: 'secret.metadata_read',
+                        actor: 'erin',
+                        actor_type: 'user',
+                        description: 'User erin looked up secret db',
+                        timestamp: '2026-01-16T10:00:00Z',
+                    },
+                ],
+                total: 4,
+                page: 1,
+                pageSize: 100,
+                totalPages: 1,
+            },
+            isLoading: false,
+            error: null,
+        });
+        render(<AuditLogPage />);
+        expect(within(screen.getByRole('table')).getByText('Metadata read')).toBeInTheDocument();
+
+        fireEvent.change(screen.getByLabelText('Filter by event type'), {
+            target: { value: 'secret.metadata_read' },
+        });
+        expect(screen.getByText('erin')).toBeInTheDocument();
+        expect(screen.queryByText('bob')).not.toBeInTheDocument();
     });
 
     it('filters by actor type', () => {
@@ -292,20 +359,44 @@ describe('AuditLogPage — RBAC tab', () => {
         expect(screen.getByText('role 999 assigned to Frank OBrien')).toBeInTheDocument();
     });
 
-    it('does not rewrite ids in non-RBAC event descriptions', () => {
+    it('resolves secret and project ids in any event description; unknown ones read "secret #N"', async () => {
         useAuditLog.mockReturnValue({
             data: {
                 data: [
                     {
                         id: 1,
-                        event_type: 'secret.read',
+                        event_type: 'secret.restored',
                         actor: 'bob',
                         actor_type: 'user',
-                        description: 'read secret 9 in project 7',
+                        description: 'secret 9 restored',
                         timestamp: '2026-01-15T10:00:00Z',
                     },
+                    {
+                        id: 2,
+                        event_type: 'secret.restored',
+                        actor: 'bob',
+                        actor_type: 'user',
+                        description: 'secret 10 restored',
+                        timestamp: '2026-01-16T10:00:00Z',
+                    },
+                    {
+                        id: 3,
+                        event_type: 'project.restored',
+                        actor: 'bob',
+                        actor_type: 'user',
+                        description: 'project 7 restored (cascade resurrected 1 environment(s) and 2 secret(s))',
+                        timestamp: '2026-01-17T10:00:00Z',
+                    },
+                    {
+                        id: 4,
+                        event_type: 'secret.restored',
+                        actor: 'bob',
+                        actor_type: 'user',
+                        description: 'secret 9 ("db-password") restored',
+                        timestamp: '2026-01-18T10:00:00Z',
+                    },
                 ],
-                total: 1,
+                total: 4,
                 page: 1,
                 pageSize: 100,
                 totalPages: 1,
@@ -313,10 +404,25 @@ describe('AuditLogPage — RBAC tab', () => {
             isLoading: false,
             error: null,
         });
-        useRoles.mockReturnValue({ data: [{ id: 9, name: 'project_viewer' }] });
+        apiClientGet.mockImplementation(async (url: string) => {
+            if (url === '/api/v1/secrets') {
+                return { data: { data: { secrets: [{ id: 9, name: 'db-password' }], total: 1 } } };
+            }
+            if (String(url).startsWith('/api/v1/projects')) {
+                return { data: { data: { projects: [{ id: 7, name: 'payments' }] } } };
+            }
+            return { data: { data: { users: [] } } };
+        });
 
         render(<AuditLogPage />);
-        expect(screen.getByText('read secret 9 in project 7')).toBeInTheDocument();
+
+        expect(await screen.findByText('secret "db-password" restored')).toBeInTheDocument();
+        expect(screen.getByText('secret #10 restored')).toBeInTheDocument();
+        expect(
+            screen.getByText('project "payments" restored (cascade resurrected 1 environment(s) and 2 secret(s))')
+        ).toBeInTheDocument();
+        // A newer event already carries its name: shown as the server wrote it, not doubled.
+        expect(screen.getByText('secret 9 ("db-password") restored')).toBeInTheDocument();
     });
 });
 
@@ -419,7 +525,7 @@ describe('AuditLogPage — unmapped event types, missing fields, and invalid tim
         render(<AuditLogPage />);
 
         const table = within(screen.getByRole('table'));
-        expect(table.getByText('custom.unmapped')).toBeInTheDocument();
+        expect(table.getByText('Custom unmapped')).toBeInTheDocument();
         expect(table.getByText('not-a-real-date')).toBeInTheDocument();
     });
 

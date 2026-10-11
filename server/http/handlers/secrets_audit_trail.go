@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -76,7 +77,7 @@ func toSecretAuditEntry(e *models.AuditEvent) secretAuditEntry {
 		EventType:     e.EventType,
 		Timestamp:     e.EventTime.UTC().Format("2006-01-02T15:04:05Z07:00"),
 		UserID:        e.UserID,
-		ActorType:     e.ActorType,
+		ActorType:     storage.AuditActorKind(e),
 		Description:   e.Description,
 		Success:       e.Success == nil || *e.Success,
 		Impersonation: e.Impersonation,

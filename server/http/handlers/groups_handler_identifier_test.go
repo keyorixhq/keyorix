@@ -23,6 +23,12 @@ import (
 
 func newGroupHandlerForTest(t *testing.T) *GroupHandler {
 	t.Helper()
+	h, _ := newGroupHandlerAndDBForTest(t)
+	return h
+}
+
+func newGroupHandlerAndDBForTest(t *testing.T) (*GroupHandler, *gorm.DB) {
+	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -30,7 +36,7 @@ func newGroupHandlerForTest(t *testing.T) *GroupHandler {
 	c := core.NewKeyorixCore(store.NewLocalStorage(db))
 	h, err := NewGroupHandler(c)
 	require.NoError(t, err)
-	return h
+	return h, db
 }
 
 func postCreateGroup(t *testing.T, h *GroupHandler, name string) *httptest.ResponseRecorder {
@@ -84,4 +90,23 @@ func TestUpdateGroup_RejectsDangerousName(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.UpdateGroup(w, req)
 	require.Equal(t, http.StatusBadRequest, w.Code, "response body: %s", w.Body.String())
+}
+
+// #2779: a duplicate group name is a client error, not a server fault. The unique
+// index is real here (in-memory SQLite via the production LocalStorage), so this
+// exercises the actual driver error text, not a hand-written one.
+func TestCreateGroup_DuplicateNameIs409(t *testing.T) {
+	h, db := newGroupHandlerAndDBForTest(t)
+	// AutoMigrate does not create the partial unique index migrateDatabase adds in
+	// production (storage/factory.go, ensureGroupNameIndex); create the same one.
+	require.NoError(t, db.Exec(
+		"CREATE UNIQUE INDEX uniq_groups_name_folded_active ON groups (name_folded) WHERE deleted_at IS NULL").Error)
+	require.Equal(t, http.StatusCreated, postCreateGroup(t, h, "platform-engineering").Code)
+
+	for _, name := range []string{"platform-engineering", "Platform-Engineering"} { // exact + case-folded collision
+		w := postCreateGroup(t, h, name)
+		require.Equal(t, http.StatusConflict, w.Code, "name %q, response body: %s", name, w.Body.String())
+		require.Contains(t, w.Body.String(), "already exists")
+		require.NotContains(t, w.Body.String(), "UNIQUE", "the raw driver error must not reach the client")
+	}
 }

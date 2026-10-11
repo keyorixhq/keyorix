@@ -537,6 +537,9 @@ func (ls *LocalStorage) GetUserGroupsAt(ctx context.Context, userID uint, scope 
 
 func (ls *LocalStorage) CreateGroup(ctx context.Context, group *models.Group) (*models.Group, error) {
 	if err := ls.db.WithContext(ctx).Create(group).Error; err != nil {
+		if isUniqueViolation(err) {
+			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateGroupName, err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return group, nil

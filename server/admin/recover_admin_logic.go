@@ -3,6 +3,8 @@ package admin
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/user"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -23,6 +25,10 @@ type recoverAdminSummary struct {
 	keyless                    bool
 	auditChainBroken           bool
 	auditChainFirstBrokenID    uint
+	// operator is the host OS account that ran the command (design §4: there is
+	// no Keyorix identity to attribute an offline recovery to, the actor is the
+	// host user). Recorded in the audit event and the admin notification.
+	operator string
 	// oneTimePassword is the plaintext credential just set on the recovered
 	// account, for the CLI to print exactly once. Never logged, audited, or
 	// included in the admin-notification text (recordRecoveryAuditEvent/
@@ -35,7 +41,7 @@ type recoverAdminSummary struct {
 // performRecoverAdmin is the whole recovery act (design §3): verify the
 // target exists and holds a global-admin role, verify the recovery key
 // (skipped entirely when keyless is true -- design §5's labs/demo escape
-// hatch, gated by security.recover_admin.keyless_mode and never reachable
+// hatch, gated by security.recover_admin.insecure_keyless_admin_recovery and never reachable
 // from anywhere but a host-side config-file read, see recover_admin.go),
 // then reset account state / password / MFA / WebAuthn / lockout / sessions
 // on that ONE account, and record it. Every failure path returns before any
@@ -61,6 +67,7 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 		userID:   user.ID,
 		username: user.Username,
 		keyless:  keyless,
+		operator: hostOperator(),
 	}
 	if !keyless {
 		record, found, err := store.GetRecoveryKeyRecord(ctx)
@@ -70,7 +77,7 @@ func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIde
 		if !found {
 			return nil, fmt.Errorf("no recovery key has been generated on this install yet -- " +
 				"run `keyorix-server admin recovery-key rotate` first, then retry recover-admin with the key it prints " +
-				"(or enable security.recover_admin.keyless_mode, not recommended outside labs/demo use)")
+				"(or enable security.recover_admin.insecure_keyless_admin_recovery, not recommended outside labs/demo use)")
 		}
 		if !recoverykey.Verify(rawRecoveryKey, record.KeyHash) {
 			return nil, fmt.Errorf("recovery key does not match")
@@ -183,12 +190,12 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 	verification, err := store.VerifyAuditChain(ctx, nil)
 	keyDetail := fmt.Sprintf("recovery key generation %d", summary.recoveryKeyVersion)
 	if summary.keyless {
-		keyDetail = "KEYLESS MODE -- no recovery key was checked (security.recover_admin.keyless_mode)"
+		keyDetail = "KEYLESS MODE -- no recovery key was checked (security.recover_admin.insecure_keyless_admin_recovery)"
 	}
 	description := fmt.Sprintf(
-		"keyorix-server admin recover-admin restored account %q (user id %d): reactivated, password reset required, "+
+		"keyorix-server admin recover-admin, run by host user %s, restored account %q (user id %d): reactivated, password reset required, "+
 			"MFA cleared, %d WebAuthn credential(s) cleared, login-lockout cleared, %d session(s) revoked (%s)",
-		summary.username, summary.userID, summary.webAuthnCredentialsCleared, summary.sessionsRevoked, keyDetail)
+		summary.operator, summary.username, summary.userID, summary.webAuthnCredentialsCleared, summary.sessionsRevoked, keyDetail)
 
 	if err == nil && !verification.Valid {
 		summary.auditChainBroken = true
@@ -216,4 +223,18 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 	if writeErr != nil {
 		fmt.Printf("note: could not record this recovery to the audit chain (%v)\n", writeErr)
 	}
+}
+
+// hostOperator names the host OS account running this process, as
+// "name (uid N)", for attributing an offline admin action (design §4). Falls
+// back to $USER, then "unknown": attribution is best-effort and must never
+// block a recovery.
+func hostOperator() string {
+	if u, err := user.Current(); err == nil && u.Username != "" {
+		return fmt.Sprintf("%q (uid %s)", u.Username, u.Uid)
+	}
+	if name := os.Getenv("USER"); name != "" {
+		return fmt.Sprintf("%q (uid unknown)", name)
+	}
+	return "unknown"
 }

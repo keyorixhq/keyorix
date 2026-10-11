@@ -468,6 +468,16 @@ func scanFunc(fset *token.FileSet, file string, fd *ast.FuncDecl, localReturns m
 	var lastWrite token.Pos
 	var lastWriteName string
 	var discards []discardSite
+	// discardedWrites are write-verb calls whose result is itself blank-
+	// discarded (`_ = c.storage.AddPasswordHistory(...)`). Such a write is a
+	// best-effort step, not the operation's commit, so it must not become the
+	// "last write" anchor -- otherwise it hides itself (the discard sits AT the
+	// anchor, never after it) and, with no checked write after it, the guard
+	// never fires. Found by FuzzStorageFaultOperations: CreateUserWithRoles'
+	// `_ = c.storage.AddPasswordHistory` panicked past an already-committed
+	// user create and reported failure (GRPC UserService.CreateUser,
+	// AddPasswordHistory#1/panic, oracle (a), [User UserRole]).
+	discardedWrites := map[token.Pos]bool{}
 
 	var walk func(n ast.Node, protected bool)
 	walk = func(n ast.Node, protected bool) {
@@ -482,6 +492,11 @@ func scanFunc(fset *token.FileSet, file string, fd *ast.FuncDecl, localReturns m
 				if !protected {
 					call, callee := discardCallName(assign)
 					discards = append(discards, discardSite{pos: assign.Pos(), call: call, callee: callee, kind: KindBlank})
+				}
+				for _, rhs := range assign.Rhs {
+					if call, ok := rhs.(*ast.CallExpr); ok {
+						discardedWrites[call.Pos()] = true
+					}
 				}
 				return true
 			}
@@ -498,7 +513,8 @@ func scanFunc(fset *token.FileSet, file string, fd *ast.FuncDecl, localReturns m
 			}
 			if call, ok := m.(*ast.CallExpr); ok {
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok &&
-					writeVerbRe.MatchString(sel.Sel.Name) && matchesWriteReceiver(sel, opts) {
+					writeVerbRe.MatchString(sel.Sel.Name) && matchesWriteReceiver(sel, opts) &&
+					!discardedWrites[call.Pos()] {
 					if call.Pos() > lastWrite {
 						lastWrite, lastWriteName = call.Pos(), sel.Sel.Name
 					}

@@ -23,7 +23,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"attestProjectAccessReview":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/attest
 	"authLogout":                         reasonSchemaNotYetWritten, // post /auth/logout
 	"authPasswordReset":                  reasonSchemaNotYetWritten, // post /auth/password-reset
-	"changePassword":                     reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
 	"closeAccessReviewCampaign":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
 	"createAccessRequest":                reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":             reasonSchemaNotYetWritten, // post /api/v1/invitations
@@ -213,10 +212,12 @@ var schemaExemptOperations = map[string]bool{
 // (loud, not silent -- an out-of-date entry here fails closed).
 var exercisingTests = map[string][]string{
 	"authGetSetupToken":             {"TestGetSetupToken_HappyPath_S11"},
+	"searchShareRecipients":         {"TestContractShare2_SearchShareRecipients"},
 	"authLogin":                     {"TestLogin_HappyPath_S8", "TestContractQA2_Login_MFARequiredBranch"},
 	"authConsumeSetup":              {"TestConsumeSetup_HappyPath_S11"},
 	"enrollMFA":                     {"TestContractQA2_EnrollMFA"},
 	"activateMFA":                   {"TestContractQA2_ActivateMFA"},
+	"changePassword":                {"TestContractRecover1_ChangePassword"},
 	"disableMFA":                    {"TestContractQA2_DisableMFA"},
 	"recoveryCodesStatus":           {"TestContractQA2_RecoveryCodesStatus"},
 	"regenerateMFARecoveryCodes":    {"TestContractQA2_RegenerateRecoveryCodes"},

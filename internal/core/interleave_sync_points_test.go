@@ -108,6 +108,29 @@ type syncPoint struct {
 	arrived chan struct{}
 	release chan struct{}
 	once    sync.Once
+
+	// remove unregisters this sync point's GORM callback. See the method of
+	// the same name below for why a caller in a loop must not rely on
+	// t.Cleanup for this.
+	removeFn func()
+}
+
+// remove unregisters the sync point's GORM callback immediately, rather than
+// at the end of the test.
+//
+// This matters for any caller that creates sync points in a LOOP. GORM holds
+// one callback chain per *gorm.DB and walks it for every statement, so N
+// still-registered sync points cost O(N) per query — and t.Cleanup does not
+// run until the whole test function returns. The ordering sweep creates two
+// per run across ~175 runs; leaving them registered made it quadratic and it
+// failed to finish inside a 60-minute timeout twice before this was found.
+// Idempotent, and safe to call even when t.Cleanup will also fire.
+func (sp *syncPoint) remove() {
+	if sp == nil || sp.removeFn == nil {
+		return
+	}
+	sp.removeFn()
+	sp.removeFn = nil
 }
 
 // syncPointName builds the canonical name for a sync point: the production
@@ -147,16 +170,17 @@ func newSyncPoint(t *testing.T, db *gorm.DB, fn, kind, table string) *syncPoint 
 	switch kind {
 	case "create":
 		require.NoError(t, db.Callback().Create().Before("gorm:create").Register(cbName, cb))
-		t.Cleanup(func() { _ = db.Callback().Create().Remove(cbName) })
+		sp.removeFn = func() { _ = db.Callback().Create().Remove(cbName) }
 	case "update":
 		require.NoError(t, db.Callback().Update().Before("gorm:update").Register(cbName, cb))
-		t.Cleanup(func() { _ = db.Callback().Update().Remove(cbName) })
+		sp.removeFn = func() { _ = db.Callback().Update().Remove(cbName) }
 	case "delete":
 		require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(cbName, cb))
-		t.Cleanup(func() { _ = db.Callback().Delete().Remove(cbName) })
+		sp.removeFn = func() { _ = db.Callback().Delete().Remove(cbName) }
 	default:
 		t.Fatalf("newSyncPoint: unknown kind %q (want create|update|delete)", kind)
 	}
+	t.Cleanup(sp.remove)
 	return sp
 }
 
@@ -473,8 +497,31 @@ func runInterleavingTimeout(t *testing.T, order interleaveOrder, spA, spB *syncP
 		actFirst, actSecond = first, second
 	}
 	actFirst.sp.resume()
-	<-actFirst.done
-	res.logf("%s acted and finished (err=%v)", actFirst.label, *actFirst.err)
+	// Bounded, not a bare receive. The side we just released can block on a
+	// row lock the STILL-PARKED other side holds: a parked sync point sits
+	// inside its replica's open transaction, so every lock that transaction
+	// has taken is still held while it waits. Releasing A and then waiting
+	// forever for A's write to land behind B's locks is a deadlock the test
+	// binary cannot get out of — it hung two full sweep runs at exactly the
+	// same pair before this was found, with no diagnostic beyond "still
+	// running". This is the same failure as the unpausable-side deadlock
+	// handled above, in the other branch; both exist because a parked replica
+	// is not an idle one.
+	select {
+	case <-actFirst.done:
+		res.logf("%s acted and finished (err=%v)", actFirst.label, *actFirst.err)
+	case <-time.After(arrival):
+		res.Degraded = fmt.Sprintf("replica %s could not complete its act while %s was still parked at %s "+
+			"(the two are serialized against each other), so %s could not be realized",
+			actFirst.label, actSecond.label, actSecond.sp.name, order)
+		res.logf("%s blocked on %s's held locks; releasing %s", actFirst.label, actSecond.label, actSecond.label)
+		actSecond.sp.resume()
+		<-actSecond.done
+		res.logf("%s finished (err=%v)", actSecond.label, *actSecond.err)
+		<-actFirst.done
+		res.logf("%s finished (err=%v)", actFirst.label, *actFirst.err)
+		return res
+	}
 	actSecond.sp.resume()
 	<-actSecond.done
 	res.logf("%s acted and finished (err=%v)", actSecond.label, *actSecond.err)

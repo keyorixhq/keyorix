@@ -11,47 +11,38 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// memDBSeq makes each in-memory test DB name unique.
-var memDBSeq atomic.Int64
-
-// uniqueMemDSN returns a uniquely-named shared-cache in-memory SQLite DSN. A fixed-name
-// "file::memory:?cache=shared" is ONE database for the whole process, so tests that use
-// it collide (e.g. one test's rows leak into another's), which makes them pass alone but
-// fail when run together. A unique name per call isolates each test's DB while keeping it
-// consistent across the connection pool. extra carries extra pragmas (e.g. "&_timeout=…").
-func uniqueMemDSN(extra string) string {
-	return fmt.Sprintf("file:kxtest_%d?mode=memory&cache=shared%s", memDBSeq.Add(1), extra)
-}
-
 // newTestCore creates a minimal *core.KeyorixCore backed by an in-memory SQLite DB.
 func newTestCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
+	return newTestCoreWrapped(t, nil)
+}
+
+// newTestCoreWrapped is newTestCore with the core built over wrap(the real
+// storage) — a fault-injecting wrapper — when wrap is non-nil.
+func newTestCoreWrapped(t *testing.T, wrap func(storage.Storage) storage.Storage) *core.KeyorixCore {
+	t.Helper()
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
 	// models.AllTestModels() is the single source of truth for the test schema —
 	// add new models there (internal/storage/models/all_models.go), not here.
-	err = db.AutoMigrate(models.AllTestModels()...)
+	err := db.AutoMigrate(models.AllTestModels()...)
 	require.NoError(t, err)
 	// Mirror internal/storage/factory.go's ensureProjectMembershipIndex exactly (the
 	// same production migration path #309's TestConcurrency_InviteMember_
@@ -79,7 +70,11 @@ func newTestCore(t *testing.T) *core.KeyorixCore {
 		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'").Error)
 	require.NoError(t, db.Exec("CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
 		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''").Error)
-	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
+	var st storage.Storage = store.NewLocalStorage(db)
+	if wrap != nil {
+		st = wrap(st)
+	}
+	cs := core.NewKeyorixCore(st)
 	// ADR-109 step 3: internal/core no longer defaults to dynamic.New internally
 	// (that would mean importing internal/dynamic from production code) — wire it
 	// explicitly here, exactly as server/main.go's DefaultIntegrations does, so
@@ -1394,6 +1389,161 @@ func TestImpersonation_BreakGlassBlocked(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(bgResp.Body).Decode(&bgErrBody))
 	assert.Contains(t, bgErrBody.Message, "not permitted while impersonating")
+}
+
+// TestImpersonation_BreakGlassReviewBlocked is the 2026-10-09 watchdog-review
+// regression: POST .../break-glass/{activationId}/review carried
+// RequireScopedPermission(permRolesAssign, ...) but NO BlockWhenImpersonating,
+// unlike ActivateBreakGlass immediately above it. ReviewBreakGlass's
+// self-review refusal compares actorID against activation.UserID -- under
+// impersonation that actorID is the IMPERSONATED user's, not the real admin's
+// -- so an activator who can impersonate any roles.assign holder could
+// impersonate one and pass the self-review check, forging an independent
+// "reviewed" record for their own activation. Reproduced end to end: the
+// SAME account (testadmin) both activates (as itself) and then attempts to
+// review (while impersonating a different user) -- exactly the attack
+// shape -- and the fix must refuse it before the handler ever runs, leaving
+// the activation unreviewed.
+func TestImpersonation_BreakGlassReviewBlocked(t *testing.T) {
+	require.NoError(t, i18n.InitializeForTesting())
+	defer i18n.ResetForTesting()
+
+	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
+	testCore := newTestCore(t)
+	_ = createTestToken(t, testCore) // seeds testadmin (admin role) /TestPassword123!
+
+	ctx := context.Background()
+	puppetUser, err := testCore.CreateUser(ctx, &core.CreateUserRequest{
+		Username: "bg-review-puppet", Email: "bg-review-puppet@example.com", Password: "CorrectHorseBattery9!",
+	})
+	require.NoError(t, err)
+	project, err := testCore.CreateProject(ctx, "bg-review-project", "")
+	require.NoError(t, err)
+
+	// testadmin's role is GLOBAL, which IsProjectMember deliberately does NOT
+	// count toward break-glass eligibility (see ActivateBreakGlass's own doc
+	// comment) -- grant an explicit project-scoped role so testadmin can
+	// activate for real, the same as any ordinary member would.
+	testadmin, err := testCore.GetUserByUsername(ctx, "testadmin")
+	require.NoError(t, err)
+	roles, err := testCore.ListRolesWithPermissions(ctx)
+	require.NoError(t, err)
+	var viewerRoleID uint
+	for _, r := range roles {
+		if r.Role.Name == "project_viewer" {
+			viewerRoleID = r.Role.ID
+		}
+	}
+	require.NotZero(t, viewerRoleID, "seeded role 'project_viewer' not found")
+	require.NoError(t, testCore.AssignUserRole(ctx, testadmin.ID, testadmin.ID, viewerRoleID, core.Scope{ProjectID: project.ID}, false))
+	// Also grant the puppet an ELIGIBLE reviewer's role (roles.assign at the
+	// project), so the attack this test reproduces is the REAL one: without
+	// this, a pre-fix run would 403 on RequireScopedPermission for an
+	// unrelated reason (the puppet simply lacking roles.assign) rather than
+	// genuinely demonstrating that impersonating an eligible reviewer forges
+	// a review. project_admin carries roles.assign; granting it here (an
+	// ordinary role grant, unrelated to break-glass's own emergency-role
+	// restriction above) is exactly what a real eligible reviewer would hold.
+	var adminRoleID uint
+	for _, r := range roles {
+		if r.Role.Name == "project_admin" {
+			adminRoleID = r.Role.ID
+		}
+	}
+	require.NotZero(t, adminRoleID, "seeded role 'project_admin' not found")
+	require.NoError(t, testCore.AssignUserRole(ctx, testadmin.ID, puppetUser.ID, adminRoleID, core.Scope{ProjectID: project.ID}, false))
+	// The emergency role must differ from the membership role above (granting
+	// a role the activator already holds fails as "already assigned") and
+	// must not itself confer install-wide admin authority (break-glass
+	// refuses that configuration outright) -- project_developer is a
+	// contained, non-admin project role.
+	testCore.SetBreakGlassPolicy(core.BreakGlassPolicy{
+		Enabled: true, EmergencyRole: "project_developer", DefaultTTL: time.Hour, MaxTTL: time.Hour,
+	})
+
+	router, err := NewRouter(cfg, testCore)
+	require.NoError(t, err)
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	client := newCookieClient(t)
+	loginResp := loginViaHTTP(t, client, server.URL, "testadmin", "TestPassword123!")
+	_ = loginResp.Body.Close()
+	require.Equal(t, http.StatusOK, loginResp.StatusCode)
+
+	// testadmin activates break-glass AS ITSELF, for real -- a genuine
+	// activation this same account must never be able to independently review.
+	activateBody, _ := json.Marshal(map[string]string{"justification": "incident response for review-block test"})
+	activateReq, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/api/v1/projects/%d/break-glass", server.URL, project.ID), bytes.NewReader(activateBody))
+	require.NoError(t, err)
+	activateReq.Header.Set("Content-Type", "application/json")
+	activateReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	activateResp, err := client.Do(activateReq)
+	require.NoError(t, err)
+	defer func() { _ = activateResp.Body.Close() }()
+	require.Equal(t, http.StatusCreated, activateResp.StatusCode, "setup: the activation itself must succeed")
+	var activateOut struct {
+		Data struct {
+			Activation struct {
+				ID uint `json:"id"`
+			} `json:"activation"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(activateResp.Body).Decode(&activateOut))
+	require.NotZero(t, activateOut.Data.Activation.ID)
+
+	// Revoke it (still as testadmin, not impersonating) so it is CONCLUDED --
+	// ReviewBreakGlass refuses a still-active activation regardless of who is
+	// reviewing it, which would otherwise mask the self-review bypass this
+	// test targets behind an unrelated 400.
+	revokeReq, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/api/v1/projects/%d/break-glass/%d/revoke", server.URL, project.ID, activateOut.Data.Activation.ID), nil)
+	require.NoError(t, err)
+	revokeReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	revokeResp, err := client.Do(revokeReq)
+	require.NoError(t, err)
+	defer func() { _ = revokeResp.Body.Close() }()
+	require.Equal(t, http.StatusOK, revokeResp.StatusCode, "setup: the revoke must succeed so the activation is reviewable")
+
+	// Impersonate the puppet -- who DOES hold roles.assign (an eligible
+	// reviewer), so without the fix the self-review bypass actually succeeds
+	// and records a review, not merely fails on an unrelated permission check.
+	startBody, _ := json.Marshal(map[string]uint{"user_id": puppetUser.ID})
+	startReq, err := http.NewRequest(http.MethodPost, server.URL+"/api/v1/admin/impersonate", bytes.NewReader(startBody))
+	require.NoError(t, err)
+	startReq.Header.Set("Content-Type", "application/json")
+	startReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	startResp, err := client.Do(startReq)
+	require.NoError(t, err)
+	defer func() { _ = startResp.Body.Close() }()
+	require.Equal(t, http.StatusOK, startResp.StatusCode)
+
+	reviewBody, _ := json.Marshal(map[string]string{"note": "forged independent review via puppet identity"})
+	reviewReq, err := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("%s/api/v1/projects/%d/break-glass/%d/review", server.URL, project.ID, activateOut.Data.Activation.ID),
+		bytes.NewReader(reviewBody))
+	require.NoError(t, err)
+	reviewReq.Header.Set("Content-Type", "application/json")
+	reviewReq.Header.Set("X-CSRF-Token", csrfCookieValue(t, client, server.URL))
+	reviewResp, err := client.Do(reviewReq)
+	require.NoError(t, err)
+	defer func() { _ = reviewResp.Body.Close() }()
+	require.Equal(t, http.StatusForbidden, reviewResp.StatusCode,
+		"a break-glass review must be refused while impersonating, forging no independent review of the impersonating admin's own activation")
+
+	var reviewErrBody struct {
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.NewDecoder(reviewResp.Body).Decode(&reviewErrBody))
+	assert.Contains(t, reviewErrBody.Message, "not permitted while impersonating")
+
+	// No review was recorded -- the activation this account both created AND
+	// tried to review-via-puppet must still show reviewed_at IS NULL.
+	activations, err := testCore.ListBreakGlassActivations(ctx, project.ID)
+	require.NoError(t, err)
+	require.Len(t, activations, 1)
+	assert.Nil(t, activations[0].ReviewedAt, "no review may be recorded by a blocked, impersonated request")
 }
 
 // ── #1972 cookie-attribute invariants ───────────────────────────────────────

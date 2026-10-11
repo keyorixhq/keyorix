@@ -46,7 +46,7 @@ const (
 // key/cert (RSA keygen via crypto/rand) — expensive, but entirely iteration-
 // independent: a throwaway signing identity has nothing to do with any particular
 // world's state, so it's generated ONCE per test binary run (sync.Once-guarded),
-// not once per world/reset. Contrast with wireSAMLProvider below, which IS
+// not once per world/reset. Contrast with wireSSOProviders below, which IS
 // iteration-specific (wires into a *specific* core) and must re-run on every
 // newWorldCore/newFaultWorld call.
 var (
@@ -62,7 +62,7 @@ func fuzzSAMLFixtureShared() (*samltest.IdPFixture, error) {
 	return fuzzSAMLFixture, fuzzSAMLFixtureErr
 }
 
-// fuzzSAMLProviderConfig returns the saml.Config shared by wireSAMLProvider and
+// fuzzSAMLProviderConfig returns the saml.Config shared by wireSSOProviders and
 // fuzzSAMLSPMetadata — kept in one place so the two never drift apart.
 func fuzzSAMLProviderConfig(fixture *samltest.IdPFixture) saml.Config {
 	return saml.Config{
@@ -85,8 +85,9 @@ func fuzzSAMLProviderConfig(fixture *samltest.IdPFixture) saml.Config {
 	}
 }
 
-// wireSAMLProvider builds a saml.Provider from the shared IdP fixture and wires it
-// into core as the "fuzzsaml" SSO provider. Called unconditionally from
+// wireSSOProviders builds a saml.Provider from the shared IdP fixture and wires it
+// into core as the "fuzzsaml" SSO provider, alongside the "fuzzoidc" OIDC provider
+// (#2910). Called unconditionally from
 // newFaultWorld/newWorldCore (mirroring the unconditional SetWebAuthn call next to
 // it) — core itself is rebuilt fresh every reset (see newWorldCore's own doc
 // comment) and would otherwise have nil ssoProviders.
@@ -100,7 +101,7 @@ func fuzzSAMLProviderConfig(fixture *samltest.IdPFixture) saml.Config {
 // able to claim an EXISTING account, which doesn't apply here (AutoProvision
 // always creates a new account; resolveSSOUser's claim-by-email path is never
 // exercised because the email is always fresh).
-func wireSAMLProvider(c *core.KeyorixCore) error {
+func wireSSOProviders(c *core.KeyorixCore) error {
 	fixture, err := fuzzSAMLFixtureShared()
 	if err != nil {
 		return fmt.Errorf("fuzzSAMLFixtureShared: %w", err)
@@ -109,19 +110,51 @@ func wireSAMLProvider(c *core.KeyorixCore) error {
 	if err != nil {
 		return fmt.Errorf("saml.NewProvider: %w", err)
 	}
+	oidcProv, jwks, err := fuzzOIDCProvider()
+	if err != nil {
+		return fmt.Errorf("fuzzOIDCProvider: %w", err)
+	}
+	// #2910: group sync and a GroupRoleMap are ON, so the reconcile CompleteSAML
+	// refuses the login over (#2839/#2903) actually runs under the fault fuzzer.
+	// Before, neither was set, and both reconcile branches were unreachable here.
+	//
+	// The revocation case is a JIT-shaped one, because this op JIT-provisions a
+	// fresh account every run (see the op's Setup). provisionSSOUser grants the
+	// DefaultRole (system_viewer), and the map makes system_viewer a MANAGED role
+	// conferred by "fuzz-saml-viewers". The assertion never carries that group,
+	// so every login revokes the baseline role it was just provisioned with.
+	// Alongside it, the asserted "fuzz-saml-engineers" adds a native membership
+	// and grants a mapped role. One login thus drives a group add, a role grant
+	// and a role revocation. The OIDC op (zz_sso_oidc_callback_op_test.go) covers
+	// the existing-account shape: group removal plus role revocation.
 	c.SetSSOProviders(map[string]*core.SSOProvider{
 		fuzzSAMLProviderName: {
 			Name: fuzzSAMLProviderName, Type: "saml", SAML: prov,
 			AutoProvision: true, TrustAssertedEmail: true,
 			CompleteURL: "https://fuzz-world.invalid/sso/complete",
+			GroupSync:   true,
+			GroupRoleMap: map[string]string{
+				fuzzSAMLGroupEngineers: fuzzSAMLRoleEngineer,
+				fuzzSAMLGroupViewers:   "system_viewer",
+			},
 		},
-	}, nil)
+		fuzzOIDCProviderName: oidcProv,
+	}, jwks)
 	return nil
 }
 
+// The SAML world's IdP groups and the mapped role. Setup seeds the native
+// group and the role (table reset wipes them between iterations); the
+// assertion carries only fuzzSAMLGroupEngineers.
+const (
+	fuzzSAMLGroupEngineers = "fuzz-saml-engineers"
+	fuzzSAMLGroupViewers   = "fuzz-saml-viewers"
+	fuzzSAMLRoleEngineer   = "fuzz_saml_engineer"
+)
+
 // fuzzSAMLSPMetadata rebuilds the SP metadata used to sign a matching Response.
 // A second, throwaway saml.Provider built from the identical Config
-// wireSAMLProvider wired into core — cheap (XML parse of a small embedded
+// wireSSOProviders wired into core — cheap (XML parse of a small embedded
 // metadata string, no RSA) — rather than threading the real provider's metadata
 // through the faultWorld struct.
 func fuzzSAMLSPMetadata() (*csaml.EntityDescriptor, error) {
@@ -157,10 +190,16 @@ func init() {
 	opCatalog = append(opCatalog, operation{
 		Key: "REST POST /auth/saml/{provider}/acs",
 		Setup: func(ctx context.Context, w *faultWorld) (any, error) {
-			relayState, err := randFuzzSAMLToken()
-			if err != nil {
-				return nil, fmt.Errorf("setup randFuzzSAMLToken: %w", err)
-			}
+			// Deterministic, not random (#2910): the RelayState is persisted as the
+			// SSOLoginState key, and the subject becomes the JIT account's
+			// Username/Email/ExternalID. Oracle (a) compares the fault world's
+			// final state against an independently built reference world, so a
+			// per-run random value there makes every faulted-but-SUCCESSFUL run
+			// differ from the reference in User, whatever the fault did. The
+			// tables are reset between iterations, so a fixed value never
+			// collides. Found when group sync made this op's best-effort-fault
+			// successes common enough to see.
+			const relayState = "fuzz-saml-relay-state"
 			// Register a provider + matching SSOLoginState directly via storage: the
 			// real BeginSAML endpoint would mint its own RelayState/request ID and
 			// redirect to an unreachable fake IdP URL, so Setup supplies the
@@ -183,9 +222,15 @@ func init() {
 			if err != nil {
 				return nil, fmt.Errorf("setup fuzzSAMLSPMetadata: %w", err)
 			}
-			subject := "fuzz-saml-" + relayState[:8]
+			if err := seedFuzzSSOGroup(w, fuzzSAMLGroupEngineers); err != nil {
+				return nil, fmt.Errorf("setup seed group: %w", err)
+			}
+			if err := seedFuzzSSORole(w, fuzzSAMLRoleEngineer); err != nil {
+				return nil, fmt.Errorf("setup seed role: %w", err)
+			}
+			const subject = "fuzz-saml-user"
 			resp, err := samltest.SignedResponse(fixture, fuzzSAMLIdPEntityID, spMetadata,
-				subject, subject+"@fuzz-saml.example", "Fuzz SAML User", nil, relayState)
+				subject, subject+"@fuzz-saml.example", "Fuzz SAML User", []string{fuzzSAMLGroupEngineers}, relayState)
 			if err != nil {
 				return nil, fmt.Errorf("setup samltest.SignedResponse: %w", err)
 			}

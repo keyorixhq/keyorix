@@ -98,7 +98,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("verify token against %s: %w", serverURL, err)
 	}
 	if profileResp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("login succeeded but token verification failed: HTTP %d", profileResp.StatusCode())
+		return httpStatusError("login succeeded but token verification failed", profileResp.StatusCode(), profileResp.Body)
 	}
 
 	store, err := resolveCredStore()
@@ -272,7 +272,7 @@ func resolveMFACode(cmd *cobra.Command) (string, error) {
 		return loginMFACode, nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", fmt.Errorf("this account requires a second factor and there is no terminal to prompt on: pass --mfa-code <authenticator or recovery code>")
+		return "", fmt.Errorf("this account requires a second factor and there is no terminal to prompt on: pass --mfa-code <authenticator or recovery code>") // docs-secrets:allow -- single-use code; the only non-interactive path when there is no TTY
 	}
 	code, err := promptPassword("Authenticator code (or an unused recovery code): ")
 	if err != nil {

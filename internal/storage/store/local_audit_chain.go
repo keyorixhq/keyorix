@@ -105,17 +105,51 @@ func applyAuditCommitDurability(tx *gorm.DB, skip bool) error {
 	return tx.Exec("SET LOCAL synchronous_commit = off").Error
 }
 
-// isSQLiteBusyErr reports whether err looks like a SQLite writer-lock
-// contention error (SQLITE_BUSY / "database is locked"). Matches the
-// driver-native message text, the same approach isUniqueViolation already
-// uses (local_memberships.go) since this codebase doesn't set
-// gorm.Config{TranslateError: true}.
+// isSQLiteBusyErr reports whether err is a SQLite writer-lock contention
+// error: the in-process write gate's own timeout, or the driver-native
+// SQLITE_BUSY / "database is locked" from the raw busy handler.
+//
+// The gate's sentinel is checked FIRST, and with errors.Is rather than a
+// substring. Once storage.ErrSQLiteWriteContention exists, it is the DOMINANT
+// contention error on SQLite — the gate serializes writers in-process, so
+// contention is resolved by waiting on a channel and reported as a timeout,
+// and SQLITE_BUSY only survives for the paths the gate does not cover
+// (autocommit writes, a second *sql.DB handle in the same process). A
+// classifier that knows only the driver text would therefore stop recognising
+// the common case the moment the gate landed, which is what the coordinator's
+// review of #2637 found: the busy-retry budget that exists for exactly this
+// condition would no longer apply to it.
+//
+// The driver-text checks stay, as substrings, for the reason the original
+// comment gives: this codebase does not set gorm.Config{TranslateError: true},
+// so there is no typed error to match on for the driver's own errors — the
+// same approach isUniqueViolation uses (local_memberships.go).
 func isSQLiteBusyErr(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, storage.ErrSQLiteWriteContention) {
+		return true
+	}
 	msg := err.Error()
 	return strings.Contains(msg, "SQLITE_BUSY") || strings.Contains(msg, "database is locked")
+}
+
+// isBatchGlobalContentionErr reports whether err is a contention failure that
+// applies to the BATCH rather than to any item in it, so bisecting to find a
+// poisoned item is not just useless but actively harmful. See commitAuditBatch.
+//
+// That includes a write-gate wait that ended on the caller's ctx instead of on the
+// gate's own timer. auditWriteTimeout, sqliteWriteGateMaxWait and the DSN's
+// busy_timeout are all 10s and the ctx deadline starts first, so the gate's
+// select can legitimately return a wrapped ctx.Err() rather than
+// ErrSQLiteWriteContention (#2637 review, Finding 1). Every item of a batch
+// shares one fixed deadline shape, so an expired/cancelled ctx is likewise a
+// property of the batch, not of an item.
+func isBatchGlobalContentionErr(err error) bool {
+	return errors.Is(err, storage.ErrSQLiteWriteContention) ||
+		errors.Is(err, context.DeadlineExceeded) ||
+		errors.Is(err, context.Canceled)
 }
 
 // computeAuditEntryHash hashes an event's semantically meaningful fields plus
@@ -646,6 +680,17 @@ func (ls *LocalStorage) commitBatchWithBusyRetry(ctx context.Context, batch []*a
 // expired under sustained contention) bisects the same way and every leaf
 // gets the same outcome (nothing committed, same error) — bisection doesn't
 // change that case's result, only adds a few harmless extra attempts.
+//
+// That last sentence is TRUE ONLY WHEN THE CTX HAS EXPIRED, which is what makes
+// each leaf fail instantly. The in-process SQLite write gate (#2637) breaks that
+// premise and is therefore excluded explicitly below: the gate gives up after its
+// own bound while the item's auditWriteContext deadline can still be live, so
+// every leaf of the recursion can queue for the FULL bound again. A 256-item
+// batch has ~511 leaves, so a single bounded failure becomes an unbounded serial
+// amplification — under precisely the sustained-contention load the gate exists
+// to bound. recordAuditFlush also fires once per recursion level, which would
+// corrupt keyorix_audit_flusher_batch_size / _flushes_total at exactly the moment
+// an operator is looking at them. Found by the coordinator's review of #2637.
 func (ls *LocalStorage) commitAuditBatch(batch []*auditBatchItem) []error {
 	ctx := batch[0].ctx // auditWriteContext-derived; every item's ctx carries the same fixed deadline shape
 	err := ls.commitBatchWithBusyRetry(ctx, batch)
@@ -655,6 +700,18 @@ func (ls *LocalStorage) commitAuditBatch(batch []*auditBatchItem) []error {
 	}
 	if len(batch) == 1 {
 		return []error{err}
+	}
+	// A batch-GLOBAL contention failure is not a poisoned item, so there is
+	// nothing for a bisection to find: fail the whole batch with the one error.
+	// Every caller is already waiting on its own item's done channel and gets the
+	// same error it would have got from a leaf, just without the ~511 extra gate
+	// waits and the corrupted flush metrics.
+	if isBatchGlobalContentionErr(err) {
+		errs := make([]error, len(batch))
+		for i := range errs {
+			errs[i] = err
+		}
+		return errs
 	}
 	mid := len(batch) / 2
 	left := ls.commitAuditBatch(batch[:mid])

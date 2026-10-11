@@ -362,8 +362,15 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	}
 
 	// Best-effort password-history seed, after the atomic create (ADR-025).
+	// Through besteffort.Run, exactly like CreateUser above: a bare `_ =`
+	// discards the error but not a PANIC, which escaped past the committed
+	// CreateUserWithRoleGrants and reported a created user as a failed request
+	// (FuzzStorageFaultOperations: GRPC UserService.CreateUser,
+	// AddPasswordHistory#1/panic, oracle (a), [User UserRole]).
 	if c.passwordPolicy.HistoryCount > 0 {
-		_ = c.storage.AddPasswordHistory(ctx, created.ID, hash, c.now())
+		besteffort.Run(ctx, "users.CreateUserWithAssignments.AddPasswordHistory", func() error {
+			return c.storage.AddPasswordHistory(ctx, created.ID, hash, c.now())
+		})
 	}
 
 	c.LogUserCreated(ctx, actorID, created.ID, created.Username)
@@ -928,7 +935,7 @@ func (c *KeyorixCore) RevokeAllPersonalAccessTokensForUser(ctx context.Context, 
 	}
 	c.invalidateTokenCache(hashes...)
 	c.writeAuditEvent(ctx, EventUserCredentialsRevoked, actorPtr(actorID), nil,
-		fmt.Sprintf("revoked all personal access tokens for user %d", targetUserID))
+		fmt.Sprintf("revoked all personal access tokens for %s", c.auditRef(ctx, c.storage, auditKindUser, targetUserID)))
 	return hashes, nil
 }
 
@@ -947,7 +954,7 @@ func (c *KeyorixCore) DeleteSessionsForUserExcept(ctx context.Context, actorType
 	}
 	c.invalidateTokenCache(sessionHashes...)
 	c.writeAuditEvent(ctx, EventUserCredentialsRevoked, actorPtr(actorID), nil,
-		fmt.Sprintf("deleted sessions for user %d", targetUserID))
+		fmt.Sprintf("deleted sessions for %s", c.auditRef(ctx, c.storage, auditKindUser, targetUserID)))
 	return nil
 }
 

@@ -87,6 +87,72 @@ func (ls *LocalStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id u
 	return nil
 }
 
+// SetDynamicSecretConfigClassification persists ONLY the classification column
+// (plus updated_at), conditional on the row's current classification still being
+// fromClassification — see the storage.Storage interface doc for why
+// ClassifyDynamicSecretConfig cannot use the full-row UpdateDynamicSecretConfig
+// (#2698: its Save wrote `disabled=false` back over the incident kill switch).
+//
+// COALESCE so a NULL column (a row written before Classification existed) is
+// matched by fromClassification "", the value GORM reads it back as.
+func (ls *LocalStorage) SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification, toClassification string, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).
+		Where("id = ? AND COALESCE(classification, '') = ?", id, fromClassification).
+		Updates(map[string]interface{}{"classification": toClassification, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// ExtendDynamicSecretLeaseExpiry persists ONLY expires_at, and only for a lease
+// that is STILL active — see the storage.Storage interface doc (#2698: the
+// full-row Save it replaces wrote the stale Status/RevokeError/RevokedAt back
+// over a concurrent RevokeLease, turning a successful revoke into an `active`
+// lease with a later expiry).
+//
+// expires_at is normalised to UTC here because this raw UPDATE bypasses
+// DynamicSecretLease.BeforeSave, which exists precisely to keep this column
+// canonical for ListExpiredActiveLeases' SQL range query (G81, INV-STORE-19).
+// Dropping that normalisation would let the auto-revoke sweep misjudge expiry
+// on a non-UTC server.
+func (ls *LocalStorage) ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
+		Where("lease_id = ? AND status = ?", leaseID, "active").
+		Updates(map[string]interface{}{"expires_at": newExpiry.UTC()})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// RecordDynamicSecretLeaseRevocation persists ONLY the revocation columns of a
+// lease: status, revoke_reason, revoke_error and revoked_at. Not conditional on
+// the current status — unlike the two methods above, this write records what
+// already happened to the credential at the backend, and it must land whatever
+// else moved meanwhile (a lease whose target drop failed must not be left
+// reading `active` because some other writer touched the row first).
+//
+// What it must NOT do is carry the rest of the caller's pre-read row with it:
+// the former full-row Save also rewrote expires_at, so a revoke could revert a
+// concurrent renewal's extension (harmless on a dead credential, but it is the
+// same lost-update shape, and leaving one full-row writer alive is how the class
+// comes back — #2698).
+func (ls *LocalStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID, status, revokeReason, revokeError string, revokedAt *time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
+		Where("lease_id = ?", leaseID).
+		Updates(map[string]interface{}{
+			"status":        status,
+			"revoke_reason": revokeReason,
+			"revoke_error":  revokeError,
+			"revoked_at":    revokedAt,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
 // TransitionDynamicSecretConfigDisabled persists c's full row via a conditional
 // UPDATE gated on the row's CURRENT disabled value still being fromDisabled (see
 // the interface doc in internal/core/storage/interface.go for why this exists

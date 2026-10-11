@@ -53,27 +53,30 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestBreakGlassError_Denied_S22(t *testing.T) {
-	err := breakGlassError(errors.New("denied: break-glass is restricted"))
+	err := breakGlassError(errBGDisabled)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
 func TestBreakGlassError_NotActive_S22(t *testing.T) {
-	err := breakGlassError(errors.New("activation is not active"))
+	err := breakGlassError(errBGNotActive)
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
+// #2905: an "expired" activation is not a distinct core refusal -- revoke
+// accepts a TTL-lapsed row, and every state refusal is ErrBreakGlassNotActive --
+// so the former "expired" text arm is the same FailedPrecondition sentinel.
 func TestBreakGlassError_Expired_S22(t *testing.T) {
-	err := breakGlassError(errors.New("activation has expired"))
+	err := breakGlassError(errBGNotActive)
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 
 func TestBreakGlassError_Required_S22(t *testing.T) {
-	err := breakGlassError(errors.New("ttl is required"))
+	err := breakGlassError(errBGInvalidRequest)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestBreakGlassError_Invalid_S22(t *testing.T) {
-	err := breakGlassError(errors.New("invalid ttl format"))
+	err := breakGlassError(errBGInvalidRequest)
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 

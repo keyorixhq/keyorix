@@ -462,6 +462,26 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `server/grpc/services/project_service_list_scoped_2780_test.go`; structurally,
   `server/http/permission_sweep_test.go`'s `noPermissionGateAllowlist` +
   `TestNoUngatedRoutes` and `scripts/e2e/routes.json`. All default-ci.
+  Four corollaries, each learned by getting one of them wrong first:
+  (a) a GLOBAL grant holder sees EVERYTHING, not their owned/shared/ACL subset — the
+  tier that returns the personal set is tier 3 (no role-granted scope at all), and
+  collapsing tiers 1/2 onto it is the #2780 defect
+  (`secret_readable_listing_global_test.go`);
+  (b) a project-restricted PAT (ADR-042) sees its restricted project even when its
+  OWNER is granted only globally — neither the global check nor the owner's
+  project-scoped grants can produce it, so `VisibleProjects` adds the restriction's
+  project as a CANDIDATE and lets the project-scope authorization pass decide
+  (`TestVisibleProjects_ProjectRestrictedPATSeesOnlyItsProject`); an
+  ENVIRONMENT-restricted PAT still sees nothing, because that pass refuses it
+  (`..._EnvironmentRestrictedPATSeesNoProject`);
+  (c) a machine identity is a distinct path (GetMachineRoleScopes, no admin bypass)
+  and is asserted on both transports
+  (`server/http/handlers/catalog_list_scoped_actors_test.go`,
+  `server/grpc/services/project_service_list_scoped_machine_test.go`);
+  (d) a bound that truncates must SAY so: `SecretListResponse.Truncated` plus
+  `CountReadableSecrets`' `exact` return, which makes `GetDashboardStats` degrade
+  rather than render a floor as a count
+  (`secret_readable_listing_truncation_test.go`).
   `TestCTAReview_InviteMemberOpenMode_vs_Revoke_CrossReplicaPostgres` (pg-gated),
   plus `FuzzCrossReplicaInvariants`' invariant 6 (`g4OrphanedMembershipGrants`,
   pg-gated). That oracle fires on a (project, user) pair that has a `revoked`
@@ -493,6 +513,20 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `membershipLockKey` closure; `revoked` has no outgoing transition, so a new
   invite is the only way back, which is why the serial re-invite shape above is
   reachable at all.
+- **INV-CORE-47** A membership of a SOFT-DELETED project is reported by the per-user
+  membership LIST, flagged `ProjectDeleted` and carrying the project's real name, and is
+  excluded from the per-user project COUNTS. The two surfaces differ on purpose: a
+  project-scoped grant survives a soft-delete so `RestoreProject` can reinstate it, so an
+  access review must see the grant, while a headline "how many projects is this person in"
+  must not include one nobody can navigate to. A grant pointing at a project that is not in
+  the index at all (hard-deleted, stale row) is likewise not counted and never errors. Why:
+  the counts included soft-deleted projects, and the list reported them with an EMPTY name
+  (`ListProjects` is soft-delete-scoped), so an auditor got a row they could not identify.
+  Guard: `project_membership_soft_delete_test.go` — each half asserts the OTHER surface's
+  behaviour too, so a later change that collapses them together fails. Same file pins that a
+  SUSPENDED user still holds their grants (suspension blocks login, not RBAC — the same
+  live-holders-vs-grant-rows distinction as INV-CORE-15) and that a soft-deleted GROUP
+  confers no membership. All default-ci.
   Why: C-GUARD2-EXEMPT-REVIEW. Guard: user profile writes (#2653/#2654, fixed):
   `user_profile_column_scoped_guard_test.go:TestUserProfileWrites_AreColumnScoped` +
   `TestCTAReview_UpdateUser_vs_SuspendUser_CrossReplicaPostgres` /

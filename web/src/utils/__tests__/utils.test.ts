@@ -70,6 +70,13 @@ describe('formatRelativeTime', () => {
         expect(formatRelativeTime(ago(3 * 3_600_000))).toBe('3 hours ago');
         expect(formatRelativeTime(ago(2 * 86_400_000))).toBe('2 days ago');
     });
+
+    it('uses the singular for exactly one unit', () => {
+        const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+        expect(formatRelativeTime(ago(60_000 + 5_000))).toBe('1 minute ago');
+        expect(formatRelativeTime(ago(3_600_000 + 5_000))).toBe('1 hour ago');
+        expect(formatRelativeTime(ago(86_400_000 + 5_000))).toBe('1 day ago');
+    });
 });
 
 describe('generateId', () => {

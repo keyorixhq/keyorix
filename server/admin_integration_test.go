@@ -159,10 +159,18 @@ func waitForLockFree(t *testing.T, cfg *config.Config, timeoutSeconds int) bool 
 }
 
 func baseEnv(dir string) []string {
-	return []string{
+	env := []string{
 		"HOME=" + dir,
 		"PATH=/usr/bin:/bin",
 	}
+	// Honour the caller's temp dir: the child (admin restore creates a staging
+	// directory under os.TempDir) otherwise falls back to /tmp, which a
+	// sandboxed runner may not allow writing. Only forwarded when set, so an
+	// environment without TMPDIR (CI) is unchanged.
+	if tmp := os.Getenv("TMPDIR"); tmp != "" {
+		env = append(env, "TMPDIR="+tmp)
+	}
+	return env
 }
 
 // freeTCPPort returns a port number no listener is bound to, by binding to

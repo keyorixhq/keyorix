@@ -698,6 +698,23 @@ func (w *FaultyStorage) CountUnreadNotifications(ctx context.Context, userID uin
 	return w.real.CountUnreadNotifications(ctx, userID)
 }
 
+func (w *FaultyStorage) CountUnreadScopedNotifications(ctx context.Context, userID uint, scope storage.NotificationScope) (int64, error) {
+	fire, kind, injected := w.check("CountUnreadScopedNotifications")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 int64
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.CountUnreadScopedNotifications(ctx, userID, scope)
+			return rv1, injected
+		}
+	}
+	return w.real.CountUnreadScopedNotifications(ctx, userID, scope)
+}
+
 func (w *FaultyStorage) CountUnusedMFARecoveryCodes(ctx context.Context, userID uint) (int, error) {
 	fire, kind, injected := w.check("CountUnusedMFARecoveryCodes")
 	if fire {
@@ -2167,6 +2184,23 @@ func (w *FaultyStorage) EnforceSessionLimit(ctx context.Context, userID uint, ke
 		}
 	}
 	return w.real.EnforceSessionLimit(ctx, userID, keep)
+}
+
+func (w *FaultyStorage) ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (bool, error) {
+	fire, kind, injected := w.check("ExtendDynamicSecretLeaseExpiry")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ExtendDynamicSecretLeaseExpiry(ctx, leaseID, newExpiry)
+			return rv1, injected
+		}
+	}
+	return w.real.ExtendDynamicSecretLeaseExpiry(ctx, leaseID, newExpiry)
 }
 
 func (w *FaultyStorage) GetAccessRequest(ctx context.Context, id uint) (*models.AccessRequest, error) {
@@ -4910,6 +4944,23 @@ func (w *FaultyStorage) ListRotationPolicies(ctx context.Context, projectID *uin
 	return w.real.ListRotationPolicies(ctx, projectID, environmentID)
 }
 
+func (w *FaultyStorage) ListScopedNotifications(ctx context.Context, userID uint, scope storage.NotificationScope, unreadOnly bool, limit int) ([]*models.Notification, error) {
+	fire, kind, injected := w.check("ListScopedNotifications")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []*models.Notification
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListScopedNotifications(ctx, userID, scope, unreadOnly, limit)
+			return rv1, injected
+		}
+	}
+	return w.real.ListScopedNotifications(ctx, userID, scope, unreadOnly, limit)
+}
+
 func (w *FaultyStorage) ListSecretACLs(ctx context.Context, secretID uint) ([]*models.SecretACL, error) {
 	fire, kind, injected := w.check("ListSecretACLs")
 	if fire {
@@ -5302,6 +5353,23 @@ func (w *FaultyStorage) ListUnalertedAnomalyAlerts(ctx context.Context) ([]model
 	return w.real.ListUnalertedAnomalyAlerts(ctx)
 }
 
+func (w *FaultyStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	fire, kind, injected := w.check("ListUnreviewedBreakGlassActivationsBefore")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []*models.BreakGlassActivation
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+			return rv1, injected
+		}
+	}
+	return w.real.ListUnreviewedBreakGlassActivationsBefore(ctx, cutoff)
+}
+
 func (w *FaultyStorage) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
 	fire, kind, injected := w.check("ListUserProjectMemberships")
 	if fire {
@@ -5487,6 +5555,22 @@ func (w *FaultyStorage) MarkAllNotificationsRead(ctx context.Context, userID uin
 	return w.real.MarkAllNotificationsRead(ctx, userID)
 }
 
+func (w *FaultyStorage) MarkAllScopedNotificationsRead(ctx context.Context, userID uint, scope storage.NotificationScope) error {
+	fire, kind, injected := w.check("MarkAllScopedNotificationsRead")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.MarkAllScopedNotificationsRead(ctx, userID, scope)
+			return injected
+		}
+	}
+	return w.real.MarkAllScopedNotificationsRead(ctx, userID, scope)
+}
+
 func (w *FaultyStorage) MarkAnomalyAlertAlerted(ctx context.Context, id uint) error {
 	fire, kind, injected := w.check("MarkAnomalyAlertAlerted")
 	if fire {
@@ -5517,6 +5601,22 @@ func (w *FaultyStorage) MarkNotificationRead(ctx context.Context, id uint, userI
 		}
 	}
 	return w.real.MarkNotificationRead(ctx, id, userID)
+}
+
+func (w *FaultyStorage) MarkScopedNotificationRead(ctx context.Context, id uint, userID uint, scope storage.NotificationScope) error {
+	fire, kind, injected := w.check("MarkScopedNotificationRead")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.MarkScopedNotificationRead(ctx, id, userID, scope)
+			return injected
+		}
+	}
+	return w.real.MarkScopedNotificationRead(ctx, id, userID, scope)
 }
 
 func (w *FaultyStorage) MarkSetupTokenConsumed(ctx context.Context, id uint, consumedAt time.Time) (bool, error) {
@@ -5769,6 +5869,23 @@ func (w *FaultyStorage) ReconcileExpiredBreakGlassActivation(ctx context.Context
 		}
 	}
 	return w.real.ReconcileExpiredBreakGlassActivation(ctx, projectID, userID)
+}
+
+func (w *FaultyStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID string, status string, revokeReason string, revokeError string, revokedAt *time.Time) (bool, error) {
+	fire, kind, injected := w.check("RecordDynamicSecretLeaseRevocation")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.RecordDynamicSecretLeaseRevocation(ctx, leaseID, status, revokeReason, revokeError, revokedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.RecordDynamicSecretLeaseRevocation(ctx, leaseID, status, revokeReason, revokeError, revokedAt)
 }
 
 func (w *FaultyStorage) RecordLoginAttempt(ctx context.Context, ip string, at time.Time) error {
@@ -6064,6 +6181,22 @@ func (w *FaultyStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID 
 	return w.real.RevertAccessReviewItemClaim(ctx, itemID, fromDecision, actorID)
 }
 
+func (w *FaultyStorage) ReviewBreakGlassActivation(ctx context.Context, id uint, reviewerID uint, note string, reviewedAt time.Time) error {
+	fire, kind, injected := w.check("ReviewBreakGlassActivation")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.ReviewBreakGlassActivation(ctx, id, reviewerID, note, reviewedAt)
+			return injected
+		}
+	}
+	return w.real.ReviewBreakGlassActivation(ctx, id, reviewerID, note, reviewedAt)
+}
+
 func (w *FaultyStorage) RevokeAllPersonalAccessTokensForUser(ctx context.Context, userID uint) ([]string, error) {
 	fire, kind, injected := w.check("RevokeAllPersonalAccessTokensForUser")
 	if fire {
@@ -6325,6 +6458,23 @@ func (w *FaultyStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id u
 		}
 	}
 	return w.real.SetDynamicSecretConfigAdminDSN(ctx, id, enc, meta)
+}
+
+func (w *FaultyStorage) SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification string, toClassification string, updatedAt time.Time) (bool, error) {
+	fire, kind, injected := w.check("SetDynamicSecretConfigClassification")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.SetDynamicSecretConfigClassification(ctx, id, fromClassification, toClassification, updatedAt)
+			return rv1, injected
+		}
+	}
+	return w.real.SetDynamicSecretConfigClassification(ctx, id, fromClassification, toClassification, updatedAt)
 }
 
 func (w *FaultyStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification string, toClassification string) (bool, error) {

@@ -293,6 +293,18 @@ type BreakGlassActivation struct {
 	// machine caller (ADR-030) rather than a human. Plain uint, 0 = none.
 	RevokedByMachineIdentityID uint       `json:"revoked_by_machine_identity_id,omitempty"`
 	RevokedAt                  *time.Time `json:"revoked_at,omitempty"`
+	// ReviewedBy/ReviewedAt/ReviewNote (ADR-112 §3, break-glass review item 5):
+	// a second, after-the-fact check on every activation, distinct from the
+	// activation itself staying single-person (decided). ReviewedBy is 0 and
+	// ReviewedAt is nil until a reviewer submits one -- an activation can be
+	// reviewed exactly once; a second attempt is refused by the core layer, not
+	// by a storage constraint (see ReviewBreakGlassActivation's own doc for the
+	// atomic conditional UPDATE this relies on). An activation whose ReviewedAt
+	// is still nil, older than break_glass.review_window, is what the posture
+	// report (item 4) lists as a deviation.
+	ReviewedBy uint       `gorm:"index" json:"reviewed_by,omitempty"`
+	ReviewedAt *time.Time `json:"reviewed_at,omitempty"`
+	ReviewNote string     `json:"review_note,omitempty"`
 }
 
 // BeforeSave normalises CreatedAt and ExpiresAt to UTC so SQLite string
@@ -313,6 +325,17 @@ func (b *BreakGlassActivation) BeforeSave(_ *gorm.DB) error {
 	if b.ExpiresAt != nil {
 		utc := b.ExpiresAt.UTC()
 		b.ExpiresAt = &utc
+	}
+	// ReviewedAt: same G81 normalization. ReviewBreakGlassActivation's own
+	// conditional UPDATE only ever compares it against IS NULL (not a range
+	// bound), so a mixed timezone wouldn't break that one query today -- but
+	// ListUnreviewedBreakGlassActivationsBefore's created_at <= cutoff (and any
+	// future ReviewedAt-based query) depends on every timestamp in this table
+	// being UTC-consistent, so this is normalized unconditionally rather than
+	// relying on today's one query shape happening not to need it.
+	if b.ReviewedAt != nil {
+		utc := b.ReviewedAt.UTC()
+		b.ReviewedAt = &utc
 	}
 	return nil
 }
@@ -984,6 +1007,23 @@ type SecretNode struct {
 	// is always still needed against the current, LocalStorage-only backend. Never
 	// carries the value itself.
 	ValueStored bool `gorm:"-" json:"-"`
+	// CacheEpoch is the read-path metadata cache's generation stamp
+	// (internal/storage/store/secret_metadata_cache.go), maintained by a DATABASE
+	// TRIGGER — store.EnsureSecretNodeCacheEpoch — which bumps it on EVERY update
+	// to this row: Save(), Updates(), UpdateColumn() and raw SQL alike, with no Go
+	// code to forget and nothing for a new writer to opt into.
+	//
+	// `<-:false` makes it READ-ONLY to GORM: it is selected into this struct but
+	// never written, so no Go code can set it even by accident, and a full-struct
+	// Save() of a stale struct cannot roll it backwards. That is load-bearing, not
+	// tidiness — the whole point of the column is that application code does not
+	// own it. Guarded by TestSecretNodeCacheEpoch_FieldStaysReadOnlyToGORM.
+	// `json:"-"` keeps an internal cache stamp out of API responses.
+	//
+	// It IS a field (rather than a column with no field) so AutoMigrate creates it
+	// for every test schema and fresh install; the migration's explicit ALTER
+	// covers the upgrade path, where AutoMigrate does not run at all.
+	CacheEpoch int64 `gorm:"<-:false;not null;default:0" json:"-"`
 }
 
 // BeforeSave normalises Expiration to UTC so SQLite string comparisons are
@@ -1092,8 +1132,13 @@ type SecretVersion struct {
 	VersionNumber      int
 	EncryptedValue     []byte `json:"-"`
 	EncryptionMetadata JSON   `json:"-"`
-	ReadCount          int
-	CreatedAt          time.Time
+	// ReadCount is a best-effort display copy of the reads charged against the
+	// secret's MaxReads while this version was the one read (readVersionValue). A
+	// secret with no MaxReads is never charged, so this stays 0 however often the
+	// version is read; the enforcement counter is SecretNode.ReadCount. Actual read
+	// activity lives in the audit log (secret.read), not here. See docs/API_REFERENCE.md.
+	ReadCount int
+	CreatedAt time.Time
 }
 
 // DynamicSecretConfig (ADR-035) defines an on-demand database-credential source:
@@ -1187,11 +1232,11 @@ func (l *DynamicSecretLease) BeforeSave(_ *gorm.DB) error {
 // installs gain them via migrateDatabase's CREATE INDEX IF NOT EXISTS block.
 type SecretAccessLog struct {
 	ID              uint `gorm:"primaryKey"`
-	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2"`
+	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2;index:idx_secret_access_logs_secret_action,priority:1"`
 	SecretVersionID uint
 	AccessedBy      string
 	AccessTime      time.Time `gorm:"index:idx_secret_access_logs_secret_time,priority:2;index:idx_secret_access_logs_access_time,priority:1"`
-	Action          string
+	Action          string    `gorm:"index:idx_secret_access_logs_secret_action,priority:2"`
 	IPAddress       string
 	UserAgent       string
 }
@@ -1258,6 +1303,16 @@ type Session struct {
 	// are still swept up by CleanupExpiredSessions once their (unextended) ExpiresAt
 	// passes, so they don't accumulate indefinitely.
 	RotatedAt *time.Time
+
+	// SetupOnly marks a session minted for an account that must still both set a
+	// password and enrol a second factor before it may do anything (#3024: a
+	// recovered admin, a one-time-password or forced-reset user, under
+	// security.require_mfa). Such a session can reach only those setup steps,
+	// never full access: core.EndSetupSessionIfComplete revokes it once nothing
+	// is pending, so the account's next login is a normal MFA login. Set once at
+	// mint (or on refresh of a session whose account is in that state), carried
+	// through every refresh, never cleared.
+	SetupOnly bool `gorm:"not null;default:false"`
 }
 
 // BeforeSave normalises ExpiresAt to UTC so SQLite string comparisons are

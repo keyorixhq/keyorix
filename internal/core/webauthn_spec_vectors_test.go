@@ -127,9 +127,17 @@ func newWebAuthnSpecTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
+	// #2841: the RBAC tables are part of this harness's minimum schema now, not
+	// an optional extra. Both login paths resolve the response identity
+	// (GetUserRoles + GetUserPermissions) BEFORE minting the session and the
+	// step-up grant, so a login against a schema missing them fails outright —
+	// as it would in production, where they always exist. Tests that want a
+	// role-HOLDER still seed rows (seedWebAuthnLoginRole); these migrations only
+	// make the empty-role case resolve to an empty identity instead of erroring.
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
 		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{},
-		&models.MFAStepupToken{}, &models.MFAStepUpGrant{}))
+		&models.MFAStepupToken{}, &models.MFAStepUpGrant{},
+		&models.Role{}, &models.Permission{}, &models.UserRole{}, &models.RolePermission{}))
 	hash, err := bcrypt.GenerateFromPassword([]byte(webauthnTestPassword), int(bcryptCost.Load()))
 	require.NoError(t, err)
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", UsernameFolded: "alice", Email: "a@b.com", EmailFolded: "a@b.com",
@@ -241,12 +249,21 @@ func TestFinishWebAuthnLogin_SucceedsWithRealAssertion(t *testing.T) {
 	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: challenge, UserID: specWebAuthnID(1)})
 	require.NoError(t, err)
 
-	session, user, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	session, user, identity, err := c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.NoError(t, err)
 	require.NotNil(t, session)
 	require.NotNil(t, user)
 	assert.Equal(t, uint(1), user.ID)
 	assert.NotEmpty(t, session.SessionToken)
+	// #2841: the identity is resolved inside core, BEFORE the session and grant
+	// are written, and handed back so the handler never re-reads it. Asserting
+	// it matches an independent read is what rules out the returned value being
+	// a zero struct, or one resolved for the wrong user. (That it is POPULATED
+	// for a user who actually holds roles is covered by
+	// login_identity_before_mint_test.go, which seeds one.)
+	wantIdentity, ierr := c.GetUserIdentity(ctx, 1)
+	require.NoError(t, ierr)
+	assert.Equal(t, wantIdentity, identity, "a successful login must return the resolved response identity")
 
 	var events int64
 	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "webauthn.login_verified").Count(&events).Error)
@@ -264,7 +281,7 @@ func TestFinishWebAuthnLogin_SucceedsWithRealAssertion(t *testing.T) {
 	// Replay: both the MFA challenge and the webauthn ceremony session are
 	// single-use -- reusing either after a completed login must fail, not
 	// silently mint a second session.
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err, "a consumed challenge/session pair must not be replayable")
 }
 
@@ -287,7 +304,7 @@ func TestFinishWebAuthnLogin_RejectsCredentialMismatch(t *testing.T) {
 	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: challenge, UserID: specWebAuthnID(1)})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "assertion verification failed")
 
@@ -316,7 +333,7 @@ func TestFinishWebAuthnLogin_RejectsCorruptedSignature(t *testing.T) {
 	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: challenge, UserID: specWebAuthnID(1)})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "assertion verification failed")
 
@@ -341,11 +358,15 @@ func TestFinishWebAuthnPasswordlessLogin_SucceedsWithRealAssertion(t *testing.T)
 	token, err := c.storeWebAuthnSession(ctx, 0, "passwordless", &webauthn.SessionData{Challenge: challenge})
 	require.NoError(t, err)
 
-	session, user, err := c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	session, user, identity, err := c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.NoError(t, err)
 	require.NotNil(t, session)
 	require.NotNil(t, user)
 	assert.Equal(t, uint(1), user.ID)
+	// #2841, same as the second-factor path above.
+	wantIdentity, ierr := c.GetUserIdentity(ctx, 1)
+	require.NoError(t, ierr)
+	assert.Equal(t, wantIdentity, identity, "a successful login must return the resolved response identity")
 
 	var events int64
 	require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "webauthn.passwordless_login").Count(&events).Error)
@@ -372,7 +393,7 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsUnknownUserHandle(t *testing.T) 
 	token, err := c.storeWebAuthnSession(ctx, 0, "passwordless", &webauthn.SessionData{Challenge: challenge})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 
 	var failedEvents int64
@@ -396,7 +417,7 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsCredentialMismatch(t *testing.T)
 	token, err := c.storeWebAuthnSession(ctx, 0, "passwordless", &webauthn.SessionData{Challenge: challenge})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "assertion verification failed")
 }
@@ -416,10 +437,10 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsReplayedSession(t *testing.T) {
 	token, err := c.storeWebAuthnSession(ctx, 0, "passwordless", &webauthn.SessionData{Challenge: challenge})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err, "a consumed passwordless ceremony session must not be replayable")
 }
 
@@ -452,7 +473,7 @@ func TestFinishWebAuthnLogin_ClonedCredentialRejectsAndDisablesEndToEnd(t *testi
 	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: challenge, UserID: specWebAuthnID(1)})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cloned authenticator")
 
@@ -511,7 +532,7 @@ func TestFinishWebAuthnPasswordlessLogin_RejectsSuspendedAccount(t *testing.T) {
 	token, err := c.storeWebAuthnSession(ctx, 0, "passwordless", &webauthn.SessionData{Challenge: challenge})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnPasswordlessLogin(ctx, token, "test-agent", "203.0.113.5", parsed)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not active")
 }
@@ -535,7 +556,7 @@ func TestFinishWebAuthnLogin_RecordsMFAStepupTokenWhenClassificationRequires(t *
 	token, err := c.storeWebAuthnSession(ctx, 1, "login", &webauthn.SessionData{Challenge: challenge, UserID: specWebAuthnID(1)})
 	require.NoError(t, err)
 
-	_, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
+	_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "test-agent", "203.0.113.5", parsed)
 	require.NoError(t, err)
 
 	var count int64
