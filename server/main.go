@@ -543,6 +543,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	coreService := core.NewKeyorixCore(store)
+	// The configured soft-delete window, wired where the service is built (not in an
+	// unrelated wireX helper) so every transport and job that shows or applies a
+	// purge date (core.SecretPurgeAt) sees soft_delete.retention_days, never core's
+	// 30-day library default.
+	coreService.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 
 	// keyless mode (docs/design-b2-recover-admin.md §5): flagged loudly and
 	// repeatedly wherever an operator or auditor would look -- a startup
@@ -2905,7 +2910,6 @@ func wireDynamicSecrets(cfg *config.Config, coreService *core.KeyorixCore) {
 	// refuses to mint from backends whose lease TTL only the sweeper enforces
 	// (MySQL/MongoDB) when it is disabled — otherwise the credential never expires.
 	coreService.SetDynamicSweepEnabled(cfg.DynamicSecrets.SweepEnabled)
-	coreService.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 	// SSRF guard for admin DSNs: disabled (private targets allowed) only when the
 	// operator explicitly opts in via dynamic_secrets.allow_private_network_targets.
 	coreService.SetDynamicAllowPrivateTargets(cfg.DynamicSecrets.AllowPrivateNetworkTargets)

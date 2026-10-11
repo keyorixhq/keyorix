@@ -17,7 +17,11 @@ import (
 )
 
 // defaultSoftDeleteRetentionDays is config.SoftDeleteConfig.GetRetentionDays's default,
-// used when the service was never told the configured window (tests, library use).
+// used when the service was never told the configured window (tests, library use). The
+// server wires soft_delete.retention_days at construction (server/main.go), so this value
+// never applies in a running server; it equals the config default so the unwired case
+// shows the same date an unconfigured server would, and
+// TestDefaultSoftDeleteRetentionDays_MatchesConfigDefault fails if the two drift apart.
 const defaultSoftDeleteRetentionDays = 30
 
 // SecretPurgeAt is the UTC instant the purge job will first hard-delete a soft-deleted
