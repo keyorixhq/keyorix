@@ -166,13 +166,13 @@ func TestAuthBudgetFallback_BudgetsDoNotEvictEachOther(t *testing.T) {
 	for i := 0; i < fallbackLockoutPolicy.MaxAttempts; i++ {
 		c.authBudgetFallback(acct).reserve(accountBudgetKey(1), now, acct.window, 4*acct.limit)
 	}
-	require.True(t, c.budgetFallbackLimited(acct, accountBudgetKey(1)))
+	require.True(t, c.budgetFallbackLimitedWithStored(acct, accountBudgetKey(1), 0))
 	for i := 0; i < authFallbackMaxKeys+10; i++ {
 		ip := "10." + itoa(i>>16&255) + "." + itoa(i>>8&255) + "." + itoa(i&255)
 		c.authBudgetFallback(loginBudget).reserve(ip, now, LoginWindow, 4*LoginMaxAttempts)
 	}
 	assert.LessOrEqual(t, c.authBudgetFallback(loginBudget).size(), authFallbackMaxKeys)
-	assert.True(t, c.budgetFallbackLimited(acct, accountBudgetKey(1)), "an IP flood on the login budget must not unlock an account")
+	assert.True(t, c.budgetFallbackLimitedWithStored(acct, accountBudgetKey(1), 0), "an IP flood on the login budget must not unlock an account")
 }
 
 // TestAccountLockoutFallback_LockSurvivesUpToTheKeyBound pins the bound the
@@ -192,11 +192,11 @@ func TestAccountLockoutFallback_LockSurvivesUpToTheKeyBound(t *testing.T) {
 	for i := 0; i < fallbackLockoutPolicy.MaxAttempts; i++ {
 		f.reserve(accountBudgetKey(1), now, acct.window, 4*acct.limit)
 	}
-	require.True(t, c.budgetFallbackLimited(acct, accountBudgetKey(1)))
+	require.True(t, c.budgetFallbackLimitedWithStored(acct, accountBudgetKey(1), 0))
 	for uid := uint(2); uid <= authFallbackMaxKeys; uid++ { // authFallbackMaxKeys-1 other accounts
 		f.reserve(accountBudgetKey(uid), now, acct.window, 4*acct.limit)
 	}
 	assert.Equal(t, authFallbackMaxKeys, f.size(), "the limiter is full but not over its bound")
-	assert.True(t, c.budgetFallbackLimited(acct, accountBudgetKey(1)),
+	assert.True(t, c.budgetFallbackLimitedWithStored(acct, accountBudgetKey(1), 0),
 		"failures on fewer than authFallbackMaxKeys other accounts must not unlock an account")
 }

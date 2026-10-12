@@ -244,9 +244,10 @@ func TestFallbackLoginSlot_ReleaseOnAnotherReplicaRefundsNothingThere(t *testing
 
 	since := b.now().Add(-LoginWindow)
 	before := b.authBudgetFallback(loginBudget).count("192.0.2.77", since, true)
+	require.Equal(t, 1, before, "calibration: B's own fallback reservation is counted before the release")
 	if ch.LoginAttemptID != nil {
 		b.ReleaseLoginAttempt(ctx, *ch.LoginAttemptID) // what B's completed second factor does
 	}
 	after := b.authBudgetFallback(loginBudget).count("192.0.2.77", since, true)
-	assert.Equal(t, before, after, "replica B refunded an unrelated IP's reservation using replica A's fallback id")
+	assert.Equal(t, 1, after, "replica B refunded an unrelated IP's reservation using replica A's fallback id")
 }
