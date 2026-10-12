@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -359,8 +360,18 @@ type ServerConfig struct {
 	GRPC ServerInstanceConfig `yaml:"grpc"`
 }
 
+// DefaultBindHost is the listen address used when server.http.host /
+// server.grpc.host is unset: loopback only. Reaching the server from another
+// machine (a container, a Kubernetes pod, a LAN demo) is an explicit opt-in,
+// e.g. host: "0.0.0.0". (#2939: the listeners used to bind all interfaces
+// while the startup log claimed 127.0.0.1.)
+const DefaultBindHost = "127.0.0.1"
+
 type ServerInstanceConfig struct {
-	Enabled          bool      `yaml:"enabled"`
+	Enabled bool `yaml:"enabled"`
+	// Host is the address the listener binds to. Empty means DefaultBindHost
+	// (loopback only). Use "0.0.0.0" or "::" to listen on all interfaces.
+	Host             string    `yaml:"host"`
 	Port             string    `yaml:"port"`
 	ProtocolVersions []string  `yaml:"protocol_versions"`
 	TLS              TLSConfig `yaml:"tls"`
@@ -400,6 +411,12 @@ type ServerInstanceConfig struct {
 	// (the default) /metrics is unauthenticated — restrict network access at the
 	// perimeter. Set this to a long random token for any internet-facing deployment.
 	MetricsToken string `yaml:"metrics_token,omitempty"`
+	// MetricsTokenFile names a file holding the metrics token instead (same rules
+	// as a KEYORIX_*_FILE secret file: regular file, one trailing newline
+	// stripped, must not be empty, owner/group-readable only). `keyorix-server
+	// admin init` generates one at 0600 and points both listeners at it. Setting
+	// both metrics_token and metrics_token_file refuses to start.
+	MetricsTokenFile string `yaml:"metrics_token_file,omitempty"`
 	// Keepalive tunes server-side connection keepalive/idle-reclaim (#222/#435). GRPC
 	// only — an authenticated credential holder can otherwise open many long-lived,
 	// mostly-idle connections that the server has no way to detect and reclaim, a
@@ -475,6 +492,36 @@ func (c GRPCKeepaliveConfig) GetMaxConnectionAgeGrace() time.Duration {
 
 // defaultMaxRequestBodyBytes is the request-body cap when none is configured.
 const defaultMaxRequestBodyBytes = 10 << 20 // 10 MiB
+
+// ResolveMetricsToken returns the token GET /metrics requires: metrics_token, or
+// the contents of metrics_token_file. "" with a nil error means no token is
+// configured. Both set, or an unreadable/empty file, is an error, and the
+// caller must not fall back to serving /metrics unauthenticated:
+// Config.Validate refuses to start on it.
+func (s ServerInstanceConfig) ResolveMetricsToken() (string, error) {
+	switch {
+	case s.MetricsToken != "" && s.MetricsTokenFile != "":
+		return "", fmt.Errorf("both metrics_token and metrics_token_file are set; set exactly one")
+	case s.MetricsTokenFile != "":
+		v, err := secretenv.ReadFile(s.MetricsTokenFile)
+		if err != nil {
+			return "", fmt.Errorf("metrics_token_file %q: %w", s.MetricsTokenFile, err)
+		}
+		return v, nil
+	}
+	return s.MetricsToken, nil
+}
+
+// metricsTokenMissing reports whether either listener serves /metrics without a
+// token. An unresolvable metrics_token_file counts as missing (fail closed).
+func (c *Config) metricsTokenMissing() bool {
+	for _, s := range []ServerInstanceConfig{c.Server.HTTP, c.Server.GRPC} {
+		if tok, err := s.ResolveMetricsToken(); err != nil || tok == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // EffectiveMaxRequestBodyBytes returns the request-body cap to enforce: the configured
 // value, or a 10 MiB default when unset (0). A negative value is returned as-is and
@@ -1090,6 +1137,36 @@ type SecurityConfig struct {
 	// RecoverAdmin configures `keyorix-server admin recover-admin`
 	// (docs/design-b2-recover-admin.md §5).
 	RecoverAdmin RecoverAdminConfig `yaml:"recover_admin"`
+	// RecoveryOneTimePasswordTTL is how long the one-time password printed by
+	// `keyorix-server admin recover-admin` stays valid, as a Go duration (e.g.
+	// "24h", "90m"). Empty means the 24h default; a set value must be a duration
+	// in (0, MaxOneTimePasswordTTL] or Validate refuses it. There is no way to
+	// configure "never expires" (OTP-EXPIRY-1).
+	RecoveryOneTimePasswordTTL string `yaml:"recovery_one_time_password_ttl"`
+	// OneTimePasswordTTL is the same for admin-created one-time passwords
+	// (`keyorix user create --one-time-password`). Empty means the 72h default;
+	// the same range check applies.
+	OneTimePasswordTTL string `yaml:"one_time_password_ttl"`
+}
+
+// Defaults for the one-time-password lifetimes (see SecurityConfig). They mirror
+// core.DefaultRecoveryOneTimePasswordTTL / core.DefaultOneTimePasswordTTL, which
+// internal/config cannot import; config_test.go keeps the two in step.
+const (
+	DefaultRecoveryOneTimePasswordTTL = 24 * time.Hour
+	DefaultOneTimePasswordTTL         = 72 * time.Hour
+)
+
+// GetRecoveryOneTimePasswordTTL returns the validity of a recover-admin one-time
+// password, falling back to the default for an empty or invalid value.
+func (s *SecurityConfig) GetRecoveryOneTimePasswordTTL() time.Duration {
+	return parseDurationDefault(s.RecoveryOneTimePasswordTTL, DefaultRecoveryOneTimePasswordTTL)
+}
+
+// GetOneTimePasswordTTL returns the validity of an admin-created one-time
+// password, falling back to the default for an empty or invalid value.
+func (s *SecurityConfig) GetOneTimePasswordTTL() time.Duration {
+	return parseDurationDefault(s.OneTimePasswordTTL, DefaultOneTimePasswordTTL)
 }
 
 // RecoverAdminConfig configures `keyorix-server admin recover-admin`
@@ -2264,6 +2341,14 @@ func (c *Config) ValidateSecretSources() error {
 			problems = append(problems, err.Error())
 		}
 	}
+	for _, l := range []struct {
+		name string
+		inst ServerInstanceConfig
+	}{{"server.http", c.Server.HTTP}, {"server.grpc", c.Server.GRPC}} {
+		if _, err := l.inst.ResolveMetricsToken(); err != nil {
+			problems = append(problems, l.name+": "+err.Error())
+		}
+	}
 	if len(problems) > 0 {
 		return fmt.Errorf("secret source misconfigured: %s", strings.Join(problems, "; "))
 	}
@@ -2271,9 +2356,21 @@ func (c *Config) ValidateSecretSources() error {
 }
 
 // SecretFilePaths returns the files named by the <NAME>_FILE variables that are
-// set, for the file-permission check at startup.
+// set, plus the configured metrics_token_file(s), for the file-permission check
+// at startup.
 func (c *Config) SecretFilePaths() []string {
-	return secretenv.FilePaths(c.secretEnvNames()...)
+	paths := secretenv.FilePaths(c.secretEnvNames()...)
+	seen := map[string]bool{}
+	for _, p := range paths {
+		seen[p] = true
+	}
+	for _, p := range []string{c.Server.HTTP.MetricsTokenFile, c.Server.GRPC.MetricsTokenFile} {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+	return paths
 }
 
 const appRootDir = "."
@@ -2512,6 +2609,27 @@ func LoadConfig() (*Config, error) {
 	return Load("")
 }
 
+// BindHost returns the host the listener binds to: Host, or DefaultBindHost
+// when unset.
+func (s ServerInstanceConfig) BindHost() string {
+	if s.Host == "" {
+		return DefaultBindHost
+	}
+	return s.Host
+}
+
+// ListenAddr returns the host:port the listener binds to (IPv6-safe).
+func (s ServerInstanceConfig) ListenAddr() string {
+	return net.JoinHostPort(s.BindHost(), s.Port)
+}
+
+func validateBindHost(field, host string) error {
+	if host == "" || net.ParseIP(host) != nil || host == "localhost" {
+		return nil
+	}
+	return fmt.Errorf("%s %q is not an IP address (use 127.0.0.1, 0.0.0.0, ::1, :: or a specific interface IP)", field, host)
+}
+
 // Validate checks the configuration for required fields and correctness.
 func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppress go:S3776
 	// X and X_FILE both set, or an unreadable X_FILE, must stop the boot: the
@@ -2524,6 +2642,12 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return err
 	}
 	if err := validateTLSMode("server.grpc.tls_mode", c.Server.GRPC.TLSMode); err != nil {
+		return err
+	}
+	if err := validateBindHost("server.http.host", c.Server.HTTP.Host); err != nil {
+		return err
+	}
+	if err := validateBindHost("server.grpc.host", c.Server.GRPC.Host); err != nil {
 		return err
 	}
 	if c.Server.HTTP.Enabled && c.Server.HTTP.Port == "" {
@@ -2666,6 +2790,38 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		return err
 	}
 
+	if err := validateOneTimePasswordTTLs(c.Security); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// MaxOneTimePasswordTTL is the longest life a one-time password may be configured
+// with. A credential issued out-of-band that stays valid for longer is a standing
+// secret, which is what expiry exists to prevent.
+const MaxOneTimePasswordTTL = 7 * 24 * time.Hour
+
+// validateOneTimePasswordTTLs rejects a security.one_time_password_ttl /
+// security.recovery_one_time_password_ttl that is set but unusable, instead of
+// letting the getters fall back to the default and hide the typo (a "7d" is not a Go
+// duration: say "168h"). Empty is valid and means the default.
+func validateOneTimePasswordTTLs(s SecurityConfig) error {
+	for _, f := range []struct{ key, raw string }{
+		{"security.one_time_password_ttl", s.OneTimePasswordTTL},
+		{"security.recovery_one_time_password_ttl", s.RecoveryOneTimePasswordTTL},
+	} {
+		if f.raw == "" {
+			continue
+		}
+		d, err := time.ParseDuration(f.raw)
+		if err != nil {
+			return fmt.Errorf("%s: %q is not a Go duration (use e.g. \"24h\" or \"90m\"; days are written in hours, \"168h\" for 7 days)", f.key, f.raw)
+		}
+		if d <= 0 || d > MaxOneTimePasswordTTL {
+			return fmt.Errorf("%s: %q is outside the allowed range (greater than 0, at most %s)", f.key, f.raw, MaxOneTimePasswordTTL)
+		}
+	}
 	return nil
 }
 

@@ -52,6 +52,26 @@ release's tooling before swapping: on the v0.95.3 Compose image
 encryption key lock`; stop `backend` and use `docker compose run` (see
 SELF_HOSTING.md §5).
 
+**Your config is not changed.** From the release after v0.95.3, a *fresh*
+`keyorix-server admin init` writes the secure baseline (TLS with a generated
+self-signed certificate, rate limiting on, a generated `/metrics` token file;
+see [CONFIGURATION.md](CONFIGURATION.md#the-generated-config-is-the-secure-baseline)).
+An existing `keyorix.yaml` keeps its values, and re-running `admin init` next to
+it generates nothing, so `admin validate --posture` keeps reporting the same
+deviations until you set the keys listed in
+[CONFIGURATION.md](CONFIGURATION.md#hardening-an-older-config-clearing-the-posture-report)
+yourself. Scripts that ran `admin init` and then talked plain HTTP need
+`admin init --dev` (relaxed, labelled DEV-ONLY) or the generated certificate
+(`keyorix config set ca_file <path>`, `--ca-file`, `KEYORIX_CA_FILE`).
+
+**Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
+CMD). `docker run <image> <command>` and `docker compose run backend <command>`
+still run `<command>`, after the optional config copy (`KEYORIX_CONFIG_SOURCE`);
+only an explicit `--entrypoint` bypasses it. Compose and Helm can opt into the
+secure baseline: `docker-compose.secure.yml` / `secureBaseline.enabled=true`
+(docs/SELF_HOSTING.md §7); turning it on changes `/metrics` (token required)
+and the backend's listener (TLS only).
+
 Schema migrations run on boot. If a rolling multi-replica upgrade hits
 `database schema epoch N is newer than this binary's schema epoch M`, that's
 expected mid-rollout (see `docs/SELF_HOSTING.md` §9 troubleshooting table) —
@@ -229,6 +249,28 @@ Also confirmed the air-gapped profile links **zero** AWS/Azure/GCP SDK
 packages (`go list -tags "noaws noazure nogcp" -deps ./server`, 666 total
 packages, none matching; cross-checked those three SDK families ARE
 present in the unfiltered dependency graph, so this isn't a vacuous pass).
+
+## 6a. BREAKING: the server now binds 127.0.0.1 by default
+
+`server.http.host` and `server.grpc.host` now default to `127.0.0.1` (loopback
+only) instead of every interface (#2939 / #2946). An install that keeps its own
+config file with **no `host:` line** and is reached from another machine, a
+reverse proxy on another host, or through a published container port stops
+accepting those connections after the upgrade.
+
+Add the bind address explicitly under `server.http` (and `server.grpc` if you
+enable gRPC), then restart:
+
+```yaml
+server:
+  http:
+    host: "0.0.0.0"   # all interfaces; or a specific interface address
+```
+
+The shipped `docker-compose.yml` / `keyorix.docker.yaml`, the Helm chart and
+`scripts/demo/up.sh` already set `0.0.0.0`; only configs you wrote or mounted
+yourself need the line. The startup log prints the bound address, with a note
+when it is reachable from the network.
 
 ## 7. Rollback
 

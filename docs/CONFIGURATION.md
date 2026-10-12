@@ -141,6 +141,7 @@ locale:
 server:
   http:
     enabled: true
+    host: "127.0.0.1"             # bind address; default 127.0.0.1 (this machine only). "0.0.0.0" = all interfaces
     port: "8080"
     protocol_versions: ["1.1", "2.0"]
     swagger_enabled: false        # keep false in production
@@ -161,11 +162,14 @@ server:
       enabled: true
       requests_per_second: 50
       burst: 100
+    metrics_token: ""             # GET /metrics then requires "Authorization: Bearer <token>"
+    metrics_token_file: ""        # or read the token from this file (secret-file rules, see below); set one, not both
   grpc:
     # Partial surface, off by default. HTTP is the complete interface; enable this
     # only if you need it, and read docs/adr-105-grpc-scope-and-parity.md first —
     # governance controls such as classification cannot be set over gRPC.
     enabled: false
+    host: "127.0.0.1"             # same default and meaning as server.http.host
     port: "9090"
     protocol_versions: ["2.0"]
     reflection_enabled: false     # keep false in production
@@ -565,20 +569,71 @@ Like every `admin` command, `admin validate --posture` needs the database to
 itself: it refuses while the server runs (stop it, or in Docker Compose use
 `docker compose stop backend` then `docker compose run --rm backend ./keyorix-server admin validate --posture`).
 
-### Hardening the generated config (clearing the posture report)
+### The generated config is the secure baseline
 
-The config written by `admin init` (and `keyorix.docker.yaml`) is a dev baseline:
-on it the report lists the three `insecure_*` settings below (cleartext transport,
-unauthenticated `/metrics`, no API rate limit), and exits 1. Verified on a fresh
-SQLite install: setting exactly these keys makes `admin validate --posture` print
-`No deviations found.` and exit 0 (the startup warning text for each is the
-`insecure_*` name, not the YAML key, so the mapping is:)
+`keyorix-server admin init` writes a config on which `admin validate --posture`
+prints `No deviations found.` (ADR-112 §4; guarded in CI by
+`server/admin_init_secure_baseline_test.go`). In the same run it generates the
+files that config references, each `0600` in a `0700` directory, and prints
+none of their contents:
+
+| File | What | Config key |
+|---|---|---|
+| `certs/server.crt`, `certs/server.key` | self-signed ECDSA P-256 certificate for `localhost`, the host name, `127.0.0.1`, `::1`, valid 397 days | `server.http/grpc.tls.cert_file`/`key_file`, with `tls.enabled: true` and `security.require_transport_tls: true` |
+| `secrets/metrics_token` | 32 random bytes, base64url | `server.http/grpc.metrics_token_file` |
+
+Rate limiting is on (`50`/`100` HTTP, `25`/`50` gRPC, as in
+`server/config/production.yaml`); the request-body cap stays at its default.
+
+- **Existing files are kept.** A certificate/key pair or token already at those
+  paths is used as is (only one of cert/key present is an error). To use your own
+  certificate, put it there before `admin init`, or change `cert_file`/`key_file`.
+- **An existing config is never changed**, and nothing is generated for it
+  (ADR-112: no silent change on upgrade). Re-running `admin init` next to one is a
+  no-op for the config.
+- **Fail closed.** A missing certificate, or an unreadable/empty
+  `metrics_token_file`, stops the server at startup. `metrics_token_file` follows
+  the secret-file rules (regular file, one trailing newline stripped, not readable
+  by others; the startup permission check covers it). Setting both
+  `metrics_token` and `metrics_token_file` is refused.
+- **The CLI must trust the self-signed certificate:**
+  `keyorix config set ca_file /abs/path/certs/server.crt` (stored in the CLI's
+  credentials file), `KEYORIX_CA_FILE`, or `--ca-file` on one command, in that
+  order of precedence: flag, env, stored. The CLI then trusts exactly that file's
+  certificates (not the OS store); a missing file, one with no certificate, one
+  holding a private key, or one writable by group/others is refused. `admin init`
+  prints the exact line. `SSL_CERT_FILE` only works on Linux.
+- **Behind a TLS-terminating proxy** instead: set `server.http.tls.enabled: false`,
+  list the proxy in `server.http.trusted_proxies`, and accept that the posture
+  report then lists `security.insecure_allow_cleartext_transport` if you also set
+  `require_transport_tls: false` (it must be false for a cleartext listener to start).
+
+Docker Compose and Helm reach the same baseline with `docker-compose.secure.yml`
+and the chart's `secureBaseline.enabled` (docs/SELF_HOSTING.md §7);
+`keyorix-server admin init --secure-files` is the generation step on its own,
+for a config an orchestrator supplies.
+
+**`admin init --dev`** writes the relaxed config for a throwaway local demo: TLS
+off and not required, rate limiting off, no metrics token. Its first lines are a
+`DEV-ONLY CONFIG` banner naming those three, and the posture report lists them
+and exits 1. It generates no certificate or token. `require_mfa` stays on. The
+demo and e2e scripts in `scripts/` that talk plain HTTP use it explicitly.
+
+### Hardening an older config (clearing the posture report)
+
+A config written by an earlier `admin init` (and `keyorix.docker.yaml`) is a dev
+baseline: on it the report lists the three `insecure_*` settings below
+(cleartext transport, unauthenticated `/metrics`, no API rate limit), and exits
+1. Upgrading does not change it. Verified on a fresh SQLite install: setting
+exactly these keys makes `admin validate --posture` print `No deviations found.`
+and exit 0 (the startup warning text for each is the `insecure_*` name, not the
+YAML key, so the mapping is:)
 
 | Report names | Set in `keyorix.yaml` |
 |---|---|
 | `security.insecure_allow_cleartext_transport` | `server.http.tls.enabled: true` (with `cert_file`/`key_file`) and `security.require_transport_tls: true`; or terminate TLS at a proxy you trust and list it in `server.http.trusted_proxies` |
-| `server.insecure_allow_unauthenticated_metrics` | `server.http.metrics_token: "<long random string>"`; `/metrics` then answers 401 without `Authorization: Bearer <token>` and 200 with it |
-| `server.insecure_disable_api_ratelimit` | `server.http.ratelimit.enabled: true` (and `server.grpc.ratelimit.enabled: true` if gRPC is on) |
+| `server.insecure_allow_unauthenticated_metrics` | `metrics_token: "<long random string>"` or `metrics_token_file: <path to a 0600 file>` on **both** `server.http` and `server.grpc` (the entry checks both listeners); `/metrics` then answers 401 without `Authorization: Bearer <token>` and 200 with it |
+| `server.insecure_disable_api_ratelimit` | `server.http.ratelimit.enabled: true` and `server.grpc.ratelimit.enabled: true` (the entry checks both listeners, even with gRPC off) |
 
 Also keep the key and config files `0600` and owned by the server's user. In
 Docker Compose the bind-mounted `keyorix.docker.yaml` arrives as the host's
@@ -626,6 +681,45 @@ confined to `change-password` and MFA/passkey enrolment, in either order. When b
 done the session ends and the next login is a normal two-step MFA login (#3024;
 walkthrough in [operator/j5-lost-admin.md](operator/j5-lost-admin.md)). Every other
 endpoint answers 403 with `pending_steps`.
+
+**One-time passwords expire.** Every one-time password the system issues is stored with an
+expiry, and the command or API call that issues it reports that time (UTC):
+
+```yaml
+security:
+  recovery_one_time_password_ttl: 24h   # keyorix-server admin recover-admin (default 24h)
+  one_time_password_ttl: 72h            # keyorix user create --one-time-password (default 72h)
+```
+
+Both are Go durations (write days as hours: `168h`). Leave a key empty for the default; a value
+that is set but is not a duration, is zero or negative, or exceeds 168h (7 days) is refused at
+start-up with the key named, rather than silently becoming the default. There is deliberately
+no setting that means "never expires". The 24h default for recovery is
+because it is an admin credential printed on a terminal and should be used the same day; the
+72h default for new users covers a weekend between an admin creating an account and the
+colleague first logging in. After the expiry, login with the password is refused exactly like
+a wrong password (same response, no hint that it was merely late), audited server-side as
+`auth.one_time_password_expired` (written asynchronously, so the refusal costs the same time as a
+wrong password), and counted toward `login_lockout`. Expiry is enforced at login only: a session
+that already exists keeps working, and `change-password`, own-profile updates and re-authentication
+inside that session do not re-check it. A new password (the
+user's own, via `change-password` or a setup link) removes the expiry, so a password the user
+chose never expires this way. A fresh admin-forced reset (`user force-password-reset`) issues no
+password and has no expiry (but see *Upgrading*). To get an account past an expired one-time password: re-run
+`recover-admin` (admins), or `user resend-setup-link` / re-create the user.
+
+*Upgrading:* accounts already in `password_reset_required` when this version first starts
+have no recorded expiry and cannot be told apart (a one-time password, an admin-forced reset
+and an expired-password gate leave the same state), so they get **24 hours from the upgrade**.
+An account whose owner changes the password in that window is unaffected; one that does not
+is then refused at login until an admin re-issues access. **This includes accounts an admin
+forced to reset and accounts held by the password max-age gate**, not only one-time passwords.
+This happens once, in the same migration (SQLite and PostgreSQL) that adds the column, and is
+logged at start-up with the count.
+
+*Mixed-version rollouts:* the schema epoch is unchanged, so replicas still running the previous
+version keep accepting an expired one-time password until they are upgraded. Expiry is fully in
+force only once every replica runs this version; do not count on it during a rolling upgrade.
 
 **Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection
 distinct from the per-IP rate limiter (ADR-040): after `max_attempts` failed
