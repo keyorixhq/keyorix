@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -630,9 +631,13 @@ func (h *UserHandler) ReissueOneTimePassword(w http.ResponseWriter, r *http.Requ
 			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
 		case errors.Is(err, core.ErrCannotActOnSelf):
 			sendError(w, "BadRequest", "Cannot reissue your own one-time password; use `keyorix-server admin recover-admin` to recover your own account", http.StatusBadRequest, nil)
-		case errors.Is(err, core.ErrReissueExternalIdentity), errors.Is(err, core.ErrReissueAccountBlocked):
-			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
-		case strings.Contains(err.Error(), errNotFound):
+		case errors.Is(err, core.ErrReissueExternalIdentity):
+			sendError(w, "Conflict", core.ReissueExternalIdentityMessage, http.StatusConflict, nil)
+		case errors.Is(err, core.ErrReissueAccountBlocked):
+			sendError(w, "Conflict", core.ReissueAccountBlockedMessage, http.StatusConflict, nil)
+		case errors.Is(err, storage.ErrUserNotFound):
+			// The typed sentinel, not the "not found" substring: a storage fault is a
+			// 500, never a 404 the admin would read as "no such user".
 			sendError(w, "Error", errNotFound, http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)

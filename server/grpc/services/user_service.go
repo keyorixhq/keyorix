@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"errors"
+	"log"
 	"strings"
 	"time"
 
@@ -154,10 +155,19 @@ func (s *UserGRPCService) ReissueOneTimePassword(ctx context.Context, req *pb.Re
 		switch {
 		case errors.Is(err, core.ErrCannotActOnSelf):
 			return nil, status.Error(codes.FailedPrecondition, "cannot reissue your own one-time password; use `keyorix-server admin recover-admin` to recover your own account")
-		case errors.Is(err, core.ErrReissueExternalIdentity), errors.Is(err, core.ErrReissueAccountBlocked):
-			return nil, status.Error(codes.FailedPrecondition, err.Error())
+		case errors.Is(err, core.ErrReissueExternalIdentity):
+			return nil, status.Error(codes.FailedPrecondition, core.ReissueExternalIdentityMessage)
+		case errors.Is(err, core.ErrReissueAccountBlocked):
+			return nil, status.Error(codes.FailedPrecondition, core.ReissueAccountBlockedMessage)
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			return nil, mapUserError(err)
+		case errors.Is(err, corestorage.ErrUserNotFound):
+			return nil, status.Error(codes.NotFound, "user not found")
 		}
-		return nil, mapUserError(err)
+		// Not mapUserError's substring switch: a storage fault whose text happens to
+		// say "not found" or "invalid" must stay Internal, never NotFound/InvalidArgument.
+		log.Printf("reissue one-time password error for user %d: %v", req.GetId(), err)
+		return nil, status.Error(codes.Internal, "user operation failed")
 	}
 	return &pb.ReissueOneTimePasswordResponse{
 		UserId:                   req.GetId(),

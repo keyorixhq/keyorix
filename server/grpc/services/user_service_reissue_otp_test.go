@@ -1,6 +1,7 @@
 package services
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -10,6 +11,9 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/testhelper"
 	"github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
@@ -82,4 +86,53 @@ func TestReissueOneTimePassword_RefusesSuspendedUser(t *testing.T) {
 	_, err := svc.ReissueOneTimePassword(adminCtx(), &pb.ReissueOneTimePasswordRequest{Id: target.GetId()})
 	require.Error(t, err)
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+}
+
+// Each refusal sends its fixed client text, never err.Error().
+func TestReissueOneTimePassword_RefusalMessagesAreFixed(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+	h.CreateTestUser(t, "admin", 1)
+	h.AssignUserRole(t, 1, 1, nil)
+	svc := NewUserService(h.CoreService)
+	sso := svc.mustCreate(t, "reissue_sso_grpc", "reissue_sso_grpc@example.com")
+	require.NoError(t, h.DB.Exec("UPDATE users SET external_id = ? WHERE id = ?", "sso:corp:corp|7", sso.GetId()).Error)
+	susp := svc.mustCreate(t, "reissue_susp_msg", "reissue_susp_msg@example.com")
+	require.NoError(t, svc.core.SuspendUser(t.Context(), 1, uint(susp.GetId())))
+
+	for name, tc := range map[string]struct {
+		id   uint32
+		want string
+	}{
+		"sso only":  {sso.GetId(), core.ReissueExternalIdentityMessage},
+		"suspended": {susp.GetId(), core.ReissueAccountBlockedMessage},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.ReissueOneTimePassword(adminCtx(), &pb.ReissueOneTimePasswordRequest{Id: tc.id})
+			require.Error(t, err)
+			assert.Equal(t, codes.FailedPrecondition, status.Code(err))
+			assert.Equal(t, tc.want, status.Convert(err).Message())
+		})
+	}
+}
+
+// A storage fault on the reissue's row lock is Internal, not the NotFound a
+// missing user gets, and its text never reaches the client.
+func TestReissueOneTimePassword_LockFaultIsInternalNotNotFound(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+	h.CreateTestUser(t, "admin", 1)
+	h.AssignUserRole(t, 1, 1, nil)
+	target := h.CreateTestUser(t, "reissue_fault_grpc", 2)
+	faulty := faultstorage.NewFaultyStorage(h.Storage, &faultstorage.FaultSpec{
+		Method: "LockUserForUpdate", NthCall: 1, Kind: faultstorage.KindError,
+		Err: errors.New("injected: LockUserForUpdate"),
+	})
+	svc := NewUserService(core.NewKeyorixCore(faulty))
+
+	_, err := svc.ReissueOneTimePassword(adminCtx(), &pb.ReissueOneTimePasswordRequest{Id: uint32(target.ID)})
+	require.True(t, faulty.Fired(), "the reissue's row lock must have been reached")
+	require.Error(t, err)
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.NotContains(t, status.Convert(err).Message(), "injected")
 }

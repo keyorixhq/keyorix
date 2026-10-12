@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -271,4 +273,34 @@ func TestReissueOneTimePassword_KeepsAnEnrolledSecondFactor(t *testing.T) {
 
 	assert.True(t, f.reload(t, f.target.ID).MFAEnabled,
 		"a reissue must not strip MFA: otherwise a users.write holder could take over an MFA-protected account")
+}
+
+// A storage fault on the row lock is not a missing user: the transports map a
+// not-found error to 404 / NotFound, so the fault must not carry that sentinel or
+// that text (it is a 500 / Internal), and nothing is written. A real missing user
+// still carries storage.ErrUserNotFound.
+func TestReissueOneTimePassword_LockFaultIsNotUserNotFound(t *testing.T) {
+	f := newReissueFixture(t)
+	ctx := context.Background()
+	before := f.reload(t, f.target.ID)
+
+	base := f.c.storage
+	fs := faultstorage.NewFaultyStorage(base, &faultstorage.FaultSpec{
+		Method: "LockUserForUpdate", NthCall: 1, Kind: faultstorage.KindError,
+		Err: errors.New("injected: LockUserForUpdate"),
+	})
+	f.c.storage = fs
+	_, err := f.c.ReissueOneTimePassword(ctx, f.admin.ID, f.target.ID)
+	f.c.storage = base
+
+	require.True(t, fs.Fired(), "the reissue's row lock must have been reached")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, storage.ErrUserNotFound)
+	assert.NotContains(t, strings.ToLower(err.Error()), "not found", "a storage fault must not read as a missing user: %v", err)
+	after := f.reload(t, f.target.ID)
+	assert.Equal(t, before.PasswordHash, after.PasswordHash, "nothing was written")
+	assert.Equal(t, before.AccountState, after.AccountState)
+
+	_, err = f.c.ReissueOneTimePassword(ctx, f.admin.ID, 99999)
+	require.ErrorIs(t, err, storage.ErrUserNotFound, "a real missing user keeps the typed sentinel")
 }

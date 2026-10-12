@@ -23,18 +23,25 @@ import (
 // administrator, subject = the user. The description never contains the password.
 const EventUserOneTimePasswordReissued = "user.one_time_password_reissued" // #nosec G101 -- audit event type, not a credential
 
+// Fixed client-facing texts of the two refusal sentinels below. The transports
+// send these constants, never err.Error() (keyorix-raw-error-to-client).
+const (
+	ReissueExternalIdentityMessage = "this account is managed by an external identity provider; it has no local password to reissue"
+	ReissueAccountBlockedMessage   = "account is suspended or inactive; reactivate it before reissuing a one-time password"
+)
+
 var (
 	// ErrReissueExternalIdentity: the account is managed by an external identity
 	// provider (SSO/SCIM). A local password would be a backdoor that bypasses the
 	// IdP's MFA, conditional access and deprovisioning (same rule as
 	// RequestPasswordReset and setup-link consume).
-	ErrReissueExternalIdentity = errors.New("this account is managed by an external identity provider; it has no local password to reissue")
+	ErrReissueExternalIdentity = errors.New(ReissueExternalIdentityMessage)
 
 	// ErrReissueAccountBlocked: the account is suspended/deprovisioned/inactive.
 	// Reissuing would put it into password_reset_required, which is a LOGIN-able
 	// state, so it would silently reactivate the account. Reactivate it first,
 	// deliberately.
-	ErrReissueAccountBlocked = errors.New("account is suspended or inactive; reactivate it before reissuing a one-time password")
+	ErrReissueAccountBlocked = errors.New(ReissueAccountBlockedMessage)
 )
 
 // ReissueOneTimePassword issues a new server-generated one-time password for the
@@ -100,7 +107,12 @@ func (c *KeyorixCore) ReissueOneTimePassword(ctx context.Context, adminID, userI
 		// suspended or linked to an IdP since.
 		locked, lerr := tx.LockUserForUpdate(ctx, userID)
 		if lerr != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), lerr)
+			if errors.Is(lerr, storage.ErrUserNotFound) {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), lerr)
+			}
+			// A storage fault is not a missing user: it surfaces as a server error
+			// (500 / Internal), never as a 404 the admin would read as "no such user".
+			return lerr
 		}
 		if locked.ExternalID != "" {
 			return ErrReissueExternalIdentity
