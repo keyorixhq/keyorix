@@ -284,12 +284,13 @@ test('secret detail History and Recent access update after rotate and reveal, wi
         .last();
     // #3141: Recent access lists reads only; the rotation is in History (asserted above).
     await expect(recent.getByText(/^Rotated/)).toHaveCount(0);
+    // (A row reads "Read · <ip>"; the panel subtitle "Reads of this secret…" must not count as a row.)
     // Opening the view may already log reads; what matters is that Reveal adds one without a refresh.
-    const readsBefore = await recent.getByText(/^Read/).count();
+    const readsBefore = await recent.getByText(/^Read( ·|$)/).count();
     const historyReadsBefore = await history.getByText('Read', { exact: true }).count();
     await page.getByRole('button', { name: 'Reveal', exact: true }).click();
     await expect(page.getByText(`rotated-${unique}`, { exact: true })).toBeVisible({ timeout: 10_000 });
-    await expect(recent.getByText(/^Read/)).toHaveCount(readsBefore + 1, { timeout: 10_000 });
+    await expect(recent.getByText(/^Read( ·|$)/)).toHaveCount(readsBefore + 1, { timeout: 10_000 });
     await expect(history.getByText('Read', { exact: true })).toHaveCount(historyReadsBefore + 1, { timeout: 10_000 });
 });
 
