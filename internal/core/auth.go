@@ -54,6 +54,16 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 		// Spend an equivalent bcrypt comparison so a missing username doesn't return
 		// faster than a wrong password (account-enumeration timing side-channel).
 		_ = bcrypt.CompareHashAndPassword(*dummyBcryptHash.Load(), []byte(password))
+		if !storage.IsUserNotFound(err) {
+			// AUTH-AUDIT-1 item 1 (#2745): a storage failure, not "no such user".
+			// The password was never checked, so the transport audits
+			// auth.login_error and hands the per-IP slot back. The dummy bcrypt
+			// above is spent BEFORE this branch, so both outcomes cost the same;
+			// the text stays "invalid credentials", so nothing a transport might
+			// render changes; and a storage error does not depend on the username,
+			// so the class says nothing about whether the account exists.
+			return nil, &loginNotEvaluatedError{}
+		}
 		return nil, fmt.Errorf("invalid credentials")
 	}
 	// Per-account lockout gate: while locked, refuse regardless of the password, so
@@ -110,6 +120,26 @@ func (c *KeyorixCore) VerifyPasswordCredentials(ctx context.Context, username, p
 	}
 	return user, nil
 }
+
+// ErrLoginNotEvaluated marks a password login that reached NO verdict: the
+// username lookup failed with a storage error, so the supplied password was
+// never checked against anything (#2745, AUTH-AUDIT-1 item 1). The transport
+// audits it as auth.login_error rather than auth.login_failed and hands the
+// per-IP slot back (the budget counts failed credential attempts only, #2936),
+// while answering exactly as it answers a wrong password: the error's text is
+// still "invalid credentials", and a storage failure does not depend on the
+// username supplied, so the class says nothing about whether the account
+// exists. Same contract as ErrWebAuthnLoginNotEvaluated (#2565).
+var ErrLoginNotEvaluated = errors.New("login not evaluated: username lookup failed")
+
+// loginNotEvaluatedError is ErrLoginNotEvaluated with the wrong-password text,
+// so a caller that renders err.Error() renders exactly what it did before. It
+// deliberately does not wrap the storage error: driver text never travels
+// towards an unauthenticated caller.
+type loginNotEvaluatedError struct{}
+
+func (*loginNotEvaluatedError) Error() string        { return "invalid credentials" }
+func (*loginNotEvaluatedError) Is(target error) bool { return target == ErrLoginNotEvaluated }
 
 // ErrLoginPostVerdict marks an error a login path returned AFTER the supplied
 // credential had already been confirmed CORRECT — a storage fault during the
@@ -426,6 +456,16 @@ func (c *KeyorixCore) Logout(ctx context.Context, token string) error {
 // whole session family is revoked.
 const EventSessionReuseDetected = "auth.session_reuse_detected" // #nosec G101 -- audit event type, not a credential
 
+// ErrRefreshNotEvaluated is wrapped by RefreshSession when the session lookup
+// (GetSessionAny, other than a definitive "no such session") fails: no token was
+// found, so none was judged, and the HTTP handler releases the per-IP
+// login-attempt slot it reserved instead of counting a guess (the #2880 rule,
+// same class as ErrWebAuthnLoginNotEvaluated). A storage fault AFTER the token
+// matched a live session (the owner read GetUser, the rotation, the reuse
+// revocation, the dead-session delete) is deliberately NOT wrapped in it: those
+// keep the slot, so a valid token is never cheaper than a wrong one.
+var ErrRefreshNotEvaluated = errors.New("session refresh not evaluated: storage lookup failed")
+
 // RefreshSession rotates an existing session to a new token with a fresh access
 // window. The access window may have lapsed — that is the normal silent-refresh
 // case — but refresh is refused once the session's absolute ceiling is reached, so
@@ -442,6 +482,9 @@ const EventSessionReuseDetected = "auth.session_reuse_detected" // #nosec G101 -
 func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models.Session, error) {
 	old, err := c.storage.GetSessionAny(ctx, token)
 	if err != nil {
+		if !storage.IsSessionNotFound(err) {
+			return nil, fmt.Errorf("%w: reading the session: %w", ErrRefreshNotEvaluated, err)
+		}
 		return nil, fmt.Errorf("session not found or expired")
 	}
 	now := c.now()
@@ -485,6 +528,13 @@ func (c *KeyorixCore) RefreshSession(ctx context.Context, token string) (*models
 	// indefinitely. Mirror the gate and drop the now-invalid session.
 	user, err := c.storage.GetUser(ctx, old.UserID)
 	if err != nil {
+		if !storage.IsUserNotFound(err) {
+			// POST-verdict: GetSessionAny matched a live token and the reuse, ceiling
+			// and impersonation verdicts above already ran, so this fault is
+			// deliberately NOT ErrRefreshNotEvaluated. The handler keeps the slot: a
+			// correct token must never be cheaper than a wrong one (#2880).
+			return nil, fmt.Errorf("failed to read account: %w", err)
+		}
 		return nil, fmt.Errorf("user not found")
 	}
 	if !user.IsActive || AccountLoginBlocked(user.ID, user.AccountState) {
