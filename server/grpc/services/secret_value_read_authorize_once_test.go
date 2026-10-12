@@ -255,7 +255,12 @@ func TestGRPCValueReadAuthorizeOnce_Equivalence(t *testing.T) {
 					require.NoError(t, err)
 				}, denied("Internal", "secret operation failed")},
 				{"expired", "dev", func(s *models.SecretNode) {
-					require.NoError(t, w.db.Model(&models.SecretNode{}).Where("id = ?", s.ID).Update("expiration", time.Now().Add(-time.Minute)).Error)
+					// Through Save(), so SecretNode's BeforeSave hook runs (G1619).
+					var row models.SecretNode
+					require.NoError(t, w.db.First(&row, s.ID).Error)
+					past := time.Now().Add(-time.Minute)
+					row.Expiration = &past
+					require.NoError(t, w.db.Save(&row).Error)
 				}, denied("Internal", "secret operation failed")},
 				{"schedule denies", "dev", func(s *models.SecretNode) {
 					_, err := c.SetSecretSchedule(ctx, s.ID, gvoNotTodayOrTomorrow(), 0, 24, "UTC")

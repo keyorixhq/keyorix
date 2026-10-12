@@ -356,7 +356,12 @@ func voEquivalence(t *testing.T, backend string) {
 		}, func(*models.SecretNode) voOutcome { return forbidden }},
 		{"expired share", "sharee", func(s *models.SecretNode) {
 			id := share(s, "sharee")
-			require.NoError(t, r.db.Model(&models.ShareRecord{}).Where("id = ?", id).Update("expires_at", time.Now().Add(-time.Minute)).Error)
+			// Through Save(), so ShareRecord's BeforeSave hook runs (G1619).
+			var rec models.ShareRecord
+			require.NoError(t, r.db.First(&rec, id).Error)
+			past := time.Now().Add(-time.Minute)
+			rec.ExpiresAt = &past
+			require.NoError(t, r.db.Save(&rec).Error)
 		}, func(*models.SecretNode) voOutcome { return forbidden }},
 		{"acl grant", "acluser", func(s *models.SecretNode) {
 			require.NoError(t, c.GrantSecretACL(ctx, w.adminID, s.ID, w.users["acluser"], []string{"secrets.read"}))
@@ -372,7 +377,12 @@ func voEquivalence(t *testing.T, backend string) {
 			return voDenied(http.StatusInternalServerError, "InternalError", "Failed to get secret value")
 		}},
 		{"expired", "dev", func(s *models.SecretNode) {
-			require.NoError(t, r.db.Model(&models.SecretNode{}).Where("id = ?", s.ID).Update("expiration", time.Now().Add(-time.Minute)).Error)
+			// Through Save(), so SecretNode's BeforeSave hook runs (G1619).
+			var row models.SecretNode
+			require.NoError(t, r.db.First(&row, s.ID).Error)
+			past := time.Now().Add(-time.Minute)
+			row.Expiration = &past
+			require.NoError(t, r.db.Save(&row).Error)
 		}, func(*models.SecretNode) voOutcome {
 			return voDenied(http.StatusInternalServerError, "InternalError", "Failed to get secret")
 		}},
