@@ -1,0 +1,2 @@
+### Fixed
+- **A failing purge-date read no longer turns a committed secret delete into an error (#3105).** `DELETE` on a secret (gRPC `SecretService.DeleteSecret` and the REST endpoint) soft-deletes the row and then reads it back to report when it will be purged. If that read-back panicked, the caller got an error although the secret was already deleted. `DeletedSecretPurgeAt` now recovers the panic, logs it at `SECURITY` level and leaves the purge date unset, exactly as it already did for a failed read.

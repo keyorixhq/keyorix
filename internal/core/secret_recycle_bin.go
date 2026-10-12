@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -40,7 +41,18 @@ func (c *KeyorixCore) SecretPurgeAt(s *models.SecretNode) (time.Time, bool) {
 
 // DeletedSecretPurgeAt returns the purge date of a secret that has just been
 // soft-deleted, read back from the row so the caller reports exactly what was stored.
-func (c *KeyorixCore) DeletedSecretPurgeAt(ctx context.Context, id uint) (time.Time, error) {
+//
+// A panic from the read-back is recovered and returned as an error (#3105): both
+// delete transports call this AFTER the delete committed and treat an error as "leave
+// the purge date unset", so a panic escaping here used to turn a committed delete into
+// a reported failure (oracle (a): reported ERROR, SecretNode changed anyway).
+func (c *KeyorixCore) DeletedSecretPurgeAt(ctx context.Context, id uint) (at time.Time, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: DeletedSecretPurgeAt panicked reading secret %d after its delete committed (best-effort, purge date left unset): %v", id, r)
+			at, err = time.Time{}, fmt.Errorf("%s: purge date read panicked", i18n.T("ErrorRetrievalFailed", nil))
+		}
+	}()
 	s, err := c.storage.GetSecretIncludingDeleted(ctx, id)
 	if err != nil {
 		return time.Time{}, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
