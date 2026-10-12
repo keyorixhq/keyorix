@@ -635,6 +635,163 @@ rest	GET /api/v1/users/{id}/memberships	server/http/router.go	972	usersRolesHand
 rest	GET /api/v1/users/{id}/permissions	server/http/router.go	967	usersRolesHandler.GetUserPermissionsForUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/users/{id}/roles	server/http/router.go	963	usersRolesHandler.GetUserRolesForUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/users/{id}/shared-secrets	server/http/router.go	985	shareHandler.ListSharedSecretsForUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/admin/anomaly-config/	server/http/router.go	1310	handlers.GetAnomalyConfig	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/admin/billing/report	server/http/router.go	1254	adminBillingHandler.GetBillingReport	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/admin/scheduler-metrics	server/http/router.go	1132	<expr>.ServeHTTP	D	router.go:1086 wires customMiddleware.SchedulerMetricsHandler().ServeHTTP; server/middleware/scheduler_metrics.go:110-112 shows that's a stock promhttp.HandlerFor exposition endpoint, pure read.
+rest	GET /api/v1/admin/usage	server/http/router.go	1245	adminUsageHandler.GetUsageReport	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/alert-escalation-policies	server/http/router.go	418	alertEscalationHandler.List	D	server/http/handlers/alert_escalation.go:100-112 List only calls ListAlertEscalationPolicies and writes the JSON response -- no state writes.
+rest	GET /api/v1/alert-escalation-policies/{id}	server/http/router.go	419	alertEscalationHandler.Get	D	server/http/handlers/alert_escalation.go:115-131 Get only calls GetAlertEscalationPolicy and writes the JSON response -- no state writes.
+rest	GET /api/v1/audit/anomalies	server/http/router.go	1119	handlers.ListAnomalyAlerts	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/audit/export	server/http/router.go	1104	auditHandler.ExportAuditLogs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/audit/export.csv	server/http/router.go	1105	auditHandler.ExportAuditLogsCSV	D	server/http/handlers/audit_export_csv.go:22-62: the 3 flagged calls are w.Header().Set (Content-Type/X-Content-Type-Options/Content-Disposition) before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/audit/logs	server/http/router.go	1093	auditHandler.GetAuditLogs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/audit/rbac-logs	server/http/router.go	1106	auditHandler.GetRBACAuditLogs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/audit/retention	server/http/router.go	1107	auditHandler.GetAuditRetention	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/audit/search	server/http/router.go	1094	auditHandler.SearchAuditLogs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/audit/verify	server/http/router.go	1108	auditHandler.VerifyAuditChain	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/auth/mfa/recovery-codes	server/http/router.go	363	authHandler.RecoveryCodesStatus	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/auth/profile	server/http/router.go	353	authHandler.Profile	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/auth/sessions	server/http/router.go	386	authHandler.ListSessions	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/auth/tokens	server/http/router.go	388	patHandler.ListPATs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/auth/tokens/expired	server/http/router.go	394	patExpiryHandler.ListExpiredPATs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/auth/webauthn/credentials	server/http/router.go	373	authHandler.ListWebAuthnCredentials	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/controls	server/http/router.go	1173	dashboardHandler.GetComplianceControls	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/controls.csv	server/http/router.go	1176	dashboardHandler.ExportComplianceControlsCSV	D	server/http/handlers/compliance_controls_csv.go:20-53: 3 w.Header().Set calls before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/compliance/credential-trends	server/http/router.go	1164	hygieneTrendsHandler.GetCredentialTrends	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/digest	server/http/router.go	1179	dashboardHandler.GetComplianceDigest	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/evidence	server/http/router.go	1205	dashboardHandler.GetComplianceEvidence	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/permission-baseline	server/http/router.go	1212	dashboardHandler.GetPermissionBaseline	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/permission-baseline.csv	server/http/router.go	1213	dashboardHandler.GetPermissionBaselineCSV	D	server/http/handlers/permission_baseline.go:38-68: 3 w.Header().Set calls before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/compliance/permission-changes	server/http/router.go	1218	dashboardHandler.GetPermissionChangeAudit	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/posture	server/http/router.go	1166	dashboardHandler.GetCompliancePosture	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/rotation-by-backend	server/http/router.go	1171	secretHandler.RotationByBackend	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/compliance/snapshots	server/http/router.go	1192	dashboardHandler.ListComplianceSnapshots	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/connect/connectors	server/http/router.go	466	connectHandler.ListConnectors	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/connect/ref-grants	server/http/router.go	471	connectHandler.ListRefGrants	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/dashboard/activity	server/http/router.go	440	dashboardHandler.GetActivity	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/dashboard/stats	server/http/router.go	437	dashboardHandler.GetStats	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/dynamic-secrets/configs	server/http/router.go	890	dynamicSecretHandler.ListConfigs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/dynamic-secrets/configs/{id}	server/http/router.go	891	dynamicSecretHandler.GetConfig	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/dynamic-secrets/configs/{id}/leases	server/http/router.go	895	dynamicSecretHandler.ListLeases	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/environments	server/http/router.go	679	catalogHandler.ListEnvironments	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/folders/	server/http/router.go	837	folderHandler.ListFolders	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/groups/	server/http/router.go	988	groupHandler.ListGroups	D	server/http/handlers/groups_handler.go:45-62 ListGroups only calls ListGroups and writes the JSON response -- no state writes.
+rest	GET /api/v1/groups/{id}	server/http/router.go	992	groupHandler.GetGroup	D	server/http/handlers/groups_handler.go:109-130 GetGroup only calls GetGroup and writes the JSON response -- no state writes.
+rest	GET /api/v1/groups/{id}/members	server/http/router.go	999	groupHandler.GetGroupMembers	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/groups/{id}/roles	server/http/router.go	1018	rbacHandler.GetGroupRoles	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/groups/{id}/shared-secrets	server/http/router.go	1002	shareHandler.ListGroupSharedSecrets	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/groups/{id}/shares	server/http/router.go	1005	shareHandler.ListGroupShares	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/hygiene	server/http/router.go	1155	secretHandler.DeploymentHygiene	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/legal-hold	server/http/router.go	1196	dashboardHandler.GetLegalHold	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/license/status	server/http/router.go	1135	licenseHandler.GetLicenseStatus	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/machine-identities/audit	server/http/router.go	1150	machineAuditHandler.GetMachineAuditReport	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/machine-identities/audit.csv	server/http/router.go	1151	machineAuditHandler.GetMachineAuditReportCSV	D	server/http/handlers/machine_audit.go:47-77: 3 w.Header().Set calls before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/machine-token-hygiene	server/http/router.go	1146	catalogHandler.MachineTokenHygiene	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/notification-channels	server/http/router.go	407	notificationChannelHandler.List	D	server/http/handlers/notification_channels.go:49-61 List only calls ListNotificationChannels and writes the JSON response -- no state writes.
+rest	GET /api/v1/notification-channels/{id}	server/http/router.go	409	notificationChannelHandler.Get	D	server/http/handlers/notification_channels.go:108-124 Get only calls GetNotificationChannel and writes the JSON response -- no state writes.
+rest	GET /api/v1/notification-channels/{id}/retry-policy	server/http/router.go	413	notificationChannelHandler.GetRetryPolicy	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/notifications	server/http/router.go	400	notificationHandler.List	D	server/http/handlers/notifications_handler.go:48-73 List (notificationHandler, not notificationChannelHandler) only calls ListNotifications then UnreadNotificationCount, both reads, and writes the JSON response.
+rest	GET /api/v1/pat-hygiene	server/http/router.go	1142	patHandler.PATHygiene	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/permissions/	server/http/router.go	1055	rbacHandler.ListPermissions	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/permissions/{id}	server/http/router.go	1062	rbacHandler.GetPermission	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects	server/http/router.go	481	catalogHandler.ListProjects	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}	server/http/router.go	482	catalogHandler.GetProject	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/access-requests	server/http/router.go	545	catalogHandler.ListAccessRequests	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/access-review	server/http/router.go	510	catalogHandler.GetProjectAccessReview	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/access-review/campaigns	server/http/router.go	517	catalogHandler.ListAccessReviewCampaigns	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/access-review/campaigns/{campaignId}	server/http/router.go	519	catalogHandler.GetAccessReviewCampaign	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/access-review/campaigns/{campaignId}/export.csv	server/http/router.go	524	catalogHandler.ExportAccessReviewCampaignCSV	D	server/http/handlers/access_review_campaign_export_csv.go:22-57: calls GetAccessReviewCampaign and per-decider GetUser lookups (reads), then streams CSV with header writes only; no state writes.
+rest	GET /api/v1/projects/{id}/break-glass	server/http/router.go	582	catalogHandler.ListBreakGlassActivations	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/drift	server/http/router.go	490	catalogHandler.GetProjectDrift	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/environments	server/http/router.go	667	catalogHandler.ListProjectEnvironments	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/health	server/http/router.go	493	secretHandler.GetProjectHealth	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/hygiene	server/http/router.go	625	secretHandler.ProjectHygiene	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/invitations	server/http/router.go	534	catalogHandler.ListInvitations	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/machine-identities	server/http/router.go	597	catalogHandler.ListMachineIdentities	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/machine-identities/stale	server/http/router.go	598	catalogHandler.ListStaleMachineIdentities	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/machine-identities/{machineId}/oidc-bindings	server/http/router.go	620	catalogHandler.ListOIDCBindings	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/machine-identities/{machineId}/roles	server/http/router.go	617	catalogHandler.ListMachineRoles	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/machine-identities/{machineId}/tokens	server/http/router.go	613	catalogHandler.ListMachineTokens	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/members	server/http/router.go	502	catalogHandler.ListProjectMembers	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/memberships	server/http/router.go	530	catalogHandler.ListProjectMemberships	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/rotation-order	server/http/router.go	491	secretHandler.GetProjectRotationOrder	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/rotation-plan	server/http/router.go	492	secretHandler.GetProjectRotationPlan	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/secrets/deleted	server/http/router.go	623	secretHandler.DeletedSecrets	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/secrets/expiring	server/http/router.go	626	secretHandler.ExpiringSecrets	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/secrets/inventory.csv	server/http/router.go	629	secretHandler.SecretsInventoryCSV	D	server/http/handlers/secrets_inventory_csv.go:19-54: the 3 flagged calls are w.Header().Set (Content-Type/X-Content-Type-Options/Content-Disposition) before streaming a read-only CSV. No state writes.
+rest	GET /api/v1/projects/{id}/secrets/name-conformance	server/http/router.go	632	secretHandler.SecretNameConformance	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/secrets/orphaned	server/http/router.go	624	secretHandler.OrphanedSecrets	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/share-recipients	server/http/router.go	508	shareHandler.SearchShareRecipients	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/projects/{id}/stats	server/http/router.go	494	secretHandler.GetProjectStats	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/rbac/permission-matrix	server/http/router.go	1050	rbacHandler.GetPermissionMatrix	D	RBACHandler.GetPermissionMatrix (server/http/handlers/rbac.go:1023) is read-only: one GetPermissionMatrix read, then branches on format to write a CSV or JSON body; flagged "writes" are w.Header().Set calls.
+rest	GET /api/v1/rejection-reason-templates	server/http/router.go	573	catalogHandler.ListRejectionReasonTemplates	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/risk-exceptions	server/http/router.go	1222	dashboardHandler.ListRiskExceptions	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/roles/	server/http/router.go	1026	rbacHandler.ListRoles	D	RBACHandler.ListRoles (server/http/handlers/rbac.go:117) only calls coreService.ListRolesWithPermissions (read) then sendSuccess; no storage write calls.
+rest	GET /api/v1/roles/by-name	server/http/router.go	1037	rbacHandler.GetRoleByName	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/roles/{id}	server/http/router.go	1038	rbacHandler.GetRole	D	RBACHandler.GetRole (server/http/handlers/rbac.go:223) only calls coreService.GetRoleWithPermissions (read) then sendSuccess; purely read-only.
+rest	GET /api/v1/roles/{id}/permissions	server/http/router.go	1041	rbacHandler.GetRolePermissions	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/rotation-calendar	server/http/router.go	849	rotationCalendarHandler.Get	D	RotationCalendarHandler.Get (server/http/handlers/rotation_calendar_handler.go:30) parses query params and calls coreService.GetRotationCalendar (read) once, then sendSuccess; no writes.
+rest	GET /api/v1/rotation-plan	server/http/router.go	498	secretHandler.GetDeploymentRotationPlan	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/rotation-policies/	server/http/router.go	856	rotationPolicyHandler.List	D	RotationPolicyHandler.List (server/http/handlers/rotation_policies_handler.go:86) calls coreService.ListRotationPolicies (read) once then sendSuccess; no writes.
+rest	GET /api/v1/rotation-policies/evaluate	server/http/router.go	857	rotationPolicyHandler.Evaluate	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/rotation-policies/status	server/http/router.go	858	rotationPolicyHandler.Status	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/rotation-policies/{id}	server/http/router.go	859	rotationPolicyHandler.Get	D	RotationPolicyHandler.Get (server/http/handlers/rotation_policies_handler.go:199) calls coreService.GetRotationPolicy (read) once then sendSuccess; no writes.
+rest	GET /api/v1/secret-access-requests	server/http/router.go	566	catalogHandler.ListSecretAccessRequests	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secret-access-requests/{requestId}	server/http/router.go	567	catalogHandler.GetSecretAccessRequest	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secret-templates/	server/http/router.go	869	secretTemplateHandler.List	D	SecretTemplateHandler.List (server/http/handlers/secret_templates.go:85) calls coreService.ListSecretTemplates (read) once then sendSuccess; no writes.
+rest	GET /api/v1/secret-templates/{id}	server/http/router.go	871	secretTemplateHandler.Get	D	SecretTemplateHandler.Get (server/http/handlers/secret_templates.go:96) calls coreService.GetSecretTemplate (read) once then sendSuccess; no writes.
+rest	GET /api/v1/secrets/	server/http/router.go	696	secretHandler.ListSecrets	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/by-name	server/http/router.go	732	secretHandler.GetSecretByName	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/inventory.csv	server/http/router.go	716	secretHandler.DeploymentSecretsInventoryCSV	D	SecretHandler.DeploymentSecretsInventoryCSV (server/http/handlers/secrets_inventory_deployment_csv.go:21) calls coreService.DeploymentSecretsInventory (read) once; flagged "3-writes" are w.Header().Set x3 for the CSV attachment response.
+rest	GET /api/v1/secrets/name-conformance	server/http/router.go	721	secretHandler.DeploymentSecretNameConformance	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/policy	server/http/router.go	698	secretHandler.SecretPolicy	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/quota-report	server/http/router.go	709	secretHandler.GetQuotaReport	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/usage/most-accessed	server/http/router.go	700	secretHandler.UsageMostAccessed	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/usage/unused	server/http/router.go	701	secretHandler.UsageUnused	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/value	server/http/router.go	727	secretHandler.GetSecretValueByRef	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}	server/http/router.go	733	secretHandler.GetSecret	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/access	server/http/router.go	744	secretHandler.ListAccessors	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/access-log	server/http/router.go	745	secretHandler.AccessHistory	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/access-log/export	server/http/router.go	746	secretHandler.ExportAccessLog	D	SecretHandler.ExportAccessLog (server/http/handlers/secret_access_log_export_handler.go:19) calls coreService.ExportSecretAccessLog (read) once; flagged "3-writes" are w.Header().Set x3 for the download response.
+rest	GET /api/v1/secrets/{id}/acl	server/http/router.go	772	secretHandler.ListSecretACLs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/audit	server/http/router.go	749	secretHandler.AuditTrail	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/blast-radius	server/http/router.go	760	secretHandler.GetBlastRadius	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/certificate	server/http/router.go	789	secretHandler.GetSecretCertificate	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/dependencies	server/http/router.go	755	secretHandler.ListSecretDependencies	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/impact	server/http/router.go	758	secretHandler.GetSecretImpact	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/impact-preview	server/http/router.go	764	secretHandler.GetSecretImpactPreview	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/ownership-history	server/http/router.go	750	secretHandler.OwnershipHistory	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/read-summary	server/http/router.go	762	secretHandler.GetSecretReadSummary	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/risk	server/http/router.go	742	secretHandler.GetSecretRisk	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/rotation-state	server/http/router.go	769	rotationPolicyHandler.GetRotationState	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/schedule	server/http/router.go	777	secretHandler.GetSecretSchedule	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/shares	server/http/router.go	743	shareHandler.ListSecretShares	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/stats	server/http/router.go	748	secretHandler.GetSecretAccessStats	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/tags	server/http/router.go	751	secretHandler.GetTags	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/versions	server/http/router.go	734	secretHandler.GetSecretVersions	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/versions/{from}/diff/{to}	server/http/router.go	735	secretHandler.DiffSecretVersions	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/secrets/{id}/versions/{versionId}/comments	server/http/router.go	738	versionCommentHandler.ListComments	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/shared-secrets	server/http/router.go	830	shareHandler.ListSharedSecrets	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/shares/	server/http/router.go	824	shareHandler.ListShares	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/shares/owned	server/http/router.go	834	shareHandler.ListOwnedShares	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/sod/policies	server/http/router.go	1231	catalogHandler.ListSoDPolicies	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/sod/violations	server/http/router.go	1234	catalogHandler.ListSoDViolations	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/system/auth-config	server/http/router.go	447	<expr>	D	router.go:440 wires handlers.MakeAuthConfigHandler(cfg): a closure returning a redacted config summary directly from in-memory cfg -- no storage access.
+rest	GET /api/v1/system/encryption-config	server/http/router.go	448	<expr>	D	router.go:441 wires handlers.MakeEncryptionConfigHandler(cfg), same shape as auth-config: redacted in-memory config summary, no storage access.
+rest	GET /api/v1/system/info	server/http/router.go	455	<expr>	D	router.go:448 wires handlers.MakeSystemInfoHandler(cfg, coreService); returns version/build/runtime/metrics info, a read-only reporting endpoint.
+rest	GET /api/v1/system/metrics	server/http/router.go	456	handlers.GetMetrics	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/user-roles/user/{userId}	server/http/router.go	1087	rbacHandler.GetUserRoles	D	RBACHandler.GetUserRoles (server/http/handlers/rbac.go:525) calls coreService.GetUserRoleAssignment (read) once then sendSuccess; no writes.
+rest	GET /api/v1/users/	server/http/router.go	904	handlers.ListUsers	D	UserHandler.ListUsers (server/http/handlers/users_list.go:29) calls coreService.ListUsers (read) then attachProjectCounts (a best-effort read-only query merge); no writes.
+rest	GET /api/v1/users/by-email	server/http/router.go	920	handlers.GetUserByEmail	D	UserHandler.GetUserByEmail (server/http/handlers/users_crud.go:256) calls coreService.GetUserByEmail (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/users/by-external-id	server/http/router.go	928	handlers.GetUserByExternalID	D	UserHandler.GetUserByExternalID (server/http/handlers/users_crud.go:313) calls coreService.GetUserByExternalID (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/users/by-username	server/http/router.go	927	handlers.GetUserByUsername	D	UserHandler.GetUserByUsername (server/http/handlers/users_crud.go:285) calls coreService.GetUserByUsername (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/users/search	server/http/router.go	910	handlers.SearchUsers	D	UserHandler.SearchUsers (server/http/handlers/users_list.go:104) calls coreService.ListUsers (read) with a search filter then sendSuccess; no writes.
+rest	GET /api/v1/users/stale	server/http/router.go	912	handlers.StaleAccounts	D	UserHandler.StaleAccounts (server/http/handlers/users_list.go:166) calls coreService.StaleAccounts (read) once then sendSuccess; no writes.
+rest	GET /api/v1/users/{id}	server/http/router.go	929	handlers.GetUser	D	UserHandler.GetUser (server/http/handlers/users_crud.go:218) calls coreService.GetUser (read) + attachProjectCounts (read-only); no writes.
+rest	GET /api/v1/users/{id}/memberships	server/http/router.go	964	usersRolesHandler.GetUserMembershipsForUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/users/{id}/permissions	server/http/router.go	959	usersRolesHandler.GetUserPermissionsForUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/users/{id}/roles	server/http/router.go	955	usersRolesHandler.GetUserRolesForUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
+rest	GET /api/v1/users/{id}/shared-secrets	server/http/router.go	977	shareHandler.ListSharedSecretsForUser	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/version	server/http/router.go	238	<expr>	D	router.go:233 wires handlers.MakeVersionHandler(cfg) (server/http/handlers/version.go:33): builds a VersionInfo struct from in-memory cfg/version constants and JSON-encodes it; no storage access.
 rest	GET /auth/saml/{provider}/login	server/http/router.go	226	authHandler.BeginSAML	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /auth/saml/{provider}/metadata	server/http/router.go	225	authHandler.SAMLMetadata	none	single/no write-shaped call found by a 1-hop scan of the handler body
