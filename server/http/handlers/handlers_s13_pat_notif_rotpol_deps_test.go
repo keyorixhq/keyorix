@@ -31,7 +31,7 @@ import (
 // TestCreatePAT_HappyPath_S13 — valid body without expiry → 201 with plain token.
 func TestCreatePAT_HappyPath_S13(t *testing.T) {
 	t.Parallel()
-	h := NewPATHandler(freshCoreS12(t))
+	h := NewPATHandler(freshCoreS12WithCredentialOwners(t, 1))
 	body, _ := json.Marshal(map[string]any{"name": "my-token"})
 	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)))
 	req.Header.Set("Content-Type", "application/json")
@@ -43,7 +43,7 @@ func TestCreatePAT_HappyPath_S13(t *testing.T) {
 // TestCreatePAT_ValidExpiry_S13 — valid expires_at → 201.
 func TestCreatePAT_ValidExpiry_S13(t *testing.T) {
 	t.Parallel()
-	h := NewPATHandler(freshCoreS12(t))
+	h := NewPATHandler(freshCoreS12WithCredentialOwners(t, 1))
 	body, _ := json.Marshal(map[string]any{
 		"name":       "expiring-token",
 		"expires_at": "2099-12-31T23:59:59Z",

@@ -12,17 +12,37 @@ import (
 	"gorm.io/gorm"
 )
 
+// CreateDynamicSecretConfig inserts a config and, in the same transaction, re-reads
+// its project with lockLiveParent (FOR SHARE on Postgres), rolling back if the project
+// is gone (#2651, INV-STORE-21). DeleteProject's #369 cascade row-locks the project
+// before it disables the project's configs, so it either disables this config or this
+// insert fails; without the re-check a config inserted after the cascade's disable
+// committed enabled under the deleted project and minted again once it was restored.
 func (ls *LocalStorage) CreateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) (*models.DynamicSecretConfig, error) {
-	if err := ls.db.WithContext(ctx).Create(c).Error; err != nil {
-		if isUniqueViolation(err) {
-			// The unique index uniq_dynamic_secret_configs_project_env_name (#462) caught a
-			// duplicate (project, environment, name) tuple — the only unique constraint on
-			// this table, so a bare driver-message match (isUniqueViolation, shared with
-			// CreateProjectMembership) is unambiguous here. Translate to the sentinel so
-			// callers (CreateDynamicSecretConfig in internal/core) can surface a clean
-			// validation error instead of a raw constraint-violation message.
-			return nil, fmt.Errorf("%w: %v", storage.ErrDuplicateDynamicSecretConfig, err)
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(c).Error; err != nil {
+			if isUniqueViolation(err) {
+				// The unique index uniq_dynamic_secret_configs_project_env_name (#462) caught a
+				// duplicate (project, environment, name) tuple — the only unique constraint on
+				// this table, so a bare driver-message match (isUniqueViolation, shared with
+				// CreateProjectMembership) is unambiguous here. Translate to the sentinel so
+				// callers (CreateDynamicSecretConfig in internal/core) can surface a clean
+				// validation error instead of a raw constraint-violation message. Returning
+				// it rolls the transaction back, so no aborted-transaction COMMIT follows.
+				return fmt.Errorf("%w: %v", storage.ErrDuplicateDynamicSecretConfig, err)
+			}
+			return err
 		}
+		live, err := lockLiveParent(tx, &models.Project{}, "id = ?", c.ProjectID)
+		if err != nil {
+			return err
+		}
+		if !live {
+			return fmt.Errorf("project not found")
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -50,6 +70,87 @@ func (ls *LocalStorage) ListDynamicSecretConfigs(ctx context.Context, projectID,
 
 func (ls *LocalStorage) UpdateDynamicSecretConfig(ctx context.Context, c *models.DynamicSecretConfig) error {
 	return ls.db.WithContext(ctx).Save(c).Error
+}
+
+// SetDynamicSecretConfigAdminDSN writes only the encrypted admin DSN columns and
+// updated_at (#2651): a targeted UPDATE, so a concurrent writer's columns
+// (DeleteProject's #369 disabled=true above all) are never overwritten.
+func (ls *LocalStorage) SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).Where("id = ?", id).
+		Updates(map[string]interface{}{"admin_dsn_enc": enc, "admin_dsn_meta": meta, "updated_at": time.Now()})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return fmt.Errorf("dynamic-secret config not found")
+	}
+	return nil
+}
+
+// SetDynamicSecretConfigClassification persists ONLY the classification column
+// (plus updated_at), conditional on the row's current classification still being
+// fromClassification — see the storage.Storage interface doc for why
+// ClassifyDynamicSecretConfig cannot use the full-row UpdateDynamicSecretConfig
+// (#2698: its Save wrote `disabled=false` back over the incident kill switch).
+//
+// COALESCE so a NULL column (a row written before Classification existed) is
+// matched by fromClassification "", the value GORM reads it back as.
+func (ls *LocalStorage) SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification, toClassification string, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretConfig{}).
+		Where("id = ? AND COALESCE(classification, '') = ?", id, fromClassification).
+		Updates(map[string]interface{}{"classification": toClassification, "updated_at": updatedAt})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// ExtendDynamicSecretLeaseExpiry persists ONLY expires_at, and only for a lease
+// that is STILL active — see the storage.Storage interface doc (#2698: the
+// full-row Save it replaces wrote the stale Status/RevokeError/RevokedAt back
+// over a concurrent RevokeLease, turning a successful revoke into an `active`
+// lease with a later expiry).
+//
+// expires_at is normalised to UTC here because this raw UPDATE bypasses
+// DynamicSecretLease.BeforeSave, which exists precisely to keep this column
+// canonical for ListExpiredActiveLeases' SQL range query (G81, INV-STORE-19).
+// Dropping that normalisation would let the auto-revoke sweep misjudge expiry
+// on a non-UTC server.
+func (ls *LocalStorage) ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
+		Where("lease_id = ? AND status = ?", leaseID, "active").
+		Updates(map[string]interface{}{"expires_at": newExpiry.UTC()})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// RecordDynamicSecretLeaseRevocation persists ONLY the revocation columns of a
+// lease: status, revoke_reason, revoke_error and revoked_at. Not conditional on
+// the current status — unlike the two methods above, this write records what
+// already happened to the credential at the backend, and it must land whatever
+// else moved meanwhile (a lease whose target drop failed must not be left
+// reading `active` because some other writer touched the row first).
+//
+// What it must NOT do is carry the rest of the caller's pre-read row with it:
+// the former full-row Save also rewrote expires_at, so a revoke could revert a
+// concurrent renewal's extension (harmless on a dead credential, but it is the
+// same lost-update shape, and leaving one full-row writer alive is how the class
+// comes back — #2698).
+func (ls *LocalStorage) RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID, status, revokeReason, revokeError string, revokedAt *time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.DynamicSecretLease{}).
+		Where("lease_id = ?", leaseID).
+		Updates(map[string]interface{}{
+			"status":        status,
+			"revoke_reason": revokeReason,
+			"revoke_error":  revokeError,
+			"revoked_at":    revokedAt,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // TransitionDynamicSecretConfigDisabled persists c's full row via a conditional

@@ -17,9 +17,11 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"time"
 )
 
 // ---------- failing store wrapper ----------
@@ -58,11 +60,11 @@ func (s *failingSecretTemplateStore) GetSecretTemplate(_ context.Context, id uin
 	return s.LocalStorage.GetSecretTemplate(context.Background(), id)
 }
 
-func (s *failingSecretTemplateStore) UpdateSecretTemplate(_ context.Context, t *models.SecretTemplate) error {
+func (s *failingSecretTemplateStore) UpdateSecretTemplateFields(_ context.Context, id uint, f coreStorage.SecretTemplateFieldUpdate, updatedAt time.Time) (bool, error) {
 	if s.failUpdate {
-		return errors.New("injected update error")
+		return false, errors.New("injected update error")
 	}
-	return s.LocalStorage.UpdateSecretTemplate(context.Background(), t)
+	return s.LocalStorage.UpdateSecretTemplateFields(context.Background(), id, f, updatedAt)
 }
 
 func (s *failingSecretTemplateStore) DeleteSecretTemplate(_ context.Context, id uint) error {

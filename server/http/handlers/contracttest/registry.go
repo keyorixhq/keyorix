@@ -23,7 +23,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"attestProjectAccessReview":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/attest
 	"authLogout":                         reasonSchemaNotYetWritten, // post /auth/logout
 	"authPasswordReset":                  reasonSchemaNotYetWritten, // post /auth/password-reset
-	"changePassword":                     reasonSchemaNotYetWritten, // post /api/v1/auth/change-password
 	"closeAccessReviewCampaign":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns/{campaignId}/close
 	"createAccessRequest":                reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-requests
 	"createGlobalInvitation":             reasonSchemaNotYetWritten, // post /api/v1/invitations
@@ -62,7 +61,6 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"getUnusedSecrets":                   reasonSchemaNotYetWritten, // get /api/v1/secrets/usage/unused
 	"getUser":                            reasonSchemaNotYetWritten, // get /api/v1/users/{id}
 	"getUserByEmail":                     reasonSchemaNotYetWritten, // get /api/v1/users/by-email
-	"getUserMembershipsForUser":          reasonSchemaNotYetWritten, // get /api/v1/users/{id}/memberships
 	"grantMachineRole":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/machine-identities/{machineId}/roles
 	"inviteMember":                       reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/memberships
 	"liftLegalHold":                      reasonSchemaNotYetWritten, // delete /api/v1/legal-hold
@@ -86,6 +84,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"openAccessReviewCampaign":           reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/campaigns
 	"placeLegalHold":                     reasonSchemaNotYetWritten, // post /api/v1/legal-hold
 	"reactivateUser":                     reasonSchemaNotYetWritten, // post /api/v1/users/{id}/reactivate
+	"reissueOneTimePassword":             reasonSchemaNotYetWritten, // post /api/v1/users/{id}/reissue-one-time-password
 	"removeMachineRole":                  reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/roles/{roleId}
 	"removeProjectMember":                reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/members/{userId}
 	"requirePasswordReset":               reasonSchemaNotYetWritten, // post /api/v1/users/{id}/require-password-reset
@@ -214,10 +213,13 @@ var schemaExemptOperations = map[string]bool{
 // (loud, not silent -- an out-of-date entry here fails closed).
 var exercisingTests = map[string][]string{
 	"authGetSetupToken":             {"TestGetSetupToken_HappyPath_S11"},
+	"searchShareRecipients":         {"TestContractShare2_SearchShareRecipients"},
+	"listOwnedShares":               {"TestContractShare3_ListOwnedShares"},
 	"authLogin":                     {"TestLogin_HappyPath_S8", "TestContractQA2_Login_MFARequiredBranch"},
 	"authConsumeSetup":              {"TestConsumeSetup_HappyPath_S11"},
 	"enrollMFA":                     {"TestContractQA2_EnrollMFA"},
 	"activateMFA":                   {"TestContractQA2_ActivateMFA"},
+	"changePassword":                {"TestContractRecover1_ChangePassword"},
 	"disableMFA":                    {"TestContractQA2_DisableMFA"},
 	"recoveryCodesStatus":           {"TestContractQA2_RecoveryCodesStatus"},
 	"regenerateMFARecoveryCodes":    {"TestContractQA2_RegenerateRecoveryCodes"},
@@ -375,4 +377,7 @@ var exercisingTests = map[string][]string{
 	"createProjectEnvironment": {"TestContractCatalog_CreateProjectEnvironment"},
 	"listEnvironments":         {"TestContractCatalog_ListEnvironments"},
 	"cloneEnvironment":         {"TestContractCatalog_CloneEnvironment"},
+	// #2781 (one definition of project membership) --
+	// users_memberships_2781_test.go.
+	"getUserMembershipsForUser": {"TestContract2781_GetUserMembershipsForUser"},
 }

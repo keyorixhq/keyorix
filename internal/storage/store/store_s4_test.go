@@ -386,8 +386,11 @@ func TestGroup_CRUD(t *testing.T) {
 	require.Error(t, err)
 
 	// Update.
-	g.Description = "engineers"
-	updated, err := ls.UpdateGroup(ctx, g)
+	desc := "engineers"
+	matched, err := ls.UpdateGroupFields(ctx, g.ID, nil, nil, &desc, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
+	updated, err := ls.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "engineers", updated.Description)
 

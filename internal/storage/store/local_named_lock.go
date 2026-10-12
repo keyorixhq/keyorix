@@ -40,9 +40,30 @@ import (
 // correctness gap) or finds it already deleted (creates a fresh one for a
 // genuinely uncontended key) -- there is never a window where two different
 // mutex objects are live for the same key at once.
+// #2853: the entry is an explicit FIFO ticket queue, not a sync.Mutex. Three
+// properties the mutex could not give, each load-bearing:
+//
+//   - CONTEXT-AWARENESS. A waiter whose ctx is cancelled must leave the queue
+//     and return, having touched no pooled connection. sync.Mutex.Lock cannot
+//     be cancelled, so a caller abandoned by its request context stayed queued.
+//   - FIFO. sync.Mutex deliberately allows barging (a newly arriving goroutine
+//     can win over one already waiting) and only falls back to a FIFO-ish
+//     starvation mode after 1ms. For a lock that guards a cross-replica
+//     check-then-act sequence, "first to ask is first served" is the behaviour
+//     an operator expects, and it bounds worst-case latency per waiter.
+//   - A CHECKABLE held/queued STATE. The Postgres path below must be entered by
+//     at most one goroutine per key per process (see WithNamedLock's connection
+//     budget note), which means the gate has to be inspectable, not implicit in
+//     a mutex's internals.
+//
+// held is true while some caller owns the key. Release hands ownership to the
+// head of the queue by closing its ticket WITHOUT clearing held, so no third
+// goroutine can slip in between a release and its successor's wake-up.
 type namedLockEntry struct {
-	mu   sync.Mutex
-	refs int // guarded by namedLockRegistry.mu, not by mu above
+	mu    sync.Mutex
+	held  bool
+	queue []chan struct{} // FIFO; guarded by mu
+	refs  int             // guarded by namedLockRegistry.mu, not by mu above
 }
 
 type namedLockRegistry struct {
@@ -54,12 +75,12 @@ func newNamedLockRegistry() *namedLockRegistry {
 	return &namedLockRegistry{locks: make(map[string]*namedLockEntry)}
 }
 
-// acquire locks and returns the entry for lockKey, creating it if this is the
-// first caller to ever name it (or if a prior entry was already reclaimed).
-// The caller MUST pass the returned entry to release(lockKey, entry) exactly
-// once, after its critical section, to unlock it and let the registry
-// reclaim it once no one else is using it.
-func (r *namedLockRegistry) acquire(lockKey string) *namedLockEntry {
+// acquire blocks until this caller owns lockKey, or ctx is done, creating the
+// entry if this is the first caller to ever name it (or if a prior entry was
+// already reclaimed). On success the caller MUST pass the returned entry to
+// release(lockKey, entry) exactly once, after its critical section. On error
+// nothing is owed: acquire has already undone its own bookkeeping.
+func (r *namedLockRegistry) acquire(ctx context.Context, lockKey string) (*namedLockEntry, error) {
 	r.mu.Lock()
 	e, ok := r.locks[lockKey]
 	if !ok {
@@ -68,15 +89,68 @@ func (r *namedLockRegistry) acquire(lockKey string) *namedLockEntry {
 	}
 	e.refs++
 	r.mu.Unlock()
+
 	e.mu.Lock()
-	return e // nosemgrep: trailofbits.go.missing-unlock-before-return.missing-unlock-before-return -- intentional lock handoff: e.mu is returned still locked BY DESIGN, unlocked by the paired release(lockKey, e) call the caller is contractually required to make (see doc comment above); tested under -race in TestWithNamedLock_ConcurrentSameKey_MutualExclusionSurvivesReclamation
+	if !e.held {
+		e.held = true
+		e.mu.Unlock()
+		return e, nil
+	}
+	ticket := make(chan struct{})
+	e.queue = append(e.queue, ticket)
+	e.mu.Unlock()
+
+	select {
+	case <-ticket:
+		return e, nil
+	case <-ctx.Done():
+		e.mu.Lock()
+		for i, c := range e.queue {
+			if c != ticket {
+				continue
+			}
+			// Still queued: drop out. Nothing was ever owned, and no
+			// connection was ever taken.
+			e.queue = append(e.queue[:i], e.queue[i+1:]...)
+			e.mu.Unlock()
+			r.unref(lockKey, e)
+			return nil, ctx.Err()
+		}
+		e.mu.Unlock()
+		// Not in the queue any more: a release dequeued this ticket and is
+		// committed to closing it, so ownership is being handed to US even
+		// though our ctx has fired. Take it and pass it straight on —
+		// returning here without releasing would leave held=true forever and
+		// wedge the key for the life of the process.
+		<-ticket
+		r.release(lockKey, e)
+		return nil, ctx.Err()
+	}
 }
 
-// release unlocks e and, if no other caller is currently holding or waiting
-// on it, removes lockKey's entry from the registry so its memory is
-// reclaimed rather than retained for the rest of the process's lifetime.
+// release hands ownership of lockKey to the longest-waiting caller, or marks
+// the key free if nobody is waiting, and then lets the registry reclaim the
+// entry once no one is holding or waiting on it (#1690: the map must not grow
+// by one permanent entry per distinct ID ever locked).
 func (r *namedLockRegistry) release(lockKey string, e *namedLockEntry) {
-	e.mu.Unlock()
+	e.mu.Lock()
+	if len(e.queue) > 0 {
+		next := e.queue[0]
+		e.queue = e.queue[1:]
+		// held stays true: ownership transfers directly to next.
+		e.mu.Unlock()
+		close(next)
+	} else {
+		e.held = false
+		e.mu.Unlock()
+	}
+	r.unref(lockKey, e)
+}
+
+// unref drops this caller's reference and reclaims the entry once the last
+// holder/waiter is gone. refs counts live acquire calls (owner plus queued
+// waiters), so refs==0 implies held==false and an empty queue.
+func (r *namedLockRegistry) unref(lockKey string, e *namedLockEntry) {
 	r.mu.Lock()
 	e.refs--
 	if e.refs == 0 {
@@ -153,18 +227,54 @@ func heldNamedLockConn(ctx context.Context) *sql.Conn {
 }
 
 // WithNamedLock runs fn with every OTHER caller using the identical lockKey
-// serialized against it: a per-key process-level mutex (namedLockRegistry)
-// covers the common single-writer self-host topology and SQLite (inherently
-// single-instance — there is no DB-level advisory lock to take); a PostgreSQL
-// session-scoped advisory lock (pg_advisory_lock), keyed by lockKey's FNV-1a
-// hash, extends that across processes/replicas (ADR-039 HA). Both paths give
-// two DIFFERENT lock keys independent locks — only callers sharing the same
-// key ever serialize against each other.
+// serialized against it, in two layers:
+//
+//  1. a per-key in-process FIFO queue (namedLockRegistry), which every caller
+//     passes through FIRST, on every dialect;
+//  2. on PostgreSQL only, a session-scoped advisory lock (pg_advisory_lock)
+//     keyed by lockKey's FNV-1a hash, which extends the guarantee across
+//     processes/replicas (ADR-039 HA). SQLite is single-instance by
+//     construction, so layer 1 is the whole guarantee there.
+//
+// Two DIFFERENT lock keys never serialize against each other in either layer.
 //
 // Like WithBootstrapLock/WithAuditCheckpointLock, this BLOCKS until the lock is
 // acquired rather than skipping on contention — a caller that loses the race must
 // actually re-run its check under the lock and observe the winner's now-committed
-// state, not silently no-op.
+// state, not silently no-op. It now also honours ctx while blocked: a caller whose
+// context is cancelled or times out while queued returns that error instead of
+// waiting indefinitely, and does so without ever having taken a connection.
+//
+// # Connection budget (#2853, and why layer 1 exists)
+//
+// The bound is TWO pooled connections per contended key PER PROCESS — one for
+// the advisory-lock session, one for the work inside fn — no matter how many
+// callers are contending. It is NOT two per caller.
+//
+// That ordering is the whole point. Taking the advisory lock requires a pooled
+// connection, and pg_advisory_lock BLOCKS while holding it; fn then needs a
+// further connection to do the caller's actual work. Before layer 1 existed,
+// every waiter checked out a connection and parked it for the entire wait, so
+// with max_open_conns = M (internal/config; configs/test.yaml sets 10) M
+// concurrent callers on one key exhausted the pool and the HOLDER could not get
+// a connection to finish — a permanent deadlock, not contention, taking down
+// unrelated traffic sharing the pool. Reproduced on a pool of 2 with two
+// callers: the holder failed inside its own critical section.
+//
+// Layer 1 fixes it by construction: at most one goroutine per key per process
+// is ever past the queue, so at most one connection per key is ever parked on
+// pg_advisory_lock. Waiters hold nothing. A cancelled waiter leaves the queue
+// having touched no connection at all.
+//
+// Guards: TestWithNamedLock_ManyWaitersOnOneKey_DoNotExhaustPool and
+// TestWithNamedLock_HolderCompletesUnderPoolSmallerThanWaiters (both wedge
+// without layer 1), TestWithNamedLock_CancelledWhileQueued_ReleasesAndTakesNoConnection.
+//
+// Nothing inside fn may ask the pool for a connection beyond that second one.
+// Lock ordering across DIFFERENT keys is unchanged and still the caller's
+// responsibility: two call chains taking keys A then B and B then A deadlock,
+// exactly as they did when both layers were advisory locks — layer 1 just makes
+// such a cycle resolve in-process rather than in Postgres.
 //
 // fn receives the (possibly lock-marked) context so that a nested WithNamedLock
 // call made from within fn, under the SAME lockKey, sees the marker via
@@ -180,6 +290,7 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 	if held[lockKey] {
 		return fn(ctx)
 	}
+	ctx = checkNamedLockOrder(ctx, lockKey) // C-GUARD-3: test builds panic on an out-of-order acquisition
 	next := make(map[string]bool, len(held)+1)
 	for k := range held {
 		next[k] = true
@@ -187,9 +298,16 @@ func (ls *LocalStorage) WithNamedLock(ctx context.Context, lockKey string, fn fu
 	next[lockKey] = true
 	ctx = context.WithValue(ctx, namedLockHeldCtxKey{}, next)
 
+	// #2853: queue IN-PROCESS FIRST, before any pooled connection is taken, on
+	// Postgres as well as SQLite. This is what bounds the connection cost of
+	// contention — see the connection budget note above.
+	entry, err := ls.namedLockMu.acquire(ctx, lockKey)
+	if err != nil {
+		return fmt.Errorf("failed to acquire named lock %q: %w", lockKey, err)
+	}
+	defer ls.namedLockMu.release(lockKey, entry)
+
 	if ls.db.Dialector.Name() != "postgres" {
-		entry := ls.namedLockMu.acquire(lockKey)
-		defer ls.namedLockMu.release(lockKey, entry)
 		return fn(ctx)
 	}
 

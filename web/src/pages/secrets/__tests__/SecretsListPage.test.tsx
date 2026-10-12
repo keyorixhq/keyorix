@@ -1,5 +1,6 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { AxiosError, AxiosHeaders } from 'axios';
 import { render, screen, fireEvent, within, act } from '../../../test/test-utils';
 import { SecretsListPage } from '../SecretsListPage';
 
@@ -224,6 +225,16 @@ beforeEach(() => {
     vi.clearAllMocks();
     resetState();
     window.history.pushState({}, '', '/');
+});
+
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
 });
 
 describe('SecretsListPage — loading / empty / error states', () => {
@@ -887,7 +898,10 @@ describe('SecretsListPage — view / edit / delete / rotate / share', () => {
         expect(screen.getByRole('button', { name: 'Rotating…' })).toBeDisabled();
     });
 
-    it('shares a secret and refetches on success', () => {
+    // SHARE-2: the page used to close the dialog in onSuccess, which unmounted it
+    // before its "Shared!" confirmation rendered. It now only refreshes the list; the
+    // dialog closes itself (onClose) once the confirmation has been shown.
+    it('refetches on share success and leaves the dialog open for its confirmation', () => {
         listState.secrets = secretsFixture;
         render(<SecretsListPage />);
 
@@ -896,7 +910,33 @@ describe('SecretsListPage — view / edit / delete / rotate / share', () => {
 
         fireEvent.click(screen.getByText('Share Success'));
         expect(refetchMock).toHaveBeenCalled();
+        expect(screen.getByText('Share: db-pass')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByText('Close Share'));
         expect(screen.queryByText('Share: db-pass')).not.toBeInTheDocument();
+    });
+
+    // SHARE-2: a refused update shows the server's reason (apiErrorMessage), not
+    // axios's "Request failed with status code 403".
+    it("shows the server's reason when an edit is refused", () => {
+        listState.secrets = secretsFixture;
+        listState.editMutation = {
+            isPending: false,
+            isError: true,
+            error: new AxiosError('Request failed with status code 403', 'ERR_BAD_REQUEST', undefined, undefined, {
+                status: 403,
+                statusText: 'Forbidden',
+                headers: {},
+                config: { headers: new AxiosHeaders() },
+                data: { error: 'Forbidden', message: 'Insufficient permissions' },
+            }),
+        };
+        render(<SecretsListPage />);
+
+        fireEvent.click(screen.getByText('Edit db-pass'));
+        expect(screen.getByText('Failed to update secret')).toBeInTheDocument();
+        expect(screen.getByText('Insufficient permissions')).toBeInTheDocument();
+        expect(screen.queryByText('Request failed with status code 403')).not.toBeInTheDocument();
     });
 
     it('opens the share modal from the view-detail modal', () => {
@@ -1010,5 +1050,23 @@ describe('SecretsListPage — automated rotation', () => {
 
         fireEvent.click(screen.getByText('Auto-rotate db-pass'));
         expect(screen.getByRole('button', { name: 'Saving…' })).toBeDisabled();
+    });
+});
+
+describe('SecretsListPage permission-aware controls (DEMO-UI-1)', () => {
+    it('offers no New Secret / Create Secret to a read-only user and says nothing here is visible', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        render(<SecretsListPage />);
+        expect(screen.queryByTestId('create-secret-button')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Create Secret' })).not.toBeInTheDocument();
+        expect(screen.getByText('No secrets found')).toBeInTheDocument();
+        expect(screen.queryByText('Get started by creating your first secret.')).not.toBeInTheDocument();
     });
 });

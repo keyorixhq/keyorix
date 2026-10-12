@@ -188,6 +188,44 @@ func (ls *LocalStorage) PurgeDeletedEnvironmentsBefore(ctx context.Context, befo
 	return ls.purgeDeletedBefore(ctx, &models.Environment{}, before)
 }
 
+// secretPurgeCandidate is the projection of a soft-deleted secret the purge decides on.
+type secretPurgeCandidate struct {
+	ID                    uint
+	DeletedAt             gorm.DeletedAt
+	RetentionOverrideDays int
+	PurgeAt               *time.Time
+}
+
+// eligible reports whether the purge may hard-delete this secret at now. This is THE
+// purge rule, and the one invariant it exists for: a secret is never removed before
+// the purge date that was shown for it (RETENTION-1; see the table test around the
+// boundary in local_purge_purgeat_test.go).
+//
+//   - Frozen purge_at (every secret soft-deleted since the column exists, whenever the
+//     store knew the window): purge strictly after it, and nothing else is consulted.
+//     `before` is derived from the CURRENT soft_delete.retention_days, so honouring it
+//     here would let an operator who shortens the window pull a purge earlier than the
+//     date already displayed. A window changed after deletion therefore affects only
+//     later deletions, in both directions (it never defers a displayed date either).
+//   - No purge_at (soft-deleted before the column existed, or by a store never told the
+//     window): the legacy rule, which is also the date core.SecretPurgeAt shows for such
+//     a row, evaluated against the current configuration - its per-secret override, else
+//     the caller's cutoff (`before` = now - retention_days, computed in UTC by the
+//     scheduler so it equals models.PurgeAtFor exactly).
+func (c secretPurgeCandidate) eligible(now, before time.Time) bool {
+	if !c.DeletedAt.Valid {
+		return false
+	}
+	if c.PurgeAt != nil {
+		return now.After(c.PurgeAt.UTC())
+	}
+	cutoff := before
+	if c.RetentionOverrideDays > 0 {
+		cutoff = now.AddDate(0, 0, -c.RetentionOverrideDays)
+	}
+	return c.DeletedAt.Time.Before(cutoff)
+}
+
 // PurgeDeletedSecretsBefore hard-deletes soft-deleted secrets past the retention window,
 // together with their version rows AND the dependency-graph edges incident to them, in one
 // transaction. The secret VALUE lives in secret_versions.encrypted_value, which has no
@@ -218,29 +256,18 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 	// whether `before` (no override) or `now - override days` (override set) applies.
 	// now is a single wall-clock read for the whole sweep, not per-row, so every
 	// candidate in this run is judged against the same instant.
-	now := time.Now()
+	now := time.Now().UTC()
 	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var candidates []struct {
-			ID                    uint
-			DeletedAt             gorm.DeletedAt
-			RetentionOverrideDays int
-		}
+		var candidates []secretPurgeCandidate
 		if e := tx.Unscoped().Model(&models.SecretNode{}).
-			Select("id, deleted_at, retention_override_days").
+			Select("id, deleted_at, retention_override_days, purge_at").
 			Where("deleted_at IS NOT NULL").
 			Find(&candidates).Error; e != nil {
 			return e
 		}
 		var ids []uint
 		for _, cand := range candidates {
-			if !cand.DeletedAt.Valid {
-				continue
-			}
-			cutoff := before
-			if cand.RetentionOverrideDays > 0 {
-				cutoff = now.AddDate(0, 0, -cand.RetentionOverrideDays)
-			}
-			if cand.DeletedAt.Time.Before(cutoff) {
+			if cand.eligible(now, before) {
 				ids = append(ids, cand.ID)
 			}
 		}
@@ -262,6 +289,14 @@ func (ls *LocalStorage) PurgeDeletedSecretsBefore(ctx context.Context, before ti
 			return tx.Unscoped().Model(&models.SecretNode{}).
 				Select("id").
 				Where("id IN ? AND deleted_at IS NOT NULL", ids)
+		}
+		// #3085: every mutable row that references the secret or one of its
+		// versions goes first (children before parents), so the purge leaves no
+		// orphan for restore's dangling-reference check to refuse. audit_events
+		// and the access_review_items snapshot are deliberately NOT here: they
+		// are historical references (see local_purge_secret_refs.go).
+		if e := purgeSecretReferences(tx, stillEligible); e != nil {
+			return e
 		}
 		if e := tx.Where("secret_node_id IN (?)", stillEligible()).Delete(&models.SecretVersion{}).Error; e != nil {
 			return e
@@ -394,14 +429,32 @@ func (ls *LocalStorage) DeleteClosedAccessReviewsBefore(ctx context.Context, bef
 }
 
 // DeleteExpiredBreakGlassBefore hard-deletes old break-glass activations before
-// the cutoff: explicitly non-active (revoked, or reconciled-expired) rows.
-// Before doing so it reconciles ('active' -> 'expired') rows still labeled
-// 'active' whose ExpiresAt has genuinely passed -- ReconcileExpiredBreakGlassActivation
+// the cutoff: explicitly non-active (revoked, or reconciled-expired) AND
+// reviewed rows. Before doing so it reconciles ('active' -> 'expired') rows
+// still labeled 'active' whose ExpiresAt has genuinely passed -- ReconcileExpiredBreakGlassActivation
 // only ever reconciles the SAME user's row at their own next activation in the
 // SAME project, so a user who activates once and never revisits that project
 // leaves their row 'active' in the DB indefinitely otherwise; this retention
 // sweep is the backstop that still reclaims it. A row genuinely still active
 // (ExpiresAt in the future, or nil) is never touched either way.
+//
+// #2461 round 2: an unreviewed row (reviewed_at IS NULL) is NEVER matched by
+// this delete, no matter how old. ADR-112's posture deviation ("an open
+// activation without a recorded review") is exactly what retention would
+// otherwise silently erase: a row old enough to outlive break_glass_days
+// would be purged before anyone reviewed it, and the compliance posture
+// report (accumulateBreakGlassPosture) would then report FEWER unreviewed
+// activations than ever actually went unreviewed -- the same masking effect
+// DeleteAnomalyAlertsBefore's ackBefore/unackCeiling split exists to prevent
+// for unacknowledged anomaly alerts, immediately below. Unlike that sweep,
+// this one has no separate, more-generous ceiling for the unreviewed case:
+// break-glass activation is rare, tightly audited, and already surfaced by
+// RunBreakGlassReviewReminder's recurring overdue warning (and, since round
+// 2, the "emergency-access" compliance control going to Gap), so an
+// unreviewed row has an active, nagging escalation path rather than the
+// anomaly-alert stream's passive accumulation risk a disk-exhaustion ceiling
+// guards against -- there is no legitimate "ancient and still unreviewed and
+// nobody will ever look at it" case here to additionally cap.
 //
 // FIX-7 (adversarial review run 2): #1653 reopened's widen hard-deleted a
 // still-'active' row in the SAME statement as the reconciliation, the instant
@@ -483,7 +536,7 @@ func (ls *LocalStorage) DeleteExpiredBreakGlassBefore(ctx context.Context, befor
 	if err := ls.reconcileBreakGlassIDsToExpired(ctx, justReconciledIDs); err != nil {
 		return 0, err
 	}
-	q := ls.db.WithContext(ctx).Where("state <> ? AND created_at < ?", breakGlassActiveState, before)
+	q := ls.db.WithContext(ctx).Where("state <> ? AND created_at < ? AND reviewed_at IS NOT NULL", breakGlassActiveState, before)
 	if len(justReconciledIDs) > 0 {
 		q = q.Where("id NOT IN ?", justReconciledIDs)
 	}

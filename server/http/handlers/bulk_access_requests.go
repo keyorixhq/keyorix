@@ -27,7 +27,7 @@ func (h *CatalogHandler) BulkApproveAccessRequests(w http.ResponseWriter, r *htt
 	if !mustDecodeBody(w, r, &body) {
 		return
 	}
-	result, err := h.coreService.BulkApproveAccessRequests(r.Context(), body.RequestIDs, actor.UserID)
+	result, err := h.coreService.BulkApproveAccessRequests(r.Context(), body.RequestIDs, actor.UserID, machineID(r))
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest
@@ -57,7 +57,7 @@ func (h *CatalogHandler) BulkRejectAccessRequests(w http.ResponseWriter, r *http
 	if !mustDecodeBody(w, r, &body) {
 		return
 	}
-	result, err := h.coreService.BulkRejectAccessRequests(r.Context(), body.RequestIDs, actor.UserID, body.Reason)
+	result, err := h.coreService.BulkRejectAccessRequests(r.Context(), body.RequestIDs, actor.UserID, machineID(r), body.Reason)
 	if err != nil {
 		msg := err.Error()
 		status := http.StatusBadRequest

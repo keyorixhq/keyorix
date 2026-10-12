@@ -130,20 +130,37 @@ func assertColumnScopedStorageWrite(t *testing.T, path, name string) {
 // requiredRecv ("storage", "tx", or "c" for a core method).
 func assertCoreWritesOnlyVia(t *testing.T, path, name, requiredRecv, required string, forbidden ...string) {
 	t.Helper()
+	assertWritesOnlyVia(t, path, "KeyorixCore", name, requiredRecv, required, forbidden...)
+}
+
+// assertStorageWritesOnlyVia is assertCoreWritesOnlyVia for a LocalStorage
+// method. It exists because some entry points this family guards are in
+// internal/storage/store rather than internal/core (AdvanceWebAuthnCredentialCounter),
+// and the earlier claim that those "cannot be reached by these core-scoped
+// helpers" was about the WRAPPER's hardcoded receiver type, not about the AST
+// walk — columnScopedFuncCalls already takes an arbitrary path and receiver
+// type (#2836).
+func assertStorageWritesOnlyVia(t *testing.T, path, name, requiredRecv, required string, forbidden ...string) {
+	t.Helper()
+	assertWritesOnlyVia(t, path, "LocalStorage", name, requiredRecv, required, forbidden...)
+}
+
+func assertWritesOnlyVia(t *testing.T, path, recvType, name, requiredRecv, required string, forbidden ...string) {
+	t.Helper()
 	bad := map[string]bool{}
 	for _, f := range forbidden {
 		bad[f] = true
 	}
 	found := false
-	for _, c := range columnScopedFuncCalls(t, path, "KeyorixCore", name) {
+	for _, c := range columnScopedFuncCalls(t, path, recvType, name) {
 		if bad[c.Name] && c.Recv != "c" {
-			t.Errorf("%s: KeyorixCore.%s calls %s.%s — a full-row write of its pre-read snapshot", path, name, c.Recv, c.Name)
+			t.Errorf("%s: %s.%s calls %s.%s — a full-row write of its pre-read snapshot", path, recvType, name, c.Recv, c.Name)
 		}
 		if c.Name == required && (c.Recv == requiredRecv || len(c.Recv) > len(requiredRecv) && c.Recv[len(c.Recv)-len(requiredRecv)-1:] == "."+requiredRecv) {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("%s: KeyorixCore.%s no longer calls %s.%s — the column-scoped write this guard depends on", path, name, requiredRecv, required)
+		t.Errorf("%s: %s.%s no longer calls %s.%s — the column-scoped write this guard depends on", path, recvType, name, requiredRecv, required)
 	}
 }

@@ -353,11 +353,11 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 	// #1573: approverMachineID distinguishes one machine approver from another —
 	// ApproverID/ResolvedBy is 0 for every machine caller (ADR-030, no UserID),
 	// so without this the dual-control distinct-approver count could not tell
-	// two different machines' sign-offs apart. 0 for a human actor.
-	var approverMachineID uint
-	if actor.MachineIdentityID != nil {
-		approverMachineID = *actor.MachineIdentityID
-	}
+	// two different machines' sign-offs apart. 0 for a human actor. #2495: via
+	// the shared machineID(r) helper rather than an inline re-derivation, so
+	// this and the bulk endpoints cannot disagree about what "the acting machine
+	// identity" is.
+	approverMachineID := machineID(r)
 	var resolveErr error
 	switch body.Action {
 	case "approve":

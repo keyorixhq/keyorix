@@ -31,9 +31,20 @@ const (
 // ValidateMachineToken/CurrentMachineTokenRestriction on the same two
 // conditions ErrPATRevoked/ErrPATExpired cover for PATs — the caller (auth
 // middleware) surfaces either as a 401.
+//
+// ErrMachineIdentityNotActive is the THIRD such condition (#2518): the
+// credential itself is fine but its owning machine identity is no longer
+// active (suspended / revoked / deprovisioned). CurrentMachineTokenRestriction's
+// own doc comment already named it one of the signals its caller "must treat as
+// deny the request, not a transient lookup failure to degrade past" — but it
+// returned a plain fmt.Errorf, which the auth middleware's cache-hit path
+// cannot tell apart from a storage blip, so it fell into the
+// degrade-to-stale-snapshot branch instead (INV-MW-05). A typed sentinel is
+// what makes the claim in that doc comment actually checkable by the caller.
 var (
-	ErrMachineTokenRevoked = errors.New("token revoked")
-	ErrMachineTokenExpired = errors.New("token expired")
+	ErrMachineTokenRevoked      = errors.New("token revoked")
+	ErrMachineTokenExpired      = errors.New("token expired")
+	ErrMachineIdentityNotActive = errors.New("machine identity is not active")
 )
 
 // IssueMachineTokenResult carries the freshly minted token. PlainToken is shown
@@ -348,7 +359,12 @@ func (c *KeyorixCore) ValidateMachineToken(ctx context.Context, raw string) (*mo
 		return nil, nil, nil, 0, fmt.Errorf("machine identity not found")
 	}
 	if m.State != MachineActive {
-		return nil, nil, nil, 0, fmt.Errorf("machine identity is %s", m.State)
+		// Same sentinel as CurrentMachineTokenRestriction's identical check
+		// (#2518). Not load-bearing here — every caller of this function denies
+		// on any error — but a sibling condition returning a differently-typed
+		// error is exactly how the cache-hit path came to be unable to see it,
+		// so the two are kept in step.
+		return nil, nil, nil, 0, fmt.Errorf("%w: %s", ErrMachineIdentityNotActive, m.State)
 	}
 
 	roles, err := c.storage.GetMachineRoles(ctx, m.ID)
@@ -414,7 +430,14 @@ func (c *KeyorixCore) CurrentMachineTokenRestriction(ctx context.Context, raw st
 		return nil, ErrMachineTokenExpired
 	}
 	if identityState != MachineActive {
-		return nil, fmt.Errorf("machine identity is %s", identityState)
+		// #2518: wrap the typed sentinel so the auth middleware's cache-hit path
+		// can distinguish this DEFINITIVE deny from an indeterminate storage
+		// error, while keeping the concrete state in the message for logs. A
+		// bare fmt.Errorf here meant suspending a machine identity took up to
+		// validTokenTTL to take effect on every replica other than the one that
+		// ran the suspension (only that one flushes via
+		// SetMachineTokenCacheFlusher).
+		return nil, fmt.Errorf("%w: %s", ErrMachineIdentityNotActive, identityState)
 	}
 	return machineRestrictionFrom(cred), nil
 }
@@ -527,16 +550,35 @@ func (c *KeyorixCore) RemoveMachineRole(ctx context.Context, machineID, roleID u
 	if err != nil {
 		return err
 	}
+	return c.withMachineRoleRemovalGuards(ctx, machineID, scope, func(ctx context.Context) error {
+		return c.removeMachineRoleWriteOn(ctx, c.storage, c.auditNow(), m, roleID, scope, actorID)
+	})
+}
+
+// withMachineRoleRemovalGuards runs write under exactly the named lock and
+// scope validation a machine-role removal requires — hoisted out of
+// RemoveMachineRole so the access-review revoke transaction (#2676) reuses this
+// decision rather than restating it, the same arrangement
+// withUserRoleRemovalGuards / withGroupRoleRemovalGuards use for their
+// respective principals.
+func (c *KeyorixCore) withMachineRoleRemovalGuards(ctx context.Context, machineID uint, scope Scope, write func(ctx context.Context) error) error {
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("machine", machineID), func(ctx context.Context) error {
 		if err := c.requireEnvironmentInProject(ctx, scope); err != nil {
 			return err
 		}
-		if err := c.storage.RemoveMachineRole(ctx, machineID, roleID, scope); err != nil {
-			return err
-		}
-		c.logMachineEvent(ctx, "machine_identity.role_removed", m, actorID)
-		return nil
+		return write(ctx)
 	})
+}
+
+// removeMachineRoleWriteOn is the machine-role removal's persistent effect
+// through an explicit storage handle and audit target — the machine counterpart
+// of removeUserRoleWriteOn.
+func (c *KeyorixCore) removeMachineRoleWriteOn(ctx context.Context, st storage.Storage, tgt auditTarget, m *models.MachineIdentity, roleID uint, scope Scope, actorID uint) error {
+	if err := st.RemoveMachineRole(ctx, m.ID, roleID, scope); err != nil {
+		return err
+	}
+	c.logMachineEventOn(ctx, tgt, "machine_identity.role_removed", m, actorID)
+	return nil
 }
 
 // ListMachineRoles returns every role granted to a machine identity in the

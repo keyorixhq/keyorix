@@ -19,6 +19,11 @@ const hookState = vi.hoisted(() => ({
     projects: [] as any[],
     isLoading: false,
     isError: false,
+    // React Query's own error object, shaped as axios delivers it. The page has
+    // to read the status off this to tell "you may not list projects" from
+    // "the server is unreachable"; before #2819 it ignored it entirely and
+    // told every non-admin to go check that the backend was running.
+    error: undefined as unknown,
     createPending: false,
     deletePending: false,
     restorePending: false,
@@ -69,10 +74,12 @@ beforeEach(() => {
     hookState.deletePending = false;
     hookState.restorePending = false;
     hookState.restoreVariables = undefined;
+    hookState.error = undefined;
     useProjectsMock.mockImplementation(() => ({
         data: hookState.projects,
         isLoading: hookState.isLoading,
         isError: hookState.isError,
+        error: hookState.error,
     }));
     createMutateAsync.mockResolvedValue(makeProject({ id: 99, name: 'new-project' }));
 });
@@ -84,9 +91,37 @@ describe('ProjectsListPage', () => {
         expect(screen.getByText('Loading projects…')).toBeInTheDocument();
     });
 
-    it('shows the error state', () => {
+    // Three error cases, not one: the page used to render a single hardcoded
+    // "Check that the backend is running" for every failure, which is actively
+    // wrong for the commonest one -- a project-scoped user whom the server
+    // refuses with 403 while being perfectly healthy (#2819). The reachability
+    // message has to survive too, which is why the transport case is still
+    // asserted alongside it: a fix that just reworded the string for everyone
+    // would pass a single-case test and lose the real diagnosis.
+    it('tells a user refused by the server that it is a permission problem, not a down backend', () => {
         hookState.isError = true;
+        hookState.error = { response: { status: 403 } };
         render(<ProjectsListPage />);
+
+        expect(screen.getByText(/do not have permission to list projects/i)).toBeInTheDocument();
+        expect(screen.queryByText(/backend is running/i)).not.toBeInTheDocument();
+    });
+
+    it('still blames reachability when the request never got an answer', () => {
+        hookState.isError = true;
+        // No `response` at all: axios's shape for a connection that failed
+        // outright, which is the case the original copy was written for.
+        hookState.error = { message: 'Network Error' };
+        render(<ProjectsListPage />);
+
+        expect(screen.getByText('Failed to load projects. Check that the backend is running.')).toBeInTheDocument();
+    });
+
+    it('falls back to the reachability message for any other server error', () => {
+        hookState.isError = true;
+        hookState.error = { response: { status: 500 } };
+        render(<ProjectsListPage />);
+
         expect(screen.getByText('Failed to load projects. Check that the backend is running.')).toBeInTheDocument();
     });
 

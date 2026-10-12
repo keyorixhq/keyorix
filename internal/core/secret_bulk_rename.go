@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/identity"
 )
 
@@ -164,11 +165,15 @@ func (c *KeyorixCore) BulkRenameSecrets(ctx context.Context, projectID uint, ren
 		}
 
 		oldName := secret.Name
-		secret.Name = newName
-		if _, err := c.storage.UpdateSecret(ctx, secret); err != nil {
+		// #2695: name only — see ClassifySecret's comment. A rename is the
+		// likeliest of all these callers to run concurrently with something
+		// else (a bulk pass over many secrets), and it owns exactly one column.
+		matched, uerr := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{Name: &newName})
+		if uerr != nil || !matched {
 			skip(rn.ID, oldName, newName, "storage error")
 			continue
 		}
+		secret.Name = newName
 		c.LogSecretUpdatedWithDiff(ctx, actorID, secret.ID, projectID, actor, newName, ip, ua, buildNameRenameDiff(oldName, newName))
 		report.Outcomes = append(report.Outcomes, SecretRenameOutcome{
 			ID: rn.ID, OldName: oldName, NewName: newName, Status: renameStatusRenamed,

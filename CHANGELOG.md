@@ -3,9 +3,89 @@
 All notable changes to Keyorix are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+**Unreleased entries now live in `changelog.d/`** (one fragment file per PR; see
+`changelog.d/README.md`) and are assembled into this file at release time by
+`scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
+that section is the text written before the switch.
+
 ## Unreleased
 
 ### Security
+- **HSTS behind a TLS-terminating load balancer** (#3058): the web nginx (compose
+  image and Helm chart) sends `Strict-Transport-Security` only for a request from a
+  configured trusted proxy (`KEYORIX_WEB_TRUSTED_PROXIES` / `web.trustedProxies`)
+  that carries `X-Forwarded-Proto: https`; never for direct http, never on the say-so
+  of an untrusted client. On by default once a trusted proxy is configured, off
+  otherwise. See docs/SELF_HOSTING.md §7. Guarded by a real-nginx test
+  (`deploy` `TestWebNginxHSTS_*`).
+- **A database fault during login no longer reveals that the password, TOTP
+  code or passkey was correct.** Every login path (password, TOTP, WebAuthn
+  second factor, passwordless, re-authentication, MFA step-up) already answered
+  a storage failure *after* the credential matched with the same response a
+  wrong credential gets. The account's **lockout state** now matches too: the
+  failed-attempt counter is cleared only once the login has actually been
+  delivered, and a post-match failure counts as an attempt. Previously the
+  counter was reset on the way to the failure, so an attacker at one attempt
+  short of the lockout threshold could tell a correct password from a wrong one
+  by whether the account locked. Audit logging distinguishes the two for
+  operators — `auth.login_error` (the credential was right; a storage fault
+  denied the login) versus `auth.login_failed` (a wrong credential) — and
+  `/auth/mfa/verify` now writes `auth.login_error` for this case instead of
+  nothing at all. Visible effects: a login denied by a transient storage fault
+  now counts toward the per-account lockout, so a sustained database problem can
+  lock accounts whose owners typed the right password; and the counter is reset a
+  few milliseconds later in the request than before. A fault reading the
+  account's roles after the password matched now also answers `401 Invalid
+  credentials` instead of a distinguishable `500`. (#2894, #2888)
+- **The bundled Caddy (`tls` compose profile) no longer runs as root.** It runs as
+  uid:gid 65532 with only `NET_BIND_SERVICE`. A one-shot `caddy-init` service
+  chowns the existing `caddy_data` / `caddy_config` volumes first, so upgrading
+  an install whose Caddy volumes are root-owned needs no manual step and keeps
+  its certificates. `caddy-init` runs with `CHOWN` + `DAC_READ_SEARCH` so a
+  second run (Caddy's storage directories are `0700`) and an interrupted first
+  run succeed; it touches only the two Caddy volumes and only entries not already
+  owned by 65532. See `docs/SELF_HOSTING.md` §7.
+- **Every `tmpfs` (compose) and `emptyDir` (Helm) now has an explicit size limit**
+  (`size=` / `sizeLimit`), so a runaway writer cannot exhaust host memory or node
+  ephemeral storage. The backend's `/tmp` (64 MiB) also stages `admin restore`.
+- **The bundled PostgreSQL runs as the image's own uid, 70, in both compose and
+  the Helm chart** (`postgres:15-alpine`; the Debian-based images use 999). Compose
+  volumes were already owned by 70. **Helm upgrade note:** charts since v0.87.0 ran
+  the pod as 999 even on the alpine image, so an existing chart-created volume is
+  owned by 999 and the pod will not start (Postgres refuses a data directory it
+  does not own). Either `--set postgresql.runAsUser=999` to keep the old owner, or
+  `--set postgresql.migrateOwnership=true` for a one-time chown to 70 (opt-in: it
+  adds a root init container with only `CHOWN` + `DAC_READ_SEARCH`, which a Pod
+  Security "restricted" namespace rejects). Guarded by `deploy/hardening`, which
+  ties compose user, chart securityContext and image flavour together. See
+  `docs/UPGRADING.md` §5.
+- **The shipped compose stack and Helm chart run with
+  `security.enable_file_permission_check` on** (ADR-112 default): key material and
+  the `*_FILE` secret files are checked strictly; the orchestrator-mounted config
+  file only warns. Both configs omit the key on purpose, because an explicit `true`
+  would also audit that root/host-owned file strictly. A `*_FILE` secret that is not
+  key material follows the same upgrade grace period as the key files. Guarded by
+  `deploy/hardening` `TestShipped{Compose,Helm}Config_FilePermissionCheckIsOn`.
+- **Every secret the server reads from the environment now also accepts
+  `<NAME>_FILE`** (Docker secrets, Kubernetes Secret volumes): the master
+  password, DB password, bootstrap token, SMTP/SIEM/SCIM/webhook/SSO secrets and
+  the operator-named KEK, Shamir-share, rotation-DSN and Vault-token variables.
+  Setting both `X` and `X_FILE`, or pointing `X_FILE` at an unreadable or empty
+  file, stops the server at startup; the value and the file contents are never
+  logged. File permissions: the master password, KEK and Shamir-share files are
+  **always refused** unless `0600`/`0400` (the key-material rule) -- the one
+  exception is a group-readable file the running user does not own whose group the
+  process holds (a Kubernetes Secret volume with `fsGroup`, a Docker secret with
+  `group_add`); every other secret file follows
+  `security.enable_file_permission_check` (refuse) / warn, and during the ADR-112
+  upgrade grace period they only warn. The container
+  entrypoint (`KEYORIX_ADMIN_PASSWORD_FILE`, `KEYORIX_BOOTSTRAP_TOKEN_FILE`) and
+  `keyorix system init` resolve `_FILE` too, so a `_FILE`-only deployment
+  auto-bootstraps; the entrypoint never exports a value read from a file (the
+  server gets the `_FILE` path) and sends the bootstrap token in the request body,
+  not on wget's command line. A file value has one trailing `\n`, then one `\r`,
+  stripped (same bytes as `--passphrase-file`); the plain `KEYORIX_MASTER_PASSWORD` variable keeps
+  its whitespace trim. See `docs/CONFIGURATION.md`.
 - **New `server.http/grpc.tls_mode: strict` setting** (ADR-112, secure-by-default
   baseline, item 3) switches a listener to TLS 1.3 only, with no fallback to
   1.2. The existing default (TLS 1.2 floor, restricted to forward-secret AEAD
@@ -15,6 +95,160 @@ All notable changes to Keyorix are documented here. This project follows
   the opt-in upgrade for a deployment that can require 1.3-only clients.
   `tls.allowed_ciphers` has no effect under strict mode (TLS 1.3 negotiates
   its own suite set) and now warns if both are set.
+- **Every break-glass activation must now be reviewed after the fact**
+  (ADR-112, secure-by-default baseline, break-glass review item 5):
+  `POST /api/v1/projects/{id}/break-glass/{activationId}/review` records who
+  reviewed an activation, when, and a note — exactly once (a second attempt
+  is refused, not a silent overwrite). The reviewer must be **someone other
+  than the user who activated it**, and must be an attributable human (a
+  machine identity cannot review), and the activation must have **concluded**
+  first — a still-active grant has to be revoked or allowed to expire before
+  it can be reviewed, since a reviewer cannot assess access that is still in
+  use. Activation itself remains single-person, by design (an emergency path
+  that needs a second person fails exactly when it's needed) — review is the
+  separate, after-the-fact check that makes that safe, not a second approver.
+
+  `break_glass.review_window` (default 72h) is how long an activation may go
+  unreviewed before it is reported. Past that, it is counted as a deviation
+  in the compliance posture report (`emergency_access.unreviewed_activations`,
+  with the age of the worst outstanding one), and a recurring check logs a
+  `SECURITY:` warning and writes a `break_glass.review_overdue` audit event
+  — on startup and every 6h. That visibility is the whole of the
+  enforcement: nothing is locked out, no grant is cut short, and no user is
+  blocked, because an emergency path that can be disabled by unfiled
+  paperwork fails exactly when it is needed.
+
+  **Upgrade note:** break-glass activations recorded before this release have
+  no review on file (`reviewed_at` is NULL), so immediately after upgrading
+  every one of them older than `break_glass.review_window` is counted as
+  unreviewed — the posture report's `emergency_access.unreviewed_activations`
+  will jump, the "emergency-access" control will show a Gap, and the 6-hourly
+  reminder will log and audit them until each one is reviewed. Retention will
+  not clear the backlog for you — an unreviewed activation is never purged, no
+  matter how old, deliberately, so retention cannot silently erase the
+  deviation. They are also NOT backfilled as "pre-review-era": a synthetic
+  review record would assert a second pair of eyes that never looked, which is
+  exactly the claim this change exists to make true. Review the pre-upgrade
+  activations (any user other than the activator with `roles.assign` at the
+  project can) to clear the report. (#2461)
+- **The server now refuses to start on an incomplete key-file set** (ADR-112,
+  follow-up from #2400). #2400 made a single restore operation atomic (every
+  file in a key-material set is either all written or none are); this adds the
+  boot-time check for what that cannot cover — a set assembled across multiple
+  operations. The encryption key files (salt, wrapped DEK, and any KMS/TPM
+  wrapped-key blob or Shamir share files) must either all be present or all be
+  absent. A partial set — the salt restored but not the wrapped DEK, say —
+  refuses to start, naming every present and missing file.
+  A second, **best-effort** check compares ages within each group of files one
+  operation writes together (a Shamir provider's share set, in practice) and
+  refuses when they differ by more than 24h. It is deliberately *not* presented
+  as a mixed-generation guarantee, because mtimes cannot provide one: `cp`,
+  `install`, `docker cp` and `kubectl cp` all stamp the destination with the
+  current time, so a set hand-assembled from two different backups by the most
+  common means shows no gap at all, and mtime is writable by anyone who can
+  write the file. Issue #2900 tracks the real fix — a key-set manifest
+  (generation id plus per-file hash) written atomically with the keys and
+  verified at boot, which also covers the `.pending` rotation-staging files.
+  The wrapped DEK is exempt from the timing check (routine DEK rotation
+  legitimately rewraps it on its own schedule), and so is any comparison
+  *across* groups: `rotate-kek` rewrites only the salt and DEK, so a deployment
+  with a KMS/TPM/Shamir fallback keeps that provider's blob at its original
+  age, which must not become a refusal to boot after an ordinary rotation.
+- **`security.enable_file_permission_check` and `security.require_mfa` now
+  default to the secure state** (ADR-112, secure-by-default baseline, item 1).
+  A fresh install enforces file-permission/DEK-salt-size/database-reachability
+  startup checks and admin MFA from its very first start, with no config
+  changes needed; the first admin login asks for MFA enrolment. On the
+  default, the encryption key material and database file are checked strictly;
+  the config file and TLS cert/key (usually orchestrator-mounted) get a warning
+  naming the file and the fix, and an explicit `true` makes those strict too.
+  **Upgrade note:** an existing deployment (its database already has users)
+  that never set `enable_file_permission_check` keeps booting during a grace
+  period: a real file-permission or startup-validation problem logs a loud
+  `ADR-112` warning naming the setting and how to comply, instead of refusing
+  to start. The grace period ends for good at the first boot whose checks pass
+  (or when the key is set explicitly). `require_mfa` on such a deployment is
+  also in a grace period: not enforced yet, with a loud start-up warning on
+  every boot until the key is set explicitly. On a fresh install a
+  session-authenticated user without MFA is confined to the enrolment
+  endpoints until they enrol (non-interactive PAT/machine credentials are
+  unaffected). An explicit
+  `enable_file_permission_check: true` keeps its exact pre-upgrade behavior,
+  including refusing to start when the key material is missing.
+- **`keyorix mfa enroll` / `keyorix mfa activate`**: the CLI can now enrol a
+  TOTP factor (secret + otpauth URI, then confirm with a code and the account
+  password; prints one-time recovery codes). With `require_mfa` on, this is
+  how a CLI-only operator gets past the first-login enrolment confinement;
+  `keyorix login --mfa-code` completes later logins.
+- **16 security-weakening settings renamed to an `insecure_` prefix** (ADR-112,
+  secure-by-default baseline, item 2, part 3) —
+  `security.allow_unsafe_file_permissions`, `security.login_lockout.disabled`,
+  `security.recover_admin.keyless_mode`,
+  `audit.siem.allow_private_network_target`/`allow_insecure_transport`,
+  `evidence_delivery.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `notifications.webhook.allow_private_network_target`/`allow_insecure_transport`,
+  `dynamic_secrets.allow_private_network_targets`/`allow_insecure_transport`,
+  `storage.encryption.key_provider.kms_allow_context_fallback`/`allow_weaker_fallback`,
+  `sso.providers[].trust_asserted_email`,
+  `sso.providers[].saml.allow_idp_initiated` and `audit_checkpoints.disabled`.
+  **Upgrade note: every old name still works exactly as before.** It is a
+  deprecated alias, not a removal — the raw YAML is rewritten before the strict
+  decode, so nothing changes except that using an old name now logs a start-up
+  warning naming its replacement. Setting both names is not ambiguous: the new
+  one wins and a "both set" warning fires. The two key-provider settings are
+  also aliased **inside the `fallbacks:` chain**, where a config file using the
+  old name previously hit the strict decode's unknown-field check and the
+  server refused to start instead of warning.
+  Not renamed: the fourteen settings tracked in #2895, each of which needs a
+  polarity inversion or a non-boolean field restructured first.
+- **Every security-weakening setting is now registered, warned about and
+  audited** (ADR-112, secure-by-default baseline, item 2 — the opt-out rule).
+  `internal/config.InsecureSettingsRegistry` is the single enumeration of all
+  33 of them (32 plus the fast-audit opt-out from ADR-112 Amendment 1); three things read it, so nothing has to be wired up per setting:
+  a start-up **warning** for every one currently in effect, a start-to-start
+  **settings diff** that writes an audit event (old value → new value) for any
+  of them that changed between two starts of the same deployment, and the
+  posture report. Nothing is renamed yet and no behaviour changes for an
+  existing config file: each entry records the `insecure_`-prefixed name it is
+  *heading for* alongside the real key it reads today, and the literal YAML
+  renames land as their own small follow-ups, each keeping the old key working
+  as a warning-logging deprecated alias.
+  A **sweep of the whole config surface** (`insecure_settings_sweep_test.go`)
+  is what keeps the registry honest: a setting whose name reads as an opt-out
+  and that no entry covers fails CI by name, and a set ratchet over every
+  leaf setting fails on *any* config addition, removal or rename — because seven of the registered
+  weakenings (`membership.validation_mode`, `storage.database.ssl_mode`,
+  `credential_delivery.mode`, the SMTP/email `tls` enums, `metrics_token`,
+  `max_request_body_bytes`) have names no pattern list can recognise. Thirteen settings that cannot be renamed
+  mechanically — each needing a polarity inversion of a load-bearing flag, or
+  a non-boolean field restructured into a real boolean — are recorded as known
+  exceptions with an owning tracking issue, and are covered by the warning,
+  the audit diff and the posture report under their current names meanwhile.
+- **New `keyorix-server admin validate --posture` command** (ADR-112,
+  secure-by-default baseline, item 4) reports every secure-baseline deviation
+  in one place and exits non-zero if any is found. **Every security-weakening
+  setting in effect counts**, whatever stage its `insecure_` naming is at:
+  encryption-at-rest disabled, database TLS disabled, unauthenticated
+  `/metrics`, log-delivered setup links and the rest are deviations because of
+  what they do, not because of what they are called. The report also covers
+  `security.enable_file_permission_check` disabled outright, a real
+  file-permission / encryption / database problem, an incomplete key-file set
+  (item 6), an enabled listener with no TLS while
+  `security.require_transport_tls` is set, and an admin-tier holder with
+  neither TOTP MFA nor a passkey enrolled. `security.require_mfa: false` is a
+  deviation, and so is an upgraded deployment still in `require_mfa`'s ADR-112
+  grace period (the server does not enforce MFA there yet, even with every
+  admin enrolled). A grace-period setting (item 1)
+  still enforcing only via its new secure-by-default value, with the underlying
+  condition it covers still non-compliant, is reported as its own deviation
+  referencing the detail above it. Each deviation is labelled with whether it
+  comes from a **shipped default** or an **explicit** config choice (whether
+  the config file literally writes the key), so an
+  operator can tell "this install has not been hardened yet" from "someone
+  turned this off" — but both count toward the exit code. Only genuinely
+  non-judgemental facts are informational: TLS mode, and the KEK salt file's
+  age (no rotation-age threshold is defined anywhere in this codebase, so a
+  number here would be a guess).
 
 ## v0.95.3 — 2026-10-01
 

@@ -78,11 +78,30 @@ apiClient.interceptors.request.use(
 // since only handle401 ever reads/writes this flag.
 type RetriableConfig = AxiosRequestConfig & { _retry?: boolean };
 
+// #3024 / RECOVER-1: the step that finishes a restricted account's setup (change the one-time
+// password, enrol a second factor) also ends the calling session, and says so with
+// `data.reauthentication_required: true` on its 200 response. The page that made the call
+// still has something to show (the new recovery codes, "password changed"), so the flag only
+// remembers the fact; the next request, which the server will now answer 401, is the moment
+// to send the user to sign in again, with a message that says why, instead of trying to
+// refresh a session that no longer exists and reporting a generic "session expired".
+let sessionEndedByServer = false;
+
+const sessionEndFlag = (body: unknown): boolean => {
+    const b = body as { reauthentication_required?: unknown; data?: { reauthentication_required?: unknown } } | null;
+    return b?.reauthentication_required === true || b?.data?.reauthentication_required === true;
+};
+
 const handle401 = async (
     error: AxiosError,
     authStore: ReturnType<typeof useAuthStore.getState>
 ): Promise<AxiosResponse | void> => {
     if (!authStore.isAuthenticated) {
+        return;
+    }
+    if (sessionEndedByServer || sessionEndFlag(error.response?.data)) {
+        sessionEndedByServer = false;
+        authStore.endSessionForReauth();
         return;
     }
     if (error.config?.url?.includes('/auth/refresh')) {
@@ -114,6 +133,9 @@ const handle401 = async (
     }
 };
 
+// Where MFAEnrollmentRequired sends the user; ProfilePage reads `tab` and `mfa`.
+export const MFA_ENROLMENT_URL = '/profile?tab=security&mfa=required';
+
 const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.getState>): void => {
     // ADR-025: a restricted account is blocked from everything but the
     // password change. Route it to the profile page rather than just
@@ -123,8 +145,36 @@ const handle403 = (error: AxiosError, authStore: ReturnType<typeof useAuthStore.
         if (!window.location.pathname.startsWith('/profile')) {
             window.location.href = '/profile';
         }
+    } else if (code === 'MFAEnrollmentRequired') {
+        // #2924 / ADR-112: security.require_mfa is on and this session has no second
+        // factor, so the server confines it to the enrolment endpoints and answers
+        // everything else with this 403. Take the user to the one place that can fix
+        // it (Profile -> Security -> Enable) instead of a "no permission" error. On
+        // /profile itself the 403s are expected (e.g. the recovery-code status call):
+        // no redirect, and no generic permission error either.
+        if (!window.location.pathname.startsWith('/profile')) {
+            window.location.href = MFA_ENROLMENT_URL;
+        }
     } else {
         authStore.setError('You do not have permission to perform this action.');
+    }
+};
+
+// axios words every non-2xx as "Request failed with status code N". That string reaches
+// users through any `error.message` a dialog renders (the 13 sites SHARE-2 moved to
+// apiErrorMessage, and every one nobody has found yet). Replace it once, here, with the
+// server's own reason when the body carries one; for a bare 403 say what is true: the
+// action is not permitted and the server gave no reason.
+const AXIOS_GENERIC_MESSAGE = /^Request failed with status code \d+$/;
+export const NO_PERMISSION_MESSAGE = 'You do not have permission to do this. Ask a project admin for access.';
+
+export const humanizeRefusal = (error: AxiosError): void => {
+    if (!AXIOS_GENERIC_MESSAGE.test(error.message ?? '')) return;
+    const data = error.response?.data as { message?: unknown; error?: unknown } | undefined;
+    if (typeof data?.message === 'string' && data.message) {
+        error.message = data.message;
+    } else if (error.response?.status === 403) {
+        error.message = NO_PERMISSION_MESSAGE;
     }
 };
 
@@ -151,6 +201,9 @@ const handleErrorByStatus = async (
 
 apiClient.interceptors.response.use(
     (response: AxiosResponse) => {
+        if (sessionEndFlag(response.data)) {
+            sessionEndedByServer = true;
+        }
         return response;
     },
     async (error: AxiosError) => {
@@ -162,6 +215,7 @@ apiClient.interceptors.response.use(
             return result;
         }
 
+        humanizeRefusal(error);
         throw error;
     }
 );
@@ -175,7 +229,11 @@ export const makeAuthenticatedRequest = async <T>(reqConfig: AxiosRequestConfig)
 // the server's `message` (e.g. a validation reason like "secret value is a known weak
 // or placeholder value") over the `error` type code. Use this where the message is
 // shown to the user; handleApiError keeps its legacy code-first ordering.
-export const apiErrorMessage = (error: unknown): string => {
+// apiErrorMessage is what a dialog shows for a failed request: the server's own
+// reason (`message`, else `error`) when there is one, so a refusal reads e.g. "You
+// can't edit this secret: ..." instead of axios's "Request failed with status code
+// 403"; otherwise the Error's message; otherwise `fallback`.
+export const apiErrorMessage = (error: unknown, fallback = 'An unexpected error occurred'): string => {
     if (axios.isAxiosError(error)) {
         const data = error.response?.data as { message?: string; error?: string } | undefined;
         if (data?.message) return data.message;
@@ -183,7 +241,7 @@ export const apiErrorMessage = (error: unknown): string => {
         if (error.message) return error.message;
     }
     if (error instanceof Error) return error.message;
-    return 'An unexpected error occurred';
+    return fallback;
 };
 
 export const handleApiError = (error: unknown): string => {

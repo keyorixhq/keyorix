@@ -41,8 +41,8 @@ type updateRotPolicyErrStorage struct {
 	err error
 }
 
-func (s *updateRotPolicyErrStorage) UpdateRotationPolicy(_ context.Context, _ *models.RotationPolicy) error {
-	return s.err
+func (s *updateRotPolicyErrStorage) UpdateRotationPolicyFields(_ context.Context, _ uint, _ corestorage.RotationPolicyFieldUpdate, _ time.Time) (bool, error) {
+	return false, s.err
 }
 
 type deleteRotPolicyErrStorage struct {

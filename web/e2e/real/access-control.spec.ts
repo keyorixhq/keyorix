@@ -13,6 +13,7 @@
 // brief describes. Documented here and in the report rather than asserting
 // a UI state that doesn't exist.
 import { test, expect, Page } from '@playwright/test';
+import { compliantPassword, personalInfoCandidates } from './support/password';
 
 const ADMIN_USERNAME = process.env.KEYORIX_E2E_ADMIN_USERNAME;
 const ADMIN_PASSWORD = process.env.KEYORIX_E2E_ADMIN_PASSWORD;
@@ -38,16 +39,16 @@ async function logout(page: Page) {
 }
 
 test('a limited (project_viewer) user cannot see or reach what their role denies', async ({ page }) => {
-    // The "New User" modal (web/src/pages/admin/AdminPage.tsx) has no internal
-    // scroll container -- its content (username/display-name/email, 3 create
-    // modes with descriptions, password field + policy hints, project
-    // assignment picker) overflows a standard 1280x720 viewport with no way
-    // to reach the submit button (confirmed live: Playwright's own
-    // scroll-into-view retried for the full 30s timeout and never found it
-    // visible). Real product gap, folded into SESSION-WEB-E2E's J36 UI-polish
-    // report rather than filed standalone; worked around here with a taller
-    // viewport so this test can still exercise the create flow.
-    await page.setViewportSize({ width: 1280, height: 2200 });
+    // This test used to raise the viewport to 1280x2200 to work around the
+    // "New User" modal having no internal scroll container: taller than a
+    // standard 1280x720 window, clipped by the shared Modal's overflow-hidden,
+    // submit button unreachable. That was a real product gap (#2775), and the
+    // workaround meant no test exercised the real geometry -- the suite that
+    // would have caught it was hiding it. Fixed in the shared Modal
+    // (web/src/components/ui/Modal.tsx: max-h + a scrollable body), so this
+    // test now runs at the default Desktop Chrome viewport like everything
+    // else. web/e2e/real/ui-dialog-viewport.spec.ts is what guards the
+    // geometry, over every dialog in the app, at two real laptop heights.
 
     // Unique per run so repeat runs against a persistent dev DB don't collide.
     const stamp = Math.floor(Math.random() * 1_000_000);
@@ -59,7 +60,21 @@ test('a limited (project_viewer) user cannot see or reach what their role denies
     // name (see scripts/smoke.sh's own header comment on this exact trap, and
     // CLAUDE.md's "local-only test failures" notes). A shared stamp here
     // silently 400s the create-user call with a generic "ValidationError".
-    const limitedPassword = 'Quartz-Falcon-77-Ridge!-' + Math.random().toString(36).slice(2, 10);
+    //
+    // #2815: the previous literal here, 'Quartz-Falcon-77-Ridge!-' + base-36,
+    // was compliant only because of the hardcoded "77" -- its sibling in
+    // mfa-login.spec.ts had no literal digit and flaked ~14% of runs. Switched
+    // to the shared generator so this one is compliant by construction too,
+    // rather than by a detail no future edit is obliged to preserve.
+    const limitedDisplayName = `Limited User ${stamp}`;
+    const limitedEmail = `${limitedUsername}@example.invalid`;
+    const limitedPassword = compliantPassword(
+        personalInfoCandidates({
+            username: limitedUsername,
+            email: limitedEmail,
+            displayName: limitedDisplayName,
+        })
+    );
 
     // ── Setup as admin: a project, and a user scoped to only that project ──
     await page.goto('/login');
@@ -74,8 +89,8 @@ test('a limited (project_viewer) user cannot see or reach what their role denies
     await page.goto('/admin/users');
     await page.getByRole('button', { name: 'New User' }).click();
     await page.getByLabel('Username').fill(limitedUsername);
-    await page.getByLabel('Display Name').fill(`Limited User ${stamp}`);
-    await page.getByLabel('Email').fill(`${limitedUsername}@example.invalid`);
+    await page.getByLabel('Display Name').fill(limitedDisplayName);
+    await page.getByLabel('Email').fill(limitedEmail);
     await page.locator('#create-password').fill(limitedPassword);
     // Default-role project assignment: the typeahead attaches project_viewer
     // (web/src/features/admin/ProjectAssignmentsPicker.tsx's DEFAULT_ROLE) --
@@ -95,7 +110,12 @@ test('a limited (project_viewer) user cannot see or reach what their role denies
     await logout(page);
 
     // ── As the limited user ─────────────────────────────────────────────────
-    await page.goto('/login');
+    // No page.goto('/login') here: logout() already waits for **/login, so the
+    // browser is on it. Navigating to the URL it is already settling on raced
+    // the login page's own in-flight navigation and aborted it -- intermittent
+    // `page.goto: net::ERR_ABORTED at .../login`, reproduced twice on an
+    // otherwise-unmodified copy of this file. The login form is simply filled
+    // in where logout() left us.
     await submitLogin(page, limitedUsername, limitedPassword);
     await page.waitForURL('/dashboard', { timeout: 15_000 });
 

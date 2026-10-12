@@ -480,7 +480,13 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 	if !isAdmin {
 		return nil // confirmed not an admin — not the last-admin case
 	}
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		// #2496, same stance as the targetHasGlobalAdminRole error above: "can't
+		// tell which roles are admin-conferring" must not silently become "there
+		// are none", which would disable this guard entirely.
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -619,6 +625,27 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 			if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
 				return err
 			}
+			// #2855: revoke the user's PATs too. This path swept sessions only,
+			// unlike every other deprovisioning path (setAccountState's
+			// blocked-state branch, DeleteUser, RevokeUserCredentialsForDeactivation),
+			// all of which revoke both. A surviving PAT is inert while the account
+			// is deprovisioned — ValidatePATToken re-checks is_active and the
+			// account state — but nothing on the way back revokes it:
+			// ReactivateUser and RestoreUser deliberately revoke nothing, on the
+			// assumption the deprovision already did. So an IdP offboard followed
+			// by a restore handed every PAT back, possibly with no expiry, after an
+			// audit trail that recorded a completed deprovision.
+			//
+			// In the same transaction as the rest, so a SCIM DELETE stays
+			// all-or-nothing (see this function's own doc comment); the hashes are
+			// folded into sessionHashes for the post-commit cache eviction below,
+			// so a cached PAT stops authenticating immediately rather than
+			// lingering for the auth-cache TTL.
+			patHashes, err := tx.RevokeAllPersonalAccessTokensForUser(ctx, id)
+			if err != nil {
+				return err
+			}
+			sessionHashes = append(sessionHashes, patHashes...)
 			return tx.DeleteUser(ctx, id)
 		})
 	})

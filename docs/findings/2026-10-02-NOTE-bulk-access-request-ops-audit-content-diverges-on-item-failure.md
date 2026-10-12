@@ -9,6 +9,32 @@ oracle (a) error-path `default:` branch), surfaced by
 while fixing the opCatalog per-item/envelope result-detection gap (see the
 `SESSION-FI (AT5)` comments on the `bulk-delete`/`bulk-reject`/
 `bulk-approve`/`bulk-rename`/`bulk-rotate` ops in `opcatalog_test.go`).
+**RESOLVED 2026-10-05 (#2549) — and the four tolerances for it had already gone
+DEAD.** The limitation this document describes ("the oracle's error-branch has
+no exemption mechanism for this yet") no longer holds: the error-reporting
+branch gained its own `onlyOutcomeLogTables` check, which accepts an
+`[AuditEvent]`-only divergence exactly as the success branch does. Driving all
+four of these cases directly confirms the oracle returns
+`ACCEPTABLE-BY-DESIGN` and never reaches `report()`, so the four
+`knownOpenTolerances` entries citing #2549 for them were never consulted —
+expiring carve-outs for a case nothing flags. They are deleted rather than
+re-filed.
+
+What covers these cases now is pinned by
+`TestOracleAErrorBranch_BulkAccessRequestAuditDiffIsAcceptedWithoutATolerance`
+(`server/faultops/oracle_a_by_design_test.go`), so the `ACCEPTABLE-BY-DESIGN`
+log line reads as deliberate rather than accidental and nobody re-adds a
+tolerance "just in case". The staleness that hid the decay is itself now
+checked by `TestKnownOpenTolerances_AreLoadBearing`, which drives every
+fully-specified tolerance and fails on any that no longer tolerates anything.
+
+Note the asymmetry with this document's sibling
+(`2026-10-02-NOTE-mfa-stepup-consume-first-grant-failure-reported-as-error.md`),
+filed under the same issue: that one's divergence is `[MFASecret]` —
+*business* state, not an outcome log — so no existing exemption reached it and
+its tolerance WAS load-bearing. It moved to the new reviewed
+`oracleAByDesignErrors` inventory. Same issue, two genuinely different
+outcomes.
 
 ## Summary
 

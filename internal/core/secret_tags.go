@@ -39,7 +39,7 @@ func (c *KeyorixCore) GetSecretTags(ctx context.Context, secretID, actorID uint)
 // lowercased, de-duplicated, and bounded (≤20 tags, ≤50 chars each); empties are
 // dropped. Audited as secret.tags_updated.
 func (c *KeyorixCore) SetSecretTags(ctx context.Context, secretID, actorID uint, tags []string) ([]string, error) {
-	if _, err := c.EnforceSecretWritePermission(ctx, secretID, actorID); err != nil {
+	if _, err := c.EnforceSecretActionPermission(ctx, secretID, actorID, SecretActionUpdateMetadata); err != nil {
 		return nil, err
 	}
 	normalized, err := normalizeTags(tags)
@@ -52,7 +52,7 @@ func (c *KeyorixCore) SetSecretTags(ctx context.Context, secretID, actorID uint,
 	uid := actorID
 	sid := secretID
 	c.writeAuditEvent(ctx, EventSecretTagsUpdated, &uid, &sid,
-		fmt.Sprintf("set %d tag(s) on secret %d", len(normalized), secretID))
+		fmt.Sprintf("set %d tag(s) on %s", len(normalized), c.auditRef(ctx, c.storage, auditKindSecret, secretID)))
 	return normalized, nil
 }
 

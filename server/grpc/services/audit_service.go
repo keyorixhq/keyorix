@@ -533,7 +533,7 @@ func auditEventToProto(e *models.AuditEvent, names map[uint]string) *pb.AuditLog
 		Id:            intToU32(int(e.ID)),
 		EventType:     e.EventType,
 		Actor:         resolveActor(e, names),
-		ActorType:     e.ActorType,
+		ActorType:     corestorage.AuditActorKind(e), // same display rule as HTTP and the actor_type filter (#2951)
 		Description:   e.Description,
 		IpAddress:     e.IPAddress,
 		Success:       success,
@@ -559,19 +559,11 @@ func auditEventToProto(e *models.AuditEvent, names map[uint]string) *pb.AuditLog
 	return out
 }
 
-// resolveActor returns the actor's username, or "system"/"unknown" when there is
-// no resolvable user.
+// resolveActor returns the actor's username, "system" for a kind-system row, or
+// "unknown" when there is no resolvable user (corestorage.AuditActorName, the
+// rule HTTP uses too).
 func resolveActor(e *models.AuditEvent, names map[uint]string) string {
-	if e.UserID == nil {
-		if e.ActorType == "system" {
-			return "system"
-		}
-		return "unknown"
-	}
-	if n, ok := names[*e.UserID]; ok && n != "" {
-		return n
-	}
-	return "unknown"
+	return corestorage.AuditActorName(e, names)
 }
 
 func ptrU32(v uint) *uint32 {

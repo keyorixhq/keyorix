@@ -89,7 +89,6 @@ var fullRowOverwriteMethods = map[string]bool{
 	"UpdateAccessRequest":              true,
 	"TransitionMachineIdentityState":   true,
 	"ApproveRiskExceptionIfPending":    true,
-	"TransitionSecretStatus":           true,
 	"UpdateUserIfActiveStateMatches":   true,
 	// Plain, unconditional .Save(...).
 	// UpdateMachineIdentityCredential was here until #2696 replaced it with
@@ -99,19 +98,38 @@ var fullRowOverwriteMethods = map[string]bool{
 	// the deleted TransitionMachineIdentityStateProxy got in the allowlist
 	// below. The replacement is deliberately NOT added: it takes scalars, not
 	// a struct, so there is no unfetched-struct shape for this guard to catch.
+	// UpdateProject and UpdateGroup went the same way in #2697, replaced by
+	// UpdateProjectFields / UpdateGroupFields (conditional column-scoped
+	// UPDATEs). Same reasoning; their replacements take scalars and pointers,
+	// not a caller-built *models.X, so there is no unfetched-struct shape here
+	// either.
 	"UpdateRole":                 true,
 	"UpdateBreakGlassActivation": true,
-	"UpdateProject":              true,
 	"UpdateWebAuthnCredential":   true,
 	"UpdateSecretTemplate":       true,
 	"UpdateRotationPolicy":       true,
-	"UpdateLegalHold":            true,
-	"UpdateDynamicSecretConfig":  true,
-	"UpdateDynamicSecretLease":   true,
-	"UpdateSecret":               true,
-	"UpdateUser":                 true,
-	"UpdateGroup":                true,
-	"SaveAnomalyConfig":          true,
+	// UpdateRotationPolicy, UpdateSecretTemplate and UpdateWebAuthnCredential
+	// went the same way in #2700, replaced by column-scoped,
+	// RowsAffected-checked writers (UpdateRotationPolicyFields,
+	// UpdateSecretTemplateFields, DisableWebAuthnCredential /
+	// SetWebAuthnCredentialCounterState). Same reasoning, and the
+	// replacements take an id plus scalars or a field struct, never a
+	// caller-built *models.X.
+	"UpdateProject":             true,
+	"UpdateLegalHold":           true,
+	"UpdateDynamicSecretConfig": true,
+	"UpdateDynamicSecretLease":  true,
+	"UpdateUser":                true,
+	"SaveAnomalyConfig":         true,
+	// UpdateSecret was here until #2695 replaced it with UpdateSecretFields (a
+	// per-field-pointer conditional UPDATE); TransitionSecretStatus was in the
+	// Select("*") group above until the same PR whitelisted it to Status and
+	// UpdatedAt. Neither is a full-row writer any more. UpdateSecret still exists
+	// for ONE caller that open PR #2668 converts (see
+	// TestUpdateSecret_HasNoProductionCallerBeyond2668), but no caller-facing
+	// handler reaches it, which is all this guard scans — and the replacement
+	// takes an id plus a field struct, not a caller-built *models.SecretNode,
+	// so there is no unfetched-struct shape here to catch.
 }
 
 // fullRowOverwriteAllowlist is the exhaustive, reasoned inventory of every

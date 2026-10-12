@@ -51,10 +51,11 @@ variables, then execute the supplied command.
 
 Project is resolved via: --project-id flag -> --project flag -> KEYORIX_PROJECT env.
 
---project-id bypasses the project-NAME lookup (GET /api/v1/projects, which needs a
-GLOBAL secrets.read grant -- a project-scoped machine token, the usual caller of
-'run' in a CI/service context, never holds one). Use it when the token invoking
-'run' is scoped to this one project only. See
+--project-id bypasses the project-NAME lookup (GET /api/v1/projects). Since #2780
+that listing serves a project-scoped caller their own projects, so --project works
+for a token scoped to this project. --project-id is still the only path for a token
+with NO project grant at all (it resolves nothing by name), and the cheaper one in
+CI -- it skips a round trip. See
 https://github.com/keyorixhq/keyorix/issues/2360 for the same shape on
 'keyorix request'.`,
 	Args: cobra.MinimumNArgs(1),
@@ -65,8 +66,8 @@ func init() {
 	runCmd.Flags().StringVar(&runEnv, "env", "development", "Environment name (e.g. production)")
 	runCmd.Flags().StringVar(&runProject, "project", "", "Project name (overrides KEYORIX_PROJECT)")
 	runCmd.Flags().UintVar(&runProjectID, "project-id", 0,
-		"Project ID -- use this instead of --project when the caller's token is scoped to this one project only "+
-			"and GET /api/v1/projects (the --project name lookup) correctly denies it")
+		"Project ID -- use this instead of --project to skip the name lookup (GET /api/v1/projects) entirely; "+
+			"required when the caller's token holds no project grant, since a name cannot be resolved without a listing")
 	runCmd.Flags().BoolVar(&runCleanEnv, "clean-env", false, "Start the child process with ONLY the injected secrets (plus a minimal PATH/HOME baseline) instead of the full inherited parent environment")
 	runCmd.Flags().StringArrayVar(&runVarMappings, "var", nil, "Inject one secret under an explicit env var name: --var NAME=secret-ref (repeatable, recommended)")
 	runCmd.Flags().BoolVar(&runDeriveNames, "derive-names", false, "Deprecated: inject every secret in the project+environment, deriving the env var name from the secret's own name")

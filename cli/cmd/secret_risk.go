@@ -40,7 +40,7 @@ func runSecretScore(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("failed to get risk score: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get risk score: HTTP %d", resp.StatusCode())
+		return httpStatusError("get risk score", resp.StatusCode(), resp.Body)
 	}
 	r := resp.JSON200.Data
 	fmt.Printf("Secret: %s\n", derefStr(r.SecretName))
@@ -100,7 +100,7 @@ func runSecretBlastRadius(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get blast radius: HTTP %d", resp.StatusCode())
+		return httpStatusError("get blast radius", resp.StatusCode(), resp.Body)
 	}
 	printBlastRadius(resp.JSON200.Data)
 	return nil
@@ -159,7 +159,7 @@ func runSecretCert(_ *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get certificate: HTTP %d", resp.StatusCode())
+		return httpStatusError("get certificate", resp.StatusCode(), resp.Body)
 	}
 	v := resp.JSON200.Data
 	notAfter := ""
@@ -235,7 +235,7 @@ func runSecretAudit(_ *cobra.Command, _ []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("get audit trail: HTTP %d", resp.StatusCode())
+		return httpStatusError("get audit trail", resp.StatusCode(), resp.Body)
 	}
 	rows := resp.JSON200.Data.Audit
 	if rows == nil || len(*rows) == 0 {

@@ -38,7 +38,7 @@ func TestMigrateUserToMachine_LockAcquisitionFailureLeavesNothingCommitted(t *te
 		Err: assert.AnError,
 	})
 
-	m, err := c.MigrateUserToMachine(ctx, svc.Username, proj.ID, "", "", 1, true)
+	m, err := c.MigrateUserToMachine(ctx, svc.Username, proj.ID, "", "", 1, 0, true)
 	require.Error(t, err, "a failed lock acquisition must be reported as an error")
 	assert.Nil(t, m)
 
@@ -82,7 +82,7 @@ func TestMigrateUserToMachine_LockAcquisitionFailureLeavesNothingCommitted_Postg
 		Err: assert.AnError,
 	})
 
-	m, err := c.MigrateUserToMachine(ctx, svc.Username, proj.ID, "", "", 1, true)
+	m, err := c.MigrateUserToMachine(ctx, svc.Username, proj.ID, "", "", 1, 0, true)
 	require.Error(t, err)
 	assert.Nil(t, m)
 

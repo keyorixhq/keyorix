@@ -36,7 +36,7 @@ RUN pnpm build && test -d dist/assets
 # even when cross-building for a different $TARGETPLATFORM: the Go toolchain
 # cross-compiles natively via GOOS/GOARCH below, which is far faster than
 # running the whole build stage under QEMU emulation for the target arch.
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS builder
 RUN apk add --no-cache git make
 WORKDIR /app
 COPY go.mod go.sum ./
@@ -97,10 +97,20 @@ RUN apk add --no-cache ca-certificates tzdata && \
 WORKDIR /app
 COPY --from=builder /app/bin/keyorix-server .
 COPY --from=builder /app/server/entrypoint.sh .
+# tls/ (0700: generated certificate, key and metrics token) and tls-public/
+# (0755: the certificate copy a proxy container reads) exist in the image so a
+# named volume mounted there starts with this ownership and mode
+# (docker-compose.secure.yml, SECURE-DEFAULT-1).
 RUN chmod +x entrypoint.sh && \
-    mkdir -p data keys && chown -R keyorix:keyorix /app
+    mkdir -p data keys tls tls-public && chown -R keyorix:keyorix /app && \
+    chmod 0700 data keys tls && chmod 755 tls-public
 USER 1001:1001
 EXPOSE 8080
+# KEYORIX_LOCAL_URL / KEYORIX_LOCAL_CA_FILE: see entrypoint.sh (https + the
+# server's own certificate when TLS is on; plain http://localhost by default).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-CMD ["./entrypoint.sh"]
+    CMD ["sh", "-c", "if [ -n \"$KEYORIX_LOCAL_CA_FILE\" ]; then SSL_CERT_FILE=\"$KEYORIX_LOCAL_CA_FILE\"; export SSL_CERT_FILE; fi; wget --no-verbose --tries=1 --spider \"${KEYORIX_LOCAL_URL:-http://localhost:8080}/health\" || exit 1"]
+# ENTRYPOINT (not CMD) so `docker compose run --rm backend ./keyorix-server
+# admin ...` also gets entrypoint.sh's config preparation; with arguments it
+# runs them instead of the server.
+ENTRYPOINT ["./entrypoint.sh"]

@@ -168,8 +168,8 @@ func TestDeleteExpiredBreakGlassBefore_SkipsActive(t *testing.T) {
 	ctx := context.Background()
 	old := time.Now().AddDate(0, 0, -120)
 
-	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{ID: 1, State: "expired", CreatedAt: old}).Error)
-	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{ID: 2, State: "revoked", CreatedAt: old}).Error)
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{ID: 1, State: "expired", CreatedAt: old, ReviewedAt: &old}).Error)
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{ID: 2, State: "revoked", CreatedAt: old, ReviewedAt: &old}).Error)
 	// Still active despite being old — must never be purged.
 	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{ID: 3, State: "active", CreatedAt: old}).Error)
 
@@ -180,6 +180,35 @@ func TestDeleteExpiredBreakGlassBefore_SkipsActive(t *testing.T) {
 	var active int64
 	require.NoError(t, ls.db.Model(&models.BreakGlassActivation{}).Where("state = ?", "active").Count(&active).Error)
 	assert.Equal(t, int64(1), active)
+}
+
+// TestDeleteExpiredBreakGlassBefore_SkipsUnreviewed is #2461 round 2's
+// proving test: retention must never purge an old, concluded activation that
+// has not been reviewed -- doing so would silently clear ADR-112's posture
+// deviation ("an open activation without a recorded review") before anyone
+// ever reviewed it, which is exactly the masking effect this guard exists to
+// prevent (see DeleteExpiredBreakGlassBefore's doc comment). A sibling row
+// that WAS reviewed, equally old, is still purged normally.
+func TestDeleteExpiredBreakGlassBefore_SkipsUnreviewed(t *testing.T) {
+	ls := newRetentionTestStore(t)
+	ctx := context.Background()
+	old := time.Now().AddDate(0, 0, -120)
+
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
+		ID: 10, State: "expired", CreatedAt: old, ReviewedAt: nil,
+	}).Error, "never reviewed, despite being concluded and ancient")
+	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
+		ID: 11, State: "revoked", CreatedAt: old, ReviewedAt: &old,
+	}).Error, "reviewed -- ordinary retention applies")
+
+	n, err := ls.DeleteExpiredBreakGlassBefore(ctx, time.Now().AddDate(0, 0, -90))
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), n, "only the reviewed row is purged")
+
+	var remaining []models.BreakGlassActivation
+	require.NoError(t, ls.db.Find(&remaining).Error)
+	require.Len(t, remaining, 1)
+	assert.Equal(t, uint(10), remaining[0].ID, "the unreviewed row must survive retention indefinitely")
 }
 
 // TestDeleteExpiredBreakGlassBefore_ReclaimsUnreconciledExpired is #1653
@@ -206,7 +235,7 @@ func TestDeleteExpiredBreakGlassBefore_ReclaimsUnreconciledExpired(t *testing.T)
 	cutoff := time.Now().AddDate(0, 0, -90)
 
 	require.NoError(t, ls.db.Create(&models.BreakGlassActivation{
-		ID: 4, State: "active", CreatedAt: old, ExpiresAt: &longExpired,
+		ID: 4, State: "active", CreatedAt: old, ExpiresAt: &longExpired, ReviewedAt: &old,
 	}).Error)
 	// Genuinely still active (far-future ExpiresAt) despite being old — must
 	// never be purged regardless of TTL-lapse reasoning.

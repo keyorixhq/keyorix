@@ -354,6 +354,16 @@ var operationOverrides = map[string]overrideEntry{
 	// internal/saml/samltest) — ParseResponse's actual signature/audience/
 	// destination verification, not a stub.
 	"REST POST /auth/saml/{provider}/acs": {StatusFuzzed, "opCatalog[\"REST POST /auth/saml/{provider}/acs\"] — Session FI2"},
+
+	// #2910 (SSO-2): the OIDC callback, a state-changing GET the inventory could
+	// not see before stateChangingGETRoutes (dump_inventory_test.go). It is driven
+	// end to end against a fake IdP: a real token endpoint, a real RS256 id_token
+	// and real JWKS verification (zz_sso_oidc_callback_op_test.go). Its two
+	// login-redirect siblings, GET /auth/sso/{provider}/login and GET
+	// /auth/saml/{provider}/login, are listed too and stay StatusPending (the
+	// default), which is an honest, tracked gap. Each writes only an SSOLoginState
+	// row.
+	"REST GET /auth/sso/{provider}/callback": {StatusFuzzed, "opCatalog[\"REST GET /auth/sso/{provider}/callback\"] — #2910"},
 }
 
 func statusOf(key string) overrideEntry {

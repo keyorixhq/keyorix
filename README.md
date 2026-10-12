@@ -33,6 +33,11 @@ Vault is powerful but requires a dedicated admin. Doppler is simple but SaaS-onl
 curl -L https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh
 ```
 
+That installs the `keyorix` **CLI** only. The server (`keyorix-server`) is a
+separate release asset (`keyorix-server_linux_amd64`, plus an `-airgap` variant,
+with `checksums.txt`) — see [QUICK_START.md](QUICK_START.md#get-the-binaries) — or a
+container image (`ghcr.io/keyorixhq/keyorix-server`).
+
 Or build from source:
 
 ```bash
@@ -65,17 +70,20 @@ KEYORIX_MASTER_PASSWORD=yourpassword keyorix-server
 **Log in with the CLI:**
 
 ```bash
-keyorix login --server http://localhost:8080 --username admin --password yourpassword
+keyorix login --server https://localhost:8080 --ca-file certs/server.crt --username admin
+# Password: (typed at the no-echo prompt)
 ```
 
-With an authenticator app enrolled, `login` prompts for a code after the
-password; `--mfa-code` supplies one (or an unused recovery code)
-non-interactively.
+(`certs/server.crt` is the self-signed certificate `keyorix-server admin init`
+generated; `login` remembers the CA file for later commands.)
 
-**Create and use secrets:**
+With an authenticator app enrolled, `login` prompts for a code after the
+password (an unused recovery code works too).
+
+**Create and use secrets** (passwords and values are prompted or read from a file, not passed as flags, because command-line arguments are visible via `ps` and saved in shell history):
 
 ```bash
-keyorix secret create --name db-password --value supersecret
+keyorix secret create --name db-password --interactive   # value typed at a hidden prompt
 keyorix run --env production --var DATABASE_URL=db-password -- node app.js
 keyorix run --env production --var DATABASE_URL=db-password -- flask run
 keyorix run --env production --var DATABASE_URL=db-password -- ./myapp

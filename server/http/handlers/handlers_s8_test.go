@@ -10,28 +10,23 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ── helpers ──────────────────────────────────────────────────────────────────
-
-// s8DBCounter ensures every freshCoreS8 call gets a unique in-memory SQLite DSN.
-var s8DBCounter atomic.Int64
 
 // freshCoreS8 creates a brand-new in-memory SQLite DB (unique DSN per call).
 // Use this for tests that call BootstrapSystem, Login, or any other stateful
@@ -39,11 +34,8 @@ var s8DBCounter atomic.Int64
 func freshCoreS8(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s8DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s8_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
+	db := sqlitetest.Open(t, "kxhandlers_s8_")
+	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
@@ -909,7 +901,7 @@ func TestVerifyMFA_InvalidChallenge_S8(t *testing.T) {
 // → 200 with empty environments slice.
 func TestListEnvironments_HappyPath_S8(t *testing.T) {
 	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -923,7 +915,7 @@ func TestListEnvironments_HappyPath_S8(t *testing.T) {
 // TestListProjects_HappyPath_S8 tests ListProjects with an empty DB → 200.
 func TestListProjects_HappyPath_S8(t *testing.T) {
 	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -935,10 +927,18 @@ func TestListProjects_HappyPath_S8(t *testing.T) {
 // TestListProjects_IncludeDeleted_S8 tests ListProjects with ?include_deleted=true.
 func TestListProjects_IncludeDeleted_S8(t *testing.T) {
 	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?include_deleted=true", nil)
+	// #2780: ?include_deleted=true now requires secrets.read at the GLOBAL scope.
+	// Project-scoped grants deliberately survive a soft-delete (so RestoreProject
+	// works) while GetProject 404s on a deleted project, so a scoped reader cannot
+	// read a soft-deleted project through any path and must not see one listed. This
+	// fixture seeds no RBAC, so 403 is the correct answer and this test now pins that
+	// gate. The 200 path (a real global reader) is covered by
+	// catalog_list_scoped_2780_test.go's TestListProjects2780_IncludeDeletedStillRequiresGlobal,
+	// which seeds the grant properly rather than relying on the route having no gate.
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/projects?include_deleted=true", nil))
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // ── groups_handler.go: ListGroups ────────────────────────────────────────────

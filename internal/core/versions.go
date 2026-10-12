@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -184,6 +185,13 @@ func (c *KeyorixCore) GetSecretValueResolved(ctx context.Context, secret *models
 // the same secret correctly refused. Route every value-disclosing function
 // through this one guard bundle instead of re-implementing a subset of it.
 func (c *KeyorixCore) enforceSecretReadGuards(ctx context.Context, secret *models.SecretNode, userID uint) error {
+	return c.enforceSecretReadGuardsWith(ctx, secret, userID, c.storage.GetSecretAccessSchedule)
+}
+
+// enforceSecretReadGuardsWith is enforceSecretReadGuards with the schedule read
+// supplied by the caller (PERF-FIX-4): the same guards in the same order, the
+// schedule step last; only where the schedule row comes from differs.
+func (c *KeyorixCore) enforceSecretReadGuardsWith(ctx context.Context, secret *models.SecretNode, userID uint, loadSchedule scheduleLoader) error {
 	// #1632: c.now(), not a bare time.Now() -- the injected/test-controllable
 	// clock every other security-relevant expiry check in this package uses
 	// (service.go's `now func() time.Time` field). This is the actual
@@ -214,7 +222,7 @@ func (c *KeyorixCore) enforceSecretReadGuards(ctx context.Context, secret *model
 	if err := c.checkRestrictedSecretReadApproval(ctx, secret, userID); err != nil {
 		return err
 	}
-	return c.checkSecretAccessSchedule(ctx, secret.ID)
+	return checkSecretAccessScheduleWith(ctx, secret.ID, loadSchedule)
 }
 
 // getSecretValueForUser is GetSecretValue's real body, plus the classification
@@ -241,14 +249,34 @@ func (c *KeyorixCore) getSecretValueForUser(ctx context.Context, secretID, userI
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 		}
 	}
-	if err := c.enforceSecretReadGuards(ctx, secret, userID); err != nil {
+	// PERF-FIX-4 (C5): the schedule step and the latest-version lookup share one
+	// storage read (one statement on a warm version cache). The guard order and
+	// the error that fires first are unchanged: the schedule is still judged
+	// last in the guard bundle, a failure of the shared read surfaces as the
+	// schedule-read error, and the version result is looked at only after every
+	// guard passed, with GetLatestSecretVersion's own error.
+	var state *storage.SecretScheduleAndLatestVersion
+	loadSchedule := func(ctx context.Context, id uint) (*models.SecretAccessSchedule, error) {
+		s, err := c.storage.GetSecretScheduleAndLatestVersion(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if s == nil {
+			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorStorageFailed", nil), "no schedule/version snapshot")
+		}
+		state = s
+		return s.Schedule, nil
+	}
+	if err := c.enforceSecretReadGuardsWith(ctx, secret, userID, loadSchedule); err != nil {
 		return nil, err
 	}
-	version, err := c.storage.GetLatestSecretVersion(ctx, secretID)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
+	if state.LatestVersionErr != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), state.LatestVersionErr)
 	}
-	return c.readVersionValue(ctx, secret, version)
+	if state.LatestVersion == nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), storage.ErrSecretVersionNotFound)
+	}
+	return c.readVersionValue(ctx, secret, state.LatestVersion)
 }
 
 // GetSecretValueWithPermissionCheck retrieves the decrypted value with permission validation.
@@ -263,6 +291,45 @@ func (c *KeyorixCore) GetSecretValueWithPermissionCheck(ctx context.Context, sec
 	// max-reads logic while still giving the classification gate a user to check
 	// an approved secret-scoped access request against.
 	return c.getSecretValueForUser(ctx, secretID, userID, nil)
+}
+
+// ReadPermittedSecret is proof that GetSecretForValueRead's read-permission check
+// (the same EnforceSecretReadPermission + access-schedule check as
+// GetSecretWithPermissionCheck) passed for one user on one secret. Its fields are
+// unexported, so outside this package it can only be obtained from that check, and
+// GetPermittedSecretValue cannot be handed an unchecked secret.
+type ReadPermittedSecret struct {
+	secret *models.SecretNode
+	userID uint
+}
+
+// Secret returns the secret as the permission check resolved it.
+func (p *ReadPermittedSecret) Secret() *models.SecretNode { return p.secret }
+
+// GetSecretForValueRead is GetSecretWithPermissionCheck for a request that goes on
+// to read the value: same checks, same errors, same returned secret, plus the proof
+// GetPermittedSecretValue takes (PERF-FIX-3).
+func (c *KeyorixCore) GetSecretForValueRead(ctx context.Context, id, userID uint) (*ReadPermittedSecret, error) {
+	secret, err := c.GetSecretWithPermissionCheck(ctx, id, userID)
+	if err != nil {
+		return nil, err
+	}
+	return &ReadPermittedSecret{secret: secret, userID: userID}, nil
+}
+
+// GetPermittedSecretValue is GetSecretValueWithPermissionCheck for a request whose
+// read permission GetSecretForValueRead has just checked (PERF-FIX-3). The
+// permission decision is not evaluated a second time and the secret is not fetched
+// again (the second evaluation was the same CheckSecretPermission call with the same
+// arguments, ~12 statements); everything else is GetSecretValueWithPermissionCheck's
+// own tail: the full read-guard bundle (clock, expiry, suspended, classification
+// gate with the real userID, schedule), the latest version and the atomic max-reads
+// accounting.
+func (c *KeyorixCore) GetPermittedSecretValue(ctx context.Context, p *ReadPermittedSecret) ([]byte, error) {
+	if p == nil || p.secret == nil || p.userID == 0 {
+		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
+	}
+	return c.getSecretValueForUser(ctx, p.secret.ID, p.userID, p.secret)
 }
 
 // GetSecretValueByVersion retrieves the decrypted value of a specific version of a secret.

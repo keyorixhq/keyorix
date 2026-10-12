@@ -62,6 +62,11 @@ var keylessModeAllowedFiles = map[string]string{
 		"instead of [WARN] for a missing recovery key on keyless-mode installs, inside the offline, host-side " +
 		"`diagnose` CLI command -- never writes it. No HTTP or gRPC transport reaches this code path (ADR-108 " +
 		"section B: no admin command starts a network listener).",
+	"internal/config/insecure_settings_registry.go": "reads it once (inside the registry's InEffect/Value " +
+		"closures for the insecure_keyless_admin_recovery entry, ADR-112 opt-out rule item 2) to decide " +
+		"whether this setting is in effect, for the start-up warning loop and the settings-diff audit -- " +
+		"never writes it. No HTTP or gRPC transport is involved: these closures only ever run from " +
+		"server/main.go's own startup code, over an already-loaded *config.Config.",
 }
 
 // repoRootForKeylessModeScan resolves the main module's repo root from this

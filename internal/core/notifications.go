@@ -21,8 +21,13 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"sort"
 
+	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -52,6 +57,91 @@ func isApproverRole(roleName string) bool {
 	return ok
 }
 
+// projectAdminRecipients resolves "the project's admins" for every notifier that
+// addresses them (#2955, NOTIFY-1): the project's own approver-role members PLUS
+// every ACTIVE holder of an install-wide admin-bypass role -- directly or through
+// a group. Reading ListProjectMembers alone matches user_roles.project_id exactly,
+// so the install's global admin (the usual admin on a fresh install, who holds no
+// project-scoped row) was never considered and received nothing. A global admin
+// has admin authority on every project (requireAdminAuthorityAt), so they may
+// see anything a project admin may and are a project admin for alerting purposes.
+//
+// Every candidate -- approver-role project members AND install-wide admins -- is
+// vetted the same way: a deleted user, a deactivated one, or one whose login is
+// blocked (AccountLoginBlocked: suspended, deprovisioned, blank/unrecognised
+// state) is dropped, because nothing about the subject (secret names, anomaly
+// detail) may reach someone whose account is off. Admin-group members count only
+// through a GLOBAL (project_id=0) membership.
+//
+// Every notifier that notifies project admins MUST resolve them here -- the
+// guard in notify_recipients_guard_test.go fails any notify*/remind* function
+// that reads ListProjectMembers directly. Callers that must skip someone (the
+// requester of their own access request) filter the result.
+//
+// Returns each user once, in ascending ID order. On a partial failure it returns
+// the recipients it did resolve together with the error, so the caller can still
+// alert them and report the gap loudly (#166).
+func (c *KeyorixCore) projectAdminRecipients(ctx context.Context, projectID uint) ([]uint, error) {
+	// candidates: every user who might be a recipient. ONE vetting rule (an active
+	// account whose login is not blocked) is applied to all of them below.
+	candidates := map[uint]struct{}{}
+	var errs []error
+
+	members, err := c.storage.ListProjectMembers(ctx, projectID)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("list project %d members: %w", projectID, err))
+	}
+	for _, m := range members {
+		if isApproverRole(m.RoleName) {
+			candidates[m.UserID] = struct{}{}
+		}
+	}
+
+	adminRoleIDs, err := c.adminBypassRoleIDSlice(ctx)
+	if err != nil {
+		errs = append(errs, fmt.Errorf("resolve install-wide admins: %w", err))
+	} else if assignments, aerr := c.storage.ListGlobalAdminAssignmentsForUpdate(ctx, adminRoleIDs); aerr != nil {
+		// Read-only use outside any transaction: the Postgres row lock it takes is
+		// released immediately, and a stale read here only costs one alert.
+		errs = append(errs, fmt.Errorf("list install-wide admin grants: %w", aerr))
+	} else {
+		for _, a := range assignments {
+			switch a.PrincipalType {
+			case "user":
+				candidates[a.PrincipalID] = struct{}{}
+			case "group":
+				// The assignment is GLOBAL, so only members whose own membership is
+				// global (user_groups.project_id=0) inherit it. ListGroupMembers
+				// ignores that scope: a member scoped to another project would be
+				// told about every project (same rule as resolveGroupAdminMembers).
+				gm, gerr := c.storage.ListGroupMembersAt(ctx, a.PrincipalID, corestorage.Scope{})
+				if gerr != nil {
+					errs = append(errs, fmt.Errorf("list members of admin group %d: %w", a.PrincipalID, gerr))
+					continue
+				}
+				for _, u := range gm {
+					candidates[u.ID] = struct{}{}
+				}
+			}
+		}
+	}
+
+	var ids []uint
+	for uid := range candidates {
+		u, uerr := c.storage.GetUser(ctx, uid)
+		switch {
+		case uerr != nil && corestorage.IsUserNotFound(uerr):
+			continue // deleted: not a recipient, not a failure
+		case uerr != nil:
+			errs = append(errs, fmt.Errorf("vet recipient %d: %w", uid, uerr))
+		case u != nil && u.IsActive && !AccountLoginBlocked(u.ID, u.AccountState):
+			ids = append(ids, uid)
+		}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return ids, errors.Join(errs...)
+}
+
 // notify creates one in-app notification, best-effort (errors are swallowed so a
 // failed insert can't roll back the triggering action).
 func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string) {
@@ -71,8 +161,29 @@ func (c *KeyorixCore) notify(ctx context.Context, userID uint, nType, title, mes
 // or the race this index closes at the DB layer would still duplicate the
 // user-visible email/webhook. Mirrors upgradeReminder's identical guard (#482).
 func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string, severity models.NotificationSeverity) { // NOSONAR -- domain-driven parameter count
+	_ = c.notifyChecked(ctx, userID, nType, title, message, projectID, link, severity)
+}
+
+// recoverPostCommitNotifyPanic is deferred by a notifier that runs AFTER its
+// primary write has committed and keeps no failure record of its own (#3092):
+// it recovers a PANIC from the insert or the out-of-band dispatch and logs it at
+// SECURITY level, so the committed write is never reported as an error. A
+// CreateNotification ERROR is already swallowed by notify; this closes the panic
+// half. Deliberately not folded into notify itself: break-glass relies on the
+// panic reaching notifyBreakGlassAdmins' own recover to audit it.
+func recoverPostCommitNotifyPanic(nType string, userID uint) {
+	if r := recover(); r != nil {
+		log.Printf("SECURITY: WARN: %s notification for user %d panicked (best-effort, primary operation already committed): %v", nType, userID, r)
+	}
+}
+
+// notifyChecked is notifyWithSeverity that RETURNS the CreateNotification error
+// instead of swallowing it, for a caller that has to record the failure: the
+// access-request notifiers, run under runPostCommitNotification (#3075). It does
+// not recover a panic; runPostCommitNotification does.
+func (c *KeyorixCore) notifyChecked(ctx context.Context, userID uint, nType, title, message string, projectID *uint, link string, severity models.NotificationSeverity) error { // NOSONAR -- domain-driven parameter count
 	if userID == 0 {
-		return
+		return nil
 	}
 	if _, err := c.storage.CreateNotification(ctx, &models.Notification{
 		UserID:    userID,
@@ -84,9 +195,46 @@ func (c *KeyorixCore) notifyWithSeverity(ctx context.Context, userID uint, nType
 		Severity:  severity,
 		CreatedAt: c.now(),
 	}); err != nil {
-		return
+		return fmt.Errorf("notify user %d (%s): %w", userID, nType, err)
 	}
 	c.dispatchNotification(ctx, userID, nType, title, message, projectID, link)
+	return nil
+}
+
+// runPostCommitNotification runs notifyFn, a notification step that follows an
+// access-request transition which has ALREADY committed, so nothing notifyFn does
+// can turn that committed transition into a reported failure (#3075, the #2880
+// rule: once the decision is durable, the response reports it).
+//
+// The bug it closes: FuzzStorageFaultOperations found PUT
+// /projects/{id}/access-requests/{requestId} with CreateNotification#1/panic
+// granting the role, approving the request and writing its audit row, then
+// answering 500 because the panic escaped the notify step. A CreateNotification
+// ERROR was already swallowed, but silently -- nobody could tell an approver was
+// never told.
+//
+// A returned error or a panic anywhere in notifyFn (recipient resolution, the
+// project label lookup, CreateNotification, the email sink) is recovered, logged
+// at SECURITY level with the step, actor, project and access request, and
+// recorded as one "notification.failed" audit event in the request's project.
+// The audit write recovers its own panic (writeAuditEventDiffOn, #2561).
+func (c *KeyorixCore) runPostCommitNotification(ctx context.Context, step string, actorID uint, req *models.AccessRequest, notifyFn func() error) {
+	var failure error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				failure = fmt.Errorf("panic: %v", r)
+			}
+		}()
+		failure = notifyFn()
+	}()
+	if failure == nil {
+		return
+	}
+	log.Printf("SECURITY: WARN: %s: notification for access request %d (project %d, actor %d) failed after the transition committed; the transition stands: %v",
+		step, req.ID, req.ProjectID, actorID, failure)
+	c.auditProjectScoped(ctx, auditNotificationFailed, actorID, req.ProjectID,
+		fmt.Sprintf("%s: notification for access request %d was not delivered: %v", step, req.ID, failure))
 }
 
 // upgradeReminder overwrites Title/Message/Severity on an existing unread
@@ -158,45 +306,48 @@ func (c *KeyorixCore) notifyMembershipActivated(ctx context.Context, m *models.P
 		&pid, link)
 }
 
-// notifyAccessRequested fans a new-request notification out to project approvers.
-func (c *KeyorixCore) notifyAccessRequested(ctx context.Context, req *models.AccessRequest) {
-	members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
-	if err != nil {
-		return
+// notifyAccessRequested fans a new-request notification out to the project's
+// admins (projectAdminRecipients: approver-role members + install-wide admins).
+// It returns every failure (a partial recipient resolution, a failed
+// CreateNotification) for runPostCommitNotification to record; whoever WAS
+// resolved is still notified.
+func (c *KeyorixCore) notifyAccessRequested(ctx context.Context, req *models.AccessRequest) error {
+	var errs []error
+	recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID) // partial result still notified (best-effort)
+	if rerr != nil {
+		errs = append(errs, fmt.Errorf("resolve project %d admins (%d resolved), some admins may not be notified: %w", req.ProjectID, len(recipients), rerr))
 	}
 	pid := req.ProjectID
 	label := c.projectLabel(ctx, req.ProjectID)
 	link := fmt.Sprintf("/projects/%d", req.ProjectID)
-	for _, mbr := range members {
-		if mbr.UserID == req.UserID {
+	for _, uid := range recipients {
+		if uid == req.UserID {
 			continue // don't notify the requester of their own request.
 		}
-		if !isApproverRole(mbr.RoleName) {
-			continue
-		}
-		c.notify(ctx, mbr.UserID, NotificationAccessRequested,
+		errs = append(errs, c.notifyChecked(ctx, uid, NotificationAccessRequested,
 			"New access request",
 			fmt.Sprintf("User %d requested %s access to %s.", req.UserID, req.SuggestedRole, label),
-			&pid, link)
+			&pid, link, models.NotificationSeverityNone))
 	}
+	return errors.Join(errs...)
 }
 
 // notifyAccessResolved tells the requester their request was approved/rejected.
-func (c *KeyorixCore) notifyAccessResolved(ctx context.Context, req *models.AccessRequest, approved bool) {
+// Run it under runPostCommitNotification, which records a returned error.
+func (c *KeyorixCore) notifyAccessResolved(ctx context.Context, req *models.AccessRequest, approved bool) error {
 	pid := req.ProjectID
 	label := c.projectLabel(ctx, req.ProjectID)
 	link := fmt.Sprintf("/projects/%d", req.ProjectID)
 	if approved {
-		c.notify(ctx, req.UserID, NotificationAccessApproved,
+		return c.notifyChecked(ctx, req.UserID, NotificationAccessApproved,
 			"Access request approved",
 			fmt.Sprintf("Your request for access to %s was approved as %s.", label, req.GrantedRole),
-			&pid, link)
-		return
+			&pid, link, models.NotificationSeverityNone)
 	}
-	c.notify(ctx, req.UserID, NotificationAccessRejected,
+	return c.notifyChecked(ctx, req.UserID, NotificationAccessRejected,
 		"Access request rejected",
 		fmt.Sprintf("Your request for access to %s was rejected.", label),
-		&pid, link)
+		&pid, link, models.NotificationSeverityNone)
 }
 
 // notifySecretShared tells a recipient a secret was shared with them directly. Self-
@@ -276,6 +427,7 @@ func (c *KeyorixCore) notifySecretOwnershipTransferred(ctx context.Context, secr
 		p := secret.ProjectID
 		pid = &p
 	}
+	defer recoverPostCommitNotifyPanic(NotificationSecretOwnershipTransferred, newOwnerID)
 	c.notify(ctx, newOwnerID, NotificationSecretOwnershipTransferred,
 		"You are now a secret owner",
 		fmt.Sprintf("You were made the owner of secret %q.", secret.Name),
@@ -293,6 +445,7 @@ func (c *KeyorixCore) notifySecretsReassigned(ctx context.Context, newOwnerID, a
 		p := projectID
 		pid = &p
 	}
+	defer recoverPostCommitNotifyPanic(NotificationSecretOwnershipTransferred, newOwnerID)
 	c.notify(ctx, newOwnerID, NotificationSecretOwnershipTransferred,
 		"Secrets reassigned to you",
 		fmt.Sprintf("%d secret(s) in %s were reassigned to you.", count, c.projectLabel(ctx, projectID)),
@@ -302,21 +455,78 @@ func (c *KeyorixCore) notifySecretsReassigned(ctx context.Context, newOwnerID, a
 // ── Self-scoped reads/writes (the authenticated user) ───────────────────────
 
 // ListNotifications returns the user's notifications, newest first.
+//
+// A request authenticated by a restricted PAT sees only the notifications its
+// restriction allows (patAllowsNotification, PAT-GUARD-1): a notification names
+// project resources, and this feed is self-scoped, so no Authorize call ever
+// narrows it. The narrowing is done in the query (patNotificationScope), so limit
+// counts visible rows: a restricted token gets up to limit of the rows it can see,
+// however many newer rows it cannot.
 func (c *KeyorixCore) ListNotifications(ctx context.Context, userID uint, unreadOnly bool, limit int) ([]*models.Notification, error) {
-	return c.storage.ListNotifications(ctx, userID, unreadOnly, limit)
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.ListNotifications(ctx, userID, unreadOnly, limit)
+	}
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
+		return []*models.Notification{}, nil
+	}
+	rows, err := c.storage.ListScopedNotifications(ctx, userID, scope, unreadOnly, limit)
+	if err != nil {
+		return nil, err
+	}
+	// Defence in depth: the scope is exact (see patNotificationScope), so this drops
+	// nothing; if the two ever disagree, the row is hidden, never shown.
+	visible := make([]*models.Notification, 0, len(rows))
+	for _, n := range rows {
+		if patAllowsNotification(ctx, n) {
+			visible = append(visible, n)
+		}
+	}
+	return visible, nil
 }
 
-// UnreadNotificationCount returns how many unread notifications the user has.
+// UnreadNotificationCount returns how many unread notifications the user has —
+// for a restricted PAT, how many of the ones it can see, so the badge count and
+// the list agree.
 func (c *KeyorixCore) UnreadNotificationCount(ctx context.Context, userID uint) (int64, error) {
-	return c.storage.CountUnreadNotifications(ctx, userID)
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.CountUnreadNotifications(ctx, userID)
+	}
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
+		return 0, nil
+	}
+	return c.storage.CountUnreadScopedNotifications(ctx, userID, scope)
 }
 
 // MarkNotificationRead marks one of the user's notifications read (ownership-checked).
+// A restricted PAT gets the same not-found for a notification it cannot see as for
+// one that does not exist.
 func (c *KeyorixCore) MarkNotificationRead(ctx context.Context, id, userID uint) error {
-	return c.storage.MarkNotificationRead(ctx, id, userID)
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.MarkNotificationRead(ctx, id, userID)
+	}
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
+		// The storage layer's own wording for "no such (id, user) row".
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	return c.storage.MarkScopedNotificationRead(ctx, id, userID, scope)
 }
 
-// MarkAllNotificationsRead marks all of the user's notifications read.
+// MarkAllNotificationsRead marks all of the user's notifications read — for a
+// restricted PAT, all of the ones it can see (one UPDATE, so all or none).
 func (c *KeyorixCore) MarkAllNotificationsRead(ctx context.Context, userID uint) error {
-	return c.storage.MarkAllNotificationsRead(ctx, userID)
+	if patRestrictionFromContext(ctx) == nil {
+		return c.storage.MarkAllNotificationsRead(ctx, userID)
+	}
+	scope, ok := patNotificationScope(ctx)
+	if !ok {
+		return nil
+	}
+	return c.storage.MarkAllScopedNotificationsRead(ctx, userID, scope)
 }
+
+// auditNotificationFailed is the audit event type recorded when a notification
+// that follows an already-committed operation could not be created (#3075).
+const auditNotificationFailed = "notification.failed"

@@ -3,10 +3,13 @@
 package store
 
 import (
+	"context"
 	"fmt"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
+
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // lockLiveParent re-reads the parent row matching where/args inside tx and reports
@@ -42,4 +45,19 @@ func lockLiveParent(tx *gorm.DB, model interface{}, where string, args ...interf
 		return false, fmt.Errorf("failed to re-check parent liveness: %w", err)
 	}
 	return len(ids) == 1, nil
+}
+
+// LockLiveProject is lockLiveParent specialised to a project, exported on
+// Storage so a core-layer caller already inside WithTransaction can apply the
+// same write-then-check it gives store-internal callers — see the interface
+// doc for the ordering contract, and lockLiveParent's own doc for why
+// write-then-check is what makes it sound.
+//
+// ls.db is the transaction-scoped handle when this is reached through the
+// Storage WithTransaction hands fn (local_transaction.go passes db: tx), which
+// is what keeps the FOR SHARE held across the caller's own write. On a
+// non-transactional LocalStorage the answer is still correct but guarantees
+// nothing, since the lock releases with the autocommit statement.
+func (ls *LocalStorage) LockLiveProject(ctx context.Context, projectID uint) (bool, error) {
+	return lockLiveParent(ls.db.WithContext(ctx), &models.Project{}, "id = ?", projectID)
 }

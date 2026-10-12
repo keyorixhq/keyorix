@@ -18,11 +18,11 @@ package store
 import (
 	"context"
 	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -36,15 +36,9 @@ import (
 // helper: newMaxStore — unique in-memory SQLite DB auto-migrated for many models
 // ---------------------------------------------------------------------------
 
-// maxStoreDBSeq makes each in-memory DB unique within the process, even
-// across repeated invocations of the same test (e.g. `go test -count=N`).
-var maxStoreDBSeq atomic.Int64
-
 func newMaxStore(t *testing.T, tag string, ms ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:max_%s_%s_%d?mode=memory&cache=shared", tag, t.Name(), maxStoreDBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "storemax_", sqlite.Open, &gorm.Config{})
 	if len(ms) > 0 {
 		require.NoError(t, db.AutoMigrate(ms...))
 	}
@@ -91,6 +85,9 @@ func TestListSessionTokenHashesByFamily_Empty(t *testing.T) {
 // EnforceSessionLimit — at-cap path (keep > 0, user has fewer than keep sessions) and keep=0.
 func TestEnforceSessionLimit_NeedsToPrune(t *testing.T) {
 	ls := newMaxStore(t, "esl", sessionModels...)
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	// Create 3 sessions.
@@ -138,6 +135,9 @@ func TestListSessionTokenHashesForUser_Empty(t *testing.T) {
 // CreatePersonalAccessToken + GetPersonalAccessTokenByID — success + not-found.
 func TestPersonalAccessToken_CreateAndGetByID(t *testing.T) {
 	ls := newMaxStore(t, "patid", &models.PersonalAccessToken{}, &models.User{})
+	// #2701: a session/PAT insert now re-reads its owning user and rolls back if
+	// it is not live, so this fixture needs the owners it references to exist.
+	seedCredentialOwners(t, ls.db)
 	ctx := context.Background()
 
 	pat, err := ls.CreatePersonalAccessToken(ctx, &models.PersonalAccessToken{
@@ -298,9 +298,11 @@ func TestUpdateGroup_Success(t *testing.T) {
 	ctx := context.Background()
 	g, err := ls.CreateGroup(ctx, &models.Group{Name: "g-upd", NameFolded: "g-upd"})
 	require.NoError(t, err)
-	g.Name = "g-upd-v2"
-	g.NameFolded = "g-upd-v2"
-	got, err := ls.UpdateGroup(ctx, g)
+	name, folded := "g-upd-v2", "g-upd-v2"
+	matched, err := ls.UpdateGroupFields(ctx, g.ID, &name, &folded, nil, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
+	got, err := ls.GetGroup(ctx, g.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "g-upd-v2", got.Name)
 }
@@ -401,8 +403,7 @@ func TestUpdateProject_DuplicateNameError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Rename p1 to "proj-beta" — must hit the unique-name collision.
-	p1.Name = "proj-beta"
-	_, err = ls.UpdateProject(ctx, p1)
+	_, err = ls.UpdateProjectFields(ctx, p1.ID, "proj-beta", p1.Description, nil, time.Now())
 	require.Error(t, err)
 }
 
@@ -1014,7 +1015,7 @@ func TestLogAuditEvent_MissingTable(t *testing.T) {
 
 func newPurgeStore(t *testing.T) *LocalStorage {
 	t.Helper()
-	return newMaxStore(t, "purge_"+t.Name(),
+	return newMaxStore(t, "purge_"+t.Name(), append([]any{
 		&models.User{}, &models.UserRole{}, &models.UserGroup{},
 		&models.ShareRecord{}, &models.SecretACL{}, &models.PersonalAccessToken{}, &models.Session{},
 		&models.Project{}, &models.Environment{},
@@ -1025,7 +1026,7 @@ func newPurgeStore(t *testing.T) *LocalStorage {
 		&models.BreakGlassActivation{},
 		&models.AccessRequest{}, &models.AccessRequestApproval{},
 		&models.DynamicSecretConfig{},
-	)
+	}, secretPurgeCascadeModels()...)...)
 }
 
 // PurgeDeletedUsersBefore — nothing to purge.
@@ -1140,6 +1141,10 @@ func newRBACStoreMax(t *testing.T) *LocalStorage {
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.GroupRole{}, &models.User{}, &models.Group{}, &models.UserGroup{},
 		&models.Project{}, &models.Environment{},
+		// SystemMetadata: AssignPermissionToRole/RemovePermissionFromRole/
+		// DeleteRole bump the PERF-3 PR-2 role_permissions cache generation
+		// (a system_metadata row) in the same transaction as the real write.
+		&models.SystemMetadata{},
 	)
 }
 

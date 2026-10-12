@@ -63,9 +63,36 @@ Share a secret with a user or group.
 
 **Error Responses:**
 - `400 Bad Request`: Invalid request data
-- `403 Forbidden`: Insufficient permissions
+- `403 Forbidden`: Insufficient permissions. `message` says why when the share
+  itself is refused: only the owner can share; the owner is not a member of the
+  secret's project; or the recipient (user or group) is not a member of it.
 - `404 Not Found`: Secret not found
 - `409 Conflict`: Share already exists
+
+A share applies only to members of the secret's project. For them, the
+effective permission on the secret is the higher of their project role and the
+share, with one limit: a `write` share elevates only three actions on that
+secret — `PUT /api/v1/secrets/{id}` (value and metadata; not a change to
+`expiration`, `clear_expiration` or `max_reads`), `PUT .../tags` and
+`PATCH .../description`, and `POST .../rotate` (gRPC: `UpdateSecret`). Every
+other `secrets.write` route (suspend, resume, move, rollback,
+transfer-ownership, classification, auto-rotate, dependencies, version
+comments, share, restore, `/shares/{id}`, project-level bulk routes) answers
+`403` for a share-only caller, with `message` "A share on this secret only lets
+you update its value and metadata or rotate it. ..." where the gate consulted
+the share. A share never grants delete, `secrets.manage` or re-sharing.
+Each elevated action is audited as `share_access_elevated` once it succeeds
+(action, secret, share id, actor); refusals and failures write nothing. See the
+[user guide](SECRET_SHARING_USER_GUIDE.md#how-a-share-combines-with-a-project-role).
+
+**Transferring a shared secret.** `POST /api/v1/secrets/{id}/transfer-ownership`
+(and the bulk `reassign-owner`) moves the secret's shares to the new owner in the
+same transaction: afterwards the shares appear in the new owner's
+`GET /api/v1/shares/owned` and gRPC `ListUserShares` as their own (`createdBy` is the
+new owner), disappear from the previous owner's, and only the new owner can update
+or revoke them (`PUT`/`DELETE /api/v1/shares/{id}` answer `403` for the previous
+owner). Recipients, permissions and expiries are untouched. Who originally created a
+share is in the audit log (`share_created`), not in `createdBy`.
 
 **Example:**
 ```bash
@@ -286,6 +313,165 @@ No response body.
 curl -X DELETE "https://api.keyorix.com/api/v1/secrets/123/self-share" \
   -H "Authorization: Bearer your-token"
 ```
+
+### 8. Search Share Recipients in a Project
+
+Find the users a secret in a project can be shared with. This is what the web
+Share dialog uses. It needs only a role in the project that allows sharing, so a
+**project-only admin** (`project_admin` of the project, no global role) can find
+recipients. `GET /users` needs the global `users.read` permission.
+
+**Endpoint:** `GET /projects/{id}/share-recipients`
+
+**Who may call it:** a caller with `secrets.write` at the project's scope who is a
+member of the project (the same rule that lets a secret's owner share it), or a
+holder of the global `users.read` permission (global admins keep their access).
+Machine identities may not.
+
+**Parameters:**
+- `id` (path, required): project ID (the secret's `project_id`)
+- `q` (query, optional): case-insensitive prefix of the username, of the display
+  name (or of any word in it), or of the email when emails are visible (see
+  below). Empty lists every recipient.
+- `page` (query, optional, default 1), `page_size` (query, optional, default 20, max 100)
+
+**What it returns:** only **active members** of the project, meaning users who hold
+a live role in it directly or through a group, and whose account is not deleted,
+deactivated, suspended or deprovisioned. These are exactly the users a share can
+go to. Results are ordered by username. Each row has `id`, `username` and
+`display_name`. `email` is included, and matched by `q`, only if you hold
+`users.read` at the project's scope, which every built-in project role does. A
+caller who cannot already see members' emails never gets them here.
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "recipients": [
+      {"id": 2, "username": "alice", "display_name": "Alice", "email": "alice@example.com"}
+    ],
+    "total": 1,
+    "page": 1,
+    "page_size": 20
+  }
+}
+```
+
+**Refusal (403):** every refusal carries the same message, whether or not the
+project exists:
+```json
+{
+  "success": false,
+  "error": "Forbidden",
+  "message": "You can only search for share recipients in a project where you can share secrets: that needs a role in this project that allows sharing (for example project_admin). Ask a project admin to give you a role in the project.",
+  "code": 403
+}
+```
+
+**Example:**
+```bash
+curl "https://api.keyorix.com/api/v1/projects/7/share-recipients?q=al&page_size=8" \
+  -H "Authorization: Bearer your-token"
+```
+
+### 9. Effective Access List of a Secret
+
+**Endpoint:** `GET /secrets/{id}/access` (CLI: `keyorix secret access --id N`)
+
+Every user who can read the secret, with their **effective** permission. For a
+project member, that is the higher of their role and any active share, so a share
+that elevates a role shows as the higher level. `source` names the grant that
+gives the permission (`owner`, `role`, `acl`, `direct_share` or
+`group_share:<group>`). `grants` lists every grant the user holds, for example
+`["role:read", "direct_share:write"]`; a live owner's grant is `owner:owner`. An
+owner who is no longer a member of the secret's project has no owner authority and
+is not listed as owner. Expired shares, and shares to users who are no longer
+project members, grant nothing and are not listed. Holders of a global role (global
+admins) have implicit access and are not listed. Two parts of the report follow the
+gate of the route that would otherwise show them:
+
+- Project roles (`role:` grants, and members who hold access only through a role)
+  appear only if the caller holds `users.read` at the project (the gate of
+  `GET /projects/{id}/members`; every built-in project role has it).
+- Per-secret ACL holders and `acl:` grants appear only if the caller passes
+  `secrets.manage` on the secret (the gate of `GET /secrets/{id}/acl`).
+
+When either part is withheld it is left out and the response is flagged `degraded`
+with a `project_members` or `secret_acls` reason, so the list is an under-count,
+never presented as complete. A lookup that fails (a group's members, a user's group
+memberships, a role or ACL check) degrades the report the same way. No built-in
+project role holds `secrets.manage`, so a project member's report is normally
+degraded with a `secret_acls` reason. `keyorix secret access` prints
+`WARNING: this list is incomplete` with the reasons, and the web panel shows a
+"This list is incomplete" banner with them.
+
+The response is `{accessors, total, degraded, degraded_reasons}`.
+
+`grants` holds every share that applies, not only the strongest: a user with a
+direct read share and a group write share shows `direct_share:read` and
+`group_share:<group>:write`. The share term follows enforcement exactly (direct
+shares, group shares through a membership that is global or scoped to the secret's
+project, read/write levels only, project members only).
+
+What the report still reveals, by design:
+
+- Without `users.read`, a caller can still tell that a listed share recipient, or
+  the owner, is a member of the project: a share to a non-member grants nothing and
+  is not listed. The roster gate withholds the list of role holders, not the
+  membership of users the caller already sees through a share or ownership.
+- Deactivated or suspended accounts that still hold a role, share or ACL are
+  listed. Their grants apply again if the account is reactivated, so an access
+  review needs to see them. Account status is shown by the user routes, not here.
+
+### 10. List Shares You Created (owner-scoped)
+
+**Endpoint:** `GET /shares/owned`
+
+The list behind the Sharing Management page for a caller who does not hold global
+`secrets.read` (which `GET /shares` requires), for example a project-only
+`project_admin`. It returns:
+- only shares the caller created, and
+- only on secrets in projects the caller is a member of now. Removing the caller from a
+  project hides their shares in it (it does not revoke them); adding them back shows
+  them again.
+
+Received shares are not listed, and global `secrets.read` adds nobody else's shares here.
+Access: `secrets.read` at the global scope or in at least one project. Machine identities
+are refused. Every refusal is the same `403` with this reason: "You can only list the
+shares you created in projects you are a member of: ...". Listing is a read and writes no
+audit event, like `GET /shares`.
+
+**Query Parameters:** `secretId`, `recipientType` (`user` or `group`), `page`
+(default 1), `pageSize` (default 20, max 200).
+
+**Response (200 OK):**
+```json
+{
+  "success": true,
+  "data": {
+    "data": [
+      {
+        "id": 456,
+        "secretId": 123,
+        "recipientType": "user",
+        "recipientId": 789,
+        "recipientName": "john.doe",
+        "permission": "read",
+        "createdAt": "2026-10-10T10:30:00Z",
+        "createdBy": "olga"
+      }
+    ],
+    "total": 1,
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 1
+  }
+}
+```
+
+The owner revokes a listed share with `DELETE /shares/{id}` (section 4), which needs
+`secrets.write` at the secret's project and the secret's ownership.
 
 ## Group Sharing
 

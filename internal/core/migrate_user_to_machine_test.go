@@ -50,7 +50,7 @@ func TestMigrateUserToMachine(t *testing.T) {
 			return true
 		})).Return(nil)
 
-		m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 9, true)
+		m, err := c.MigrateUserToMachine(ctx, "ci-bot", 3, "", "", 9, 0, true)
 		require.NoError(t, err)
 		assert.Equal(t, uint(20), m.ID)
 		assert.Equal(t, MachineTypeService, m.IdentityType)
@@ -88,7 +88,7 @@ func TestMigrateUserToMachine(t *testing.T) {
 			return true
 		})).Return(nil)
 
-		_, err := c.MigrateUserToMachine(ctx, "jane.doe", 3, "", "", 9, false)
+		_, err := c.MigrateUserToMachine(ctx, "jane.doe", 3, "", "", 9, 0, false)
 		require.NoError(t, err)
 
 		assert.NotContains(t, createdDesc, "jane.doe@customer.example", "machine identity Description must not leak the source user's email")
@@ -115,7 +115,7 @@ func TestMigrateUserToMachine(t *testing.T) {
 		})).Return(&models.MachineIdentity{ID: 21, Name: "renamed", IdentityType: MachineTypeAutomation, State: MachineActive}, nil)
 		store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
 
-		_, err := c.MigrateUserToMachine(ctx, "svc", 1, MachineTypeAutomation, "renamed", 9, false)
+		_, err := c.MigrateUserToMachine(ctx, "svc", 1, MachineTypeAutomation, "renamed", 9, 0, false)
 		require.NoError(t, err)
 		store.AssertNotCalled(t, "SetAccountState", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 		store.AssertExpectations(t)
@@ -127,7 +127,7 @@ func TestMigrateUserToMachine(t *testing.T) {
 		ctx := context.Background()
 		store.On("GetUserByUsername", ctx, "ghost").Return((*models.User)(nil), errors.New("not found"))
 
-		_, err := c.MigrateUserToMachine(ctx, "ghost", 1, "", "", 9, true)
+		_, err := c.MigrateUserToMachine(ctx, "ghost", 1, "", "", 9, 0, true)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "ghost")
 		store.AssertNotCalled(t, "CreateMachineIdentity", mock.Anything, mock.Anything)
@@ -135,9 +135,9 @@ func TestMigrateUserToMachine(t *testing.T) {
 
 	t.Run("validates required inputs", func(t *testing.T) {
 		c := newMachineCore(new(MockStorage))
-		_, err := c.MigrateUserToMachine(context.Background(), "", 1, "", "", 9, true)
+		_, err := c.MigrateUserToMachine(context.Background(), "", 1, "", "", 9, 0, true)
 		require.Error(t, err)
-		_, err = c.MigrateUserToMachine(context.Background(), "x", 0, "", "", 9, true)
+		_, err = c.MigrateUserToMachine(context.Background(), "x", 0, "", "", 9, 0, true)
 		require.Error(t, err)
 	})
 }

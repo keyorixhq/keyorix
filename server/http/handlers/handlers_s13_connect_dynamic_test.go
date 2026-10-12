@@ -75,9 +75,13 @@ func newConnectHandlerS13(t *testing.T) *ConnectHandler {
 // seedDynamicSecretConfig inserts a minimal DynamicSecretConfig and returns its ID.
 func seedDynamicSecretConfig(t *testing.T, h *DynamicSecretHandler) uint {
 	t.Helper()
+	// A config must belong to a live project: CreateDynamicSecretConfig refuses a
+	// missing or soft-deleted one (#2651, INV-STORE-21).
+	proj, err := h.coreService.Storage().CreateProject(context.Background(), &models.Project{Name: "test-proj-s13"})
+	require.NoError(t, err)
 	cfg := &models.DynamicSecretConfig{
 		Name:        "test-cfg-s13",
-		ProjectID:   1,
+		ProjectID:   proj.ID,
 		BackendType: "postgres",
 	}
 	created, err := h.coreService.Storage().CreateDynamicSecretConfig(context.Background(), cfg)

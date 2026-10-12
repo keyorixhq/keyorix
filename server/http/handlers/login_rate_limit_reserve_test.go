@@ -79,14 +79,14 @@ func runLoginBurst(t *testing.T, h *AuthHandler, ip string, burst int) (unauthor
 	return unauthorized, tooMany, other
 }
 
-// TestLogin_ConcurrentBurst_RateLimitBoundsCredentialChecks runs several
+// TestLogin_ConcurrentBurst_RateLimitBoundsCredentialChecks drives several
 // independent synchronized bursts (each on its own fresh IP, so no round's
-// budget carries into the next) and asserts the AGGREGATE too-many-requests
-// count across rounds — averaging out the single-round noise described in
-// this file's header comment while still reliably distinguishing the fixed
-// ordering from the pre-fix one (see this test's own red/green note in the
-// PR description: reverting reserveLoginAttempt to run only after Login()
-// fails made this aggregate assertion fail in the majority of repeated runs).
+// budget carries into the next) through the real handler.
+//
+// #2816: it no longer asserts the statistical too-many-requests threshold that
+// made it flaky — see the note at the end of this function. It now covers the
+// load-shape properties only; the ceiling itself is asserted exactly in
+// login_rate_limit_reserve_interleaving_test.go.
 func TestLogin_ConcurrentBurst_RateLimitBoundsCredentialChecks(t *testing.T) {
 	if raceDetectorActive {
 		// -race instruments every memory access, slowing execution enough to
@@ -129,17 +129,35 @@ func TestLogin_ConcurrentBurst_RateLimitBoundsCredentialChecks(t *testing.T) {
 	t.Logf("TOTAL across %d rounds of %d: unauthorized=%d too_many_requests=%d other=%d",
 		rounds, burst, totalUnauthorized, totalTooMany, totalOther)
 	assert.Zero(t, totalOther, "every response must be either 401 (reached the credential check) or 429 (rate-limited)")
-	// Empirically (15 single-round runs of the fixed code): too_many_requests
-	// per round of 30 ranged 8-20 (mean ~14); reverted to the pre-fix
-	// ordering (10 single-round runs): 0-9 (mean ~4.5). Requiring the
-	// 5-round AGGREGATE to clear 40 (mean 8/round) sits well above the
-	// broken ordering's per-round ceiling repeated 5 times (5*9=45 would be
-	// its best case, but its actual mean*5 ~22 is far below) and well below
-	// the fixed ordering's typical aggregate (~70).
-	assert.GreaterOrEqual(t, totalTooMany, int64(40),
-		"CEILING VIOLATED: too few of these synchronized bursts were rate-limited in aggregate — the "+
-			"reserve must happen before the slow credential check runs, not only after it fails, or a "+
-			"concurrent burst can blow straight through the budget")
 	assert.Less(t, totalUnauthorized, int64(rounds*burst),
 		"the rate limiter had no observable effect on any of these bursts at all")
+
+	// #2816: the statistical threshold assertion that used to live here
+	//     assert.GreaterOrEqual(t, totalTooMany, int64(40), "CEILING VIOLATED: ...")
+	// is GONE, and the ceiling it defended is now asserted EXACTLY, not
+	// sampled -- by TestLogin_ExhaustedBudgetRefusesWhileChecksStillInFlight
+	// and TestLogin_ReserveLandsBeforeCredentialCheck_Interleaved
+	// (login_rate_limit_reserve_interleaving_test.go), which park a request
+	// inside its credential check and observe directly that its slot is
+	// already consumed. That is the same property, proved by construction.
+	//
+	// This is NOT a lowered threshold. The threshold was a proxy for the
+	// ceiling, calibrated against observed means (8-20 per round of 30 for
+	// the fixed ordering, 0-9 for the broken one) -- overlapping
+	// distributions, which is why it was never sound: a 5-round aggregate of
+	// 40 sits inside the broken ordering's own best case (5*9=45). Under CI
+	// load it read 38 against a threshold of 40 and failed unrelated PRs.
+	// Replacing an overlapping-distribution proxy with an exact assertion
+	// raises the strength of the check; keeping both would just reinstate the
+	// flake. Deliberate, and flagged in the PR for the coordinator rather
+	// than done quietly.
+	//
+	// What is deliberately KEPT here, and why this test still earns its place:
+	// the two assertions above are not timing-sensitive and are the thing the
+	// deterministic tests cannot cover -- they drive a genuinely simultaneous
+	// 150-request burst through the real handler and require that every single
+	// response is a clean 401 or 429 (no 500, no panic, no torn state), which
+	// sequential-dispatch interleaving by construction never exercises.
+	t.Logf("ceiling property is asserted exactly by TestLogin_ExhaustedBudgetRefusesWhileChecksStillInFlight; " +
+		"this test now covers only the load-shape properties (no 5xx under a simultaneous burst, limiter has effect)")
 }

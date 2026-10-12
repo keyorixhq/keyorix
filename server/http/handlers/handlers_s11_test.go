@@ -18,38 +18,31 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
 // ── DB / helper plumbing ─────────────────────────────────────────────────────
 
-var s11DBCounter atomic.Int64
-
 // freshCoreS11 creates a brand-new in-memory SQLite DB with the full schema
 // (same set as freshCoreS8, including SystemMetadata / PasswordHistory).
 func freshCoreS11(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s11DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s11_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
-	err = db.AutoMigrate(
+	db := sqlitetest.Open(t, "kxhandlers_s11_")
+	err := db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SecretNode{},
@@ -524,14 +517,22 @@ func TestImpersonationEnd_MismatchedAdminCookie_NotRestored_S11(t *testing.T) {
 
 // ── catalog.go: ListProjects / ListEnvironments ───────────────────────────────
 
-// TestListProjects_IncludeDeleted_S11 — ?include_deleted=true → 200.
+// TestListProjects_IncludeDeleted_S11 — ?include_deleted=true is global-only.
 func TestListProjects_IncludeDeleted_S11(t *testing.T) {
 	t.Parallel()
 	h := newCatalogHandlerS8(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects?include_deleted=true", nil)
+	// #2780: ?include_deleted=true now requires secrets.read at the GLOBAL scope.
+	// Project-scoped grants deliberately survive a soft-delete (so RestoreProject
+	// works) while GetProject 404s on a deleted project, so a scoped reader cannot
+	// read a soft-deleted project through any path and must not see one listed. This
+	// fixture seeds no RBAC, so 403 is the correct answer and this test now pins that
+	// gate. The 200 path (a real global reader) is covered by
+	// catalog_list_scoped_2780_test.go's TestListProjects2780_IncludeDeletedStillRequiresGlobal,
+	// which seeds the grant properly rather than relying on the route having no gate.
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/projects?include_deleted=true", nil))
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 // TestListEnvironments_WithProjects_S11 — ListEnvironments returns all envs → 200.
@@ -542,7 +543,9 @@ func TestListEnvironments_WithProjects_S11(t *testing.T) {
 	// Create a project so at least some envs exist.
 	_, err := cs.CreateProject(context.Background(), "s11envlistproj", "")
 	require.NoError(t, err)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)
+	// #2780: ListEnvironments authorizes in-handler now, so it needs a user context
+	// (the route carries no permission middleware any more).
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil))
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -2015,7 +2018,10 @@ func cancelledCtxReq(method, target string) *http.Request {
 func TestListEnvironments_CtxError_S11(t *testing.T) {
 	t.Parallel()
 	h := NewCatalogHandler(freshCoreS11(t))
-	r := cancelledCtxReq(http.MethodGet, "/api/v1/environments")
+	// withUserCtx on top of the cancelled context: #2780 made ListEnvironments
+	// authorize in-handler, so without a user context it would 401 before reaching
+	// the storage call whose cancellation this test is about.
+	r := withUserCtx(cancelledCtxReq(http.MethodGet, "/api/v1/environments"))
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
@@ -2024,7 +2030,8 @@ func TestListEnvironments_CtxError_S11(t *testing.T) {
 func TestListProjects_CtxError_S11(t *testing.T) {
 	t.Parallel()
 	h := newCatalogHandlerS8(t)
-	r := cancelledCtxReq(http.MethodGet, "/api/v1/projects")
+	// See TestListEnvironments_CtxError_S11 for why the user context is needed.
+	r := withUserCtx(cancelledCtxReq(http.MethodGet, "/api/v1/projects"))
 	w := httptest.NewRecorder()
 	h.ListProjects(w, r)
 	assert.Equal(t, http.StatusInternalServerError, w.Code)

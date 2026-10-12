@@ -522,12 +522,24 @@ func TestListRoles_PermissionDenied(t *testing.T) {
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }
 
-func TestListProjects_PermissionDenied(t *testing.T) {
+// TestListProjects_UnauthorizedSeesNothing replaces TestListProjects_PermissionDenied.
+//
+// #2780: ListProjects no longer answers PermissionDenied to a caller without a
+// global secrets.read — it returns the projects that caller CAN read, which for a
+// caller with no grant at all is an empty list. The 403 was the defect: it is what
+// made the web UI report "you have zero secrets, create your first one" to a user
+// who could read five, and it is indistinguishable from "the backend is down".
+//
+// The security property this test exists for is unchanged and now asserted
+// directly: an unauthorized caller receives NO project. Asserting the status code
+// instead would have been asserting the symptom.
+func TestListProjects_UnauthorizedSeesNothing(t *testing.T) {
 	svc := newProjectTestRig(t)
 	ctx := authCtx(999, "nobody")
-	_, err := svc.ListProjects(ctx, &emptypb.Empty{})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+	resp, err := svc.ListProjects(ctx, &emptypb.Empty{})
+	require.NoError(t, err)
+	assert.Empty(t, resp.GetProjects(),
+		"a caller with no project grant must receive no project — an empty list, not a denial")
 }
 
 func TestListEnvironments_PermissionDenied(t *testing.T) {

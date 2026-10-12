@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -515,15 +516,41 @@ func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request,
 	}
 	if err := transition(r.Context(), admin.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
+		msg := clientSafe(err)
 		switch {
 		case errors.Is(err, core.ErrInsufficientAdminAuthority):
 			status = http.StatusForbidden
+		case strings.Contains(err.Error(), "last install administrator"):
+			// SuspendUser calls guardLastAdminDeactivation (#G02) exactly as
+			// UpdateUser and DeleteUser do, and both of those map this refusal to a
+			// readable 409 (see their own switches above). This one did not, so the
+			// same refusal arrived as a bare 500 "Failed to ..." — the identical
+			// readability defect ADR-108 PR 6 fixed for UpdateUser, still open on
+			// this route.
+			//
+			// It matters more here than on either sibling: UpdateUser and DeleteUser
+			// both run requireAdminRankCeilingForTarget first, which (since #2496
+			// unified admin resolution on the structural bypass flag) means any actor
+			// who reaches their guard at all is itself a surviving global-admin
+			// holder — so their 409 case cannot fire. accountStateAction applies NO
+			// ceiling, only a self-action check, so THIS is the route on which the
+			// last-admin refusal is actually reachable, and the one whose message a
+			// real operator will see.
+			//
+			// The real reason is forwarded verbatim rather than through
+			// clientSafe, matching UpdateUser's and DeleteUser's identical cases:
+			// it is a deliberate, operator-facing policy refusal, not an internal
+			// failure whose detail might leak anything — and clientSafe replaces it
+			// with "an internal error occurred", which is precisely the useless
+			// message ADR-108 PR 6 set out to remove.
+			status = http.StatusConflict
+			msg = err.Error()
 		case strings.Contains(err.Error(), errNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("account state transition error for user %d: %v", uint(id), err)
 		}
-		sendError(w, "Error", clientSafe(err), status, nil)
+		sendError(w, "Error", msg, status, nil)
 		return
 	}
 	sendSuccess(w, nil, okMessage)
@@ -578,6 +605,54 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sendSuccess(w, map[string]any{"revoked": n}, "Sessions revoked")
+}
+
+// ReissueOneTimePassword handles POST /api/v1/users/{id}/reissue-one-time-password
+// (REISSUE-1): issue a new server-generated one-time password for an existing user.
+// The password is returned once, in this response only, for the admin to relay out of
+// band. Same gate as creating a user with a one-time password (users.write, enforced
+// by the router); core adds the admin-rank ceiling and refuses the caller's own
+// account (recover-admin is the way back for that) and SSO-only / suspended users.
+func (h *UserHandler) ReissueOneTimePassword(w http.ResponseWriter, r *http.Request) {
+	admin, ok := mustGetUser(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
+	if err != nil {
+		sendError(w, "InvalidParameter", errInvalidUserID, http.StatusBadRequest, nil)
+		return
+	}
+	res, err := h.coreService.ReissueOneTimePassword(r.Context(), admin.UserID, uint(id))
+	if err != nil {
+		switch {
+		case errors.Is(err, core.ErrInsufficientAdminAuthority):
+			// clientSafe: the underlying error names the permission the target holds.
+			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
+		case errors.Is(err, core.ErrCannotActOnSelf):
+			sendError(w, "BadRequest", "Cannot reissue your own one-time password; use `keyorix-server admin recover-admin` to recover your own account", http.StatusBadRequest, nil)
+		case errors.Is(err, core.ErrReissueExternalIdentity):
+			sendError(w, "Conflict", core.ReissueExternalIdentityMessage, http.StatusConflict, nil)
+		case errors.Is(err, core.ErrReissueAccountBlocked):
+			sendError(w, "Conflict", core.ReissueAccountBlockedMessage, http.StatusConflict, nil)
+		case errors.Is(err, storage.ErrUserNotFound):
+			// The typed sentinel, not the "not found" substring: a storage fault is a
+			// 500, never a 404 the admin would read as "no such user".
+			sendError(w, "Error", errNotFound, http.StatusNotFound, nil)
+		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
+		default:
+			log.Printf("reissue one-time password error for user %d: %v", uint(id), err)
+			sendError(w, "InternalError", "Failed to reissue the one-time password", http.StatusInternalServerError, nil)
+		}
+		return
+	}
+	// The body carries a credential: never cache it.
+	w.Header().Set("Cache-Control", "no-store")
+	sendSuccess(w, map[string]any{
+		"user_id":           uint(id),
+		"one_time_password": res,
+	}, "One-time password reissued")
 }
 
 // ResendSetupLink handles POST /api/v1/users/{id}/resend-setup-link (ADR-028). It

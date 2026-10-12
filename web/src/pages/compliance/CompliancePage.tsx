@@ -1,3 +1,4 @@
+import { formatDateTime } from '../../utils/datetime';
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { complianceApi } from '../../services/compliance';
@@ -21,9 +22,13 @@ const LegalHoldBanner: React.FC = () => {
         mutationFn: (reason: string) => complianceApi.placeLegalHold(reason),
         onSuccess: invalidate,
     });
-    const lift = useMutation({ mutationFn: () => complianceApi.liftLegalHold(), onSuccess: invalidate });
+    const lift = useMutation({
+        mutationFn: (reason: string) => complianceApi.liftLegalHold(reason),
+        onSuccess: invalidate,
+    });
 
     const [placing, setPlacing] = useState(false);
+    const [lifting, setLifting] = useState(false);
     const [reason, setReason] = useState('');
     const [error, setError] = useState('');
     const onError = (err: any) =>
@@ -56,13 +61,13 @@ const LegalHoldBanner: React.FC = () => {
                     </p>
                 </div>
                 {(() => {
-                    if (active) {
+                    if (active && !lifting) {
                         return (
                             <button
                                 type="button"
                                 onClick={() => {
                                     setError('');
-                                    lift.mutate(undefined, { onError });
+                                    setLifting(true);
                                 }}
                                 disabled={lift.isPending}
                                 className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
@@ -72,7 +77,7 @@ const LegalHoldBanner: React.FC = () => {
                             </button>
                         );
                     }
-                    if (!placing) {
+                    if (!placing && !active) {
                         return (
                             <button
                                 type="button"
@@ -90,6 +95,53 @@ const LegalHoldBanner: React.FC = () => {
                     return null;
                 })()}
             </div>
+            {lifting && active && (
+                <div className="mt-3 flex items-center gap-2">
+                    <input
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        placeholder="Reason for lifting (e.g. litigation closed — case INC-7)"
+                        autoFocus
+                        className="flex-1 rounded-lg px-3 py-1.5 text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
+                    <button
+                        type="button"
+                        onClick={() => {
+                            if (!reason.trim()) return;
+                            setError('');
+                            lift.mutate(reason.trim(), {
+                                onError,
+                                onSuccess: () => {
+                                    invalidate();
+                                    setLifting(false);
+                                    setReason('');
+                                },
+                            });
+                        }}
+                        disabled={lift.isPending || !reason.trim()}
+                        className="px-3 py-1.5 rounded-lg text-xs font-medium disabled:opacity-50 shrink-0"
+                        style={{ border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+                    >
+                        Confirm lift
+                    </button>
+                    <button
+                        type="button"
+                        onClick={() => {
+                            setLifting(false);
+                            setReason('');
+                        }}
+                        className="px-2.5 py-1.5 rounded-lg text-xs shrink-0"
+                        style={{ color: 'var(--text-muted)' }}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            )}
             {placing && !active && (
                 <div className="mt-3 flex items-center gap-2">
                     <input
@@ -264,7 +316,7 @@ const PosturePanel: React.FC = () => {
                     Controls posture
                 </h2>
                 <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                    {p.generatedAt ? new Date(p.generatedAt).toLocaleString() : ''}
+                    {p.generatedAt ? formatDateTime(p.generatedAt) : ''}
                 </span>
             </div>
             <div className="px-6 py-5 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">

@@ -288,6 +288,34 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 					return err
 				}
 			}
+			// #2702/#2711: and now the PROJECT, after both writes, in this same
+			// transaction. Everything above serializes against a concurrent
+			// DeleteEnvironment (the named lock plus the in-lock existence check)
+			// and nothing serialized against a concurrent DeleteProject, whose
+			// cascade takes no such named lock — it row-locks the project and
+			// sweeps the project's secrets directly. So the legitimate order
+			// "delete wins, sweeps a secret that is not inserted yet, commits;
+			// create then inserts anyway" left a LIVE secret, with a live
+			// version 1, under a deleted project and a deleted environment.
+			//
+			// That end state is reachable, not merely untidy: GetSecret and
+			// AuthorizeSecret do not check project liveness, so a global-scope
+			// role or an ACL grant still reaches the value, the owner
+			// short-circuit still applies (IsProjectMember has no liveness
+			// join), new shares can still be created on it — and it is never
+			// purged, because the purge only collects soft-deleted rows.
+			//
+			// AFTER the writes, not before: a cascade that runs entirely between
+			// a pre-write check and the insert never sees this secret. See
+			// lockLiveParent's doc comment.
+			live, lerr := tx.LockLiveProject(ctx, secret.ProjectID)
+			if lerr != nil {
+				return lerr
+			}
+			if !live {
+				return fmt.Errorf("%s: project %d was deleted while this secret was being created",
+					i18n.T("ErrorNotFound", nil), secret.ProjectID)
+			}
 			return nil
 		})
 	}); err != nil {
@@ -340,6 +368,12 @@ func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
+	return unexpiredSecret(secret)
+}
+
+// unexpiredSecret is GetSecret's expiration check: the secret itself, or
+// ErrorSecretExpired once its Expiration has passed.
+func unexpiredSecret(secret *models.SecretNode) (*models.SecretNode, error) {
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
 	}
@@ -347,14 +381,21 @@ func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 }
 
 // GetSecretWithPermissionCheck retrieves a secret by ID with read permission enforcement.
+//
+// It runs the same read check as EnforceSecretReadPermission (checkSecretPermission with
+// PermissionRead and no action) and returns the secret that check fetched, instead of
+// fetching it again with GetSecret (PERF-FIX-5). The order is unchanged: permission,
+// then the access schedule, then GetSecret's expiration check, evaluated here at the
+// same point it used to be.
 func (c *KeyorixCore) GetSecretWithPermissionCheck(ctx context.Context, id, userID uint) (*models.SecretNode, error) {
-	if _, err := c.EnforceSecretReadPermission(ctx, id, userID); err != nil {
+	_, secret, err := c.checkSecretPermission(ctx, id, userID, PermissionRead, "")
+	if err != nil {
 		return nil, err
 	}
 	if err := c.checkSecretAccessSchedule(ctx, id); err != nil {
 		return nil, err
 	}
-	return c.GetSecret(ctx, id)
+	return unexpiredSecret(secret)
 }
 
 // GetSecretByName resolves a secret by its name within a project/environment. Like
@@ -411,14 +452,30 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	if err := applyUpdateSecretFields(secret, req); err != nil {
 		return nil, err
 	}
-	secret.UpdatedAt = time.Now()
+	now := time.Now()
+	secret.UpdatedAt = now
+	// #2695: the columns this request actually asked to change, and nothing
+	// else. The previous full-row Save persisted the whole struct read above, so
+	// an update landing after a concurrent DeleteSecret resurrected the secret
+	// (its shares and ACLs already revoked, no secret.restored audit) and
+	// reverted a concurrent SuspendSecret, read-count increment or ownership
+	// clear. Built from req, not from the mutated struct, so a field the request
+	// did not carry cannot reach the UPDATE at all.
+	fields, err := secretFieldUpdateFromRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	fields.UpdatedAt = &now
 
 	if len(req.Value) == 0 {
-		updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		matched, uerr := c.storage.UpdateSecretFields(ctx, secret.ID, fields)
+		if uerr != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 		}
-		return updatedSecret, nil
+		if !matched {
+			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		return secret, nil
 	}
 
 	// #121 follow-up: two concurrent UpdateSecret calls on the same secret (or one
@@ -430,11 +487,44 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 	// a freshly re-read version number instead, same as RotateSecret, and shares one
 	// transaction between the version write and this row update — see that function's
 	// doc comment for why.
-	updatedSecret, err := c.updateSecretWithNewVersion(ctx, secret, req.Value)
+	updatedSecret, err := c.updateSecretWithNewVersion(ctx, secret, req.Value, fields)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return updatedSecret, nil
+}
+
+// secretFieldUpdateFromRequest derives the column set an UpdateSecretRequest
+// asks to change, mirroring applyUpdateSecretFields exactly — that function
+// mutates the in-memory struct (for the value returned to the caller and for
+// the new-version path), this one names the columns that may be written
+// (#2695). They must stay in lockstep; TestUpdateSecretRequest_FieldSetsMatch
+// asserts that mechanically rather than by comment.
+func secretFieldUpdateFromRequest(req *UpdateSecretRequest) (storage.SecretFieldUpdate, error) {
+	var f storage.SecretFieldUpdate
+	if req.Type != "" {
+		f.Type = &req.Type
+	}
+	if req.Description != nil {
+		f.Description = req.Description
+	}
+	if req.MaxReads != nil {
+		f.SetMaxReads, f.MaxReads = true, req.MaxReads
+	}
+	if req.ClearExpiration {
+		f.SetExpiration, f.Expiration = true, nil
+	} else if req.Expiration != nil {
+		f.SetExpiration, f.Expiration = true, req.Expiration
+	}
+	if req.Metadata != nil {
+		metadataJSON, err := json.Marshal(req.Metadata)
+		if err != nil {
+			return f, fmt.Errorf("%s: %w", i18n.T("ErrorInvalidMetadata", nil), err)
+		}
+		j := models.JSON(metadataJSON)
+		f.Metadata = &j
+	}
+	return f, nil
 }
 
 // applyUpdateSecretFields patches the non-value fields (max reads, expiration,
@@ -469,10 +559,30 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 	if req.UserID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
-	if _, err := c.EnforceSecretWritePermission(ctx, req.ID, req.UserID); err != nil {
+	if _, err := c.EnforceSecretActionPermission(ctx, req.ID, req.UserID, c.updateSecretAction(ctx, req)); err != nil {
 		return nil, err
 	}
 	return c.UpdateSecret(ctx, req)
+}
+
+// updateSecretAction classifies an update for the share allowlist: SecretActionUpdate
+// (value, type, description, metadata, tags) unless it CHANGES the expiry or the read
+// limit, which is SecretActionUpdateLifecycle. Re-sending the stored values is not a
+// change, so an edit form that echoes them back is still a plain update. If the
+// secret cannot be read the update is classified as lifecycle (not elevated): fail
+// closed, and the permission check that follows reports the read error anyway.
+func (c *KeyorixCore) updateSecretAction(ctx context.Context, req *UpdateSecretRequest) SecretAction {
+	cur, err := c.storage.GetSecret(ctx, req.ID)
+	if err != nil {
+		return SecretActionUpdateLifecycle
+	}
+	switch {
+	case req.ClearExpiration && cur.Expiration != nil,
+		req.Expiration != nil && (cur.Expiration == nil || !req.Expiration.Equal(*cur.Expiration)),
+		req.MaxReads != nil && (cur.MaxReads == nil || *req.MaxReads != *cur.MaxReads):
+		return SecretActionUpdateLifecycle
+	}
+	return SecretActionUpdate
 }
 
 // EventSecretRotateNoop is audited when RotateSecret is invoked with a value that is
@@ -572,10 +682,20 @@ func (c *KeyorixCore) RotateSecret(ctx context.Context, id uint, newValue []byte
 		secret.LastRotatedAt = &now
 	}
 	secret.UpdatedAt = now
-	updatedSecret, err := c.storage.UpdateSecret(ctx, secret)
-	if err != nil {
-		return nil, fmt.Errorf("failed to update rotation timestamp: %w", err)
+	// #2695: RotateSecret owns last_rotated_at and updated_at, nothing else.
+	// SetLastRotatedAt is explicit because the no-op branch above deliberately
+	// WITHHOLDS the stamp (#408) — passing secret.LastRotatedAt unconditionally
+	// here is correct precisely because that branch left it at its prior value.
+	matched, uerr := c.storage.UpdateSecretFields(ctx, secret.ID, storage.SecretFieldUpdate{
+		SetLastRotatedAt: true, LastRotatedAt: secret.LastRotatedAt, UpdatedAt: &now,
+	})
+	if uerr != nil {
+		return nil, fmt.Errorf("failed to update rotation timestamp: %w", uerr)
 	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+	}
+	updatedSecret := secret
 	// Refresh the cached certificate expiry immediately for a certificate-typed secret
 	// (ADR-056) so the certificate-hygiene posture reflects the rotated certificate
 	// without waiting for the next expiry scan. The plaintext is already in hand, so no
@@ -635,7 +755,7 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	sid := id
-	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, fmt.Sprintf("secret %d restored", id))
+	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, c.auditRef(ctx, c.storage, auditKindSecret, id)+" restored")
 	// Emit an audit event for every dependency edge that is now re-active so
 	// operators know which rotation plans are unblocked (best-effort).
 	if secret != nil {
@@ -741,9 +861,29 @@ func (c *KeyorixCore) CreateFolder(
 	// see CreateSecret's own doc comment on this pattern.
 	var created *models.SecretNode
 	if err := c.withEnvironmentSecretGuard(ctx, envID, func(ctx context.Context) error {
-		var cerr error
-		created, cerr = c.storage.CreateSecret(ctx, node, "")
-		return cerr
+		// #2711: wrapped in a transaction purely so the project re-check below
+		// can share one with the insert — the insert alone needed none. Same
+		// write-then-check as CreateSecret above; see its comment for why the
+		// environment guard does not cover a concurrent DeleteProject, and why
+		// a folder is affected exactly like a secret (it is a SecretNode row,
+		// counts toward DeleteEnvironment's active-secret guard, and ends up
+		// live under a deleted project the same way).
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			var cerr error
+			created, cerr = tx.CreateSecret(ctx, node, "")
+			if cerr != nil {
+				return cerr
+			}
+			live, lerr := tx.LockLiveProject(ctx, projectID)
+			if lerr != nil {
+				return lerr
+			}
+			if !live {
+				return fmt.Errorf("%s: project %d was deleted while this folder was being created",
+					i18n.T("ErrorNotFound", nil), projectID)
+			}
+			return nil
+		})
 	}); err != nil {
 		return nil, err
 	}

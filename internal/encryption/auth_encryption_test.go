@@ -189,7 +189,8 @@ func TestAuthEncryption_KeyRotation(t *testing.T) {
 		&models.SecretNode{}, &models.SecretVersion{},
 		&models.APIClient{}, &models.Session{}, &models.APIToken{}, &models.PasswordReset{},
 		&models.MFASecret{}, &models.DynamicSecretConfig{}, &models.DynamicSecretLease{},
-		&models.SystemMetadata{}, // DEK-rotation redo marker
+		&models.NotificationChannel{}, // #2433: now swept by SweepAllTables too
+		&models.SystemMetadata{},      // DEK-rotation redo marker
 	))
 
 	const passphrase = "test-passphrase-for-key-rotation"

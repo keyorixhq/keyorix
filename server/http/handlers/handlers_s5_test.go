@@ -997,7 +997,7 @@ func TestDynamicSecretHandler_SetConfigEnabled_HappyPath(t *testing.T) {
 
 func TestCatalogHandler_ListProjects_HappyPathS5(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1005,15 +1005,23 @@ func TestCatalogHandler_ListProjects_HappyPathS5(t *testing.T) {
 
 func TestCatalogHandler_ListProjects_IncludeDeleted(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?include_deleted=true", nil)
+	// #2780: ?include_deleted=true now requires secrets.read at the GLOBAL scope.
+	// Project-scoped grants deliberately survive a soft-delete (so RestoreProject
+	// works) while GetProject 404s on a deleted project, so a scoped reader cannot
+	// read a soft-deleted project through any path and must not see one listed. This
+	// fixture seeds no RBAC, so 403 is the correct answer and this test now pins that
+	// gate. The 200 path (a real global reader) is covered by
+	// catalog_list_scoped_2780_test.go's TestListProjects2780_IncludeDeletedStillRequiresGlobal,
+	// which seeds the grant properly rather than relying on the route having no gate.
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?include_deleted=true", nil))
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestCatalogHandler_ListEnvironments_HappyPathS5(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -1752,7 +1760,7 @@ func TestCatalogHandler_CreateProject_HappyPath(t *testing.T) {
 
 func TestCatalogHandler_ListProjects_HappyPathS5b(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?include_deleted=false", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/?include_deleted=false", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

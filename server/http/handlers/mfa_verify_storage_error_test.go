@@ -132,7 +132,10 @@ func TestVerifyMFA_GetUserStorageError_DoesNotFeedAccountLockout(t *testing.T) {
 		fs.Arm(&faultstorage.FaultSpec{Method: "GetUser", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
 
 		code := verifyMFAHTTP(t, h, challenge, good)
-		assert.Equal(t, http.StatusUnauthorized, code, "attempt %d: a storage error must still refuse the login", i)
+		// FIX-1 (#2548): a storage error must refuse the login with a distinct
+		// 5xx, not the same 401 a genuinely wrong code gets — see
+		// errMFAVerificationUnavailable's doc (mfa.go).
+		assert.Equal(t, http.StatusServiceUnavailable, code, "attempt %d: a storage error must be a 5xx, not a wrong-code 401", i)
 		assert.True(t, fs.Fired(), "attempt %d: the armed GetUser fault must actually have fired", i)
 	}
 

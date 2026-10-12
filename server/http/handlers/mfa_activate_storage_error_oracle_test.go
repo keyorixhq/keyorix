@@ -1,17 +1,16 @@
-// mfa_activate_storage_error_oracle_test.go — the blocking half of #2846,
-// which is a review finding against #2744's own fix in this same branch.
+// mfa_activate_storage_error_oracle_test.go — the blocking review finding on
+// #2846, kept as a guard after the fix itself landed on main through #3023.
 //
-// #2744 split ActivateMFA's two indistinguishable outcomes apart: a wrong code
-// (audited mfa.failed) and a MarkTOTPStepUsed STORAGE failure (now audited
-// mfa.error). That is the right split for the AUDIT, and the wrong one for the
-// CLIENT: the storage branch returned a plain wrapped sentinel, which
-// writeMFAErr renders with clientSafe()'s generic internal-error message, while
-// the wrong-code branch returns "invalid code". MarkTOTPStepUsed is reached only
-// AFTER validateTOTPStep succeeded, so the two different bodies tell the caller
-// whether the code they submitted was CORRECT — a right-vs-wrong-code oracle
-// available for as long as the DB fault lasts, which is exactly the
-// over-correction #2744's own PR body named as this class's main risk and then
-// shipped anyway.
+// #2744 split ActivateMFA's two outcomes apart for the AUDIT: a wrong code
+// (mfa.failed) and a MarkTOTPStepUsed STORAGE failure (mfa.error). #2846's first
+// version also split them for the CLIENT: the storage branch returned a wrapped
+// sentinel, which writeMFAErr renders with clientSafe()'s generic internal-error
+// message, while the wrong-code branch returns "invalid code". MarkTOTPStepUsed
+// is reached only AFTER validateTOTPStep succeeded, so the two different bodies
+// told the caller whether the code they submitted was CORRECT — a
+// right-vs-wrong-code oracle available for as long as the DB fault lasts. That
+// version never reached main; main's ActivateMFA returns the plain wrong-code
+// error on the storage branch and audits mfa.error (#3023).
 //
 // This is a HANDLER-level test on purpose. The leak is not visible in core: the
 // two branches there legitimately return different error VALUES (they must, so
@@ -107,8 +106,8 @@ func TestActivateMFA_StorageErrorResponseIsIdenticalToWrongCode(t *testing.T) {
 		"response headers must not distinguish the two either (#2846)")
 
 	// Sanity: the shared body really is the wrong-code body, not some generic
-	// message both branches happened to converge on. Without this, deleting the
-	// message mapping AND the "invalid code" literal together would still pass.
+	// message both branches happened to converge on (e.g. both rendered as
+	// clientSafe()'s internal-error body).
 	var decoded struct {
 		Message string `json:"message"`
 	}

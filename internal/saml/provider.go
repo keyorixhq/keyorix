@@ -279,6 +279,12 @@ func extractAssertion(a *csaml.Assertion, emailAttr, nameAttr, groupsAttr string
 	}
 	for _, st := range a.AttributeStatements {
 		for _, attr := range st.Attributes {
+			// Presence is recorded BEFORE the empty-values skip below: a groups
+			// attribute with no (non-blank) values is the IdP asserting "no
+			// groups", which must reconcile to zero, not read as absent (#2903).
+			if attrMatches(attr, groupsAttr) {
+				info.GroupsPresent = true
+			}
 			vals := attributeValues(attr)
 			if len(vals) == 0 {
 				continue

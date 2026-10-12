@@ -123,6 +123,56 @@ function resolve(doc: Schema, s: Schema | undefined): Schema {
     return cur;
 }
 
+/**
+ * flattenUnion collapses a `oneOf`/`anyOf` of object branches into one
+ * synthetic object schema, which is the faithful model of how this app's TS
+ * types represent such a union: one interface with the fields of every branch,
+ * each optional unless every branch requires it.
+ *
+ * Needed because an OpenAPI union node carries no `type` of its own, so
+ * `compare` read it as "schema has no usable type" and the drift test went red
+ * on `main` the moment `/auth/login`'s 200 `data` became
+ * `oneOf: [LoginSuccessData, MFAChallengeData]` (the mfa_required branch, which
+ * the response's own description documents as disambiguated by
+ * `data.mfa_required`, never by status code).
+ *
+ * This does NOT weaken the comparison, which is the whole point:
+ *  - properties: the UNION of all branches, so a TS field present in no branch
+ *    at all is still reported as "declared in TS but not in the schema";
+ *  - required: the INTERSECTION, so a field only some branches require is
+ *    correctly optional — a non-optional TS field against it is still flagged
+ *    as optionality drift, which is the right answer for a union;
+ *  - each property's own type/enum/nullability is still compared, because the
+ *    merged property schemas are the branches' own schemas.
+ * A branch that is not an object (or a union mixing kinds) is deliberately NOT
+ * merged — it falls through to the existing "no usable type" flag rather than
+ * being silently accepted.
+ */
+function flattenUnion(doc: Schema, schema: Schema): Schema | undefined {
+    const branches: Schema[] | undefined = schema.oneOf ?? schema.anyOf;
+    if (!Array.isArray(branches) || branches.length === 0) return undefined;
+    const resolved = branches.map((b) => resolve(doc, b));
+    if (!resolved.every((b) => b.type === 'object' || b.properties)) return undefined;
+
+    const properties: Schema = {};
+    for (const b of resolved) {
+        for (const [name, p] of Object.entries(b.properties ?? {})) {
+            // First branch to declare a property wins. Two branches declaring the
+            // SAME property with different schemas would make the merge lossy, so
+            // surface it rather than pick silently.
+            if (name in properties && JSON.stringify(properties[name]) !== JSON.stringify(p)) {
+                return undefined;
+            }
+            properties[name] = p;
+        }
+    }
+    const required = (resolved[0].required ?? []).filter((name: string) =>
+        resolved.every((b) => (b.required ?? []).includes(name))
+    );
+    const nullable = resolved.some((b) => b.nullable === true);
+    return { type: 'object', properties, required, ...(nullable ? { nullable: true } : {}) };
+}
+
 export type Locator =
     | { schema: string }
     | { response: string }
@@ -177,7 +227,10 @@ export function compare(
     out: string[],
     request = false
 ): void {
-    const schema = resolve(doc, rawSchema);
+    const resolved = resolve(doc, rawSchema);
+    // A oneOf/anyOf of object branches is compared as the merged object the TS
+    // side models it with; anything else passes through untouched.
+    const schema = flattenUnion(doc, resolved) ?? resolved;
     const flag = (msg: string) => {
         if (at in allow) used.add(at);
         else out.push(`${at}: ${msg}`);

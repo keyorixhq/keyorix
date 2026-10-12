@@ -131,14 +131,24 @@ var seedIntent = map[string]struct{ op, method string }{
 	"2565_finishwebauthnlogin_consumewebauthnsession_error":  {"REST POST /auth/webauthn/login/finish", "ConsumeWebAuthnSession"},
 	"2565_finishwebauthnlogin_listwebauthncredentials_error": {"REST POST /auth/webauthn/login/finish", "ListWebAuthnCredentials"},
 	"5900200031": {"GRPC keyorix.v1.UserService.CreateUser", "CountProjectMembershipsByUsers"},
-	"mfa-verify-enforcesessionlimit-panic-2416":        {"REST POST /auth/mfa/verify", "EnforceSessionLimit"},
-	"bulk_delete_getsecret_partial_success_reported":   {"REST POST /api/v1/projects/{id}/secrets/bulk-delete", "GetSecret"},
-	"bulk-approve-rolesetbypass-audit-2549":            {"REST POST /api/v1/access-requests/bulk-approve", "RoleSetBypassesPermissionChecks"},
+	"mfa-verify-enforcesessionlimit-panic-2416":      {"REST POST /auth/mfa/verify", "EnforceSessionLimit"},
+	"bulk_delete_getsecret_partial_success_reported": {"REST POST /api/v1/projects/{id}/secrets/bulk-delete", "GetSecret"},
+	// PERF-FIX-6: the 4th Authorize's bypass read (this seed's nth is 4) is now
+	// part of ResolveUserPermissionAt#4, the same call site; see
+	// TestOracleAErrorBranch_BulkAccessRequestAuditDiffIsAcceptedWithoutATolerance.
+	"bulk-approve-rolesetbypass-audit-2549":            {"REST POST /api/v1/access-requests/bulk-approve", "ResolveUserPermissionAt"},
 	"classification-createsecretaccesslog-panic-2554":  {"REST PATCH /api/v1/secrets/{id}/classification", "CreateSecretAccessLog"},
 	"invitations-countsetuptokenssince-audit-2599":     {"REST POST /api/v1/invitations", "CountSetupTokensSince"},
 	"mfa-disable-deletesessionsforuserexcept-accepted": {"REST POST /api/v1/auth/mfa/disable", "DeleteSessionsForUserExcept"},
 	"mfa-verify-createsession-steplost-2567":           {"REST POST /auth/mfa/verify", "CreateSession"},
 	"webauthn-loginfinish-listcredentials-2565":        {"REST POST /auth/webauthn/login/finish", "ListWebAuthnCredentials"},
+	// FUZZ-RULES-2: committed already legacy-encoded; TestByDesignSeeds_AcceptedOnlyThroughTheirRule.
+	"3091_webauthn_loginfinish_getuserpermissions_effect_then_error":   {"REST POST /auth/webauthn/login/finish", "GetUserPermissions"},
+	"3106_webauthn_loginfinish_getuserroles_effect_then_error":         {"REST POST /auth/webauthn/login/finish", "GetUserRoles"},
+	"3093_grpc_createuser_getuserrolescopes_error":                     {"GRPC keyorix.v1.UserService.CreateUser", "GetUserRoleScopes"},
+	"3093_grpc_updateuser_getuserrolescopes_nth2_error":                {"GRPC keyorix.v1.UserService.UpdateUser", "GetUserRoleScopes"},
+	"3094_recoverycodes_regenerate_marktotpstepused_effect_then_error": {"REST POST /api/v1/auth/mfa/recovery-codes/regenerate", "MarkTOTPStepUsed"},
+	"3101_mfa_verify_getuserpermissions_error":                         {"REST POST /auth/mfa/verify", "GetUserPermissions"},
 }
 
 const fuzzCorpusDir = "testdata/fuzz/FuzzStorageFaultOperations"

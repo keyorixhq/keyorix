@@ -6,6 +6,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -91,8 +93,12 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("Error creating group: %v", err)
-		if strings.Contains(err.Error(), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
-			sendError(w, "ConflictError", "Group name already exists", http.StatusConflict, nil)
+		// #2779: match the storage sentinel, not driver text -- SQLite reports
+		// "UNIQUE constraint failed" (upper case), which the old substring test missed,
+		// so a duplicate name surfaced as a 500.
+		if errors.Is(err, storage.ErrDuplicateGroupName) ||
+			strings.Contains(err.Error(), "unique") || strings.Contains(strings.ToLower(err.Error()), "duplicate") {
+			sendError(w, "ConflictError", "A group with that name already exists", http.StatusConflict, nil)
 			return
 		}
 		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {

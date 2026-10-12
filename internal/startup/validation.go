@@ -1,10 +1,12 @@
 package startup
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
@@ -24,6 +26,52 @@ type ValidationResult struct {
 	DatabaseOK    bool
 	Warnings      []string
 	Errors        []string
+
+	// Which checks actually RAN. validateStartup stops at its first hard
+	// failure, so a false *OK field alone cannot tell "ran and failed" from
+	// "never reached"; a caller reporting per-check outcomes (the posture
+	// report, server/admin/posture.go) needs both. A check that is switched
+	// off (file-permission check disabled, encryption disabled) did not run
+	// either, and its *OK is true by convention.
+	PermissionsChecked bool
+	EncryptionChecked  bool
+	DatabaseChecked    bool
+	// PermissionsIssue is what the file-permission check found, whether it
+	// then failed validation or was tolerated by
+	// security.allow_unsafe_file_permissions (in which case validation carries
+	// on and the issue is otherwise only in Warnings). "" when it found none or
+	// did not run.
+	PermissionsIssue string
+	// InsecureSettings is the STRUCTURED posture view of every ADR-112
+	// `insecure_` opt-out this validator knows about, alongside the
+	// human-readable Warnings above. Structured on purpose (Andrei's decision,
+	// 2026-10-05): "configured but not in effect, and here is why" is a
+	// distinct state from both "off" and "weakening your durability", and a
+	// consumer — the posture report, a dashboard, an auditor's script — has to
+	// be able to tell them apart from a field rather than by parsing log text.
+	//
+	// Today it carries exactly one entry's worth of settings (the fast audit
+	// mode). When ADR-112's registry (#2454) lands, this slice should be
+	// populated by iterating that registry instead of being hand-built here.
+	InsecureSettings []InsecureSettingStatus
+}
+
+// InsecureSettingStatus is one ADR-112 `insecure_` opt-out's posture state.
+type InsecureSettingStatus struct {
+	// Name is the canonical dotted config path, insecure_-prefixed leaf.
+	Name string
+	// Configured is true when the operator wrote the key into the config file,
+	// whether or not it does anything on this backend.
+	Configured bool
+	// InEffect is true only when the setting is configured AND actually
+	// weakening something right now.
+	InEffect bool
+	// NotInEffectReason is non-empty ONLY when Configured is true and InEffect
+	// is false — so a non-empty value always means "you wrote this and it is
+	// doing nothing", and never means anything else.
+	NotInEffectReason string
+	// Describe is a one-line explanation of what being in effect weakens.
+	Describe string
 }
 
 // ValidateStartup performs comprehensive startup validation. forceAutoFix, when
@@ -32,6 +80,40 @@ type ValidationResult struct {
 // intent (e.g. an explicit CLI flag) takes effect without silently depending
 // on a field read from the very config file being validated.
 func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, error) {
+	return validateStartup(configPath, forceAutoFix, false)
+}
+
+// ValidateStartupTolerant is ValidateStartup, except a KEK salt/wrapped-DEK pair
+// that BOTH don't exist yet is a warning, not an error, from validateEncryption.
+//
+// server/main.go's runStartupValidation is the sole caller: it runs BEFORE
+// initializeCoreService's encryption.Service.Initialize, which performs
+// first-boot key generation (ensureSaltExists/ensureWrappedDEKExists) when
+// they're missing — so on an actual fresh install, "missing" here means
+// "about to be generated in a few hundred milliseconds," not "broken."
+// ADR-112 flips security.enable_file_permission_check's default to true,
+// which is what makes this server-boot path reach ValidateStartup at all for
+// a deployment that never explicitly asked for it — this tolerance is what
+// keeps that flip from refusing to complete a fresh install's first boot.
+//
+// `keyorix-server admin ... validate` (server/admin/validate.go) and
+// examples/system_init deliberately keep calling the strict ValidateStartup
+// above, unchanged: an operator invoking validate (or the init example)
+// explicitly, as a diagnostic, wants "encryption is enabled but no key
+// material exists" reported as the real problem it is, not silently
+// explained away as "first boot" — they are not mid-boot-sequence the moment
+// before auto-generation runs the way the server's own call is.
+//
+// It also applies only while the loaded config leaves enable_file_permission_check
+// to ADR-112's implicit default, and under that default an orchestrator-mounted
+// input (the config file, a TLS cert/key) with the wrong mode or owner is a
+// warning naming the file and the fix rather than an error (see
+// validateFilePermissions). Key material and the database stay strict.
+func ValidateStartupTolerant(configPath string, forceAutoFix bool) (*ValidationResult, error) {
+	return validateStartup(configPath, forceAutoFix, true)
+}
+
+func validateStartup(configPath string, forceAutoFix bool, tolerateUnprovisionedKeys bool) (*ValidationResult, error) {
 	result := &ValidationResult{
 		ConfigValid:   false,
 		PermissionsOK: false,
@@ -51,9 +133,14 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 		return result, fmt.Errorf("configuration validation failed: %w", err)
 	}
 	result.ConfigValid = true
+	// The tolerant variant's relaxations exist only for ADR-112's implicit default;
+	// a config that writes the key itself is audited strictly whoever the caller is.
+	tolerateUnprovisionedKeys = tolerateUnprovisionedKeys && cfg.Security.EnableFilePermissionCheckImplicitDefault
 
 	if cfg.Security.EnableFilePermissionCheck {
-		if err := validateFilePermissions(cfg, configPath, forceAutoFix, result); err != nil {
+		result.PermissionsChecked = true
+		if err := validateFilePermissions(cfg, configPath, forceAutoFix, tolerateUnprovisionedKeys, result); err != nil {
+			result.PermissionsIssue = err.Error()
 			if !cfg.Security.AllowUnsafeFilePermissions {
 				return result, fmt.Errorf("file permission validation failed: %w", err)
 			}
@@ -67,7 +154,8 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 	}
 
 	if cfg.Storage.Encryption.Enabled {
-		if err := validateEncryption(cfg, result); err != nil {
+		result.EncryptionChecked = true
+		if err := validateEncryption(cfg, result, tolerateUnprovisionedKeys); err != nil {
 			result.Errors = append(result.Errors, fmt.Sprintf("Encryption validation failed: %v", err))
 			return result, fmt.Errorf("encryption validation failed: %w", err)
 		}
@@ -77,13 +165,87 @@ func ValidateStartup(configPath string, forceAutoFix bool) (*ValidationResult, e
 		result.Warnings = append(result.Warnings, "Encryption is disabled")
 	}
 
+	result.DatabaseChecked = true
 	if err := validateDatabase(cfg, result); err != nil {
 		result.Errors = append(result.Errors, fmt.Sprintf("Database validation failed: %v", err))
 		return result, fmt.Errorf("database validation failed: %w", err)
 	}
 	result.DatabaseOK = true
 
+	// ADR-112 Amendment 1 (docs/specs/fast-audit-mode.md) requires the fast
+	// audit mode to appear in the posture surface. Until the dedicated
+	// `admin validate --posture` report lands (#2478), this -- what
+	// `keyorix-server admin validate` prints -- IS the posture surface, so the
+	// deviation goes here, both as a human-readable Warnings line and as a
+	// structured InsecureSettings entry.
+	appendFastAuditPosture(cfg, result)
+
 	return result, nil
+}
+
+// AuditSkipDurableSyncSettingName is the canonical dotted config path of the
+// fast audit mode, insecure_-prefixed leaf per ADR-112 section 1. Exported so
+// a posture consumer can match on it without hardcoding the string.
+const AuditSkipDurableSyncSettingName = "storage.database.insecure_audit_skip_durable_sync"
+
+// auditSkipDurableSyncDescribe is the one-line "what being in effect weakens"
+// text, in the shape ADR-112's registry (#2454) uses for every entry.
+const auditSkipDurableSyncDescribe = "the audit commit no longer waits for a disk sync, so an OS or " +
+	"database-server crash can lose the most recent audit entries"
+
+// AuditDurableSyncSkippedWarning is the posture-deviation line for the fast
+// audit mode when it is actually IN EFFECT. Exported so a test can assert the
+// exact string rather than a substring a later reword could silently stop
+// matching, the same way validation_test.go already pins "File permission
+// checks are disabled" and "Encryption is disabled" literally
+// (admin/validate.go matches those by equality to pick a recommendation line).
+const AuditDurableSyncSkippedWarning = "Durable audit sync is DISABLED " +
+	"(storage.database.insecure_audit_skip_durable_sync): audit commits no longer wait for a disk sync, so an OS " +
+	"crash or power loss can lose the most recent audit entries -- see docs/security/hardening-guide.md"
+
+// AuditDurableSyncIgnoredWarningPrefix starts the posture line for a setting
+// that is CONFIGURED BUT NOT IN EFFECT (Andrei's decision, 2026-10-05: show it
+// as off, with the reason). A prefix rather than a whole constant because the
+// reason varies by backend and is appended verbatim; a test asserts the
+// prefix plus the reason rather than a single frozen sentence.
+//
+// Worded as IGNORED, never as "audit durability weakened" -- the whole point of
+// this state is that nothing has been weakened, and a line that implied
+// otherwise would send an operator chasing a durability problem they do not
+// have.
+const AuditDurableSyncIgnoredWarningPrefix = "storage.database.insecure_audit_skip_durable_sync is set but IGNORED, " +
+	"not in effect: "
+
+// appendFastAuditPosture records the fast audit mode's state in result, in
+// both forms. Three outcomes, and each is a distinct, separately-reported
+// state rather than a boolean:
+//
+//   - not configured: nothing recorded at all, so a default install still
+//     shows ZERO deviations (ADR-112 section 4's own gate).
+//   - configured and in effect: the AuditDurableSyncSkippedWarning deviation,
+//     InEffect true, empty NotInEffectReason.
+//   - configured and NOT in effect: an IGNORED line carrying the reason, and
+//     a structured entry with InEffect false plus that same reason. Still
+//     reported, because a config line an operator wrote and believes is doing
+//     something is worth surfacing -- but not reported as a weakening,
+//     because it is not one.
+func appendFastAuditPosture(cfg *config.Config, result *ValidationResult) {
+	st := cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type)
+	if !st.Configured {
+		return
+	}
+	result.InsecureSettings = append(result.InsecureSettings, InsecureSettingStatus{
+		Name:              AuditSkipDurableSyncSettingName,
+		Configured:        true,
+		InEffect:          st.InEffect,
+		NotInEffectReason: st.NotInEffectReason,
+		Describe:          auditSkipDurableSyncDescribe,
+	})
+	if st.InEffect {
+		result.Warnings = append(result.Warnings, AuditDurableSyncSkippedWarning)
+		return
+	}
+	result.Warnings = append(result.Warnings, AuditDurableSyncIgnoredWarningPrefix+st.NotInEffectReason)
 }
 
 // SafeFilePermPath cleans path and rejects it if the cleaned form still
@@ -103,8 +265,24 @@ func SafeFilePermPath(label, path string) (string, error) {
 	return keyfiles.SafePath(label, path)
 }
 
-func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
+// implicitDefault (ValidateStartupTolerant only: security.enable_file_permission_check is
+// on through ADR-112's default, not written in the config) changes two things:
+//
+//   - It leaves out of the audit the files the server itself creates at 0600 later in
+//     the same first boot: the key material when EVERY key file is absent (the same
+//     both-missing rule as validateEncryption; a partial set is audited, and refused by
+//     the key-set consistency check), and a local database file that does not exist yet.
+//   - The config file and the TLS cert/key are inputs an orchestrator mounts (a
+//     Kubernetes ConfigMap/Secret is root-owned 0644 by default, a docker-compose bind
+//     mount keeps the host owner), so a mode/owner mismatch on them is a warning naming
+//     the file, the mismatch and the fix, not a refusal. Key material and the database
+//     stay strict. An explicit enable_file_permission_check: true audits everything
+//     strictly, as before ADR-112.
+func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix, implicitDefault bool, result *ValidationResult) error { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	var files []securefiles.FilePermSpec
+	// mounted holds the orchestrator-mounted inputs (config file, TLS cert/key); they
+	// join files (strict) unless implicitDefault, see the doc comment above.
+	var mounted []mountedInput
 
 	// Check the config file that was actually loaded, not a hardcoded "keyorix.yaml":
 	// the loader resolves KEYORIX_CONFIG_PATH / an absolute path, so a fixed relative
@@ -114,7 +292,7 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files, securefiles.FilePermSpec{Path: clean, Mode: 0600})
+		mounted = append(mounted, mountedInput{"config file", securefiles.FilePermSpec{Path: clean, Mode: 0600}})
 	}
 
 	if cfg.Storage.Encryption.Enabled {
@@ -129,7 +307,11 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files, specs...)
+		if implicitDefault && noneExist(specs) {
+			result.Warnings = append(result.Warnings, "Key material does not exist yet — treating as first boot; its permissions are checked once it is generated")
+		} else {
+			files = append(files, specs...)
+		}
 	}
 
 	// Mirror Config.Validate()'s switch on Storage.Type: only "local"/"" storage has a
@@ -146,10 +328,14 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 			if err != nil {
 				return err
 			}
-			files = append(files, securefiles.FilePermSpec{
-				Path: dbPath,
-				Mode: 0600,
-			})
+			if implicitDefault && noneExist([]securefiles.FilePermSpec{{Path: dbPath}}) {
+				result.Warnings = append(result.Warnings, fmt.Sprintf("Database file %s does not exist yet — treating as first boot; it is created at 0600", dbPath))
+			} else {
+				files = append(files, securefiles.FilePermSpec{
+					Path: dbPath,
+					Mode: 0600,
+				})
+			}
 		}
 	}
 
@@ -162,9 +348,9 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files,
-			securefiles.FilePermSpec{Path: certPath, Mode: 0600},
-			securefiles.FilePermSpec{Path: keyPath, Mode: 0600},
+		mounted = append(mounted,
+			mountedInput{"HTTP TLS cert", securefiles.FilePermSpec{Path: certPath, Mode: 0600}},
+			mountedInput{"HTTP TLS key", securefiles.FilePermSpec{Path: keyPath, Mode: 0600}},
 		)
 	}
 	if cfg.Server.GRPC.TLS.Enabled {
@@ -176,50 +362,130 @@ func validateFilePermissions(cfg *config.Config, configPath string, forceAutoFix
 		if err != nil {
 			return err
 		}
-		files = append(files,
-			securefiles.FilePermSpec{Path: certPath, Mode: 0600},
-			securefiles.FilePermSpec{Path: keyPath, Mode: 0600},
+		mounted = append(mounted,
+			mountedInput{"gRPC TLS cert", securefiles.FilePermSpec{Path: certPath, Mode: 0600}},
+			mountedInput{"gRPC TLS key", securefiles.FilePermSpec{Path: keyPath, Mode: 0600}},
 		)
 	}
 
 	autoFix := cfg.Security.AutoFixFilePermissions || forceAutoFix
+	for _, m := range mounted {
+		if !implicitDefault {
+			files = append(files, m.spec)
+			continue
+		}
+		if err := securefiles.FixFilePerms([]securefiles.FilePermSpec{m.spec}, autoFix); err != nil {
+			result.Warnings = append(result.Warnings, describeMountedInputMismatch(m))
+		}
+	}
 	if err := securefiles.FixFilePerms(files, autoFix); err != nil {
 		return fmt.Errorf("file permission validation failed: %w", err)
 	}
 
 	if autoFix {
-		result.Warnings = append(result.Warnings, "File permissions were automatically fixed")
+		result.Warnings = append(result.Warnings, autoFixPermsNotice)
 	}
 
 	return nil
 }
+
+// mountedInput is a file an orchestrator typically provides read-only (config, TLS).
+type mountedInput struct {
+	label string
+	spec  securefiles.FilePermSpec
+}
+
+// describeMountedInputMismatch is the warning for a mounted input that failed the
+// audit under the ADR-112 implicit default: the file, what is wrong with it, and how
+// to fix it.
+func describeMountedInputMismatch(m mountedInput) string {
+	var problems []string
+	info, err := os.Lstat(m.spec.Path)
+	switch {
+	case err != nil:
+		problems = append(problems, fmt.Sprintf("cannot be inspected (%v)", err))
+	case info.Mode()&os.ModeSymlink != 0:
+		problems = append(problems, "is a symlink")
+	default:
+		if perm := info.Mode().Perm(); perm != m.spec.Mode {
+			problems = append(problems, fmt.Sprintf("has mode %04o, expected %04o", perm, m.spec.Mode))
+		}
+		if st, ok := info.Sys().(*syscall.Stat_t); ok && int(st.Uid) != os.Getuid() {
+			problems = append(problems, fmt.Sprintf("is owned by uid %d, expected the server's uid %d", st.Uid, os.Getuid()))
+		}
+	}
+	if len(problems) == 0 {
+		problems = append(problems, "failed the permission audit")
+	}
+	return fmt.Sprintf("ADR-112: %s %s %s. Fix: chmod %o and chown it to the server's user (Kubernetes: mount it with defaultMode 0400 and the pod's fsGroup, or copy it into an emptyDir in an initContainer running as the server's uid; docker-compose: chown/chmod the host file to match the container user). On the implicit security.enable_file_permission_check default this only warns; set the key to true explicitly to refuse to start on it.",
+		m.label, m.spec.Path, strings.Join(problems, " and "), m.spec.Mode)
+}
+
+// noneExist reports whether every spec's path is absent (os.ErrNotExist). Any
+// other stat result, including an error, counts as existing, so the file stays
+// in the audit.
+func noneExist(specs []securefiles.FilePermSpec) bool {
+	for _, sp := range specs {
+		if _, err := os.Stat(sp.Path); !errors.Is(err, os.ErrNotExist) {
+			return false
+		}
+	}
+	return true
+}
+
+// autoFixPermsNotice is shown whenever automatic permission fixing is ON (config
+// security.auto_fix_file_permissions, or admin validate --fix), not only when
+// something was changed. FixFilePerms prints one "[FIXED] <path>: <old> -> <new>"
+// line per file it actually changed, so say that, and say what to do (#2940: the
+// old text, "File permissions were automatically fixed", appeared on every start
+// and read like a fault).
+const autoFixPermsNotice = "Automatic file-permission fixing is on (security.auto_fix_file_permissions in keyorix.yaml): " +
+	"wrong modes on key, config and database files are reset at every start, and each change is logged as \"[FIXED] <path>\". " +
+	"If no [FIXED] line appears, nothing needed changing. Set it to false to turn this off."
 
 // validateEncryption verifies the on-disk key material required by the ADR-004
 // envelope scheme: the 32-byte KEK salt and the wrapped DEK. The KEK itself is
 // derived from the master passphrase at runtime and never touches disk, so there
 // is no KEK file to check. The DEK on disk is wrapped (AES-256-GCM: 12-byte nonce
 // + 32-byte key + 16-byte tag = 60 bytes), not a bare 32-byte key.
-func validateEncryption(cfg *config.Config, result *ValidationResult) error {
+//
+// tolerateUnprovisionedKeys, when true (ValidateStartupTolerant), treats BOTH
+// files missing as "not yet provisioned" (a warning) rather than an error — see
+// ValidateStartupTolerant's doc comment for why the server's own boot path needs
+// this and the CLI `admin validate` diagnostic path (tolerateUnprovisionedKeys
+// false, via the plain ValidateStartup) does not. Exactly one of the two missing
+// (as opposed to both) is NEVER given this pass, even when tolerant: that is a
+// broken partial state no ordinary boot sequence produces, not a fresh install,
+// and stays a hard error below regardless of the caller.
+func validateEncryption(cfg *config.Config, result *ValidationResult, tolerateUnprovisionedKeys bool) error {
 	enc := cfg.Storage.Encryption
 
 	saltPath := resolveKeyPath(enc.SaltPath)
 	if strings.Contains(saltPath, "..") {
 		return fmt.Errorf("KEK salt path is unsafe: %s", saltPath)
 	}
-	saltInfo, err := os.Stat(saltPath)
-	if err != nil {
+	dekPath := resolveKeyPath(enc.DEKPath)
+	if strings.Contains(dekPath, "..") {
+		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
+	}
+
+	saltInfo, saltErr := os.Stat(saltPath)
+	dekInfo, dekErr := os.Stat(dekPath)
+	if tolerateUnprovisionedKeys && os.IsNotExist(saltErr) && os.IsNotExist(dekErr) {
+		result.Warnings = append(result.Warnings, fmt.Sprintf(
+			"KEK salt (%s) and wrapped DEK (%s) do not exist yet — treating as first boot; they will be generated before this check runs again",
+			saltPath, dekPath))
+		return nil
+	}
+
+	if saltErr != nil {
 		return fmt.Errorf("KEK salt file not found: %s", saltPath)
 	}
 	if saltInfo.Size() != 32 {
 		return fmt.Errorf("KEK salt file %s has invalid size %d bytes (expected 32)", saltPath, saltInfo.Size())
 	}
 
-	dekPath := resolveKeyPath(enc.DEKPath)
-	if strings.Contains(dekPath, "..") {
-		return fmt.Errorf("DEK path is unsafe: %s", dekPath)
-	}
-	dekInfo, err := os.Stat(dekPath)
-	if err != nil {
+	if dekErr != nil {
 		return fmt.Errorf("wrapped DEK file not found: %s", dekPath)
 	}
 	const minWrappedDEKSize = 60 // 12-byte GCM nonce + 32-byte key + 16-byte tag

@@ -1,0 +1,9 @@
+ADR-112 Secure Baseline Posture
+===============================
+3 deviation(s) found (2 from shipped defaults, 1 explicitly configured) — all counted:
+  [insecure-setting/explicit] storage.encryption.insecure_disable_encryption_at_rest is in effect (true) — secrets stored unencrypted at rest
+  [insecure-setting/shipped-default] server.insecure_allow_unauthenticated_metrics is in effect (true) — /metrics served fully unauthenticated
+  [insecure-setting/shipped-default] server.insecure_disable_api_ratelimit is in effect (true) — removes per-principal API rate limiting
+
+Informational (not counted toward the exit code):
+  - security.enable_file_permission_check is enforcing on its ADR-112 secure-by-default value (never set explicitly; enforced since 2026-10-10T00:00:00Z)

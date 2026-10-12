@@ -30,7 +30,11 @@ func setupSCIMTest(t *testing.T) (*SCIMHandler, *gorm.DB) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Session{}, &models.AuditEvent{},
+		// PersonalAccessToken is migrated because SCIM DELETE now revokes PATs in
+		// the same transaction as the session sweep (#2855) — without the table
+		// the whole deprovision transaction aborts, which is exactly what this
+		// fixture gap surfaced.
+		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Session{}, &models.PersonalAccessToken{}, &models.AuditEvent{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{Name: "system_viewer"}).Error)

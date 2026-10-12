@@ -259,7 +259,7 @@ export interface paths {
         put?: never;
         /**
          * Change own password (drops other sessions)
-         * @description Change the authenticated user's password; invalidates all other active sessions.
+         * @description Change the authenticated user's password; invalidates all other active sessions. In a setup-only session (an account that had to both replace a one-time password and enrol a second factor under security.require_mfa, #3024), the step that finishes setup also ends the calling session: data.reauthentication_required is then true and the next login is a normal two-step MFA login.
          */
         post: operations["changePassword"];
         delete?: never;
@@ -323,7 +323,7 @@ export interface paths {
         put?: never;
         /**
          * Create a personal access token (raw token returned once)
-         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once.
+         * @description Create a personal access token with optional scopes and expiry; the raw token is returned only once. A request authenticated by a restricted personal access token (any scopes, project, environment or CIDR restriction) is refused with 403, since the new token would not carry that restriction.
          */
         post: operations["createPAT"];
         delete?: never;
@@ -705,7 +705,7 @@ export interface paths {
         };
         /**
          * List projects with secret and environment counts
-         * @description List all projects accessible to the caller, including secret and environment counts.
+         * @description List the projects the CALLER CAN READ, including secret and environment counts. A caller holding secrets.read at the global scope gets every project; a caller whose grants are project-scoped gets exactly the projects they are authorized to read at the project scope — the same check GET /api/v1/projects/{id} applies, so every project listed here is one the caller can also fetch by id. A caller with no such grant gets 200 with an empty array, not 403.
          */
         get: operations["listProjects"];
         put?: never;
@@ -1067,7 +1067,7 @@ export interface paths {
         put?: never;
         /**
          * Activate break-glass emergency access (self-service)
-         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled.
+         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled, and always when the caller authenticated with a restricted personal access token (ADR-042).
          */
         post: operations["activateBreakGlass"];
         delete?: never;
@@ -1090,6 +1090,26 @@ export interface paths {
          * @description End an active emergency grant before its TTL — removes the role assignment and marks the activation revoked. Requires roles.assign.
          */
         post: operations["revokeBreakGlass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/projects/{id}/share-recipients": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search share recipients in a project
+         * @description The active members of the project that the caller could share a secret with, for the Share dialog. Requires secrets.write at the project's scope, and the caller must be a member of the project (the rule ShareSecret applies to a secret's owner) or hold global users.read. A project-only admin can therefore find recipients without the global users.read that GET /api/v1/users needs. Only members whose account is active are listed (not suspended, deprovisioned, deactivated or deleted), ordered by username. Each result carries id, username and display_name; email is included, and matched by q, only when the caller holds users.read at the project's scope. Every refusal is the same 403 with a fixed reason, whether or not the project exists.
+         */
+        get: operations["searchShareRecipients"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1197,7 +1217,7 @@ export interface paths {
         };
         /**
          * List all environments (global, backward-compat)
-         * @description Return all environments across all projects accessible to the authenticated user.
+         * @description Return the environments belonging to projects the CALLER CAN READ, across all of them. Scoped exactly like GET /api/v1/projects: a global secrets.read holder gets every environment, a project-scoped reader gets only their projects', and a caller with no such grant gets 200 with an empty array rather than 403.
          */
         get: operations["listEnvironments"];
         put?: never;
@@ -2380,7 +2400,7 @@ export interface paths {
         };
         /**
          * List who can read a secret
-         * @description Effective access list -- every user who can read the secret, with their permission and how it was granted (owner, direct share, group share).
+         * @description Effective access list -- every user who can read the secret, with their EFFECTIVE permission and how it was granted. For a project member the level is max(role permission, active share permission), so a share that elevates a role shows as the higher level; `grants` lists every grant behind it. Expired shares and shares to users who are not project members grant nothing and are not listed. Holders of a global role (global admins) have implicit access and are not enumerated. An owner who is no longer a project member is not listed as owner. Project roles (role grants, and members who hold access only through a role) are shown only when the caller holds users.read at the project (the gate of GET /projects/{id}/members); per-secret ACL holders and acl grants only when the caller passes secrets.manage on the secret (the gate of GET /secrets/{id}/acl). A withheld part is left out and the response is flagged `degraded`, as is a lookup that failed; a degraded list is an under-count, never complete. A caller without users.read can still tell that a listed share recipient or the owner is a project member (a share to a non-member is not listed). Deactivated or suspended accounts that still hold a grant are listed on purpose: the grant applies again if the account is reactivated.
          */
         get: operations["listAccessors"];
         put?: never;
@@ -3173,6 +3193,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/shares/owned": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the shares the caller created, in projects they are a member of
+         * @description The owner-scoped share list behind the Sharing Management page for a caller without global secrets.read (GET /api/v1/shares needs it). Returns only shares the caller created, and only on secrets in projects the caller is a member of now: after removal from a project its shares stop being listed (they are not revoked). Received shares are not listed, and holding global secrets.read does not add anyone else's shares. Requires secrets.read at the global scope or at one or more project scopes; machine identities are refused. Every refusal is the same 403 with a fixed reason. Same filters, paging and shape as GET /api/v1/shares. A read: no audit event, like GET /api/v1/shares. A list over 10000 shares is refused with 422 ShareListOverCap (never truncated); pagination in core is a follow-up.
+         */
+        get: operations["listOwnedShares"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/shares/{id}": {
         parameters: {
             query?: never;
@@ -3553,6 +3593,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/users/{id}/reissue-one-time-password": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reissue a one-time password for an existing user (REISSUE-1)
+         * @description Issue a new server-generated one-time password for an existing local user and return it ONCE in this response, for the administrator to relay out of band. Requires users.write (the same permission as creating a user with a one-time password) and the admin-rank ceiling over the target. The password expires after security.one_time_password_ttl (default 72h); the account is put into password_reset_required, so its first login is confined to changing the password (and to MFA enrolment where security.require_mfa applies); every existing session of the user ends. An enrolled second factor is kept. Personal access tokens are handled as for require-password-reset (restricted at once, revoked when the user sets a new password). Refused for the caller's own account (400, use `keyorix-server admin recover-admin`), for an externally-managed (SSO/SCIM) account and for a suspended or inactive one (409). Audited as user.one_time_password_reissued (actor and target, never the password).
+         */
+        post: operations["reissueOneTimePassword"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users/{id}/revoke-sessions": {
         parameters: {
             query?: never;
@@ -3612,7 +3674,7 @@ export interface paths {
         };
         /**
          * List user project memberships
-         * @description Return all project memberships for the specified user with their role and state in each project.
+         * @description Return every project the specified user is a member of, with their role(s) and the membership's onboarding state. "Member of a project" means the user holds a live role grant scoped to that project, directly or through a group — the same definition GET /api/v1/projects/{id}/members reports, so the two views agree. An install-wide grant (project 0) is not membership of any project and is never listed here, nor is an expired time-bound grant. `state` is the ADR-022 onboarding lifecycle state where an invite produced the membership, and `active` for a grant added directly via POST /api/v1/projects/{id}/members. `via_group` marks a membership held only through a group, which the project's own members list cannot remove.
          */
         get: operations["getUserMembershipsForUser"];
         put?: never;
@@ -5078,6 +5140,8 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id only when the request sends include=total_reads (the count is O(reads), so it is not computed by default), including value reads; omitted otherwise, from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
             classification?: string;
@@ -5489,6 +5553,8 @@ export interface components {
             description?: string;
             max_reads?: number | null;
             read_count?: number;
+            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id only when the request sends include=total_reads (the count is O(reads), so it is not computed by default), including value reads; omitted otherwise, from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads. */
+            total_reads?: number;
             /** Format: date-time */
             expiration?: string | null;
             classification?: string;
@@ -5603,13 +5669,16 @@ export interface components {
             secret_name?: string;
             affected?: components["schemas"]["SecretImpactedSecret"][];
         };
-        /** @description One entry in a secret's effective access list (owner, direct share, or group share). */
+        /** @description One entry in a secret's effective access list. */
         SecretAccessor: {
             user_id?: number;
             username?: string;
+            /** @description Effective level: read, write or owner. */
             permission?: string;
-            /** @description How access was granted: owner, direct share, or group share. */
+            /** @description The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>. */
             source?: string;
+            /** @description Every grant the user holds on the secret as source:level, e.g. owner:owner, role:read, direct_share:write. */
+            grants?: string[];
         };
         /** @description One read event from a secret's access log (server/http/handlers/secrets_access_history.go's secretAccessLogEntry -- a snake_case DTO, not the raw internal/storage/models.SecretAccessLog). ip_address/user_agent are present only when the caller separately holds audit.read (see the route's own description); an ordinary secrets.read-only caller never sees another user's originating IP. */
         SecretAccessLogEntry: {
@@ -5661,6 +5730,11 @@ export interface components {
             type?: string;
             classification?: string;
             deleted_at?: string;
+            /**
+             * Format: date-time
+             * @description UTC instant (RFC 3339) before which the purge job will not hard-delete this secret -- the restore deadline. Frozen when the secret was deleted (deleted_at plus the secret's own retention override, else the soft_delete.retention_days in force then), so a later change to the configured window does not move it. For a secret deleted before this field existed it is computed from the current configuration.
+             */
+            purge_at?: string;
         };
         /** @description A group (server/http/handlers/groups_handler.go's groupToAPIResponse). */
         Group: {
@@ -5979,6 +6053,8 @@ export interface components {
                     details?: {
                         [key: string]: unknown;
                     } | null;
+                    /** @description Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order. */
+                    pending_steps?: string[];
                 };
             };
         };
@@ -6269,6 +6345,11 @@ export interface operations {
                         timestamp?: string;
                         version?: string;
                         checks?: Record<string, never>;
+                        /**
+                         * @description degraded while any auth rate limit (login, password reset, SSO begin, per-account lockout) is enforcing from its in-memory fallback because its database storage failed within the last limit window. Names no budget, key or address; liveness (status, HTTP 200) is unaffected.
+                         * @enum {string}
+                         */
+                        auth_rate_limit?: "ok" | "degraded";
                     };
                 };
             };
@@ -6388,9 +6469,19 @@ export interface operations {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: {
+                            /** @description True when this change finished account setup and the calling session was ended (#3024). */
+                            reauthentication_required?: boolean;
+                        };
+                    };
+                };
             };
             400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listSessions: {
@@ -6498,6 +6589,7 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listExpiredPATs: {
@@ -6646,6 +6738,8 @@ export interface operations {
                         message?: string;
                         data?: {
                             recovery_codes: string[];
+                            /** @description True when this activation finished account setup in a setup-only session and that session was ended (#3024); otherwise the calling session stays signed in. */
+                            reauthentication_required?: boolean;
                         };
                     };
                 };
@@ -6979,7 +7073,7 @@ export interface operations {
     listProjects: {
         parameters: {
             query?: {
-                /** @description When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. */
+                /** @description When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. This form requires secrets.read at the GLOBAL scope: project-scoped role grants deliberately survive a soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id} returns 404 for a deleted project, so a project-scoped reader cannot read a soft-deleted project through any path and must not see one listed. A caller without the global grant gets 403 for this form, and 200 for the default one. */
                 include_deleted?: "true" | "false";
             };
             header?: never;
@@ -7642,6 +7736,51 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    searchShareRecipients: {
+        parameters: {
+            query?: {
+                /** @description Case-insensitive prefix of the username, the display name (or any word of it) or, when visible, the email. Empty lists every recipient. */
+                q?: string;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope `{success, data}`. `data.recipients` is one page of results; `data.total` counts every match. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        success: boolean;
+                        data: {
+                            recipients: {
+                                /** Format: uint32 */
+                                id: number;
+                                username: string;
+                                display_name: string;
+                                /** @description Present only when the caller holds users.read at the project's scope. */
+                                email?: string;
+                            }[];
+                            total: number;
+                            page: number;
+                            page_size: number;
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
         };
     };
     listProjectMembers: {
@@ -9323,10 +9462,15 @@ export interface operations {
                     "application/json": {
                         data?: {
                             secrets?: components["schemas"]["SecretListEntry"][];
+                            /** @description Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true. */
                             total?: number;
                             page?: number;
                             page_size?: number;
                             total_pages?: number;
+                            /** @description Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response. */
+                            truncated?: boolean;
+                            /** @description Names the bound and the scopes it affected. Absent unless truncated. */
+                            truncated_reason?: string;
                         };
                     };
                 };
@@ -9390,6 +9534,8 @@ export interface operations {
             query?: {
                 /** @description When `true`, response `data` becomes `{secret, value}` with the decrypted value. */
                 include_value?: boolean;
+                /** @description Comma-separated (or repeated) optional fields. `total_reads` adds the secret's lifetime read count as `total_reads`; it is computed only when requested, so it is absent by default. */
+                include?: string;
             };
             header?: never;
             path: {
@@ -9399,7 +9545,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `{data, message}`. `data` is the secret node, or `{secret, value}` when `include_value=true`. */
+            /** @description Envelope `{data, message}`. `data` is the secret node, or `{secret, value}` when `include_value=true`. `total_reads` is present only when `include=total_reads` is sent. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -9465,9 +9611,11 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Secret deleted (no content). */
+            /** @description Secret soft-deleted (no content). The Keyorix-Purge-At header says until when it can be restored; it is omitted only if the server could not read the date back after the delete. */
             204: {
                 headers: {
+                    /** @description UTC instant (RFC 3339) before which the purge job will not hard-delete the secret. */
+                    "Keyorix-Purge-At"?: string;
                     [name: string]: unknown;
                 };
                 content?: never;
@@ -10093,7 +10241,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `{data, message}`. `data` is `{accessors}`. */
+            /** @description Envelope `{data, message}`. `data` is `{accessors, total, degraded, degraded_reasons}`. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10102,6 +10250,12 @@ export interface operations {
                     "application/json": {
                         data?: {
                             accessors?: components["schemas"]["SecretAccessor"][];
+                            /** @description Number of accessors listed. */
+                            total?: number;
+                            /** @description True when the list is incomplete: part of it was withheld from this caller (project roles, ACL holders) or a lookup failed. `accessors` is then an under-count. Clients must show it. */
+                            degraded?: boolean;
+                            /** @description One entry per gap, in the form `area: reason`; null when the list is complete. */
+                            degraded_reasons?: string[] | null;
                         };
                     };
                 };
@@ -10830,7 +10984,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `{data, message}`. `data.versions` is the version history array. */
+            /** @description Envelope `{data, message}`. `data.versions` is the version history array; `data.total_reads` the secret's lifetime read count (access-log rows with action read). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -10839,6 +10993,8 @@ export interface operations {
                     "application/json": {
                         data?: {
                             versions?: components["schemas"]["SecretVersion"][];
+                            /** @description Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads. */
+                            total_reads?: number;
                         };
                     };
                 };
@@ -11418,6 +11574,64 @@ export interface operations {
                 content?: never;
             };
             401: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    listOwnedShares: {
+        parameters: {
+            query?: {
+                secretId?: number;
+                recipientType?: "user" | "group";
+                page?: number;
+                pageSize?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope `{success, data}`. `data.data` is one page of shares; `data.total` counts every match. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        success: boolean;
+                        data: {
+                            data: {
+                                /** Format: uint32 */
+                                id: number;
+                                /** Format: uint32 */
+                                secretId: number;
+                                /** @enum {string} */
+                                recipientType: "user" | "group";
+                                /** Format: uint32 */
+                                recipientId: number;
+                                recipientName: string;
+                                permission: string;
+                                /**
+                                 * Format: date-time
+                                 * @description Absent for a permanent share.
+                                 */
+                                expiresAt?: string;
+                                /** Format: date-time */
+                                createdAt: string;
+                                /** @description Username of the share's creator (always the caller here). */
+                                createdBy: string;
+                            }[];
+                            total: number;
+                            page: number;
+                            pageSize: number;
+                            totalPages: number;
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            422: components["responses"]["Error"];
         };
     };
     updateSharePermission: {
@@ -11810,7 +12024,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Envelope `data` is the created user. With generate_one_time_password it is `{user, one_time_password}`; with deliver_setup_link it is `{user, setup_link}`. */
+            /** @description Envelope `data` is the created user. With generate_one_time_password it is `{user, one_time_password}` where `one_time_password` is `{email, one_time_password, expires_at}` (`expires_at` is the UTC RFC 3339 instant after which login with it is refused like a wrong password); with deliver_setup_link it is `{user, setup_link}`. */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -12083,6 +12297,31 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    reissueOneTimePassword: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope `data` is {user_id, one_time_password: {email, one_time_password, expires_at}}. The response is not cacheable. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+        };
+    };
     revokeUserSessions: {
         parameters: {
             query?: never;
@@ -12179,12 +12418,34 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope `data.memberships[]` with project_id, project_name, role, state. */
+            /** @description Envelope {data, message}. data.memberships is an array of {project_id, project_name, role, roles[], state, via_group}. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        data?: {
+                            memberships?: {
+                                project_id?: number;
+                                project_name?: string;
+                                /** @description The highest-privilege role the user holds at this project's scope. */
+                                role?: string;
+                                /** @description Every role the user holds at this project's scope, sorted. */
+                                roles?: string[];
+                                /**
+                                 * @description ADR-022 onboarding state; 'active' when the grant was added directly.
+                                 * @enum {string}
+                                 */
+                                state?: "invited" | "identity_verified" | "provisioned" | "active" | "revoked";
+                                /** @description True when the membership comes only from a group grant. */
+                                via_group?: boolean;
+                                /** @description True when the project has been soft-deleted. The grant survives a soft-delete (RestoreProject reinstates it), so the membership is reported rather than hidden, but it is not counted by the per-user project tallies on GET /api/v1/users. */
+                                project_deleted?: boolean;
+                            }[];
+                        };
+                    };
+                };
             };
             401: components["responses"]["Error"];
         };
@@ -13181,7 +13442,7 @@ export interface operations {
                 /** @description Exact originating IP address. */
                 ip?: string;
                 /** @description Filter by operation success/failure. */
-                success?: true | false;
+                success?: "true" | "false";
                 /** @description RFC3339 start of time range (inclusive). */
                 since?: string;
                 /** @description RFC3339 end of time range (inclusive). */
@@ -13623,6 +13884,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     getNotificationChannel: {
@@ -14410,7 +14672,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data: items[] (each: id, type, secretName, timestamp, actor), total, page, pageSize. */
+            /** @description Envelope {data, message}. data: items[] (each: id, type, eventType, label, secretName, timestamp, actor), total, page, pageSize. eventType is the raw audit event type; label is the readable phrase to show after the actor ("revoked break-glass access"); actor is who did it ("system" when no user did); secretName is empty for events with no subject secret. timestamp is UTC RFC 3339. */
             200: {
                 headers: {
                     [name: string]: unknown;

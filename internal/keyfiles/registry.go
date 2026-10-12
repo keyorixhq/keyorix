@@ -181,8 +181,11 @@ func Registry(enc *config.EncryptionConfig, baseDir string) ([]securefiles.FileP
 		}
 	}
 
-	providers := make([]config.KeyProviderConfig, 0, 1+len(enc.KeyProvider.Fallbacks))
-	providers = append(providers, enc.KeyProvider)
+	// No capacity pre-sizing: this list is at most a handful of entries, built
+	// once per process start, never a hot path -- the arithmetic capacity hint
+	// this used to carry (1+len(Fallbacks)) is exactly the shape CodeQL's
+	// go/allocation-size-overflow query flags, and it bought nothing here.
+	providers := []config.KeyProviderConfig{enc.KeyProvider}
 	providers = append(providers, enc.KeyProvider.Fallbacks...)
 
 	for i := range providers {

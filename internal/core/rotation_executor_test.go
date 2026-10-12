@@ -879,15 +879,20 @@ func TestRunAutoRotation_FailuresNotBundledAcrossProjects(t *testing.T) {
 
 func ptrTime(t time.Time) *time.Time { return &t }
 
-// rotationDriftStore wraps LocalStorage and fails UpdateSecret, so RotateSecret errors AFTER
-// the backend executor has already applied the new credential upstream — the split-brain /
-// drift case.
+// rotationDriftStore wraps LocalStorage and fails the secret-row write, so
+// RotateSecret errors AFTER the backend executor has already applied the new
+// credential upstream — the split-brain / drift case.
+//
+// The faulted method is UpdateSecretFields since #2695 moved RotateSecret's
+// last_rotated_at write onto it; the fault is injected at the same logical point
+// as before (the row update that follows the upstream rotation), so this test
+// pins the same property it always did.
 type rotationDriftStore struct {
 	*store.LocalStorage
 }
 
-func (s *rotationDriftStore) UpdateSecret(_ context.Context, _ *models.SecretNode) (*models.SecretNode, error) {
-	return nil, errors.New("simulated storage failure after upstream rotation")
+func (s *rotationDriftStore) UpdateSecretFields(_ context.Context, _ uint, _ storage.SecretFieldUpdate) (bool, error) {
+	return false, errors.New("simulated storage failure after upstream rotation")
 }
 
 // TestRunAutoRotation_BackendSucceedsStoreFails_AuditsDrift pins that the most dangerous

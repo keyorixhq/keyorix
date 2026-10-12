@@ -1,18 +1,15 @@
 import { useQuery, useMutation, keepPreviousData } from '@tanstack/react-query';
-import { sharingApi } from '../../services/sharing';
+import { sharingApi, type ShareListParams } from '../../services/sharing';
 import { usersApi } from '../../services/users';
 import { queryKeys, invalidateQueries } from '../../lib/queryClient';
 import { ShareFormData } from '../../types';
 
-export const useShares = (params?: {
-    page?: number;
-    pageSize?: number;
-    secretId?: number;
-    recipientType?: 'user' | 'group';
-}) => {
+// useShares is the Sharing Management list: GET /shares for a caller with global
+// secrets.read, otherwise the owner-scoped GET /shares/owned (data.scope says which).
+export const useShares = (params?: ShareListParams) => {
     return useQuery({
         queryKey: queryKeys.sharing.list(params),
-        queryFn: () => sharingApi.list(params),
+        queryFn: () => sharingApi.listForManagement(params),
         placeholderData: keepPreviousData,
     });
 };
@@ -79,6 +76,12 @@ export const useCreateShare = () => {
 // Plain async function — called imperatively inside form submit handlers.
 // Lives here so components don't import directly from services/.
 export const searchRecipients = (query: string) => usersApi.search(query);
+
+// searchShareRecipients lists the active members of the secret's project the caller
+// can share with (GET /projects/{id}/share-recipients, SHARE-2). It needs secrets.write
+// in that project, not the global users.read GET /users needs.
+export const searchShareRecipients = (projectId: number, query: string, pageSize = 8) =>
+    sharingApi.searchRecipients(projectId, { q: query, pageSize });
 
 // Composite mutation: share with the identity already verified in the UI
 // (recipientId, captured when the caller picked a specific user from the

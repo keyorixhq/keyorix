@@ -16,7 +16,6 @@
 //   - buildSSOProviders: SAML with valid metadata file (file path)
 //   - buildSSOProviders: JWKS resolver error (invalid jwks_uri after successful discovery)
 //   - runStartupValidation: enabled path with warnings (errors collection logs)
-//   - resolveOutboundIP: fallback path (127.0.0.1) is exercised indirectly via conn failure
 //
 // #G12: startHTTPServer/startGRPCServer no longer call initializeCoreService
 // themselves (that now happens once in main(), shared by both) — every test
@@ -247,7 +246,7 @@ func TestStartSchedulers_S27_AnomalyOffHoursNumeric(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startSchedulers(ctx, cfg, coreService)
+	startSchedulersForTest(t, ctx, cfg, coreService)
 	// startSchedulers only wires up the scheduler goroutines and returns
 	// immediately; give the anomaly detector's first (immediate) tick a moment
 	// to run so the off-hours branch actually executes before the test exits.
@@ -615,7 +614,7 @@ func TestStartSchedulers_S27_AnomalyOffHoursEndOnly(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startSchedulers(ctx, cfg, coreService)
+	startSchedulersForTest(t, ctx, cfg, coreService)
 	time.Sleep(50 * time.Millisecond)
 }
 
@@ -1016,7 +1015,7 @@ func TestStartSchedulers_S27_WithEncryption(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startSchedulers(ctx, cfg, coreService)
+	startSchedulersForTest(t, ctx, cfg, coreService)
 	// The audit-checkpoint goroutine's first (immediate) tick needs a moment
 	// to run before the test exits.
 	time.Sleep(300 * time.Millisecond)
@@ -1258,7 +1257,7 @@ func TestStartSchedulers_S27_LegalHoldBlocksPurge(t *testing.T) {
 	// skip message.
 	ctx2, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startSchedulers(ctx2, cfg, coreService)
+	startSchedulersForTest(t, ctx2, cfg, coreService)
 	time.Sleep(200 * time.Millisecond)
 }
 
@@ -1323,6 +1322,6 @@ func TestStartSchedulers_S27_JITExpiredGrantSwept(t *testing.T) {
 	// expired grant(s)" message.
 	ctx2, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	startSchedulers(ctx2, cfg, coreService)
+	startSchedulersForTest(t, ctx2, cfg, coreService)
 	time.Sleep(300 * time.Millisecond)
 }
