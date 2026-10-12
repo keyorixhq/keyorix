@@ -9,8 +9,11 @@
   which the check adds to the stored count. `loginLocked` and
   `recheckLoginLockFailClosed` consult the account fallback; a delivered login
   (`clearLoginFailures`) and `UnlockUser` clear it. The fallback has no
-  exponential cooldown: an account stays locked while MaxAttempts failures fall
-  inside the window. While on the fallback, the in-memory count is held to the
+  exponential cooldown: an account stays locked while its stored failures inside
+  the window plus its in-memory ones reach MaxAttempts (`accountFailuresSpent`;
+  compared separately, an intermittently failing lockout write let up to
+  2*(MaxAttempts-1) failures through, #3029 review). While on the fallback, the
+  in-memory count is held to the
   budget's fallback limit: its limit divided by `fallbackDivisor` (2 for password
   reset) and by `SetAuthRateLimitFallbackReplicas` (config
   `security.auth_rate_limit_fallback.replicas`, default 1), never below 1; a stored
@@ -25,7 +28,8 @@
   unchanged. Why: Andrei, 2026-10-10 18:52 (AUTH-AUDIT-1 item 5). Guard:
   `auth_budget_storage_guard_test.go` (`TestAuthBudgetStorage_OnlyThroughTheSharedLimiter`:
   no login_attempts storage call outside `auth_budget.go` except the relay),
-  `account_lockout_storage_fallback_test.go`, `auth_budget_degraded_test.go`
+  `account_lockout_storage_fallback_test.go`,
+  `account_lockout_stored_plus_fallback_test.go`, `auth_budget_degraded_test.go`
   (half limit, per-account cap, replica divisor, degraded window), and
   `server/http/handlers/auth_budget_routes_guard_test.go`
   (`TestEveryAuthBudget_HoldsWithItsStorageDown`).

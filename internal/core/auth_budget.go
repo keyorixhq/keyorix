@@ -59,8 +59,9 @@
 //     row other replicas read (sharedLoginSlot), so a fallback slot held by an
 //     MFA challenge or a WebAuthn ceremony stays counted until it ages out.
 //   - for account_lockout, no exponential cooldown: an account is locked while
-//     MaxAttempts in-memory failures fall inside Window, and unlocks as they
-//     age out. A delivered login and an admin unlock clear the entry, as they
+//     its stored failures inside Window plus its in-memory failures reach
+//     MaxAttempts (the check adds the two, as for every budget; #3029 review),
+//     and unlocks as they age out. A delivered login and an admin unlock clear the entry, as they
 //     clear the stored columns.
 //
 // While a budget is on its fallback (item 5, points 2-4):
@@ -310,10 +311,17 @@ func (c *KeyorixCore) budgetRecordFallback(ctx context.Context, b authBudget, ke
 	c.authBudgetFallback(b).reserve(key, c.now(), b.window, 4*b.limit)
 }
 
-// budgetFallbackLimited reports whether the fallback alone has key at b's
-// fallback limit.
-func (c *KeyorixCore) budgetFallbackLimited(b authBudget, key string) bool {
-	return b.limit > 0 && c.authBudgetFallback(b).count(key, c.now().Add(-b.window), true) >= c.fallbackLimit(b)
+// budgetFallbackLimitedWithStored reports whether key has spent b, for a
+// budget stored outside login_attempts (account_lockout): stored is the
+// attempts its own storage holds for key inside b's window. The in-memory
+// count alone binds at b's fallback limit; otherwise the check adds it to the
+// stored count against b's normal limit, as budgetLimited does (#3029 review).
+func (c *KeyorixCore) budgetFallbackLimitedWithStored(b authBudget, key string, stored int) bool {
+	if b.limit <= 0 {
+		return false
+	}
+	mem := c.authBudgetFallback(b).count(key, c.now().Add(-b.window), true)
+	return mem >= c.fallbackLimit(b) || stored+mem >= b.limit
 }
 
 // budgetFallbackTryReserve counts one attempt for key in memory if key is

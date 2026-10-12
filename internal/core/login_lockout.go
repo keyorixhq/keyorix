@@ -48,8 +48,9 @@ func (c *KeyorixCore) loginFailureLock(userID uint) *sync.Mutex {
 }
 
 // loginLocked reports whether the user is currently within an active lockout
-// window: the stored one, or the shared limiter's in-memory one while the
-// lockout columns cannot be written (auth_budget.go).
+// window (the stored one), or has spent MaxAttempts failures inside Window
+// counting the stored failures and the shared limiter's in-memory ones
+// together (accountFailuresSpent).
 func (c *KeyorixCore) loginLocked(user *models.User) bool {
 	if !c.loginLockout.Enabled {
 		return false
@@ -57,7 +58,24 @@ func (c *KeyorixCore) loginLocked(user *models.User) bool {
 	if user.LoginLockedUntil != nil && c.now().Before(*user.LoginLockedUntil) {
 		return true
 	}
-	return c.budgetFallbackLimited(c.accountBudget(), accountBudgetKey(user.ID))
+	return c.accountFailuresSpent(user)
+}
+
+// accountFailuresSpent reports whether u's stored failures inside Window plus
+// the in-memory failures counted while the lockout columns could not be
+// written (auth_budget.go) reach MaxAttempts. ADR-040's amendment: the check
+// adds the in-memory count to the stored one, for every budget (#3029 review
+// at 81a070aa: compared separately, a lockout write failing intermittently let
+// up to 2*(MaxAttempts-1) failures through). The in-memory failures are those
+// whose stored write failed, so the sum does not double-count. The stored
+// count is u's as read by the caller; a stale one (last failure older than
+// Window) counts 0, exactly as recordFailedLogin restarts it.
+func (c *KeyorixCore) accountFailuresSpent(u *models.User) bool {
+	stored := 0
+	if u.LastFailedLoginAt != nil && c.now().Sub(*u.LastFailedLoginAt) <= c.loginLockout.Window {
+		stored = u.FailedLoginAttempts
+	}
+	return c.budgetFallbackLimitedWithStored(c.accountBudget(), accountBudgetKey(u.ID), stored)
 }
 
 // cooldownFor returns the lock duration for the nth lockout (1-based): an
@@ -218,8 +236,9 @@ func (c *KeyorixCore) recheckLoginLockFailClosed(ctx context.Context, user *mode
 			lockErr = fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 			return nil
 		}
-		if c.budgetFallbackLimited(c.accountBudget(), accountBudgetKey(uid)) {
-			// Locked in memory: the failures were counted while the lockout
+		if c.accountFailuresSpent(u) {
+			// MaxAttempts failures between the stored count (read fresh under
+			// the row lock) and the in-memory one, counted while the lockout
 			// columns could not be written (auth_budget.go).
 			lockErr = fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 		}
