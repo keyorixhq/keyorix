@@ -119,7 +119,18 @@ echo "Back up $dir/master_password separately: losing it makes every stored secr
 # chmod). On a host where your uid is also 1001 the 0640 files above would be refused,
 # so say so now instead of at `docker compose up`. Another owner is fine: the group
 # bit is what the container uses.
+#
+# INIT_SECRETS_SERVER_UID names the uid to refuse. Default 1001 (the shipped image). Set it
+# only if you rebuilt the image with a different server uid (operator override), or from
+# tests that must not run as the server uid. It must be a number: anything else is an error
+# (a value that never matches would silently turn this check off).
 server_uid="${INIT_SECRETS_SERVER_UID:-1001}"
+case "$server_uid" in
+    ''|*[!0-9]*)
+        echo "init-secrets: ERROR: INIT_SECRETS_SERVER_UID must be a numeric uid, got '$server_uid'" >&2
+        exit 1
+        ;;
+esac
 bad=""
 for _f in db_password master_password admin_password bootstrap_token; do
     _owner=$(stat -c %u "$dir/$_f" 2>/dev/null || stat -f %u "$dir/$_f" 2>/dev/null || echo "")

@@ -16,12 +16,22 @@ import (
 // values byte-for-byte (the master password and DB password MUST NOT change on
 // upgrade), and KEYORIX_SECRETS_GID lands in the env file.
 
+// notTheProcessUID returns a server uid for INIT_SECRETS_SERVER_UID that differs from the
+// test process's uid. The script refuses files owned by the server uid (default 1001), and
+// CI runners are uid 1001, so tests that are not about that refusal must not collide with it.
+func notTheProcessUID() string {
+	if os.Getuid() == 65534 {
+		return "65533"
+	}
+	return "65534"
+}
+
 func runInit(t *testing.T, dir string, args ...string) (string, error) {
 	t.Helper()
 	script := filepath.Join(repoRoot(), "scripts", "selfhost", "init-secrets.sh")
 	cmd := exec.Command("sh", append([]string{script}, args...)...) //nolint:gosec // repo script, test-controlled args
 	cmd.Dir = dir
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "INIT_SECRETS_SERVER_UID=" + notTheProcessUID()}
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -162,8 +172,12 @@ func TestInitSecrets_WarnsWhenFilesAreOwnedByTheServerUID(t *testing.T) {
 		t.Errorf("master_password should exist after the failed check: %v", statErr)
 	}
 	// Any other server uid is fine.
-	if out, err := cmdEnv("65534"); err != nil {
+	if out, err := cmdEnv(notTheProcessUID()); err != nil {
 		t.Fatalf("a non-matching server uid must succeed: %v\n%s", err, out)
+	}
+	// A non-numeric override must be an error, never a silently disabled check.
+	if out, err := cmdEnv("none"); err == nil || !strings.Contains(out, "must be a numeric uid") {
+		t.Fatalf("a non-numeric INIT_SECRETS_SERVER_UID must fail loudly, err=%v\n%s", err, out)
 	}
 }
 
