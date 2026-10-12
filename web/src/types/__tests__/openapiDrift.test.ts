@@ -139,6 +139,7 @@ const NOT_COMPARED: Record<string, string> = {
     ValidationError: 'UI only (form validation)',
     AppNotification: 'UI toast model',
     SecretFilters: 'UI filter state',
+    SecretAccessReport: 'UI model (services/secrets.ts accessList maps the /access body; degradedReasons is camelCase)',
     PaginationState: 'UI state',
     LoginFormData: 'UI form state',
     AuthState: 'UI store state',
