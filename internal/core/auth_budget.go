@@ -164,8 +164,27 @@ func (c *KeyorixCore) budgetRecord(ctx context.Context, b authBudget, key string
 }
 
 // budgetReserve is budgetRecord returning a handle budgetRelease can refund.
+//
+// The stored reservation is identified by a key generated here, before the
+// write (#3050): a write that landed but reported an error is retried ONCE
+// with the same key, and the idempotent store returns the row that landed (or
+// writes it if the first attempt did not). So a lost acknowledgement neither
+// loses the handle nor counts the attempt twice. Only a write that fails both
+// times falls back to memory, and only then is the budget marked degraded, so
+// a retry that recovers adds no mirror entry.
 func (c *KeyorixCore) budgetReserve(ctx context.Context, b authBudget, key string) uint {
-	id, err := c.storage.ReserveLoginAttempt(ctx, b.prefix+key, c.now())
+	resKey, err := generateSecureToken()
+	if err != nil {
+		// No key, so no idempotent storage write: the in-memory fallback still
+		// counts the attempt (never fail open).
+		c.noteAuthBudgetFallback(ctx, b, "reserve", key, nil, err)
+		return c.authBudgetFallback(b).reserve(key, c.now(), b.window, 4*b.limit)
+	}
+	now := c.now()
+	id, err := c.storage.ReserveLoginAttempt(ctx, b.prefix+key, now, resKey)
+	if err != nil {
+		id, err = c.storage.ReserveLoginAttempt(ctx, b.prefix+key, now, resKey)
+	}
 	if err != nil {
 		c.noteAuthBudgetFallback(ctx, b, "reserve", key, nil, err)
 		return c.authBudgetFallback(b).reserve(key, c.now(), b.window, 4*b.limit)
