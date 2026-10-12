@@ -12581,6 +12581,22 @@ func NewGetSecretRequest(server string, id int, params *GetSecretParams) (*http.
 
 		}
 
+		if params.Include != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "include", runtime.ParamLocationQuery, *params.Include); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
@@ -22780,12 +22796,15 @@ type HealthCheckResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		Checks    *map[string]interface{} `json:"checks,omitempty"`
-		Status    *string                 `json:"status,omitempty"`
-		Timestamp *time.Time              `json:"timestamp,omitempty"`
-		Version   *string                 `json:"version,omitempty"`
+		// AuthRateLimit degraded while any auth rate limit (login, password reset, SSO begin, per-account lockout) is enforcing from its in-memory fallback because its database storage failed within the last limit window. Names no budget, key or address; liveness (status, HTTP 200) is unaffected.
+		AuthRateLimit *HealthCheck200AuthRateLimit `json:"auth_rate_limit,omitempty"`
+		Checks        *map[string]interface{}      `json:"checks,omitempty"`
+		Status        *string                      `json:"status,omitempty"`
+		Timestamp     *time.Time                   `json:"timestamp,omitempty"`
+		Version       *string                      `json:"version,omitempty"`
 	}
 }
+type HealthCheck200AuthRateLimit string
 
 // Status returns HTTPResponse.Status
 func (r HealthCheckResponse) Status() string {
@@ -36456,10 +36475,12 @@ func ParseHealthCheckResponse(rsp *http.Response) (*HealthCheckResponse, error) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			Checks    *map[string]interface{} `json:"checks,omitempty"`
-			Status    *string                 `json:"status,omitempty"`
-			Timestamp *time.Time              `json:"timestamp,omitempty"`
-			Version   *string                 `json:"version,omitempty"`
+			// AuthRateLimit degraded while any auth rate limit (login, password reset, SSO begin, per-account lockout) is enforcing from its in-memory fallback because its database storage failed within the last limit window. Names no budget, key or address; liveness (status, HTTP 200) is unaffected.
+			AuthRateLimit *HealthCheck200AuthRateLimit `json:"auth_rate_limit,omitempty"`
+			Checks        *map[string]interface{}      `json:"checks,omitempty"`
+			Status        *string                      `json:"status,omitempty"`
+			Timestamp     *time.Time                   `json:"timestamp,omitempty"`
+			Version       *string                      `json:"version,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
