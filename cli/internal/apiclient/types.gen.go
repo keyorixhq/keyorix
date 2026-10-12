@@ -414,7 +414,10 @@ type DeletedSecretEntry struct {
 	DeletedAt      *string `json:"deleted_at,omitempty"`
 	Id             *int    `json:"id,omitempty"`
 	Name           *string `json:"name,omitempty"`
-	Type           *string `json:"type,omitempty"`
+
+	// PurgeAt UTC instant (RFC 3339) before which the purge job will not hard-delete this secret -- the restore deadline. Frozen when the secret was deleted (deleted_at plus the secret's own retention override, else the soft_delete.retention_days in force then), so a later change to the configured window does not move it. For a secret deleted before this field existed it is computed from the current configuration.
+	PurgeAt *time.Time `json:"purge_at,omitempty"`
+	Type    *string    `json:"type,omitempty"`
 }
 
 // DeploymentRotationPlan The install-wide roll-up of every project's rotation plan (ADR-108 PR 1 addition, ADR-053) -- a roll-up of per-project plans, most pressing first.
@@ -994,11 +997,15 @@ type SecretAccessSchedule struct {
 	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
 }
 
-// SecretAccessor One entry in a secret's effective access list (owner, direct share, or group share).
+// SecretAccessor One entry in a secret's effective access list.
 type SecretAccessor struct {
+	// Grants Every grant the user holds on the secret as source:level, e.g. owner:owner, role:read, direct_share:write.
+	Grants *[]string `json:"grants,omitempty"`
+
+	// Permission Effective level: read, write or owner.
 	Permission *string `json:"permission,omitempty"`
 
-	// Source How access was granted: owner, direct share, or group share.
+	// Source The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>.
 	Source   *string `json:"source,omitempty"`
 	UserId   *int    `json:"user_id,omitempty"`
 	Username *string `json:"username,omitempty"`

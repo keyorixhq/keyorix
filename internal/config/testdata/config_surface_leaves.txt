@@ -192,12 +192,15 @@ security.login_lockout.insecure_disable_login_lockout
 security.login_lockout.max_attempts
 security.login_lockout.max_cooldown
 security.login_lockout.window
+security.one_time_password_ttl
 security.recover_admin.insecure_keyless_admin_recovery
+security.recovery_one_time_password_ttl
 security.require_mfa
 security.require_transport_tls
 server.grpc.allowed_origins
 server.grpc.domain
 server.grpc.enabled
+server.grpc.host
 server.grpc.keepalive.max_connection_age
 server.grpc.keepalive.max_connection_age_grace
 server.grpc.keepalive.min_time
@@ -206,6 +209,7 @@ server.grpc.keepalive.time
 server.grpc.keepalive.timeout
 server.grpc.max_request_body_bytes
 server.grpc.metrics_token
+server.grpc.metrics_token_file
 server.grpc.port
 server.grpc.protocol_versions
 server.grpc.ratelimit.burst
@@ -226,6 +230,7 @@ server.grpc.web_assets_path
 server.http.allowed_origins
 server.http.domain
 server.http.enabled
+server.http.host
 server.http.keepalive.max_connection_age
 server.http.keepalive.max_connection_age_grace
 server.http.keepalive.min_time
@@ -234,6 +239,7 @@ server.http.keepalive.time
 server.http.keepalive.timeout
 server.http.max_request_body_bytes
 server.http.metrics_token
+server.http.metrics_token_file
 server.http.port
 server.http.protocol_versions
 server.http.ratelimit.burst
