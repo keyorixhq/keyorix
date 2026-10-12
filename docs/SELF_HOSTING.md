@@ -136,7 +136,10 @@ unreadable by the containers' non-root users. `init-secrets.sh` writes the files
 `postgres` and `backend` containers join that group. Nothing is world-readable, and
 the server's secret-file permission check (nothing for "other", no group write; a
 group-readable file must not be owned by the container's own user) passes. Run the
-script as a regular user, not root. Docker Desktop (macOS/Windows) maps file ownership
+script as a regular user, not root. If your uid is `1001` (the uid the server
+container runs as) the server would refuse the group-readable files it "owns", and the
+script says so: hand them to another owner with `sudo chown root:<your gid> secrets/*`
+and re-run it. Docker Desktop (macOS/Windows) maps file ownership
 differently; this layout is for Linux hosts.
 
 **Upgrading an install that keeps its passwords in `.env`:**

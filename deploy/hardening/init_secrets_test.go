@@ -130,6 +130,43 @@ func TestInitSecrets_FromEnvMigratesValuesExactly(t *testing.T) {
 	}
 }
 
+// The server container runs as uid 1001 and refuses a group-readable secret file it
+// owns. A host user whose uid is 1001 would get 0640 files the server then rejects at
+// `compose up`; the script must say so up front. The uid is overridable so the test
+// can trigger it without being uid 1001, and the fix is a non-owner (never relaxing
+// the server's rule).
+func TestInitSecrets_WarnsWhenFilesAreOwnedByTheServerUID(t *testing.T) {
+	dir := t.TempDir()
+	envFile := filepath.Join(dir, ".env")
+	sec := filepath.Join(dir, "secrets")
+
+	cmdEnv := func(uid string) (string, error) {
+		script := filepath.Join(repoRoot(), "scripts", "selfhost", "init-secrets.sh")
+		cmd := exec.Command("sh", script, "--dir", sec, "--env-file", envFile) //nolint:gosec // repo script, test-controlled args
+		cmd.Dir = dir
+		cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "INIT_SECRETS_SERVER_UID=" + uid}
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+
+	u, _ := user.Current()
+	out, err := cmdEnv(u.Uid)
+	if err == nil {
+		t.Fatalf("files owned by the server uid must fail the script, got success:\n%s", out)
+	}
+	if !strings.Contains(out, "owned by uid "+u.Uid) || !strings.Contains(out, "chown root:") {
+		t.Errorf("error should name the uid and the chown fix: %q", out)
+	}
+	// The files were still written (and kept on the re-run): nothing is lost or regenerated.
+	if _, statErr := os.Stat(filepath.Join(sec, "master_password")); statErr != nil {
+		t.Errorf("master_password should exist after the failed check: %v", statErr)
+	}
+	// Any other server uid is fine.
+	if out, err := cmdEnv("65534"); err != nil {
+		t.Fatalf("a non-matching server uid must succeed: %v\n%s", err, out)
+	}
+}
+
 func TestInitSecrets_RefusesToOverwriteWithDifferentFromEnvValue(t *testing.T) {
 	// Re-running --from-env after a file exists must keep the file (and say so),
 	// not silently swap a master password.

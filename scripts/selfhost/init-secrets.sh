@@ -113,3 +113,26 @@ fi
 echo
 echo "The first admin's password is in $dir/admin_password (user: KEYORIX_ADMIN_USERNAME, default admin)."
 echo "Back up $dir/master_password separately: losing it makes every stored secret undecryptable."
+
+# The server container runs as uid 1001 and REFUSES a group-readable secret file that
+# its own uid owns (the permission rule never trusts a file the process itself could
+# chmod). On a host where your uid is also 1001 the 0640 files above would be refused,
+# so say so now instead of at `docker compose up`. Another owner is fine: the group
+# bit is what the container uses.
+server_uid="${INIT_SECRETS_SERVER_UID:-1001}"
+bad=""
+for _f in db_password master_password admin_password bootstrap_token; do
+    _owner=$(stat -c %u "$dir/$_f" 2>/dev/null || stat -f %u "$dir/$_f" 2>/dev/null || echo "")
+    if [ "$_owner" = "$server_uid" ]; then
+        bad="$bad $dir/$_f"
+    fi
+done
+if [ -n "$bad" ]; then
+    echo >&2
+    echo "init-secrets: ERROR: these files are owned by uid $server_uid, the uid the server container runs as:" >&2
+    echo "init-secrets:  $bad" >&2
+    echo "init-secrets: the server refuses a group-readable secret it owns. Hand them to another owner and re-run:" >&2
+    echo "init-secrets:   sudo chown root:$gid $dir/*" >&2
+    echo "init-secrets: (or run this script as a different user)." >&2
+    exit 1
+fi
