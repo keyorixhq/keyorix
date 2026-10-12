@@ -1,4 +1,4 @@
-### Deployment
+### Added
 - **Helm: `secureBaseline.existingSecret`** for ArgoCD and other GitOps tools that
   render with `helm template`. There `lookup` sees no cluster, so the generated
   certificates and `/metrics` token changed on every sync. With the value set to a
