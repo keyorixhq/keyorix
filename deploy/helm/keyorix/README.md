@@ -214,8 +214,23 @@ kubectl -n keyorix create secret generic keyorix-secure-baseline \
 On `helm install/upgrade` a missing or empty key fails the render naming the
 key. Under `helm template` the cluster is invisible, so the check cannot run
 and a bad Secret shows up as pods that do not start. The pod checksum
-annotation tracks the Secret's content where Helm can read it; after rotating
-the Secret under ArgoCD, restart the pods.
+annotation tracks the Secret's content where Helm can read it; under ArgoCD it
+is constant, so rotating the Secret does not restart the pods by itself.
+
+**Rotation under GitOps.** Kubernetes does not restart pods when a mounted
+Secret changes. After you rotate the existing Secret, either restart the
+workloads (`kubectl rollout restart`) or bump the optional revision in Git, which
+feeds the `checksum/secure-baseline` pod annotation of the server, web and
+bundled-Postgres pods and so rolls them on the next sync:
+
+```yaml
+secureBaseline:
+  existingSecret: keyorix-secure-baseline
+  existingSecretRevision: "2026-10-12"   # any string; change it on every rotation
+```
+
+Empty (default) leaves the annotation exactly as without the value. It only
+applies together with `existingSecret`; setting it alone fails the render.
 
 ## Image pinning
 

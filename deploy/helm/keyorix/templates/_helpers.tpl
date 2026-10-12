@@ -217,12 +217,19 @@ sha256 over "key=value\n" for the sorted secureBaseline Secret keys. A pod
 template annotation checksum/secure-baseline: <this> rolls the pods when the
 Secret changes (delete it to rotate, then helm upgrade), since Kubernetes does
 not restart pods on a mounted Secret change.
+With secureBaseline.existingSecretRevision set (BYO Secret) the revision is mixed
+in: under `helm template` (ArgoCD) the Secret is invisible, so the data part is
+constant and bumping the revision is the only way a GitOps change rolls the pods
+after the operator rotated the Secret. Empty (default): the checksum is unchanged.
 */}}
 {{- define "keyorix.secureBaseline.checksum" -}}
 {{- $d := include "keyorix.secureBaseline.data" . | fromJson -}}
 {{- $s := "" -}}
 {{- range $k := keys $d | sortAlpha -}}
 {{- $s = printf "%s%s=%s\n" $s $k (index $d $k) -}}
+{{- end -}}
+{{- if and .Values.secureBaseline.existingSecret .Values.secureBaseline.existingSecretRevision -}}
+{{- $s = printf "%sexistingSecretRevision=%s\n" $s (toString .Values.secureBaseline.existingSecretRevision) -}}
 {{- end -}}
 {{- sha256sum $s -}}
 {{- end -}}

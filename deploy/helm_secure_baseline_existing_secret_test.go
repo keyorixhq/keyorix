@@ -16,7 +16,9 @@ import (
 // Secret is still rendered (secure by default, nothing weakened).
 //
 // What this does not cover: the required-key check, which needs `lookup` to see
-// a real Secret (helm install/upgrade); it is exercised on a cluster, see the PR.
+// a Secret (helm install/upgrade). It is tested in
+// helm_secure_baseline_lookup_test.go against a fake API server, with the limits
+// stated there.
 
 const byoSecretName = "my-baseline"
 

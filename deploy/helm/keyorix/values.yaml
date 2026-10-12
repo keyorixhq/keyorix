@@ -66,6 +66,14 @@ secureBaseline:
   # bootstrap token in the auth Secret is generated otherwise).
   # See README.md ("Secure baseline with an existing Secret").
   existingSecret: ""
+  # Optional, only with existingSecret. Any string (a counter, a date, the
+  # Secret's resourceVersion). Kubernetes does not restart pods when a mounted
+  # Secret changes and, under ArgoCD, the chart cannot see the Secret, so the
+  # pod annotation checksum/secure-baseline is constant: after rotating the
+  # Secret, bump this value in Git to roll the server, web and bundled-Postgres
+  # pods. Empty (default) leaves the annotation exactly as it is without it.
+  # Setting it without existingSecret fails the render.
+  existingSecretRevision: ""
 
 # ── API server ────────────────────────────────────────────────────────────────
 server:
