@@ -105,6 +105,14 @@ func loadConfig() (*config.Config, error) {
 	return cfg, nil
 }
 
+// stoppedServerHint is appended to the held-lock refusal: the Docker Compose
+// sequence docs/SELF_HOSTING.md documents for running an admin command with the
+// server stopped (#2540). `exec` runs inside the live backend, so it can never work.
+const stoppedServerHint = "With Docker Compose, run admin commands in a throwaway container while the server is stopped:\n" +
+	"  docker compose stop backend\n" +
+	"  docker compose run --rm backend ./keyorix-server admin <command>\n" +
+	"  docker compose start backend"
+
 // acquireDatabaseLock is the shared guard every admin command runs before
 // doing anything, and HOLDS for its entire operation -- not merely a check
 // released before the real work starts. A probe-then-release design leaves
@@ -139,7 +147,10 @@ func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
 		// cases still fail closed (no lock acquired, command refuses to proceed without
 		// --force); only the displayed reason differs.
 		if serverguard.IsLockHeld(err) {
-			return nil, fmt.Errorf("a Keyorix server (or another admin command) appears to be using this database (%v) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe", err)
+			// #2540: say HOW to stop it on the documented Docker Compose path. Operators
+			// who copy an old `docker compose exec backend ... admin ...` line land here,
+			// and the refusal itself is correct (the command needs the database to itself).
+			return nil, fmt.Errorf("a Keyorix server (or another admin command) appears to be using this database (%v) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe.\n%s", err, stoppedServerHint)
 		}
 		return nil, fmt.Errorf("cannot connect to the database to check for a running server: %v — admin commands must not run concurrently with a server, but this could not be verified; pass --force if you are certain this is safe", err)
 	}

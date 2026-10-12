@@ -29,6 +29,13 @@ var keptPaths = []string{
 	"/health",
 	"/api/v1/version",
 	"/auth/login",
+	// #2737: the second step of a two-step login. /auth/login answers an
+	// MFA-enabled account with a challenge instead of a token (200 +
+	// MFAChallengeData, see openapi.yaml's authLogin description), and the
+	// challenge is completed here. Without this path the generated client had
+	// no way to finish a login at all, which is why `keyorix login` dead-ended
+	// on the challenge response.
+	"/auth/mfa/verify",
 	"/auth/logout",
 	"/api/v1/auth/profile",
 	// Item 3b (RELEASE-BLOCKERS): `keyorix change-password`, so the J5
@@ -40,6 +47,11 @@ var keptPaths = []string{
 	"/system/init",
 	// PR 2 (docs/cli-split-inventory.md §7) -- pat, auth (mfa/logout), machine.
 	"/api/v1/auth/mfa/stepup",
+	// ADR-112 item 1: require_mfa defaults on, so a fresh install's first admin
+	// is confined to MFA enrolment until it enrols -- `keyorix mfa enroll` and
+	// `keyorix mfa activate` are how the CLI does that.
+	"/api/v1/auth/mfa/enroll",
+	"/api/v1/auth/mfa/activate",
 	"/api/v1/auth/tokens",
 	"/api/v1/auth/tokens/{id}",
 	"/api/v1/auth/tokens/expired",
@@ -168,6 +180,7 @@ var keptPaths = []string{
 	"/api/v1/users/{id}/require-password-reset",
 	"/api/v1/users/{id}/revoke-sessions",
 	"/api/v1/users/{id}/resend-setup-link",
+	"/api/v1/users/{id}/reissue-one-time-password",
 	"/api/v1/admin/jobs/suspend-inactive-users",
 	// PR 3 (docs/cli-split-inventory.md §7) -- rbac, group, invite.
 	"/api/v1/users/{id}/roles",

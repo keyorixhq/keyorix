@@ -18,7 +18,10 @@ func newRBACReconcileCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.AuditEvent{},
+	// models.SystemMetadata holds the role_permissions cache-invalidation
+	// generation (PERF-3 PR-2) that every role_permissions write bumps in the
+	// same transaction — see role_permission_cache.go.
+	require.NoError(t, db.AutoMigrate(&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.AuditEvent{},
 		&models.UserRole{}, &models.Project{}, &models.Environment{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}))
 	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db

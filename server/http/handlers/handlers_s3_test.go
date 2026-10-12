@@ -464,7 +464,10 @@ func TestActivateBreakGlass_MissingJustification(t *testing.T) {
 
 func TestCatalogHandler_ListProjects_HappyPath(t *testing.T) {
 	h := NewCatalogHandler(newHandlerCore(t))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	// #2780: ListProjects authorizes in-handler now, so it needs a user context.
+	// This fixture seeds no RBAC, so the list comes back empty — the assertion is
+	// that the endpoint answers 200, which is the point (it used to 403).
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil))
 	w := httptest.NewRecorder()
 	h.ListProjects(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

@@ -70,6 +70,11 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// be bounded over HTTP. Streams are intentionally exempt (StreamAuditLogs is
 			// long-lived), so the stream chain carries no timeout.
 			interceptors.TimeoutInterceptor(grpcUnaryTimeout),
+			// RESIL-1 (#2637 follow-up): a handler whose write timed out on the SQLite
+			// write gate answers codes.Unavailable + retry-after instead of Internal.
+			// Inside Timeout (sees the handlers' context), outside Auth so it needs no
+			// principal; Metrics/Logging above record the converted status.
+			interceptors.WriteContentionInterceptor(),
 			interceptors.AuthInterceptor(coreService, cfg.Security.RequireMFA),
 			// Per-principal token-bucket rate limit mirroring the HTTP PrincipalRateLimit
 			// middleware so an authenticated caller cannot bypass the rate limit by
@@ -91,6 +96,10 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// PrincipalRateLimit (post-auth, per-principal) and the inline per-IP
 			// token-failure budget in its auth middleware (server/middleware/auth.go).
 			interceptors.GRPCRateLimitInterceptor(cfg.Server.GRPC.RateLimit),
+			// Innermost: a per-RPC recorder for share elevations, committed to the audit
+			// log only when the handler succeeds (an elevated action is audited when
+			// performed). Without it core refuses write-share elevation, so it must stay.
+			interceptors.ShareElevationAuditInterceptor(coreService),
 		),
 		// The stream chain intentionally carries no metrics interceptor: MetricsInterceptor
 		// (and the keyorix_grpc_requests_total / _duration_seconds_total series it feeds)
@@ -284,7 +293,7 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		// For gRPC, autocert (certificate acquisition) is more complex and typically
 		// not wired up here — but the hardened MinVersion/CipherSuites below must
 		// still apply, matching the non-AutoCert path's posture (#172).
-		tlsConfig := &tls.Config{}
+		tlsConfig := &tls.Config{} // nosemgrep: go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion -- applyTLSHardening below sets MinVersion unconditionally on every path (TLS 1.3 in strict mode, TLS 1.2 otherwise) before this config is ever used
 		if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS, cfg.Server.GRPC.TLSMode); err != nil {
 			return nil, err
 		}
@@ -297,7 +306,7 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		return nil, fmt.Errorf("failed to load gRPC TLS certificate: %w", err)
 	}
 
-	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}}
+	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}} // nosemgrep: go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion -- applyTLSHardening below sets MinVersion unconditionally on every path, same as createGRPCTLSConfig's AutoCert branch above
 	if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS, cfg.Server.GRPC.TLSMode); err != nil {
 		return nil, err
 	}

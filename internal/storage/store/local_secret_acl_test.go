@@ -263,3 +263,21 @@ func TestLocalACL_DeleteByUserAndProject_NoMatchIsNoop(t *testing.T) {
 	ls, _ := newACLStore(t)
 	require.NoError(t, ls.DeleteSecretACLsByUserAndProject(context.Background(), 404, 404))
 }
+
+// TestLocalACL_RefusesSoftDeletedSecret: the single-process half of INV-STORE-21 for
+// ACL grants (#2649). A grant on a soft-deleted secret is refused and leaves no row,
+// because DeleteSecret's CWE-284 cascade has already run for that secret and nothing
+// would ever delete the new grant before RestoreSecret reactivates it.
+func TestLocalACL_RefusesSoftDeletedSecret(t *testing.T) {
+	ls, secretID := newACLStore(t)
+	ctx := context.Background()
+	require.NoError(t, ls.db.Delete(&models.SecretNode{}, secretID).Error)
+
+	err := ls.CreateOrUpdateSecretACL(ctx, &models.SecretACL{
+		SecretID: secretID, UserID: 10, Permissions: `["secrets.read"]`, GrantedBy: 1,
+	})
+	require.Error(t, err)
+	acls, lerr := ls.ListSecretACLs(ctx, secretID)
+	require.NoError(t, lerr)
+	assert.Empty(t, acls, "the refused grant must have been rolled back")
+}

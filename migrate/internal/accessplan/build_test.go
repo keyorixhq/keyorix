@@ -41,18 +41,19 @@ func TestBuild_DeduplicatesIdenticalUnmappableAcrossRoles(t *testing.T) {
 type fakeReader struct {
 	roleDescriptions    map[string]string
 	machineDescriptions map[string]string
+	ids                 map[string]int
 	grants              map[string]bool
 	bindings            map[string]bool
 }
 
-func (f *fakeReader) RoleDescriptionByName(_ context.Context, name string) (string, bool, error) {
+func (f *fakeReader) RoleDescriptionByName(_ context.Context, name string) (int, string, bool, error) {
 	d, ok := f.roleDescriptions[name]
-	return d, ok, nil
+	return f.ids[name], d, ok, nil
 }
 
-func (f *fakeReader) MachineIdentityDescriptionByName(_ context.Context, _ int, name string) (string, bool, error) {
+func (f *fakeReader) MachineIdentityDescriptionByName(_ context.Context, _ int, name string) (int, string, bool, error) {
 	d, ok := f.machineDescriptions[name]
-	return d, ok, nil
+	return f.ids[name], d, ok, nil
 }
 
 func (f *fakeReader) MachineHasRoleGrant(_ context.Context, _ int, machineName, roleName string) (bool, error) {
@@ -84,6 +85,20 @@ func TestReconcile_SkipOnProvenanceMatch(t *testing.T) {
 	}
 	if items[0].Outcome != Skip {
 		t.Fatalf("outcome = %q, want Skip", items[0].Outcome)
+	}
+}
+
+func TestReconcile_SkipCarriesExistingID(t *testing.T) {
+	items := []Item{{Kind: KindRole, Outcome: Create, ProposedName: "vault-migrated-read", ProvenanceKey: "k1"}}
+	reader := &fakeReader{
+		roleDescriptions: map[string]string{"vault-migrated-read": FormatProvenanceLine("k1")},
+		ids:              map[string]int{"vault-migrated-read": 99},
+	}
+	if err := Reconcile(context.Background(), items, reader); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if items[0].Outcome != Skip || items[0].ExistingID != 99 {
+		t.Fatalf("item = %+v, want Skip with ExistingID 99 (Apply needs this to grant roles to an already-migrated identity on a resumed run)", items[0])
 	}
 }
 
@@ -148,6 +163,6 @@ func TestReconcile_PropagatesLookupError(t *testing.T) {
 
 type erroringReader struct{ fakeReader }
 
-func (e *erroringReader) RoleDescriptionByName(context.Context, string) (string, bool, error) {
-	return "", false, errors.New("keyorix unreachable")
+func (e *erroringReader) RoleDescriptionByName(context.Context, string) (int, string, bool, error) {
+	return 0, "", false, errors.New("keyorix unreachable")
 }

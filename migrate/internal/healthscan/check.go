@@ -21,21 +21,21 @@ const (
 // remediation — the shape G2's spec requires for every check. Remediation is empty for an
 // info-severity finding that isn't a problem (nothing to remediate).
 type Finding struct {
-	ID           string
-	Title        string
-	Severity     Severity
-	Evidence     string
-	WhyItMatters string
-	Remediation  string
+	ID           string   `json:"id"`
+	Title        string   `json:"title"`
+	Severity     Severity `json:"severity"`
+	Evidence     string   `json:"evidence"`
+	WhyItMatters string   `json:"why_it_matters"`
+	Remediation  string   `json:"remediation"`
 }
 
 // NotChecked records a check this scan could not run — almost always a Vault 403 for a path the
 // configured token/policy doesn't grant. PolicyLine is the exact healthscan-policy.hcl stanza
 // that would enable it, so the report can tell the operator precisely what to add.
 type NotChecked struct {
-	ID         string
-	Reason     string
-	PolicyLine string
+	ID         string `json:"id"`
+	Reason     string `json:"reason"`
+	PolicyLine string `json:"policy_line"`
 }
 
 // Result is what a CheckFunc returns: exactly one of Finding or NotChecked is non-nil.

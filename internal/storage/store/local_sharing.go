@@ -22,13 +22,59 @@ import (
 )
 
 // CreateShareRecord creates a share record, or updates the permission if one already exists.
-func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) { // NOSONAR -- cognitive complexity 25, suppress go:S3776
+//
+// #2646/#2647: the whole upsert runs in one transaction that ends by re-checking the
+// secret's liveness under lockLiveParent (FOR SHARE on Postgres), and rolls back if the
+// secret is gone. Without it, a DeleteSecret committing between the GetSecret read
+// below and the INSERT revoked every share it could see (#370) but not this one, which
+// then committed live on the deleted secret and reactivated on RestoreSecret.
+func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.ShareRecord) (*models.ShareRecord, error) {
 	if err := models.ValidateShareRecord(share); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
-
-	secret, err := ls.GetSecret(ctx, share.SecretID)
+	var out *models.ShareRecord
+	err := ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		created, err := createShareRecordTx(tx, share)
+		if err != nil {
+			return err
+		}
+		live, err := lockLiveParent(tx, &models.SecretNode{}, sqlWhereID, share.SecretID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+		}
+		if !live {
+			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		// #3102: the FOR SHARE above is held to commit, so the secret's owner_id read
+		// here cannot change under us. createShareRecordTx compared share.OwnerID with
+		// the owner it read BEFORE its write; a TransferSecretOwnership that committed
+		// in between has already re-stamped the shares it could see, so this row would
+		// commit stamped with the PREVIOUS owner on a secret the new owner owns, the
+		// exact state the transfer exists to prevent. Re-check, and roll back (fail
+		// closed) if the owner moved. A transfer that starts after the lock blocks on
+		// the secret row until we commit, then re-stamps this row with the rest.
+		var owners []uint
+		if err := tx.Model(&models.SecretNode{}).Where(sqlWhereID, share.SecretID).
+			Limit(1).Pluck("owner_id", &owners).Error; err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
+		}
+		if len(owners) != 1 || owners[0] != share.OwnerID {
+			return fmt.Errorf("%s", i18n.T("ErrorNotAuthorized", nil))
+		}
+		out = created
+		return nil
+	})
 	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// createShareRecordTx is CreateShareRecord's upsert body, run against tx. The caller
+// owns the transaction and the closing parent-liveness re-check.
+func createShareRecordTx(tx *gorm.DB, share *models.ShareRecord) (*models.ShareRecord, error) { // NOSONAR -- cognitive complexity 25, suppress go:S3776
+	var secret models.SecretNode
+	if err := tx.First(&secret, share.SecretID).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 
@@ -38,7 +84,7 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 
 	if share.IsGroup {
 		var count int64
-		if err := ls.db.Model(&models.Group{}).Where("id = ?", share.RecipientID).Count(&count).Error; err != nil {
+		if err := tx.Model(&models.Group{}).Where("id = ?", share.RecipientID).Count(&count).Error; err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 		}
 		if count == 0 {
@@ -46,7 +92,7 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 		}
 	} else {
 		var count int64
-		if err := ls.db.Model(&models.User{}).Where("id = ?", share.RecipientID).Count(&count).Error; err != nil {
+		if err := tx.Model(&models.User{}).Where("id = ?", share.RecipientID).Count(&count).Error; err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 		}
 		if count == 0 {
@@ -55,7 +101,7 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 	}
 
 	var existing models.ShareRecord
-	result := ls.db.Where(sqlWhereShareActive,
+	result := tx.Where(sqlWhereShareActive,
 		share.SecretID, share.RecipientID, share.IsGroup).First(&existing)
 
 	if result.Error == nil {
@@ -66,7 +112,7 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 		// permission. Save writes nil as NULL.
 		existing.ExpiresAt = share.ExpiresAt
 		existing.UpdatedAt = time.Now()
-		if err := ls.db.Save(&existing).Error; err != nil {
+		if err := tx.Save(&existing).Error; err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 		}
 		return &existing, nil
@@ -74,7 +120,10 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), result.Error)
 	}
 
-	if err := ls.db.Create(share).Error; err != nil {
+	// The INSERT runs in a nested transaction (a SAVEPOINT): on Postgres a failed
+	// statement aborts the whole enclosing transaction, so the unique-violation
+	// fallback below can only read and update after rolling back to the savepoint.
+	if err := tx.Transaction(func(sp *gorm.DB) error { return sp.Create(share).Error }); err != nil {
 		// #136: the SELECT above and this INSERT are not atomic — a concurrent
 		// CreateShareRecord for the same (secret, recipient, is_group) can race between
 		// them, both miss the SELECT, and both attempt the INSERT. The partial unique
@@ -84,11 +133,11 @@ func (ls *LocalStorage) CreateShareRecord(ctx context.Context, share *models.Sha
 		// updating the row that won the race, preserving CreateShareRecord's upsert
 		// contract instead of surfacing a raw constraint error to the caller.
 		if isUniqueConstraintErr(err) {
-			if ls.db.Where(sqlWhereShareActive,
+			if tx.Where(sqlWhereShareActive,
 				share.SecretID, share.RecipientID, share.IsGroup).First(&existing).Error == nil {
 				existing.Permission = share.Permission
 				existing.UpdatedAt = time.Now()
-				if serr := ls.db.Save(&existing).Error; serr != nil {
+				if serr := tx.Save(&existing).Error; serr != nil {
 					return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), serr)
 				}
 				return &existing, nil
@@ -211,6 +260,27 @@ func (ls *LocalStorage) DeleteExpiredShareRecords(ctx context.Context, before ti
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
 	return removed, nil
+}
+
+// ReassignSecretShareOwner re-stamps owner_id on every share_records row of secretID
+// (#3102) — Unscoped on purpose, so expired-unswept and soft-deleted (revoked) rows are
+// included: a row that ever comes back live (a restore path, a stale write) must not
+// carry the previous owner as the share's owner. Writes owner_id only (no updated_at:
+// the grant itself did not change), as a conditional UPDATE, never a Save — see
+// UpdateShareRecord's bug-origin note on why a Save of a share row is unsafe.
+//
+// Core calls it inside the same WithTransaction as the secret's owner_id write.
+func (ls *LocalStorage) ReassignSecretShareOwner(ctx context.Context, secretID, newOwnerID uint) (int64, error) {
+	if secretID == 0 || newOwnerID == 0 {
+		return 0, fmt.Errorf("%s: secret ID and new owner ID are required", i18n.T("ErrorValidation", nil))
+	}
+	res := ls.db.WithContext(ctx).Unscoped().Model(&models.ShareRecord{}).
+		Where("secret_id = ?", secretID).
+		Update("owner_id", newOwnerID)
+	if res.Error != nil {
+		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), res.Error)
+	}
+	return res.RowsAffected, nil
 }
 
 // ListSharesBySecret lists currently-active share records for a secret — soft-deleted

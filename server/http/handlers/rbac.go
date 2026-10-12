@@ -168,7 +168,10 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	// into two separately-sequenced calls (an AssignPermissionToRole failure
 	// here used to be logged and swallowed, the role still reported created
 	// with whatever subset happened to succeed).
-	role, assignedPerms, err := h.coreService.CreateRole(r.Context(), userCtx.UserID, req.Name, req.Description, permissionIDs)
+	// #2545, extended to roles: a client-asserted origin (e.g. keyorix-migrate's source
+	// policy/path) is recorded as a labelled note on the audit event, never as attribution.
+	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
+	role, assignedPerms, err := h.coreService.CreateRole(auditCtx, userCtx.UserID, req.Name, req.Description, permissionIDs)
 	if err != nil {
 		log.Printf("Error creating role: %v", err)
 		msg := err.Error()

@@ -52,12 +52,35 @@ const Modal: React.FC<ModalProps> = ({
                 onClick={closeOnOverlayClick ? undefined : (e) => e.stopPropagation()}
             />
 
-            {/* Panel */}
+            {/* Panel
+                Height: `max-h` + a flex column + a scrollable body, not just
+                `overflow-hidden`. The panel is vertically centred with
+                `-translate-y-1/2`, so a panel taller than the window overflows
+                SYMMETRICALLY -- half above it, half below -- and
+                `overflow-hidden` with no height bound meant such a dialog lost
+                its header AND its footer at once, with nothing to scroll to get
+                either back. The Create User dialog is 869px tall, so at 1280x720
+                and 1440x800 its own submit button sat outside the viewport and
+                the dialog could not be submitted at all (#2775).
+
+                100dvh, not 100vh: on mobile browsers 100vh is the viewport
+                WITHOUT the retracted browser chrome, which would put the
+                panel's footer back under it. The 2rem subtracted leaves the
+                panel visibly inset rather than flush against the window edges,
+                so "clipped" and "exactly full height" stay distinguishable.
+
+                The header stays put (`shrink-0`) and the body scrolls, so the
+                title and the close button remain reachable at any content
+                height. Callers render their own action row inside `children`,
+                so it scrolls with the body -- a user scrolls down to submit,
+                which is ordinary dialog behaviour and, unlike the previous
+                state, possible. */}
             <Dialog.Content
                 {...(!closeOnOverlayClick && { onInteractOutside: (e) => e.preventDefault() })}
                 className={cn(
                     'fixed left-1/2 top-1/2 z-50 w-full -translate-x-1/2 -translate-y-1/2',
                     'rounded-lg border shadow-xl overflow-hidden',
+                    'flex flex-col max-h-[calc(100dvh-2rem)]',
                     'data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95',
                     'data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95',
                     SIZE[size],
@@ -69,7 +92,7 @@ const Modal: React.FC<ModalProps> = ({
 
                 {((title && !hideTitleVisually) || showCloseButton) && (
                     <div
-                        className="flex items-center justify-between px-6 py-4 border-b"
+                        className="flex shrink-0 items-center justify-between px-6 py-4 border-b"
                         style={{ borderColor: 'var(--border)' }}
                     >
                         {title && !hideTitleVisually && (
@@ -92,7 +115,7 @@ const Modal: React.FC<ModalProps> = ({
                     </div>
                 )}
 
-                <div className="px-6 py-4">{children}</div>
+                <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">{children}</div>
             </Dialog.Content>
         </Dialog.Portal>
     </Dialog.Root>

@@ -1,3 +1,4 @@
+import { apiErrorMessage } from '../../services/client';
 import React, { useState, useCallback } from 'react';
 import { useSearchParams } from 'react-router';
 import { Loading } from '../../components/ui/Loading';
@@ -8,32 +9,31 @@ import { useAuditLog, AuditLogEntry } from '../../features/audit';
 import { useAnomalyAlerts, useAcknowledgeAnomaly } from '../../features/dashboard';
 import { useRoles, useGroups } from '../../features/admin';
 import { apiClient } from '../../services/client';
+import { secretsApi } from '../../services/secrets';
+import { projectsApi } from '../../services/projects';
+import { resolveAuditIds, toNameMap } from '../../features/audit/auditNames';
 import { AnomalyAlert, User } from '../../types';
 import { humanizeAlertType } from '../../utils/anomaly';
+import { eventLabel } from '../../utils/eventLabels';
+import { formatDateTime } from '../../utils/datetime';
 
 // ─── Event badge ─────────────────────────────────────────────────────────────
 
-const EVENT_STYLES: Record<
-    string,
-    { label: string; darkBg: string; darkColor: string; lightBg: string; lightColor: string }
-> = {
+const EVENT_STYLES: Record<string, { darkBg: string; darkColor: string; lightBg: string; lightColor: string }> = {
     // Auth
     'auth.login': {
-        label: 'Login',
         darkBg: 'rgba(148,163,184,0.15)',
         darkColor: '#94a3b8',
         lightBg: '#f1f5f9',
         lightColor: '#475569',
     },
     'auth.logout': {
-        label: 'Logout',
         darkBg: 'rgba(148,163,184,0.15)',
         darkColor: '#94a3b8',
         lightBg: '#f1f5f9',
         lightColor: '#475569',
     },
     'auth.login_failed': {
-        label: 'Login Failed',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
@@ -41,49 +41,56 @@ const EVENT_STYLES: Record<
     },
     // Secrets
     'secret.read': {
-        label: 'Read',
         darkBg: 'rgba(251,191,36,0.15)',
         darkColor: '#fbbf24',
         lightBg: '#fef9c3',
         lightColor: '#854d0e',
     },
+    // A by-name lookup exposes metadata only, never a value: styled neutral, not as a Read.
+    'secret.metadata_read': {
+        darkBg: 'rgba(148,163,184,0.15)',
+        darkColor: '#94a3b8',
+        lightBg: '#f1f5f9',
+        lightColor: '#475569',
+    },
+    // A version listing exposes metadata only, never a value: styled neutral, not as a Read.
+    'secret.versions_listed': {
+        darkBg: 'rgba(148,163,184,0.15)',
+        darkColor: '#94a3b8',
+        lightBg: '#f1f5f9',
+        lightColor: '#475569',
+    },
     'secret.created': {
-        label: 'Created',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
     'secret.updated': {
-        label: 'Updated',
         darkBg: 'rgba(59,130,246,0.15)',
         darkColor: '#60a5fa',
         lightBg: '#dbeafe',
         lightColor: '#1e40af',
     },
     'secret.deleted': {
-        label: 'Deleted',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
         lightColor: '#991b1b',
     },
     'secret.rotated': {
-        label: 'Rotated',
         darkBg: 'rgba(168,85,247,0.15)',
         darkColor: '#c084fc',
         lightBg: '#f3e8ff',
         lightColor: '#6b21a8',
     },
     'secret.shared': {
-        label: 'Shared',
         darkBg: 'rgba(99,102,241,0.15)',
         darkColor: '#818cf8',
         lightBg: '#e0e7ff',
         lightColor: '#3730a3',
     },
     'share.revoked': {
-        label: 'Unshared',
         darkBg: 'rgba(251,146,60,0.15)',
         darkColor: '#fb923c',
         lightBg: '#ffedd5',
@@ -91,56 +98,48 @@ const EVENT_STYLES: Record<
     },
     // RBAC — roles (keys match the backend event types in internal/core/audit.go)
     'role.created': {
-        label: 'Role Created',
         darkBg: 'rgba(99,102,241,0.15)',
         darkColor: '#818cf8',
         lightBg: '#e0e7ff',
         lightColor: '#3730a3',
     },
     'role.updated': {
-        label: 'Role Updated',
         darkBg: 'rgba(99,102,241,0.15)',
         darkColor: '#818cf8',
         lightBg: '#e0e7ff',
         lightColor: '#3730a3',
     },
     'role.deleted': {
-        label: 'Role Deleted',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
         lightColor: '#991b1b',
     },
     'role.assigned': {
-        label: 'Role Assigned',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
     'role.removed': {
-        label: 'Role Removed',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
         lightColor: '#991b1b',
     },
     'role.expired': {
-        label: 'Role Expired',
         darkBg: 'rgba(251,146,60,0.15)',
         darkColor: '#fb923c',
         lightBg: '#ffedd5',
         lightColor: '#9a3412',
     },
     'role.group_assigned': {
-        label: 'Role Assigned to Group',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
     'role.group_removed': {
-        label: 'Role Removed from Group',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
@@ -148,14 +147,12 @@ const EVENT_STYLES: Record<
     },
     // RBAC — permissions
     'permission.assigned': {
-        label: 'Permission Granted',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
     'permission.removed': {
-        label: 'Permission Revoked',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
@@ -163,42 +160,36 @@ const EVENT_STYLES: Record<
     },
     // RBAC — groups
     'group.created': {
-        label: 'Group Created',
         darkBg: 'rgba(168,85,247,0.15)',
         darkColor: '#c084fc',
         lightBg: '#f3e8ff',
         lightColor: '#6b21a8',
     },
     'group.updated': {
-        label: 'Group Updated',
         darkBg: 'rgba(168,85,247,0.15)',
         darkColor: '#c084fc',
         lightBg: '#f3e8ff',
         lightColor: '#6b21a8',
     },
     'group.deleted': {
-        label: 'Group Deleted',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
         lightColor: '#991b1b',
     },
     'group.restored': {
-        label: 'Group Restored',
         darkBg: 'rgba(168,85,247,0.15)',
         darkColor: '#c084fc',
         lightBg: '#f3e8ff',
         lightColor: '#6b21a8',
     },
     'group.member_added': {
-        label: 'Added to Group',
         darkBg: 'rgba(16,185,129,0.15)',
         darkColor: '#34d399',
         lightBg: '#dcfce7',
         lightColor: '#166534',
     },
     'group.member_removed': {
-        label: 'Removed from Group',
         darkBg: 'rgba(239,68,68,0.15)',
         darkColor: '#f87171',
         lightBg: '#fee2e2',
@@ -212,13 +203,9 @@ const EVENT_STYLES: Record<
 const RBAC_EVENT_PREFIXES = ['role.', 'group.', 'permission.'];
 const isRbacEvent = (eventType: string): boolean => RBAC_EVENT_PREFIXES.some((prefix) => eventType.startsWith(prefix));
 
-function eventLabel(eventType: string): string {
-    return EVENT_STYLES[eventType]?.label ?? eventType;
-}
-
 function eventBadge(eventType: string, isDark: boolean) {
     const e = EVENT_STYLES[eventType];
-    const label = e?.label ?? eventType;
+    const label = eventLabel(eventType);
     const defaultBg = isDark ? 'rgba(148,163,184,0.15)' : '#f1f5f9';
     const eBgInner = isDark ? e?.darkBg : e?.lightBg;
     const eBg = e ? eBgInner : null;
@@ -238,15 +225,8 @@ function eventBadge(eventType: string, isDark: boolean) {
 }
 
 function fmtTime(ts: string): string {
-    const d = new Date(ts);
-    if (Number.isNaN(d.getTime())) return ts;
-    return d.toLocaleString('en', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-    });
+    const out = formatDateTime(ts, { seconds: true });
+    return out === '—' ? ts : out;
 }
 
 // ─── CSV export ───────────────────────────────────────────────────────────────
@@ -1058,7 +1038,7 @@ const AuditTabPanel: React.FC<AuditTabPanelProps> = ({
             <Alert
                 type="error"
                 title="Failed to load audit log"
-                message="There was an error loading the audit log. Please try again."
+                message={apiErrorMessage(error, 'There was an error loading the audit log. Please try again.')}
             />
         )}
         <div className="bg-surface border border-base rounded-xl shadow-xs overflow-hidden">
@@ -1108,6 +1088,17 @@ export const AuditLogPage: React.FC = () => {
         staleTime: 5 * 60 * 1000,
     });
 
+    const { data: auditSecrets } = useQuery({
+        queryKey: ['audit-secret-map'],
+        queryFn: () => secretsApi.list({ page: 1, pageSize: 100 }),
+        staleTime: 5 * 60 * 1000,
+    });
+    const { data: auditProjects } = useQuery({
+        queryKey: ['audit-project-map'],
+        queryFn: () => projectsApi.list(),
+        staleTime: 5 * 60 * 1000,
+    });
+
     const { theme } = useUIStore();
     const isDark =
         theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -1136,22 +1127,44 @@ export const AuditLogPage: React.FC = () => {
         [urlFilter, actorFilter, eventTypeFilter, actorTypeFilter, dateFrom, dateTo]
     );
 
-    const userById = new Map<number, string>();
-    rbacUsers.forEach((u) => userById.set(u.id, u.displayName || u.email || u.username));
-    const roleById = new Map<number, string>();
-    (rbacRoles ?? []).forEach((r) => roleById.set(r.id, r.name));
-    const groupById = new Map<number, string>();
-    (rbacGroups?.groups ?? []).forEach((g: { id: number; name: string }) => groupById.set(g.id, g.name));
-
-    // Rewrite "role N" / "group N" / "user N" tokens to names, RBAC events only,
-    // leaving the token untouched when the id can't be resolved.
-    const humanizeRbacDescription = (desc: string): string =>
-        desc
-            .replace(/\brole (\d+)\b/g, (m: string, id: string) => roleById.get(Number(id)) ?? m)
-            .replace(/\bgroup (\d+)\b/g, (m: string, id: string) => groupById.get(Number(id)) ?? m)
-            .replace(/\buser (\d+)\b/g, (m: string, id: string) => userById.get(Number(id)) ?? m);
-    const resolveIds = (e: AuditLogEntry): AuditLogEntry =>
-        isRbacEvent(e.event_type) ? { ...e, description: humanizeRbacDescription(e.description) } : e;
+    const nameMaps = {
+        users: toNameMap(
+            rbacUsers,
+            (u) => u.id,
+            (u) => u.displayName || u.email || u.username
+        ),
+        roles: toNameMap(
+            rbacRoles,
+            (r) => r.id,
+            (r) => r.name
+        ),
+        groups: toNameMap(
+            rbacGroups?.groups as { id: number; name: string }[] | undefined,
+            (g) => g.id,
+            (g) => g.name
+        ),
+        secrets: auditSecrets
+            ? toNameMap(
+                  auditSecrets.data,
+                  (s) => s.id,
+                  (s) => s.name
+              )
+            : undefined,
+        projects: auditProjects
+            ? toNameMap(
+                  auditProjects,
+                  (p) => p.id,
+                  (p) => p.name
+              )
+            : undefined,
+    };
+    // Rewrite "role N" / "group N" / "user N" / "secret N" / "project N" tokens to names, leaving
+    // a token that already carries its name (newer events) alone. Unresolvable roles, groups and
+    // users keep the id; an unresolvable secret or project reads "secret #N".
+    const resolveIds = (e: AuditLogEntry): AuditLogEntry => ({
+        ...e,
+        description: resolveAuditIds(e.description, nameMaps),
+    });
 
     const auditEntries = applyFilters(allEntries).map(resolveIds);
     const rbacEntries = applyFilters(allEntries.filter((e) => isRbacEvent(e.event_type))).map(resolveIds);

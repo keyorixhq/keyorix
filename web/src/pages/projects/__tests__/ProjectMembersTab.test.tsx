@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '../../../test/test-utils';
 import { ProjectMembersTab } from '../ProjectMembersTab';
 import type { ProjectMember } from '../../../services/projects';
+import { AxiosError } from 'axios';
 
 const {
     addMemberMutate,
@@ -127,6 +128,16 @@ beforeEach(() => {
     useProjectMock.mockReturnValue({ data: { id: 1, name: 'Payments API' } });
     usersApiListMock.mockResolvedValue({ data: [otherUser], total: 1, page: 1, pageSize: 200, totalPages: 1 });
     mockMembers([]);
+});
+
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../../features/auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
 });
 
 describe('ProjectMembersTab', () => {
@@ -419,7 +430,9 @@ describe('ProjectMembersTab', () => {
             fireEvent.click(screen.getByRole('button', { name: /^Add$/i }));
 
             const onError = addMemberMutate.mock.calls[0][1].onError;
-            onError({ response: { data: { error: 'user already a member' } } });
+            const refusal = new AxiosError('Request failed with status code 409');
+            refusal.response = { data: { error: 'user already a member' } } as AxiosError['response'];
+            onError(refusal);
 
             expect(await screen.findByText('user already a member')).toBeInTheDocument();
         });
@@ -515,5 +528,31 @@ describe('ProjectMembersTab', () => {
             );
             expect(screen.getByTestId('project-invitations')).toHaveTextContent('invitations for project 7');
         });
+    });
+});
+
+describe('ProjectMembersTab permission-aware controls (DEMO-UI-1)', () => {
+    it('a member without roles.assign sees the roster but no Add / Invite / role / remove controls', async () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        mockMembers([makeMember({ userId: 2, roleName: 'project_viewer' })]);
+        render(<ProjectMembersTab projectId={1} />);
+
+        expect(screen.getByText('Human members')).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /invite by email/i })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /^Add$/i })).not.toBeInTheDocument();
+        expect(screen.queryByTitle('Remove from project')).not.toBeInTheDocument();
+        expect(screen.queryByDisplayValue('Select a user to add…')).not.toBeInTheDocument();
+        // The user directory is an admin read: asking for it as a plain member is just a 403.
+        expect(usersApiListMock).not.toHaveBeenCalled();
+        // The admin-only child sections are not mounted for them either.
+        expect(screen.queryByTestId('pending-onboarding')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('project-invitations')).not.toBeInTheDocument();
     });
 });

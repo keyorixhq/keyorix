@@ -2,10 +2,20 @@
 
 ## Status
 
+**Implemented (2026-10-03, #2502).** `minCompatibleSchemaEpoch` / system_metadata key
+`schema_min_compatible_epoch` in `internal/storage/factory.go`; see INV-STORAGE-04 in
+`internal/storage/INVARIANTS.md` for the guards. Two points the text below leaves open were
+resolved with the stricter reading: (1) a database whose `schema_epoch` is newer than the
+binary but which has **no** floor recorded keeps ADR-097's unconditional refusal (absence of a
+compatibility claim is not a claim); (2) the stored epoch and floor are only ever raised, never
+lowered, by `recordSchemaEpoch`, so an older binary the floor lets start cannot stamp the
+database back down. `admin restore` keeps the strict rule, since a backup manifest carries no
+floor. The remainder of this document is the original design record.
+
 **Accepted — deferred (2026-09-04).** This is a design decision for a fix that has
 not been implemented yet. It must land **before `currentSchemaEpoch`
-(`internal/storage/factory.go`) is first bumped past its current value of 1** — see
-Trigger below. A test enforces this (`TestCurrentSchemaEpoch_StillOne_SeeADR101` /
+(`internal/storage/factory.go`) is first bumped past 1** (it is now 2, for `secret_nodes.purge_at`, with the floor raised to 2 because an epoch-1 binary does not maintain the column and a stale date could purge early, see ADR-032's amendment; the floor mechanism itself is implemented, see the status note above) — see
+Trigger below. A test enforces this (`TestCurrentSchemaEpoch_Is2_SeeADR101` /
 `internal/storage/schema_epoch_tripwire_test.go`); its failure message points here.
 
 Until this lands, ADR-097's guard stays exactly as it is: a hard, unconditional

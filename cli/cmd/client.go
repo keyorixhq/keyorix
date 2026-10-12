@@ -50,12 +50,51 @@ func resolveServerAndToken(store *credstore.FileStore) (serverURL, token string,
 	return serverURL, token, nil
 }
 
+// caFileFlag is the global --ca-file flag (root.go).
+var caFileFlag string
+
+// caFileEnv names the environment variable form of --ca-file.
+const caFileEnv = "KEYORIX_CA_FILE"
+
+// resolveCAFile applies the precedence --ca-file > KEYORIX_CA_FILE > ca_file in the
+// credentials file, and names where the value came from (for error messages and for
+// `config get`). An unreadable credentials file yields no stored value here: every command
+// that needs credentials reports that refusal itself, and without a CA file a self-signed
+// server simply fails TLS verification (fails closed).
+func resolveCAFile() (path, source string) {
+	if caFileFlag != "" {
+		return caFileFlag, "--ca-file"
+	}
+	if v := os.Getenv(caFileEnv); v != "" {
+		return v, caFileEnv
+	}
+	store, err := resolveCredStore()
+	if err != nil {
+		return "", ""
+	}
+	if creds, err := store.Load(); err == nil && creds.CAFile != "" {
+		return creds.CAFile, "ca_file in " + store.Path()
+	}
+	return "", ""
+}
+
 // newAPIClient builds a generated client against serverURL, attaching an Authorization
 // header when token is non-empty. Always uses apiclient.NewHardenedHTTPClient (request
 // timeout, response-size cap, redirect refusal) instead of the generated client's bare
 // &http.Client{} default -- see hardened_client.go's doc comment for why.
+//
+// When a CA file is configured (resolveCAFile), the client trusts exactly that file's
+// certificates for TLS instead of the system roots.
 func newAPIClient(serverURL, token string) (*apiclient.ClientWithResponses, error) {
-	opts := []apiclient.ClientOption{apiclient.WithHTTPClient(apiclient.NewHardenedHTTPClient())}
+	httpClient := apiclient.NewHardenedHTTPClient()
+	if caFile, source := resolveCAFile(); caFile != "" {
+		c, err := apiclient.NewHardenedHTTPClientWithCAFile(caFile)
+		if err != nil {
+			return nil, fmt.Errorf("CA file from %s: %w", source, err)
+		}
+		httpClient = c
+	}
+	opts := []apiclient.ClientOption{apiclient.WithHTTPClient(httpClient)}
 	if token != "" {
 		opts = append(opts, apiclient.WithRequestEditorFn(func(_ context.Context, req *http.Request) error {
 			req.Header.Set("Authorization", "Bearer "+token)
@@ -171,7 +210,37 @@ type apiErrorBody struct {
 func apiError(action string, statusCode int, body []byte) error {
 	var eb apiErrorBody
 	if err := json.Unmarshal(body, &eb); err == nil && eb.Message != "" {
-		return fmt.Errorf("%s failed: %s (HTTP %d)", action, cliout.SanitizeForTerminal(eb.Message), statusCode)
+		return fmt.Errorf("%s failed: %s (HTTP %d)%s", action, cliout.SanitizeForTerminal(eb.Message), statusCode, nextStepHint(eb))
 	}
 	return fmt.Errorf("%s failed: HTTP %d", action, statusCode)
+}
+
+// errCodeMFAEnrollmentRequired is the "error" code the server's auth middleware
+// returns (403) on every authenticated route when security.require_mfa is on and
+// the caller has no MFA enrolled (server/middleware/auth.go).
+const errCodeMFAEnrollmentRequired = "MFAEnrollmentRequired"
+
+// nextStepHint returns a " Next step: ..." suffix for server error codes that
+// have one fixed remedy, or "". Today only MFA enrolment: without it a fresh
+// admin logs in successfully and then every command fails (#2937).
+func nextStepHint(eb apiErrorBody) string {
+	if eb.Error == errCodeMFAEnrollmentRequired {
+		return " Next step: this server requires multi-factor authentication. " +
+			"Enrol MFA with `keyorix mfa enroll`, then `keyorix mfa activate`, " +
+			"then log in again with `keyorix login` (it prompts for the code)."
+	}
+	return ""
+}
+
+// httpStatusError is the failure path for a non-2xx response where the caller
+// has its own wording: "<what>: <server message> (HTTP <code>)", falling back to
+// "<what>: HTTP <code>" when the body carries no message. Every CLI command uses
+// this (or apiError) so a 403/409 always says why (#2937, #2938). what is a
+// phrase such as "failed to create secret".
+func httpStatusError(what string, statusCode int, body []byte) error {
+	var eb apiErrorBody
+	if err := json.Unmarshal(body, &eb); err == nil && eb.Message != "" {
+		return fmt.Errorf("%s: %s (HTTP %d)%s", what, cliout.SanitizeForTerminal(eb.Message), statusCode, nextStepHint(eb))
+	}
+	return fmt.Errorf("%s: HTTP %d", what, statusCode)
 }

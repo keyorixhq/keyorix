@@ -37,8 +37,8 @@ permissions: {}
 # Cancel superseded runs for the same PR/ref (2026-09-28, runner-cap relief).
 # merge_group refs are unique per group, so queue runs never cancel each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   release-dry-run:
@@ -51,7 +51,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       # `make release` depends on populate-webui-dist (pnpm install + build of
       # web/) same as release.yml's own build-and-release job -- see that

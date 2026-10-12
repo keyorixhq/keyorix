@@ -291,7 +291,7 @@ describe('CompliancePage posture panel', () => {
         expect(await screen.findByText('Forbidden: system.write required')).toBeInTheDocument();
     });
 
-    it('lifts an active legal hold', async () => {
+    it('lifts an active legal hold, sending the typed reason (DELETE requires a non-empty one)', async () => {
         (complianceApi.getPosture as any).mockResolvedValue({
             ...posture,
             legalHold: { active: true, reason: 'litigation INC-7' },
@@ -300,7 +300,12 @@ describe('CompliancePage posture panel', () => {
         render(<CompliancePage />);
 
         fireEvent.click(await screen.findByRole('button', { name: /lift hold/i }));
-        await waitFor(() => expect(complianceApi.liftLegalHold).toHaveBeenCalled());
+        fireEvent.change(screen.getByPlaceholderText(/reason for lifting/i), {
+            target: { value: 'litigation closed' },
+        });
+        fireEvent.click(screen.getByRole('button', { name: /confirm lift/i }));
+
+        await waitFor(() => expect(complianceApi.liftLegalHold).toHaveBeenCalledWith('litigation closed'));
     });
 
     it('falls back to an em dash when an active legal hold has no recorded reason', async () => {
@@ -335,7 +340,28 @@ describe('CompliancePage posture panel', () => {
         render(<CompliancePage />);
 
         fireEvent.click(await screen.findByRole('button', { name: /lift hold/i }));
+        fireEvent.change(screen.getByPlaceholderText(/reason for lifting/i), { target: { value: 'case-3' } });
+        fireEvent.click(screen.getByRole('button', { name: /confirm lift/i }));
+
         expect(await screen.findByText('Lift failed.')).toBeInTheDocument();
+    });
+
+    it('disables Confirm lift until a reason is typed, and Cancel clears the input', async () => {
+        (complianceApi.getPosture as any).mockResolvedValue({
+            ...posture,
+            legalHold: { active: true, reason: 'litigation INC-7' },
+        });
+        render(<CompliancePage />);
+
+        fireEvent.click(await screen.findByRole('button', { name: /lift hold/i }));
+        expect(screen.getByRole('button', { name: /confirm lift/i })).toBeDisabled();
+
+        fireEvent.change(screen.getByPlaceholderText(/reason for lifting/i), { target: { value: 'case-4' } });
+        expect(screen.getByRole('button', { name: /confirm lift/i })).not.toBeDisabled();
+
+        fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+        expect(screen.queryByPlaceholderText(/reason for lifting/i)).not.toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /lift hold/i })).toBeInTheDocument();
     });
 
     it('shows a generic error when the posture report fails with a non-403 error', async () => {

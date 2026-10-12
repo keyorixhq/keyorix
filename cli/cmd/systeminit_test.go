@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -137,8 +140,8 @@ func TestResolveSystemInitBootstrapToken_FlagAndEnvPrecedence(t *testing.T) {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 	t.Setenv("KEYORIX_BOOTSTRAP_TOKEN", "env-token-xyz")
-	if got := resolveSystemInitBootstrapToken(systemInitCmd); got != "env-token-xyz" {
-		t.Fatalf("got %q, want the env var value", got)
+	if got, err := resolveSystemInitBootstrapToken(systemInitCmd); err != nil || got != "env-token-xyz" {
+		t.Fatalf("got %q, %v, want the env var value", got, err)
 	}
 
 	resetSystemInitFlagChanged()
@@ -146,12 +149,57 @@ func TestResolveSystemInitBootstrapToken_FlagAndEnvPrecedence(t *testing.T) {
 		t.Fatalf("ParseFlags: %v", err)
 	}
 	out := captureStderr(t, func() {
-		if got := resolveSystemInitBootstrapToken(systemInitCmd); got != "flag-token-abc" {
-			t.Fatalf("got %q, want the flag value", got)
+		if got, err := resolveSystemInitBootstrapToken(systemInitCmd); err != nil || got != "flag-token-abc" {
+			t.Fatalf("got %q, %v, want the flag value", got, err)
 		}
 	})
 	if !containsAll(out, "insecure", "bootstrap-token") {
 		t.Fatalf("expected an insecure-flag warning for --bootstrap-token, got: %q", out)
+	}
+}
+
+// KEYORIX_ADMIN_PASSWORD_FILE / KEYORIX_BOOTSTRAP_TOKEN_FILE: read, one trailing
+// newline stripped; a too-open file, an unreadable file, or X and X_FILE together
+// are errors (never a prompt, never a silent fallback).
+func TestSystemInit_SecretFiles(t *testing.T) {
+	resetSystemInitFlags()
+	defer resetSystemInitFlags()
+	if err := systemInitCmd.ParseFlags([]string{"--server", "http://localhost:8080"}); err != nil {
+		t.Fatalf("ParseFlags: %v", err)
+	}
+	write := func(content string, mode os.FileMode) string {
+		p := filepath.Join(t.TempDir(), "s")
+		if err := os.WriteFile(p, []byte(content), mode); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chmod(p, mode); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	t.Setenv("KEYORIX_ADMIN_PASSWORD_FILE", write("filepass\n", 0o600))
+	t.Setenv("KEYORIX_BOOTSTRAP_TOKEN_FILE", write("filetoken\n", 0o400))
+	if got, err := resolveSystemInitAdminPassword(systemInitCmd); err != nil || got != "filepass" {
+		t.Fatalf("admin password from file: %q, %v", got, err)
+	}
+	if got, err := resolveSystemInitBootstrapToken(systemInitCmd); err != nil || got != "filetoken" {
+		t.Fatalf("bootstrap token from file: %q, %v", got, err)
+	}
+
+	t.Setenv("KEYORIX_ADMIN_PASSWORD_FILE", write("filepass\n", 0o644))
+	t.Setenv("KEYORIX_BOOTSTRAP_TOKEN_FILE", write("filetoken\n", 0o644))
+	if got, err := resolveSystemInitAdminPassword(systemInitCmd); err == nil || strings.Contains(err.Error(), "filepass") {
+		t.Fatalf("a world-readable admin password file must be refused without echoing it: %q, %v", got, err)
+	}
+	if _, err := resolveSystemInitBootstrapToken(systemInitCmd); err == nil {
+		t.Fatal("a world-readable bootstrap token file must be refused")
+	}
+
+	t.Setenv("KEYORIX_ADMIN_PASSWORD_FILE", write("filepass\n", 0o600))
+	t.Setenv("KEYORIX_ADMIN_PASSWORD", "both")
+	if _, err := resolveSystemInitAdminPassword(systemInitCmd); err == nil {
+		t.Fatal("X and X_FILE both set must be refused")
 	}
 }
 
@@ -181,6 +229,11 @@ func TestRunSystemInit_Success(t *testing.T) {
 	if !containsAll(out, "Keyorix initialised successfully", "Project: default",
 		"development, staging, production", "Admin user: admin") {
 		t.Fatalf("output missing expected fields: %q", out)
+	}
+	// #2940: the printed next step must be a command that works (`secret create`
+	// takes --name; the bare positional form fails with "secret name is required").
+	if !containsAll(out, "keyorix secret create --name my-first-secret") {
+		t.Fatalf("next-step hint is not a working command: %q", out)
 	}
 }
 

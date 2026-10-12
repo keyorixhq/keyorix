@@ -19,9 +19,19 @@ unreadable ciphertext; the keys without the database have nothing to unwrap.
 never have to separately track which key files go with which database
 snapshot.
 
-Only local/sqlite storage is covered by `admin backup`/`admin restore` today.
-For a Postgres-backed deployment, use `pg_dump`/`psql` directly — see
-[SELF_HOSTING.md §5](SELF_HOSTING.md).
+`admin backup`/`admin restore` cover both SQLite and PostgreSQL (backup format
+v2). The commands below are written for the single-binary SQLite case (stop the
+server first); for the Docker Compose + Postgres variants, including the
+`docker compose run` details, see [SELF_HOSTING.md §5](SELF_HOSTING.md).
+
+**Egress-blocked check (INSTALL-WALK-1, origin/main 12d5dbcb).** With the host
+firewall dropping every non-loopback packet from the server's user (single binary)
+and every packet leaving the compose bridge for outside the compose subnet
+(`iptables -I DOCKER-USER -s <subnet> ! -d <subnet> -j DROP`), both a SQLite
+single binary with TLS and the Compose + Postgres stack restarted, served logins
+and returned a stored secret, and the DROP rules' packet counters stayed at 0 over
+several minutes (including the anomaly-detection and checkpoint schedulers): the
+core product makes no outbound connection attempts.
 
 ## Routine backup
 
@@ -76,7 +86,12 @@ startup), or lower `audit_checkpoints.schedule` if you need one sooner.
 ## Restoring (drill, or the real thing)
 
 Restore into a **fresh, empty data directory**, with the **same config**
-(same key-material paths) the backup was taken from:
+(same key-material paths) the backup was taken from. Note the host's
+`.audit-highwater-witness` file lives *beside* the database: if you wipe only
+`keyorix.db*` and `keys/` on the same host and restore a backup that is behind the
+host's last state, restore refuses with "this backup's audit trail is N event(s)
+BEHIND" and needs `--allow-rollback` (a replacement host has no witness and is
+not checked, see SELF_HOSTING.md §5):
 
 ```sh
 keyorix-server admin restore --input /path/to/keyorix-backup-2026-09-25.tar.gz
@@ -124,7 +139,9 @@ keyorix-server admin verify-audit --json --anchor /path/to/checkpoint-2026-09-20
 Check `.verdict == "VALID"` and `.external_anchor.supplied == true` /
 `.external_anchor.authenticated == true` in the JSON output. `authenticated`
 additionally requires `--checkpoint-key-file` (the KEK-derived checkpoint
-signing key, extracted out of band — never the KEK or passphrase itself); a
+signing key, extracted out of band — never the KEK or passphrase itself; no
+documented command produces that file today, so in practice a drill sees
+`supplied: true, authenticated: false`); a
 supplied-but-unauthenticated anchor still cross-checks the chain's head/
 chained-event count against the external copy, just without cryptographic
 proof it came from this exact key. Read the full report's "What this run
@@ -171,6 +188,31 @@ doc or behavior differences found between the full and air-gapped images for
 this flow — expected, since none of `admin backup`/`admin restore`/`admin
 verify-audit`'s own code paths touch any cloud SDK.
 
+**Resolved (2026-10-05, #2752):** neither published image — `keyorix-server`
+nor its `-airgap` variant — used to embed the web dashboard. Both served the
+placeholder page ("This build does not bundle the web dashboard") at `/`,
+because `server/Dockerfile` compiled the server without ever building `web/`
+first, and the only thing git tracks under `server/webui/dist/` is that
+placeholder. Getting a dashboard therefore meant also pre-staging a second,
+separate `keyorix-web` image that has no `-airgap` variant and was never
+profiled for air-gap suitability — which undercut ADR-109's single-artifact
+pitch. The release **tarballs** never had this gap (`make release` depends on
+`populate-webui-dist`); it was Docker-only. `server/Dockerfile` now builds the
+dashboard in its own stage and embeds it, so
+
+```sh
+docker build -f server/Dockerfile --build-arg BUILD_TAGS=noaws,noazure,nogcp -t keyorix-airgap .
+```
+
+produces **one image that serves both the API and the real dashboard at `/`**,
+with no second container. `scripts/docker-webui-embedded-check.sh <tag>` asserts
+exactly that against a running container (and refuses a placeholder page); the
+air-gap guarantees are unchanged — `scripts/airgap-dependency-guard.sh` still
+reports 0 forbidden cloud-SDK packages, and `scripts/airgap-e2e.sh` still passes
+end to end with `--network none` against the new image. The three-container
+`docker compose` path in [SELF_HOSTING.md](SELF_HOSTING.md) is unaffected and
+remains the documented self-host default.
+
 **Resolved (2026-09-25):** `docker build -f server/Dockerfile .` previously
 failed on a clean checkout — `server/admin/init.go` imports
 `github.com/keyorixhq/keyorix/configs`, but `.dockerignore` excluded
@@ -184,7 +226,10 @@ you'd rather pre-build the image yourself and skip the build step entirely.
 
 ## Estimate: adding PostgreSQL support to `admin backup`/`admin restore`
 
-Not built — an estimate only (ADR-109 step 6, B7). Today, `admin backup`/`admin
+**Historical — this has since been built** (backup format v2 supports Postgres;
+see above and [SELF_HOSTING.md §5](SELF_HOSTING.md)). Kept for the design record.
+
+Not built at the time — an estimate only (ADR-109 step 6, B7). Then, `admin backup`/`admin
 restore` refuse non-sqlite storage outright (verified live: `admin backup`
 against a Postgres-backed install fails immediately with "admin backup only
 supports local/sqlite storage today ... for Postgres, back up with pg_dump

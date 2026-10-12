@@ -11,7 +11,6 @@ package store
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -38,6 +37,8 @@ type localAuditJournalState struct {
 	// auditQueueCapacity already documents for the DB-direct path.
 	liveBatches chan []auditjournal.Record
 	wg          sync.WaitGroup
+	closeOnce   sync.Once
+	closeErr    error
 }
 
 // journalPayload is the JSON-encoded body of every journal record this
@@ -93,18 +94,33 @@ func (ls *LocalStorage) EnableLocalAuditJournal(ctx context.Context, dir, replic
 	if ls.auditFlusher == nil {
 		return fmt.Errorf("local audit journal: cannot enable on a transaction-scoped storage")
 	}
+	if ls.localAuditJournal != nil {
+		return fmt.Errorf("local audit journal: already enabled on this storage")
+	}
 
-	if err := ls.db.WithContext(ctx).AutoMigrate(&models.AuditJournalReplayState{}); err != nil {
-		return fmt.Errorf("local audit journal: migrate replay-state table: %w", err)
+	if err := ls.db.WithContext(ctx).AutoMigrate(&models.AuditJournalReplayState{}, &models.AuditJournalOrigin{}); err != nil {
+		return fmt.Errorf("local audit journal: migrate journal tables: %w", err)
 	}
 
 	preExisting, err := auditjournal.Validate(dir)
 	if err != nil {
 		return fmt.Errorf("local audit journal: %w", err)
 	}
-	cursor, cursorFound, err := ls.auditJournalReplayCursor(ctx, replicaID)
+	cursor, cursorFound, err := auditJournalReplayCursor(ls.db.WithContext(ctx), replicaID)
 	if err != nil {
 		return fmt.Errorf("local audit journal: read replay cursor: %w", err)
+	}
+	// The DB cursor is the one record of the journal's length that lives
+	// outside the journal directory. Validate cannot tell a journal cut
+	// short at a record boundary (tail truncated, trailing segments deleted)
+	// from a genuinely shorter one; the cursor can, for everything already
+	// replayed: the journal must still contain seq `cursor`. Refuse to start
+	// otherwise -- reusing a lower NextSeq would also make the writer hand
+	// out seqs the cursor already covers, and replay would skip them.
+	// Records lost from the not-yet-replayed tail are NOT detectable this
+	// way (coordinator review of #2758, item 5; see ADR-115 prototype notes).
+	if cursorFound && preExisting.NextSeq <= cursor {
+		return fmt.Errorf("local audit journal: journal in %s ends before seq %d, but replica %q has already replayed through seq %d into audit_events -- the journal was truncated or replaced; refusing to start", dir, preExisting.NextSeq, replicaID, cursor)
 	}
 	toReplay := preExisting.Records
 	if cursorFound {
@@ -144,22 +160,36 @@ func (ls *LocalStorage) EnableLocalAuditJournal(ctx context.Context, dir, replic
 	return nil
 }
 
-// CloseLocalAuditJournal stops the replicator goroutine and closes the
-// journal writer. Safe to call on a LocalStorage with no journal enabled
-// (no-op). Primarily for tests and graceful shutdown; a production process
-// exiting without calling this loses nothing durable -- everything the
-// journal ever acknowledged is on disk, and the next EnableLocalAuditJournal
-// call (on restart) replays whatever the replicator had not yet caught up
-// to.
+// CloseLocalAuditJournal closes the journal writer and then stops the
+// replicator goroutine. Safe to call on a LocalStorage with no journal
+// enabled (no-op). Primarily for tests and graceful shutdown; a production
+// process exiting without calling this loses nothing durable -- everything
+// the journal ever acknowledged is on disk, and the next
+// EnableLocalAuditJournal call (on restart) replays whatever the replicator
+// had not yet caught up to.
+//
+// Order matters: the writer's flusher feeds liveBatches from its onBatch
+// callback, and auditjournal.Writer.Close guarantees no onBatch call after
+// it returns. Closing liveBatches first (the original order) let a batch
+// committed during Close send on a closed channel and panic (coordinator
+// review of #2758, item 1). The replicator keeps draining while the writer
+// closes, so the flusher can never block on a full liveBatches here.
+//
+// The journal stays attached after Close: a LogAuditEvent racing or
+// following Close gets auditjournal.ErrClosed and fails closed. It does not
+// fall back to the DB path, and the field is never written again, so
+// concurrent LogAuditEvent calls do not race with Close. Idempotent.
 func (ls *LocalStorage) CloseLocalAuditJournal() error {
 	st := ls.localAuditJournal
 	if st == nil {
 		return nil
 	}
-	ls.localAuditJournal = nil
-	close(st.liveBatches)
-	st.wg.Wait()
-	return st.writer.Close()
+	st.closeOnce.Do(func() {
+		st.closeErr = st.writer.Close()
+		close(st.liveBatches)
+		st.wg.Wait()
+	})
+	return st.closeErr
 }
 
 // runJournalReplicator drains st.liveBatches (fed by the journal writer's
@@ -217,23 +247,24 @@ func recordsAfter(recs []auditjournal.Record, cursor uint64) []auditjournal.Reco
 	return out
 }
 
-// auditJournalReplayCursor returns the last journal sequence number already
-// replayed into the DB for replicaID, or 0 if none has ever been recorded.
-// auditJournalReplayCursor returns (cursor, found, err). found is false
-// when no cursor row has ever been written for replicaID -- a DISTINCT
-// state from "found with a cursor value of 0" (0 is a legitimate replayed
-// sequence number, see EnableLocalAuditJournal's cursorFound guard for why
+// auditJournalReplayCursor returns (cursor, found, err): the last journal
+// sequence number already replayed into the DB for replicaID, read through
+// db (the store's handle, or a replay transaction). found is false when no
+// cursor row has ever been written for replicaID -- a DISTINCT state from
+// "found with a cursor value of 0" (0 is a legitimate replayed sequence
+// number, see EnableLocalAuditJournal's cursorFound guard for why
 // collapsing these two cases into a bare 0 was a real bug).
-func (ls *LocalStorage) auditJournalReplayCursor(ctx context.Context, replicaID string) (cursor uint64, found bool, err error) {
-	var row models.AuditJournalReplayState
-	err = ls.db.WithContext(ctx).Where("replica_id = ?", replicaID).Take(&row).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return 0, false, nil
-		}
+func auditJournalReplayCursor(db *gorm.DB, replicaID string) (cursor uint64, found bool, err error) {
+	// Find, not Take: "no cursor yet" is a normal state on every replay until
+	// the first commit, and Take would log it as an error each time.
+	var rows []models.AuditJournalReplayState
+	if err := db.Where("replica_id = ?", replicaID).Limit(1).Find(&rows).Error; err != nil {
 		return 0, false, err
 	}
-	return row.LastReplayedSeq, true, nil
+	if len(rows) == 0 {
+		return 0, false, nil
+	}
+	return rows[0].LastReplayedSeq, true, nil
 }
 
 // replayJournalRecords replays records (already in ascending Seq order)
@@ -247,6 +278,19 @@ func (ls *LocalStorage) auditJournalReplayCursor(ctx context.Context, replicaID 
 // together or not at all, so a restart's crash replay (EnableLocalAuditJournal)
 // never double-replays a row the cursor already accounts for, and never
 // skips a row the cursor doesn't yet account for.
+//
+// The cursor is re-read INSIDE the transaction, after the audit lock, and
+// records it already covers are skipped. That makes a retry after a
+// commit-ambiguous error (connection lost at COMMIT, the commit actually
+// landed) a no-op instead of a duplicate (coordinator review of #2758,
+// item 4). The (replica_id, seq) primary key of audit_journal_origins
+// (models.AuditJournalOrigin) is the enforced backstop: a duplicate that got past this check fails the insert
+// and rolls the batch back rather than committing twice.
+//
+// Durability of this commit: the replay transaction does NOT apply ADR-112
+// Amendment 1's fast audit mode (applyAuditCommitDurability); config
+// refuses to combine the two (see storage.enableLocalAuditJournalIfConfigured),
+// so this always commits with the database's normal durability.
 func (ls *LocalStorage) replayJournalRecords(ctx context.Context, replicaID string, records []auditjournal.Record) error {
 	if len(records) == 0 {
 		return nil
@@ -255,6 +299,17 @@ func (ls *LocalStorage) replayJournalRecords(ctx context.Context, replicaID stri
 		if tx.Dialector.Name() == "postgres" {
 			if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(auditAdvisoryLockKey)).Error; err != nil {
 				return err
+			}
+		}
+
+		cursor, cursorFound, err := auditJournalReplayCursor(tx, replicaID)
+		if err != nil {
+			return err
+		}
+		if cursorFound {
+			records = recordsAfter(records, cursor)
+			if len(records) == 0 {
+				return nil
 			}
 		}
 
@@ -286,11 +341,10 @@ func (ls *LocalStorage) replayJournalRecords(ctx context.Context, replicaID stri
 			normalizeAuditEventForHash(event)
 			event.PrevHash = prev
 			event.EntryHash = computeAuditEntryHash(event, prev)
-			seq := rec.Seq
-			rid := replicaID
-			event.JournalReplicaID = &rid
-			event.JournalSeq = &seq
 			if err := tx.Create(event).Error; err != nil {
+				return err
+			}
+			if err := tx.Create(&models.AuditJournalOrigin{ReplicaID: replicaID, Seq: rec.Seq, EntryHash: event.EntryHash}).Error; err != nil {
 				return err
 			}
 			prev = event.EntryHash

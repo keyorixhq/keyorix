@@ -94,10 +94,10 @@ func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	// guardLastGlobalAdminMembership (#G02) precheck for user 1's removal — no
-	// admin roles seeded in this fixture, so it's a no-op.
-	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
-	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
-	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
+	// admin roles seeded in this fixture, so it's a no-op. #2496: the admin-role
+	// set is now resolved structurally (MockStorage.ListAdminBypassRoleIDs
+	// returns none) rather than by three GetRoleByName name lookups, so there is
+	// nothing left to stub here.
 	// guardLastProjectAdminGroupMembership (core-project-members.json#3) precheck
 	// for user 1's removal — no group role assignments in this fixture, so it's a
 	// no-op too.

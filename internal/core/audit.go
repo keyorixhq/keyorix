@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -98,7 +99,14 @@ func (c *KeyorixCore) LogRoleAssigned(ctx context.Context, actorID, targetUserID
 }
 
 func (c *KeyorixCore) LogRoleRemoved(ctx context.Context, actorID, targetUserID, roleID uint, scope Scope) {
-	c.logRoleChange(ctx, EventRoleRemoved, "removed from", actorID, targetUserID, roleID, scope, false)
+	c.LogRoleRemovedOn(ctx, c.auditNow(), actorID, targetUserID, roleID, scope)
+}
+
+// LogRoleRemovedOn is LogRoleRemoved against an explicit audit target
+// (audit_target.go) — used by the access-review revoke path, which writes this
+// event inside the same transaction as the removal it describes.
+func (c *KeyorixCore) LogRoleRemovedOn(ctx context.Context, tgt auditTarget, actorID, targetUserID, roleID uint, scope Scope) {
+	c.logRoleChangeOn(ctx, tgt, EventRoleRemoved, "removed from", actorID, targetUserID, roleID, scope, false)
 }
 
 // LogRoleAssignedBackfill records a role grant issued by the startup baseline-
@@ -112,11 +120,17 @@ func (c *KeyorixCore) LogRoleAssignedBackfill(ctx context.Context, actorID, targ
 }
 
 func (c *KeyorixCore) logRoleChange(ctx context.Context, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope, baselineBackfill bool) {
-	desc := fmt.Sprintf("role %d %s user %d", roleID, verb, targetUserID)
+	c.logRoleChangeOn(ctx, c.auditNow(), eventType, verb, actorID, targetUserID, roleID, scope, baselineBackfill)
+}
+
+// logRoleChangeOn is logRoleChange against an explicit audit target. ONE body,
+// two entry points.
+func (c *KeyorixCore) logRoleChangeOn(ctx context.Context, tgt auditTarget, eventType, verb string, actorID, targetUserID, roleID uint, scope Scope, baselineBackfill bool) {
+	desc := fmt.Sprintf("%s %s %s", c.auditRef(ctx, tgt.st, auditKindRole, roleID), verb, c.auditRef(ctx, tgt.st, auditKindUser, targetUserID))
 	if baselineBackfill {
 		desc = fmt.Sprintf("%s reason=%s", desc, reasonBaselineRoleBackfill)
 	}
-	c.writeRBACAudit(ctx, eventType, desc, actorID, scope, rbacAuditDetail{
+	c.writeRBACAuditOn(ctx, tgt, eventType, desc, actorID, scope, rbacAuditDetail{
 		TargetUserID:         targetUserID,
 		RoleID:               roleID,
 		BaselineRoleBackfill: baselineBackfill,
@@ -132,12 +146,24 @@ func (c *KeyorixCore) LogGroupRoleAssigned(ctx context.Context, actorID, groupID
 }
 
 func (c *KeyorixCore) LogGroupRoleRemoved(ctx context.Context, actorID, groupID, roleID uint, scope Scope) {
-	c.logGroupRoleChange(ctx, EventRoleGroupRemoved, "removed from group", actorID, groupID, roleID, scope)
+	c.LogGroupRoleRemovedOn(ctx, c.auditNow(), actorID, groupID, roleID, scope)
+}
+
+// LogGroupRoleRemovedOn is LogGroupRoleRemoved against an explicit audit target
+// (audit_target.go) — the group-grant counterpart of LogRoleRemovedOn.
+func (c *KeyorixCore) LogGroupRoleRemovedOn(ctx context.Context, tgt auditTarget, actorID, groupID, roleID uint, scope Scope) {
+	c.logGroupRoleChangeOn(ctx, tgt, EventRoleGroupRemoved, "removed from group", actorID, groupID, roleID, scope)
 }
 
 func (c *KeyorixCore) logGroupRoleChange(ctx context.Context, eventType, verb string, actorID, groupID, roleID uint, scope Scope) {
-	desc := fmt.Sprintf("role %d %s %d", roleID, verb, groupID)
-	c.writeRBACAudit(ctx, eventType, desc, actorID, scope, rbacAuditDetail{
+	c.logGroupRoleChangeOn(ctx, c.auditNow(), eventType, verb, actorID, groupID, roleID, scope)
+}
+
+// logGroupRoleChangeOn is logGroupRoleChange against an explicit audit target.
+// ONE body, two entry points.
+func (c *KeyorixCore) logGroupRoleChangeOn(ctx context.Context, tgt auditTarget, eventType, verb string, actorID, groupID, roleID uint, scope Scope) {
+	desc := fmt.Sprintf("%s %s %s", c.auditRef(ctx, tgt.st, auditKindRole, roleID), verb, c.auditRefTail(ctx, tgt.st, auditKindGroup, groupID))
+	c.writeRBACAuditOn(ctx, tgt, eventType, desc, actorID, scope, rbacAuditDetail{
 		GroupID:       groupID,
 		RoleID:        roleID,
 		ProjectID:     scope.ProjectID,
@@ -158,7 +184,7 @@ func (c *KeyorixCore) LogGroupMemberRemoved(ctx context.Context, actorID, userID
 }
 
 func (c *KeyorixCore) logGroupMemberChange(ctx context.Context, eventType, verb string, actorID, userID, groupID uint) {
-	desc := fmt.Sprintf("user %d %s %d", userID, verb, groupID)
+	desc := fmt.Sprintf("%s %s %s", c.auditRef(ctx, c.storage, auditKindUser, userID), verb, c.auditRefTail(ctx, c.storage, auditKindGroup, groupID))
 	c.writeRBACAudit(ctx, eventType, desc, actorID, Scope{}, rbacAuditDetail{
 		TargetUserID: userID,
 		GroupID:      groupID,
@@ -243,6 +269,13 @@ func (c *KeyorixCore) logRoleDefinitionChange(ctx context.Context, eventType, ve
 // writeRBACAudit is the shared writer for RBAC audit events: actor as UserID,
 // scope's project as ProjectID, and the structured detail in the diff.
 func (c *KeyorixCore) writeRBACAudit(ctx context.Context, eventType, desc string, actorID uint, scope Scope, detail rbacAuditDetail) {
+	c.writeRBACAuditOn(ctx, c.auditNow(), eventType, desc, actorID, scope, detail)
+}
+
+// writeRBACAuditOn is writeRBACAudit against an explicit audit target — see
+// audit_target.go for why a transaction-scoped caller needs one. ONE body, two
+// entry points: writeRBACAudit is the auditNow() case.
+func (c *KeyorixCore) writeRBACAuditOn(ctx context.Context, tgt auditTarget, eventType, desc string, actorID uint, scope Scope, detail rbacAuditDetail) {
 	encoded, _ := json.Marshal(detail)
 	var actor *uint
 	if actorID != 0 {
@@ -254,7 +287,7 @@ func (c *KeyorixCore) writeRBACAudit(ctx context.Context, eventType, desc string
 		p := scope.ProjectID
 		projectID = &p
 	}
-	c.writeAuditEventDiff(ctx, eventType, actor, nil, projectID, "", desc, string(encoded))
+	c.writeAuditEventDiffOn(ctx, tgt, eventType, actor, nil, projectID, "", desc, string(encoded))
 }
 
 // writeAuditEvent persists an audit_events row (basic — no project/IP context).
@@ -266,7 +299,15 @@ func (c *KeyorixCore) writeAuditEvent(ctx context.Context, eventType string, use
 // Returns whether it actually persisted (see emitAudit's own doc comment) --
 // every pre-#2406 caller ignores it, source-compatible and behavior-unchanged.
 func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) bool {
-	return c.writeAuditEventDiff(ctx, eventType, userID, secretID, projectID, ip, description, "")
+	return c.writeAuditEventFullOn(ctx, c.auditNow(), eventType, userID, secretID, projectID, ip, description)
+}
+
+// writeAuditEventFullOn is writeAuditEventFull against an explicit audit target
+// (audit_target.go). ONE body, two entry points. A pure one-line delegation --
+// writeAuditEventDiffOn (below) is where the actual construction/panic risk
+// lives and where the #2561 recover is, so this needs none of its own.
+func (c *KeyorixCore) writeAuditEventFullOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string) bool {
+	return c.writeAuditEventDiffOn(ctx, tgt, eventType, userID, secretID, projectID, ip, description, "")
 }
 
 // writeAuditEventDiff is writeAuditEventFull plus a structured before/after diff.
@@ -274,6 +315,33 @@ func (c *KeyorixCore) writeAuditEventFull(ctx context.Context, eventType string,
 // impersonation tag (set by the auth middleware), so every action taken inside
 // an impersonation session is consistently marked with impersonation=true.
 func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) bool { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.writeAuditEventDiffOn(ctx, c.auditNow(), eventType, userID, secretID, projectID, ip, description, diff)
+}
+
+// writeAuditEventDiffOn is writeAuditEventDiff against an explicit audit target
+// (audit_target.go). ONE body, two entry points.
+//
+// Recovers its own panic (#2561). emitAuditOn already does, but its recover
+// only begins once control REACHES it: this function BUILDS the AuditEvent
+// (sanitizeAuditText, withClientOriginNote, actorTypeFromContext,
+// impersonatorFromContext) before calling emitAuditOn, so a panic in any of
+// those -- or in this wrapper's own frame -- would still escape to a caller
+// that has already committed its write, which is exactly the "panic masks an
+// already-committed write" class QA-1 found 12+ times. 42 post-commit call
+// sites in this package discard this function's bool (via writeAuditEventFull/
+// writeAuditEventDiff), so the window was real, if narrow. Closing it here
+// (rather than recording it as a reviewed exemption in
+// docs/besteffort-exempt.tsv) makes the safety DERIVABLE by
+// internal/besteffortguard's panicSafetyIndex, which reads this defer out of
+// the source -- and a derived fact goes red if someone deletes it, where an
+// exemption row would have kept pardoning the call sites.
+func (c *KeyorixCore) writeAuditEventDiffOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) (persisted bool) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: writeAuditEventDiffOn panicked building/emitting audit event %q (best-effort, primary operation already succeeded): %v", eventType, r)
+			persisted = false
+		}
+	}()
 	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
@@ -293,7 +361,7 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 		event.ActingAs = userID
 		event.Impersonation = true
 	}
-	return c.emitAudit(ctx, event)
+	return c.emitAuditOn(ctx, tgt, event)
 }
 
 // writeAuditEventFailed persists a failed audit event (Success=false), with
@@ -422,6 +490,86 @@ func (c *KeyorixCore) LogSecretReadWithProject(ctx context.Context, userID uint,
 	return c.emitAuditWithAccessLog(ctx, event, accessLog)
 }
 
+// EventSecretVersionsListed is the audit event for listing a secret's version
+// history (GET /secrets/{id}/versions, gRPC GetSecretVersions). The listing
+// carries version numbers, timestamps and read counters, never a value
+// (SecretVersion.EncryptedValue is json:"-"), so it is not a secret.read:
+// secret.read, and every count keyed on it (read summaries, billing and usage
+// reads, dashboard "accessed"), means a value disclosure only (AUDIT-UX-2, #2951).
+const EventSecretVersionsListed = "secret.versions_listed"
+
+// AccessActionVersionsList is the secret_access_logs action written with
+// EventSecretVersionsListed. Not "read": read counts (total reads, most-accessed,
+// rotation risk) filter on action "read". Anomaly detection reads every action,
+// so who listed a secret's versions from where still feeds its baselines.
+const AccessActionVersionsList = "versions_list"
+
+// EventSecretMetadataRead is the audit event for a metadata-only secret lookup
+// (GET /secrets/by-name): the response carries the secret's metadata, never its
+// value, so it is not a secret.read (AUDIT-UX-3, same rule as
+// EventSecretVersionsListed).
+const EventSecretMetadataRead = "secret.metadata_read"
+
+// AccessActionMetadataRead is the secret_access_logs action written with
+// EventSecretMetadataRead. Not "read": read counts filter on action "read".
+// Anomaly detection reads every action, so metadata lookups still feed its
+// baselines.
+const AccessActionMetadataRead = "metadata_read"
+
+// LogSecretVersionsListed writes audit_events + secret_access_logs for a
+// version-history listing, as ONE atomic unit, and blocks until both are
+// durably committed: the same audit-before-response contract (and the same
+// writer) as LogSecretReadWithProject, which this replaces for the listing.
+// Returns an error if the write fails; the caller must not send the listing.
+func (c *KeyorixCore) LogSecretVersionsListed(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.logSecretMetadataAccess(ctx, EventSecretVersionsListed, AccessActionVersionsList,
+		fmt.Sprintf("User %s listed the versions of secret %s", username, secretName),
+		userID, secretID, projectID, username, ip, ua)
+}
+
+// LogSecretMetadataRead writes secret.metadata_read + an access-log row of
+// action "metadata_read" (atomically, like LogSecretVersionsListed) for a
+// metadata-only lookup by name.
+func (c *KeyorixCore) LogSecretMetadataRead(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	return c.logSecretMetadataAccess(ctx, EventSecretMetadataRead, AccessActionMetadataRead,
+		fmt.Sprintf("User %s looked up secret %s", username, secretName),
+		userID, secretID, projectID, username, ip, ua)
+}
+
+// logSecretMetadataAccess is the shared atomic writer for metadata-only secret
+// access events (no value disclosed). The description must end in
+// " secret <name>" (the dashboard extracts the name from it).
+func (c *KeyorixCore) logSecretMetadataAccess(ctx context.Context, eventType, accessAction, description string, userID, secretID, projectID uint, username, ip, ua string) error { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
+	uid, sid, pid := userID, secretID, projectID
+	t := true
+	event := &models.AuditEvent{
+		EventType:    eventType,
+		UserID:       &uid,
+		SecretNodeID: &sid,
+		ProjectID:    &pid,
+		IPAddress:    ip,
+		Description:  sanitizeAuditText(description),
+		Success:      &t,
+		EventTime:    time.Now(),
+		ActorType:    actorTypeFromContext(ctx),
+	}
+	if adminID, ok := impersonatorFromContext(ctx); ok {
+		a := adminID
+		event.ImpersonatedBy = &a
+		event.ActingAs = &uid
+		event.Impersonation = true
+	}
+	accessLog := &models.SecretAccessLog{
+		SecretNodeID: secretID,
+		AccessedBy:   username,
+		AccessTime:   time.Now(),
+		Action:       accessAction,
+		IPAddress:    ip,
+		UserAgent:    ua,
+	}
+	return c.emitAuditWithAccessLog(ctx, event, accessLog)
+}
+
 // LogSecretCreated writes audit_events + secret_access_logs for a secret creation.
 func (c *KeyorixCore) LogSecretCreated(ctx context.Context, userID uint, secretID uint, username, secretName, ip, ua string) {
 	uid, sid := userID, secretID
@@ -492,8 +640,56 @@ func (c *KeyorixCore) LogSecretDeleted(ctx context.Context, userID uint, secretI
 func (c *KeyorixCore) LogSecretDeletedWithProject(ctx context.Context, userID uint, secretID uint, projectID uint, username, secretName, ip, ua string) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	uid, sid, pid := userID, secretID, projectID
 	c.writeAuditEventFull(ctx, "secret.deleted", &uid, &sid, &pid, ip,
-		fmt.Sprintf("User %s deleted secret %s", username, secretName))
+		fmt.Sprintf("User %s deleted secret %s", username, secretName)+c.softDeleteNote(ctx, secretID, projectID))
 	c.writeAccessLog(ctx, secretID, username, "delete", ip, ua)
+}
+
+// softDeleteNoteMarker starts the note appended to a secret.deleted description.
+// extractSecretName cuts the description at it, so the secret's name is still
+// recoverable from "User <u> deleted secret <name> (soft delete: ...)".
+const softDeleteNoteMarker = " (soft delete:"
+
+// softDeleteNote says what the delete actually did, for the audit entry (#2951):
+// a secret delete is a soft delete (restorable until purge, its versions are kept,
+// not destroyed), and secrets that depended on it lose that dependency until it is
+// restored. Best-effort and display only: a failed lookup just yields a shorter
+// note, never a missing or altered audit event.
+func (c *KeyorixCore) softDeleteNote(ctx context.Context, secretID, projectID uint) string {
+	versions := -1
+	var dependents []string
+	besteffort.Run(ctx, "audit.softDeleteNote", func() error {
+		if vs, err := c.storage.GetSecretVersions(ctx, secretID); err == nil {
+			versions = len(vs)
+		}
+		edges, err := c.storage.ListSecretDependenciesForProject(ctx, projectID)
+		if err != nil {
+			return err
+		}
+		for _, e := range edges {
+			if e.DependsOnSecretID != secretID {
+				continue
+			}
+			if dep, derr := c.storage.GetSecret(ctx, e.DependentSecretID); derr == nil && dep != nil {
+				dependents = append(dependents, dep.Name)
+			}
+		}
+		return nil
+	})
+	note := softDeleteNoteMarker + " restorable with 'secret restore' until purged"
+	if versions >= 0 {
+		note += fmt.Sprintf("; %d version(s) kept", versions)
+	}
+	if n := len(dependents); n > 0 {
+		shown := dependents
+		if n > 5 {
+			shown = dependents[:5]
+		}
+		note += fmt.Sprintf("; %d dependent secret(s) lose this dependency until restored: %s", n, strings.Join(shown, ", "))
+		if n > 5 {
+			note += fmt.Sprintf(" and %d more", n-5)
+		}
+	}
+	return note + ")"
 }
 
 // LogAuthLogin writes an auth.login audit event.
@@ -507,6 +703,33 @@ func (c *KeyorixCore) LogAuthLogin(ctx context.Context, userID uint, username, i
 func (c *KeyorixCore) LogAuthFailure(ctx context.Context, username, ip string) {
 	c.writeAuditEventFailed(ctx, "auth.login_failed", nil, nil, ip,
 		fmt.Sprintf("Failed login attempt for username: %s", username))
+}
+
+// LogAuthError writes an auth.login_error audit event (Success=false) —
+// distinct from auth.login_failed (#2888, mirroring mfa.go's
+// auditMFAFailed/auditMFAError split): this request's PASSWORD was already
+// confirmed correct, and a storage error afterward (resolving the identity
+// payload, creating an MFA challenge) is what actually denied the login, not
+// a wrong credential. The HTTP response to the client must stay byte-identical
+// to a genuine login_failed either way (#2740 option C: a storage error after
+// a credential matched must never confirm the match), so this distinction
+// exists ONLY for an operator reading the audit trail -- it changes nothing
+// the caller can observe.
+func (c *KeyorixCore) LogAuthError(ctx context.Context, username, ip string, err error) {
+	c.writeAuditEventFailed(ctx, "auth.login_error", nil, nil, ip,
+		fmt.Sprintf("Login for username %s denied by a storage error AFTER the password matched: %v", username, err))
+}
+
+// LogAuthNotEvaluated writes the same auth.login_error event as LogAuthError,
+// for the PRE-verdict case: a storage failure before any credential was
+// checked (the username lookup on /auth/login, loading a passkey's user on a
+// passwordless login), so neither auth.login_failed nor "after the password
+// matched" is true (AUTH-AUDIT-1 items 1-2, #2745/#2746). Same event name on
+// purpose: one error event for a login the server could not complete, the
+// message says which kind. username is "" when the request named none.
+func (c *KeyorixCore) LogAuthNotEvaluated(ctx context.Context, username, ip string, err error) {
+	c.writeAuditEventFailed(ctx, "auth.login_error", nil, nil, ip,
+		fmt.Sprintf("Login for username %q could not be evaluated: storage error before any credential was checked: %v", username, err))
 }
 
 // LogAuthLogout writes an auth.logout audit event.

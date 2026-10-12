@@ -22,7 +22,9 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CLI_BIN="$REPO_ROOT/bin/keyorix"
 SERVER_BIN="$REPO_ROOT/bin/keyorix-server"
 SERVER_PORT=18089
-SERVER_URL="http://127.0.0.1:$SERVER_PORT"
+# admin init writes the secure baseline (SECURE-DEFAULT-1): TLS with a generated
+# self-signed certificate, so the server is HTTPS from the first boot.
+SERVER_URL="https://127.0.0.1:$SERVER_PORT"
 
 fail() {
     echo "" >&2
@@ -50,7 +52,12 @@ trap cleanup EXIT
 echo "==> Isolated smoke test dir: $SMOKE_DIR"
 
 # HOME isolation: a real ~/.keyorix/ credential file must never be visible to this
-# run, and must never be overwritten by it.
+# run, and must never be overwritten by it. REAL_HOME is kept aside so the
+# scripts/totpgen `go run` call below (needs the real module cache, not a
+# throwaway one under this ephemeral dir -- `go run` under the isolated HOME
+# re-resolves GOPATH/GOMODCACHE there and re-downloads the entire module
+# graph on every run) can still find Go's real toolchain state.
+REAL_HOME="$HOME"
 export HOME="$SMOKE_DIR"
 export KEYORIX_MASTER_PASSWORD="smoke-test-master-password-$$-${RANDOM}"
 BOOTSTRAP_TOKEN="smoke-test-bootstrap-token-$$-${RANDOM}"
@@ -84,20 +91,43 @@ echo "==> keyorix-server admin encryption init"
 echo "==> keyorix-server admin migrate"
 "$SERVER_BIN" admin migrate --config "$CONFIG_PATH" || fail "admin migrate exited non-zero"
 
+# ADR-112 §4: the config admin init generated passes the posture check as is.
+echo "==> keyorix-server admin validate --posture"
+POSTURE_OUT="$("$SERVER_BIN" admin validate --posture --config "$CONFIG_PATH")" \
+    || fail "admin validate --posture reported deviations on the generated config:
+$POSTURE_OUT"
+echo "$POSTURE_OUT" | grep -qF "No deviations found." || fail "posture check did not report zero deviations:
+$POSTURE_OUT"
+
+# The CLI (and curl below) trust the generated self-signed certificate -- the one
+# step QUICK_START.md shows after admin init.
+CA_FILE="$SMOKE_DIR/certs/server.crt"
+[ -f "$CA_FILE" ] || fail "admin init did not generate $CA_FILE"
+echo "==> keyorix config set ca_file"
+"$CLI_BIN" config set ca_file "$CA_FILE" || fail "config set ca_file exited non-zero"
+
 echo "==> starting keyorix-server"
 KEYORIX_CONFIG_PATH="$CONFIG_PATH" KEYORIX_BOOTSTRAP_TOKEN="$BOOTSTRAP_TOKEN" "$SERVER_BIN" \
     > "$SMOKE_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 
 for _ in $(seq 1 30); do
-    if curl -fs "$SERVER_URL/health" >/dev/null 2>&1; then break; fi
+    if curl -fs --cacert "$CA_FILE" "$SERVER_URL/health" >/dev/null 2>&1; then break; fi
     sleep 0.5
 done
-if ! curl -fs "$SERVER_URL/health" >/dev/null 2>&1; then
+if ! curl -fs --cacert "$CA_FILE" "$SERVER_URL/health" >/dev/null 2>&1; then
     echo "server never became healthy -- see $SMOKE_DIR/server.log" >&2
     cat "$SMOKE_DIR/server.log" >&2
     fail "keyorix-server did not start"
 fi
+
+# /metrics needs the generated token (secrets/metrics_token); without it, 401.
+echo "==> GET /metrics (401 without the generated token, 200 with it)"
+METRICS_NOAUTH="$(curl -s -o /dev/null -w '%{http_code}' --cacert "$CA_FILE" "$SERVER_URL/metrics")"
+[ "$METRICS_NOAUTH" = "401" ] || fail "/metrics without the token returned HTTP $METRICS_NOAUTH, want 401"
+METRICS_AUTH="$(curl -s -o /dev/null -w '%{http_code}' --cacert "$CA_FILE" \
+    -H "Authorization: Bearer $(cat "$SMOKE_DIR/secrets/metrics_token")" "$SERVER_URL/metrics")"
+[ "$METRICS_AUTH" = "200" ] || fail "/metrics with the generated token returned HTTP $METRICS_AUTH, want 200"
 
 echo "==> keyorix system init --server (bootstrap admin + default workspace)"
 "$CLI_BIN" system init --server "$SERVER_URL" --admin-username admin \
@@ -107,6 +137,44 @@ echo "==> keyorix system init --server (bootstrap admin + default workspace)"
 echo "==> keyorix login"
 "$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
     || fail "login exited non-zero"
+
+# ADR-112 item 1: security.require_mfa defaults on, so admin init's generated
+# config enforces it from this run's first boot. The bootstrap admin has no
+# MFA enrolled yet, so EnforceAccountSetup confines this session to the
+# enrolment endpoints until it enrols -- every OTHER authenticated call below
+# (starting with project create) would otherwise fail closed with
+# "This deployment requires multi-factor authentication." Enrol for real,
+# the way an operator would: `mfa enroll` returns a fresh TOTP secret,
+# scripts/totpgen computes a code from it the way an authenticator app
+# would (there is no human here to read one off a phone), and `mfa activate`
+# confirms enrolment with that code plus the account password.
+echo "==> keyorix mfa enroll"
+ENROLL_OUT="$("$CLI_BIN" mfa enroll)" || fail "mfa enroll exited non-zero"
+MFA_SECRET="$(echo "$ENROLL_OUT" | grep -E '^  [A-Z2-7]+$' | tr -d '[:space:]')"
+[ -n "$MFA_SECRET" ] || fail "could not parse MFA secret from:
+$ENROLL_OUT"
+
+echo "==> keyorix mfa activate"
+MFA_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET")" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" mfa activate --code "$MFA_CODE" --password "$ADMIN_PASSWORD" \
+    || fail "mfa activate exited non-zero"
+
+# ActivateMFA invalidates every OTHER session for this user (the calling session
+# is kept, #2978), so a pre-MFA session elsewhere cannot outlive the upgrade.
+# Log in again anyway, to exercise the MFA login path: the account now has MFA
+# enabled, so this second attempt gets mfa_required instead of a token
+# directly -- exercises the exact two-step login path (`--mfa-code`,
+# completing POST /auth/mfa/verify) a real operator's SECOND-and-later
+# login goes through from now on.
+echo "==> keyorix login (again, now MFA-enabled)"
+# +30s step offset: ActivateMFA just marked the CURRENT step's code used
+# (anti-replay) -- without the offset this would very likely compute the
+# identical code (same 30s window) and get rejected as a replay.
+MFA_LOGIN_CODE="$(cd "$REPO_ROOT" && HOME="$REAL_HOME" GOWORK=off go run scripts/totpgen/main.go "$MFA_SECRET" 30)" \
+    || fail "totpgen exited non-zero"
+"$CLI_BIN" login --server "$SERVER_URL" --username admin --password "$ADMIN_PASSWORD" \
+    --mfa-code "$MFA_LOGIN_CODE" || fail "login (MFA-enabled) exited non-zero"
 
 echo "==> keyorix project create"
 "$CLI_BIN" project create --name smoke-project || fail "project create exited non-zero"
@@ -170,7 +238,7 @@ APP_TOKEN="$(echo "$TOKEN_OUT" | grep '^Token:' | awk '{print $2}')"
 $TOKEN_OUT"
 
 echo "==> machine token denied before grant-role"
-DENIED_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/secrets/1?include_value=true" \
+DENIED_CODE="$(curl -s --cacert "$CA_FILE" -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/secrets/1?include_value=true" \
     -H "Authorization: Bearer $APP_TOKEN")"
 [ "$DENIED_CODE" = "403" ] || fail "expected 403 before grant-role, got $DENIED_CODE"
 
@@ -179,7 +247,7 @@ echo "==> keyorix machine grant-role"
     || fail "machine grant-role exited non-zero"
 
 echo "==> machine token reads the secret after grant-role"
-READ_OUT="$(curl -s "$SERVER_URL/api/v1/secrets/1?include_value=true" \
+READ_OUT="$(curl -s --cacert "$CA_FILE" "$SERVER_URL/api/v1/secrets/1?include_value=true" \
     -H "Authorization: Bearer $APP_TOKEN")"
 echo "$READ_OUT" | grep -qF "$SECRET_VALUE" || fail \
     "machine token did not read the secret value after grant-role -- got:
@@ -190,7 +258,7 @@ echo "==> keyorix machine revoke-role"
     || fail "machine revoke-role exited non-zero"
 
 echo "==> machine token denied again after revoke-role"
-REVOKED_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/secrets/1?include_value=true" \
+REVOKED_CODE="$(curl -s --cacert "$CA_FILE" -o /dev/null -w '%{http_code}' "$SERVER_URL/api/v1/secrets/1?include_value=true" \
     -H "Authorization: Bearer $APP_TOKEN")"
 [ "$REVOKED_CODE" = "403" ] || fail "expected 403 after revoke-role, got $REVOKED_CODE"
 

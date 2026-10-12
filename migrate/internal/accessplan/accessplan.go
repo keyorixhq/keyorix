@@ -97,6 +97,13 @@ type Item struct {
 	// ProvenanceKey is the migrate.source-id this object would carry in its Description —
 	// apply-access's idempotency key (ADR-114's "Provenance and idempotency").
 	ProvenanceKey string
+
+	// ExistingID is set by Reconcile whenever a same-named Role/MachineIdentity object was
+	// found in Keyorix — on Skip (it's the already-migrated object's own ID, the one Apply
+	// must reuse for any grant/binding that references it on a resumed run) and on Conflict
+	// (the colliding object's ID, for the report only; Apply never touches it). Zero
+	// otherwise. Mirrors internal/plan.Item.ExistingID's exact role for secret values.
+	ExistingID int
 }
 
 // Plan is the full output: every item this run produced, in a stable, deterministic order

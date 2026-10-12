@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -34,6 +36,51 @@ var ErrWebAuthnDisabled = errors.New("webauthn is not enabled on this server")
 // failed attempt, and the per-account lockout counter is never touched (#2565,
 // same class as ErrMFAVerificationStorageFailure on /auth/mfa/verify).
 var ErrWebAuthnLoginNotEvaluated = errors.New("webauthn login not evaluated: storage lookup failed")
+
+// ErrLoginIdentityUnavailable means the login's assertion VERIFIED, but the
+// response identity (roles + permissions, GetUserIdentity) could not be
+// resolved — so the login is refused with nothing written (#2841).
+//
+// It is deliberately NOT ErrWebAuthnLoginNotEvaluated: the assertion WAS
+// evaluated and passed, so the per-IP login-attempt reservation must stay
+// counted exactly as it did before this sentinel existed, and the per-account
+// lockout counters have already been cleared by the successful verification.
+// The handler maps it to the same 500 "Login could not be completed. Please try
+// again." a post-mint identity failure produced before, so the caller-visible
+// behaviour is unchanged — only the ORDER changed, and with it what survives.
+var ErrLoginIdentityUnavailable = errors.New("login identity unavailable: could not resolve roles/permissions")
+
+// resolveLoginIdentityBeforeMint reads the response identity BEFORE a login
+// writes anything (#2841).
+//
+// Both WebAuthn login paths used to mint the session, then an ambient
+// MFAStepUpGrant, and only afterwards hand back to the HTTP handler, which
+// resolved the identity for its response body. A failure in THAT read was
+// reported to the caller as a failed login while both writes stayed:
+// completeLogin (server/http/handlers/auth.go) revoked the session, but nothing
+// revoked the grant. An MFAStepUpPurposeRestrictedSecretRead grant therefore
+// outlived a login the caller was told had failed, satisfying the
+// restricted-secret MFA gate for the rest of the step-up window on some later
+// session the user never proved a second factor for.
+//
+// Found by FuzzStorageFaultOperations (op="REST POST /auth/webauthn/login/finish",
+// fault=(GetUserRoles, NthCall=1, kind=error)); filed as #2841.
+//
+// Doing the read here, before the writes, closes the window by CONSTRUCTION
+// rather than by compensating after the fact — nothing fallible-and-reported
+// runs after the session and grant are written, so there is no partial state to
+// undo. (The remaining post-mint writes — UpsertMFAStepupToken, the grant
+// itself, the audit event — are all explicitly best-effort, errors discarded,
+// and cannot make the login report failure.) The caller is expected to return
+// this identity so the handler does not re-read it; re-reading would reopen the
+// same window one layer up.
+func (c *KeyorixCore) resolveLoginIdentityBeforeMint(ctx context.Context, userID uint) (UserIdentity, error) {
+	identity, err := c.GetUserIdentity(ctx, userID)
+	if err != nil {
+		return UserIdentity{}, fmt.Errorf("%w: user %d: %w", ErrLoginIdentityUnavailable, userID, err)
+	}
+	return identity, nil
+}
 
 const webauthnSessionTTL = 5 * time.Minute
 
@@ -71,7 +118,12 @@ func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.cr
 func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webauthnUser, error) {
 	user, err := c.storage.GetUser(ctx, userID)
 	if err != nil {
-		return nil, fmt.Errorf("user not found")
+		// AUTH-AUDIT-1 item 2 (#2746): keep WHICH failure this was, without
+		// changing the "user not found" text callers render today. The
+		// passwordless caller needs the class: its user handle is
+		// attacker-supplied, so a handle naming no user is a failed attempt,
+		// while a storage failure evaluated nothing.
+		return nil, &webauthnUserLoadError{cause: err}
 	}
 	rows, err := c.storage.ListWebAuthnCredentials(ctx, userID)
 	if err != nil {
@@ -95,9 +147,26 @@ func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webau
 	return &webauthnUser{user: user, creds: creds}, nil
 }
 
+// webauthnUserLoadError is loadWebAuthnUser's failure: always the text "user
+// not found" (what every caller has rendered since it was written), with the
+// storage error kept in the chain so storage.IsUserNotFound tells a genuinely
+// absent account from a storage failure.
+type webauthnUserLoadError struct{ cause error }
+
+func (e *webauthnUserLoadError) Error() string { return "user not found" }
+func (e *webauthnUserLoadError) Unwrap() error { return e.cause }
+
 // storeWebAuthnSession persists the ceremony SessionData under the hash of an
 // opaque token (returned to the caller), single-use and short-lived.
 func (c *KeyorixCore) storeWebAuthnSession(ctx context.Context, userID uint, purpose string, sd *webauthn.SessionData) (string, error) {
+	return c.storeWebAuthnSessionHoldingLoginSlot(ctx, userID, purpose, sd, nil)
+}
+
+// storeWebAuthnSessionHoldingLoginSlot is storeWebAuthnSession for a login
+// Begin that reserved a per-IP login-budget slot and keeps it: the slot id is
+// stored on the ceremony row, and only the Finish that consumes the row and
+// delivers a session hands it back (#2936 review).
+func (c *KeyorixCore) storeWebAuthnSessionHoldingLoginSlot(ctx context.Context, userID uint, purpose string, sd *webauthn.SessionData, slotID *uint) (string, error) {
 	data, err := json.Marshal(sd)
 	if err != nil {
 		return "", err
@@ -107,12 +176,13 @@ func (c *KeyorixCore) storeWebAuthnSession(ctx context.Context, userID uint, pur
 		return "", err
 	}
 	if err := c.storage.CreateWebAuthnSession(ctx, &models.WebAuthnSession{
-		UserID:    userID,
-		TokenHash: sha256Hex(token),
-		Purpose:   purpose,
-		Data:      data,
-		ExpiresAt: c.now().Add(webauthnSessionTTL),
-		CreatedAt: c.now(),
+		UserID:         userID,
+		TokenHash:      sha256Hex(token),
+		Purpose:        purpose,
+		Data:           data,
+		ExpiresAt:      c.now().Add(webauthnSessionTTL),
+		CreatedAt:      c.now(),
+		LoginAttemptID: sharedLoginSlot(slotID),
 	}); err != nil {
 		return "", err
 	}
@@ -382,7 +452,11 @@ func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, ses
 	if err := c.rejectIfCloned(ctx, userID, cred, ""); err != nil {
 		return err
 	}
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
+	// TOCTOU re-check only — the failure state is NOT cleared here (#2894): the
+	// step-up grant below is still to be written, and a fault there denies the
+	// re-auth with the same error a failed assertion gets, so it must cost the
+	// same lockout progress. See LoginCompletion.
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
 		return err
 	}
 	c.persistUpdatedCredential(ctx, userID, cred)
@@ -392,8 +466,13 @@ func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, ses
 		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
 	}
 	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
-		return fmt.Errorf("failed to record MFA reauth step-up: %w", err)
+		// #2894: the assertion already verified, so this is a post-verdict storage
+		// fault. Count it exactly as a failed assertion would be counted (the
+		// recordFailedLogin two branches up), or a correct assertion plus an
+		// injected fault here is the cheaper probe.
+		return c.denyAfterCredentialMatched(ctx, user, fmt.Errorf("failed to record MFA reauth step-up: %w", err))
 	}
+	c.clearLoginFailures(ctx, user)
 	uid := userID
 	c.writeAuditEventFull(ctx, "mfa.reauth_verified", &uid, nil, nil, "",
 		fmt.Sprintf("user %s completed WebAuthn re-authentication", user.Username))
@@ -406,6 +485,17 @@ func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, ses
 // webauthn session token to echo back at FinishWebAuthnLogin (alongside the
 // challenge, which is consumed there).
 func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) (*protocol.CredentialAssertion, string, error) {
+	return c.BeginWebAuthnLoginHoldingLoginSlot(ctx, challenge, nil)
+}
+
+// BeginWebAuthnLoginHoldingLoginSlot is BeginWebAuthnLogin for a transport that
+// reserved a per-IP login-budget slot for this Begin and KEEPS it (#2936
+// review): Begin does not consume the MFA challenge and writes a ceremony row
+// per call, so a slot handed back here would let one valid challenge drive
+// unlimited Begin calls at no budget cost. The slot is bound to the ceremony
+// row instead, and FinishWebAuthnLoginPending's LoginCompletion hands it back
+// only once a session is delivered. slotID nil means nothing was reserved.
+func (c *KeyorixCore) BeginWebAuthnLoginHoldingLoginSlot(ctx context.Context, challenge string, slotID *uint) (*protocol.CredentialAssertion, string, error) {
 	if c.webauthnRP == nil {
 		return nil, "", ErrWebAuthnDisabled
 	}
@@ -429,7 +519,7 @@ func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) 
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to begin login: %w", err)
 	}
-	token, err := c.storeWebAuthnSession(ctx, ch.UserID, "login", sd)
+	token, err := c.storeWebAuthnSessionHoldingLoginSlot(ctx, ch.UserID, "login", sd, slotID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -461,31 +551,51 @@ func (c *KeyorixCore) checkWebAuthnAccountGates(wu *webauthnUser) error {
 //
 // FinishWebAuthnLogin consumes the challenge + webauthn session, verifies the
 // assertion, updates the credential's signature counter, and mints the session.
-func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, error) {
+// It also returns the response identity, resolved BEFORE the session and the
+// ambient step-up grant are written so the caller does not have to re-read it
+// afterwards (#2841 — see resolveLoginIdentityBeforeMint).
+//
+// Convenience wrapper over FinishWebAuthnLoginPending for callers that own
+// nothing further after this returns; every TRANSPORT must use the Pending form
+// — see Login/LoginPending and LoginCompletion for why (#2894).
+func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, error) {
+	session, user, identity, lc, err := c.FinishWebAuthnLoginPending(ctx, challenge, sessionToken, userAgent, ip, parsed)
+	if err != nil {
+		return nil, user, UserIdentity{}, err
+	}
+	lc.Succeeded(ctx)
+	return session, user, identity, nil
+}
+
+// FinishWebAuthnLoginPending is FinishWebAuthnLogin with the lockout accounting
+// left open — the returned LoginCompletion MUST get Succeeded or Failed exactly
+// once (#2894). On an error return the user is non-nil for every post-verdict
+// failure, so a transport can name the account in its auth.login_error event.
+func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	if c.webauthnRP == nil {
-		return nil, nil, ErrWebAuthnDisabled
+		return nil, nil, UserIdentity{}, nil, ErrWebAuthnDisabled
 	}
 	// Consume the challenge first — it is the single-use login gate.
 	ch, err := c.storage.ConsumeMFAChallenge(ctx, sha256Hex(challenge), c.now())
 	if err != nil {
 		if !errors.Is(err, storage.ErrMFAChallengeInvalid) {
-			return nil, nil, fmt.Errorf("%w: consuming login challenge: %w", ErrWebAuthnLoginNotEvaluated, err)
+			return nil, nil, UserIdentity{}, nil, fmt.Errorf("%w: consuming login challenge: %w", ErrWebAuthnLoginNotEvaluated, err)
 		}
-		return nil, nil, fmt.Errorf("invalid or expired challenge")
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("invalid or expired challenge")
 	}
 	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(sessionToken), c.now())
 	if err != nil {
 		if !errors.Is(err, storage.ErrWebAuthnSessionInvalid) {
-			return nil, nil, fmt.Errorf("%w: consuming webauthn session: %w", ErrWebAuthnLoginNotEvaluated, err)
+			return nil, nil, UserIdentity{}, nil, fmt.Errorf("%w: consuming webauthn session: %w", ErrWebAuthnLoginNotEvaluated, err)
 		}
-		return nil, nil, fmt.Errorf("invalid or expired webauthn session")
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("invalid or expired webauthn session")
 	}
 	if sess.Purpose != "login" || sess.UserID != ch.UserID {
-		return nil, nil, fmt.Errorf("webauthn session mismatch")
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("webauthn session mismatch")
 	}
 	var sd webauthn.SessionData
 	if err := json.Unmarshal(sess.Data, &sd); err != nil {
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	wu, err := c.loadWebAuthnUser(ctx, ch.UserID)
 	if err != nil {
@@ -494,7 +604,7 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 		// passed), so this is never a credential guess: either a storage error
 		// or the account being deleted mid-ceremony. Neither evaluated the
 		// assertion, so neither may count as a failed attempt.
-		return nil, nil, fmt.Errorf("%w: loading webauthn user: %w", ErrWebAuthnLoginNotEvaluated, err)
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("%w: loading webauthn user: %w", ErrWebAuthnLoginNotEvaluated, err)
 	}
 	// A second-factor WebAuthn login still mints a session, so a suspended or
 	// deactivated account must be refused — the challenge may have been issued just
@@ -502,13 +612,16 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	// passwordless path's AccountLoginBlocked gate (and the password/session gates).
 	// Per-account lockout also gates the second factor (parity with VerifyMFALogin).
 	if err := c.checkWebAuthnAccountGates(wu); err != nil {
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	cred, err := c.webauthnRP.ValidateLogin(wu, sd, parsed)
+	// #3048: the assertion has been evaluated, pass or fail; ValidateLogin makes
+	// no storage call, so every later storage call is post-verdict.
+	markLoginVerdict(ctx)
 	if err != nil {
 		c.auditWebAuthnFailed(ctx, ch.UserID, "login")
 		c.recordFailedLogin(ctx, wu.user) // count the failed second factor toward the lockout
-		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
 	// Clone-detection (#212): a signature-counter regression is a stronger, more
 	// specific signal than a simple bad assertion, so it is checked and refused
@@ -516,29 +629,57 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	// including clearing the lockout counters below — no session is minted, the
 	// credential is disabled, and the owner is alerted (see rejectIfCloned).
 	if err := c.rejectIfCloned(ctx, ch.UserID, cred, ip); err != nil {
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	// A concurrent burst of failed second-factor attempts against this account may
 	// have tripped the lock since the pre-verification snapshot check above
 	// (TOCTOU). Re-check under the same serialization recordFailedLogin uses
-	// before minting a session; on success this also clears the lockout counters,
-	// superseding a bare clearLoginFailures call.
-	if err := c.checkLockAndClearLoginFailures(ctx, wu.user); err != nil {
-		return nil, nil, err
+	// before minting a session. The lockout counters are deliberately NOT cleared
+	// here (#2894): the password-expiry gate, the identity read and the session
+	// mint all still have to succeed, and a fault in any of them denies the login
+	// with the same response a failed assertion gets — see LoginCompletion.
+	if err := c.recheckLockAfterCredentialMatched(ctx, wu.user, true); err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			return nil, wu.user, UserIdentity{}, nil, err
+		}
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	c.persistUpdatedCredential(ctx, ch.UserID, cred)
 
 	if err := c.enforcePasswordExpiryGate(ctx, wu.user); err != nil {
-		return nil, nil, err
+		return nil, wu.user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, wu.user, err)
 	}
+	// #2841: the LAST fallible-and-reported read, done BEFORE the
+	// session/grant/step-up-token writes. Not "before the first write" — the
+	// challenge consume, persistUpdatedCredential's sign-counter update and the
+	// password-expiry gate all write earlier; what matters is that nothing
+	// fallible-and-reported runs AFTER the writes that would outlive a login
+	// reported as failed. See resolveLoginIdentityBeforeMint's doc comment for
+	// what used to survive a login this read failed on.
+	// #2894: the assertion verified, so a failure here is post-verdict: counted
+	// like a failed assertion and wrapped with ErrLoginPostVerdict (the transport
+	// answers exactly as for a failed assertion and audits auth.login_error);
+	// ErrLoginIdentityUnavailable stays in the chain, ErrWebAuthnLoginNotEvaluated
+	// never does, so the per-IP attempt stays counted (#2880).
+	identity, err := c.resolveLoginIdentityBeforeMint(ctx, ch.UserID)
+	if err != nil {
+		return nil, wu.user, UserIdentity{}, nil, c.denyAfterCredentialMatched(ctx, wu.user, err)
+	}
+	lc := c.newLoginCompletion(wu.user)
+	// #2936 item 4: the password step's slot (on the challenge) and Begin's (on
+	// the ceremony row) go back only if this login is delivered.
+	lc.holdLoginSlots(ch.LoginAttemptID, sess.LoginAttemptID)
 	session, err := c.mintSession(ctx, ch.UserID, userAgent, ip)
 	if err != nil {
-		return nil, nil, err
+		lc.Failed(ctx)
+		return nil, wu.user, UserIdentity{}, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
 	// Record the MFA step-up window when the classification gate requires it,
 	// matching the existing TOTP path in VerifyMFALogin.
 	if c.classificationRestrictedRequiresMFAStepUp {
-		_ = c.storage.UpsertMFAStepupToken(ctx, ch.UserID, c.now().Add(c.mfaStepUpWindow()))
+		besteffort.Run(ctx, "webauthn.FinishWebAuthnLogin.UpsertMFAStepupToken", func() error {
+			return c.storage.UpsertMFAStepupToken(ctx, ch.UserID, c.now().Add(c.mfaStepUpWindow()))
+		})
 	}
 	// Also mint a genuine MFAStepUpGrant, unconditionally (not gated behind
 	// classificationRestrictedRequiresMFAStepUp, matching the pre-existing
@@ -552,15 +693,21 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 	// proving possession of the second factor at the moment of a
 	// takeover-grade change. THIS purpose separation — not gating the write —
 	// is the fix for the confused-deputy bug this grant used to enable.
-	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
-		UserID:    ch.UserID,
-		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
-		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	//
+	// Panic-safe as well as error-tolerant: this runs after the session is
+	// written, and a panic escaping here reported the login as failed while
+	// the session stayed live (#2844, CreateMFAStepUpGrant#1/panic).
+	besteffort.Run(ctx, "webauthn.FinishWebAuthnLogin.CreateMFAStepUpGrant", func() error {
+		return c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+			UserID:    ch.UserID,
+			Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
+			ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+		})
 	})
 	uid := ch.UserID
 	c.writeAuditEventFull(ctx, "webauthn.login_verified", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s passed WebAuthn", wu.user.Username))
-	return session, wu.user, nil
+	return session, wu.user, identity, lc, nil
 }
 
 // BeginWebAuthnPasswordlessLogin starts a discoverable (usernameless) login. No
@@ -569,6 +716,14 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 // gesture proves both possession and the user (MFA-grade), making this a complete
 // passwordless login. Returns the assertion options + an opaque session token.
 func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (*protocol.CredentialAssertion, string, error) {
+	return c.BeginWebAuthnPasswordlessLoginHoldingLoginSlot(ctx, nil)
+}
+
+// BeginWebAuthnPasswordlessLoginHoldingLoginSlot is BeginWebAuthnPasswordlessLogin
+// with the transport's kept budget slot bound to the ceremony row, exactly as
+// BeginWebAuthnLoginHoldingLoginSlot does: the slot stays counted unless the
+// Finish that consumes this row delivers a session.
+func (c *KeyorixCore) BeginWebAuthnPasswordlessLoginHoldingLoginSlot(ctx context.Context, slotID *uint) (*protocol.CredentialAssertion, string, error) {
 	if c.webauthnRP == nil {
 		return nil, "", ErrWebAuthnDisabled
 	}
@@ -579,7 +734,7 @@ func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (*prot
 		return nil, "", fmt.Errorf("failed to begin passwordless login: %w", err)
 	}
 	// userID is unknown until finish resolves it from the credential's user handle.
-	token, err := c.storeWebAuthnSession(ctx, 0, "passwordless", sd)
+	token, err := c.storeWebAuthnSessionHoldingLoginSlot(ctx, 0, "passwordless", sd, slotID)
 	if err != nil {
 		return nil, "", err
 	}
@@ -595,81 +750,146 @@ func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (*prot
 //
 // FinishWebAuthnPasswordlessLogin verifies a discoverable assertion, resolves the
 // user from the credential's user handle, enforces account state, and mints a
-// session — a full login from a single passkey, no password.
-func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, error) {
+// session — a full login from a single passkey, no password. Like
+// FinishWebAuthnLogin it also returns the response identity, resolved before the
+// session/grant writes (#2841).
+//
+// Convenience wrapper over FinishWebAuthnPasswordlessLoginPending for callers
+// that own nothing further after this returns; every TRANSPORT must use the
+// Pending form — see Login/LoginPending and LoginCompletion for why (#2894).
+func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, error) {
+	session, user, identity, lc, err := c.FinishWebAuthnPasswordlessLoginPending(ctx, sessionToken, userAgent, ip, parsed)
+	if err != nil {
+		return nil, user, UserIdentity{}, err
+	}
+	lc.Succeeded(ctx)
+	return session, user, identity, nil
+}
+
+// FinishWebAuthnPasswordlessLoginPending is FinishWebAuthnPasswordlessLogin
+// with the lockout accounting left open — the returned LoginCompletion MUST get
+// Succeeded or Failed exactly once (#2894). On an error return the user is
+// non-nil for every post-verdict failure, so a transport can name the account
+// in its auth.login_error event.
+func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	if c.webauthnRP == nil {
-		return nil, nil, ErrWebAuthnDisabled
+		return nil, nil, UserIdentity{}, nil, ErrWebAuthnDisabled
 	}
 	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(sessionToken), c.now())
 	if err != nil {
-		return nil, nil, fmt.Errorf("invalid or expired webauthn session")
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("invalid or expired webauthn session")
 	}
 	if sess.Purpose != "passwordless" {
-		return nil, nil, fmt.Errorf("webauthn session mismatch")
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("webauthn session mismatch")
 	}
 	var sd webauthn.SessionData
 	if err := json.Unmarshal(sess.Data, &sd); err != nil {
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, nil, err
 	}
 
 	// The discoverable handler resolves the user from the 8-byte user handle that
 	// the authenticator returns (our WebAuthnID encoding). ValidatePasskeyLogin then
 	// verifies the assertion against that user's stored credentials.
 	var resolved *models.User
+	// AUTH-AUDIT-1 item 2 (#2746): a storage failure loading the handle's user
+	// evaluated nothing. Carried out of the handler by closure, because
+	// ValidatePasskeyLogin folds whatever the handler returns into its own error.
+	var notEvaluated error
 	handler := func(_, userHandle []byte) (webauthn.User, error) {
 		if len(userHandle) != 8 {
+			// Malformed input: a genuine negative result, still a failed attempt.
 			return nil, fmt.Errorf("unexpected user handle")
 		}
 		uid := uint(binary.BigEndian.Uint64(userHandle))
 		wu, err := c.loadWebAuthnUser(ctx, uid)
 		if err != nil {
+			// A handle naming no user is a credential guess (no first factor on
+			// this path); only a storage failure is not-evaluated.
+			if !storage.IsUserNotFound(err) {
+				notEvaluated = err
+			}
 			return nil, err
 		}
 		resolved = wu.user
 		return wu, nil
 	}
 	_, cred, err := c.webauthnRP.ValidatePasskeyLogin(handler, sd, parsed)
+	if notEvaluated != nil {
+		// Not audited here: the transport writes auth.login_error and hands the
+		// per-IP slot back, and answers exactly as for a failed assertion.
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("%w: loading the passkey's user: %w", ErrWebAuthnLoginNotEvaluated, notEvaluated)
+	}
 	if err != nil || resolved == nil {
 		c.writeAuditEventFull(ctx, "webauthn.failed", nil, nil, nil, ip, "failed passwordless WebAuthn login")
-		return nil, nil, fmt.Errorf("assertion verification failed: %w", err)
+		return nil, nil, UserIdentity{}, nil, fmt.Errorf("assertion verification failed: %w", err)
 	}
 	// Clone-detection (#212): refuse before any other gate — a signature-counter
 	// regression means this assertion may come from a cloned authenticator, so it
 	// must never mint a session regardless of account state. See rejectIfCloned.
 	if err := c.rejectIfCloned(ctx, resolved.ID, cred, ip); err != nil {
-		return nil, nil, err
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	if err := c.checkPasswordlessAccountState(ctx, resolved); err != nil {
-		return nil, nil, err
+		if errors.Is(err, ErrLoginPostVerdict) {
+			return nil, resolved, UserIdentity{}, nil, err
+		}
+		return nil, nil, UserIdentity{}, nil, err
 	}
 	c.persistUpdatedCredential(ctx, resolved.ID, cred)
 
+	// #2894: this path uses the NOT-COUNTED completion -- a failed discoverable
+	// assertion never identifies a user, so it does not feed the per-account
+	// counter either, and charging a post-verdict fault would make the CORRECT
+	// credential the more expensive one. The fix here is purely that the counter
+	// is no longer CLEARED on the way to a denial. See
+	// newLoginCompletionNotCounted.
+	lc := c.newLoginCompletionNotCounted(resolved)
+	lc.holdLoginSlots(sess.LoginAttemptID) // Begin's kept slot (#2936)
 	if err := c.enforcePasswordExpiryGate(ctx, resolved); err != nil {
-		return nil, nil, err
+		lc.Failed(ctx)
+		return nil, resolved, UserIdentity{}, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
+	}
+	// #2841: the LAST fallible-and-reported read, done BEFORE the
+	// session/grant/step-up-token writes — see resolveLoginIdentityBeforeMint's
+	// doc comment. Post-verdict (#2894), so it is denied exactly like the gate
+	// above: not counted on this path, ErrLoginIdentityUnavailable kept in chain.
+	identity, err := c.resolveLoginIdentityBeforeMint(ctx, resolved.ID)
+	if err != nil {
+		lc.Failed(ctx)
+		return nil, resolved, UserIdentity{}, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
 	session, err := c.mintSession(ctx, resolved.ID, userAgent, ip)
 	if err != nil {
-		return nil, nil, err
+		lc.Failed(ctx)
+		return nil, resolved, UserIdentity{}, nil, fmt.Errorf("%w: %w", ErrLoginPostVerdict, err)
 	}
 	// Record the MFA step-up window when the classification gate requires it,
 	// matching both VerifyMFALogin and FinishWebAuthnLogin.
 	if c.classificationRestrictedRequiresMFAStepUp {
-		_ = c.storage.UpsertMFAStepupToken(ctx, resolved.ID, c.now().Add(c.mfaStepUpWindow()))
+		besteffort.Run(ctx, "webauthn.FinishWebAuthnPasswordlessLogin.UpsertMFAStepupToken", func() error {
+			return c.storage.UpsertMFAStepupToken(ctx, resolved.ID, c.now().Add(c.mfaStepUpWindow()))
+		})
 	}
 	// Also mint a genuine MFAStepUpGrant, unconditionally (matching the
 	// pre-existing behavior this fix does not change) — see the identical
 	// comment in FinishWebAuthnLogin for why this purpose does NOT satisfy
 	// requireReauth (that requires MFAStepUpPurposeReauth, minted only by
 	// FinishWebAuthnReauth's live re-assertion). Best-effort.
-	_ = c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
-		UserID:    resolved.ID,
-		Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
-		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+	//
+	// Panic-safe as well as error-tolerant: this runs after the session is
+	// written, and a panic escaping here reported the login as failed while
+	// the session stayed live (#2844, CreateMFAStepUpGrant#1/panic).
+	besteffort.Run(ctx, "webauthn.FinishWebAuthnPasswordlessLogin.CreateMFAStepUpGrant", func() error {
+		return c.storage.CreateMFAStepUpGrant(ctx, &models.MFAStepUpGrant{
+			UserID:    resolved.ID,
+			Purpose:   models.MFAStepUpPurposeRestrictedSecretRead,
+			ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
+		})
 	})
 	uid := resolved.ID
 	c.writeAuditEventFull(ctx, "webauthn.passwordless_login", &uid, nil, nil, ip,
 		fmt.Sprintf("user %s logged in passwordlessly via WebAuthn", resolved.Username))
-	return session, resolved, nil
+	return session, resolved, identity, lc, nil
 }
 
 // checkPasswordlessAccountState enforces account-state and lockout gates for a
@@ -687,8 +907,12 @@ func (c *KeyorixCore) checkPasswordlessAccountState(ctx context.Context, user *m
 	if c.loginLocked(user) {
 		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
-	// Re-check under serialization before minting a session (TOCTOU guard).
-	return c.checkLockAndClearLoginFailures(ctx, user)
+	// Re-check under serialization before minting a session (TOCTOU guard). The
+	// clear is NOT done here (#2894) — FinishWebAuthnPasswordlessLogin's own
+	// LoginCompletion owns it, after the mint and the transport's identity read.
+	// A storage fault in the recheck is post-verdict but NOT counted: this path's
+	// failed assertions do not count either (see newLoginCompletionNotCounted).
+	return c.recheckLockAfterCredentialMatched(ctx, user, false)
 }
 
 // rejectIfCloned inspects a just-verified assertion's credential for a signature-
@@ -712,7 +936,16 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 	// row.UserID check is needed here.
 	if row, err := c.storage.GetWebAuthnCredentialByCredID(ctx, cred.ID, userID); err == nil {
 		// Mutation + audit as one unit (#1714) — see markWebAuthnCredentialClonedDisabled.
-		_ = c.markWebAuthnCredentialClonedDisabled(ctx, row, ip)
+		//
+		// #2836: the discard is safe BY CONSTRUCTION now, not by luck — that
+		// function audits the clone signal before any branch can return, so
+		// dropping this error cannot lose the incident; it only drops the
+		// "what happened to the row" detail, which the audit already carries.
+		// Logged anyway so an operator sees a disable that did not take effect
+		// without having to read the audit trail.
+		if derr := c.markWebAuthnCredentialClonedDisabled(ctx, row, ip); derr != nil {
+			log.Printf("webauthn: clone-disable for user %d credential %d did not take effect: %v", userID, row.ID, derr)
+		}
 	} else {
 		// Row lookup failed (rare — e.g. a race with the credential being deleted
 		// between assertion verification and this call). Nothing to disable, but
@@ -737,13 +970,52 @@ func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *web
 // call scopes ownership by construction; MarkWebAuthnCredentialClonedByLookup
 // below does the same for a caller that only has (credentialID, userID)).
 func (c *KeyorixCore) markWebAuthnCredentialClonedDisabled(ctx context.Context, row *models.WebAuthnCredential, ip string) error {
-	row.Disabled = true
-	if err := c.storage.UpdateWebAuthnCredential(ctx, row); err != nil {
-		return err
+	// #2700: write `disabled` alone. The previous full-row Save re-INSERTED a
+	// passkey the user had concurrently deleted (WebAuthnCredential is hard-
+	// deleted, so Save's 0-rows fallback upserts it back).
+	matched, err := c.storage.DisableWebAuthnCredential(ctx, row.ID)
+
+	// #2836: the clone-detected audit is written UNCONDITIONALLY, before any
+	// branch can return. The signature-counter regression is a fact about this
+	// LOGIN ATTEMPT, established before this function was called; whether the
+	// row could then be disabled is a separate fact, and belongs in the detail
+	// rather than deciding whether the incident is recorded at all.
+	//
+	// #2700's first version returned early on both !matched and err != nil,
+	// skipping the audit — so a passkey deleted (or a database briefly
+	// unavailable) in the window between the assertion check and this write
+	// turned a clone signal into silence. That was a REGRESSION this branch
+	// introduced: the full-row Save it replaced upserted the row back and
+	// therefore always reached the audit. Worse, the comment that replaced it
+	// claimed "the caller's rejectIfCloned path already audits the clone signal
+	// separately for the credential-missing case" — rejectIfCloned's else branch
+	// covers only a failed LOOKUP, not a lookup that succeeded and an UPDATE
+	// that then matched nothing. The cover was asserted, not checked, and did
+	// not exist.
+	//
+	// Not split into a second webauthn.error event: a storage failure here does
+	// not leave the clone verdict unreached (CloneWarning was already true), so
+	// there is exactly one incident to record — emitting two events would let an
+	// incident count double. The mfa.error/mfa.failed split exists for the
+	// opposite case, where no verdict was reached at all.
+	outcome := "credential disabled pending re-registration"
+	switch {
+	case err != nil:
+		outcome = fmt.Sprintf("credential could NOT be disabled (storage error: %v) — it may still be usable, treat as unmitigated", err)
+	case !matched:
+		outcome = "credential was already deleted — nothing left to disable"
 	}
 	uid := row.UserID
 	c.writeAuditEventFull(ctx, EventWebAuthnCloneDetected, &uid, nil, nil, ip,
-		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — credential disabled pending re-registration", row.UserID))
+		fmt.Sprintf("authentication refused for user %d: signature-counter regression (possible cloned authenticator) — %s", row.UserID, outcome))
+
+	if err != nil {
+		return err
+	}
+	if !matched {
+		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
+	row.Disabled = true
 	return nil
 }
 
@@ -814,10 +1086,12 @@ func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint,
 	now := c.now()
 
 	// Best-effort: called from inside FinishWebAuthnLogin/FinishWebAuthnPasswordlessLogin/
-	// VerifyMFAStepUp BEFORE mintSession, after checkLockAndClearLoginFailures may
-	// already have cleared this user's lockout counters -- an unrecovered panic
+	// VerifyMFAStepUp BEFORE mintSession, after recheckLoginLockFailClosed may
+	// already have written to this user's lockout row -- an unrecovered panic
 	// here would propagate past that write and report the whole login/reauth as
-	// failed even though lockout state already changed. besteffort.Run closes
+	// failed even though lockout state already changed. (Since #2894 the CLEAR
+	// itself happens later, at delivery, so the window this guards is narrower
+	// than it was -- but the lock recheck above can still have written.) besteffort.Run closes
 	// that gap; found by besteffort_guard_test.go (GUARD-1), no returned-error
 	// protection existed here at all before this fix, let alone a panic recover.
 	besteffort.Run(ctx, "webauthn.persistUpdatedCredential", func() error {

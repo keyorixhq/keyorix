@@ -29,10 +29,11 @@ func complianceTrendCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(
-		&models.Project{},
-		&models.CompliancePostureSnapshot{},
-	))
+	// Full schema (#2834): GetCompliancePosture persists the trend snapshot only
+	// when no sub-rollup is degraded, and a minimal fixture's missing tables
+	// degrade it (see #2461 round 2 for the same effect on the Role/UserRole
+	// queries). Every rollup must be readable for a snapshot to be saved.
+	require.NoError(t, db.AutoMigrate(models.AllTestModels()...))
 	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
 	c.now = func() time.Time { return time.Date(2099, 1, 15, 12, 0, 0, 0, time.UTC) }
 	return c, db

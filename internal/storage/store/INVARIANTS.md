@@ -72,13 +72,27 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
 ## State-machine transitions (atomic conditional UPDATE pattern)
 
 - **INV-STORE-14** `TransitionMachineIdentityState`/`TransitionSecretStatus` persist via a
-  conditional `WHERE id = ? AND state/status = ?` + `Select("*")` + `Updates(m)` — the full
-  mutated row is written in one statement, only when the row's current state still matches
-  `fromState`. Why: #388; mirrors `UpdateProjectInvitation`'s shape; "atomic security counters"
-  review-finding pattern applied to state machines. Guard: inferred live from
-  `local_machine_identities.go:57` and `local_secrets.go:548` — dedicated test names not
-  independently confirmed in this pass. UNGUARDED pending confirmation (#issue: locate and
-  cite the exact test, or add one asserting a stale-fromState UPDATE affects 0 rows).
+  conditional `WHERE id = ? AND state/status = ?` + `Updates(m)`, so the write lands only
+  when the row's current state still matches `fromState`. The COLUMN SCOPE differs between
+  the two, deliberately: `TransitionMachineIdentityState` uses `Select("*")` (it writes
+  `RevokedAt` and clears `Description`/`Classification` in the same statement, which a bare
+  struct `Updates` would skip as zero values); `TransitionSecretStatus` uses
+  `Select("Status", "UpdatedAt")` — narrowed from `Select("*")` by #2695, because its only
+  callers (`SuspendSecret`, `ResumeSecret`) set exactly those two, and writing the rest of
+  the caller's already-stale read reverted whatever a narrower concurrent writer had changed
+  (`read_count`, i.e. a spent `MaxReads` budget; `owner_id`, i.e. an offboarding clear;
+  classification; the rotation columns). Why: #388 for the CAS; mirrors
+  `UpdateProjectInvitation`'s shape; #2695 for the scope split. Guard, in three parts:
+  the stale-`fromState`-is-rejected half is
+  `local_state_transition_cas_test.go:TestTransitionMachineIdentityState_StaleFromStateIsRejectedAndNoOp`
+  and `local_secrets_transition_status_test.go:TestTransitionSecretStatus_ClosesRace`, plus
+  `concurrency_state_transition_cas_postgres_test.go:TestConcurrency_StateTransitionCAS_MultiInstancePostgres_ExactlyOneWinner`
+  (8 independent connections, exactly one winner; pg-gated) — verified red by dropping the
+  `AND state/status = ?` predicate (8 winners; loser clobbers); the COLUMN-SCOPE half is
+  `state_transition_full_row_test.go` —
+  `TestTransitionMachineIdentityState_PersistsFullRowIncludingZeroValues` (inclusion) and
+  `TestTransitionSecretStatus_WritesOnlyStatusAndUpdatedAt` (exclusion, red when the
+  `Select` is widened back to `"*"`).
 - **INV-STORE-15** `LockMachineIdentityForUpdate` takes `SELECT ... FOR UPDATE` on Postgres
   only (SQLite has no row lock, relies on single-process + transaction) — the two dialects'
   serialization strategy stays matched to `TransitionMachineIdentityState`'s usage, and the
@@ -100,6 +114,15 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   under concurrent reads — atomic conditional UPDATE, fail closed. Why: "atomic security
   counters" review-finding pattern. Guard: `concurrency_max_reads_test.go`
   (`TestConcurrency_MaxReads_NeverExceedsCap`, `TestConcurrency_MaxReadsSecretLevel_NeverExceedsCap`).
+- **INV-STORE-21** `UpdateUserIfActiveStateMatches` writes only the seven profile columns
+  (`username`, `username_folded`, `email`, `email_folded`, `display_name`, `is_active`,
+  `updated_at`), never the full row; `account_state` is written only by `SetAccountState`
+  (a state that does not depend on the pre-read one) or `SetAccountStateIfMatches`
+  (`WHERE id = ? AND account_state = <pre-read> AND deleted_at IS NULL`, matched=false on a
+  moved, missing or soft-deleted row). Why: #2653/#2654, C-RACE-FIX-B2. Guard:
+  `local_users_set_account_state_if_matches_test.go`
+  (`TestSetAccountStateIfMatches_RefusesWhenStateMoved` et al.);
+  `internal/core` `TestUserProfileWrites_AreColumnScoped`.
 
 ## Soft-delete / purge races
 
@@ -108,6 +131,34 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `concurrency_purge_restore_race_test.go`
   (`TestConcurrency_PurgeDeletedSecretsBefore_RestoreWinsRace`,
   `_PurgeDeletedUsersBefore_RestoreWinsRace`, `_PurgeDeletedProjectsBefore_RestoreWinsRace`).
+
+- **INV-STORE-21** A child row (share, ACL grant, lease, environment, config) never commits
+  live under a parent that a concurrent delete cascade soft-deleted or disabled. The child
+  write and a `lockLiveParent` re-read of the parent (`SELECT ... FOR SHARE` on Postgres) run
+  in ONE transaction, in that order (write first, then check), and the transaction rolls back
+  when the parent is gone. The delete side must UPDATE (row-lock) the parent row BEFORE it
+  sweeps the children. Checking before the write is not enough under READ COMMITTED: a
+  cascade that runs between the check and the write never sees the child. Why: #2646/#2647
+  (`CreateShareRecord` vs `DeleteSecret`), C-GUARD2-EXEMPT-REVIEW #2662. Guard (pg-gated,
+  two replicas): `internal/core/concurrency_check_then_act_exempt_review_postgres_test.go`
+  (`TestCTAReview_ShareSecret_vs_DeleteSecret_CrossReplicaPostgres`,
+  `_ShareSecretWithGroup_vs_DeleteSecret_`, `_ShareSecret_DeleteSecretAfterInsert_`).
+  ACL grants (#2649, `CreateOrUpdateSecretACL` vs `DeleteSecret`'s CWE-284 cascade):
+  `_GrantSecretACL_vs_DeleteSecret_`, `_GrantSecretACL_DeleteSecretAfterUpsert_`, and
+  `local_secret_acl_test.go:TestLocalACL_RefusesSoftDeletedSecret` (default-ci).
+  Active leases (#2652, `CreateDynamicSecretLease` vs `DeleteProject`'s #369 config disable;
+  the parent is the config, `disabled = false`): `_IssueLease_vs_DeleteProject_`,
+  `_IssueLease_DeleteProjectAfterInsert_`, and `local_dynamic_test.go:
+  TestCreateDynamicSecretLease_ActiveRefusedOnDisabledConfig` (default-ci). A `revoke_failed`
+  tracking row is always recorded: it is the only record of a credential still live.
+  Environments (#2656, `RestoreEnvironment` vs `DeleteProject`): `deleteProjectCascade` takes
+  `SELECT ... FOR UPDATE` on the project before any child sweep (it used to touch the project
+  row last). `_RestoreEnvironment_vs_DeleteProject_`, `_RestoreEnvironment_DeleteProjectAfterUpdate_`,
+  and `_RestoreEnvironment_InsideDeleteProjectCascade_`, which runs A's whole restore between
+  the cascade's environment sweep and its project UPDATE and fails without that up-front lock.
+  Configs (#2651, `CreateDynamicSecretConfig` vs `DeleteProject`'s #369 disable; the parent is
+  the project): `_CreateDynamicSecretConfig_DeleteProjectAfterInsert_` and
+  `local_dynamic_test.go:TestCreateDynamicSecretConfig_RefusesSoftDeletedProject` (default-ci).
 
 ## GORM hook / timezone correctness (`internal/storage/models`, `store`)
 
@@ -166,3 +217,13 @@ Format: `INV-STORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`
   `internal/core` `TestCTAReview_RemoveUserRole_LastGlobalAdmin_AfterAdminGroupDeleted`
   (+ `_Postgres`), `TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked` (drift between
   the state list and `core.AccountLoginBlocked`).
+## Query plans (anomaly detection hot path)
+
+- **INV-STORE-21** `CreateAnomalyAlert`'s dedup count, `ListSecretAccessLogs`, and
+  `ListSecretIDsAccessedSince` are index-served on SQLite — checked by EXPLAINing the SQL the
+  production methods actually issued (captured from gorm), not a copied predicate.
+  `ListSecretIDsAccessedSince`'s `DISTINCT +secret_node_id` is load-bearing: without the unary
+  plus SQLite full-scans the per-secret index instead of range-scanning the time index.
+  Postgres plans are deliberately NOT asserted (seq scans on tiny test tables regardless of
+  indexes). Why: PERF-2 performance study. Guard:
+  `anomaly_query_plan_test.go:TestAnomalyQueries_UseTheirIndexes`.

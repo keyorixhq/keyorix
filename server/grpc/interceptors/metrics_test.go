@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc"
 )
@@ -26,6 +27,7 @@ func TestMetricsInterceptor_CountsSuccessAndError(t *testing.T) {
 	// A successful call.
 	_, err := interceptor(context.Background(), nil, info,
 		func(_ context.Context, _ interface{}) (interface{}, error) {
+			time.Sleep(time.Millisecond) // #2927: keep duration above clock resolution
 			return "ok", nil
 		})
 	if err != nil {
@@ -69,8 +71,14 @@ func TestMetricsInterceptor_UsesSharedGlobalSingleton(t *testing.T) {
 	interceptor := MetricsInterceptor()
 	info := &grpc.UnaryServerInfo{FullMethod: "/keyorix.v1.SecretService/GetSecret"}
 
+	// #2927: the handlers must take measurable time. A no-op handler can finish
+	// within the clock's resolution, so time.Since reports 0ns and TotalDuration
+	// legitimately does not move (~1.6% of runs) — a flaw in the test's input, not
+	// in the interceptor, and not shared state: the delta arithmetic here is
+	// already immune to other tests' writes.
 	_, err := interceptor(context.Background(), nil, info,
 		func(_ context.Context, _ interface{}) (interface{}, error) {
+			time.Sleep(time.Millisecond)
 			return "ok", nil
 		})
 	if err != nil {
@@ -78,6 +86,7 @@ func TestMetricsInterceptor_UsesSharedGlobalSingleton(t *testing.T) {
 	}
 	_, err = interceptor(context.Background(), nil, info,
 		func(_ context.Context, _ interface{}) (interface{}, error) {
+			time.Sleep(time.Millisecond)
 			return nil, errors.New("fail")
 		})
 	if err == nil {

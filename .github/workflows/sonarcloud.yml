@@ -24,8 +24,8 @@ permissions: {}
 # a later push/merge on the same branch makes an in-flight run's result moot
 # before it even finishes.
 concurrency:
-  group: sonarcloud-${{ github.ref }}
-  cancel-in-progress: true
+  group: sonarcloud-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # Sonar's "New Code Coverage" gate only evaluates lines this PR actually
@@ -85,7 +85,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: needs.changes.outputs.skip_go != 'true'
         with:
-          go-version: '1.27.1'
+          go-version: '1.27.2'
 
       # On main this is the whole-project baseline and runs ./... unchanged.
       #
@@ -237,7 +237,7 @@ jobs:
       # wrapping another cache around this would just duplicate what's already
       # inside the action.
       - name: Analyze with SonarCloud
-        uses: SonarSource/sonarqube-scan-action@ba9859eae8dd6bd29e412f25ddbbef3d032000f4 # v8.2.2
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:

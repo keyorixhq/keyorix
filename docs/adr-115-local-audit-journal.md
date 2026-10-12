@@ -1,6 +1,6 @@
 # ADR-115: Local append-only audit journal (opt-in alternative durability point)
 
-**Status:** Proposed
+**Status:** Proposed (an experimental prototype, off by default, is in #2758; see Status)
 **Date:** 2026-10-05
 **Context:** PERF-4 (performance-parity study, `~/proj/prompts/reports/SESSION-PERF-2.md`).
 Confirmed H1: with audit-before-disclosure enforced (non-negotiable, see below),
@@ -134,12 +134,16 @@ net loss at low concurrency.
   by the replicator's drain loop instead of a blocked HTTP request. ADR-029's
   checkpoints keep signing the same table with the same key; this ADR adds no
   new signing key and no new verification surface for the DB chain itself.
-- Each replicated row additionally records its origin
-  (`journal_replica_id`, `journal_seq`) in two new nullable columns on
-  `audit_events`, added the same additive, `columnExists`-guarded way ADR-029
-  added `prev_hash`/`entry_hash` — so a reconciliation tool (and the "DB copy
-  converges" test, see Prototype) can prove every acknowledged journal record
-  has a corresponding DB row, independent of trusting the replay cursor alone.
+- Each replicated row additionally records its origin in a side table,
+  `audit_journal_origins(replica_id, seq)` (primary key) `→ entry_hash`,
+  written in the same transaction as the row — so a reconciliation tool (and
+  the "DB copy converges" test, see Prototype) can prove every acknowledged
+  journal record has a corresponding DB row, independent of trusting the
+  replay cursor alone. A side table rather than columns on `audit_events`:
+  columns there would be bound by every audit INSERT on the default path
+  (the flusher's multi-row INSERT binds every model column), journal or not.
+  The row is identified by `entry_hash`, not `id`, because retention may
+  delete old audit rows and an `id` would then dangle.
 
 ### Asynchronous replication, crash replay, idempotent exactly-once-visible DB copy
 
@@ -152,9 +156,11 @@ net loss at low concurrency.
   re-replay/duplicate insert on restart) or vice versa (would cause the
   replicator to skip rows it never actually replayed). On restart, the
   replicator reads `last_replayed_seq` for its own `replica_id` and resumes
-  from `last_replayed_seq + 1` — no separate dedup/idempotency key is needed
-  because the transactional boundary already makes "replayed" and "cursor
-  advanced" a single atomic fact.
+  from `last_replayed_seq + 1`. The cursor is re-read inside each replay
+  transaction, after the audit lock, and records it already covers are
+  skipped: a retry after a commit-ambiguous error (the COMMIT landed but the
+  client saw an error) is then a no-op rather than a duplicate. The
+  `audit_journal_origins` primary key is the enforced backstop.
 - **Crash replay**: on startup, before serving any traffic that could emit a
   new audit event, the replicator (a) validates the local journal (see
   "Corrupt journal" below), (b) reads its persisted cursor, (c) replays every
@@ -283,3 +289,15 @@ required for correctness, only for operational honesty about the lag window.
 Proposed. Andrei approved the idea in principle on 2026-10-03 (per PERF-4's
 brief); this document is the first artifact for review before the prototype
 (PERF-4 item 2) lands.
+
+Prototype (#2758) — experimental, not an acceptance of this ADR. It is off
+unless `local_audit_journal.enabled: true` is set, refuses to start without
+`directory` and `replica_id`, refuses to combine with ADR-112 Amendment 1's
+fast audit mode, and is registered as a weakening setting (start-up warning,
+settings-diff audit, posture report). Measured on pve01 (PERF-4, 2026-10-05)
+it was slower than the existing group commit at every concurrency tested
+(c=1 p50 90.5ms vs 10.7ms), the opposite of this ADR's premise; whether
+that is the disk or the sync pattern is PERF-5's question. Known gap: the
+journal cannot detect its own truncation at a record boundary; the DB
+replay cursor catches that for records already replayed, but loss of the
+not-yet-replayed tail is not detectable.

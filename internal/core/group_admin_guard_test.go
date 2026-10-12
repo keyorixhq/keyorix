@@ -27,7 +27,7 @@ func TestRemoveRoleFromGroup_RefusesLastGlobalAdmin(t *testing.T) {
 
 	err := c.RemoveRoleFromGroup(ctx, 0, 1, 1, Scope{})
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no super_admin/admin/system_admin at the global scope")
+	assert.Contains(t, err.Error(), "no install administrator at the global scope")
 
 	// The grant is untouched.
 	var count int64
@@ -183,7 +183,11 @@ func TestDeleteGroup_ProjectScopedSoleMemberNotCountedAsGlobalAdmin(t *testing.T
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	// #2496: admin-ness is the structural flag, not the name — this fixture
+	// relied on the retired installAdminRoleNames list recognising "admin",
+	// which made the guard a no-op once that list was gone, and this test would
+	// have passed vacuously (DeleteGroup succeeding for the wrong reason).
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error) // GLOBAL admin grant
 	require.NoError(t, db.Create(&models.User{ID: 42, Username: "scoped-member", Email: "sm@example.com"}).Error)
@@ -207,7 +211,11 @@ func TestDeleteGroup_GlobalMemberCountedAsGlobalAdmin(t *testing.T) {
 	c, db := newRBACManagementCore(t)
 	ctx := context.Background()
 	require.NoError(t, db.AutoMigrate(&models.User{}))
-	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin"}).Error)
+	// #2496: see the sibling test above — without the structural flag this
+	// fixture's role is not admin-conferring at all, so the "deleting group 1 is
+	// safe BECAUSE group 2's global member carries admin authority" assertion
+	// below would hold for the opposite reason (nothing to guard).
+	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "ops"}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 2, Name: "ops2"}).Error)
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: 1, RoleID: 1}).Error)

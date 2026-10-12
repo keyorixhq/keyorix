@@ -121,6 +121,16 @@ var permissionSweepAllowlist = map[string]string{
 		"above. Actual alert data (which does disclose SecretName/AccessedBy/IPAddress " +
 		"deployment-wide) is the separate /audit/anomalies route (line 1074 above), already " +
 		"gated at effective audit.read.",
+	"GET /api/v1/audit/export": "GET /audit/export sits inside r.Route(\"/audit\", ...) " +
+		"(router.go:1054), same group as /audit/anomalies above -- same chi With()-adds-to-" +
+		"group's-Use() reasoning applies verbatim: this route actually requires BOTH " +
+		"audit.read AND system.read (AND, not OR). Added FIX-1 (#2733's sibling class): " +
+		"AuditExportEntry's full-fidelity shape includes IPAddress and the tamper-evidence " +
+		"hash chain, deliberately excluded from /audit/logs and /audit/search -- same " +
+		"disclosure shape /audit/anomalies' own elevation exists for.",
+	"GET /api/v1/audit/export.csv": "GET /audit/export.csv -- see GET /api/v1/audit/export " +
+		"immediately above, same route group, same elevation, same reasoning (CSV vs JSON " +
+		"encoding of the identical AuditExportEntry-shaped data).",
 }
 
 // repoRoot resolves the repository root relative to THIS test file's own location (not
@@ -374,13 +384,13 @@ const (
 
 	// justSelfServiceOwnAccount covers the My Account / MFA / WebAuthn /
 	// sessions / PAT / notifications family inside /api/v1: authenticated (the
-	// group's Authentication/RequireCSRF/EnforceAccountRestriction/
-	// EnforceMFAEnrollment middleware all still apply), but acts ONLY on the
+	// group's Authentication/RequireCSRF/EnforceAccountSetup middleware all
+	// still apply), but acts ONLY on the
 	// calling principal's OWN account/session/token/notification, so no RBAC
 	// permission concept applies -- ADR-021/ADR-024/ADR-027 establish this
 	// whole family as authenticated-but-not-permission-gated by design.
 	justSelfServiceOwnAccount = "Self-service: authenticated (this whole route sits inside the /api/v1 group's " +
-		"Authentication/RequireCSRF/EnforceAccountRestriction/EnforceMFAEnrollment " +
+		"Authentication/RequireCSRF/EnforceAccountSetup " +
 		"middleware -- see router.go:304-325), but acts ONLY on the calling principal's " +
 		"OWN account/session/token/notification. ADR-021/ADR-024/ADR-027 establish this " +
 		"whole family (My Account, MFA/WebAuthn self-enrolment, session/PAT self-service, " +
@@ -464,7 +474,9 @@ var noPermissionGateAllowlist = map[string]string{
 		"(classification_gate.go's own doc comment explains why the weaker project/role family's " +
 		"permission doesn't fit a grant that carries no role at all). A route-level permission gate " +
 		"here would either be wrong (roles.assign is not sufficient) or a duplicate of the exact " +
-		"check core already performs. See ResolveSecretAccessRequest.",
+		"check core already performs. For a restricted PAT core also applies the restriction first " +
+		"(requireAccessRequestAuthorityAt: roles.assign at the request's project), so the route is " +
+		"ALLOWED to restricted PATs in core.restrictedPATUngatedWrites (PAT-GUARD-3). See ResolveSecretAccessRequest.",
 	"POST /api/v1/secret-access-requests/{requestId}/withdraw": "Self-service, same reasoning as WithdrawAccessRequest above: POST " +
 		"secret-access-requests/{requestId}/withdraw cancels only the CALLER'S OWN pending request " +
 		"(core.WithdrawAccessRequest, reused unchanged, scopes to the requester -- #G14's identical " +
@@ -522,8 +534,26 @@ var noPermissionGateAllowlist = map[string]string{
 		"instead by deployment config + a mandatory justification + full audit trail + automatic " +
 		"expiry (NIS2/DORA incident response). Blocked under impersonation (BlockWhenImpersonating) " +
 		"so an admin acting as a user cannot mint a durable emergency role grant attributed to the " +
-		"target. See router.go's own adjacent comment.",
+		"target. A restricted PAT is refused in core (ErrRestrictedPATCannotBreakGlass, ADR-042 " +
+		"addendum of 2026-10-11). See router.go's own adjacent comment.",
 
+	"GET /api/v1/projects": "GET /projects (ListProjects) performs its own authorization INSIDE the handler " +
+		"(#2780), exactly like GET /secrets below and for the same reason: the route used to require " +
+		"secrets.read at the GLOBAL scope and then return EVERY project unfiltered, so a project-scoped " +
+		"reader got a 403 while being able to read those same projects one at a time via " +
+		"GET /projects/{id}. The handler now resolves core.VisibleProjects, which authorizes each project " +
+		"at the PROJECT scope -- the same check GET /projects/{id} applies -- so every row returned is a " +
+		"row this caller could already fetch by id, a global reader's list is unchanged, and a caller with " +
+		"no grant gets an empty list rather than a 403. It also refuses a request with no user context " +
+		"(401) and keeps ?include_deleted=true on the global grant, since a soft-deleted project is " +
+		"unreadable by id to a scoped caller. See catalog.go's ListProjects doc comment.",
+	"GET /api/v1/environments": "GET /environments (ListEnvironments) authorizes INSIDE the handler, " +
+		"same change and same reasoning as GET /projects above (#2780, fix-siblings). It returns only " +
+		"environments whose parent project the caller can read, resolved by the same " +
+		"core.VisibleProjects answer. Load-bearing rather than cosmetic: the web New Secret dialog's " +
+		"required Environment select reads THIS endpoint, so scoping the project list alone would leave " +
+		"that dialog unsatisfiable for a project-scoped reader. Refuses a request with no user context " +
+		"(401). See catalog.go's ListEnvironments doc comment.",
 	"GET /api/v1/secrets": "GET /secrets (ListSecrets) performs its own authorization INSIDE the " +
 		"handler so a project-scoped reader gets the union of their accessible scopes rather than a " +
 		"403 on an unfiltered request -- see router.go's own adjacent comment and secrets_list.go. " +
@@ -575,6 +605,7 @@ var permissionGateMiddleware = map[string]bool{
 	"RequireScopedPermission":           true,
 	"RequireScopedSecretPermission":     true,
 	"RequireScopedSecretRefPermission":  true,
+	"RequirePermissionInAnyScope":       true,
 	"RequireNodeCredential":             true,
 	"RequireNodeCredentialOrPermission": true,
 	// SCIMToken is not permission-shaped (no `permission string` argument) but

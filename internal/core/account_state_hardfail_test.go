@@ -68,7 +68,9 @@ func TestUpdateSCIMUser_HardFailsWhenBackendCannotPersistDeprovision(t *testing.
 	store.On("GetUser", ctx, uint(2)).Return(target, nil)
 	store.On("GetUserRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(2), Scope{}).Return([]uint{}, nil)
-	store.On("SetAccountState", ctx, uint(2), AccountDeprovisioned, mock.Anything).Return(errAccountStatePersistFailure)
+	// C-RACE-FIX-B2: SCIM writes account_state through the conditional
+	// SetAccountStateIfMatches (from = the pre-read AccountActive).
+	store.On("SetAccountStateIfMatches", ctx, uint(2), AccountActive, AccountDeprovisioned, mock.Anything).Return(false, errAccountStatePersistFailure)
 
 	no := false
 	_, err := c.UpdateSCIMUser(ctx, 9, 2, nil, nil, &no)
@@ -104,4 +106,5 @@ func TestUpdateSCIMUser_NoStateChange_DoesNotConsultSetAccountState(t *testing.T
 	require.NoError(t, err)
 	require.Equal(t, "Bob Smith", updated.DisplayName)
 	store.AssertNotCalled(t, "SetAccountState", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	store.AssertNotCalled(t, "SetAccountStateIfMatches", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

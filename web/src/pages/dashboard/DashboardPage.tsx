@@ -1,3 +1,4 @@
+import { useCan } from '../../features/auth/useCan';
 import React from 'react';
 import { useNavigate } from 'react-router';
 import { ROUTES } from '../../constants';
@@ -5,6 +6,8 @@ import { useAuthStore } from '../../store/authStore';
 import { useUIStore } from '../../store/uiStore';
 import { ActivityItem, AnomalyAlert } from '../../types';
 import { humanizeAlertType } from '../../utils/anomaly';
+import { eventLabel } from '../../utils/eventLabels';
+import { formatDateTime } from '../../utils/datetime';
 import {
     useDashboardStats,
     useDashboardActivity,
@@ -20,10 +23,8 @@ import {
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmt = (n: number) => n.toLocaleString();
-const fmtDate = (d: string | Date) =>
-    new Intl.DateTimeFormat('en', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(
-        new Date(d)
-    );
+const NOT_VISIBLE = 'Not visible to you';
+const fmtDate = (d: string | Date) => formatDateTime(d);
 
 interface SecurityCardData {
     label: string;
@@ -69,6 +70,9 @@ interface StatCardProps {
     prevValue?: number;
     accent: string;
     onClick?: () => void;
+    // The caller may not see this number at all (no audit.read, not an admin). Showing 0 would
+    // read as "nothing happened"; say it is not visible instead.
+    notVisible?: boolean;
 }
 
 function buildStatCardClassName(onClick: (() => void) | undefined): string {
@@ -76,15 +80,39 @@ function buildStatCardClassName(onClick: (() => void) | undefined): string {
     return `relative bg-surface border border-base rounded-xl p-6 flex flex-col gap-2 shadow-xs ${clickable}`;
 }
 
-const StatCard: React.FC<StatCardProps> = ({ label, value, sub, trend, prevValue, accent, onClick }) => {
+const StatCard: React.FC<StatCardProps> = ({
+    label,
+    value: rawValue,
+    sub: rawSub,
+    trend,
+    prevValue,
+    accent,
+    onClick: rawOnClick,
+    notVisible,
+}) => {
+    const value = notVisible ? '—' : rawValue;
+    const sub = notVisible ? NOT_VISIBLE : rawSub;
+    const onClick = notVisible ? undefined : rawOnClick;
     const numericValue = typeof value === 'number' ? value : 0;
     const delta = trend && prevValue != null ? Math.round(numericValue - prevValue) : null;
     const cardClass = buildStatCardClassName(onClick);
+    // Derived from the label so every card gets one without a second list to keep
+    // in sync: "Total Secrets" -> stat-card-total-secrets-value. Added for #2780's
+    // real-backend spec, which has to read this number rather than assert on screen
+    // text — the label renders uppercase via CSS while the DOM text is title case,
+    // and the value is a sibling span with no distinguishing class of its own.
+    const testID = `stat-card-${label
+        .toLowerCase()
+        .replace(/\s+/g, '-')
+        .replace(/[^a-z0-9-]/g, '')}`;
     const cardContent = (
         <>
             <div className={`absolute left-0 top-4 bottom-4 w-1 rounded-r-full ${accent}`} />
             <span className="text-xs font-semibold text-base-muted uppercase tracking-widest pl-3">{label}</span>
-            <span className="text-4xl font-bold text-base-primary pl-3 tabular-nums leading-none">
+            <span
+                data-testid={`${testID}-value`}
+                className="text-4xl font-bold text-base-primary pl-3 tabular-nums leading-none"
+            >
                 {typeof value === 'number' ? fmt(value) : value}
             </span>
             <div className="pl-3 flex items-center gap-2 flex-wrap">
@@ -146,6 +174,8 @@ const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
     created: { dot: 'bg-emerald-500', label: 'created secret' },
     updated: { dot: 'bg-blue-500', label: 'updated secret' },
     accessed: { dot: 'bg-amber-500', label: 'accessed secret' },
+    versions_listed: { dot: 'bg-gray-400', label: 'listed versions of secret' },
+    metadata_read: { dot: 'bg-gray-400', label: 'looked up secret' },
     shared: { dot: 'bg-purple-500', label: 'shared secret' },
     login: { dot: 'bg-gray-400', label: 'logged in' },
     logout: { dot: 'bg-gray-300', label: 'logged out' },
@@ -153,7 +183,10 @@ const EVENT_STYLES: Record<string, { dot: string; label: string }> = {
 };
 
 const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
-    const style = EVENT_STYLES[item.type] ?? { dot: 'bg-gray-400', label: item.type };
+    // The server sends a readable `label` for every event; the raw audit type stays
+    // available as `eventType` (tooltip). Older servers send neither: fall back to a
+    // friendly label derived from the type.
+    const style = EVENT_STYLES[item.type] ?? { dot: 'bg-gray-400', label: item.label ?? eventLabel(item.type) };
     const secretPart = item.secretName ? ` "${item.secretName}"` : '';
     return (
         <div className="flex items-start gap-3 py-3 border-b border-base last:border-0">
@@ -163,7 +196,7 @@ const ActivityRow: React.FC<{ item: ActivityItem }> = ({ item }) => {
             <div className="flex-1 min-w-0">
                 <p className="text-sm text-base-primary">
                     <span className="font-semibold">{item.actor}</span>{' '}
-                    <span className="text-base-muted">
+                    <span className="text-base-muted" title={item.eventType ?? item.type}>
                         {style.label}
                         {secretPart}
                     </span>
@@ -182,6 +215,7 @@ interface SignalCardProps {
     hint: string;
     severity: SignalSeverity;
     onClick?: () => void;
+    notVisible?: boolean;
 }
 
 function getSignalCardStyles(severity: SignalSeverity, isDark: boolean): React.CSSProperties {
@@ -206,7 +240,18 @@ function getSignalCardStyles(severity: SignalSeverity, isDark: boolean): React.C
     };
 }
 
-const SignalCard: React.FC<SignalCardProps> = ({ label, value, hint, severity, onClick }) => {
+const SignalCard: React.FC<SignalCardProps> = ({
+    label,
+    value: rawValue,
+    hint: rawHint,
+    severity: rawSeverity,
+    onClick: rawOnClick,
+    notVisible,
+}) => {
+    const value: number | string = notVisible ? '—' : rawValue;
+    const hint = notVisible ? NOT_VISIBLE : rawHint;
+    const severity: SignalSeverity = notVisible ? 'neutral' : rawSeverity;
+    const onClick = notVisible ? undefined : rawOnClick;
     const { theme } = useUIStore();
     const isDark =
         theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
@@ -265,40 +310,46 @@ const StatCardsSection: React.FC<StatCardsSectionProps> = ({
     activeUsersSub,
     auditEventsSub,
     alertCount,
-}) => (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-            label="Total Secrets"
-            value={stats?.totalSecrets ?? 0}
-            {...(stats?.totalSecretsTrend ? { trend: stats.totalSecretsTrend } : {})}
-            {...(stats?.prevTotalSecrets != null ? { prevValue: stats.prevTotalSecrets } : {})}
-            sub={totalSecretsSub}
-            accent="bg-blue-500"
-            onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc')}
-        />
-        <StatCard
-            label="Active Users"
-            value={stats?.activeUsers ?? 0}
-            sub={activeUsersSub}
-            accent="bg-purple-500"
-            onClick={() => navigate(ROUTES.ADMIN_USERS)}
-        />
-        <StatCard
-            label="Audit Events (30d)"
-            value={stats?.auditEvents30d ?? 0}
-            sub={auditEventsSub}
-            accent="bg-indigo-500"
-            onClick={() => navigate(ROUTES.AUDIT)}
-        />
-        <StatCard
-            label={securityCard.label}
-            value={securityCard.value}
-            sub={securityCard.sub}
-            accent={securityCard.accent}
-            {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT + '?tab=anomalies') } : {})}
-        />
-    </div>
-);
+}) => {
+    const can = useCan();
+    return (
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <StatCard
+                label="Total Secrets"
+                value={stats?.totalSecrets ?? 0}
+                {...(stats?.totalSecretsTrend ? { trend: stats.totalSecretsTrend } : {})}
+                {...(stats?.prevTotalSecrets != null ? { prevValue: stats.prevTotalSecrets } : {})}
+                sub={totalSecretsSub}
+                accent="bg-blue-500"
+                onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc')}
+            />
+            <StatCard
+                label="Active Users"
+                value={stats?.activeUsers ?? 0}
+                sub={activeUsersSub}
+                accent="bg-purple-500"
+                onClick={() => navigate(ROUTES.ADMIN_USERS)}
+                notVisible={!can.admin}
+            />
+            <StatCard
+                label="Audit Events (30d)"
+                value={stats?.auditEvents30d ?? 0}
+                sub={auditEventsSub}
+                accent="bg-indigo-500"
+                onClick={() => navigate(ROUTES.AUDIT)}
+                notVisible={!can.readAudit}
+            />
+            <StatCard
+                label={securityCard.label}
+                value={securityCard.value}
+                sub={securityCard.sub}
+                accent={securityCard.accent}
+                {...(alertCount > 0 ? { onClick: () => navigate(ROUTES.AUDIT + '?tab=anomalies') } : {})}
+                notVisible={!can.readAudit}
+            />
+        </div>
+    );
+};
 
 interface OperationalSignalsSectionProps {
     navigate: (path: string) => void;
@@ -318,50 +369,67 @@ const OperationalSignalsSection: React.FC<OperationalSignalsSectionProps> = ({
     expiringSeverity,
     failedAuth,
     failedAuthSeverity,
-}) => (
-    <div className="bg-surface border border-base rounded-xl shadow-xs">
-        <div className="px-6 py-4 border-b border-base">
-            <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Operational Signals</h2>
+}) => {
+    const can = useCan();
+    return (
+        <div className="bg-surface border border-base rounded-xl shadow-xs">
+            <div className="px-6 py-4 border-b border-base">
+                <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">
+                    Operational Signals
+                </h2>
+            </div>
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                <SignalCard
+                    label="Expiring Secrets"
+                    value={expiring.length}
+                    hint={expiringHint}
+                    severity={expiringSeverity}
+                    onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc&filter=expiring')}
+                />
+                <SignalCard
+                    label="Failed Auth (24h)"
+                    value={failedAuth}
+                    hint="unsuccessful attempts"
+                    severity={failedAuthSeverity}
+                    onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=failed')}
+                    notVisible={!can.readAudit}
+                />
+                <SignalCard
+                    label="Inactive Users"
+                    value={stats?.inactiveUsers ?? 0}
+                    hint="no login in 30 days"
+                    severity={(stats?.inactiveUsers ?? 0) === 0 ? 'neutral' : 'warn'}
+                    onClick={() => navigate(ROUTES.ADMIN_USERS + '?filter=inactive')}
+                    notVisible={!can.admin}
+                />
+                <SignalCard
+                    label="Secret Reads (30d)"
+                    value={stats?.auditSecretReads30d ?? 0}
+                    hint="access events logged"
+                    severity="neutral"
+                    onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=reads')}
+                    notVisible={!can.readAudit}
+                />
+            </div>
         </div>
-        <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            <SignalCard
-                label="Expiring Secrets"
-                value={expiring.length}
-                hint={expiringHint}
-                severity={expiringSeverity}
-                onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc&filter=expiring')}
-            />
-            <SignalCard
-                label="Failed Auth (24h)"
-                value={failedAuth}
-                hint="unsuccessful attempts"
-                severity={failedAuthSeverity}
-                onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=failed')}
-            />
-            <SignalCard
-                label="Inactive Users"
-                value={stats?.inactiveUsers ?? 0}
-                hint="no login in 30 days"
-                severity={(stats?.inactiveUsers ?? 0) === 0 ? 'neutral' : 'warn'}
-                onClick={() => navigate(ROUTES.ADMIN_USERS + '?filter=inactive')}
-            />
-            <SignalCard
-                label="Secret Reads (30d)"
-                value={stats?.auditSecretReads30d ?? 0}
-                hint="access events logged"
-                severity="neutral"
-                onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=reads')}
-            />
-        </div>
-    </div>
-);
+    );
+};
 
 interface RecentActivitySectionProps {
     navigate: (path: string) => void;
     activityData: ActivityData;
+    // hasSecrets picks the empty-state copy. "Create your first secret to get
+    // started" is only true for a genuinely new user; for a project member who can
+    // read secrets but has generated no visible audit events — the ordinary case for
+    // a read-only persona, since this feed is scoped to the caller's own events
+    // without audit.read — it is wrong, and it invites an action they may not be
+    // permitted to take. Part of #2780's demo-visible symptom: the misleading copy
+    // sat under a count that was also wrong, and fixing only the number would have
+    // left the sentence.
+    hasSecrets: boolean;
 }
 
-const RecentActivitySection: React.FC<RecentActivitySectionProps> = ({ navigate, activityData }) => (
+const RecentActivitySection: React.FC<RecentActivitySectionProps> = ({ navigate, activityData, hasSecrets }) => (
     <div className="lg:col-span-2 bg-surface border border-base rounded-xl shadow-xs">
         <div className="flex items-center justify-between px-6 py-4 border-b border-base">
             <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Recent Activity</h2>
@@ -376,7 +444,11 @@ const RecentActivitySection: React.FC<RecentActivitySectionProps> = ({ navigate,
         <div className="px-6 py-2">
             {!activityData?.data?.length ? (
                 <div className="py-12 text-center">
-                    <p className="text-sm text-base-muted">No activity yet. Create your first secret to get started.</p>
+                    <p className="text-sm text-base-muted">
+                        {hasSecrets
+                            ? 'No recent activity to show.'
+                            : 'No activity yet. Create your first secret to get started.'}
+                    </p>
                 </div>
             ) : (
                 activityData.data.slice(0, 8).map((item: ActivityItem) => <ActivityRow key={item.id} item={item} />)
@@ -753,7 +825,11 @@ export const DashboardPage: React.FC = () => {
 
                 {/* ── Main Grid ──────────────────────────────────────────── */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    <RecentActivitySection navigate={navigate} activityData={activityData} />
+                    <RecentActivitySection
+                        navigate={navigate}
+                        activityData={activityData}
+                        hasSecrets={(stats?.totalSecrets ?? 0) > 0}
+                    />
 
                     {/* Right column */}
                     <div className="space-y-4">

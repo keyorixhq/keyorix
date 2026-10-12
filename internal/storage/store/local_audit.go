@@ -64,11 +64,17 @@ func (ls *LocalStorage) CountSecretReadsBySecretIDs(ctx context.Context, secretI
 		Count        int
 	}
 	var rows []row
-	err := ls.db.WithContext(ctx).Model(&models.SecretAccessLog{}).
+	q := ls.db.WithContext(ctx).Model(&models.SecretAccessLog{}).
 		Select("secret_node_id, COUNT(*) AS count").
-		Where("secret_node_id IN ? AND access_time >= ? AND action = ?", secretIDs, since, "read").
-		Group("secret_node_id").
-		Find(&rows).Error
+		Where("secret_node_id IN ? AND action = ?", secretIDs, "read")
+	// A zero `since` means "all time" (the lifetime count, total_reads). Leaving the
+	// always-true bound out lets the planner answer from (secret_node_id, action)
+	// alone instead of range-scanning (secret_node_id, access_time) with a heap
+	// lookup per row to check action.
+	if !since.IsZero() {
+		q = q.Where("access_time >= ?", since)
+	}
+	err := q.Group("secret_node_id").Find(&rows).Error
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -119,6 +125,33 @@ func (ls *LocalStorage) PrincipalSecretFirstSeen(ctx context.Context, since time
 		out[r.AccessedBy][r.SecretNodeID] = *r.FirstSeen.t
 	}
 	return out, nil
+}
+
+// ListSecretIDsAccessedSince returns the distinct secret IDs with at least one
+// access-log row at or after since — every action and every accessor (including an
+// empty accessed_by), deliberately unlike PrincipalSecretFirstSeen's accessed_by != ”
+// filter: the anomaly detector uses this to decide which secrets to evaluate at all,
+// and its off_hours/frequency_spike/cumulative_rate rules fire on rows regardless of
+// accessor, so narrowing it here would silently drop detections. Served by
+// idx_secret_access_logs_access_time.
+func (ls *LocalStorage) ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error) {
+	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
+	//
+	// The unary plus in `DISTINCT +secret_node_id` is deliberate (a no-op on both
+	// dialects): with a bare `DISTINCT secret_node_id`, SQLite's stats-less planner
+	// prefers a full scan of idx_secret_access_logs_secret_time (already ordered by
+	// secret_node_id, so DISTINCT needs no sort) over a range scan of
+	// idx_secret_access_logs_access_time — reading the whole append-only table every
+	// pass. The expression hides that ordering, so the range scan wins.
+	// TestAnomalyQueries_UseTheirIndexes pins the resulting plan.
+	var ids []uint
+	err := ls.db.WithContext(ctx).
+		Raw("SELECT DISTINCT +secret_node_id AS secret_node_id FROM secret_access_logs WHERE access_time >= ?", since.UTC()).
+		Scan(&ids).Error
+	if err != nil {
+		return nil, err
+	}
+	return ids, nil
 }
 
 // scanTime portably scans a SQL timestamp that some drivers return as time.Time
@@ -506,7 +539,10 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			query = query.Where("success = ?", *filter.Success)
 		}
 		if filter.ActorType != nil {
-			query = query.Where("actor_type = ?", *filter.ActorType)
+			// The displayed kind, not the raw column (#2951): one rule shared with
+			// the HTTP/gRPC views, storage.AuditActorKind.
+			cond, args := storage.AuditActorKindWhere(*filter.ActorType)
+			query = query.Where(cond, args...)
 		}
 		if filter.AfterID != nil {
 			query = query.Where("id > ?", *filter.AfterID)
@@ -520,10 +556,22 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 			// escapeLIKE sanitises % and _ in the caller-supplied username so
 			// a value like "admin%" doesn't turn into a wildcard prefix scan
 			// covering all usernames (#r124 LIKE injection).
-			query = query.Where(
-				`user_id IN (SELECT id FROM users WHERE username LIKE ? ESCAPE '\' AND deleted_at IS NULL)`,
-				"%"+escapeLIKE(*filter.ActorUsername)+"%",
-			)
+			// LOWER on both sides: LIKE is case-insensitive (ASCII) on SQLite but
+			// case-sensitive on Postgres, so without it the same search returned
+			// different rows per backend.
+			cond := `user_id IN (SELECT id FROM users WHERE LOWER(username) LIKE LOWER(?) ESCAPE '\' AND deleted_at IS NULL)`
+			args := []interface{}{"%" + escapeLIKE(*filter.ActorUsername) + "%"}
+			// Rows of kind "system" are displayed with actor "system" (#2951), so a
+			// term that is part of "system" (ASCII case-insensitive, e.g. "sys") also
+			// finds exactly those rows: the same rule as actor_type=system
+			// (storage.AuditSystemActorWhere). A failed login has no user but is
+			// kind "user", so it is not pulled in here.
+			if term := strings.ToLower(*filter.ActorUsername); term != "" && strings.Contains("system", term) {
+				sysCond, sysArgs := storage.AuditSystemActorWhere()
+				cond = "(" + cond + " OR " + sysCond + ")"
+				args = append(args, sysArgs...)
+			}
+			query = query.Where(cond, args...)
 		}
 		if filter.ResourceType != nil {
 			// event_type is "resource_type.action" — match rows whose event_type

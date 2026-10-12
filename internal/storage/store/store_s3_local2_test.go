@@ -40,8 +40,16 @@ func TestMFA_UpsertGetActivate(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, got.Activated)
 
-	// Activate.
-	require.NoError(t, ls.ActivateMFASecret(ctx, 1))
+	// Activate: a stale ciphertext matches nothing (#2655); the current one does.
+	matched, err := ls.ActivateMFASecret(ctx, 1, []byte("stale-enc"))
+	require.NoError(t, err)
+	assert.False(t, matched)
+	got1, err := ls.GetMFASecret(ctx, 1)
+	require.NoError(t, err)
+	assert.False(t, got1.Activated, "a mismatched ciphertext must not activate the secret")
+	matched, err = ls.ActivateMFASecret(ctx, 1, []byte("enc"))
+	require.NoError(t, err)
+	assert.True(t, matched)
 	got2, err := ls.GetMFASecret(ctx, 1)
 	require.NoError(t, err)
 	assert.True(t, got2.Activated)
@@ -258,12 +266,22 @@ func TestMachineIdentityCredential_CRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, active, 1)
 
-	// Update.
-	cred.Name = "updated-name"
-	require.NoError(t, ls.UpdateMachineIdentityCredential(ctx, cred))
+	// Classify (#2696: the only mutation this model has besides touch/revoke —
+	// column-scoped and conditional on the classification the caller read).
+	matched, err := ls.SetMachineIdentityCredentialClassification(ctx, cred.ID, cred.Classification, "internal")
+	require.NoError(t, err)
+	require.True(t, matched)
 	got2, err := ls.GetMachineIdentityCredentialByID(ctx, cred.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "updated-name", got2.Name)
+	assert.Equal(t, "internal", got2.Classification)
+	// A stale `from` value must not match, so a concurrent classifier's value is
+	// never clobbered.
+	matched, err = ls.SetMachineIdentityCredentialClassification(ctx, cred.ID, "public", "restricted")
+	require.NoError(t, err)
+	require.False(t, matched)
+	got2b, err := ls.GetMachineIdentityCredentialByID(ctx, cred.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "internal", got2b.Classification)
 
 	// Touch.
 	usedAt := time.Now().UTC().Truncate(time.Second)
@@ -556,14 +574,28 @@ func TestRotationPolicies_CRUD(t *testing.T) {
 	assert.Len(t, list3, 1)
 
 	// Update.
-	all[0].IntervalDays = 45
-	require.NoError(t, ls.UpdateRotationPolicy(ctx, all[0]))
+	matched, err := ls.UpdateRotationPolicyFields(ctx, all[0].ID, coreStorage.RotationPolicyFieldUpdate{
+		Name: all[0].Name, IntervalDays: 45, AlertDaysBefore: all[0].AlertDaysBefore, IsActive: true,
+	}, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
 	got2, err := ls.GetRotationPolicy(ctx, all[0].ID)
 	require.NoError(t, err)
 	assert.Equal(t, 45, got2.IntervalDays)
 
 	// Delete.
 	require.NoError(t, ls.DeleteRotationPolicy(ctx, all[0].ID))
+	_, err = ls.GetRotationPolicy(ctx, all[0].ID)
+	require.Error(t, err)
+
+	// #2700: the policy is SOFT-deleted, so an update must not clear deleted_at
+	// and bring it back active — the former Save's upsert fallback did exactly
+	// that.
+	matched, err = ls.UpdateRotationPolicyFields(ctx, all[0].ID, coreStorage.RotationPolicyFieldUpdate{
+		Name: "zombie", IntervalDays: 45, IsActive: true,
+	}, time.Now())
+	require.NoError(t, err)
+	require.False(t, matched, "a soft-deleted policy must not be resurrected by an update")
 	_, err = ls.GetRotationPolicy(ctx, all[0].ID)
 	require.Error(t, err)
 }
@@ -581,7 +613,11 @@ func newRBACStore(t *testing.T) *LocalStorage {
 		// MachineIdentityRole/ConnectRefGrant: DeleteRole's cascade (SESSION-AT
 		// AT1 row 2) deletes from every RoleID-referencing table, so any
 		// fixture exercising a real (non-404) DeleteRole needs all five.
-		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{})
+		&models.MachineIdentity{}, &models.MachineIdentityRole{}, &models.ConnectRefGrant{},
+		// SystemMetadata: AssignPermissionToRole/RemovePermissionFromRole/
+		// DeleteRole bump the PERF-3 PR-2 role_permissions cache generation
+		// (a system_metadata row) in the same transaction as the real write.
+		&models.SystemMetadata{})
 }
 
 func TestRBAC_RolesAndPermissions(t *testing.T) {

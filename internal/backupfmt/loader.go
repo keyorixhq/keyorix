@@ -53,9 +53,9 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 		if current[col] || removed[col] {
 			continue
 		}
-		return fmt.Errorf("table %q (archive) has column %q, which this binary's current schema neither has "+
+		return fmt.Errorf("table %q (archive, model %s) has column %q, which this binary's current schema neither has "+
 			"nor lists as a known, deliberately-removed column -- refusing rather than silently drop or "+
-			"misinterpret what may be a renamed or type-changed column (design §3.5)", archived.Name, col)
+			"misinterpret what may be a renamed or type-changed column (design §3.5)", archived.Name, modelName, col)
 	}
 	return nil
 }
@@ -86,7 +86,20 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 // and loads normally; recordSchemaEpoch is the ONLY migrateDatabase call
 // site that seeds this table (confirmed by inspection), so this single,
 // named exclusion is complete, not a guess.
+//
+// ADR-101 added a second key recordSchemaEpoch upserts in the SAME statement,
+// schemaMinCompatibleEpochMetadataKey below: the compatibility floor of the
+// schema the target's own migration just produced. It is skipped for the
+// identical reason -- it describes the restoring binary's schema, not
+// portable data -- and loading the archive's copy would also hit the same
+// UNIQUE constraint. These two keys are the complete set recordSchemaEpoch
+// writes.
 const schemaEpochMetadataKey = "schema_epoch"
+
+// schemaMinCompatibleEpochMetadataKey mirrors internal/storage's unexported
+// constant of the same name (ADR-101) -- byte-for-byte, same reason as
+// schemaEpochMetadataKey above.
+const schemaMinCompatibleEpochMetadataKey = "schema_min_compatible_epoch"
 
 // systemMetadataTableName is SystemMetadata's GORM table name -- the one
 // table loadTable applies the schemaEpochMetadataKey skip to.
@@ -108,7 +121,8 @@ const systemMetadataTableName = "system_metadata"
 // row-count sanity check below stays a check on "did the staged file match
 // what was verified," not silently weakened by this one exclusion.
 // isSystemMetadataSchemaEpochRow reports whether rowPtr (a freshly-decoded
-// row for table tableName) is system_metadata's own schema_epoch row --
+// row for table tableName) is one of system_metadata's own schema_epoch /
+// schema_min_compatible_epoch rows (the two recordSchemaEpoch writes) --
 // via reflection on a "Key" field, not a models.SystemMetadata type
 // assertion, so this package doesn't need to import internal/storage/models
 // for one narrow check.
@@ -117,7 +131,11 @@ func isSystemMetadataSchemaEpochRow(tableName string, rowPtr reflect.Value) bool
 		return false
 	}
 	keyField := rowPtr.Elem().FieldByName("Key")
-	return keyField.IsValid() && keyField.Kind() == reflect.String && keyField.String() == schemaEpochMetadataKey
+	if !keyField.IsValid() || keyField.Kind() != reflect.String {
+		return false
+	}
+	k := keyField.String()
+	return k == schemaEpochMetadataKey || k == schemaMinCompatibleEpochMetadataKey
 }
 
 func loadTable(db *gorm.DB, model any, entry TableEntry, stagingDir string) (int64, error) {
@@ -201,8 +219,11 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 	if err != nil {
 		return fmt.Errorf("derive restore order: %w", err)
 	}
-	models := modelsInOrder(order)
-	names := modelTypeNames()
+	// Walk the restore order by NAME and look each model up by that name:
+	// the name used for error messages and for knownRemovedColumns must
+	// come from the same element as the model, never from a parallel slice
+	// in a different (registry) order (#3086).
+	byName := modelsByTypeName()
 
 	archivedByTable := make(map[string]TableEntry, len(manifest.Tables))
 	for _, te := range manifest.Tables {
@@ -211,10 +232,11 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 	usedArchiveTables := make(map[string]bool, len(manifest.Tables))
 
 	var loadedModels []any
-	for i, m := range models {
+	for _, name := range order {
+		m := byName[name]
 		s, err := parseSchema(m)
 		if err != nil {
-			return fmt.Errorf("parse schema for %s: %w", names[i], err)
+			return fmt.Errorf("parse schema for %s: %w", name, err)
 		}
 		entry, ok := archivedByTable[s.Table]
 		if !ok {
@@ -222,7 +244,7 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 		}
 		usedArchiveTables[s.Table] = true
 
-		if err := checkSchemaDelta(names[i], s.DBNames, entry); err != nil {
+		if err := checkSchemaDelta(name, s.DBNames, entry); err != nil {
 			return err
 		}
 		if _, err := loadTable(db, m, entry, stagingDir); err != nil {

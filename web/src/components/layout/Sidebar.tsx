@@ -20,7 +20,10 @@ import {
 } from '@heroicons/react/24/outline';
 import { useUIStore } from '../../store/uiStore';
 import { useAuth } from '../../features/auth';
+import { useLicenseStatus } from '../../features/license';
 import { ProjectSwitcher } from './ProjectSwitcher';
+import { appVersionLabel } from '../../utils/buildInfo';
+import { paletteShortcutLabel } from '../../utils/platform';
 
 export interface SidebarProps {
     isOpen: boolean;
@@ -35,6 +38,8 @@ export interface NavLeaf {
     icon?: React.ComponentType<React.SVGProps<SVGSVGElement>>;
     soon?: boolean;
     adminOnly?: boolean; // hidden from non-admins, independent of the parent group
+    needs?: string; // hidden unless the user holds this permission (admins always do)
+    commercialOnly?: boolean; // hidden on community builds (the feature does not exist there)
 }
 
 export interface NavGroup {
@@ -89,6 +94,7 @@ export const NAV: NavItem[] = [
         name: 'Audit Logs',
         href: '/audit',
         icon: DocumentTextIcon,
+        needs: 'audit.read',
     },
     {
         kind: 'group',
@@ -126,6 +132,7 @@ export const NAV: NavItem[] = [
         href: '/admin/billing',
         icon: BanknotesIcon,
         adminOnly: true,
+        commercialOnly: true,
     },
     {
         kind: 'leaf',
@@ -319,11 +326,11 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
             style={{ borderColor: 'var(--border)' }}
         >
             <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                Keyorix v0.1.0
+                {appVersionLabel()}
             </p>
             <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                 <kbd className="px-1 py-0.5 rounded-sm text-[10px]" style={{ backgroundColor: 'var(--bg-muted)' }}>
-                    ⌘K
+                    {paletteShortcutLabel()}
                 </kbd>{' '}
                 search
             </span>
@@ -334,16 +341,36 @@ const SidebarContent: React.FC<SidebarContentProps> = ({
 const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose, className }) => {
     const location = useLocation();
     const { sidebarExpanded, toggleSidebarGroup } = useUIStore();
-    const { isAdmin } = useAuth();
+    const { isAdmin, hasPermission } = useAuth();
+    // Billing reports are a licensed feature: on a community build the page can only
+    // answer 403 (and log a console error), so the entry is not offered. Unknown (still
+    // loading, or the lookup failed) counts as not licensed. Only admins can read the
+    // licence status, so nobody else triggers the request.
+    const { data: license } = useLicenseStatus(isAdmin);
+    const hasBilling = !!license?.grants && license.features.includes('billing');
 
-    // Hide admin-only groups (e.g. Access Control) from non-admins, and
-    // admin-only leaves within otherwise-visible groups (e.g. Notification
-    // Channels inside Integrations). The backend still enforces every API;
-    // this just keeps the nav honest per role.
-    const navItems = NAV.filter((item) => !(item.kind === 'group' && item.adminOnly && !isAdmin)).map((item) =>
-        item.kind === 'group'
-            ? { ...item, children: item.children.filter((child) => !(child.adminOnly && !isAdmin)) }
-            : item
+    // Hide every adminOnly entry from a non-admin, in all three shapes a nav
+    // entry can take: an adminOnly GROUP (Access Control), an adminOnly LEAF
+    // INSIDE a group (Notification Channels, under Integrations), and an
+    // adminOnly TOP-LEVEL LEAF (Billing).
+    //
+    // That third case used to be missed (#2774): the filter predicate was
+    // `item.kind === 'group' && item.adminOnly && !isAdmin`, which is false for
+    // a leaf no matter what `adminOnly` says, so a top-level adminOnly leaf was
+    // always kept. Billing is the only one today, so the effect was one nav
+    // item every non-admin could see and none of them could reach -- clicking
+    // it hit <AdminRoute> and bounced silently back to /dashboard.
+    //
+    // `hidden` is written once and applied to both shapes deliberately: the
+    // previous version expressed the same rule twice, in two different places,
+    // and the two disagreed. The backend still enforces every API; this only
+    // keeps the nav from offering a destination the user cannot reach.
+    const hidden = (item: { adminOnly?: boolean; needs?: string; commercialOnly?: boolean }) =>
+        (!!item.adminOnly && !isAdmin) ||
+        (!!item.needs && !isAdmin && !hasPermission(item.needs)) ||
+        (!!item.commercialOnly && !hasBilling);
+    const navItems = NAV.filter((item) => !hidden(item)).map((item) =>
+        item.kind === 'group' ? { ...item, children: item.children.filter((child) => !hidden(child)) } : item
     );
 
     const isActive = (href: string) => location.pathname === href || location.pathname.startsWith(href + '/');

@@ -58,6 +58,17 @@ var membershipTransitions = map[string][]string{
 	MembershipRevoked:          {},
 }
 
+// membershipStamps is a ProjectMembership's pair of lifecycle timestamps,
+// snapshotted before a transition so a failed side effect can restore the row
+// exactly as it was (#2800). Both fields are nullable and a nil here means
+// "that event has not happened", which is itself part of what must be restored
+// — so this is a value carrying two pointers, not two separately-optional
+// arguments that a caller could forget to pass.
+type membershipStamps struct {
+	ActivatedAt *time.Time
+	RevokedAt   *time.Time
+}
+
 // canTransition reports whether a membership may move from → to.
 func canTransition(from, to string) bool {
 	return slices.Contains(membershipTransitions[from], to)
@@ -184,61 +195,83 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	if invitedByMachineID != 0 {
 		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
 	}
-	if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteMemberRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
+	// #2659: everything from the ceiling check through the create (committing
+	// `active` in open mode) and the role grant runs under membershipLockKey,
+	// the key TransitionMembership also takes around its state CAS and
+	// grant/removal side effect. Without it, a revoke on another replica
+	// landing between the `active` create and the grant found no grant to
+	// remove, reported success, and the grant then landed on a `revoked`
+	// membership.
+	var out *models.ProjectMembership
+	err = c.storage.WithNamedLock(ctx, membershipLockKey(projectID, userID), func(ctx context.Context) error {
+		if err := c.requireGranterHoldsRolePermissions(ctx, invitedBy, inviteMemberRole.ID, Scope{ProjectID: projectID}, invitedByMachineID != 0); err != nil {
+			return err
+		}
+		// One active onboarding per (project, user).
+		if existing, err := c.storage.GetActiveProjectMembership(ctx, projectID, userID); err == nil && existing != nil {
+			return fmt.Errorf("user already has a %s membership in this project", existing.State)
+		}
+
+		now := c.now()
+		initial := initialMembershipStateForMode(mode, idpResolved)
+		m := &models.ProjectMembership{
+			ProjectID:                  projectID,
+			UserID:                     userID,
+			Role:                       role,
+			State:                      initial,
+			InvitedBy:                  invitedBy,
+			InvitedByMachineIdentityID: invitedByMachineID,
+			InvitedAt:                  now,
+			UpdatedAt:                  now,
+		}
+		if initial == MembershipActive {
+			t := now
+			m.ActivatedAt = &t
+		}
+		created, err := c.storage.CreateProjectMembership(ctx, m)
+		if err != nil {
+			// #309: the "no active membership" read above races with a concurrent invite for
+			// the same (project, user) — both can pass it before either commits. The DB-level
+			// partial unique index (uniq_project_memberships_active) catches the loser's Create
+			// and CreateProjectMembership wraps it in ErrDuplicateActiveMembership; surface the
+			// same clean "already has a membership" error the winner's sequential check would
+			// have produced, instead of a raw constraint-violation message or an orphaned row.
+			return wrapCreateMembershipError(err)
+		}
+
+		c.logMembershipEvent(ctx, "membership.invited", created, invitedBy)
+		// If the mode put us straight into active, grant the role now.
+		if created.State == MembershipActive {
+			if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role, invitedByMachineID != 0); err != nil {
+				// #309: created just committed as `active` above; if the role grant that's
+				// supposed to back it fails (e.g. the composite user_roles primary key
+				// rejects a grant that already exists via some other, independent path —
+				// the DB-level uniq_project_memberships_active index only dedupes
+				// ProjectMembership rows, not user_roles grants), leaving that row standing
+				// would report a failure to the caller while a live active-looking
+				// membership with no grant behind it persists in ListProjectMemberships/
+				// ListUserProjectMemberships indefinitely. There's no earlier state to fall
+				// back to (this row didn't exist before this call), so revert straight to
+				// revoked.
+				// #2800: this row did not exist before this call, so there is
+				// no earlier state to restore — the revert IS a genuine
+				// terminal revocation. Say so explicitly (never activated,
+				// revoked now) instead of leaving revertFailedActivation to
+				// infer timestamps from the target state.
+				revokedAt := c.now()
+				c.revertFailedActivation(ctx, created, MembershipRevoked,
+					membershipStamps{ActivatedAt: nil, RevokedAt: &revokedAt})
+				return fmt.Errorf("failed to grant role on activation: %w", err)
+			}
+			c.logMembershipEvent(ctx, "membership.activated", created, invitedBy)
+		}
+		out = created
+		return nil
+	})
+	if err != nil {
 		return nil, err
 	}
-	// One active onboarding per (project, user).
-	if existing, err := c.storage.GetActiveProjectMembership(ctx, projectID, userID); err == nil && existing != nil {
-		return nil, fmt.Errorf("user already has a %s membership in this project", existing.State)
-	}
-
-	now := c.now()
-	initial := initialMembershipStateForMode(mode, idpResolved)
-	m := &models.ProjectMembership{
-		ProjectID:                  projectID,
-		UserID:                     userID,
-		Role:                       role,
-		State:                      initial,
-		InvitedBy:                  invitedBy,
-		InvitedByMachineIdentityID: invitedByMachineID,
-		InvitedAt:                  now,
-		UpdatedAt:                  now,
-	}
-	if initial == MembershipActive {
-		t := now
-		m.ActivatedAt = &t
-	}
-	created, err := c.storage.CreateProjectMembership(ctx, m)
-	if err != nil {
-		// #309: the "no active membership" read above races with a concurrent invite for
-		// the same (project, user) — both can pass it before either commits. The DB-level
-		// partial unique index (uniq_project_memberships_active) catches the loser's Create
-		// and CreateProjectMembership wraps it in ErrDuplicateActiveMembership; surface the
-		// same clean "already has a membership" error the winner's sequential check would
-		// have produced, instead of a raw constraint-violation message or an orphaned row.
-		return nil, wrapCreateMembershipError(err)
-	}
-
-	c.logMembershipEvent(ctx, "membership.invited", created, invitedBy)
-	// If the mode put us straight into active, grant the role now.
-	if created.State == MembershipActive {
-		if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role, invitedByMachineID != 0); err != nil {
-			// #309: created just committed as `active` above; if the role grant that's
-			// supposed to back it fails (e.g. the composite user_roles primary key
-			// rejects a grant that already exists via some other, independent path —
-			// the DB-level uniq_project_memberships_active index only dedupes
-			// ProjectMembership rows, not user_roles grants), leaving that row standing
-			// would report a failure to the caller while a live active-looking
-			// membership with no grant behind it persists in ListProjectMemberships/
-			// ListUserProjectMemberships indefinitely. There's no earlier state to fall
-			// back to (this row didn't exist before this call), so revert straight to
-			// revoked.
-			c.revertFailedActivation(ctx, created, MembershipRevoked)
-			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
-		}
-		c.logMembershipEvent(ctx, "membership.activated", created, invitedBy)
-	}
-	return created, nil
+	return out, nil
 }
 
 func wrapCreateMembershipError(err error) error {
@@ -279,103 +312,138 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 	if m.ProjectID != projectID {
 		return nil, fmt.Errorf("membership not found")
 	}
-	if !canTransition(m.State, to) {
-		return nil, fmt.Errorf("cannot transition membership from %s to %s", m.State, to)
-	}
-	// F6 sweep (2026-09-22): this used to be checked ONLY inside the
-	// MembershipActive branch below -- every OTHER legal transition
-	// (membershipTransitions: e.g. active->revoked, provisioned->revoked,
-	// identity_verified->provisioned) reached storage with ZERO
-	// caller-authority check, gated only by the state-machine legality guard
-	// above and the cross-project ID-match guard, which refuses a
-	// MISMATCHED project_id but never required the caller hold anything on
-	// the matching one. The human-facing PUT
-	// /projects/{id}/memberships/{membershipId} route requires roles.assign
-	// unconditionally, for every target state -- require it here too, before
-	// ANY transition, not only activation.
-	selfMachineID, isSelfMachineGrant := uint(0), false
-	if actorIsMachine {
-		selfMachineID, isSelfMachineGrant = selfMachineGranterFromContext(ctx)
-	}
-	if ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, "roles.assign", Scope{ProjectID: m.ProjectID}, actorIsMachine, isSelfMachineGrant, selfMachineID); aerr != nil {
-		return nil, fmt.Errorf("failed to resolve actor authority: %w", aerr)
-	} else if !ok {
-		return nil, ErrMembershipAuthorityRequired
-	}
-	// Activating a membership grants its role, so the ADDITIONAL
-	// escalation-by-proxy ceiling applies on top of the baseline above: the
-	// actor must already hold every permission the membership's role bundles
-	// to activate it, not merely roles.assign.
-	if to == MembershipActive {
-		activateRole, err := c.storage.GetRoleByName(ctx, m.Role)
+	// #2657: re-read under membershipLockKey (project and user are immutable,
+	// so the unlocked read above names the right key) and run the state CAS
+	// together with its grant/removal side effect under the lock, which
+	// inviteMemberWithMode also takes. Without it, a revoke on another replica
+	// landing between activation's CAS and its grant found no grant to remove,
+	// reported success, and the grant then landed on a `revoked` membership.
+	err = c.storage.WithNamedLock(ctx, membershipLockKey(m.ProjectID, m.UserID), func(ctx context.Context) error {
+		var err error
+		m, err = c.storage.GetProjectMembership(ctx, membershipID)
 		if err != nil {
-			return nil, fmt.Errorf("unknown role %q: %w", m.Role, err)
+			return fmt.Errorf("membership not found")
 		}
-		if err := c.requireGranterHoldsRolePermissions(ctx, actorID, activateRole.ID, Scope{ProjectID: m.ProjectID}, actorIsMachine); err != nil {
-			return nil, err
+		if m.ProjectID != projectID {
+			return fmt.Errorf("membership not found")
 		}
-	}
+		if !canTransition(m.State, to) {
+			return fmt.Errorf("cannot transition membership from %s to %s", m.State, to)
+		}
+		// F6 sweep (2026-09-22): this used to be checked ONLY inside the
+		// MembershipActive branch below -- every OTHER legal transition
+		// (membershipTransitions: e.g. active->revoked, provisioned->revoked,
+		// identity_verified->provisioned) reached storage with ZERO
+		// caller-authority check, gated only by the state-machine legality guard
+		// above and the cross-project ID-match guard, which refuses a
+		// MISMATCHED project_id but never required the caller hold anything on
+		// the matching one. The human-facing PUT
+		// /projects/{id}/memberships/{membershipId} route requires roles.assign
+		// unconditionally, for every target state -- require it here too, before
+		// ANY transition, not only activation.
+		selfMachineID, isSelfMachineGrant := uint(0), false
+		if actorIsMachine {
+			selfMachineID, isSelfMachineGrant = selfMachineGranterFromContext(ctx)
+		}
+		if ok, aerr := checkGranterHoldsPermission(ctx, c, actorID, "roles.assign", Scope{ProjectID: m.ProjectID}, actorIsMachine, isSelfMachineGrant, selfMachineID); aerr != nil {
+			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
+		} else if !ok {
+			return ErrMembershipAuthorityRequired
+		}
+		// Activating a membership grants its role, so the ADDITIONAL
+		// escalation-by-proxy ceiling applies on top of the baseline above: the
+		// actor must already hold every permission the membership's role bundles
+		// to activate it, not merely roles.assign.
+		if to == MembershipActive {
+			activateRole, err := c.storage.GetRoleByName(ctx, m.Role)
+			if err != nil {
+				return fmt.Errorf("unknown role %q: %w", m.Role, err)
+			}
+			if err := c.requireGranterHoldsRolePermissions(ctx, actorID, activateRole.ID, Scope{ProjectID: m.ProjectID}, actorIsMachine); err != nil {
+				return err
+			}
+		}
 
-	prevState := m.State
-	now := c.now()
-	m.State = to
-	m.UpdatedAt = now
-	switch to {
-	case MembershipActive:
-		m.ActivatedAt = &now
-	case MembershipRevoked:
-		m.RevokedAt = &now
-	}
-	// #G42: a blind UpdateProjectMembership (full-row Save) here would race a
-	// concurrent TransitionMembership call on the same membership — m was
-	// read above via GetProjectMembership with no lock, so a concurrent
-	// transition landing between that read and this write would be silently
-	// reverted (or, if this write lands first, silently clobbered). Route
-	// through the conditional write gated on the state this call actually
-	// observed (prevState).
-	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, prevState)
+		prevState := m.State
+		// #2800: snapshot the row's lifecycle timestamps BEFORE this transition
+		// stamps its own, so a failed side effect can put the row back exactly
+		// as it was rather than reconstructing timestamps from the target state
+		// (which got them wrong — see revertFailedActivation).
+		prevStamps := membershipStamps{ActivatedAt: m.ActivatedAt, RevokedAt: m.RevokedAt}
+		now := c.now()
+		m.State = to
+		m.UpdatedAt = now
+		switch to {
+		case MembershipActive:
+			m.ActivatedAt = &now
+		case MembershipRevoked:
+			m.RevokedAt = &now
+		}
+		// #G42: a blind UpdateProjectMembership (full-row Save) here would race a
+		// concurrent TransitionMembership call on the same membership — m was
+		// read above via GetProjectMembership with no lock, so a concurrent
+		// transition landing between that read and this write would be silently
+		// reverted (or, if this write lands first, silently clobbered). Route
+		// through the conditional write gated on the state this call actually
+		// observed (prevState).
+		matched, err := c.storage.TransitionProjectMembershipState(ctx, m, prevState)
+		if err != nil {
+			return fmt.Errorf("failed to update membership: %w", err)
+		}
+		if !matched {
+			return fmt.Errorf("membership %d: %w", membershipID, ErrMembershipStateConflict)
+		}
+
+		// Side effects on the role grant.
+		switch to {
+		case MembershipActive:
+			if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role, actorIsMachine); err != nil {
+				// #309: m just committed as `active` above; if the role grant fails, revert
+				// to the state m held before this transition (not straight to revoked) —
+				// unlike inviteMemberWithMode's straight-to-active create, this row already
+				// existed in a legitimate pending state, so a failed activation attempt
+				// should leave it retriable rather than terminally revoked. See
+				// revertFailedActivation.
+				c.revertFailedActivation(ctx, m, prevState, prevStamps)
+				return fmt.Errorf("failed to grant role on activation: %w", err)
+			}
+		case MembershipRevoked:
+			if err := c.RemoveProjectMember(ctx, actorID, m.ProjectID, m.UserID); err != nil && !errors.Is(err, ErrNotProjectMember) {
+				// #G54: a security-relevant refusal (guardLastProjectAdmin: this user is
+				// the project's last roles.assign holder) or a real storage failure must
+				// not be silently swallowed — the membership row was just committed as
+				// `revoked` above, but if the underlying role grant removal was
+				// REFUSED, the user still holds full access via that live grant while
+				// ListProjectMemberships and friends report them as removed. Revert the
+				// membership back to its pre-transition state and surface the error,
+				// same as the activation-failure handling above. ErrNotProjectMember
+				// (no grant existed to remove — already gone via some other path) is
+				// the one genuinely benign case and is still ignored.
+				c.revertFailedActivation(ctx, m, prevState, prevStamps)
+				return fmt.Errorf("failed to remove role grant on revocation: %w", err)
+			}
+		}
+		return nil
+	})
 	if err != nil {
-		return nil, fmt.Errorf("failed to update membership: %w", err)
+		return nil, err
 	}
-	if !matched {
-		return nil, fmt.Errorf("membership %d: %w", membershipID, ErrMembershipStateConflict)
-	}
-
-	// Side effects on the role grant.
-	switch to {
-	case MembershipActive:
-		if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role, actorIsMachine); err != nil {
-			// #309: m just committed as `active` above; if the role grant fails, revert
-			// to the state m held before this transition (not straight to revoked) —
-			// unlike inviteMemberWithMode's straight-to-active create, this row already
-			// existed in a legitimate pending state, so a failed activation attempt
-			// should leave it retriable rather than terminally revoked. See
-			// revertFailedActivation.
-			c.revertFailedActivation(ctx, m, prevState)
-			return nil, fmt.Errorf("failed to grant role on activation: %w", err)
-		}
-	case MembershipRevoked:
-		if err := c.RemoveProjectMember(ctx, actorID, m.ProjectID, m.UserID); err != nil && !errors.Is(err, ErrNotProjectMember) {
-			// #G54: a security-relevant refusal (guardLastProjectAdmin: this user is
-			// the project's last roles.assign holder) or a real storage failure must
-			// not be silently swallowed — the membership row was just committed as
-			// `revoked` above, but if the underlying role grant removal was
-			// REFUSED, the user still holds full access via that live grant while
-			// ListProjectMemberships and friends report them as removed. Revert the
-			// membership back to its pre-transition state and surface the error,
-			// same as the activation-failure handling above. ErrNotProjectMember
-			// (no grant existed to remove — already gone via some other path) is
-			// the one genuinely benign case and is still ignored.
-			c.revertFailedActivation(ctx, m, prevState)
-			return nil, fmt.Errorf("failed to remove role grant on revocation: %w", err)
-		}
-	}
-
 	c.logMembershipEvent(ctx, "membership."+transitionVerb(to), m, actorID)
 	if to == MembershipActive {
 		c.notifyMembershipActivated(ctx, m)
 	}
 	return m, nil
+}
+
+// membershipLockKey is the WithNamedLock key serializing every write that
+// moves a (project, user) membership into or out of `active` together with its
+// role-grant side effect (#2657, #2659): TransitionMembership and
+// inviteMemberWithMode. It is always taken before AddProjectMember's
+// sodGrantLockKey and RemoveProjectMember's projectAdminGuardLockKey, and no
+// holder of either of those calls back into a membership write, so the order
+// cannot invert.
+func membershipLockKey(projectID, userID uint) string {
+	return fmt.Sprintf("project-membership:%d:%d", projectID, userID)
 }
 
 // (helpers below)
@@ -408,17 +476,14 @@ func (c *KeyorixCore) StaleInvites(ctx context.Context, olderThan time.Duration)
 	return c.storage.ListStaleInvitedMemberships(ctx, before)
 }
 
-// ListUserProjectMemberships returns all membership rows for a single user
-// (ADR-025 per-user assignments view).
-func (c *KeyorixCore) ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error) {
-	return c.storage.ListUserProjectMemberships(ctx, userID)
-}
-
-// ProjectMembershipCounts returns per-user project-membership tallies (active and
-// non-revoked total) for the given user IDs in one query (ADR-025 user list).
-func (c *KeyorixCore) ProjectMembershipCounts(ctx context.Context, userIDs []uint) (map[uint]storage.MembershipCounts, error) {
-	return c.storage.CountProjectMembershipsByUsers(ctx, userIDs)
-}
+// (#2781) ListUserProjectMemberships — the per-user "which projects is this user in"
+// read off this journal — is deliberately gone. It was the second, non-equivalent
+// definition of project membership, and it answered "none" for every user on an
+// install whose members were added through POST /projects/{id}/members. Ask
+// ListProjectMembershipsForUser (project_membership_definition.go) instead; it reads
+// this journal only for the lifecycle STATE annotation.
+// project_membership_definition_guard_test.go fails the build if a second definition
+// reappears.
 
 // logMembershipEvent writes an audit event for a membership transition.
 func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, m *models.ProjectMembership, actorID uint) {
@@ -444,11 +509,26 @@ func (c *KeyorixCore) logMembershipEvent(ctx context.Context, eventType string, 
 // TransitionMembership passes the membership's own pre-transition state, so a
 // legitimate retry of the activation is still possible.
 //
+// stamps is what the row's ActivatedAt/RevokedAt must read afterwards, supplied by
+// the caller rather than inferred here.
+//
+// #2800: this used to derive them from toState — `RevokedAt = now` when reverting
+// to revoked, `ActivatedAt = nil` otherwise — which is wrong for the
+// revocation-failure path (:404). There, TransitionMembership has already stamped
+// `RevokedAt = now` for the revoke that then failed, and toState is the row's
+// pre-transition `active`. The old branch took the else arm: it cleared
+// ActivatedAt and left the failed revoke's RevokedAt standing, so the row read
+// `active` / never-activated / revoked-at-T — three mutually contradictory facts,
+// and a member who looks revoked to anything reading RevokedAt while actually
+// holding their role. The target state cannot tell you what the timestamps were;
+// only the pre-transition row can, so the caller snapshots it (prevStamps) and
+// passes it in. Guard: TestRevertFailedActivation_RestoresPreTransitionTimestamps.
+//
 // Best-effort and mirrors revokeInvitationGrants (invitations.go): m is already on a
 // path that's about to return an error to its caller, so a failure to revert is
 // audited (flagged for manual cleanup) rather than returned or retried — a partial
 // revert is strictly better than silently leaving the active row standing.
-func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.ProjectMembership, toState string) {
+func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.ProjectMembership, toState string, stamps membershipStamps) {
 	// #G42: m.State is still MembershipActive here (TransitionMembership's own
 	// write above just committed it) — capture that as fromState so this
 	// revert's write only matches if nothing else has touched the row since,
@@ -456,12 +536,8 @@ func (c *KeyorixCore) revertFailedActivation(ctx context.Context, m *models.Proj
 	fromState := m.State
 	m.State = toState
 	m.UpdatedAt = c.now()
-	if toState == MembershipRevoked {
-		t := c.now()
-		m.RevokedAt = &t
-	} else {
-		m.ActivatedAt = nil
-	}
+	m.ActivatedAt = stamps.ActivatedAt
+	m.RevokedAt = stamps.RevokedAt
 	matched, err := c.storage.TransitionProjectMembershipState(ctx, m, fromState)
 	if err == nil && !matched {
 		err = fmt.Errorf("%w", ErrMembershipStateConflict)

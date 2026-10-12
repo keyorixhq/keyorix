@@ -38,6 +38,11 @@ export interface Secret {
     environment: string;
     isShared: boolean;
     shareCount: number;
+    // The signed-in user's per-secret grant from the list response ('read' | 'write' for a
+    // share or ACL grant), '' / undefined when they hold none. A 'write' share elevates the
+    // user on this one secret even when their roles do not (the role union in useCan cannot
+    // see that), so Edit / Rotate follow it.
+    userPermission?: string;
     lastModified: string;
     owner: string;
     permissions: string[];
@@ -94,6 +99,8 @@ export interface ShareFormData {
 // GET /secrets/{id}/access-log (server JSON is snake_case -- see
 // server/http/handlers/secrets_access_history.go and openapi.yaml).
 export interface SecretAccessLogEntry {
+    id: number;
+    secret_version_id: number;
     accessed_by: string;
     access_time: string;
     action: string;
@@ -112,6 +119,9 @@ export interface SecretAuditEntry {
     user_id?: number;
     description: string;
     success: boolean;
+    // Omitted when the event recorded no diff / was not made under impersonation.
+    diff?: Record<string, unknown>;
+    impersonation?: boolean;
 }
 
 // SecretPolicy is the active create-time policy set, from GET /secrets/policy.
@@ -124,8 +134,21 @@ export interface SecretPolicy {
 export interface SecretAccessor {
     user_id: number;
     username: string;
+    // The EFFECTIVE level: for a project member, the higher of their role and any
+    // active share (#2941).
     permission: string; // read | write | owner
-    source: string; // owner | direct_share | group_share:<group>
+    source: string; // the grant giving it: owner | role | acl | direct_share | group_share:<group>
+    // Every grant the user holds on the secret, e.g. ['role:read', 'direct_share:write'].
+    grants?: string[];
+}
+
+// SecretAccessReport is GET /secrets/{id}/access. When degraded is true the list is an
+// under-count (part of it was withheld from this caller, or a lookup failed), and the
+// UI must say so.
+export interface SecretAccessReport {
+    accessors: SecretAccessor[];
+    degraded: boolean;
+    degradedReasons: string[];
 }
 
 export interface Recipient {
@@ -181,10 +204,14 @@ export interface DashboardStats {
 
 export interface ActivityItem {
     id: number;
-    type: 'created' | 'updated' | 'shared' | 'accessed';
+    type: 'created' | 'updated' | 'shared' | 'accessed' | 'versions_listed' | 'metadata_read' | (string & {});
     secretName: string;
     timestamp: string;
     actor: string;
+    /** Raw audit event type, e.g. "secret.dependency_invalidated" (absent on older servers). */
+    eventType?: string;
+    /** Readable phrase to show after the actor (absent on older servers). */
+    label?: string;
 }
 
 // Navigation types
@@ -211,10 +238,17 @@ export interface PaginatedResponse<T> {
     totalPages: number;
 }
 
+// ApiError mirrors the server's error body (sendError, helpers.go): `error` is a
+// short type label, `message` the human text, `code` the HTTP status.
 export interface ApiError {
+    success: boolean;
+    code: number;
     error: string;
-    code: string;
-    details?: Record<string, string>;
+    message: string;
+    details?: Record<string, unknown> | null;
+    // On a 403 from the account-setup gate (#3024): the setup steps still owed
+    // ("change_password", "enroll_mfa").
+    pending_steps?: string[];
 }
 
 // Form types
@@ -365,6 +399,7 @@ export interface RotationPolicyEvaluation {
     policy_name: string;
     secret_id: number;
     secret_name: string;
+    project_id: number;
     last_rotated_at: string | null;
     days_overdue: number;
     is_overdue: boolean;
@@ -402,6 +437,9 @@ export interface SecretRiskScore {
     score: number; // 0-100 weighted composite
     band: RiskBand;
     factors: SecretRiskFactor[];
+    // true when the exposure factor could not be fully computed: treat score/band
+    // as a floor, not a verified value.
+    degraded: boolean;
 }
 
 export type RotationStatus = 'overdue' | 'due_soon' | 'ok';

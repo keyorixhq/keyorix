@@ -1,0 +1,25 @@
+[Unit]
+Description=Nightly keyorix cross-replica invariant fuzz run
+
+[Timer]
+# 01:00 local, in the 01:00-05:00 window the benchmark sessions (PERF-3,
+# PERF-4) leave free. The service's own FUZZTIME (3h45m) plus setup is sized
+# to land inside it; RuntimeMaxSec=4h15m in the unit is the backstop.
+#
+# Local time, not UTC, on purpose: the window exists because a human operator
+# is asleep, and that follows local time, not UTC. systemd timers are local
+# unless UTC is given.
+OnCalendar=*-*-* 01:00:00
+# Up to 10 minutes of jitter so this and any other 01:00 unit on the box do
+# not start their containers in the same second.
+RandomizedDelaySec=10m
+# Persistent=false, UNLIKE keyorix-mutation.timer. A missed night must NOT be
+# made up at boot: the whole point of the 01:00-05:00 window is that nothing
+# else is using the host, and a catch-up run firing at 10:00 because the box
+# was down overnight would land squarely in a benchmark session. The script
+# would skip it only if the lock happened to be held at that moment, which is
+# not something to rely on.
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -64,8 +65,36 @@ func (ls *LocalStorage) LockWebAuthnCredentialForUpdate(ctx context.Context, cre
 	return &c, nil
 }
 
-func (ls *LocalStorage) UpdateWebAuthnCredential(ctx context.Context, c *models.WebAuthnCredential) error {
-	return ls.db.WithContext(ctx).Save(c).Error
+// DisableWebAuthnCredential sets ONLY `disabled` on an EXISTING credential row —
+// see the storage.Storage interface doc for why the full-row
+// UpdateWebAuthnCredential this replaced (a bare Save) re-INSERTED a passkey the
+// user had concurrently deleted (#2700). WebAuthnCredential has no DeletedAt, so
+// RowsAffected is the whole guarantee: an Updates against a missing row matches
+// nothing, where Save would upsert it back.
+//
+// Unconditional on the current value by design: disabling on a clone signal is
+// monotone (false -> true) and must land whatever else moved.
+func (ls *LocalStorage) DisableWebAuthnCredential(ctx context.Context, id uint) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.WebAuthnCredential{}).Where(sqlWhereID, id).
+		Updates(map[string]interface{}{"disabled": true})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
+}
+
+// SetWebAuthnCredentialCounterState persists ONLY the signature-counter blob and
+// last_used_at. Its sole caller, AdvanceWebAuthnCredentialCounter, already holds
+// SELECT ... FOR UPDATE on the row in the same transaction (which is why #2700
+// classes that site SAFE), so this exists to remove the full-row writer from the
+// model rather than to close a race at this call site.
+func (ls *LocalStorage) SetWebAuthnCredentialCounterState(ctx context.Context, id uint, blob []byte, lastUsedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.WebAuthnCredential{}).Where(sqlWhereID, id).
+		Updates(map[string]interface{}{"credential_blob": blob, "last_used_at": lastUsedAt})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 // webauthnStoredCounter decodes just the one field this package needs out of a
@@ -110,11 +139,18 @@ func (ls *LocalStorage) AdvanceWebAuthnCredentialCounter(ctx context.Context, cr
 			// persisted counter.
 			return nil
 		}
+		// #2700: counter columns only. The FOR UPDATE above already makes this
+		// site safe against a concurrent writer; the narrow method exists so the
+		// model has no full-row writer left for a future caller to misuse.
+		matched, uerr := tx.SetWebAuthnCredentialCounterState(ctx, row.ID, newBlob, lastUsedAt)
+		if uerr != nil {
+			return uerr
+		}
+		if !matched {
+			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		}
 		row.CredentialBlob = newBlob
 		row.LastUsedAt = &lastUsedAt
-		if err := tx.UpdateWebAuthnCredential(ctx, row); err != nil {
-			return err
-		}
 		advanced = true
 		return nil
 	})

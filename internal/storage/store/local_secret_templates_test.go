@@ -9,7 +9,9 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	coreStorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"time"
 )
 
 func newSecretTemplateTestStore(t *testing.T) *LocalStorage {
@@ -125,16 +127,27 @@ func TestUpdateSecretTemplate(t *testing.T) {
 	tmpl := &models.SecretTemplate{Name: "orig-name", DefaultClassification: "public"}
 	require.NoError(t, ls.CreateSecretTemplate(ctx, tmpl))
 
-	tmpl.Name = "updated-name"
-	tmpl.DefaultClassification = "restricted"
-	tmpl.DefaultTags = "ops"
-	require.NoError(t, ls.UpdateSecretTemplate(ctx, tmpl))
+	matched, err := ls.UpdateSecretTemplateFields(ctx, tmpl.ID, coreStorage.SecretTemplateFieldUpdate{
+		Name: "updated-name", DefaultClassification: "restricted", DefaultTags: "ops",
+	}, time.Now())
+	require.NoError(t, err)
+	require.True(t, matched)
 
 	got, err := ls.GetSecretTemplate(ctx, tmpl.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "updated-name", got.Name)
 	assert.Equal(t, "restricted", got.DefaultClassification)
 	assert.Equal(t, "ops", got.DefaultTags)
+
+	// #2700: the template is hard-deleted, so an update against a missing row
+	// must report no-match rather than re-inserting it (what the former Save
+	// did).
+	require.NoError(t, ls.DeleteSecretTemplate(ctx, tmpl.ID))
+	matched, err = ls.UpdateSecretTemplateFields(ctx, tmpl.ID, coreStorage.SecretTemplateFieldUpdate{Name: "zombie"}, time.Now())
+	require.NoError(t, err)
+	require.False(t, matched, "a deleted template must not be resurrected by an update")
+	_, err = ls.GetSecretTemplate(ctx, tmpl.ID)
+	require.Error(t, err)
 }
 
 func TestDeleteSecretTemplate(t *testing.T) {

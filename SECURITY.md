@@ -87,8 +87,13 @@ Keyorix server runs **entirely within your perimeter**:
 What Keyorix never does: open outbound connections to us, embed third-party
 analytics, or require internet access for any cryptographic operation.
 
-A full STRIDE threat model is maintained internally and shared with customers and
-prospects under evaluation — ask via hello@keyorix.com.
+The full STRIDE threat model — assets, trust boundaries, per-boundary
+threats with mitigation citations, and residual risks stated honestly,
+including open ones — is public in this repository:
+[`docs/security/threat-model.md`](docs/security/threat-model.md), with
+per-component breakdowns under
+[`docs/security/threat-models/`](docs/security/threat-models/). It is not
+gated behind a sales conversation.
 
 ## Verifying a Release
 
@@ -180,8 +185,12 @@ Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
   for the current rule set. Every `fix(security)` PR is required to carry a
   regression test proving the specific bug is closed, not just that the
   static pattern is gone from the diff.
-- [CODEOWNERS](.github/CODEOWNERS) requires review on cryptography, auth/RBAC,
-  middleware, database migrations, the CI/CD pipeline itself, and this policy
+- [CODEOWNERS](.github/CODEOWNERS) designates the required reviewer for
+  cryptography, auth/RBAC, middleware, database migrations, the CI/CD
+  pipeline itself, and this policy. **Not currently a GitHub-enforced gate**
+  — the live branch-protection ruleset has no required-reviewer rule (see
+  `docs/security/SDLC.md`); today this is ownership designation enforced by
+  the fact that every commit to date has one human author, not by CI.
 - GitHub-native repository security: secret scanning, push protection (blocks
   a commit containing a detected secret before it lands), Dependabot security
   updates, and private vulnerability reporting are all enabled
@@ -189,8 +198,47 @@ Download releases only from `github.com/keyorixhq/keyorix/releases` over HTTPS.
   Record before implementation
 - External contributions require DCO sign-off (`git commit -s` — see
   [CONTRIBUTING.md](CONTRIBUTING.md)) and maintainer review. Branch protection
-  on `main` requires every required CI check to pass (enforced for maintainers
-  too, no bypass) before a PR can merge.
+  on `main` is a GitHub ruleset requiring every required CI check to pass
+  before a PR can merge, via a merge queue (squash-only); force-pushing or
+  deleting `main` is blocked outright. **Correction (2026-10-05):** this
+  page previously stated that enforcement has "no bypass, including for
+  maintainers." Reading the live ruleset directly showed a standing
+  `OrganizationAdmin` bypass actor on the required checks — real, not a
+  hypothetical. **Resolved the same day**: kept as a deliberate break-glass
+  path for a CI outage, narrowed from `bypass_mode: always` to
+  `bypass_mode: pull_request` — it only applies inside a pull request's own
+  checks, every use is visible on the PR, and it is scoped to the
+  `OrganizationAdmin` actor type, not named individuals. See
+  [`docs/security/SDLC.md`](docs/security/SDLC.md) § Branch protection for
+  the full ruleset detail.
+
+## Safe Harbor
+
+Keyorix will not pursue or support legal action against anyone who makes a
+good-faith effort to find and report a vulnerability under this policy,
+provided that you:
+
+- Only test against your own Keyorix instance (self-hosted, or a disposable
+  environment you control) — never a deployment you don't own or operate.
+- Avoid privacy violations, data destruction, and service disruption to
+  anyone other than yourself.
+- Give us the chance to resolve the issue before any public disclosure,
+  consistent with the coordinated-disclosure timeline above.
+- Don't exploit a finding beyond what's needed to demonstrate and report it.
+
+Testing conducted consistent with this policy is authorized under the
+Computer Fraud and Abuse Act and equivalent anti-hacking laws, and we will
+not initiate legal action for research that stays within these bounds. If
+a third party (not Keyorix) initiates legal action related to research that
+followed this policy, we will make clear — to the extent we're able — that
+your actions were authorized.
+
+## Hall of Fame
+
+Keyorix credits reporters by name in the published advisory, unless they
+prefer otherwise (see Reporting above). No third-party vulnerability
+reports have been validated and published as advisories yet — this
+section will list credited researchers as advisories publish.
 
 ## Security-Relevant Configuration
 

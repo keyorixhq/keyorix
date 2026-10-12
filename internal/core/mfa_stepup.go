@@ -6,10 +6,12 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -31,17 +33,67 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		return fmt.Errorf("account temporarily locked due to repeated failed logins; try again later")
 	}
 	if !user.MFAEnabled {
-		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix auth mfa enroll' first")
+		return fmt.Errorf("MFA is not enabled on this account; enrol with 'keyorix mfa enroll' first")
 	}
 
-	if !c.verifyMFAStepUpCode(ctx, userID, code) {
+	// storageErr distinguishes a genuine storage-read/write failure from a
+	// CONFIRMED negative result (wrong code / non-matching recovery code),
+	// mirroring VerifyMFACredentials' own storageErr handling (#2548): a
+	// resolution error here must not be indistinguishable from a legitimate
+	// negative result, or it both wrongly reports "invalid code" and wrongly
+	// counts toward the account lockout for a code that was never actually
+	// checked. verifyMFAStepUpCode used to collapse both cases into a single
+	// bool, which is exactly the bug #2548 fixed for the login path but never
+	// reached here — this is that same sibling, found during the FIX-1 sweep.
+	verified, storageErr := c.verifyMFAStepUpCode(ctx, userID, code)
+	if !verified {
+		if storageErr != nil {
+			c.auditMFAError(ctx, userID, "stepup", storageErr)
+			// #2888 (#2740 option C extended to lockout bookkeeping): when the
+			// code WAS confirmed correct and only a subsequent write (the
+			// anti-replay mark) failed, verifyMFAStepUpCode does NOT wrap this
+			// error with ErrMFAVerificationUnavailable (unlike the genuinely
+			// pre-verdict case) -- that is exactly the signal used here to still
+			// count it toward the lockout, same as a wrong code would be. A
+			// correct guess must never be cheaper, lockout-wise, than a wrong one.
+			if !errors.Is(storageErr, ErrMFAVerificationUnavailable) {
+				c.recordFailedLogin(ctx, user)
+			}
+			return fmt.Errorf("%w: %s: %w", ErrMFAVerificationStorageFailure, i18n.T("ErrorRetrievalFailed", nil), storageErr)
+		}
 		c.auditMFAFailed(ctx, userID, "stepup")
 		c.recordFailedLogin(ctx, user)
 		return fmt.Errorf("invalid code")
 	}
 
-	if err := c.checkLockAndClearLoginFailures(ctx, user); err != nil {
-		return err
+	// From here on the submitted code has been found CORRECT (and consumed). Every
+	// failure now is post-verdict (ErrLoginPostVerdict), which the handler answers
+	// byte-for-byte like a wrong code and never echoes (#2947): a different
+	// message (the raw storage error, "unable to verify account lock state",
+	// "failed to record MFA step-up") would confirm a correct guess and expose
+	// storage detail. The real cause goes to the server log; the denial is
+	// counted like a wrong code and audited mfa.error (#2894 review; the
+	// stepup/CreateMFAStepUpGrant row of oracleAByDesignErrors lists that
+	// AuditEvent).
+	//
+	// TOCTOU re-check only — the failure state is NOT cleared here (#2894): the
+	// step-up grant below is still to be written, and a fault there denies the
+	// step-up while leaving the counter at 0, making a CORRECT code the cheaper
+	// probe than a wrong one. See LoginCompletion.
+	if err := c.recheckLockAfterCredentialMatched(ctx, user, true); err != nil {
+		if errors.Is(err, ErrLoginPostVerdict) {
+			log.Printf("SECURITY: MFA step-up for user %d: code verified but the lockout re-check failed (reported to the caller as an invalid code): %v", userID, err)
+			// Counted already; audited here, synchronously like the wrong-code
+			// branch's mfa.failed, so an operator sees the fault (#2894 review).
+			c.auditMFAError(ctx, userID, "stepup", err)
+			return err
+		}
+		// The recheck found the account locked by a concurrent burst. Answer
+		// exactly like a wrong code (#2894 review): a wrong code at this moment
+		// gets "invalid code" too, and its recordFailedLogin is a no-op on a
+		// locked account, so both cost the same and read the same.
+		c.auditMFAFailed(ctx, userID, "stepup")
+		return fmt.Errorf("invalid code")
 	}
 
 	grant := &models.MFAStepUpGrant{
@@ -50,8 +102,14 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 		ExpiresAt: c.now().Add(c.mfaStepUpWindow()),
 	}
 	if err := c.storage.CreateMFAStepUpGrant(ctx, grant); err != nil {
-		return fmt.Errorf("failed to record MFA step-up: %w", err)
+		log.Printf("SECURITY: MFA step-up for user %d: code verified but the grant could not be recorded (reported to the caller as an invalid code): %v", userID, err)
+		// #2894: the code already verified, so count this post-verdict storage
+		// fault exactly as a wrong code would be counted (recordFailedLogin above).
+		perr := c.denyAfterCredentialMatched(ctx, user, fmt.Errorf("failed to record MFA step-up: %w", err))
+		c.auditMFAError(ctx, userID, "stepup", perr)
+		return perr
 	}
+	c.clearLoginFailures(ctx, user)
 	uid := userID
 	c.writeAuditEvent(ctx, "mfa.stepup_verified", &uid, nil,
 		fmt.Sprintf("user %d completed MFA step-up for restricted secret access", userID))
@@ -68,16 +126,49 @@ func (c *KeyorixCore) VerifyMFAStepUp(ctx context.Context, userID uint, code str
 //
 // verifyMFAStepUpCode checks code against the user's TOTP secret, falling
 // back to a recovery code, mirroring the login second-factor verification.
-func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) bool {
-	if secret, serr := c.loadTOTPSecret(ctx, userID); serr == nil {
-		if step, ok := c.validateTOTPStep(secret, code); ok {
-			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr == nil && fresh {
-				return true
+// Returns (true, nil) on a confirmed match, (false, nil) on a confirmed
+// negative result (the code genuinely doesn't match either path), and
+// (false, err) on a storage failure -- err is wrapped with
+// ErrMFAVerificationUnavailable only when NEITHER path reached a verdict at
+// all (codeMatched stays false); the caller (VerifyMFAStepUp) uses exactly
+// that wrap to decide whether to count the attempt toward the lockout (#2888
+// round 2: a code confirmed correct, with only its anti-replay MarkTOTPStepUsed
+// write failing, still counts, exactly like a wrong code would -- it must
+// never be cheaper, lockout-wise, than a genuine bad guess, even though the
+// RESPONSE this produces is already identical to a wrong code either way).
+// The input's shape picks the one path that can verify it (isTOTPShaped), so
+// a failed TOTP secret read never preempts a valid recovery code, and a
+// recovery-lookup fault never overrides a conclusive TOTP verdict.
+func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code string) (bool, error) {
+	var storageErr error
+	codeMatched := false // see VerifyMFACredentials / ErrMFAVerificationUnavailable
+	// Exactly one path evaluates a given input, as in VerifyMFACredentials: a
+	// six-digit code gets its verdict from the TOTP path alone, so a recovery-
+	// lookup fault cannot make a wrong TOTP code read differently from a correct
+	// one (#2894 review). See isTOTPShaped.
+	if isTOTPShaped(code) {
+		if secret, serr := c.loadTOTPSecret(ctx, userID); serr != nil {
+			storageErr = serr
+		} else if step, ok := c.validateTOTPStep(secret, code); ok {
+			codeMatched = true
+			if fresh, ferr := c.storage.MarkTOTPStepUsed(ctx, userID, step); ferr != nil {
+				storageErr = ferr
+			} else if fresh {
+				return true, nil
 			}
 		}
+	} else {
+		consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
+		if cerr != nil {
+			storageErr = cerr
+		} else if consumed {
+			return true, nil
+		}
 	}
-	consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
-	return cerr == nil && consumed
+	if storageErr != nil && !codeMatched {
+		storageErr = fmt.Errorf("%w: %w", ErrMFAVerificationUnavailable, storageErr)
+	}
+	return false, storageErr
 }
 
 // HasActiveMFAStepUp reports whether userID holds a current, unexpired step-up

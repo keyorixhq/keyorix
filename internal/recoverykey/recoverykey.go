@@ -111,6 +111,9 @@ func Normalize(raw string) string {
 // Hashes the NORMALIZED form, so storage and verification always agree
 // regardless of how the key was re-typed.
 func Hash(raw string) string {
+	// codeql[go/weak-sensitive-data-hashing] -- raw is a 256-bit crypto/rand
+	// recovery key (see this function's own doc comment), not a low-entropy
+	// password; a slow KDF would only slow legitimate verification.
 	sum := sha256.Sum256([]byte(Normalize(raw)))
 	return hex.EncodeToString(sum[:])
 }

@@ -137,9 +137,11 @@ func lastAdminResidueAdmin(t *testing.T, c *KeyorixCore, st storage.Storage) (ui
 	require.NoError(t, err)
 	ids, err := st.GetUserRoleIDsExact(ctx, admin.ID, storage.Scope{})
 	require.NoError(t, err)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	require.NoError(t, err)
 	var adminRoleID uint
 	for _, id := range ids {
-		if c.installAdminRoleIDSet(ctx)[id] {
+		if adminIDs[id] {
 			adminRoleID = id
 		}
 	}

@@ -1,0 +1,67 @@
+[Unit]
+Description=Keyorix cross-replica invariant fuzz run (two-replica Postgres)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+EnvironmentFile=/etc/keyorix-xreplica/config.env
+ExecStart=/opt/keyorix-xreplica/keyorix/scripts/fuzzing/nightly-cross-replica.sh
+
+# RuntimeMaxSec is the backstop for the 01:00-05:00 window the timer targets.
+# 4h15m, not 4h: FUZZTIME defaults to 3h45m and the run also pays for the
+# container start, the schema migration, the ~3-minute ordering sweep and the
+# corpus push. If the script ever overruns anyway, being killed at 05:15 is
+# strictly better than running into a benchmark session's morning — the script
+# already treats an interrupted run as "no finding" rather than as a failure,
+# so a kill here cannot produce a false alert.
+RuntimeMaxSec=4h15m
+TimeoutStopSec=2m
+
+# Nice/CPUQuota: same reasoning as keyorix-fuzz.service and
+# keyorix-mutation.service — this must never starve anything else on a shared
+# homelab box. 200%, lower than the fuzz rig's 400%, because this target's
+# throughput is dominated by Postgres round-trips rather than by CPU: two
+# replicas plus a Postgres container on 8 threads gets nothing from more
+# cores, and leaving headroom is what keeps a benchmark session's host-load
+# check (< 1.5) from being tripped by a night that overlaps its morning.
+Nice=10
+CPUQuota=200%
+# 4G covers go test's build cache plus the Postgres container's shared
+# buffers with room to spare. Set explicitly rather than left unbounded so a
+# runaway fuzz corpus gets a clean OOM kill instead of swapping the host.
+MemoryMax=4G
+
+# Process-isolation hardening (mirrors keyorix-fuzz.service / keyorix-mutation.service).
+NoNewPrivileges=true
+ProtectSystem=strict
+# NOT "true": the script's git invocations read ~/.gitconfig for
+# credential.helper and safe.directory, and the private-corpus push needs the
+# credential helper — same reasoning as keyorix-mutation.service.
+ProtectHome=read-only
+PrivateTmp=true
+RestrictSUIDSGID=true
+
+# go test needs a writable build/module cache; ProtectSystem=strict plus
+# ProtectHome=read-only makes the defaults under $HOME unwritable.
+Environment=GOCACHE=/opt/keyorix-xreplica/go-cache
+Environment=GOMODCACHE=/opt/keyorix-xreplica/go-mod
+Environment=GOPATH=/opt/keyorix-xreplica/gopath
+
+# ProtectSystem=strict makes the filesystem read-only except for what is listed
+# here. Every path the script actually writes:
+#   - KEYORIX_REPO: git fetch/reset, and `go test -fuzz` writes new corpus
+#     entries under internal/core/testdata/fuzz/.
+#   - STATE_DIR: run logs and the alert-dedup markers.
+#   - CORPUS_REPO: the private corpus checkout the crashers are pushed from.
+#   - the GOCACHE/GOMODCACHE/GOPATH dirs above.
+# NOTE: HOST_LOCK (/root/PVE-BENCH-LOCK) is deliberately NOT listed. The
+# script only ever READS it. Giving this unit write access to another
+# session's lock file is exactly the mistake that would let an automated
+# nightly stomp a human's benchmark claim.
+ReadWritePaths=/opt/keyorix-xreplica/keyorix /opt/keyorix-xreplica/state /opt/keyorix-xreplica/fuzz-corpus /opt/keyorix-xreplica/go-cache /opt/keyorix-xreplica/go-mod /opt/keyorix-xreplica/gopath
+
+[Install]
+WantedBy=multi-user.target

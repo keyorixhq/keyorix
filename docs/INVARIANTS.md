@@ -7,7 +7,7 @@ code in any of these packages.** See the root `CLAUDE.md`'s "Spec first, indepen
 package invariants" convention for when this is required.
 
 These are not invented — every entry traces to an ADR, an existing test/fuzzer/static guard,
-`docs/security-closures.tsv`, `docs/adr-conformance-enforced.tsv`, or a documented review
+`docs/security-closures.d/`, `docs/adr-conformance-enforced.tsv`, or a documented review
 finding. If you discover or add an invariant while working in a package, add it to that
 package's file in the same PR; if a change would have to break one, stop and ask rather than
 silently removing it.
@@ -46,9 +46,9 @@ even if you skip everything else:
   panic"** in `internal/core` (INV-CORE-34) or for "every key-shaped byte slice gets
   `wipeBytes`" in `internal/encryption` (INV-ENCRYPTION-25) — both are point-fixes after live
   fuzz findings, the same recurring shape, in two different packages.
-- **`web/src/types` has no generation/drift check against the server's own OpenAPI
-  document** (`web/src/INVARIANTS.md` INV-WEB-05) — asymmetric with `cli/`'s generated API
-  client from the same spec.
+- **`web/src/types` drift check covers only the schema'd wire types, and does not run on
+  an `openapi.yaml`-only PR** (`web/src/INVARIANTS.md` INV-WEB-05) — guarded by
+  `openapiDrift.test.ts`, but `web-ci.yml` is path-filtered to `web/**`.
 
 ## Ledger gaps (informational, not filed as issues)
 

@@ -10,8 +10,9 @@ on:
   # CodeQL's built-in go/zipslip DOES flag it (verified by running this
   # workflow on the pre-fix commit: alert at internal/backupfmt/reader.go,
   # traced into the stageFile helper, which free Semgrep cannot do). To keep
-  # the runner cost down, on pull_request: the JS/TS leg never runs (it still
-  # runs on merge_group/push/schedule), each Go leg runs only when its own
+  # the runner cost down, on pull_request: the JS/TS leg runs only when the PR
+  # touches web/** (see `web_changed`, added 2026-10-11; it always runs on
+  # merge_group/push/schedule), each Go leg runs only when its own
   # module's Go code changed (see the `changes` job), and a new push to the
   # PR cancels the in-flight run (concurrency below). The upload also
   # produces GitHub's "Code scanning results / CodeQL" check on the PR, which
@@ -43,11 +44,11 @@ permissions:
 # happens to overlap a push-triggered run, that push-run already scans the
 # current code, making the concurrent scheduled one redundant.
 concurrency:
-  group: codeql-${{ github.ref }}
-  cancel-in-progress: true
+  group: codeql-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  GO_VERSION: '1.27.1'
+  GO_VERSION: '1.27.2'
 
 jobs:
   # Detects PR changes that touch nothing but *.md/docs/** -- mirrors
@@ -95,6 +96,10 @@ jobs:
       root_go_changed: ${{ steps.filter.outputs.root_go_changed }}
       # pull_request only: same, for the separate operator/ module.
       operator_go_changed: ${{ steps.filter.outputs.operator_go_changed }}
+      # pull_request only: true when the PR changes anything under web/. Always
+      # true for every other event, so merge_group/push/schedule keep their full
+      # JS/TS scan unchanged.
+      web_changed: ${{ steps.filter.outputs.web_changed }}
     steps:
       - name: Detect docs-only / go-unaffected / operator-only changes
         id: filter
@@ -108,6 +113,7 @@ jobs:
               echo "operator_only=false"
               echo "root_go_changed=true"
               echo "operator_go_changed=true"
+              echo "web_changed=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -147,6 +153,12 @@ jobs:
           else
             echo "operator_go_changed=false" >> "$GITHUB_OUTPUT"
           fi
+          # JS/TS leg: only a PR that touches web/** (an empty list fails safe).
+          if [ -z "$changed" ] || echo "$changed" | grep -qE '^web/'; then
+            echo "web_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "web_changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
   # Was a single matrixed `analyze` job (server + operator legs). Split into
   # two jobs because a job-level `if:` cannot reference the `matrix` context
@@ -175,7 +187,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: go
           build-mode: manual
@@ -197,7 +209,7 @@ jobs:
           go test -run=^$ ./...
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:go-server
 
@@ -225,7 +237,7 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: go
           build-mode: manual
@@ -240,7 +252,7 @@ jobs:
           go test -run=^$ ./...
 
       - name: Perform CodeQL analysis
-        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:go-operator
 
@@ -257,9 +269,10 @@ jobs:
   analyze-web:
     name: Analyze (javascript-typescript)
     needs: [changes]
-    # Never on pull_request (Go-only there, runner-cost decision 2026-09-29);
-    # still runs on merge_group/push/schedule.
-    if: github.event_name != 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    # On pull_request only when the PR touches web/** (web_changed, decided
+    # 2026-10-11): web PRs get a new-alert check, other PRs stay Go-only for
+    # runner cost. Always runs on merge_group/push/schedule. Not a required check.
+    if: needs.changes.outputs.web_changed == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -268,7 +281,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      - uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: javascript-typescript
           # security-and-quality includes all security queries plus
@@ -277,9 +290,9 @@ jobs:
           queries: security-and-quality
 
       # JS/TS autobuild just discovers source files -- no compile step.
-      - uses: github/codeql-action/autobuild@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      - uses: github/codeql-action/autobuild@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
 
-      - uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:javascript-typescript
 

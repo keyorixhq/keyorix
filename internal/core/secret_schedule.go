@@ -29,7 +29,18 @@ var ErrAccessOutsideSchedule = errors.New("secret access is not permitted outsid
 // has a schedule and the current time falls outside the allowed window.
 // Returns nil if no schedule is configured or the current time is within it.
 func (c *KeyorixCore) checkSecretAccessSchedule(ctx context.Context, secretNodeID uint) error {
-	sched, err := c.storage.GetSecretAccessSchedule(ctx, secretNodeID)
+	return checkSecretAccessScheduleWith(ctx, secretNodeID, c.storage.GetSecretAccessSchedule)
+}
+
+// scheduleLoader reads a secret's access schedule: storage.GetSecretAccessSchedule,
+// or (latest-version value read, PERF-FIX-4) a loader backed by
+// GetSecretScheduleAndLatestVersion. Same contract: nil, nil = no schedule.
+type scheduleLoader func(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, error)
+
+// checkSecretAccessScheduleWith is checkSecretAccessSchedule with the schedule
+// read supplied by the caller; the decision is the same.
+func checkSecretAccessScheduleWith(ctx context.Context, secretNodeID uint, load scheduleLoader) error {
+	sched, err := load(ctx, secretNodeID)
 	if err != nil || sched == nil {
 		return err // nil schedule = no restriction
 	}
@@ -111,13 +122,13 @@ func (c *KeyorixCore) DeleteSecretSchedule(ctx context.Context, secretID uint) e
 func (c *KeyorixCore) LogSecretScheduleSet(ctx context.Context, actorID, secretID uint) {
 	sid := secretID
 	c.writeAuditEventFull(ctx, "secret.schedule_set", actorPtr(actorID), &sid, nil, "",
-		fmt.Sprintf("access schedule set for secret %d", secretID))
+		fmt.Sprintf("access schedule set for %s", c.auditRef(ctx, c.storage, auditKindSecret, secretID)))
 }
 
 func (c *KeyorixCore) LogSecretScheduleDeleted(ctx context.Context, actorID, secretID uint) {
 	sid := secretID
 	c.writeAuditEventFull(ctx, "secret.schedule_deleted", actorPtr(actorID), &sid, nil, "",
-		fmt.Sprintf("access schedule deleted for secret %d", secretID))
+		fmt.Sprintf("access schedule deleted for %s", c.auditRef(ctx, c.storage, auditKindSecret, secretID)))
 }
 
 // validateScheduleParams checks the schedule parameters before persistence.

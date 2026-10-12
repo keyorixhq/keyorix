@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -433,8 +435,12 @@ func TestSecretService_DeleteSecret(t *testing.T) {
 	ctx := authCtx(1, "owner", "secrets.write", "secrets.read", "secrets.delete")
 	created := r.createSecret(t, ctx, "temp", "v")
 
-	_, err := r.svc.DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: created.GetId()})
+	resp, err := r.svc.DeleteSecret(ctx, &pb.DeleteSecretRequest{Id: created.GetId()})
 	require.NoError(t, err)
+	// RETENTION-1: the response says until when the delete is undoable (default window
+	// when the rig's core was never told one).
+	require.NotNil(t, resp.GetPurgeAt(), "delete response carries purge_at")
+	assert.WithinDuration(t, time.Now().UTC().AddDate(0, 0, 30), resp.GetPurgeAt().AsTime(), time.Minute)
 
 	_, err = r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: created.GetId()})
 	require.Error(t, err)
@@ -518,4 +524,110 @@ func TestSecretService_SetSecretAutoRotate_PermissionDenied(t *testing.T) {
 	_, err := r.svc.SetSecretAutoRotate(ctx, &pb.SetSecretAutoRotateRequest{Id: sec.GetId(), Enabled: true})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
+}
+
+// #2971 (AUDIT-UX-3): gRPC parity with REST's total_reads. GetSecret and
+// GetSecretVersions report the secret's lifetime value-read count
+// (core.SecretTotalReads: access-log rows with action read), not the per-version
+// max_reads counters (which stay 0 for a secret without max_reads).
+func TestSecretService_TotalReads_GetSecretAndVersions(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
+	created := r.createSecret(t, ctx, "counted", "the-value")
+
+	before, err := r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: created.GetId(), IncludeTotalReads: true})
+	require.NoError(t, err)
+	require.NotNil(t, before.TotalReads, "total_reads is reported on GetSecret (0 before any read)")
+	assert.Equal(t, int64(0), before.GetTotalReads())
+
+	for i := 0; i < 2; i++ {
+		_, err = r.svc.GetSecretValue(ctx, &pb.GetSecretRequest{Id: created.GetId()})
+		require.NoError(t, err)
+	}
+
+	got, err := r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: created.GetId(), IncludeTotalReads: true})
+	require.NoError(t, err)
+	require.NotNil(t, got.TotalReads)
+	assert.Equal(t, int64(2), got.GetTotalReads(), "two value reads; the version max_reads counter stays 0 for this secret")
+
+	vers, err := r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: created.GetId()})
+	require.NoError(t, err)
+	require.NotNil(t, vers.TotalReads)
+	want, err := r.svc.core.SecretTotalReads(ctx, uint(created.GetId()))
+	require.NoError(t, err)
+	assert.Equal(t, want, vers.GetTotalReads(), "versions listing reports the same figure as core.SecretTotalReads")
+	assert.GreaterOrEqual(t, vers.GetTotalReads(), int64(2))
+
+	// Lists do not carry it (REST: omitted from listings).
+	list, err := r.svc.ListSecrets(ctx, &pb.ListSecretsRequest{})
+	require.NoError(t, err)
+	for _, s := range list.GetSecrets() {
+		assert.Nil(t, s.TotalReads, "ListSecrets must not carry total_reads")
+	}
+}
+
+// countingReadsStorage counts CountSecretReadsBySecretIDs calls (the O(reads)
+// query behind total_reads).
+type countingReadsStorage struct {
+	storage.Storage
+	calls atomic.Int64
+}
+
+func (s *countingReadsStorage) CountSecretReadsBySecretIDs(ctx context.Context, ids []uint, since time.Time) (map[uint]int, error) {
+	s.calls.Add(1)
+	return s.Storage.CountSecretReadsBySecretIDs(ctx, ids, since)
+}
+
+// total_reads on GetSecret is opt-in (include_total_reads): the default request
+// neither sets the field nor runs the access-log count; the opt-in request
+// returns the same figure as before.
+func TestSecretService_GetSecret_TotalReadsIsOptIn(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
+	counter := &countingReadsStorage{Storage: store.NewLocalStorage(r.db)}
+	r.svc = NewSecretService(core.NewKeyorixCore(counter))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
+	created := r.createSecret(t, ctx, "opt-in", "the-value")
+	for i := 0; i < 2; i++ {
+		_, err := r.svc.GetSecretValue(ctx, &pb.GetSecretRequest{Id: created.GetId()})
+		require.NoError(t, err)
+	}
+
+	counter.calls.Store(0)
+	def, err := r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: created.GetId()})
+	require.NoError(t, err)
+	assert.Nil(t, def.TotalReads, "default GetSecret must not carry total_reads")
+	assert.Zero(t, counter.calls.Load(), "default GetSecret must not run the total_reads count")
+
+	opt, err := r.svc.GetSecret(ctx, &pb.GetSecretRequest{Id: created.GetId(), IncludeTotalReads: true})
+	require.NoError(t, err)
+	require.NotNil(t, opt.TotalReads)
+	assert.Equal(t, int64(2), opt.GetTotalReads())
+	assert.Equal(t, int64(1), counter.calls.Load(), "opt-in runs exactly one count")
+}
+
+// AUDIT-UX-2 item 3: listing version history over gRPC is audited as
+// secret.versions_listed with an access-log row of action "versions_list"
+// (anomaly detection reads every action), never as secret.read: no value is
+// returned. Mirrors the HTTP handler (server/http
+// TestCLISecretDeleteFlow_WritesNoSecretRead).
+func TestSecretService_GetSecretVersions_AuditsListingNotRead(t *testing.T) {
+	r := newSecretTestRig(t)
+	require.NoError(t, r.db.AutoMigrate(&models.AuditEvent{}, &models.SecretAccessLog{}))
+	ctx := authCtx(1, "owner", "secrets.write", "secrets.read")
+	created := r.createSecret(t, ctx, "token", "the-value")
+
+	_, err := r.svc.GetSecretVersions(ctx, &pb.GetSecretVersionsRequest{Id: created.GetId()})
+	require.NoError(t, err)
+
+	count := func(q string, args ...any) int64 {
+		var n int64
+		r.db.Raw(q, args...).Scan(&n)
+		return n
+	}
+	assert.Equal(t, int64(1), count("SELECT COUNT(*) FROM audit_events WHERE event_type = ? AND secret_node_id = ?", core.EventSecretVersionsListed, created.GetId()))
+	assert.Zero(t, count("SELECT COUNT(*) FROM audit_events WHERE event_type = ? AND secret_node_id = ?", "secret.read", created.GetId()), "a version listing is not a value read")
+	assert.Equal(t, int64(1), count("SELECT COUNT(*) FROM secret_access_logs WHERE secret_node_id = ? AND action = ?", created.GetId(), core.AccessActionVersionsList))
+	assert.Zero(t, count("SELECT COUNT(*) FROM secret_access_logs WHERE secret_node_id = ? AND action = ?", created.GetId(), "read"))
 }

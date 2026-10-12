@@ -371,8 +371,18 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 	if user.AccountState != origState {
 		// #454: persist the state transition FIRST and abort if the backend can't —
 		// prevents a false "success" that leaves login-blocking state silently unchanged.
-		if err := tx.SetAccountState(ctx, id, user.AccountState, c.now()); err != nil {
+		// C-RACE-FIX-B2: conditional on origState, the value applySCIMActiveState
+		// derived the new state from. UpdateUserIfActiveStateMatches below writes
+		// only the profile columns (#2653/#2654), so this is the ONLY write of
+		// account_state here, and a blind one would revert a SuspendUser that
+		// committed after the read above in the #G42 window (or anywhere the row
+		// lock is not held): a reactivation would turn that suspension into active.
+		matched, err := tx.SetAccountStateIfMatches(ctx, id, origState, user.AccountState, c.now())
+		if err != nil {
 			return nil, false, err
+		}
+		if !matched {
+			return nil, false, fmt.Errorf("user %d: %w", id, ErrUserAccountStateConflict)
 		}
 	}
 	user.UpdatedAt = c.now()
@@ -470,7 +480,13 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 	if !isAdmin {
 		return nil // confirmed not an admin — not the last-admin case
 	}
-	adminIDs := c.installAdminRoleIDSet(ctx)
+	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	if err != nil {
+		// #2496, same stance as the targetHasGlobalAdminRole error above: "can't
+		// tell which roles are admin-conferring" must not silently become "there
+		// are none", which would disable this guard entirely.
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
 	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -579,12 +595,20 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 			user.UpdatedAt = c.now()
 			if user.AccountState != origState {
 				// #454: persist the state transition via the narrow column-only write (not
-				// folded into the full-row write below). See SetAccountState's doc comment.
-				if err := tx.SetAccountState(ctx, id, user.AccountState, user.UpdatedAt); err != nil {
+				// folded into the profile-column write below, which never writes
+				// account_state, #2653/#2654). C-RACE-FIX-B2: conditional on origState —
+				// the value the "never downgrade a suspension" check above was evaluated
+				// against — so a suspension that commits after that read is refused here
+				// rather than overwritten with deprovisioned.
+				matched, err := tx.SetAccountStateIfMatches(ctx, id, origState, user.AccountState, user.UpdatedAt)
+				if err != nil {
 					return err
 				}
+				if !matched {
+					return fmt.Errorf("user %d: %w", id, ErrUserAccountStateConflict)
+				}
 			}
-			// Persist IsActive (and the rest of the now-fresh row) via the same conditional
+			// Persist IsActive (and the other profile columns) via the same conditional
 			// write every other IsActive-flipping path in this package uses, rather than a
 			// blind tx.UpdateUser: succeeds only if the row's current is_active still
 			// matches wasActive, which — since user was just read under LockUserForUpdate
@@ -601,6 +625,27 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 			if err := tx.DeleteSessionsForUserExcept(ctx, id, 0); err != nil {
 				return err
 			}
+			// #2855: revoke the user's PATs too. This path swept sessions only,
+			// unlike every other deprovisioning path (setAccountState's
+			// blocked-state branch, DeleteUser, RevokeUserCredentialsForDeactivation),
+			// all of which revoke both. A surviving PAT is inert while the account
+			// is deprovisioned — ValidatePATToken re-checks is_active and the
+			// account state — but nothing on the way back revokes it:
+			// ReactivateUser and RestoreUser deliberately revoke nothing, on the
+			// assumption the deprovision already did. So an IdP offboard followed
+			// by a restore handed every PAT back, possibly with no expiry, after an
+			// audit trail that recorded a completed deprovision.
+			//
+			// In the same transaction as the rest, so a SCIM DELETE stays
+			// all-or-nothing (see this function's own doc comment); the hashes are
+			// folded into sessionHashes for the post-commit cache eviction below,
+			// so a cached PAT stops authenticating immediately rather than
+			// lingering for the auth-cache TTL.
+			patHashes, err := tx.RevokeAllPersonalAccessTokensForUser(ctx, id)
+			if err != nil {
+				return err
+			}
+			sessionHashes = append(sessionHashes, patHashes...)
 			return tx.DeleteUser(ctx, id)
 		})
 	})

@@ -7,6 +7,7 @@ Helpers used by CI workflows, or run locally next to them.
 | `failure-issue.sh` | scheduled workflows | Opens one GitHub issue per failing scheduled job, comments on repeat failures, and closes the issue when the job goes green. |
 | `check-bug-origin-block.sh` | CI (`ci.yml`) | Checks that a `fix(...)` PR has filled in its "Bug origin" block (Introduced-by, Detected-by, Class, Severity). |
 | `precheck-open-prs.sh` | the merge coordinator, **locally** | Rebases each listed open PR onto current `main` in a throwaway worktree and runs the checks that tend to fail only inside the merge queue. |
+| `install-gosec.sh` | CI (`ci.yml`: static-analysis, operator, cli, migrate) | Installs gosec in a throwaway module that also requires a newer `golang.org/x/tools`, so MVS picks that instead of gosec's own (older) requirement -- see the script header for why. |
 
 ## precheck-open-prs.sh
 

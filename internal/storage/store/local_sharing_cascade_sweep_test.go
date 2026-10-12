@@ -47,15 +47,22 @@ func TestCreateShareRecord_RaceRecoverySucceeds(t *testing.T) {
 	ctx := context.Background()
 
 	calls := 0
-	require.NoError(t, ls.db.Callback().Query().After("gorm:query").Register("share-race-insert", func(_ *gorm.DB) {
+	var competing *models.ShareRecord
+	require.NoError(t, ls.db.Callback().Query().After("gorm:query").Register("share-race-insert", func(db *gorm.DB) {
 		calls++
 		if calls == 3 {
 			// Simulate a concurrent winner: insert the competing row right
 			// after CreateShareRecord's own existence check just missed it.
-			ls.db.Create(&models.ShareRecord{
+			// Written through db (CreateShareRecord's own transaction), not
+			// ls.db: CreateShareRecord holds SQLite's single write lock for its
+			// whole transaction (#2646), so a second connection would wait on
+			// it forever. The INSERT below then hits the unique index exactly
+			// as a committed concurrent winner's row would.
+			competing = &models.ShareRecord{
 				SecretID: secret.ID, RecipientID: recipient.ID, IsGroup: false,
 				OwnerID: secret.OwnerID, Permission: "read",
-			})
+			}
+			require.NoError(t, sameConn(db).Create(competing).Error)
 		}
 	}))
 
@@ -65,6 +72,17 @@ func TestCreateShareRecord_RaceRecoverySucceeds(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "write", got.Permission)
+	require.NotNil(t, competing, "the hook must have inserted the competing row")
+	assert.Equal(t, competing.ID, got.ID, "the race-recovery branch must have updated the competing row, not inserted its own")
+}
+
+// sameConn returns a handle on the hooked statement's own connection (its
+// transaction, if any) with the statement's state and Error cleared, so a hook
+// can write through it even right after a First() that found nothing.
+func sameConn(db *gorm.DB) *gorm.DB {
+	s := db.Session(&gorm.Session{NewDB: true})
+	s.Error = nil
+	return s
 }
 
 func TestCreateShareRecord_RaceRecoverySaveFails(t *testing.T) {
@@ -73,16 +91,17 @@ func TestCreateShareRecord_RaceRecoverySaveFails(t *testing.T) {
 	ctx := context.Background()
 
 	calls := 0
-	require.NoError(t, ls.db.Callback().Query().After("gorm:query").Register("share-race-insert-then-drop", func(_ *gorm.DB) {
+	require.NoError(t, ls.db.Callback().Query().After("gorm:query").Register("share-race-insert-then-drop", func(db *gorm.DB) {
 		calls++
+		// Through db, not ls.db — see TestCreateShareRecord_RaceRecoverySucceeds.
 		switch calls {
 		case 3:
-			ls.db.Create(&models.ShareRecord{
+			sameConn(db).Create(&models.ShareRecord{
 				SecretID: secret.ID, RecipientID: recipient.ID, IsGroup: false,
 				OwnerID: secret.OwnerID, Permission: "read",
 			})
 		case 4:
-			ls.db.Exec("DROP TABLE share_records")
+			sameConn(db).Exec("DROP TABLE share_records")
 		}
 	}))
 

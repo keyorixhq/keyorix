@@ -15,10 +15,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -27,20 +25,16 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
-
-var machineAuthzDBCounter atomic.Int64
 
 // freshMachineAuthzFixture opens an isolated named in-memory SQLite DB with all
 // models required by the ListSecrets handler and the RBAC / machine-role layer.
 func freshMachineAuthzFixture(t *testing.T) (*SecretHandler, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := machineAuthzDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_machine_authz_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_machine_authz_")
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
@@ -179,4 +173,39 @@ func TestListSecrets_MachineToken_AuthorizedProject(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "authorized machine token should get 200")
 	resp := decodeListResponse(t, w.Body.Bytes())
 	assert.GreaterOrEqual(t, resp.Total, int64(1), "authorized machine token should see its project's secrets")
+}
+
+// TestListSecrets_MachineToken_OwnershipFiltersFailClosedToEmpty: a machine owns
+// nothing and has nothing shared with it, so ?show_owned_only=true /
+// ?show_shared_only=true must yield an empty list, not silently ignore the filter
+// and return everything in scope (#2874 review, minor 1). The unfiltered call is
+// the calibration: the same fixture must still list the secret.
+func TestListSecrets_MachineToken_OwnershipFiltersFailClosedToEmpty(t *testing.T) {
+	h, db := freshMachineAuthzFixture(t)
+
+	proj := &models.Project{Name: "proj-machine-own"}
+	require.NoError(t, db.Create(proj).Error)
+	env := &models.Environment{Name: "env-machine-own", ProjectID: proj.ID}
+	require.NoError(t, db.Create(env).Error)
+	require.NoError(t, db.Create(&models.SecretNode{
+		Name: "machine-scope-secret", ProjectID: proj.ID, EnvironmentID: env.ID,
+		OwnerID: 0, Type: "static", IsSecret: true,
+	}).Error)
+	const machineID = uint(40)
+	require.NoError(t, db.Create(&models.MachineIdentity{
+		ID: machineID, ProjectID: proj.ID, Name: "ci-runner-40", State: "active",
+	}).Error)
+	seedMachineReadRole(t, db, "machine_reader_own", machineID, proj.ID)
+
+	list := func(query string) *models.SecretListResponse {
+		url := fmt.Sprintf("/api/v1/secrets?project_id=%d%s", proj.ID, query)
+		w := httptest.NewRecorder()
+		h.ListSecrets(w, withMachineCtxID(httptest.NewRequest(http.MethodGet, url, nil), machineID))
+		require.Equal(t, http.StatusOK, w.Code)
+		return decodeListResponse(t, w.Body.Bytes())
+	}
+
+	assert.GreaterOrEqual(t, list("").Total, int64(1), "calibration: unfiltered machine listing still returns the secret")
+	assert.Equal(t, int64(0), list("&show_shared_only=true").Total, "a machine has nothing shared with it")
+	assert.Equal(t, int64(0), list("&show_owned_only=true").Total, "a machine owns nothing")
 }

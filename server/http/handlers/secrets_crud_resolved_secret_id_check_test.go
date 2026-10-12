@@ -5,7 +5,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -62,16 +61,10 @@ func TestGetSecret_MachineBranch_IgnoresMismatchedResolvedSecret(t *testing.T) {
 	w := httptest.NewRecorder()
 
 	h.GetSecret(w, r)
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-
-	var body map[string]any
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&body))
-	data, _ := body["data"].(map[string]any)
-	require.NotNil(t, data)
-	secretWire, _ := data["secret"].(map[string]any)
-	require.NotNil(t, secretWire)
-
-	assert.Equal(t, float64(secretB.ID), secretWire["id"], "must serve the path id's own secret, not the mismatched resolved one")
-	assert.Equal(t, "secret-b", secretWire["name"])
-	assert.Equal(t, "value-b", data["value"], "must serve the path id's own value, not secret A's")
+	// The middleware authorized secret A, not the path's secret B, and this
+	// machine principal holds no grant on B: the handler must refuse rather
+	// than serve B unchecked (and must never serve A under B's id).
+	require.Equal(t, http.StatusForbidden, w.Code, w.Body.String())
+	assert.NotContains(t, w.Body.String(), "value-b")
+	assert.NotContains(t, w.Body.String(), "value-a")
 }

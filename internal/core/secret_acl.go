@@ -88,7 +88,7 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 
 	// Check that the grant target is a project member — granting access to a
 	// non-member is confusing and potentially unintended.
-	if isMember, merr := c.storage.IsProjectMember(ctx, userID, secret.ProjectID); merr != nil {
+	if isMember, merr := c.IsProjectMember(ctx, userID, secret.ProjectID); merr != nil {
 		return fmt.Errorf("failed to verify project membership: %w", merr)
 	} else if !isMember {
 		return fmt.Errorf("%s: user %d is not a member of this secret's project", i18n.T("ErrorValidation", nil), userID)
@@ -111,7 +111,7 @@ func (c *KeyorixCore) GrantSecretACL(ctx context.Context, actorID, secretID, use
 
 	projectID := secret.ProjectID
 	c.writeAuditEventFull(ctx, EventSecretACLGranted, actorPtr(actorID), &secretID, &projectID, "",
-		fmt.Sprintf("granted user %d ACL %v on secret %d", userID, perms, secretID))
+		fmt.Sprintf("granted %s ACL %v on %s", c.auditRef(ctx, c.storage, auditKindUser, userID), perms, c.auditRef(ctx, c.storage, auditKindSecret, secretID)))
 	return nil
 }
 
@@ -144,7 +144,7 @@ func (c *KeyorixCore) RevokeSecretACL(ctx context.Context, actorID, secretID, ac
 	}
 
 	c.writeAuditEvent(ctx, EventSecretACLRevoked, actorPtr(actorID), &secretID,
-		fmt.Sprintf("revoked ACL %d (user %d) on secret %d", aclID, found.UserID, secretID))
+		fmt.Sprintf("revoked ACL %d (%s) on %s", aclID, c.auditRef(ctx, c.storage, auditKindUser, found.UserID), c.auditRef(ctx, c.storage, auditKindSecret, secretID)))
 	return nil
 }
 
@@ -213,7 +213,7 @@ func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID ui
 	if err != nil {
 		return false, err
 	}
-	isMember, err := c.storage.IsProjectMember(ctx, userID, node.ProjectID)
+	isMember, err := c.IsProjectMember(ctx, userID, node.ProjectID)
 	if err != nil {
 		return false, err
 	}

@@ -45,6 +45,10 @@ type AnomalyDetector struct {
 	// tick, drowning out genuine changes. nil until the first successful
 	// SetBusinessHours call, which is always audited.
 	lastAuditedOffHours *auditedOffHours
+	// fullSweep disables the incremental candidate filter (every secret is evaluated
+	// every pass, the pre-C-PERF-FIXES behaviour). Test-only: the equivalence test runs
+	// both modes over identical data and asserts identical alerts.
+	fullSweep bool
 }
 
 // auditedOffHours is the comparable subset of a SetBusinessHours call's applied
@@ -88,7 +92,32 @@ type StorageInterface = interface {
 	// LogAuditEvent backs auditBusinessHoursConfig (#144) — a business-hours config
 	// change must be on the audit record even though it's applied in-memory here.
 	LogAuditEvent(ctx context.Context, event *models.AuditEvent) error
+	// ListSecretIDsAccessedSince backs the incremental sweep: only secrets with an
+	// access-log row inside the detection horizon are evaluated (see RunDetection).
+	ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error)
+	// Get/SetSystemMetadata persist the sweep's high-water mark
+	// (anomalyHighWaterKey) so a delayed, jittered, or post-downtime pass extends its
+	// scan window back to where the last successful pass ended instead of leaving a gap.
+	GetSystemMetadata(ctx context.Context, key string) (value string, found bool, err error)
+	SetSystemMetadata(ctx context.Context, key, value string) error
 }
+
+// anomalyHighWaterKey is the system_metadata key holding the `now` of the last
+// fully-successful RunDetection pass (RFC3339Nano, UTC). Shared by every replica —
+// the pass itself is single-replica-gated (ADR-039).
+const anomalyHighWaterKey = "anomaly_detection_high_water"
+
+// maxDetectionCatchUp caps how far back a pass extends its scan window to reach the
+// persisted high-water mark. After a longer outage the remainder of the gap stays
+// unexamined (as every gap did before the high-water mark existed) rather than one
+// pass replaying days of access logs and flooding admins with stale alerts.
+const maxDetectionCatchUp = 24 * time.Hour
+
+// cumulativeRateHorizon is the widest look-back of any per-secret rule
+// (cumulative_rate counts the last 24h). The incremental sweep's candidate horizon
+// must never be narrower than this, or a secret whose only reads are 1–24h old
+// would be skipped and its cumulative_rate alert silently dropped.
+const cumulativeRateHorizon = 24 * time.Hour
 
 // SetLookback sets how far back each detection pass scans, flooring it at one hour. The
 // scheduler should set this to its scan interval so consecutive passes cover a
@@ -289,18 +318,43 @@ type accessBaseline struct {
 // dedup window absorbs the overlap between passes). It is best-effort per secret but
 // returns a non-nil error if any storage operation failed, so the scheduler outcome
 // reflects a partial failure rather than silently reporting success.
+//
+// Incremental sweep (C-PERF-FIXES, Detected-by: PERF-2 performance study). The pass
+// used to read two access-log ranges for EVERY active secret, every pass — including
+// the pass run at process startup — no matter how few secrets had been touched. It
+// now evaluates only the secrets ListSecretIDsAccessedSince reports activity for
+// since the detection horizon, min(scanStart, now-24h). That is exactly the set that
+// can fire: every per-secret rule needs at least one access-log row in its own
+// window (per-access rules and frequency_spike/ml_outlier the scan window,
+// cumulative_rate the last 24h), and a secret with no row in either produces no
+// alert. TestRunDetection_IncrementalSweepDetectsSameAnomaliesAsFullSweep pins the
+// equivalence. If the candidate query fails, the pass falls back to the full sweep
+// rather than skipping secrets.
+//
+// High-water mark: the scan window normally starts at now-lookback, as before. When
+// the last fully-successful pass (persisted under anomalyHighWaterKey) ended earlier
+// than that — a jittered or delayed first pass after a restart, an outage, or plain
+// ticker drift — the window extends back to it (capped at maxDetectionCatchUp), so
+// access logs between passes are never left unexamined. frequency_spike still counts
+// only the last `lookback` (its threshold is per-window), and the mark advances only
+// when the pass had no storage failures.
 func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.SecretNode) error {
 	now := time.Now().UTC()
 	lookback := d.lookback
 	if lookback < minDetectionLookback {
 		lookback = minDetectionLookback
 	}
-	window := now.Add(-lookback)
+	lookbackStart := now.Add(-lookback)
+	window := d.scanWindowStart(ctx, now, lookbackStart)
 	baselineWindow := now.Add(-30 * 24 * time.Hour)
 
 	var failures int
+	active, filtered := d.activeSecretIDs(ctx, now, window)
 	for _, secret := range secrets {
-		failures += d.detectOneSecretAnomalies(ctx, secret, baselineWindow, window, now)
+		if filtered && !active[secret.ID] {
+			continue
+		}
+		failures += d.detectOneSecretAnomalies(ctx, secret, baselineWindow, window, lookbackStart, now)
 	}
 
 	// Per-principal aggregate (#101): a principal reading many DIFFERENT secrets it has
@@ -317,12 +371,68 @@ func (d *AnomalyDetector) RunDetection(ctx context.Context, secrets []models.Sec
 	if failures > 0 {
 		return fmt.Errorf("anomaly detection completed with %d storage failure(s) — some alerts may not have been recorded", failures)
 	}
+	// Advance the high-water mark only after a clean pass, so a partially-failed pass's
+	// window is re-covered next time rather than skipped.
+	if err := d.storage.SetSystemMetadata(ctx, anomalyHighWaterKey, now.Format(time.RFC3339Nano)); err != nil {
+		return fmt.Errorf("anomaly detection: persist high-water mark: %w", err)
+	}
 	return nil
 }
 
+// scanWindowStart returns where this pass's scan window begins: lookbackStart, or the
+// persisted high-water mark when that is earlier (floored at now-maxDetectionCatchUp).
+// A missing or unreadable mark keeps lookbackStart — the pre-high-water behaviour.
+func (d *AnomalyDetector) scanWindowStart(ctx context.Context, now, lookbackStart time.Time) time.Time {
+	raw, found, err := d.storage.GetSystemMetadata(ctx, anomalyHighWaterKey)
+	if err != nil {
+		log.Printf("anomaly detection: could not read high-water mark (%v); scanning the last %s only", err, now.Sub(lookbackStart))
+		return lookbackStart
+	}
+	if !found {
+		return lookbackStart
+	}
+	hw, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		log.Printf("anomaly detection: ignoring unparseable high-water mark %q: %v", raw, err)
+		return lookbackStart
+	}
+	if !hw.Before(lookbackStart) {
+		return lookbackStart
+	}
+	if floor := now.Add(-maxDetectionCatchUp); hw.Before(floor) {
+		return floor
+	}
+	return hw.UTC()
+}
+
+// activeSecretIDs returns the set of secrets with any access-log row since the
+// detection horizon. filtered is false when the incremental sweep is disabled or the
+// candidate query failed — the caller must then evaluate every secret.
+func (d *AnomalyDetector) activeSecretIDs(ctx context.Context, now, window time.Time) (map[uint]bool, bool) {
+	if d.fullSweep {
+		return nil, false
+	}
+	horizon := now.Add(-cumulativeRateHorizon)
+	if window.Before(horizon) {
+		horizon = window
+	}
+	ids, err := d.storage.ListSecretIDsAccessedSince(ctx, horizon)
+	if err != nil {
+		log.Printf("anomaly detection: candidate-secret query failed (%v); falling back to a full sweep this pass", err)
+		return nil, false
+	}
+	set := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		set[id] = true
+	}
+	return set, true
+}
+
 // detectOneSecretAnomalies runs all anomaly rules for a single secret and returns the
-// number of storage failures encountered while saving alerts.
-func (d *AnomalyDetector) detectOneSecretAnomalies(ctx context.Context, secret models.SecretNode, baselineWindow, window, now time.Time) int {
+// number of storage failures encountered while saving alerts. window is the scan
+// window start (possibly extended back to the high-water mark); lookbackStart bounds
+// the frequency_spike count, whose threshold is defined per lookback window.
+func (d *AnomalyDetector) detectOneSecretAnomalies(ctx context.Context, secret models.SecretNode, baselineWindow, window, lookbackStart, now time.Time) int {
 	// Build 30-day baseline. A secret with NO baseline history (brand new, or unread
 	// in 30 days) is NOT skipped — detectAnomalies still flags off-hours access and
 	// first-ever new_ip/new_user (severity is scaled down for that case). Skipping was
@@ -345,9 +455,16 @@ func (d *AnomalyDetector) detectOneSecretAnomalies(ctx context.Context, secret m
 	for _, accessLog := range recentLogs {
 		failures += d.saveAlerts(ctx, detectAnomalies(secret, accessLog, baseline, d.offHours))
 	}
+	// The per-window aggregates below keep their pre-high-water inputs: only the
+	// lookback slice, even when the scan window was extended for catch-up (identical
+	// to recentLogs in the steady state, where window == lookbackStart).
+	lookbackLogs := recentLogs
+	if window.Before(lookbackStart) {
+		lookbackLogs = logsSince(recentLogs, lookbackStart)
+	}
 	// Per-secret aggregate: a read-volume spike for the window vs. the learned baseline
 	// (one alert per secret per pass, not per access).
-	if alert := volumeSpikeAlert(secret, len(recentLogs), baseline, d.effectiveVolumeMinCount(), now); alert != nil {
+	if alert := volumeSpikeAlert(secret, len(lookbackLogs), baseline, d.effectiveVolumeMinCount(), now); alert != nil {
 		if err := d.storage.CreateAnomalyAlert(ctx, alert); err != nil {
 			failures++
 		}
@@ -360,7 +477,7 @@ func (d *AnomalyDetector) detectOneSecretAnomalies(ctx context.Context, secret m
 	// Also include any logs in the current detection window (recentLogs) that fall
 	// within the last 24h — the baseline query may exclude the live window on some
 	// storage implementations.
-	for _, lg := range recentLogs {
+	for _, lg := range lookbackLogs {
 		if !lg.AccessTime.Before(window24h) {
 			logs24h = append(logs24h, lg)
 		}

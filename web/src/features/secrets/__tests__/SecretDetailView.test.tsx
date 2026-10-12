@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, act } from '../../../test/test-utils';
+import { render, screen, fireEvent, waitFor, act, within } from '../../../test/test-utils';
 import { SecretDetailView } from '../SecretDetailView';
 import { Secret } from '../../../types';
 import { DEFAULT_SENSITIVE_IDLE_MS } from '../../../hooks/useAutoClearOnIdle';
@@ -21,7 +21,9 @@ let mockVersionsError: unknown = null;
 let mockSecretValue: string | null = null;
 let mockValueLoading = false;
 let mockValueError: unknown = null;
-let mockAccessors: { user_id: number; username: string; permission: string; source: string }[] = [];
+let mockAccessors: { user_id: number; username: string; permission: string; source: string; grants?: string[] }[] = [];
+let mockAccessDegraded = false;
+let mockAccessDegradedReasons: string[] = [];
 let mockAccessLog: { accessed_by: string; access_time: string; action: string; ip_address: string }[] = [];
 let mockAuditTrail: {
     id: number;
@@ -72,7 +74,9 @@ vi.mock('../api', () => ({
     useTransferOwnership: () => ({ mutate: vi.fn(), reset: vi.fn(), isPending: false, isError: false }),
     useSuspendSecret: () => ({ mutate: mockSuspendMutate, isPending: false }),
     useResumeSecret: () => ({ mutate: mockResumeMutate, isPending: false }),
-    useSecretAccessors: () => ({ data: mockAccessors }),
+    useSecretAccessors: () => ({
+        data: { accessors: mockAccessors, degraded: mockAccessDegraded, degradedReasons: mockAccessDegradedReasons },
+    }),
     useSecretAccessLog: () => ({ data: mockAccessLog }),
     useSecretAuditTrail: () => ({ data: mockAuditTrail }),
     useSecretTags: () => ({ data: mockTags }),
@@ -106,6 +110,18 @@ const makeSecret = (overrides: Partial<Secret> = {}): Secret => ({
     tags: [],
     classification: 'confidential',
     ...overrides,
+});
+
+// What the signed-in user may do. Tests that exercise a control assume the user can; the
+// permission-aware cases flip fields on this object (see useCan.ts).
+const canState = vi.hoisted(() => ({
+    value: { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true },
+}));
+vi.mock('../../auth/useCan', () => ({ useCan: () => canState.value }));
+beforeEach(() => {
+    canState.value = { admin: true, writeSecrets: true, deleteSecrets: true, readAudit: true, manageMembers: true };
+    mockAccessDegraded = false;
+    mockAccessDegradedReasons = [];
 });
 
 describe('SecretDetailView classification', () => {
@@ -225,10 +241,56 @@ describe('SecretDetailView access list', () => {
         expect(screen.getByText('group_share:platform')).toBeInTheDocument();
     });
 
+    it('labels a share-sourced write by what it allows, not as plain "write"', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        // alice holds a direct write share (update value/metadata, rotate since #3001).
+        expect(screen.getByText('Update value/metadata, rotate')).toBeInTheDocument();
+        expect(screen.queryByText('write')).not.toBeInTheDocument();
+        // The owner keeps its own label.
+        expect(screen.getAllByText('owner').length).toBeGreaterThan(0);
+    });
+
     it('omits the section when there are no accessors', () => {
         mockAccessors = [];
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.queryByText('Who can access')).not.toBeInTheDocument();
+    });
+
+    it('shows no incomplete-list banner for a complete report', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.queryByText('This list is incomplete')).not.toBeInTheDocument();
+    });
+
+    // A degraded report is an under-count (part withheld from this caller, or a lookup
+    // failed): the panel must say so with the reasons, not present the short list as
+    // everyone who can read the secret.
+    it('warns with the reasons when the report is degraded', () => {
+        mockAccessDegraded = true;
+        mockAccessDegradedReasons = [
+            'project_members: the caller lacks users.read in the project',
+            'secret_acls: the caller lacks secrets.manage on the secret',
+        ];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('This list is incomplete')).toBeInTheDocument();
+        expect(screen.getByText('project_members: the caller lacks users.read in the project')).toBeInTheDocument();
+        expect(screen.getByText('secret_acls: the caller lacks secrets.manage on the secret')).toBeInTheDocument();
+    });
+
+    it('still shows the panel and the warning when a degraded report lists nobody', () => {
+        mockAccessors = [];
+        mockAccessDegraded = true;
+        mockAccessDegradedReasons = ['group_members:group=10(platform): unavailable'];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Who can access')).toBeInTheDocument();
+        expect(screen.getByText('This list is incomplete')).toBeInTheDocument();
+        expect(screen.getByText('group_members:group=10(platform): unavailable')).toBeInTheDocument();
+    });
+
+    it('labels a role-sourced write as write, not as the share-limited write', () => {
+        mockAccessors = [{ user_id: 4, username: 'dana', permission: 'write', source: 'role', grants: ['role:write'] }];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('write')).toBeInTheDocument();
+        expect(screen.queryByText('Update value/metadata, rotate')).not.toBeInTheDocument();
     });
 });
 
@@ -312,7 +374,7 @@ describe('SecretDetailView recent access', () => {
         mockAccessLog = [{ accessed_by: '', access_time: '2026-06-18T10:00:00Z', action: 'read', ip_address: '' }];
         render(<SecretDetailView secret={makeSecret()} />);
         expect(screen.getByText('unknown')).toBeInTheDocument();
-        expect(screen.getByText('read')).toBeInTheDocument();
+        expect(screen.getByText('Read')).toBeInTheDocument();
     });
 
     it('shows relative times across the today/yesterday/days/months/years ranges', () => {
@@ -389,6 +451,46 @@ describe('SecretDetailView history', () => {
         expect(screen.getByText('frozen for incident')).toBeInTheDocument();
     });
 
+    it('labels secret.versions_listed in the history panel', () => {
+        mockAuditTrail = [
+            {
+                id: 4,
+                event_type: 'secret.versions_listed',
+                timestamp: '2026-06-18T12:00:00Z',
+                actor_type: 'user',
+                description: '',
+                success: true,
+            },
+        ];
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Versions listed')).toBeInTheDocument();
+    });
+
+    it('shows this secret by name in an old, id-only description, and leaves a named one alone', () => {
+        const secret = makeSecret();
+        mockAuditTrail = [
+            {
+                id: 5,
+                event_type: 'secret.restored',
+                timestamp: '2026-06-18T12:00:00Z',
+                actor_type: 'user',
+                description: `secret ${secret.id} restored`,
+                success: true,
+            },
+            {
+                id: 6,
+                event_type: 'secret.description_updated',
+                timestamp: '2026-06-18T13:00:00Z',
+                actor_type: 'user',
+                description: `updated description of secret ${secret.id} ("${secret.name}")`,
+                success: true,
+            },
+        ];
+        render(<SecretDetailView secret={secret} />);
+        expect(screen.getByText(`secret "${secret.name}" restored`)).toBeInTheDocument();
+        expect(screen.getByText(`updated description of secret ${secret.id} ("${secret.name}")`)).toBeInTheDocument();
+    });
+
     it('omits the panel when there is no audit trail', () => {
         mockAuditTrail = [];
         render(<SecretDetailView secret={makeSecret()} />);
@@ -422,7 +524,7 @@ describe('SecretDetailView history', () => {
             },
         ];
         render(<SecretDetailView secret={makeSecret()} />);
-        expect(screen.getByText('custom thing')).toBeInTheDocument();
+        expect(screen.getByText('Custom thing')).toBeInTheDocument();
     });
 });
 
@@ -1166,5 +1268,193 @@ describe('SecretDetailView XSS regression (WEB track backlog item 3)', () => {
         ];
         const { container } = render(<SecretDetailView secret={makeSecret()} />);
         assertPayloadRenderedSafely(payload, container);
+    });
+});
+
+// #2977: the header's "Never rotated" came from the `secret` prop (a snapshot
+// taken when the list row was opened), so it kept saying "Never rotated" right
+// after a rotation or rollback done inside this very view.
+describe('SecretDetailView rotation label after rotate/rollback (#2977)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [
+            { VersionNumber: 1, CreatedAt: '2026-06-10T00:00:00Z' },
+            { VersionNumber: 2, CreatedAt: '2026-06-14T00:00:00Z' },
+        ];
+        mockAccessors = [];
+        mockAccessLog = [];
+        mockAuditTrail = [];
+        mockTags = [];
+        mockRotateState = { isPending: false, isError: false };
+    });
+
+    it('says "Rotated just now" instead of "Never rotated" after a successful rotate', () => {
+        mockRotateMutate.mockImplementationOnce((_value: string, opts?: { onSuccess?: () => void }) => {
+            opts?.onSuccess?.();
+        });
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Never rotated')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /^Rotate$/i }));
+        fireEvent.change(screen.getByLabelText('New value'), { target: { value: 'new-secret-value' } });
+        fireEvent.click(screen.getByRole('button', { name: /Rotate secret/i }));
+
+        expect(screen.queryByText('Never rotated')).not.toBeInTheDocument();
+        expect(screen.getByText(/^Rotated /)).toBeInTheDocument();
+    });
+
+    it('says "Rotated …" instead of "Never rotated" after a successful rollback', () => {
+        const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+        mockRollbackMutate.mockImplementationOnce((_version: number, opts?: { onSuccess?: () => void }) => {
+            opts?.onSuccess?.();
+        });
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByText('Never rotated')).toBeInTheDocument();
+
+        fireEvent.click(screen.getByRole('button', { name: /Roll back/i }));
+
+        expect(screen.queryByText('Never rotated')).not.toBeInTheDocument();
+        expect(screen.getByText(/^Rotated /)).toBeInTheDocument();
+        confirmSpy.mockRestore();
+    });
+
+    it('keeps "Never rotated" when the rotation fails', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        fireEvent.click(screen.getByRole('button', { name: /^Rotate$/i }));
+        fireEvent.change(screen.getByLabelText('New value'), { target: { value: 'new-secret-value' } });
+        fireEvent.click(screen.getByRole('button', { name: /Rotate secret/i }));
+        // mutate's onSuccess is never invoked: the server refused it.
+        expect(screen.getByText('Never rotated')).toBeInTheDocument();
+    });
+});
+
+// #2977: at 1366 px the six header buttons overflowed the modal ("Su…" cut off)
+// and the metadata row wrapped one word per line. jsdom has no layout, so
+// assert the wrapping contract the CSS relies on.
+describe('SecretDetailView header layout (#2977)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+    });
+
+    it('lets the action buttons wrap instead of overflowing the modal', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        const actions = screen.getByTestId('secret-actions');
+        expect(actions.className).toContain('flex-wrap');
+        expect(within(actions).getAllByRole('button').length).toBeGreaterThanOrEqual(5);
+    });
+
+    it('lets the header and its metadata row wrap', () => {
+        render(<SecretDetailView secret={makeSecret()} />);
+        expect(screen.getByTestId('secret-header').className).toContain('flex-wrap');
+        expect(screen.getByTestId('secret-meta').className).toContain('flex-wrap');
+    });
+});
+
+describe('SecretDetailView permission-aware controls (DEMO-UI-1)', () => {
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+    });
+
+    it('a read-only user sees none of Edit / Rotate / Share / Copy / Suspend / Delete / Transfer', () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+        render(<SecretDetailView secret={makeSecret()} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        for (const name of [/^edit$/i, /^rotate$/i, /^share$/i, /^copy$/i, /^suspend$/i, /^delete$/i]) {
+            expect(actions.queryByRole('button', { name }), String(name)).not.toBeInTheDocument();
+        }
+        expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument();
+        // the secret itself still renders, so the assertions above are not vacuous
+        expect(screen.getByRole('heading', { name: 'db-password' })).toBeInTheDocument();
+        expect(screen.getByLabelText('Classification')).toBeDisabled();
+        expect(screen.getByPlaceholderText('No description.')).toHaveAttribute('readonly');
+    });
+
+    it('a writer sees the write actions; Delete and Transfer follow secrets.delete', () => {
+        canState.value = { ...canState.value, admin: false, deleteSecrets: false };
+        render(<SecretDetailView secret={makeSecret()} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        for (const name of [/^edit$/i, /^rotate$/i, /^share$/i, /^suspend$/i]) {
+            expect(actions.getByRole('button', { name }), String(name)).toBeInTheDocument();
+        }
+        expect(actions.queryByRole('button', { name: /^delete$/i })).not.toBeInTheDocument();
+        expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument();
+    });
+});
+
+describe('SecretDetailView write-share elevation (SHARE-DETAIL-1)', () => {
+    const readOnlyUser = () => {
+        canState.value = {
+            ...canState.value,
+            admin: false,
+            writeSecrets: false,
+            deleteSecrets: false,
+            manageMembers: false,
+            readAudit: false,
+        };
+    };
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        mockVersions = [];
+        mockAccessors = [];
+    });
+
+    it('a write share offers Edit and Rotate on that secret, and nothing else a role would', () => {
+        readOnlyUser();
+        render(<SecretDetailView secret={makeSecret({ isShared: true, userPermission: 'write' })} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        for (const name of [/^edit$/i, /^rotate$/i]) {
+            expect(actions.getByRole('button', { name }), String(name)).toBeInTheDocument();
+        }
+        for (const name of [/^share$/i, /^copy$/i, /^suspend$/i, /^delete$/i]) {
+            expect(actions.queryByRole('button', { name }), String(name)).not.toBeInTheDocument();
+        }
+        expect(screen.queryByText('Transfer ownership')).not.toBeInTheDocument();
+        expect(screen.getByLabelText('Classification')).toBeDisabled();
+    });
+
+    it('a write share Edit hands the secret to onEdit and Rotate opens the rotate dialog', () => {
+        readOnlyUser();
+        const onEdit = vi.fn();
+        const secret = makeSecret({ isShared: true, userPermission: 'write' });
+        render(<SecretDetailView secret={secret} onEdit={onEdit} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        fireEvent.click(actions.getByRole('button', { name: /^edit$/i }));
+        expect(onEdit).toHaveBeenCalledWith(secret);
+        fireEvent.click(actions.getByRole('button', { name: /^rotate$/i }));
+        expect(screen.getByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('a read share stays read-only', () => {
+        readOnlyUser();
+        render(<SecretDetailView secret={makeSecret({ isShared: true, userPermission: 'read' })} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        for (const name of [/^edit$/i, /^rotate$/i, /^share$/i, /^delete$/i]) {
+            expect(actions.queryByRole('button', { name }), String(name)).not.toBeInTheDocument();
+        }
+    });
+
+    it('no share: the role alone decides', () => {
+        readOnlyUser();
+        const { unmount } = render(<SecretDetailView secret={makeSecret({ userPermission: '' })} />);
+        expect(within(screen.getByTestId('secret-actions')).queryByRole('button', { name: /^edit$/i })).toBeNull();
+        unmount();
+        canState.value = { ...canState.value, writeSecrets: true };
+        render(<SecretDetailView secret={makeSecret()} />);
+        const actions = within(screen.getByTestId('secret-actions'));
+        for (const name of [/^edit$/i, /^rotate$/i, /^share$/i]) {
+            expect(actions.getByRole('button', { name }), String(name)).toBeInTheDocument();
+        }
     });
 });

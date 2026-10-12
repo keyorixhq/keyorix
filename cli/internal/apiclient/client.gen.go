@@ -171,6 +171,14 @@ type ClientInterface interface {
 
 	ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ActivateMFAWithBody request with any body
+	ActivateMFAWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ActivateMFA(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// EnrollMFA request
+	EnrollMFA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// MfaStepUpWithBody request with any body
 	MfaStepUpWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -929,6 +937,9 @@ type ClientInterface interface {
 	// ReactivateUser request
 	ReactivateUser(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReissueOneTimePassword request
+	ReissueOneTimePassword(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RequirePasswordReset request
 	RequirePasswordReset(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -962,6 +973,11 @@ type ClientInterface interface {
 
 	// AuthLogout request
 	AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// VerifyMFALoginWithBody request with any body
+	VerifyMFALoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	VerifyMFALogin(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// HealthCheck request
 	HealthCheck(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1310,6 +1326,42 @@ func (c *Client) ChangePasswordWithBody(ctx context.Context, contentType string,
 
 func (c *Client) ChangePassword(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewChangePasswordRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateMFAWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateMFARequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ActivateMFA(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewActivateMFARequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) EnrollMFA(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewEnrollMFARequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -4644,6 +4696,18 @@ func (c *Client) ReactivateUser(ctx context.Context, id int, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
+func (c *Client) ReissueOneTimePassword(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReissueOneTimePasswordRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) RequirePasswordReset(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRequirePasswordResetRequest(c.Server, id)
 	if err != nil {
@@ -4778,6 +4842,30 @@ func (c *Client) AuthLogin(ctx context.Context, body AuthLoginJSONRequestBody, r
 
 func (c *Client) AuthLogout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewAuthLogoutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) VerifyMFALoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyMFALoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) VerifyMFALogin(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewVerifyMFALoginRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -6101,6 +6189,73 @@ func NewChangePasswordRequestWithBody(server string, contentType string, body io
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewActivateMFARequest calls the generic ActivateMFA builder with application/json body
+func NewActivateMFARequest(server string, body ActivateMFAJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewActivateMFARequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewActivateMFARequestWithBody generates requests for ActivateMFA with any type of body
+func NewActivateMFARequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/mfa/activate")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewEnrollMFARequest generates requests for EnrollMFA
+func NewEnrollMFARequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/auth/mfa/enroll")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -12426,6 +12581,22 @@ func NewGetSecretRequest(server string, id int, params *GetSecretParams) (*http.
 
 		}
 
+		if params.Include != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "include", runtime.ParamLocationQuery, *params.Include); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
@@ -14796,6 +14967,40 @@ func NewReactivateUserRequest(server string, id int) (*http.Request, error) {
 	return req, nil
 }
 
+// NewReissueOneTimePasswordRequest generates requests for ReissueOneTimePassword
+func NewReissueOneTimePasswordRequest(server string, id int) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithLocation("simple", false, "id", runtime.ParamLocationPath, id)
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/users/%s/reissue-one-time-password", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRequirePasswordResetRequest generates requests for RequirePasswordReset
 func NewRequirePasswordResetRequest(server string, id int) (*http.Request, error) {
 	var err error
@@ -15141,6 +15346,46 @@ func NewAuthLogoutRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewVerifyMFALoginRequest calls the generic VerifyMFALogin builder with application/json body
+func NewVerifyMFALoginRequest(server string, body VerifyMFALoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewVerifyMFALoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewVerifyMFALoginRequestWithBody generates requests for VerifyMFALogin with any type of body
+func NewVerifyMFALoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/auth/mfa/verify")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewHealthCheckRequest generates requests for HealthCheck
 func NewHealthCheckRequest(server string) (*http.Request, error) {
 	var err error
@@ -15331,6 +15576,14 @@ type ClientWithResponsesInterface interface {
 	ChangePasswordWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ChangePasswordResponse, error)
 
 	ChangePasswordWithResponse(ctx context.Context, body ChangePasswordJSONRequestBody, reqEditors ...RequestEditorFn) (*ChangePasswordResponse, error)
+
+	// ActivateMFAWithBodyWithResponse request with any body
+	ActivateMFAWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error)
+
+	ActivateMFAWithResponse(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error)
+
+	// EnrollMFAWithResponse request
+	EnrollMFAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*EnrollMFAResponse, error)
 
 	// MfaStepUpWithBodyWithResponse request with any body
 	MfaStepUpWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*MfaStepUpResponse, error)
@@ -16090,6 +16343,9 @@ type ClientWithResponsesInterface interface {
 	// ReactivateUserWithResponse request
 	ReactivateUserWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ReactivateUserResponse, error)
 
+	// ReissueOneTimePasswordWithResponse request
+	ReissueOneTimePasswordWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ReissueOneTimePasswordResponse, error)
+
 	// RequirePasswordResetWithResponse request
 	RequirePasswordResetWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RequirePasswordResetResponse, error)
 
@@ -16123,6 +16379,11 @@ type ClientWithResponsesInterface interface {
 
 	// AuthLogoutWithResponse request
 	AuthLogoutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthLogoutResponse, error)
+
+	// VerifyMFALoginWithBodyWithResponse request with any body
+	VerifyMFALoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error)
+
+	VerifyMFALoginWithResponse(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error)
 
 	// HealthCheckWithResponse request
 	HealthCheckWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*HealthCheckResponse, error)
@@ -16665,7 +16926,16 @@ func (r VerifyAuditChainResponse) StatusCode() int {
 type ChangePasswordResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	JSON400      *Error
+	JSON200      *struct {
+		Data *struct {
+			// ReauthenticationRequired True when this change finished account setup and the calling session was ended (#3024).
+			ReauthenticationRequired *bool `json:"reauthentication_required,omitempty"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON403 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -16678,6 +16948,69 @@ func (r ChangePasswordResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ChangePasswordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ActivateMFAResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			// ReauthenticationRequired True when this activation finished account setup in a setup-only session and that session was ended (#3024); otherwise the calling session stays signed in.
+			ReauthenticationRequired *bool    `json:"reauthentication_required,omitempty"`
+			RecoveryCodes            []string `json:"recovery_codes"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ActivateMFAResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ActivateMFAResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type EnrollMFAResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data *struct {
+			OtpauthUri string `json:"otpauth_uri"`
+
+			// Secret Base32 TOTP secret
+			Secret string `json:"secret"`
+		} `json:"data,omitempty"`
+		Message *string `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r EnrollMFAResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r EnrollMFAResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -16788,6 +17121,7 @@ type CreatePATResponse struct {
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
+	JSON403 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -18033,6 +18367,7 @@ type CreateNotificationChannelResponse struct {
 	JSON400      *Error
 	JSON401      *Error
 	JSON403      *Error
+	JSON409      *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -20357,11 +20692,19 @@ type ListSecretsResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *struct {
 		Data *struct {
-			Page       *int               `json:"page,omitempty"`
-			PageSize   *int               `json:"page_size,omitempty"`
-			Secrets    *[]SecretListEntry `json:"secrets,omitempty"`
-			Total      *int               `json:"total,omitempty"`
-			TotalPages *int               `json:"total_pages,omitempty"`
+			Page     *int               `json:"page,omitempty"`
+			PageSize *int               `json:"page_size,omitempty"`
+			Secrets  *[]SecretListEntry `json:"secrets,omitempty"`
+
+			// Total Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true.
+			Total      *int `json:"total,omitempty"`
+			TotalPages *int `json:"total_pages,omitempty"`
+
+			// Truncated Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response.
+			Truncated *bool `json:"truncated,omitempty"`
+
+			// TruncatedReason Names the bound and the scopes it affected. Absent unless truncated.
+			TruncatedReason *string `json:"truncated_reason,omitempty"`
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -20640,6 +20983,15 @@ type ListAccessorsResponse struct {
 	JSON200      *struct {
 		Data *struct {
 			Accessors *[]SecretAccessor `json:"accessors,omitempty"`
+
+			// Degraded True when the list is incomplete: part of it was withheld from this caller (project roles, ACL holders) or a lookup failed. `accessors` is then an under-count. Clients must show it.
+			Degraded *bool `json:"degraded,omitempty"`
+
+			// DegradedReasons One entry per gap, in the form `area: reason`; null when the list is complete.
+			DegradedReasons *[]string `json:"degraded_reasons"`
+
+			// Total Number of accessors listed.
+			Total *int `json:"total,omitempty"`
 		} `json:"data,omitempty"`
 	}
 	JSON401 *Error
@@ -21569,7 +21921,9 @@ type GetSecretVersionsResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *struct {
 		Data *struct {
-			Versions *[]SecretVersion `json:"versions,omitempty"`
+			// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads.
+			TotalReads *int             `json:"total_reads,omitempty"`
+			Versions   *[]SecretVersion `json:"versions,omitempty"`
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -22129,6 +22483,32 @@ func (r ReactivateUserResponse) StatusCode() int {
 	return 0
 }
 
+type ReissueOneTimePasswordResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+	JSON404      *Error
+	JSON409      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r ReissueOneTimePasswordResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReissueOneTimePasswordResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type RequirePasswordResetResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -22335,28 +22715,15 @@ type AuthLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		Data *struct {
-			// AbsoluteExpiresAt Hard ceiling past which refresh is refused
-			AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
-			AccountState           *string    `json:"account_state,omitempty"`
-			DisplayName            *string    `json:"display_name,omitempty"`
-			Email                  *string    `json:"email,omitempty"`
-			ExpiresAt              *time.Time `json:"expires_at,omitempty"`
-			PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
-			Permissions            *[]string  `json:"permissions,omitempty"`
-			Role                   *string    `json:"role,omitempty"`
-			Roles                  *[]string  `json:"roles,omitempty"`
-
-			// Token Session bearer token
-			Token    *string `json:"token,omitempty"`
-			UserId   *int    `json:"user_id,omitempty"`
-			Username *string `json:"username,omitempty"`
-		} `json:"data,omitempty"`
-		Message *string `json:"message,omitempty"`
+		Data    *AuthLogin_200_Data `json:"data,omitempty"`
+		Message *string             `json:"message,omitempty"`
 	}
 	JSON400 *Error
 	JSON401 *Error
 	JSON429 *Error
+}
+type AuthLogin_200_Data struct {
+	union json.RawMessage
 }
 
 // Status returns HTTPResponse.Status
@@ -22397,16 +22764,47 @@ func (r AuthLogoutResponse) StatusCode() int {
 	return 0
 }
 
+type VerifyMFALoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *struct {
+		Data    *LoginSuccessData `json:"data,omitempty"`
+		Message *string           `json:"message,omitempty"`
+	}
+	JSON400 *Error
+	JSON401 *Error
+	JSON429 *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r VerifyMFALoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r VerifyMFALoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type HealthCheckResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	JSON200      *struct {
-		Checks    *map[string]interface{} `json:"checks,omitempty"`
-		Status    *string                 `json:"status,omitempty"`
-		Timestamp *time.Time              `json:"timestamp,omitempty"`
-		Version   *string                 `json:"version,omitempty"`
+		// AuthRateLimit degraded while any auth rate limit (login, password reset, SSO begin, per-account lockout) is enforcing from its in-memory fallback because its database storage failed within the last limit window. Names no budget, key or address; liveness (status, HTTP 200) is unaffected.
+		AuthRateLimit *HealthCheck200AuthRateLimit `json:"auth_rate_limit,omitempty"`
+		Checks        *map[string]interface{}      `json:"checks,omitempty"`
+		Status        *string                      `json:"status,omitempty"`
+		Timestamp     *time.Time                   `json:"timestamp,omitempty"`
+		Version       *string                      `json:"version,omitempty"`
 	}
 }
+type HealthCheck200AuthRateLimit string
 
 // Status returns HTTPResponse.Status
 func (r HealthCheckResponse) Status() string {
@@ -22712,6 +23110,32 @@ func (c *ClientWithResponses) ChangePasswordWithResponse(ctx context.Context, bo
 		return nil, err
 	}
 	return ParseChangePasswordResponse(rsp)
+}
+
+// ActivateMFAWithBodyWithResponse request with arbitrary body returning *ActivateMFAResponse
+func (c *ClientWithResponses) ActivateMFAWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error) {
+	rsp, err := c.ActivateMFAWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateMFAResponse(rsp)
+}
+
+func (c *ClientWithResponses) ActivateMFAWithResponse(ctx context.Context, body ActivateMFAJSONRequestBody, reqEditors ...RequestEditorFn) (*ActivateMFAResponse, error) {
+	rsp, err := c.ActivateMFA(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseActivateMFAResponse(rsp)
+}
+
+// EnrollMFAWithResponse request returning *EnrollMFAResponse
+func (c *ClientWithResponses) EnrollMFAWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*EnrollMFAResponse, error) {
+	rsp, err := c.EnrollMFA(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseEnrollMFAResponse(rsp)
 }
 
 // MfaStepUpWithBodyWithResponse request with arbitrary body returning *MfaStepUpResponse
@@ -25134,6 +25558,15 @@ func (c *ClientWithResponses) ReactivateUserWithResponse(ctx context.Context, id
 	return ParseReactivateUserResponse(rsp)
 }
 
+// ReissueOneTimePasswordWithResponse request returning *ReissueOneTimePasswordResponse
+func (c *ClientWithResponses) ReissueOneTimePasswordWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*ReissueOneTimePasswordResponse, error) {
+	rsp, err := c.ReissueOneTimePassword(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReissueOneTimePasswordResponse(rsp)
+}
+
 // RequirePasswordResetWithResponse request returning *RequirePasswordResetResponse
 func (c *ClientWithResponses) RequirePasswordResetWithResponse(ctx context.Context, id int, reqEditors ...RequestEditorFn) (*RequirePasswordResetResponse, error) {
 	rsp, err := c.RequirePasswordReset(ctx, id, reqEditors...)
@@ -25238,6 +25671,23 @@ func (c *ClientWithResponses) AuthLogoutWithResponse(ctx context.Context, reqEdi
 		return nil, err
 	}
 	return ParseAuthLogoutResponse(rsp)
+}
+
+// VerifyMFALoginWithBodyWithResponse request with arbitrary body returning *VerifyMFALoginResponse
+func (c *ClientWithResponses) VerifyMFALoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error) {
+	rsp, err := c.VerifyMFALoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyMFALoginResponse(rsp)
+}
+
+func (c *ClientWithResponses) VerifyMFALoginWithResponse(ctx context.Context, body VerifyMFALoginJSONRequestBody, reqEditors ...RequestEditorFn) (*VerifyMFALoginResponse, error) {
+	rsp, err := c.VerifyMFALogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseVerifyMFALoginResponse(rsp)
 }
 
 // HealthCheckWithResponse request returning *HealthCheckResponse
@@ -26113,12 +26563,134 @@ func ParseChangePasswordResponse(rsp *http.Response) (*ChangePasswordResponse, e
 	}
 
 	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				// ReauthenticationRequired True when this change finished account setup and the calling session was ended (#3024).
+				ReauthenticationRequired *bool `json:"reauthentication_required,omitempty"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Error
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseActivateMFAResponse parses an HTTP response from a ActivateMFAWithResponse call
+func ParseActivateMFAResponse(rsp *http.Response) (*ActivateMFAResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ActivateMFAResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				// ReauthenticationRequired True when this activation finished account setup in a setup-only session and that session was ended (#3024); otherwise the calling session stays signed in.
+				ReauthenticationRequired *bool    `json:"reauthentication_required,omitempty"`
+				RecoveryCodes            []string `json:"recovery_codes"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseEnrollMFAResponse parses an HTTP response from a EnrollMFAWithResponse call
+func ParseEnrollMFAResponse(rsp *http.Response) (*EnrollMFAResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &EnrollMFAResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data *struct {
+				OtpauthUri string `json:"otpauth_uri"`
+
+				// Secret Base32 TOTP secret
+				Secret string `json:"secret"`
+			} `json:"data,omitempty"`
+			Message *string `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
 
 	}
 
@@ -26273,6 +26845,13 @@ func ParseCreatePATResponse(rsp *http.Response) (*CreatePATResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -28259,6 +28838,13 @@ func ParseCreateNotificationChannelResponse(rsp *http.Response) (*CreateNotifica
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 
@@ -32250,11 +32836,19 @@ func ParseListSecretsResponse(rsp *http.Response) (*ListSecretsResponse, error) 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
 			Data *struct {
-				Page       *int               `json:"page,omitempty"`
-				PageSize   *int               `json:"page_size,omitempty"`
-				Secrets    *[]SecretListEntry `json:"secrets,omitempty"`
-				Total      *int               `json:"total,omitempty"`
-				TotalPages *int               `json:"total_pages,omitempty"`
+				Page     *int               `json:"page,omitempty"`
+				PageSize *int               `json:"page_size,omitempty"`
+				Secrets  *[]SecretListEntry `json:"secrets,omitempty"`
+
+				// Total Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true.
+				Total      *int `json:"total,omitempty"`
+				TotalPages *int `json:"total_pages,omitempty"`
+
+				// Truncated Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response.
+				Truncated *bool `json:"truncated,omitempty"`
+
+				// TruncatedReason Names the bound and the scopes it affected. Absent unless truncated.
+				TruncatedReason *string `json:"truncated_reason,omitempty"`
 			} `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -32753,6 +33347,15 @@ func ParseListAccessorsResponse(rsp *http.Response) (*ListAccessorsResponse, err
 		var dest struct {
 			Data *struct {
 				Accessors *[]SecretAccessor `json:"accessors,omitempty"`
+
+				// Degraded True when the list is incomplete: part of it was withheld from this caller (project roles, ACL holders) or a lookup failed. `accessors` is then an under-count. Clients must show it.
+				Degraded *bool `json:"degraded,omitempty"`
+
+				// DegradedReasons One entry per gap, in the form `area: reason`; null when the list is complete.
+				DegradedReasons *[]string `json:"degraded_reasons"`
+
+				// Total Number of accessors listed.
+				Total *int `json:"total,omitempty"`
 			} `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -34432,7 +35035,9 @@ func ParseGetSecretVersionsResponse(rsp *http.Response) (*GetSecretVersionsRespo
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
 			Data *struct {
-				Versions *[]SecretVersion `json:"versions,omitempty"`
+				// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read; on an install upgraded from before #2970 the earlier version listings, which were logged as reads, are included, so the lifetime count is inflated there). Each version's ReadCount counts only reads charged against max_reads.
+				TotalReads *int             `json:"total_reads,omitempty"`
+				Versions   *[]SecretVersion `json:"versions,omitempty"`
 			} `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -35350,6 +35955,60 @@ func ParseReactivateUserResponse(rsp *http.Response) (*ReactivateUserResponse, e
 	return response, nil
 }
 
+// ParseReissueOneTimePasswordResponse parses an HTTP response from a ReissueOneTimePasswordWithResponse call
+func ParseReissueOneTimePasswordResponse(rsp *http.Response) (*ReissueOneTimePasswordResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReissueOneTimePasswordResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRequirePasswordResetResponse parses an HTTP response from a RequirePasswordResetWithResponse call
 func ParseRequirePasswordResetResponse(rsp *http.Response) (*RequirePasswordResetResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -35690,24 +36349,8 @@ func ParseAuthLoginResponse(rsp *http.Response) (*AuthLoginResponse, error) {
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			Data *struct {
-				// AbsoluteExpiresAt Hard ceiling past which refresh is refused
-				AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
-				AccountState           *string    `json:"account_state,omitempty"`
-				DisplayName            *string    `json:"display_name,omitempty"`
-				Email                  *string    `json:"email,omitempty"`
-				ExpiresAt              *time.Time `json:"expires_at,omitempty"`
-				PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
-				Permissions            *[]string  `json:"permissions,omitempty"`
-				Role                   *string    `json:"role,omitempty"`
-				Roles                  *[]string  `json:"roles,omitempty"`
-
-				// Token Session bearer token
-				Token    *string `json:"token,omitempty"`
-				UserId   *int    `json:"user_id,omitempty"`
-				Username *string `json:"username,omitempty"`
-			} `json:"data,omitempty"`
-			Message *string `json:"message,omitempty"`
+			Data    *AuthLogin_200_Data `json:"data,omitempty"`
+			Message *string             `json:"message,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
@@ -35766,6 +36409,56 @@ func ParseAuthLogoutResponse(rsp *http.Response) (*AuthLogoutResponse, error) {
 	return response, nil
 }
 
+// ParseVerifyMFALoginResponse parses an HTTP response from a VerifyMFALoginWithResponse call
+func ParseVerifyMFALoginResponse(rsp *http.Response) (*VerifyMFALoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &VerifyMFALoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			Data    *LoginSuccessData `json:"data,omitempty"`
+			Message *string           `json:"message,omitempty"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseHealthCheckResponse parses an HTTP response from a HealthCheckWithResponse call
 func ParseHealthCheckResponse(rsp *http.Response) (*HealthCheckResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -35782,10 +36475,12 @@ func ParseHealthCheckResponse(rsp *http.Response) (*HealthCheckResponse, error) 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
-			Checks    *map[string]interface{} `json:"checks,omitempty"`
-			Status    *string                 `json:"status,omitempty"`
-			Timestamp *time.Time              `json:"timestamp,omitempty"`
-			Version   *string                 `json:"version,omitempty"`
+			// AuthRateLimit degraded while any auth rate limit (login, password reset, SSO begin, per-account lockout) is enforcing from its in-memory fallback because its database storage failed within the last limit window. Names no budget, key or address; liveness (status, HTTP 200) is unaffected.
+			AuthRateLimit *HealthCheck200AuthRateLimit `json:"auth_rate_limit,omitempty"`
+			Checks        *map[string]interface{}      `json:"checks,omitempty"`
+			Status        *string                      `json:"status,omitempty"`
+			Timestamp     *time.Time                   `json:"timestamp,omitempty"`
+			Version       *string                      `json:"version,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err

@@ -16,11 +16,33 @@ import { Modal } from '../../components/ui/Modal';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import type { Project } from '../../services/projects';
+import { apiErrorMessage } from '../../services/client';
 import { EditProjectModal } from './EditProjectModal';
 import { formatRelativeTime, formatDate } from '../../utils';
 
 type SortKey = 'recent' | 'name';
 type SortDir = 'asc' | 'desc';
+
+// projectsListErrorMessage turns the list query's failure into something the
+// reader can act on. This used to be one hardcoded string -- "Failed to load
+// projects. Check that the backend is running." -- shown for every failure
+// mode, which is actively wrong for the commonest one: a project-scoped user
+// (system_viewer + project_viewer) is refused by a perfectly healthy server
+// with 403, and was then sent off to diagnose infrastructure that is fine
+// (#2819). Follows the pattern CompliancePage's postureErrorMessage and
+// KeyorixConnectPage already use.
+//
+// 403 only, deliberately: a 404-specific branch here would be the start of an
+// existence oracle (ADR-096 / #1645's 403-for-both convention), and there is
+// no 404 to branch on anyway -- this is a collection listing, so a refusal
+// discloses nothing about whether any particular project exists.
+const projectsListErrorMessage = (error: unknown): string => {
+    const status = (error as { response?: { status?: number } })?.response?.status;
+    if (status === 403) {
+        return 'You do not have permission to list projects. Ask an administrator to give you access to a project.';
+    }
+    return 'Failed to load projects. Check that the backend is running.';
+};
 
 // ── Create Project Modal ─────────────────────────────────────────────────────
 
@@ -31,11 +53,13 @@ interface CreateProjectModalProps {
 const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
+    const [error, setError] = useState('');
     const createProject = useCreateProject();
     const navigate = useNavigate();
 
     const handleSubmit = async () => {
         if (!name.trim()) return;
+        setError('');
         const payload = description.trim()
             ? { name: name.trim(), description: description.trim() }
             : { name: name.trim() };
@@ -43,98 +67,97 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ onClose }) => {
             const project = await createProject.mutateAsync(payload);
             onClose();
             navigate(ROUTES.PROJECT_DETAIL(project.id));
-        } catch {
-            // error shown via authStore global handler
+        } catch (e) {
+            // This catch used to be empty, with the comment "error shown via
+            // authStore global handler". There is no such handler for a
+            // mutation error -- authStore deals with 401 session expiry, not
+            // arbitrary failures -- so the catch was a silent discard: the
+            // server answered 409 "A project with that name already exists"
+            // and the user saw the dialog sit there, unchanged, forever
+            // (#2777). The message the server already took the trouble to
+            // write is now shown, the same way the create-secret dialog does
+            // it.
+            setError(apiErrorMessage(e));
         }
     };
 
     return (
-        <div
-            className="fixed inset-0 z-50 flex items-center justify-center"
-            style={{ backgroundColor: 'rgba(0,0,0,0.5)' }}
-        >
-            <div
-                className="w-full max-w-md rounded-xl p-6 shadow-2xl"
-                style={{ backgroundColor: 'var(--bg-surface)', border: '1px solid var(--border)' }}
-            >
-                <h2 className="text-lg font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
-                    New Project
-                </h2>
+        <Modal isOpen onClose={onClose} title="New Project" size="sm">
+            {error && <Alert className="mb-4" type="error" title="Failed to create project" message={error} />}
 
-                <div className="space-y-4">
-                    <div>
-                        <label
-                            htmlFor="create-project-name"
-                            className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}
-                        >
-                            Project name <span style={{ color: 'var(--error)' }}>*</span>
-                        </label>
-                        <input
-                            id="create-project-name"
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
-                            placeholder="e.g. backend-api"
-                            autoFocus
-                            className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                border: '1px solid var(--border)',
-                                color: 'var(--text-primary)',
-                            }}
-                        />
-                    </div>
-                    <div>
-                        <label
-                            htmlFor="create-project-description"
-                            className="block text-sm font-medium mb-1"
-                            style={{ color: 'var(--text-secondary)' }}
-                        >
-                            Description
-                        </label>
-                        <input
-                            id="create-project-description"
-                            type="text"
-                            value={description}
-                            onChange={(e) => setDescription(e.target.value)}
-                            placeholder="Optional"
-                            className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
-                            style={{
-                                backgroundColor: 'var(--bg-app)',
-                                border: '1px solid var(--border)',
-                                color: 'var(--text-primary)',
-                            }}
-                        />
-                    </div>
+            <div className="space-y-4">
+                <div>
+                    <label
+                        htmlFor="create-project-name"
+                        className="block text-sm font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
+                    >
+                        Project name <span style={{ color: 'var(--error)' }}>*</span>
+                    </label>
+                    <input
+                        id="create-project-name"
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && handleSubmit()}
+                        placeholder="e.g. backend-api"
+                        autoFocus
+                        className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
                 </div>
-
-                <p className="text-xs mt-3" style={{ color: 'var(--text-muted)' }}>
-                    Three environments (development, staging, production) will be created automatically.
-                </p>
-
-                <div className="flex justify-end gap-2 mt-6">
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="px-4 py-2 text-sm rounded-lg"
-                        style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-subtle)' }}
+                <div>
+                    <label
+                        htmlFor="create-project-description"
+                        className="block text-sm font-medium mb-1"
+                        style={{ color: 'var(--text-secondary)' }}
                     >
-                        Cancel
-                    </button>
-                    <button
-                        type="button"
-                        onClick={handleSubmit}
-                        disabled={!name.trim() || createProject.isPending}
-                        className="px-4 py-2 text-sm rounded-lg font-medium disabled:opacity-50"
-                        style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
-                    >
-                        {createProject.isPending ? 'Creating…' : 'Create Project'}
-                    </button>
+                        Description
+                    </label>
+                    <input
+                        id="create-project-description"
+                        type="text"
+                        value={description}
+                        onChange={(e) => setDescription(e.target.value)}
+                        placeholder="Optional"
+                        className="w-full px-3 py-2 rounded-lg text-sm outline-hidden"
+                        style={{
+                            backgroundColor: 'var(--bg-app)',
+                            border: '1px solid var(--border)',
+                            color: 'var(--text-primary)',
+                        }}
+                    />
                 </div>
             </div>
-        </div>
+
+            <p className="text-xs mt-3" style={{ color: 'var(--text-muted)' }}>
+                Three environments (development, staging, production) will be created automatically.
+            </p>
+
+            <div className="flex justify-end gap-2 mt-6">
+                <button
+                    type="button"
+                    onClick={onClose}
+                    className="px-4 py-2 text-sm rounded-lg"
+                    style={{ color: 'var(--text-secondary)', backgroundColor: 'var(--bg-subtle)' }}
+                >
+                    Cancel
+                </button>
+                <button
+                    type="button"
+                    onClick={handleSubmit}
+                    disabled={!name.trim() || createProject.isPending}
+                    className="px-4 py-2 text-sm rounded-lg font-medium disabled:opacity-50"
+                    style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+                >
+                    {createProject.isPending ? 'Creating…' : 'Create Project'}
+                </button>
+            </div>
+        </Modal>
     );
 };
 
@@ -269,7 +292,7 @@ const ProjectRow: React.FC<ProjectRowProps> = ({ project, onEditRequest, onDelet
 
 export const ProjectsListPage: React.FC = () => {
     const [showDeleted, setShowDeleted] = useState(false);
-    const { data: projects = [], isLoading, isError } = useProjects(showDeleted);
+    const { data: projects = [], isLoading, isError, error } = useProjects(showDeleted);
     const [sortKey, setSortKey] = useState<SortKey>('recent');
     const [sortDir, setSortDir] = useState<SortDir>('desc');
     const deleteProject = useDeleteProject();
@@ -397,7 +420,7 @@ export const ProjectsListPage: React.FC = () => {
                     className="rounded-lg px-4 py-3 text-sm"
                     style={{ backgroundColor: 'var(--error-subtle)', color: 'var(--error)' }}
                 >
-                    Failed to load projects. Check that the backend is running.
+                    {projectsListErrorMessage(error)}
                 </div>
             )}
 

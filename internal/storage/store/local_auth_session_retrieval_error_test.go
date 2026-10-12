@@ -10,31 +10,25 @@ package store
 
 import (
 	"context"
-	"fmt"
 	"os"
-	"sync/atomic"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
-var sessionRetrievalErrorTestCounter atomic.Int64
-
 // newSessionRetrievalErrorStore opens a uniquely-named in-memory SQLite DB with just the
 // sessions table this test needs.
 func newSessionRetrievalErrorStore(t *testing.T) (*LocalStorage, *gorm.DB) {
 	t.Helper()
-	n := sessionRetrievalErrorTestCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxsessionretrieval_%d?mode=memory&cache=shared", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "localauthsessionretrievalerror_", sqlite.Open, &gorm.Config{})
 	require.NoError(t, db.AutoMigrate(&models.Session{}))
 	return NewLocalStorage(db), db
 }

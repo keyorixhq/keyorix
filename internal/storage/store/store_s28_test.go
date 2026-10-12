@@ -5,7 +5,7 @@
 //	local_secrets.go
 //	  CreateProject          — DB error (non-duplicate)
 //	  GetProject             — not-found + DB error
-//	  UpdateProject          — DB error
+//	  UpdateProjectFields    — DB error
 //	  GetSecretsByIDs        — DB error
 //	  GetSecretByName        — DB error
 //	  UpdateSecret           — DB error
@@ -29,11 +29,11 @@ package store_test
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -42,10 +42,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// s28DBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s28DBSeq atomic.Int64
-
 // ---------------------------------------------------------------------------
 // helpers
 // ---------------------------------------------------------------------------
@@ -53,9 +49,7 @@ var s28DBSeq atomic.Int64
 // newS28Store opens a unique in-memory SQLite DB with the requested models auto-migrated.
 func newS28Store(t *testing.T, mods ...interface{}) *store.LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s28_%d?mode=memory&cache=shared", t.Name(), s28DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores28_", sqlite.Open, &gorm.Config{})
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}
@@ -65,9 +59,7 @@ func newS28Store(t *testing.T, mods ...interface{}) *store.LocalStorage {
 // brokenS28Store returns a LocalStorage whose underlying DB is already closed.
 func brokenS28Store(t *testing.T) *store.LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s28broken_%d?mode=memory&cache=shared", t.Name(), s28DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores28_", sqlite.Open, &gorm.Config{})
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	require.NoError(t, sqlDB.Close())
@@ -107,10 +99,14 @@ func TestLocalStorage_S28_GetProject_DBError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestLocalStorage_S28_UpdateProject_DBError(t *testing.T) {
+func TestLocalStorage_S28_UpdateProjectFields_DBError(t *testing.T) {
 	ls := brokenS28Store(t)
-	_, err := ls.UpdateProject(context.Background(), &models.Project{ID: 1, Name: "x"})
+	// A storage error must surface as an error, never be collapsed into a clean
+	// matched=false (#2697 — a no-match means "the project is gone", which a
+	// caller is entitled to report as not-found; a broken DB is not that).
+	matched, err := ls.UpdateProjectFields(context.Background(), 1, "x", "", nil, time.Now())
 	require.Error(t, err)
+	require.False(t, matched)
 }
 
 func TestLocalStorage_S28_GetSecretsByIDs_DBError(t *testing.T) {

@@ -32,10 +32,10 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -262,7 +262,9 @@ func (c *KeyorixCore) RequestSecretAccess(ctx context.Context, secretID, userID 
 	}
 	c.auditProjectScoped(ctx, "access_request.secret_created", userID, secret.ProjectID,
 		fmt.Sprintf("user %d requested access to read secret %d (%s)", userID, secretID, secret.Name))
-	c.notifySecretAccessRequested(ctx, created, secret)
+	c.runPostCommitNotification(ctx, "access_request.secret_created", userID, created, func() error {
+		return c.notifySecretAccessRequested(ctx, created, secret)
+	})
 	return created, nil
 }
 
@@ -312,7 +314,7 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 	// ceiling requireAuthorityForRole applies to an admin-role grant — there is no
 	// weaker "roles.assign"-shaped permission that fits (this grants no role at
 	// all), so the bar is set at the ceiling rather than invented lower.
-	if err := c.requireAdminAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
+	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
 		return nil, fmt.Errorf("only an administrator can approve access to a restricted secret: %w", err)
 	}
 	now := c.now()
@@ -333,7 +335,9 @@ func (c *KeyorixCore) ApproveSecretAccessRequest(ctx context.Context, requestID,
 	}
 	c.auditProjectScoped(ctx, "access_request.secret_approved", approverID, req.ProjectID,
 		fmt.Sprintf("approved access request %d for user %d to read secret %d (%s)", req.ID, req.UserID, *req.SecretID, secret.Name))
-	c.notifySecretAccessResolved(ctx, req, secret, true)
+	c.runPostCommitNotification(ctx, "access_request.secret_approved", approverID, req, func() error {
+		return c.notifySecretAccessResolved(ctx, req, secret, true)
+	})
 	return req, nil
 }
 
@@ -354,9 +358,12 @@ func (c *KeyorixCore) GetSecretAccessRequest(ctx context.Context, requestID, act
 		return nil, notFound
 	}
 	if req.UserID == actorID {
+		if !patAllowsOwnAccessRequest(ctx, req) {
+			return nil, notFound
+		}
 		return req, nil
 	}
-	if err := c.requireAdminAuthorityAt(ctx, actorID, req.ProjectID); err != nil {
+	if err := c.requireAccessRequestAuthorityAt(ctx, actorID, req.ProjectID); err != nil {
 		return nil, notFound
 	}
 	return req, nil
@@ -381,7 +388,7 @@ func (c *KeyorixCore) RejectSecretAccessRequest(ctx context.Context, requestID, 
 	if req.State != AccessRequestPending {
 		return nil, fmt.Errorf("only a pending request can be rejected (state is %s)", req.State)
 	}
-	if err := c.requireAdminAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
+	if err := c.requireAccessRequestAuthorityAt(ctx, approverID, req.ProjectID); err != nil {
 		return nil, fmt.Errorf("only an administrator can reject access to a restricted secret: %w", err)
 	}
 	return c.RejectAccessRequest(ctx, req.ProjectID, requestID, approverID, approverMachineID, reason)
@@ -412,7 +419,9 @@ func (c *KeyorixCore) ListSecretAccessRequestsForUser(ctx context.Context, userI
 				continue
 			}
 			if req.UserID == userID {
-				mine = append(mine, req)
+				if patAllowsOwnAccessRequest(ctx, req) {
+					mine = append(mine, req)
+				}
 				continue
 			}
 			if req.State != AccessRequestPending {
@@ -420,7 +429,7 @@ func (c *KeyorixCore) ListSecretAccessRequestsForUser(ctx context.Context, userI
 			}
 			isAdmin, ok := adminAt[p.ID]
 			if !ok {
-				isAdmin = c.requireAdminAuthorityAt(ctx, userID, p.ID) == nil
+				isAdmin = c.requireAccessRequestAuthorityAt(ctx, userID, p.ID) == nil
 				adminAt[p.ID] = isAdmin
 			}
 			if isAdmin {
@@ -472,46 +481,47 @@ func (c *KeyorixCore) checkAccessRequestApprovalClockNotRegressed(now time.Time)
 // notifySecretAccessRequested alerts the project's approvers of a new
 // secret-scoped access request, mirroring notifyAccessRequested but naming the
 // secret rather than a suggested role (there isn't one on this path).
-func (c *KeyorixCore) notifySecretAccessRequested(ctx context.Context, req *models.AccessRequest, secret *models.SecretNode) {
-	// Best-effort, but called AFTER RequestSecretAccess has already committed
-	// the AccessRequest row — without besteffort.Run's recover, a panic in
-	// ListProjectMembers would propagate past the already-committed write and
-	// the HTTP layer would report the whole request as failed even though it
-	// succeeded (docs/findings/2026-09-24-FINDING-secret-access-request-notify-panic.md).
-	besteffort.Run(ctx, "classification_gate.notifySecretAccessRequested", func() error {
-		members, err := c.storage.ListProjectMembers(ctx, req.ProjectID)
-		if err != nil {
-			return err
+//
+// Called AFTER RequestSecretAccess has already committed the AccessRequest row,
+// so it runs under runPostCommitNotification: a panic in recipient resolution or
+// CreateNotification must not propagate past the committed write and report the
+// request as failed (docs/findings/2026-09-24-FINDING-secret-access-request-notify-panic.md,
+// #3075). Every failure is returned for it to log and audit.
+func (c *KeyorixCore) notifySecretAccessRequested(ctx context.Context, req *models.AccessRequest, secret *models.SecretNode) error {
+	var errs []error
+	recipients, rerr := c.projectAdminRecipients(ctx, req.ProjectID)
+	if rerr != nil {
+		errs = append(errs, fmt.Errorf("resolve project %d admins (%d resolved), some admins may not be notified: %w", req.ProjectID, len(recipients), rerr))
+	}
+	pid := req.ProjectID
+	link := fmt.Sprintf("/projects/%d", req.ProjectID)
+	// Notify whoever WAS resolved even when part of the resolution failed.
+	for _, uid := range recipients {
+		if uid == req.UserID {
+			continue
 		}
-		pid := req.ProjectID
-		link := fmt.Sprintf("/projects/%d", req.ProjectID)
-		for _, mbr := range members {
-			if mbr.UserID == req.UserID || !isApproverRole(mbr.RoleName) {
-				continue
-			}
-			c.notify(ctx, mbr.UserID, NotificationAccessRequested,
-				"New secret access request",
-				fmt.Sprintf("User %d requested access to read secret %q.", req.UserID, secret.Name),
-				&pid, link)
-		}
-		return nil
-	})
+		errs = append(errs, c.notifyChecked(ctx, uid, NotificationAccessRequested,
+			"New secret access request",
+			fmt.Sprintf("User %d requested access to read secret %q.", req.UserID, secret.Name),
+			&pid, link, models.NotificationSeverityNone))
+	}
+	return errors.Join(errs...)
 }
 
 // notifySecretAccessResolved tells the requester their secret-scoped request was
 // approved/rejected, mirroring notifyAccessResolved.
-func (c *KeyorixCore) notifySecretAccessResolved(ctx context.Context, req *models.AccessRequest, secret *models.SecretNode, approved bool) {
+// Run it under runPostCommitNotification, which records a returned error.
+func (c *KeyorixCore) notifySecretAccessResolved(ctx context.Context, req *models.AccessRequest, secret *models.SecretNode, approved bool) error {
 	pid := req.ProjectID
 	link := fmt.Sprintf("/projects/%d", req.ProjectID)
 	if approved {
-		c.notify(ctx, req.UserID, NotificationAccessApproved,
+		return c.notifyChecked(ctx, req.UserID, NotificationAccessApproved,
 			"Secret access request approved",
 			fmt.Sprintf("Your request to read secret %q was approved.", secret.Name),
-			&pid, link)
-		return
+			&pid, link, models.NotificationSeverityNone)
 	}
-	c.notify(ctx, req.UserID, NotificationAccessRejected,
+	return c.notifyChecked(ctx, req.UserID, NotificationAccessRejected,
 		"Secret access request rejected",
 		fmt.Sprintf("Your request to read secret %q was rejected.", secret.Name),
-		&pid, link)
+		&pid, link, models.NotificationSeverityNone)
 }

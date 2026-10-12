@@ -43,7 +43,12 @@ func TestJourney_BreakGlass(t *testing.T) {
 	s := startServerWithBreakGlass(t, serverBin)
 	t.Cleanup(s.Close)
 
-	adminToken := adminLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	// This journey boots with the shipped config, so security.require_mfa is on
+	// (ADR-112). Prove that premise first -- an un-enrolled admin session is
+	// confined to enrolment -- then enrol TOTP through the real API and work from
+	// the MFA-backed session, the way a real operator on a fresh install must.
+	requireMFAEnrolmentPremise(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
+	adminToken := enrolTOTPAndLogin(t, s, "smoketestadmin", harness.BootstrapAdminPassword)
 	aEnv := adminEnv(s, adminToken)
 
 	// ── Admin: project, secret, a role deliberately WITHOUT secrets.read ───
@@ -80,7 +85,9 @@ func TestJourney_BreakGlass(t *testing.T) {
 	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", "smoketestadmin@example.invalid",
 		"--role", "project_admin", "--project", n9ProjectName)
 
-	oncallToken := adminLogin(t, s, n9OncallUser, n9UserPass)
+	// require_mfa covers every interactive user, not just admins: the oncall
+	// engineer enrols too before break-glass is reachable at all.
+	oncallToken := enrolTOTPAndLogin(t, s, n9OncallUser, n9UserPass)
 
 	// ── Before: the oncall user genuinely cannot read the secret ───────────
 	assertSecretReadDenied(t, s, oncallToken, secID)
@@ -146,11 +153,8 @@ func TestJourney_BreakGlass(t *testing.T) {
 func startServerWithBreakGlass(t *testing.T, binary string) *harness.Server {
 	t.Helper()
 	dir := t.TempDir()
-	env := []string{
-		"HOME=" + dir,
-		"PATH=" + os.Getenv("PATH"),
-		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-breakglass",
-	}
+	env := append(harness.BaseServerEnv(dir),
+		"KEYORIX_MASTER_PASSWORD=e2e-smoke-master-password-breakglass")
 	configPath := "./keyorix.yaml"
 
 	run := func(args ...string) {
@@ -160,7 +164,7 @@ func startServerWithBreakGlass(t *testing.T, binary string) *harness.Server {
 			t.Fatalf("keyorix-server admin %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
-	run("init", "--config", configPath)
+	run("init", "--dev", "--config", configPath) // plain-HTTP harness (SECURE-DEFAULT-1)
 
 	bgBlock := "\nbreak_glass:\n  enabled: true\n  emergency_role: project_developer\n  default_ttl: 4h\n  max_ttl: 24h\n"
 	cfgFile := filepath.Join(dir, "keyorix.yaml")

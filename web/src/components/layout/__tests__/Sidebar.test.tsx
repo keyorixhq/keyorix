@@ -1,11 +1,19 @@
 import React from 'react';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
-import { Sidebar, Leaf, type SidebarProps } from '../Sidebar';
+import { Sidebar, Leaf, NAV, type SidebarProps, type NavGroup, type NavLeaf } from '../Sidebar';
 import { useAuth } from '../../../features/auth';
 
 vi.mock('../../../features/auth', () => ({
     useAuth: vi.fn(),
+}));
+
+// The licence decides whether the commercial-only Billing entry is offered at all.
+const licenseState = vi.hoisted(() => ({
+    value: { grants: true, features: ['billing'] } as { grants: boolean; features: string[] } | undefined,
+}));
+vi.mock('../../../features/license', () => ({
+    useLicenseStatus: () => ({ data: licenseState.value }),
 }));
 
 // Mutable per-test state for the mocked ui store. `toggleSidebarGroupMock`
@@ -57,7 +65,10 @@ describe('Sidebar', () => {
         uiState.sidebarExpanded = { secrets: true, access: true, integrations: false, settings: false };
         toggleSidebarGroupMock.mockClear();
         mockUseAuth.mockReset();
-        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
+        licenseState.value = { grants: true, features: ['billing'] };
+        mockUseAuth.mockReturnValue({ isAdmin: true, hasPermission: () => true } as unknown as ReturnType<
+            typeof useAuth
+        >);
     });
 
     it('renders all top-level nav leaves, group headers, and expanded-by-default group children for an admin user', () => {
@@ -83,11 +94,14 @@ describe('Sidebar', () => {
         expect(screen.queryByRole('link', { name: 'Keyorix Connect' })).not.toBeInTheDocument();
         expect(screen.queryByRole('link', { name: 'Appearance' })).not.toBeInTheDocument();
 
-        expect(screen.getByText('Keyorix v0.1.0')).toBeInTheDocument();
+        // No hardcoded version: an unstamped build shows no "vX.Y.Z" at all.
+        expect(screen.queryByText(/v\d+\.\d+\.\d+/)).not.toBeInTheDocument();
     });
 
     it('hides the admin-only Access Control group and its children entirely for a non-admin user', () => {
-        mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
+        mockUseAuth.mockReturnValue({ isAdmin: false, hasPermission: () => false } as unknown as ReturnType<
+            typeof useAuth
+        >);
         renderSidebar();
 
         expect(screen.queryByRole('button', { name: 'Access Control' })).not.toBeInTheDocument();
@@ -100,7 +114,9 @@ describe('Sidebar', () => {
     });
 
     it('shows the Access Control group for an admin user', () => {
-        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
+        mockUseAuth.mockReturnValue({ isAdmin: true, hasPermission: () => true } as unknown as ReturnType<
+            typeof useAuth
+        >);
         renderSidebar();
 
         expect(screen.getByRole('button', { name: 'Access Control' })).toBeInTheDocument();
@@ -261,12 +277,16 @@ describe('Sidebar', () => {
         ['Encryption & Keys', '/settings/encryption'],
     ])('shows %s for an admin and hides it for a non-admin', (label, href) => {
         uiState.sidebarExpanded = { ...uiState.sidebarExpanded, settings: true };
-        mockUseAuth.mockReturnValue({ isAdmin: true } as unknown as ReturnType<typeof useAuth>);
+        mockUseAuth.mockReturnValue({ isAdmin: true, hasPermission: () => true } as unknown as ReturnType<
+            typeof useAuth
+        >);
         const { rerender } = renderSidebar();
 
         expect(screen.getByRole('link', { name: label })).toHaveAttribute('href', href);
 
-        mockUseAuth.mockReturnValue({ isAdmin: false } as unknown as ReturnType<typeof useAuth>);
+        mockUseAuth.mockReturnValue({ isAdmin: false, hasPermission: () => false } as unknown as ReturnType<
+            typeof useAuth
+        >);
         rerender(<Sidebar isOpen={true} onClose={vi.fn()} />);
 
         expect(screen.queryByRole('link', { name: label })).not.toBeInTheDocument();
@@ -309,6 +329,51 @@ describe('Sidebar', () => {
         expect(screen.queryByRole('link', { name: 'All Secrets' })).not.toBeInTheDocument();
     });
 
+    describe('permission-aware entries (DEMO-UI-1)', () => {
+        const asUser = (perms: string[]) =>
+            mockUseAuth.mockReturnValue({
+                isAdmin: false,
+                hasPermission: (p: string) => perms.includes(p),
+            } as unknown as ReturnType<typeof useAuth>);
+
+        it('hides Audit Logs from a user without audit.read', () => {
+            asUser(['secrets.read']);
+            renderSidebar();
+            expect(screen.queryByRole('link', { name: 'Audit Logs' })).not.toBeInTheDocument();
+            // an ungated sibling is still there, so the assertion is not vacuous
+            expect(screen.getByRole('link', { name: 'Sharing' })).toBeInTheDocument();
+        });
+
+        it('shows Audit Logs to a user who holds audit.read', () => {
+            asUser(['audit.read']);
+            renderSidebar();
+            expect(screen.getByRole('link', { name: 'Audit Logs' })).toBeInTheDocument();
+        });
+
+        it('shows Audit Logs to an admin', () => {
+            renderSidebar();
+            expect(screen.getByRole('link', { name: 'Audit Logs' })).toBeInTheDocument();
+        });
+
+        it('hides Billing from an admin on a community build (no licence grants billing)', () => {
+            licenseState.value = { grants: false, features: [] };
+            renderSidebar();
+            expect(screen.queryByRole('link', { name: 'Billing' })).not.toBeInTheDocument();
+            expect(screen.getByRole('link', { name: 'Compliance' })).toBeInTheDocument();
+        });
+
+        it('hides Billing while the licence is unknown (loading or failed)', () => {
+            licenseState.value = undefined;
+            renderSidebar();
+            expect(screen.queryByRole('link', { name: 'Billing' })).not.toBeInTheDocument();
+        });
+
+        it('shows Billing to an admin whose licence grants it', () => {
+            renderSidebar();
+            expect(screen.getByRole('link', { name: 'Billing' })).toBeInTheDocument();
+        });
+    });
+
     it('applies the className prop to the desktop nav wrapper', () => {
         const { container } = renderSidebar({ className: 'custom-wrapper' });
         expect(container.querySelector('.custom-wrapper')).toBeInTheDocument();
@@ -345,5 +410,84 @@ describe('Sidebar', () => {
 
         expect(screen.getAllByRole('link', { name: 'Dashboard' })).toHaveLength(1);
         expect(document.querySelector('button.ml-1')).not.toBeInTheDocument();
+    });
+
+    // ── adminOnly, derived from NAV rather than enumerated ───────────────────
+    //
+    // The three cases above this block (System Health / Authentication /
+    // Encryption & Keys) are a hardcoded list, and all three happen to be
+    // CHILDREN OF A GROUP. A top-level adminOnly LEAF -- the third shape a nav
+    // entry can take, and the shape Billing has -- had no case at all, and was
+    // never filtered: every non-admin saw Billing in the sidebar and was
+    // bounced back to /dashboard on clicking it (#2774).
+    //
+    // So these two tests derive their expectations from NAV itself. The point
+    // is not to add Billing to a list; it is that a newly added adminOnly entry
+    // of ANY shape is covered the moment it is added, instead of being covered
+    // only if whoever added it also remembered to extend a table here.
+    //
+    // Group names are matched as buttons (the group header is a disclosure
+    // button), leaf names as links. Every group is expanded first, so an
+    // adminOnly child cannot pass by virtue of its parent being collapsed --
+    // which would make the whole check vacuous.
+    describe('adminOnly entries, enumerated from NAV', () => {
+        const expandAllGroups = () => {
+            uiState.sidebarExpanded = Object.fromEntries(
+                NAV.filter((i): i is NavGroup => i.kind === 'group').map((g) => [g.id, true])
+            );
+        };
+
+        const adminOnlyGroups = NAV.filter((i): i is NavGroup => i.kind === 'group' && !!i.adminOnly);
+        const adminOnlyTopLevelLeaves = NAV.filter((i): i is NavLeaf => i.kind === 'leaf' && !!i.adminOnly);
+        const adminOnlyChildLeaves = NAV.filter((i): i is NavGroup => i.kind === 'group').flatMap((g) =>
+            g.children.filter((c) => !!c.adminOnly)
+        );
+
+        it('covers all three shapes an adminOnly entry can take', () => {
+            // A calibration assertion, not a coverage metric: if NAV ever has
+            // no top-level adminOnly leaf, the test below it silently checks
+            // nothing, and this is what says so out loud. Billing is the only
+            // one today -- that is exactly why the bug went unnoticed.
+            expect(adminOnlyGroups.length, 'at least one adminOnly group in NAV').toBeGreaterThan(0);
+            expect(adminOnlyTopLevelLeaves.length, 'at least one adminOnly top-level leaf in NAV').toBeGreaterThan(0);
+            expect(adminOnlyChildLeaves.length, 'at least one adminOnly leaf inside a group in NAV').toBeGreaterThan(0);
+        });
+
+        it('renders every adminOnly entry for an admin', () => {
+            expandAllGroups();
+            mockUseAuth.mockReturnValue({ isAdmin: true, hasPermission: () => true } as unknown as ReturnType<
+                typeof useAuth
+            >);
+            renderSidebar();
+
+            for (const g of adminOnlyGroups) {
+                expect(screen.getByRole('button', { name: g.name }), `group ${g.name}`).toBeInTheDocument();
+            }
+            for (const l of [...adminOnlyTopLevelLeaves, ...adminOnlyChildLeaves]) {
+                expect(screen.getByRole('link', { name: l.name }), `leaf ${l.name}`).toHaveAttribute('href', l.href);
+            }
+        });
+
+        it('hides every adminOnly entry from a non-admin, whatever shape it has', () => {
+            expandAllGroups();
+            mockUseAuth.mockReturnValue({ isAdmin: false, hasPermission: () => false } as unknown as ReturnType<
+                typeof useAuth
+            >);
+            renderSidebar();
+
+            for (const g of adminOnlyGroups) {
+                expect(screen.queryByRole('button', { name: g.name }), `group ${g.name}`).not.toBeInTheDocument();
+            }
+            for (const l of [...adminOnlyTopLevelLeaves, ...adminOnlyChildLeaves]) {
+                expect(screen.queryByRole('link', { name: l.name }), `leaf ${l.name}`).not.toBeInTheDocument();
+            }
+
+            // Green on a known-good case too, not just red on the bad one: the
+            // non-adminOnly entries must still all be there, so a filter that
+            // simply dropped everything would fail this.
+            for (const l of NAV.filter((i): i is NavLeaf => i.kind === 'leaf' && !i.adminOnly && !i.needs)) {
+                expect(screen.getByRole('link', { name: l.name }), `non-admin leaf ${l.name}`).toBeInTheDocument();
+            }
+        });
     });
 });

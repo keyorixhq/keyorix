@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 )
@@ -48,8 +49,30 @@ func (ls *LocalStorage) ListRotationPolicies(ctx context.Context, projectID *uin
 	return policies, nil
 }
 
-func (ls *LocalStorage) UpdateRotationPolicy(ctx context.Context, p *models.RotationPolicy) error {
-	return ls.db.WithContext(ctx).Save(p).Error
+// UpdateRotationPolicyFields persists ONLY the six operator-editable columns
+// (plus updated_at), onto a LIVE policy row — see the storage.Storage interface
+// doc for why the full-row UpdateRotationPolicy this replaced (a bare Save) both
+// resurrected a concurrently deleted policy and reverted the executor's recorded
+// rotation_state (#2700).
+//
+// GORM adds `deleted_at IS NULL` for this soft-delete model, which is the clause
+// that stops the resurrection. The rotation_state/last_rotation_error/
+// last_state_at columns are deliberately absent: UpdateRotationState owns them.
+func (ls *LocalStorage) UpdateRotationPolicyFields(ctx context.Context, id uint, f storage.RotationPolicyFieldUpdate, updatedAt time.Time) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.RotationPolicy{}).Where(sqlWhereID, id).
+		Updates(map[string]interface{}{
+			"name":              f.Name,
+			"description":       f.Description,
+			"interval_days":     f.IntervalDays,
+			"alert_days_before": f.AlertDaysBefore,
+			"notify_on_breach":  f.NotifyOnBreach,
+			"is_active":         f.IsActive,
+			"updated_at":        updatedAt,
+		})
+	if res.Error != nil {
+		return false, res.Error
+	}
+	return res.RowsAffected == 1, nil
 }
 
 func (ls *LocalStorage) DeleteRotationPolicy(ctx context.Context, id uint) error {

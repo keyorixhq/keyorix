@@ -184,6 +184,7 @@ func TestGetSecret_IncludeValue_MachineIdentity_S10(t *testing.T) {
 	url := fmt.Sprintf("/api/v1/secrets/%d?include_value=true", secretID)
 	r := httptest.NewRequest(http.MethodGet, url, nil)
 	r = withMachineCtxS10(r)
+	r = withResolvedSecretS10(t, h, r, secretID)
 	r = withChiParam(r, "id", fmt.Sprintf("%d", secretID))
 	w := httptest.NewRecorder()
 
@@ -201,6 +202,7 @@ func TestGetSecret_MachineIdentity_Found_S10(t *testing.T) {
 
 	r := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/secrets/%d", secretID), nil)
 	r = withMachineCtxS10(r)
+	r = withResolvedSecretS10(t, h, r, secretID)
 	r = withChiParam(r, "id", fmt.Sprintf("%d", secretID))
 	w := httptest.NewRecorder()
 
@@ -359,4 +361,14 @@ func TestCopyEnvironmentSecrets_BadEnvID_S10(t *testing.T) {
 
 	h.CopyEnvironmentSecrets(w, r)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// withResolvedSecretS10 simulates RequireScopedSecretPermission's hand-off: the
+// route middleware pins the secret it authorized on the request context, and
+// GetSecret's machine branch serves only that (any mismatch is re-authorized).
+func withResolvedSecretS10(t *testing.T, h *SecretHandler, r *http.Request, secretID uint) *http.Request {
+	t.Helper()
+	sec, err := h.coreService.GetSecret(r.Context(), secretID)
+	require.NoError(t, err)
+	return r.WithContext(customMiddleware.WithResolvedSecret(r.Context(), sec))
 }

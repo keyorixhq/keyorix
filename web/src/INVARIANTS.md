@@ -49,18 +49,28 @@ quotes CSV-special characters...'`). See `internal/core/INVARIANTS.md` INV-CORE-
   Go-side half of this same class — if a second client-side CSV writer is ever added, it needs
   the identical treatment and an identical test.
 
-## OpenAPI contract drift — confirmed unguarded, asymmetric with `cli/`
+## OpenAPI contract drift — guarded for the schema'd wire types
 
-- **INV-WEB-05** `web/src/types` (`index.ts`, `rbac.ts`, `serviceAccounts.ts`) should stay in
-  sync with the server's actual OpenAPI contract (`server/http/handlers/openapi.yaml`, ADR-074).
-  Today it is hand-written, with no codegen step and no drift check — contrast with `cli/`,
-  whose `internal/apiclient/{types,client}.gen.go` IS genuinely generated from the same
-  `openapi.yaml` via `cli/Makefile`'s `client` target. ADR-074's own `contracttest` harness
-  (`AssertOpenAPIResponse`) lives only server-side
-  (`server/http/handlers/contracttest/doc.go`) — nothing equivalent exists in `web/`.
-  UNGUARDED (#issue: real drift risk; either generate `web/src/types` from `openapi.yaml` the
-  way `cli/` does, or add a CI check that fails on drift between the hand-written types and the
-  live OpenAPI document).
+- **INV-WEB-05** The wire-shaped types in `web/src/types` (`index.ts`, `rbac.ts`) stay in sync
+  with the server's OpenAPI contract (`server/http/handlers/openapi.yaml`, ADR-074): field
+  names in both directions, JSON kind, nullability, enums, and optionality where the schema
+  declares `required`. Contrast `cli/`, whose `internal/apiclient/*.gen.go` is generated from
+  the same spec. Web is checked, not generated, because `web/src/types` mixes wire types with
+  UI models the services layer builds by mapping (`User`, `Secret`, `ShareRecord`,
+  `DashboardStats`, ...), and about half the endpoints web calls have only a prose 200
+  description in the spec, so there is nothing to generate from. Guard:
+  `types/__tests__/openapiDrift.test.ts` (real spec; also a partition — every exported
+  interface is in `WIRE_TYPES` or in `NOT_COMPARED` with a reason — and a stale-exemption
+  check) and `types/__tests__/openapiDrift.engine.test.ts` (calibration: the engine is red on
+  each drift class, green on a match). **Not covered**: the `NOT_COMPARED` types; wire bodies
+  `services/*.ts` reads as `any` (a misspelled key there is invisible); endpoints with no
+  response schema in the spec (`SecretPolicy`, `SecretUsageStat`, `UnusedSecretStat`,
+  `RotationStatusEntry`, the profile `impersonation` object — add the schema to the spec,
+  then move the type into `WIRE_TYPES`). **CI gap**: `.github/workflows/web-ci.yml` is
+  path-filtered to `web/**`, so a PR that edits only `openapi.yaml` does not run this guard
+  until the next web change or the Sonar coverage run; adding
+  `server/http/handlers/openapi.yaml` to that workflow's `paths` closes it (needs a
+  `.github/**` change).
 
 ## Anti-enumeration — holds by omission, not by a guard
 

@@ -13,33 +13,26 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // ── DB helpers ────────────────────────────────────────────────────────────────
-
-var s27DBCounter atomic.Int64
 
 // freshCoreS27 opens a uniquely-named in-memory SQLite DB with all models that
 // the s27 handlers touch migrated, and returns a ready-to-use KeyorixCore.
 func freshCoreS27(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s27DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s27_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_s27_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
@@ -61,10 +54,7 @@ func freshCoreS27(t *testing.T) *core.KeyorixCore {
 func newAdminJobsHandlerS27(t *testing.T) *AdminJobsHandler {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := s27DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s27_jobs_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_s27_jobs_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Role{}, &models.UserRole{}, &models.Project{},
 		&models.Environment{}, &models.SecretNode{}, &models.RotationPolicy{},
@@ -187,10 +177,7 @@ func TestVerifyAuditChain_S27_ChainedEvents(t *testing.T) {
 func TestWriteAuditCheckpoint_S27_ConflictOnBrokenChain(t *testing.T) {
 	t.Parallel()
 	// Use a fresh uniquely-named DB (not freshCoreS27, to control data exactly).
-	n := s27DBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kxhandlers_s27_cp_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxhandlers_s27_cp_")
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.SystemMetadata{}))
 
 	// Insert an audit event with a deliberately wrong entry_hash to break the chain.

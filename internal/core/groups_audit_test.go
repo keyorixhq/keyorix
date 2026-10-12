@@ -28,7 +28,12 @@ func TestGroupCRUDAudit(t *testing.T) {
 		&models.Group{}, &models.GroupRole{}, &models.UserGroup{}, &models.AuditEvent{}, &models.Role{},
 		&models.UserRole{},
 	))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	// NewKeyorixCore, not a bare struct literal: the literal leaves the `now`
+	// clock nil, and #2697's UpdateGroup stamps updated_at through it (as most of
+	// core already does). The literal only ever worked here because this one
+	// function happened not to need a clock — a fixture defect, not a reason to
+	// avoid the seam.
+	c := NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
 	lastActor := func(eventType string) (int64, *uint) {
@@ -83,7 +88,7 @@ func TestGroupMembershipAudit(t *testing.T) {
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 11, Username: "alice", Email: "alice@example.com"}).Error)
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
 	require.NoError(t, c.AddUserToGroup(ctx, 42, false, 11, 7, 0))
@@ -129,7 +134,7 @@ func TestGroupCreateAudit_UnauthenticatedActor(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.Group{}, &models.AuditEvent{}))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	c := NewKeyorixCore(store.NewLocalStorage(db))
 
 	_, err = c.CreateGroup(context.Background(), 0, &CreateGroupRequest{Name: "cli-group"})
 	require.NoError(t, err)

@@ -42,7 +42,19 @@ type credentialWithIdentityState struct {
 	IdentityState string `gorm:"column:identity_state"`
 }
 
+// GetMachineIdentityCredentialWithIdentityStateByHash is the live
+// revocation re-check every machine-token request runs, cache hit or miss
+// (PR-1/PR-2 deliberately never cache it). H3 (PERF-3): served from a
+// hand-written prepared statement (credential_lookup_raw.go) when
+// available — see that file's header for why, and
+// TestCredentialLookupRaw_MatchesGORM_Fuzz for the proof the two paths
+// agree. Falls back to the original GORM query unchanged whenever the raw
+// path isn't available (transaction-scoped LocalStorage, or a prepare
+// failure) — this method's observable behavior is identical either way.
 func (ls *LocalStorage) GetMachineIdentityCredentialWithIdentityStateByHash(ctx context.Context, hash string) (*models.MachineIdentityCredential, string, error) {
+	if cred, state, handled, err := ls.getMachineIdentityCredentialWithIdentityStateByHashRaw(ctx, hash); handled {
+		return cred, state, err
+	}
 	var row credentialWithIdentityState
 	err := ls.db.WithContext(ctx).
 		Table("machine_identity_credentials AS c").
@@ -102,11 +114,29 @@ func (ls *LocalStorage) ListActiveMachineIdentityCredentials(ctx context.Context
 	return rows, nil
 }
 
-func (ls *LocalStorage) UpdateMachineIdentityCredential(ctx context.Context, c *models.MachineIdentityCredential) error {
-	if err := ls.db.WithContext(ctx).Save(c).Error; err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+// SetMachineIdentityCredentialClassification persists ONLY the classification
+// column, conditional on the row's current classification still being
+// fromClassification — see the storage.Storage interface doc for why the
+// full-row UpdateMachineIdentityCredential this replaced (a bare Save) could
+// un-revoke a concurrently revoked token (#2696).
+//
+// COALESCE so a NULL column (a row written before Classification existed) is
+// matched by fromClassification "", the value GORM reads it back as — the same
+// treatment SetAccountStateIfMatches gives account_state.
+//
+// There is deliberately no updated_at here: MachineIdentityCredential has no
+// such column (only CreatedAt and the separately-stamped LastUsedAt).
+func (ls *LocalStorage) SetMachineIdentityCredentialClassification(ctx context.Context, credentialID uint, fromClassification, toClassification string) (bool, error) {
+	res := ls.db.WithContext(ctx).Model(&models.MachineIdentityCredential{}).
+		Where("id = ? AND COALESCE(classification, '') = ?", credentialID, fromClassification).
+		// A map, not a struct: GORM writes every map entry including a zero
+		// value, so clearing the label (level "") actually persists the empty
+		// string rather than being skipped as "unset".
+		Updates(map[string]interface{}{"classification": toClassification})
+	if res.Error != nil {
+		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
-	return nil
+	return res.RowsAffected == 1, nil
 }
 
 func (ls *LocalStorage) CountMachineIdentityCredentialsByClassification(ctx context.Context) (map[string]int, error) {

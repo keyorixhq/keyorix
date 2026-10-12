@@ -93,6 +93,31 @@ var mutatingHTTPMethods = map[string]bool{
 	http.MethodPost: true, http.MethodPut: true, http.MethodPatch: true, http.MethodDelete: true,
 }
 
+// stateChangingGETRoutes are GET routes that change server state, named
+// explicitly because mutatingHTTPMethods classifies by verb and so can never
+// see them (#2910). Every one is a browser redirect hop in an SSO login flow,
+// where the protocol fixes the verb as GET:
+//   - /auth/sso/{provider}/login and /auth/saml/{provider}/login write an
+//     SSOLoginState row (BeginSSO / BeginSAML);
+//   - /auth/sso/{provider}/callback consumes that row, can JIT-provision an
+//     account, reconciles group memberships and role grants, and mints a
+//     session (CompleteSSO). It is the OIDC twin of the POST SAML ACS, which
+//     was always in the inventory.
+//
+// HOW THIS LIST WAS ESTABLISHED, and what it does NOT cover: it comes from
+// reading the unauthenticated auth block of server/http/router.go, the only
+// place a protocol forces a state-changing GET. It is NOT a sweep of every GET
+// handler in the router for writes. A GET that writes anywhere else stays
+// invisible here until someone adds it, which is the "enumeration only as
+// complete as the idioms it knows about" gap (CLAUDE.md), stated rather than
+// hidden. GET /auth/setup/{token} was checked and is read-only (it inspects
+// the token; POST /auth/setup/consume consumes it).
+var stateChangingGETRoutes = map[string]bool{
+	"/auth/sso/{provider}/login":    true,
+	"/auth/sso/{provider}/callback": true,
+	"/auth/saml/{provider}/login":   true,
+}
+
 // liveOperationKeys walks the real constructed router and the real gRPC service
 // descriptors and returns every mutating operation's registry key, sorted. REST
 // keys are "REST <METHOD> <path>"; gRPC keys are "GRPC <service>.<method>".
@@ -121,7 +146,7 @@ func liveOperationKeys(t *testing.T) []string {
 
 	var keys []string
 	err = chi.Walk(routes, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
-		if mutatingHTTPMethods[method] {
+		if mutatingHTTPMethods[method] || (method == http.MethodGet && stateChangingGETRoutes[route]) {
 			keys = append(keys, "REST "+method+" "+route)
 		}
 		return nil

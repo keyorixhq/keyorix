@@ -9,21 +9,37 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
 
 // CreateOrUpdateSecretACL upserts a SecretACL row on the (secret_id, user_id) unique index.
+//
+// #2649: the upsert and a lockLiveParent re-read of the live secret node (FOR SHARE on
+// Postgres) run in one transaction, which rolls back if the node is gone. Without it, a
+// DeleteSecret committing between the caller's liveness check and this upsert ran its
+// CWE-284 ACL cascade before the grant existed, and the grant then committed on the
+// deleted secret and reactivated on RestoreSecret (INV-STORE-21).
 func (ls *LocalStorage) CreateOrUpdateSecretACL(ctx context.Context, acl *models.SecretACL) error {
-	result := ls.db.WithContext(ctx).
-		Clauses(clause.OnConflict{
-			Columns:   []clause.Column{{Name: "secret_id"}, {Name: "user_id"}},
-			DoUpdates: clause.AssignmentColumns([]string{"permissions", "granted_by", "updated_at"}),
-		}).
-		Create(acl)
-	if result.Error != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
-	}
-	return nil
+	return ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		result := tx.
+			Clauses(clause.OnConflict{
+				Columns:   []clause.Column{{Name: "secret_id"}, {Name: "user_id"}},
+				DoUpdates: clause.AssignmentColumns([]string{"permissions", "granted_by", "updated_at"}),
+			}).
+			Create(acl)
+		if result.Error != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
+		}
+		live, err := lockLiveParent(tx, &models.SecretNode{}, sqlWhereID, acl.SecretID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		}
+		if !live {
+			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		}
+		return nil
+	})
 }
 
 // ListSecretACLs returns all ACL grants for the given secret.

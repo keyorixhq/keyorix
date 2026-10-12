@@ -71,7 +71,7 @@ func openCrashTestDB(t testing.TB, path string) *LocalStorage {
 		t.Fatalf("underlying sql.DB: %v", err)
 	}
 	sqlDB.SetMaxOpenConns(1)
-	if err := db.AutoMigrate(&models.AuditEvent{}, &models.AuditJournalReplayState{}); err != nil {
+	if err := db.AutoMigrate(&models.AuditEvent{}, &models.AuditJournalReplayState{}, &models.AuditJournalOrigin{}); err != nil {
 		t.Fatalf("automigrate: %v", err)
 	}
 	return NewLocalStorage(db)
@@ -255,7 +255,7 @@ func TestLocalAuditJournal_KillNineLoop(t *testing.T) {
 			len(journalResult.Records), dbRowCount, replicaID)
 	}
 
-	cursor, _, err := ls.auditJournalReplayCursor(ctx, replicaID)
+	cursor, _, err := auditJournalReplayCursor(ls.db.WithContext(ctx), replicaID)
 	if err != nil {
 		t.Fatalf("read replay cursor: %v", err)
 	}
@@ -316,7 +316,7 @@ func dbDescriptions(t testing.TB, ls *LocalStorage) map[string]bool {
 func countReplicaRows(t testing.TB, ls *LocalStorage, replicaID string) int64 {
 	t.Helper()
 	var n int64
-	if err := ls.DB().Model(&models.AuditEvent{}).Where("journal_replica_id = ?", replicaID).Count(&n).Error; err != nil {
+	if err := ls.DB().Model(&models.AuditJournalOrigin{}).Where("replica_id = ?", replicaID).Count(&n).Error; err != nil {
 		t.Fatalf("count replica rows: %v", err)
 	}
 	return n

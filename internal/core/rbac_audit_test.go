@@ -19,7 +19,10 @@ func newRBACAuditCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.UserRole{}, &models.Role{}, &models.Permission{},
-		&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
+		// models.SystemMetadata holds the role_permissions cache-invalidation
+		// generation (PERF-3 PR-2) that every role_permissions write bumps in the
+		// same transaction — see role_permission_cache.go.
+		&models.RolePermission{}, &models.SystemMetadata{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SoDPolicy{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
@@ -126,7 +129,7 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Group{}, &models.Role{}, &models.GroupRole{}, &models.SoDPolicy{},
-		&models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Project{}, &models.Environment{}, &models.UserGroup{},
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
@@ -157,7 +160,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)

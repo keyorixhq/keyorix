@@ -2,12 +2,12 @@ package auditjournal
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"sync"
-	"time"
 )
 
 // defaultMaxSegmentBytes bounds how large one segment file grows before
@@ -28,8 +28,12 @@ const defaultMaxSegmentBytes = 64 << 20
 const (
 	appendQueueCapacity = 4096
 	appendMaxBatch      = 256
-	appendIdleTimeout   = 200 * time.Millisecond
 )
+
+// ErrClosed is returned by Submit once Close has been called (or races it)
+// and the request was not written. Like every Submit error it means the
+// payload is NOT durable.
+var ErrClosed = errors.New("auditjournal: writer closed")
 
 // segmentWriter is the subset of *os.File the Writer needs. Exists so a test
 // can substitute a fault-injecting implementation (e.g. one that fails with
@@ -45,6 +49,25 @@ type segmentWriter interface {
 func openRealSegment(path string) (segmentWriter, error) {
 	return os.OpenFile(path, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0o600) // #nosec G304 -- path is derived from an operator-configured dir, not user input
 }
+
+// syncDir fsyncs a directory so a file created (or renamed) inside it has a
+// durable directory entry. fsync on the file alone does not persist its
+// dirent: after a crash the file, and every record in it, can be gone even
+// though each record's own fsync succeeded (coordinator review of #2758,
+// item 2). Keyorix ships no Windows build, where opening a directory for
+// Sync is not supported.
+//
+// The writer calls it through syncDirFn so a test can observe the calls.
+func syncDir(dir string) error {
+	d, err := os.Open(dir) // #nosec G304 -- operator-configured journal dir
+	if err != nil {
+		return err
+	}
+	defer func() { _ = d.Close() }()
+	return d.Sync()
+}
+
+var syncDirFn = syncDir
 
 type appendRequest struct {
 	payload []byte
@@ -64,29 +87,36 @@ type appendResult struct {
 // applied to a local file.
 //
 // Zero value is not usable; construct with Open.
+//
+// Lifecycle: Open starts exactly one flusher goroutine and Close stops it.
+// There is no idle exit and no lazy restart. The earlier design started the
+// flusher on the first Submit and retired it after an idle timeout, which
+// had two defects found in the coordinator's review of #2758: a Submit that
+// captured the old queue just before the idle exit could strand its request
+// until ctx expired (item 3), and Close could not stop the flusher, only
+// wait for it to idle out, so a batch committed during Close still called
+// onBatch after the store side had torn down (item 1, a send on a closed
+// channel).
 type Writer struct {
 	dir             string
 	maxSegmentBytes int64
 	openSegment     func(path string) (segmentWriter, error)
 	onBatch         func([]Record) // optional: called after a batch's fsync succeeds, before acking callers
 
-	submitMu sync.Mutex
-	queue    chan *appendRequest
-	running  bool
+	queue chan *appendRequest
 
-	// Touched ONLY by the single flusher goroutine while running -- see
-	// runFlusher. Safe without further locking because Open/Close and
-	// runFlusher's own lifecycle guarantee at most one goroutine accesses
-	// these at a time (the submit-side queue is the only cross-goroutine
-	// handoff, and it carries no reference to these fields).
+	// Touched ONLY by the flusher goroutine between Open and Close (tests
+	// may swap file between Submits; the queue/done channel handoffs order
+	// those accesses).
 	file         segmentWriter
 	fileSize     int64
 	fileStartSeq uint64
 	nextSeq      uint64
 	chainHead    [32]byte
 
-	closeOnce sync.Once
-	closed    chan struct{}
+	closeOnce   sync.Once
+	closed      chan struct{} // closed by Close: stop accepting, drain, exit
+	flusherDone chan struct{} // closed by the flusher when it has exited; no onBatch call happens after this
 }
 
 // Option configures Open.
@@ -125,7 +155,9 @@ func Open(dir string, opts ...Option) (*Writer, error) {
 		openSegment:     openRealSegment,
 		nextSeq:         result.NextSeq,
 		chainHead:       result.HeadLocalHash,
+		queue:           make(chan *appendRequest, appendQueueCapacity),
 		closed:          make(chan struct{}),
+		flusherDone:     make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(w)
@@ -154,108 +186,124 @@ func Open(dir string, opts ...Option) (*Writer, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auditjournal: open segment %s: %w", path, err)
 	}
+	// Persist the segment's directory entry (it may have just been created)
+	// and the journal directory's own entry in its parent (listSegments may
+	// have just created it) before any record is acknowledged.
+	if err := syncDirFn(dir); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("auditjournal: fsync dir %s: %w", dir, err)
+	}
+	if err := syncDirFn(filepath.Dir(filepath.Clean(dir))); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("auditjournal: fsync parent of %s: %w", dir, err)
+	}
 	w.file = f
 	w.fileStartSeq = startSeq
 	w.fileSize = size
 
+	go w.runFlusher()
 	return w, nil
 }
 
 // Submit appends payload, waits for its batch's group fsync, and returns
 // the record's assigned sequence number. Blocks until the batch commits (or
-// fails) or ctx is done. A non-nil error means payload is NOT durable --
-// per ADR-115, the caller must treat this exactly like a failed audit
-// write: fail closed, never disclose.
+// fails), ctx is done, or the writer is closed. A non-nil error means
+// payload is NOT durable -- per ADR-115, the caller must treat this exactly
+// like a failed audit write: fail closed, never disclose.
 func (w *Writer) Submit(ctx context.Context, payload []byte) (uint64, error) {
 	req := &appendRequest{payload: payload, done: make(chan appendResult, 1)}
 
-	w.submitMu.Lock()
-	if !w.running {
-		w.running = true
-		w.queue = make(chan *appendRequest, appendQueueCapacity)
-		go w.runFlusher(w.queue)
-	}
-	queue := w.queue
-	w.submitMu.Unlock()
-
 	select {
-	case queue <- req:
+	case <-w.closed:
+		return 0, ErrClosed
+	default:
+	}
+	select {
+	case w.queue <- req:
+	case <-w.closed:
+		return 0, ErrClosed
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	}
 	select {
 	case res := <-req.done:
 		return res.seq, res.err
+	case <-w.flusherDone:
+		// The flusher answers every request it takes before it exits, so a
+		// result may already be waiting; anything else was enqueued after
+		// its final drain and was never written.
+		select {
+		case res := <-req.done:
+			return res.seq, res.err
+		default:
+			return 0, ErrClosed
+		}
 	case <-ctx.Done():
 		return 0, ctx.Err()
 	}
 }
 
-// Close stops the flusher goroutine (after any in-flight batch finishes)
-// and closes the current segment file. Safe to call once; a Submit racing
-// a concurrent Close may return early with an error -- callers are expected
-// to stop submitting before closing, same contract as a context cancel.
+// Close stops accepting new records, lets the flusher commit everything
+// already queued, waits for it to exit, and closes the current segment.
+// After Close returns the onBatch callback is never invoked again, so its
+// owner may release whatever the callback writes to. Safe to call more than
+// once.
 func (w *Writer) Close() error {
-	w.closeOnce.Do(func() { close(w.closed) })
-	w.submitMu.Lock()
-	running := w.running
-	queue := w.queue
-	w.submitMu.Unlock()
-	if !running {
-		return nil
-	}
-	// Send a sentinel with a cancelled context's shape by simply waiting for
-	// the flusher's own idle exit -- simplest correct shutdown for a
-	// prototype: stop producing new work and let the idle timeout retire the
-	// goroutine, then close the file. The flusher never touches w.file after
-	// marking itself not-running (see runFlusher), so this is race-free.
-	_ = queue
-	for {
-		w.submitMu.Lock()
-		stillRunning := w.running
-		w.submitMu.Unlock()
-		if !stillRunning {
-			break
+	var err error
+	w.closeOnce.Do(func() {
+		close(w.closed)
+		<-w.flusherDone
+		if w.file != nil {
+			err = w.file.Close()
 		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if w.file != nil {
-		return w.file.Close()
-	}
-	return nil
+	})
+	return err
 }
 
 // runFlusher is the single goroutine performing all file I/O for w. Mirrors
-// store.runAuditFlusher's shape exactly (bounded queue, non-blocking drain
-// up to appendMaxBatch, idle-exit after appendIdleTimeout) with local-file
-// group fsync in place of a Postgres transaction.
-func (w *Writer) runFlusher(queue chan *appendRequest) {
+// store.runAuditFlusher's shape (bounded queue, non-blocking drain up to
+// appendMaxBatch) with local-file group fsync in place of a Postgres
+// transaction. It blocks for the first request of a batch, so a solo
+// caller is committed immediately with no batching window.
+func (w *Writer) runFlusher() {
+	defer close(w.flusherDone)
 	for {
 		var batch []*appendRequest
 		select {
-		case req := <-queue:
+		case req := <-w.queue:
 			batch = append(batch, req)
-		case <-time.After(appendIdleTimeout):
-			w.submitMu.Lock()
-			select {
-			case req := <-queue:
-				batch = append(batch, req)
-				w.submitMu.Unlock()
-			default:
-				w.running = false
-				w.submitMu.Unlock()
-				return
-			}
+		case <-w.closed:
+			w.drainOnClose()
+			return
 		}
-		for len(batch) < appendMaxBatch {
-			select {
-			case req := <-queue:
-				batch = append(batch, req)
-			default:
-				goto commit
-			}
+		batch = w.fillBatch(batch)
+		w.commitBatch(batch)
+	}
+}
+
+// fillBatch adds whatever is already queued to batch, up to appendMaxBatch,
+// without waiting.
+func (w *Writer) fillBatch(batch []*appendRequest) []*appendRequest {
+	for len(batch) < appendMaxBatch {
+		select {
+		case req := <-w.queue:
+			batch = append(batch, req)
+		default:
+			return batch
 		}
-	commit:
+	}
+	return batch
+}
+
+// drainOnClose commits every request still queued when Close was called, so
+// a caller that got its request in before Close is answered with the real
+// outcome rather than stranded.
+func (w *Writer) drainOnClose() {
+	for {
+		batch := w.fillBatch(nil)
+		if len(batch) == 0 {
+			return
+		}
 		w.commitBatch(batch)
 	}
 }
@@ -331,22 +379,31 @@ func (w *Writer) failBatch(batch []*appendRequest, err error) {
 	}
 }
 
-// rotate closes the current segment (fsyncing first) and opens a new one
-// starting at w.nextSeq.
+// rotate opens a new segment starting at w.nextSeq, makes its directory
+// entry durable, and only then closes the old one. If any step fails the
+// old segment stays current and the batch fails closed; the next batch
+// retries the rotation instead of finding a closed file.
 func (w *Writer) rotate() error {
 	if err := w.file.Sync(); err != nil {
 		return fmt.Errorf("auditjournal: fsync before rotate: %w", err)
-	}
-	if err := w.file.Close(); err != nil {
-		return fmt.Errorf("auditjournal: close before rotate: %w", err)
 	}
 	path := filepath.Join(w.dir, segmentName(w.nextSeq))
 	f, err := w.openSegment(path)
 	if err != nil {
 		return fmt.Errorf("auditjournal: open new segment %s: %w", path, err)
 	}
+	// The new segment's dirent must be durable before the first record in it
+	// is acknowledged (see syncDir).
+	if err := syncDirFn(w.dir); err != nil {
+		_ = f.Close()
+		return fmt.Errorf("auditjournal: fsync dir after rotate: %w", err)
+	}
+	old := w.file
 	w.file = f
 	w.fileStartSeq = w.nextSeq
 	w.fileSize = 0
+	if err := old.Close(); err != nil {
+		return fmt.Errorf("auditjournal: close previous segment: %w", err)
+	}
 	return nil
 }

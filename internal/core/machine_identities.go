@@ -89,6 +89,29 @@ func IsValidMachineTransition(from, to string) bool {
 
 // CreateMachineIdentity creates an active machine identity in a project.
 func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint, name, identityType, description, classification string, createdBy, createdByMachineID uint) (*models.MachineIdentity, error) {
+	m, err := c.newMachineIdentityForCreate(projectID, name, identityType, description, classification, createdBy, createdByMachineID)
+	if err != nil {
+		return nil, err
+	}
+	created, err := c.storage.CreateMachineIdentity(ctx, m)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create machine identity: %w", err)
+	}
+	c.logMachineEvent(ctx, "machine_identity.created", created, createdBy)
+	return created, nil
+}
+
+// newMachineIdentityForCreate validates the inputs and builds the row
+// CreateMachineIdentity would insert, WITHOUT writing anything. Extracted
+// (#2867) so MigrateUserToMachine can run the validation before it takes any
+// lock, and then do the insert on a tx handle it shares with the source user's
+// suspension — the two must commit or roll back together.
+//
+// Deliberately takes no ctx and touches no storage: everything here is pure
+// validation plus field assembly, which is what makes it safe to call before a
+// transaction is open. The audit event (machine_identity.created) belongs to
+// whoever does the insert, after commit, and is NOT emitted here.
+func (c *KeyorixCore) newMachineIdentityForCreate(projectID uint, name, identityType, description, classification string, createdBy, createdByMachineID uint) (*models.MachineIdentity, error) {
 	if projectID == 0 || name == "" {
 		return nil, fmt.Errorf("project ID and name are required")
 	}
@@ -102,7 +125,7 @@ func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint,
 		return nil, fmt.Errorf("classification must be one of public, internal, confidential, restricted (or empty)")
 	}
 	now := c.now()
-	m := &models.MachineIdentity{
+	return &models.MachineIdentity{
 		ProjectID:                  projectID,
 		Name:                       name,
 		IdentityType:               identityType,
@@ -113,13 +136,7 @@ func (c *KeyorixCore) CreateMachineIdentity(ctx context.Context, projectID uint,
 		CreatedByMachineIdentityID: createdByMachineID,
 		CreatedAt:                  now,
 		UpdatedAt:                  now,
-	}
-	created, err := c.storage.CreateMachineIdentity(ctx, m)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create machine identity: %w", err)
-	}
-	c.logMachineEvent(ctx, "machine_identity.created", created, createdBy)
-	return created, nil
+	}, nil
 }
 
 // ListMachineIdentities returns the machine identities in a project.
@@ -352,7 +369,14 @@ func machineVerb(to string) string {
 }
 
 func (c *KeyorixCore) logMachineEvent(ctx context.Context, eventType string, m *models.MachineIdentity, actorID uint) {
+	c.logMachineEventOn(ctx, c.auditNow(), eventType, m, actorID)
+}
+
+// logMachineEventOn is logMachineEvent against an explicit audit target
+// (audit_target.go) — the access-review revoke path writes a machine role
+// removal's event inside the same transaction as the removal.
+func (c *KeyorixCore) logMachineEventOn(ctx context.Context, tgt auditTarget, eventType string, m *models.MachineIdentity, actorID uint) {
 	aid, pid := actorID, m.ProjectID
-	c.writeAuditEventFull(ctx, eventType, &aid, nil, &pid, "",
+	c.writeAuditEventFullOn(ctx, tgt, eventType, &aid, nil, &pid, "",
 		fmt.Sprintf("machine identity %q (%s) in project %d → %s", m.Name, m.IdentityType, m.ProjectID, m.State))
 }

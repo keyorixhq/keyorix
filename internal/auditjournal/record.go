@@ -72,6 +72,15 @@ var (
 	// self-consistent bytes in the wrong place is not what a crash mid-write
 	// produces.
 	ErrChainMismatch = errors.New("auditjournal: record does not chain from the expected predecessor")
+
+	// ErrSeqMismatch means a record decodes and chains correctly but its seq
+	// is not the next one in the journal, or the first record of a segment
+	// does not carry the seq the segment is named for. The local hash chain
+	// does not cover seq (only the CRC does, which anyone can recompute), so
+	// Validate checks it positionally instead: without this, a rewritten seq
+	// could move a record below the replay cursor and it would never reach
+	// audit_events. Always corruption, never a torn tail.
+	ErrSeqMismatch = errors.New("auditjournal: record sequence number out of order")
 )
 
 // Record is one decoded journal entry.

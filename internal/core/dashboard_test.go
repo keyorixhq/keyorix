@@ -58,19 +58,30 @@ func (s *failingExpiringSecretsStore) ListSecrets(ctx context.Context, filter *s
 	return s.LocalStorage.ListSecrets(ctx, filter)
 }
 
-// failingDashboardTotalSecretsStore wraps LocalStorage and fails only the
-// TotalSecrets ListSecrets call (identified by CreatedBy with no
-// ExpiresBefore), leaving the unrelated expiring-secrets ListSecrets call
-// (ExpiresBefore set) untouched.
+// failingDashboardTotalSecretsStore wraps LocalStorage and fails the query the
+// TOTAL SECRETS rollup depends on, leaving the dashboard's other sub-checks —
+// notably the expiring-secrets ListSecrets call — untouched.
+//
+// The hook moved with #2780. It used to intercept ListSecrets and key on
+// `CreatedBy != nil && ExpiresBefore == nil`, which was the signature of the old
+// authorship-based count (`SecretFilter{CreatedBy: &username}`). That count was the
+// defect: it reported 0 to a caller who could read five secrets. The rollup now
+// goes through CountReadableSecrets -> ListReadableSecrets, which sets no CreatedBy
+// at all, so the old hook silently stopped firing and this test would have passed
+// vacuously — asserting Degraded on a path where nothing failed.
+//
+// GetUserRoleScopes is the new hook: ListReadableSecrets calls it (via
+// GetReadableScopes) to enumerate the caller's readable scopes and returns an error
+// when it fails, which is what must flip Degraded. Nothing else in
+// GetDashboardStats calls it — the audit.read gate goes through AuthorizePrincipal
+// -> GetUserRoleIDsAt, and the expiring-secrets rollup through ListSecrets — so this
+// fails exactly one sub-check, as before.
 type failingDashboardTotalSecretsStore struct {
 	*store.LocalStorage
 }
 
-func (s *failingDashboardTotalSecretsStore) ListSecrets(ctx context.Context, filter *storage.SecretFilter) ([]*models.SecretNode, int64, error) {
-	if filter != nil && filter.CreatedBy != nil && filter.ExpiresBefore == nil {
-		return nil, 0, errors.New("simulated total-secrets query failure")
-	}
-	return s.LocalStorage.ListSecrets(ctx, filter)
+func (s *failingDashboardTotalSecretsStore) GetUserRoleScopes(_ context.Context, _ uint) ([]storage.Scope, error) {
+	return nil, errors.New("simulated total-secrets query failure")
 }
 
 // failingDashboardSharesByOwnerStore wraps LocalStorage and fails
@@ -276,10 +287,23 @@ func TestGetDashboardStats_TotalSecretsIsDeploymentWideForAuditReadCaller(t *tes
 	assert.EqualValues(t, 1, stats.TotalSecrets, "auditor5 personally created 0 secrets, but with audit.read the count must be deployment-wide")
 }
 
-// A baseline caller (no audit.read) must keep the pre-existing, privacy-preserving
-// behavior: their own home dashboard reflects only secrets they personally
-// created, not the whole deployment.
-func TestGetDashboardStats_TotalSecretsIsPersonalForBaselineCaller(t *testing.T) {
+// TestGetDashboardStats_TotalSecretsIsScopedForBaselineCaller replaces
+// TestGetDashboardStats_TotalSecretsIsPersonalForBaselineCaller.
+//
+// #2780: a baseline caller's TOTAL SECRETS used to be the count of secrets they had
+// AUTHORED, and the old test asserted 0 for a user who had created none. It passed —
+// but a count of "secrets they can read" would have passed identically, because that
+// user could read nothing either, so the assertion never actually distinguished the
+// two definitions. Authorship was the wrong one: it reported 0 to a project member
+// reading five secrets, which is what WEB-SWEEP-1 found in the UI.
+//
+// The property now asserted is the one the tile claims, in BOTH directions, which is
+// what makes it discriminating: a baseline caller who can read nothing sees 0, and a
+// caller granted read access to the project sees that project's secret WITHOUT having
+// authored it. Privacy is preserved by the second half — they see their project's
+// count, never the deployment-wide one, which stays audit.read-only (asserted by the
+// sibling test above).
+func TestGetDashboardStats_TotalSecretsIsScopedForBaselineCaller(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
@@ -299,8 +323,18 @@ func TestGetDashboardStats_TotalSecretsIsPersonalForBaselineCaller(t *testing.T)
 
 	stats, err := c.GetDashboardStats(ctx, viewerID, "viewer6", viewerID)
 	require.NoError(t, err)
+	assert.Zero(t, stats.TotalSecrets,
+		"the install baseline grants no read access to this project, so this caller can read nothing and is told 0")
 
-	assert.Zero(t, stats.TotalSecrets, "a baseline caller without audit.read must still see only secrets they personally created, not the deployment-wide count")
+	// A project reader, still the author of nothing. This is the half the old
+	// assertion could not have caught.
+	readerID := seedUserWithRole(t, st, "viewer6b", "project_viewer", storage.Scope{ProjectID: project.ID})
+	readerStats, err := c.GetDashboardStats(ctx, readerID, "viewer6b", readerID)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, readerStats.TotalSecrets,
+		"a project member who authored nothing must still be told they can read this project's one secret — "+
+			"reporting 0 here is #2780, and the UI renders it as \"Create your first secret to get started\"")
+	assert.False(t, readerStats.Degraded, "and that 1 must be a counted 1, not an unknown")
 }
 
 // A fully-healthy storage must never report Degraded.

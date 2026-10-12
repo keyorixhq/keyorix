@@ -69,17 +69,21 @@ func TestUpdateNotificationChannel(t *testing.T) {
 	ctx := context.Background()
 	ls := newNotificationChannelTestStore(t)
 
-	ch := &models.NotificationChannel{Name: "teams-alerts", Type: "teams", URL: "https://outlook.office.com/webhook/abc", Enabled: true}
+	// URLEnc, not URL (#2433): URL is gorm:"-" (not a persisted column) -- the
+	// storage layer round-trips url_enc/url_meta's raw bytes verbatim, agnostic
+	// of whether the core layer encrypted them or not; decrypting into URL is
+	// the core layer's job (notification_channels.go), not this layer's.
+	ch := &models.NotificationChannel{Name: "teams-alerts", Type: "teams", URLEnc: []byte("https://outlook.office.com/webhook/abc"), Enabled: true}
 	require.NoError(t, ls.CreateNotificationChannel(ctx, ch))
 
-	ch.URL = "https://outlook.office.com/webhook/xyz"
+	ch.URLEnc = []byte("https://outlook.office.com/webhook/xyz")
 	ch.Enabled = false
 	ch.Events = "secret.expiring"
 	require.NoError(t, ls.UpdateNotificationChannel(ctx, ch))
 
 	got, err := ls.GetNotificationChannel(ctx, ch.ID)
 	require.NoError(t, err)
-	assert.Equal(t, "https://outlook.office.com/webhook/xyz", got.URL)
+	assert.Equal(t, []byte("https://outlook.office.com/webhook/xyz"), got.URLEnc)
 	assert.False(t, got.Enabled)
 	assert.Equal(t, "secret.expiring", got.Events)
 }

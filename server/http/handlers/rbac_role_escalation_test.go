@@ -34,7 +34,7 @@ func TestCreateRole_RolesWriteHolderCannotBundleSystemWrite(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{},
 	))
@@ -91,7 +91,7 @@ func TestUpdateRole_RolesWriteHolderCannotAddSystemWrite(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{},
 	))
@@ -155,7 +155,7 @@ func TestCreateRole_CannotClaimReservedAdminBypassName(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
-		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
+		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.AuditEvent{},
 		&models.Project{}, &models.Environment{},
 	))

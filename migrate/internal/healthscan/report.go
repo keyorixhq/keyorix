@@ -34,8 +34,12 @@ type Report struct {
 // SchemaVersion is the JSON report's own schema version — bumped whenever a field is added,
 // renamed, or removed, so a consumer of the JSON output (the "share the JSON with us" flow) can
 // tell which shape it's reading. Bumped to 2 in G3: added score/score_formula/top_risks/
-// migration_readiness/footer to G1's skeleton envelope.
-const SchemaVersion = 2
+// migration_readiness/footer to G1's skeleton envelope. Bumped to 3 (MIG-3, release-readiness
+// pass): Finding/NotChecked never had json tags, so every entry in top_risks/findings/
+// not_checked rendered PascalCase field names (ID, WhyItMatters, ...) inconsistent with the rest
+// of this envelope's snake_case convention — a real blemish for the one JSON surface this tool
+// explicitly asks customers to hand to an external consumer ("Sharing the JSON with us").
+const SchemaVersion = 3
 
 // jsonReport is the on-the-wire shape written by WriteJSON — SchemaVersion is a field on the
 // envelope, not on Report itself, so Report's Go shape can evolve without every caller of Run

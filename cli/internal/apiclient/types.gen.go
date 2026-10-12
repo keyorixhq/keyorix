@@ -61,6 +61,11 @@ const (
 	DynamicSecretLeaseStatusRevoked      DynamicSecretLeaseStatus = "revoked"
 )
 
+// Defines values for MFAChallengeDataMfaRequired.
+const (
+	MFAChallengeDataMfaRequiredTrue MFAChallengeDataMfaRequired = true
+)
+
 // Defines values for MachineIdentityState.
 const (
 	MachineIdentityStateActive    MachineIdentityState = "active"
@@ -194,8 +199,8 @@ const (
 
 // Defines values for ListProjectEnvironmentsParamsIncludeDeleted.
 const (
-	False ListProjectEnvironmentsParamsIncludeDeleted = "false"
-	True  ListProjectEnvironmentsParamsIncludeDeleted = "true"
+	ListProjectEnvironmentsParamsIncludeDeletedFalse ListProjectEnvironmentsParamsIncludeDeleted = "false"
+	ListProjectEnvironmentsParamsIncludeDeletedTrue  ListProjectEnvironmentsParamsIncludeDeleted = "true"
 )
 
 // Defines values for TransitionMachineIdentityJSONBodyAction.
@@ -409,7 +414,10 @@ type DeletedSecretEntry struct {
 	DeletedAt      *string `json:"deleted_at,omitempty"`
 	Id             *int    `json:"id,omitempty"`
 	Name           *string `json:"name,omitempty"`
-	Type           *string `json:"type,omitempty"`
+
+	// PurgeAt UTC instant (RFC 3339) before which the purge job will not hard-delete this secret -- the restore deadline. Frozen when the secret was deleted (deleted_at plus the secret's own retention override, else the soft_delete.retention_days in force then), so a later change to the configured window does not move it. For a secret deleted before this field existed it is computed from the current configuration.
+	PurgeAt *time.Time `json:"purge_at,omitempty"`
+	Type    *string    `json:"type,omitempty"`
 }
 
 // DeploymentRotationPlan The install-wide roll-up of every project's rotation plan (ADR-108 PR 1 addition, ADR-053) -- a roll-up of per-project plans, most pressing first.
@@ -526,11 +534,48 @@ type Group struct {
 
 // GroupRoleGrant One role a group holds, with its time-bound expiry if any (internal/core/storage.GroupRoleGrant).
 type GroupRoleGrant struct {
-	Description *string    `json:"description,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at"`
-	Id          *int       `json:"id,omitempty"`
-	Name        *string    `json:"name,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// ExpiresAt Omitted (never null) for a permanent grant.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Id        *int       `json:"id,omitempty"`
+	Name      *string    `json:"name,omitempty"`
 }
+
+// LoginSuccessData defines model for LoginSuccessData.
+type LoginSuccessData struct {
+	// AbsoluteExpiresAt Hard ceiling past which refresh is refused
+	AbsoluteExpiresAt      *time.Time `json:"absolute_expires_at,omitempty"`
+	AccountState           *string    `json:"account_state,omitempty"`
+	DisplayName            *string    `json:"display_name,omitempty"`
+	Email                  *string    `json:"email,omitempty"`
+	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
+	PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
+	Permissions            *[]string  `json:"permissions,omitempty"`
+	Role                   *string    `json:"role,omitempty"`
+	Roles                  *[]string  `json:"roles,omitempty"`
+
+	// Token Session bearer token
+	Token    string  `json:"token"`
+	UserId   *int    `json:"user_id,omitempty"`
+	Username *string `json:"username,omitempty"`
+}
+
+// MFAChallengeData The password (or setup token) was correct, but a second factor is required -- core.ErrMFARequired. The client must complete POST /auth/mfa/verify (TOTP/recovery code) with this challenge, or the WebAuthn login ceremony, to get a real session.
+type MFAChallengeData struct {
+	// MfaChallenge Single-use challenge token to pass to /auth/mfa/verify
+	MfaChallenge string                      `json:"mfa_challenge"`
+	MfaRequired  MFAChallengeDataMfaRequired `json:"mfa_required"`
+
+	// TotpAvailable Whether this account can complete the challenge with a TOTP/recovery code
+	TotpAvailable bool `json:"totp_available"`
+
+	// WebauthnAvailable Whether this account can complete the challenge via a WebAuthn passkey
+	WebauthnAvailable bool `json:"webauthn_available"`
+}
+
+// MFAChallengeDataMfaRequired defines model for MFAChallengeData.MfaRequired.
+type MFAChallengeDataMfaRequired bool
 
 // MachineAuditReport Deployment-wide machine identity audit report (GET /machine-identities/audit).
 type MachineAuditReport struct {
@@ -850,6 +895,7 @@ type RotationPlanWave struct {
 // RotationPolicy A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found.
 type RotationPolicy struct {
 	AlertDaysBefore *int                 `json:"alert_days_before,omitempty"`
+	CreatedAt       *time.Time           `json:"created_at,omitempty"`
 	CreatedBy       *string              `json:"created_by,omitempty"`
 	Description     *string              `json:"description,omitempty"`
 	EnvironmentId   *uint32              `json:"environment_id"`
@@ -860,6 +906,7 @@ type RotationPolicy struct {
 	NotifyOnBreach  *bool                `json:"notify_on_breach,omitempty"`
 	ProjectId       *uint32              `json:"project_id"`
 	Scope           *RotationPolicyScope `json:"scope,omitempty"`
+	UpdatedAt       *time.Time           `json:"updated_at,omitempty"`
 }
 
 // RotationPolicyScope defines model for RotationPolicy.Scope.
@@ -867,13 +914,15 @@ type RotationPolicyScope string
 
 // RotationPolicyEvaluation One policy-covered secret's rotation posture, as returned by GET /api/v1/rotation-policies/evaluate (ADR-108 PR 1 addition).
 type RotationPolicyEvaluation struct {
-	DaysOverdue   *int    `json:"days_overdue,omitempty"`
-	IsApproaching *bool   `json:"is_approaching,omitempty"`
-	IsOverdue     *bool   `json:"is_overdue,omitempty"`
-	PolicyName    *string `json:"policy_name,omitempty"`
-	ProjectId     *uint32 `json:"project_id,omitempty"`
-	SecretId      *uint32 `json:"secret_id,omitempty"`
-	SecretName    *string `json:"secret_name,omitempty"`
+	DaysOverdue   *int       `json:"days_overdue,omitempty"`
+	IsApproaching *bool      `json:"is_approaching,omitempty"`
+	IsOverdue     *bool      `json:"is_overdue,omitempty"`
+	LastRotatedAt *time.Time `json:"last_rotated_at"`
+	PolicyId      *uint32    `json:"policy_id,omitempty"`
+	PolicyName    *string    `json:"policy_name,omitempty"`
+	ProjectId     *uint32    `json:"project_id,omitempty"`
+	SecretId      *uint32    `json:"secret_id,omitempty"`
+	SecretName    *string    `json:"secret_name,omitempty"`
 }
 
 // Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
@@ -903,8 +952,11 @@ type Secret struct {
 	RotationLength         *int       `json:"rotation_length,omitempty"`
 	RotationRef            *string    `json:"rotation_ref,omitempty"`
 	Status                 *string    `json:"status,omitempty"`
-	Type                   *string    `json:"type,omitempty"`
-	UpdatedAt              *time.Time `json:"updated_at,omitempty"`
+
+	// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id only when the request sends include=total_reads (the count is O(reads), so it is not computed by default), including value reads; omitted otherwise, from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads.
+	TotalReads *int       `json:"total_reads,omitempty"`
+	Type       *string    `json:"type,omitempty"`
+	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
 }
 
 // SecretACL Per-secret ACL grant. Confers the listed permissions on a specific user for one secret, independently of project RBAC (RBAC Phase 3).
@@ -945,26 +997,37 @@ type SecretAccessSchedule struct {
 	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
 }
 
-// SecretAccessor One entry in a secret's effective access list (owner, direct share, or group share).
+// SecretAccessor One entry in a secret's effective access list.
 type SecretAccessor struct {
+	// Grants Every grant the user holds on the secret as source:level, e.g. owner:owner, role:read, direct_share:write.
+	Grants *[]string `json:"grants,omitempty"`
+
+	// Permission Effective level: read, write or owner.
 	Permission *string `json:"permission,omitempty"`
 
-	// Source How access was granted: owner, direct share, or group share.
+	// Source The grant that gives `permission`: owner, role, acl, direct_share or group_share:<group>.
 	Source   *string `json:"source,omitempty"`
+	UserId   *int    `json:"user_id,omitempty"`
 	Username *string `json:"username,omitempty"`
 }
 
 // SecretAuditEntry One lifecycle event of a secret. Never carries a plaintext value.
 type SecretAuditEntry struct {
-	ActorType     *string                 `json:"actor_type,omitempty"`
-	Description   *string                 `json:"description,omitempty"`
-	Diff          *map[string]interface{} `json:"diff"`
-	EventType     *string                 `json:"event_type,omitempty"`
-	Id            *int                    `json:"id,omitempty"`
-	Impersonation *bool                   `json:"impersonation,omitempty"`
-	Success       *bool                   `json:"success,omitempty"`
-	Timestamp     *string                 `json:"timestamp,omitempty"`
-	UserId        *int                    `json:"user_id"`
+	ActorType   *string `json:"actor_type,omitempty"`
+	Description *string `json:"description,omitempty"`
+
+	// Diff Omitted (never null) when the event recorded no diff.
+	Diff      *map[string]interface{} `json:"diff,omitempty"`
+	EventType *string                 `json:"event_type,omitempty"`
+	Id        *int                    `json:"id,omitempty"`
+
+	// Impersonation Omitted when false.
+	Impersonation *bool   `json:"impersonation,omitempty"`
+	Success       *bool   `json:"success,omitempty"`
+	Timestamp     *string `json:"timestamp,omitempty"`
+
+	// UserId Omitted (never null) when the event has no acting user.
+	UserId *int `json:"user_id,omitempty"`
 }
 
 // SecretDependencies defines model for SecretDependencies.
@@ -1002,10 +1065,13 @@ type SecretGetResult struct {
 	ReadCount      *int       `json:"read_count,omitempty"`
 
 	// Secret A secret or folder node (internal/storage/models.SecretNode), metadata only -- never a value. Wire keys are snake_case, via the handler-level secretNodeWire type (server/http/handlers/secrets_wire.go) -- fixed from the previous bare-Go-field-name leak (ADR-108 PR 4/5) as part of the API-hygiene casing campaign.
-	Secret    *Secret    `json:"secret,omitempty"`
-	Status    *string    `json:"status,omitempty"`
-	Type      *string    `json:"type,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Secret *Secret `json:"secret,omitempty"`
+	Status *string `json:"status,omitempty"`
+
+	// TotalReads Lifetime count of reads of this secret's value (secret_access_logs rows with action read). Present on GET by id only when the request sends include=total_reads (the count is O(reads), so it is not computed by default), including value reads; omitted otherwise, from listings and from GET by-name. Metadata-only by-name lookups are logged as secret.metadata_read (action metadata_read) and are not counted. On an install upgraded from before #2970, rows that version listings wrote as action read before that fix also count, so a lifetime count there is inflated by the number of earlier version listings. Not read_count, which counts only reads charged against max_reads.
+	TotalReads *int       `json:"total_reads,omitempty"`
+	Type       *string    `json:"type,omitempty"`
+	UpdatedAt  *time.Time `json:"updated_at,omitempty"`
 
 	// Value The decrypted value. Present only when include_value=true.
 	Value *string `json:"value,omitempty"`
@@ -1219,7 +1285,10 @@ type Error struct {
 	// Error Short error-type label, e.g. "NotFound", "BadRequest".
 	Error   *string `json:"error,omitempty"`
 	Message *string `json:"message,omitempty"`
-	Success *bool   `json:"success,omitempty"`
+
+	// PendingSteps Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order.
+	PendingSteps *[]string `json:"pending_steps,omitempty"`
+	Success      *bool     `json:"success,omitempty"`
 }
 
 // BulkApproveAccessRequestsJSONBody defines parameters for BulkApproveAccessRequests.
@@ -1395,6 +1464,13 @@ type SearchAuditLogsParamsSuccess string
 type ChangePasswordJSONBody struct {
 	CurrentPassword string `json:"current_password"`
 	NewPassword     string `json:"new_password"`
+}
+
+// ActivateMFAJSONBody defines parameters for ActivateMFA.
+type ActivateMFAJSONBody struct {
+	// Code Current TOTP code from the pending secret
+	Code     string `json:"code"`
+	Password string `json:"password"`
 }
 
 // MfaStepUpJSONBody defines parameters for MfaStepUp.
@@ -1625,7 +1701,7 @@ type PatHygieneParams struct {
 
 // ListProjectsParams defines parameters for ListProjects.
 type ListProjectsParams struct {
-	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI.
+	// IncludeDeleted When 'true', also returns soft-deleted projects (each flagged via deleted/deleted_at) for the restore UI. This form requires secrets.read at the GLOBAL scope: project-scoped role grants deliberately survive a soft-delete (so RestoreProject can work) while GET /api/v1/projects/{id} returns 404 for a deleted project, so a project-scoped reader cannot read a soft-deleted project through any path and must not see one listed. A caller without the global grant gets 403 for this form, and 200 for the default one.
 	IncludeDeleted *ListProjectsParamsIncludeDeleted `form:"include_deleted,omitempty" json:"include_deleted,omitempty"`
 }
 
@@ -1653,7 +1729,10 @@ type DeleteProjectParamsForce string
 // UpdateProjectJSONBody defines parameters for UpdateProject.
 type UpdateProjectJSONBody struct {
 	Description *string `json:"description,omitempty"`
-	Name        *string `json:"name,omitempty"`
+	Name        string  `json:"name"`
+
+	// RequireMfa ADR-037 per-project security-policy control. Omit (or null) to leave unchanged. Changing it additionally requires roles.assign at the project, not just secrets.write.
+	RequireMfa *bool `json:"require_mfa"`
 }
 
 // CreateAccessRequestJSONBody defines parameters for CreateAccessRequest.
@@ -2030,6 +2109,9 @@ type GetSecretValueByRefParams struct {
 type GetSecretParams struct {
 	// IncludeValue When `true`, response `data` becomes `{secret, value}` with the decrypted value.
 	IncludeValue *bool `form:"include_value,omitempty" json:"include_value,omitempty"`
+
+	// Include Comma-separated (or repeated) optional fields. `total_reads` adds the secret's lifetime read count as `total_reads`; it is computed only when requested, so it is absent by default.
+	Include *string `form:"include,omitempty" json:"include,omitempty"`
 }
 
 // UpdateSecretJSONBody defines parameters for UpdateSecret.
@@ -2273,6 +2355,15 @@ type AuthLoginJSONBody struct {
 	Username string `json:"username"`
 }
 
+// VerifyMFALoginJSONBody defines parameters for VerifyMFALogin.
+type VerifyMFALoginJSONBody struct {
+	// Code A current TOTP code, or an unused recovery code
+	Code string `json:"code"`
+
+	// MfaChallenge The challenge token from /auth/login's mfa_required response
+	MfaChallenge string `json:"mfa_challenge"`
+}
+
 // SystemInitJSONBody defines parameters for SystemInit.
 type SystemInitJSONBody struct {
 	// BootstrapToken Prefer the X-Keyorix-Bootstrap-Token header; this field is the fallback for clients that cannot set headers.
@@ -2300,6 +2391,9 @@ type CreateAlertEscalationPolicyJSONRequestBody CreateAlertEscalationPolicyJSONB
 
 // ChangePasswordJSONRequestBody defines body for ChangePassword for application/json ContentType.
 type ChangePasswordJSONRequestBody ChangePasswordJSONBody
+
+// ActivateMFAJSONRequestBody defines body for ActivateMFA for application/json ContentType.
+type ActivateMFAJSONRequestBody ActivateMFAJSONBody
 
 // MfaStepUpJSONRequestBody defines body for MfaStepUp for application/json ContentType.
 type MfaStepUpJSONRequestBody MfaStepUpJSONBody
@@ -2525,6 +2619,9 @@ type UpdateUserRolesJSONRequestBody UpdateUserRolesJSONBody
 
 // AuthLoginJSONRequestBody defines body for AuthLogin for application/json ContentType.
 type AuthLoginJSONRequestBody AuthLoginJSONBody
+
+// VerifyMFALoginJSONRequestBody defines body for VerifyMFALogin for application/json ContentType.
+type VerifyMFALoginJSONRequestBody VerifyMFALoginJSONBody
 
 // SystemInitJSONRequestBody defines body for SystemInit for application/json ContentType.
 type SystemInitJSONRequestBody SystemInitJSONBody

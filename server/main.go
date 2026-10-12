@@ -45,6 +45,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/connect"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/delivery"
@@ -53,16 +54,19 @@ import (
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
 	"github.com/keyorixhq/keyorix/internal/hardening"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/license"
 	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	"github.com/keyorixhq/keyorix/internal/rotation"
 	samlpkg "github.com/keyorixhq/keyorix/internal/saml"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/keyorixhq/keyorix/internal/startup"
 	appstorage "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/pkg/trust"
 	"github.com/keyorixhq/keyorix/server/admin"
 	"github.com/keyorixhq/keyorix/server/grpc"
@@ -148,6 +152,18 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		log.Fatalf("Configuration is invalid: %v", err)
 	}
 
+	// ADR-112 opt-out rule (item 2): a deprecated alias (an old key renamed to its
+	// current insecure_ form) found in this config file gets a warning on EVERY
+	// start — never silent. See warnDeprecatedSettingAliases below.
+	warnDeprecatedSettingAliases(cfg)
+
+	// ADR-112: decide, once and from the database, whether this boot is an upgraded
+	// deployment still inside the file-permission-check grace period, then warn about
+	// every insecure_ setting in effect (opt-out rule item 2: on EVERY start, never
+	// silent). See resolveADR112BootPosture. Must run before
+	// runStartupValidation/enforceKeyFilePermissions, which both read the grace result.
+	resolveADR112BootPosture(cfg)
+
 	// Run the file-permission / encryption-key / database-reachability checks that were
 	// previously reachable ONLY via the manual `keyorix system validate` CLI subcommand
 	// (#330), despite official docs and that command's own help text claiming they run
@@ -180,16 +196,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 		if cfg.Server.HTTP.TLS.Enabled {
 			scheme = "https"
 		}
-		host := cfg.Server.HTTP.Domain
-		if host == "" {
-			host = "localhost"
-		}
-		log.Printf("HTTP server will start on %s://%s:%s", scheme, host, cfg.Server.HTTP.Port)
+		log.Printf("HTTP server will bind %s://%s%s", scheme, cfg.Server.HTTP.ListenAddr(), bindScopeNote(cfg.Server.HTTP.BindHost()))
 	} else {
 		log.Printf("HTTP server is disabled (check keyorix.yaml)")
 	}
 	if cfg.Server.GRPC.Enabled {
-		log.Printf("gRPC server will start on localhost:%s", cfg.Server.GRPC.Port)
+		log.Printf("gRPC server will bind %s%s", cfg.Server.GRPC.ListenAddr(), bindScopeNote(cfg.Server.GRPC.BindHost()))
 	}
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())
@@ -208,6 +220,26 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	if err := enforceKeyFilePermissions(cfg); err != nil {
 		log.Fatalf("key file security: %v", err)
 	}
+
+	// Same policy for the files behind KEYORIX_*_FILE secrets (DB password, master
+	// password, bootstrap token, ...).
+	if err := enforceSecretFilePermissions(cfg); err != nil {
+		log.Fatalf("secret file security: %v", err)
+	}
+
+	// Refuse to start if the installed key files are a PARTIAL set (ADR-112,
+	// follow-up from #2400). Unconditional, like the permission check above: a
+	// broken key set is not a "weaker but working" state to warn about. The
+	// same call also applies a best-effort same-group mtime heuristic, which is
+	// deliberately not claimed as a mixed-generation guarantee — see
+	// keyfiles.VerifyKeySetConsistency and #2900.
+	if err := verifyKeyFileSetConsistency(cfg); err != nil {
+		log.Fatalf("key file consistency: %v", err)
+	}
+
+	// ADR-112: security.require_mfa now defaults to true (see config.Load). This is
+	// visibility only, not an enforcement gate — logWarnOnImplicitRequireMFADefault.
+	logWarnOnImplicitRequireMFADefault(cfg)
 
 	// Mark this process as a live server attached to cfg's database (ADR-108 §B,
 	// PR 11) — held for the whole process lifetime, released on shutdown. Lets
@@ -247,6 +279,9 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	if encSvc != nil {
 		defer encSvc.Shutdown()
 	}
+	// ADR-112: a boot that enforced enable_file_permission_check (checks passed, nothing
+	// softened) or require_mfa ratchets this deployment to enforced for that key for good.
+	recordADR112Markers(cfg)
 	// #G56: flush/close the SIEM audit forwarder (if configured) on shutdown — it
 	// queues events in memory (worker.go's Deliver is non-blocking, async), and
 	// nothing would otherwise call Close() to drain that queue before the process
@@ -256,6 +291,12 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// Record the evaluated license state once at startup (ADR-065), so the
 	// entitlement (and any degrade reason) is on the audit record.
 	coreService.AuditLicenseState(ctx)
+
+	// ADR-112 opt-out rule (item 2): the start-to-start settings diff. Config has no
+	// hot reload, so this is the only place a security-relevant setting changing
+	// between two starts ever becomes visible — audits old vs. new value for any
+	// difference since the previous start.
+	coreService.ReconcileSecurityPostureSnapshot(ctx, securityPostureSnapshot(cfg))
 
 	// Start every background scheduler exactly once, regardless of which of
 	// HTTP/gRPC is enabled (#G12) — see startSchedulers' doc comment.
@@ -344,6 +385,7 @@ const (
 	schedLockReadQuota         int64 = 0x4B455953_52445154 // "KEYSRDQT"
 	schedLockMFAGrantPrune     int64 = 0x4B455953_4D464147 // "KEYSMFAG"
 	schedLockRecoverAdminAlert int64 = 0x4B455953_52435652 // "KEYSRCVR"
+	schedLockBreakGlassReview  int64 = 0x4B455953_42475256 // "KEYSBGRV"
 )
 
 // initializeEncryption sources the KEK per the configured key provider (ADR-038)
@@ -497,6 +539,11 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	}
 
 	coreService := core.NewKeyorixCore(store)
+	// The configured soft-delete window, wired where the service is built (not in an
+	// unrelated wireX helper) so every transport and job that shows or applies a
+	// purge date (core.SecretPurgeAt) sees soft_delete.retention_days, never core's
+	// 30-day library default.
+	coreService.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 
 	// keyless mode (docs/design-b2-recover-admin.md §5): flagged loudly and
 	// repeatedly wherever an operator or auditor would look -- a startup
@@ -507,13 +554,36 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// weaker mode -- an auditor reading the chain doesn't have to trust a
 	// point-in-time config dump.
 	if cfg.Security.RecoverAdmin.KeylessMode {
-		log.Printf("WARNING: security.recover_admin.keyless_mode is ENABLED -- `keyorix-server admin recover-admin` " +
+		log.Printf("WARNING: security.recover_admin.insecure_keyless_admin_recovery is ENABLED -- `keyorix-server admin recover-admin` " +
 			"can restore ANY admin account on HOST ACCESS ALONE, with no recovery key required or checked. This " +
 			"collapses host access and admin access into one trust boundary. Intended for labs/demo use only; " +
 			"disable it for any real deployment.")
 		auditKeylessModeStartup(store)
 	} else {
 		warnIfRecoveryKeyMissing(store)
+	}
+
+	// Fast audit mode (ADR-112 Amendment 1, docs/specs/fast-audit-mode.md):
+	// flagged in the same four places keyless_mode is, for the same reason --
+	// a startup warning EVERY boot, an audit event EVERY boot (so the
+	// tamper-evident chain itself records the window this install ran
+	// weakened, rather than an auditor having to trust a point-in-time config
+	// dump), a line in the posture surface (internal/startup.ValidateStartup,
+	// printed by `keyorix-server admin validate`), and a boolean in
+	// /system/info (server/http/handlers/system.go) so a buyer's auditor can
+	// see it over the API without host access.
+	if st := cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type); st.Configured {
+		log.Printf("WARNING: %s", auditDurableSyncWarning(st))
+		// The audit event fires ONLY when the mode is actually in effect. Its
+		// whole purpose is to put a durable record of the WEAKENED WINDOW into
+		// the tamper-evident chain itself; a config line that is being ignored
+		// weakened no window, so writing the event would plant a false claim in
+		// the one place an auditor is told to trust literally. The ignored case
+		// is still loud -- the startup warning above, the posture report, and
+		// /system/info all carry it with its reason.
+		if st.InEffect {
+			auditDurableSyncSkippedStartup(store)
+		}
 	}
 
 	// Top up the canonical RBAC permission catalog (ADR-044): adds any permission
@@ -536,7 +606,12 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 	// install is still empty, log it so the operator can complete first-boot init. This
 	// closes the unauthenticated, first-caller-wins admin-claim race on a fresh, reachable
 	// instance.
-	bootstrapToken := strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
+	bootstrapToken, btErr := resolveBootstrapToken()
+	if btErr != nil {
+		// Both KEYORIX_BOOTSTRAP_TOKEN and _FILE set, or the file unreadable: do not
+		// fall through to a generated token the operator never asked for.
+		return nil, nil, fmt.Errorf("bootstrap token: %w", btErr)
+	}
 	bootstrapTokenGenerated := false
 	if bootstrapToken == "" {
 		if t, gerr := core.GenerateBootstrapToken(); gerr == nil {
@@ -597,6 +672,36 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		}
 	}
 
+	// #2433: bring every NotificationChannel row's webhook/Slack/Teams URL (the
+	// bearer credential) into the encrypted, self-describing url_enc/url_meta
+	// columns -- a real envelope when encSvc is wired and enabled, an
+	// explicitly-tagged plaintext passthrough otherwise. Local-storage-only
+	// (notification channels have no remote-storage implementation at all).
+	//
+	// #2468: this FAILS STARTUP rather than logging and continuing, and that
+	// choice is deliberate over the "it is idempotent, a later restart will
+	// retry" alternative. The migration now has a second, recurring job besides
+	// the one-time legacy backfill: upgrading a plaintext-passthrough row the
+	// first time encryption is enabled (see its own doc comment). A permanently
+	// failing run of THAT job leaves webhook bearer credentials in plaintext at
+	// rest on an install that has explicitly configured encryption -- and
+	// leaves them readable and working, so nothing else ever surfaces it. That
+	// is precisely the condition the SecretValueEncryptionActive check a few
+	// lines above refuses to start on, for the same reason.
+	if ls, ok := store.(*localstore.LocalStorage); ok {
+		var encryptor ports.EncryptionProvider
+		if encSvc != nil {
+			encryptor = encSvc
+		}
+		n, merr := ls.MigrateNotificationChannelURLsToEncrypted(context.Background(), encryptor)
+		if merr != nil {
+			return nil, nil, fmt.Errorf("notification channel URL encryption backfill failed: %w -- refusing to start rather than leave a webhook credential unencrypted at rest", merr)
+		}
+		if n > 0 {
+			log.Printf("notification channel URL encryption backfill: migrated %d channel(s)", n)
+		}
+	}
+
 	// Wire every ADR-109 integration that has its own wireXxx helper
 	// (docs/adr-109-core-depends-on-interfaces.md, steps 1-4): external-notary
 	// checkpoint anchoring (ADR-029), human SSO (OIDC + SAML), backend rotation,
@@ -643,10 +748,19 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("Secret-name policy enabled (pattern=%q, max_length=%d)", snp.Pattern, snp.MaxLength)
 	}
 
+	// The auth rate limits' in-memory fallback is per process; divide its limits
+	// by the replicas sharing the budgets (ADR-040 amendment, AUTH-AUDIT-1).
+	coreService.SetAuthRateLimitFallbackReplicas(cfg.Security.AuthRateLimitFallback.GetReplicas())
+	log.Printf("Auth rate-limit storage fallback: limits divided by %d replica(s)", cfg.Security.AuthRateLimitFallback.GetReplicas())
+
+	// Admin-created one-time passwords expire (OTP-EXPIRY-1); the recover-admin
+	// password's lifetime is read by that command itself, from the same section.
+	coreService.SetOneTimePasswordTTL(cfg.Security.GetOneTimePasswordTTL())
+
 	// Apply per-account login lockout (brute-force protection, distinct from and
 	// complementary to the per-IP rate limiter, which distributed guessing can evade).
 	// Enabled BY DEFAULT — a secrets-manager login must resist online guessing out of
-	// the box; set login_lockout.disabled to opt out.
+	// the box; set login_lockout.insecure_disable_login_lockout to opt out.
 	if ll := cfg.Security.LoginLockout; !ll.Disabled {
 		coreService.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
 			Enabled:      true,
@@ -831,6 +945,13 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		EmergencyRole: cfg.BreakGlass.EmergencyRole,
 		DefaultTTL:    cfg.BreakGlass.GetDefaultTTL(),
 		MaxTTL:        cfg.BreakGlass.GetMaxTTL(),
+		// #2461: GetReviewWindow had no non-test caller, so ADR-112's
+		// post-activation-review deviation was computed against nothing. Wired
+		// unconditionally, NOT behind cfg.BreakGlass.Enabled: an install that
+		// has since turned break-glass off can still hold unreviewed
+		// activations from when it was on, and those are exactly the ones that
+		// must not drop off the posture report.
+		ReviewWindow: cfg.BreakGlass.GetReviewWindow(),
 	})
 
 	// Wire N-of-M dual-control approval for access requests (1 = disabled).
@@ -1187,7 +1308,16 @@ func closeAuditForwarder(coreService *core.KeyorixCore) {
 // Postgres advisory lock (ADR-039), so starting the loop in every process
 // (regardless of which transport it serves) is the existing, intended
 // coordination model — not a new behavior.
-func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+//
+// The returned wait blocks until every scheduler goroutine started here has
+// exited, which happens once ctx is cancelled and any in-flight tick returns.
+// The server process never needs it (it exits); tests do, so a tick cannot
+// outlive the test that started it and run against the next test's process
+// state (log output, i18n, config) -- see startSchedulersForTest.
+func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) (wait func()) { // NOSONAR -- cognitive complexity 188, suppress go:S3776
+	var schedulers sync.WaitGroup
+	ctx = withSchedulerTracking(ctx, &schedulers)
+
 	// Start anomaly detection scheduler. Single-replica-gated (ADR-039) so N
 	// replicas don't emit N copies of each alert. When anomaly_alerts is enabled,
 	// each detection pass is followed by an alerting pass that pushes newly detected
@@ -1233,7 +1363,10 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 		if alertsEnabled {
 			log.Printf("Anomaly alerting enabled: scan + alert every %s", interval)
 		}
-		runScheduler(ctx, "anomaly_detection", interval, func() middleware.SchedulerOutcome {
+		// First pass deferred + jittered, not run at startup — see anomalyFirstPassDelay.
+		firstDelay := anomalyFirstPassDelay(interval, defaultRandN)
+		log.Printf("Anomaly detection: first pass in %s, then every %s", firstDelay.Round(time.Second), interval)
+		runSchedulerAfter(ctx, "anomaly_detection", interval, firstDelay, func() middleware.SchedulerOutcome {
 			return lockedRun(ctx, coreService.Storage(), schedLockAnomaly, "Anomaly detection", func() error {
 				// Hotload: re-apply the persisted config before each pass so an operator's
 				// runtime change takes effect without a restart. Best-effort: a transient
@@ -1285,7 +1418,10 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 			}
 			// Single-replica-gated (ADR-039): only one replica runs the purge.
 			return lockedRun(ctx, coreService.Storage(), schedLockPurge, "Retention purge", func() error {
-				cutoff := time.Now().AddDate(0, 0, -retentionDays)
+				// UTC so the cutoff is exactly the inverse of models.PurgeAtFor
+				// (deleted_at + N days in UTC): a local zone with DST would let a
+				// legacy (un-stamped) secret go an hour before its displayed purge date.
+				cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
 				res, err := coreService.PurgeExpiredSoftDeletes(ctx, cutoff)
 				if err != nil {
 					log.Printf("Retention purge error: %v", err)
@@ -1700,6 +1836,26 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 		})
 	})
 
+	// Warn about break-glass activations that have gone unreviewed past the
+	// configured review window (ADR-112 §3, item 4/5; #2461) — ALWAYS runs,
+	// deliberately not gated on cfg.BreakGlass.Enabled, for the same reason the
+	// recover-admin alert above isn't opt-in: an install that has since turned
+	// break-glass OFF can still be holding unreviewed activations from when it
+	// was on, and those are precisely the ones that must not quietly drop off
+	// the report. Runs once immediately on startup (the "startup warning" half)
+	// and every 6h thereafter. Single-replica-gated (ADR-039) so an HA
+	// deployment logs and audits this once per pass, not once per replica.
+	//
+	// Visibility only — see RunBreakGlassReviewReminder's own doc comment for
+	// why ADR-112's "enforced" is a posture deviation plus this warning, and
+	// explicitly NOT a lockout.
+	runScheduler(ctx, "break_glass_review_reminder", 6*time.Hour, func() middleware.SchedulerOutcome {
+		return lockedRun(ctx, coreService.Storage(), schedLockBreakGlassReview, "Break-glass review reminder", func() error {
+			_, rerr := coreService.RunBreakGlassReviewReminder(ctx)
+			return rerr
+		})
+	})
+
 	// Start the read-quota alert scheduler — opt-in. Scans all secrets with MaxReads > 0
 	// and sends in-app notifications to their owners when usage reaches 80 % (Warning)
 	// or 95 % / 100 % (Critical / Exhausted). Single-replica-gated (ADR-039).
@@ -1721,6 +1877,7 @@ func startSchedulers(ctx context.Context, cfg *config.Config, coreService *core.
 			})
 		})
 	}
+	return schedulers.Wait
 }
 
 // errHTTPServerFailedToStart wraps every error startHTTPServer can return
@@ -1744,7 +1901,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.
 
 	// Create HTTP server
 	server := &http.Server{
-		Addr:    fmt.Sprintf(":%s", cfg.Server.HTTP.Port),
+		Addr:    cfg.Server.HTTP.ListenAddr(),
 		Handler: router,
 		// ReadHeaderTimeout bounds how long a client can dribble in request headers one
 		// byte at a time before the connection is dropped (gosec G112 / slowloris-style
@@ -1767,7 +1924,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.
 	}
 
 	// Bind the listener early so we can confirm the address before serving.
-	ln, err := net.Listen("tcp", server.Addr)
+	ln, err := bindListener(cfg.Server.HTTP)
 	if err != nil {
 		return fmt.Errorf("%w: failed to bind HTTP listener: %v", errHTTPServerFailedToStart, err)
 	}
@@ -1776,8 +1933,7 @@ func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.
 	if cfg.Server.HTTP.TLS.Enabled {
 		scheme = "https"
 	}
-	ip := resolveOutboundIP()
-	log.Printf("HTTP server listening on %s://%s:%s", scheme, ip, cfg.Server.HTTP.Port)
+	log.Printf("HTTP server listening on %s://%s%s", scheme, ln.Addr().String(), bindScopeNote(cfg.Server.HTTP.BindHost()))
 
 	// Start server
 	go func() {
@@ -1919,16 +2075,25 @@ func checkTransportTLSPosture(cfg *config.Config) error {
 // they run automatically on every boot (#330).
 //
 // Gated behind security.enable_file_permission_check — the flag these checks are
-// documented under and the one production.yaml/web-enabled.yaml explicitly turn on — so a
-// deployment that hasn't opted in (the default: the flag defaults to false) is completely
-// unaffected by wiring this in; enforceKeyFilePermissions below still runs unconditionally
+// documented under and the one production.yaml/web-enabled.yaml explicitly turn on.
+// ADR-112 flips this flag's default to true (config.Load resolves an absent key to true,
+// not Go's bool zero value) — enforceKeyFilePermissions below still runs unconditionally
 // as the lighter-weight, always-on permission check it always was. When the flag is set,
 // ValidateStartup itself decides warn-vs-fail-closed for a bad permission via
-// allow_unsafe_file_permissions, and auto-fixes bad permissions when
+// insecure_allow_unsafe_file_permissions, and auto-fixes bad permissions when
 // auto_fix_file_permissions is set (run first, before enforceKeyFilePermissions, so an
 // auto-fix takes effect before that check re-inspects the same files) — any other failure
 // (missing/undersized DEK or salt, unreachable local database) refuses to start, matching
 // this being "the sole automated backstop for a world-readable master-key-material file."
+//
+// ADR-112 grace period: only an UPGRADED deployment that never explicitly set this key
+// and has never yet booted clean under the check (EnableFilePermissionCheckUpgradeGrace,
+// decided from the database by adr112UpgradeGraceEligible) gets a start-up warning instead
+// of an instant boot-blocking regression if ValidateStartup finds a problem. A fresh
+// install with the implicit default is enforced from its first start. A deployment that
+// explicitly set the key is unaffected: an explicit true keeps the strict ValidateStartup
+// and fails closed exactly as before (including on missing key material), an explicit
+// false still skips the whole check below exactly as before.
 func runStartupValidation(cfg *config.Config) error {
 	if !cfg.Security.EnableFilePermissionCheck {
 		// #G37: unlike checkTransportTLSPosture's cleartext warning, this opt-out was
@@ -1936,13 +2101,34 @@ func runStartupValidation(cfg *config.Config) error {
 		// "run automatically" had no signal that they hadn't opted in. enforceKeyFilePermissions
 		// (called separately, right after this) still runs unconditionally as the lighter-weight
 		// backstop, so this is visibility only, not a behavior change.
-		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks (internal/startup.ValidateStartup) are SKIPPED. Set it true to enable them.")
+		log.Printf("WARNING: security.enable_file_permission_check is false — the DEK/salt existence+size and database-reachability startup checks are SKIPPED. Set it true to enable them.")
 		return nil
 	}
 	configPath := config.ResolvedPath("")
 	// Server startup has no --fix flag; remediation is governed solely by the
 	// config's Security.AutoFixFilePermissions field, as before.
-	result, err := startup.ValidateStartup(configPath, false)
+	//
+	// The TOLERANT variant is reachable ONLY through the ADR-112 grace period —
+	// never for a deployment that set security.enable_file_permission_check
+	// explicitly. That gate is the whole point, not a detail: the tolerance
+	// treats "KEK salt AND wrapped DEK both missing" as a fresh install, so with
+	// it in force a key volume that failed to mount is explained away as first
+	// boot, this function returns nil, and initializeEncryption then GENERATES A
+	// FRESH SALT AND DEK — over an existing, still-encrypted database whose real
+	// key material is merely unmounted. Every value in it becomes permanently
+	// unreadable, and the server reports a clean start while doing it.
+	//
+	// So the variant follows the same explicit/implicit split the err→warn
+	// softening below already follows, and for the same reason: an operator who
+	// wrote the key down asked for these checks, and "an explicit true keeps
+	// failing closed exactly as before" is what this function's own doc comment
+	// above promises. Guarded by
+	// TestRunStartupValidation_ExplicitTrue_MissingKeyMaterial_RefusesToStart.
+	validate := startup.ValidateStartup
+	if cfg.Security.EnableFilePermissionCheckImplicitDefault {
+		validate = startup.ValidateStartupTolerant
+	}
+	result, err := validate(configPath, false)
 	if result != nil {
 		for _, w := range result.Warnings {
 			log.Printf("startup validation warning: %s", w)
@@ -1952,6 +2138,11 @@ func runStartupValidation(cfg *config.Config) error {
 		}
 	}
 	if err != nil {
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: startup validation failed (%v) — ADR-112 grace period: this is an upgraded deployment and security.enable_file_permission_check was never set explicitly, so it continues instead of refusing to start. Fix the problem above, then set security.enable_file_permission_check: true explicitly to make this fail closed like a compliant deployment.", err)
+			return nil
+		}
 		return err
 	}
 	log.Printf("Startup validation passed (config, file permissions, encryption keys, database).")
@@ -1964,8 +2155,15 @@ func runStartupValidation(cfg *config.Config) error {
 // bad umask, or one left 0644 by an operator, would otherwise expose the wrapped DEK / TLS
 // key to any local user with no signal. Fails closed only when
 // security.enable_file_permission_check is set (and not overridden by
-// allow_unsafe_file_permissions); otherwise it warns. A not-yet-created key file (first
+// insecure_allow_unsafe_file_permissions); otherwise it warns. A not-yet-created key file (first
 // boot) is skipped — it is created at 0600.
+//
+// ADR-112 implicit default (the key absent from the config): the encryption key material,
+// which the server writes itself, fails closed (a fresh install) or warns (an upgrade in the
+// grace period). A TLS private key is an input the orchestrator mounts (a Kubernetes Secret
+// is root-owned 0644 by default), so under the implicit default it only warns, naming the
+// file, its mode and the fix; an explicit enable_file_permission_check: true refuses on it
+// as before.
 func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cognitive complexity 16, suppress go:S3776
 	resolve := func(p string) string {
 		if p == "" || filepath.IsAbs(p) {
@@ -1973,18 +2171,56 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 		}
 		return filepath.Join(".", p)
 	}
-	var paths []string
+	var keyPaths, tlsPaths []string
 	if cfg.Storage.Encryption.Enabled {
-		paths = append(paths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
+		keyPaths = append(keyPaths, resolve(cfg.Storage.Encryption.DEKPath), resolve(cfg.Storage.Encryption.SaltPath))
 	}
 	if cfg.Server.HTTP.TLS.Enabled {
-		paths = append(paths, cfg.Server.HTTP.TLS.KeyFile)
+		tlsPaths = append(tlsPaths, cfg.Server.HTTP.TLS.KeyFile)
 	}
 	if cfg.Server.GRPC.TLS.Enabled {
-		paths = append(paths, cfg.Server.GRPC.TLS.KeyFile)
+		tlsPaths = append(tlsPaths, cfg.Server.GRPC.TLS.KeyFile)
 	}
 
-	var insecure []string
+	insecureKeys := groupOrOtherReadable(keyPaths)
+	insecureTLS := groupOrOtherReadable(tlsPaths)
+	if len(insecureKeys)+len(insecureTLS) == 0 {
+		return nil
+	}
+	sec := cfg.Security
+	if !sec.EnableFilePermissionCheck || sec.AllowUnsafeFilePermissions {
+		msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(append(insecureKeys, insecureTLS...), ", "))
+		log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+		return nil
+	}
+	if sec.EnableFilePermissionCheckImplicitDefault {
+		for _, f := range insecureTLS {
+			log.Printf("WARNING: TLS private key %s is readable beyond its owner — chmod 600 it (Kubernetes: mount the Secret with defaultMode 0400), or set security.enable_file_permission_check: true explicitly to refuse to start on this (ADR-112: on the implicit default an orchestrator-mounted TLS key only warns).", f)
+		}
+		insecureTLS = nil
+		if len(insecureKeys) == 0 {
+			return nil
+		}
+	}
+	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(append(insecureKeys, insecureTLS...), ", "))
+	if sec.EnableFilePermissionCheckUpgradeGrace {
+		// ADR-112 grace period: an upgraded deployment that never explicitly opted into
+		// the check — it's failing closed only because of the new secure default. Don't
+		// turn a pre-existing bad-permission file (present before this upgrade, previously
+		// only warned about) into a boot-blocking regression. Warn loudly instead, naming
+		// exactly how to comply. A fresh install never gets here (see
+		// adr112UpgradeGraceEligible).
+		adr112GraceSoftened.Store(true)
+		log.Printf("WARNING: %s — this now fails closed by default (ADR-112); set to warn-only, which is what the pre-upgrade behavior was, with security.insecure_allow_unsafe_file_permissions, or (preferred) chmod the files to 0600 and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+		return nil
+	}
+	return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.insecure_allow_unsafe_file_permissions to override)", msg)
+}
+
+// groupOrOtherReadable returns "path (mode NNN)" for every existing path whose mode grants
+// any group or other bit. Empty and absent paths are skipped.
+func groupOrOtherReadable(paths []string) []string {
+	var out []string
 	for _, p := range paths {
 		if p == "" {
 			continue
@@ -1994,18 +2230,163 @@ func enforceKeyFilePermissions(cfg *config.Config) error { // NOSONAR -- cogniti
 			continue // absent (e.g. created at 0600 on first boot) — nothing to check yet
 		}
 		if info.Mode().Perm()&0o077 != 0 {
-			insecure = append(insecure, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
+			out = append(out, fmt.Sprintf("%s (mode %o)", p, info.Mode().Perm()))
 		}
 	}
-	if len(insecure) == 0 {
+	return out
+}
+
+// resolveBootstrapToken returns the operator-pinned bootstrap token from
+// KEYORIX_BOOTSTRAP_TOKEN or the file named by KEYORIX_BOOTSTRAP_TOKEN_FILE, or
+// "" when neither is set (the caller then generates a one-time token). Both set,
+// or an unreadable/empty file, is an error -- never a silent fall-through to a
+// generated token.
+func resolveBootstrapToken() (string, error) {
+	v, found, err := secretenv.Lookup("KEYORIX_BOOTSTRAP_TOKEN")
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", nil
+	}
+	return strings.TrimSpace(v), nil
+}
+
+// resolveVaultToken returns the Vault connector token from the env var named by
+// tokenEnv (default VAULT_TOKEN) or its _FILE variant; "" when unset.
+func resolveVaultToken(tokenEnv string) (string, error) {
+	if tokenEnv == "" {
+		tokenEnv = "VAULT_TOKEN"
+	}
+	v, _, err := secretenv.Lookup(tokenEnv)
+	return v, err
+}
+
+// enforceSecretFilePermissions applies the key-material permission policy to the
+// files named by *_FILE secret variables (secretenv.CheckPermissions: 0600/0400,
+// plus group-read only for an orchestrator-owned file in a group the process
+// holds). Key-material secrets (master password, KEK, Shamir shares) are refused
+// unconditionally where they are read (secretenv.LookupChecked, no grace); this
+// covers the rest, which follow the ADR-112 upgrade grace like the key files.
+// Same warn-vs-refuse matrix as enforceKeyFilePermissions: refuse
+// when security.enable_file_permission_check is on and
+// allow_unsafe_file_permissions is off, otherwise warn.
+func enforceSecretFilePermissions(cfg *config.Config) error {
+	var problems []string
+	for _, p := range cfg.SecretFilePaths() {
+		if err := secretenv.CheckPermissions(p); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) == 0 {
 		return nil
 	}
-	msg := fmt.Sprintf("key material is readable beyond its owner: %s", strings.Join(insecure, ", "))
+	msg := strings.Join(problems, "; ")
 	if cfg.Security.EnableFilePermissionCheck && !cfg.Security.AllowUnsafeFilePermissions {
-		return fmt.Errorf("%s — refusing to start (chmod to 0600, or set security.allow_unsafe_file_permissions to override)", msg)
+		// Strict on the implicit ADR-112 default as well (only orchestrator-mounted
+		// config/TLS files are softened there). The one exception is the upgrade
+		// grace period, same as for the key files in enforceKeyFilePermissions:
+		// warn, and record that this boot was softened. Key material never gets
+		// here -- LookupChecked has already refused it.
+		if cfg.Security.EnableFilePermissionCheckUpgradeGrace {
+			adr112GraceSoftened.Store(true)
+			log.Printf("WARNING: %s -- this now fails closed by default (ADR-112); fix the file mode (chmod 0400, or 0440 on an orchestrator-owned mount whose group the process holds) and set security.enable_file_permission_check: true explicitly once compliant.", msg)
+			return nil
+		}
+		return fmt.Errorf("%s -- refusing to start (or set security.insecure_allow_unsafe_file_permissions to override)", msg)
 	}
-	log.Printf("WARNING: %s — restrict to 0600. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
+	log.Printf("WARNING: %s. Set security.enable_file_permission_check to fail closed instead of warning.", msg)
 	return nil
+}
+
+// verifyKeyFileSetConsistency is the boot-time key-file-set consistency check
+// (ADR-112, follow-up from #2400) — see keyfiles.VerifyKeySetConsistency's own
+// doc comment for the two things it checks and why. No-op when encryption is
+// disabled: there is no key material to check in the first place.
+func verifyKeyFileSetConsistency(cfg *config.Config) error {
+	if !cfg.Storage.Encryption.Enabled {
+		return nil
+	}
+	return keyfiles.VerifyKeySetConsistency(&cfg.Storage.Encryption, ".")
+}
+
+// logWarnOnImplicitRequireMFADefault logs where security.require_mfa stands when the
+// config file never set it (ADR-112 resolves an absent key to true;
+// RequireMFAImplicitDefault is true only then).
+//
+// On a fresh install (or a deployment already enforced once) MFA is enforced and this is
+// informational: server/middleware.EnforceAccountSetup confines a session-authenticated
+// user without MFA to the enrolment endpoints (never locks the account out; PAT/machine
+// credentials are exempt). On an upgraded deployment, applyADR112UpgradeGrace has put
+// require_mfa in ADR-112's grace period (RequireMFAUpgradeGrace): MFA is NOT enforced yet,
+// and this warns loudly on every boot until the key is set explicitly.
+func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
+	sec := cfg.Security
+	switch {
+	case sec.RequireMFAUpgradeGrace:
+		log.Printf("WARNING: ADR-112 grace period: security.require_mfa now defaults to true, but %s and this config never set it, so MFA is NOT enforced yet. Have every interactive admin enrol (keyorix mfa enroll / activate, or Profile -> Security in the web UI), then set security.require_mfa: true explicitly to enforce it (or false to opt out visibly).", adr112MFAReason)
+	case sec.RequireMFA && sec.RequireMFAImplicitDefault:
+		reason := adr112MFAReason
+		if reason == "" {
+			reason = "the key is not set in this config"
+		}
+		log.Printf("INFO: security.require_mfa is enforcing on its ADR-112 secure-by-default value (%s). Session-authenticated users without MFA are confined to MFA enrolment until they enrol (PAT/machine credentials are unaffected). Set security.require_mfa explicitly to silence this.", reason)
+	}
+}
+
+// warnDeprecatedSettingAliases logs every ADR-112 deprecated-alias key (an old
+// name config.Load translated to its current insecure_ form) found in this
+// config file — "deprecated alias, warns when used" (opt-out rule item 2)
+// means the old key still works exactly as before, but is never silent about it.
+func warnDeprecatedSettingAliases(cfg *config.Config) {
+	for _, w := range cfg.DeprecatedSettingWarnings {
+		log.Printf("WARNING: deprecated config key: %s", w)
+	}
+}
+
+// warnInsecureSettingsInEffect logs a start-up warning for every ADR-112
+// registry entry currently in effect — unconditionally, on every boot, so a
+// security-weakening setting can never be silently in effect (opt-out rule
+// item 2's "a start-up warning for every insecure_ setting in effect").
+// Looping config.InsecureSettingsRegistry here is also half of what makes
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee hold: every entry with a non-nil InEffect is warned about by
+// construction, with no per-entry call site that could forget to wire one in.
+func warnInsecureSettingsInEffect(cfg *config.Config) {
+	for _, s := range config.InsecureSettingsRegistry {
+		if s.InEffect(cfg) {
+			// Name is a stable identifier, not always a key an operator can
+			// set today; SourcePaths are the config keys that actually
+			// control the state, so print them for the operator to act on.
+			log.Printf("WARNING: %s is in effect (%s; config: %s) — %s", s.Name, s.Value(cfg), strings.Join(s.SourcePaths, ", "), s.Describe)
+		}
+	}
+}
+
+// resolveADR112BootPosture applies the ADR-112 upgrade-grace decision and THEN
+// warns about every registry entry in effect. The order is the point (#2908):
+// security.insecure_skip_startup_validation's grace-warn-only state is read
+// from EnableFilePermissionCheckUpgradeGrace, which only
+// applyADR112UpgradeGrace sets. Warning first -- main's order before #2908 --
+// evaluated that entry with the flag still false, so a grace-period
+// deployment that only warns on a failed startup check got no opt-out warning.
+func resolveADR112BootPosture(cfg *config.Config) {
+	applyADR112UpgradeGrace(cfg)
+	warnInsecureSettingsInEffect(cfg)
+}
+
+// securityPostureSnapshot computes this boot's value of every ADR-112
+// registry entry, keyed by its Name — the input to
+// coreService.ReconcileSecurityPostureSnapshot's start-to-start diff. Looping
+// config.InsecureSettingsRegistry here is the other half of
+// TestInsecureSettingsRegistry_EveryEntryHasThePrefixWarningAndAuditHook's
+// guarantee: every entry with a non-nil Value is audited by construction.
+func securityPostureSnapshot(cfg *config.Config) map[string]string {
+	snapshot := make(map[string]string, len(config.InsecureSettingsRegistry))
+	for _, s := range config.InsecureSettingsRegistry {
+		snapshot[s.Name] = s.Value(cfg)
+	}
+	return snapshot
 }
 
 func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore) error {
@@ -2016,12 +2397,12 @@ func startGRPCServer(ctx context.Context, cfg *config.Config, coreService *core.
 	}
 
 	// Create listener
-	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", cfg.Server.GRPC.Port))
+	lis, err := bindListener(cfg.Server.GRPC)
 	if err != nil {
 		return fmt.Errorf("failed to listen on gRPC port: %w", err)
 	}
 
-	log.Printf("gRPC server listening on %s", lis.Addr().String())
+	log.Printf("gRPC server listening on %s%s", lis.Addr().String(), bindScopeNote(cfg.Server.GRPC.BindHost()))
 
 	// Start server
 	go func() {
@@ -2172,14 +2553,26 @@ func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig, mode stri
 	return tlsConfig, nil
 }
 
-// resolveOutboundIP returns the machine's preferred outbound IP address.
-func resolveOutboundIP() string {
-	conn, err := net.Dial("udp", "8.8.8.8:80") // NOSONAR -- well-known UDP probe target; no data is sent, used only to resolve the local outbound interface
-	if err != nil {
-		return "127.0.0.1" // NOSONAR -- default bind address, not sensitive
+// bindListener is the only place the server opens a TCP listener for its HTTP
+// and gRPC transports. It binds server.<transport>.host (default
+// config.DefaultBindHost, loopback only) so the address in the startup log is
+// the address actually bound (#2939: it used to bind ":port", all interfaces,
+// while the log claimed 127.0.0.1).
+func bindListener(inst config.ServerInstanceConfig) (net.Listener, error) {
+	return net.Listen("tcp", inst.ListenAddr())
+}
+
+// bindScopeNote returns a log suffix saying who can reach a listener bound to
+// host. Empty for loopback, a warning for any wider bind.
+func bindScopeNote(host string) string {
+	ip := net.ParseIP(host)
+	if host == "localhost" || (ip != nil && ip.IsLoopback()) {
+		return ""
 	}
-	defer conn.Close() //nolint:errcheck
-	return conn.LocalAddr().(*net.UDPAddr).IP.String()
+	if ip != nil && ip.IsUnspecified() {
+		return " (ALL interfaces: reachable from the network; set server.*.host to 127.0.0.1 to restrict)"
+	}
+	return " (non-loopback interface: reachable from the network)"
 }
 
 // oidcDiscovery is the subset of an OIDC discovery document we need.
@@ -2624,7 +3017,10 @@ func wireConnect(cfg *config.Config, coreService *core.KeyorixCore) error {
 			if tokenEnv == "" {
 				tokenEnv = "VAULT_TOKEN"
 			}
-			token := os.Getenv(tokenEnv)
+			token, terr0 := resolveVaultToken(tokenEnv)
+			if terr0 != nil {
+				return fmt.Errorf("connect: vault connector %q token: %w", cn.Name, terr0)
+			}
 			if token == "" {
 				log.Printf("Keyorix Connect: vault connector %q has no token (%s unset) — reads will fail", cn.Name, tokenEnv)
 			}
@@ -2822,7 +3218,7 @@ func buildSAMLProvider(pc config.SSOProviderConfig) (*samlpkg.Provider, error) {
 }
 
 // warnIfRecoveryKeyMissing logs a prominent WARN on EVERY boot (not just the
-// first) while security.recover_admin.keyless_mode is off and no recovery
+// first) while security.recover_admin.insecure_keyless_admin_recovery is off and no recovery
 // key has ever been generated -- `recover-admin` is unusable in that state
 // (F6, recovery-key visibility) and, unlike keyless mode, there is no other
 // startup-time signal an operator would see. Best-effort: a lookup failure
@@ -2841,7 +3237,7 @@ func warnIfRecoveryKeyMissing(store corestorage.Storage) {
 	}
 }
 
-// auditKeylessModeStartup records, at every boot while security.recover_admin.keyless_mode is
+// auditKeylessModeStartup records, at every boot while security.recover_admin.insecure_keyless_admin_recovery is
 // enabled, a system-actor audit event (no UserID, never machine-identity-typed), so the
 // tamper-evident chain itself carries a repeated record of the weaker mode. Direct
 // LogAuditEvent: this runs before any request context exists, the same shape as
@@ -2850,11 +3246,65 @@ func auditKeylessModeStartup(store corestorage.Storage) {
 	ok := true
 	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
 		EventType:   "admin.keyless_mode_enabled_at_startup",
-		Description: "server started with security.recover_admin.keyless_mode enabled -- recover-admin can restore any admin account on host access alone",
+		Description: "server started with security.recover_admin.insecure_keyless_admin_recovery enabled -- recover-admin can restore any admin account on host access alone",
 		Success:     &ok,
 		ActorType:   core.ActorTypeSystem,
 		EventTime:   time.Now(),
 	}); err != nil {
 		log.Printf("note: could not record the keyless-mode startup event to the audit chain (%v)", err)
+	}
+}
+
+// auditDurableSyncWarning is the operator-facing start-up text for
+// storage.database.insecure_audit_skip_durable_sync (ADR-112 Amendment 1,
+// docs/specs/fast-audit-mode.md). Takes the already-computed status so the
+// log, the posture report and /system/info can never disagree about whether
+// the setting is doing anything.
+//
+// Two wordings, and the distinction is load-bearing rather than cosmetic:
+//
+//   - IN EFFECT: say the durability was weakened, name what is lost, and say
+//     plainly that this is Vault's guarantee and not a safe one.
+//   - CONFIGURED BUT NOT IN EFFECT: say IGNORED and give the reason. Never
+//     imply durability was weakened (Andrei's decision, 2026-10-05) -- it was
+//     not, and a line that implied otherwise would send an operator chasing a
+//     durability problem they do not have. One warning still prints, because a
+//     config line that does nothing is itself worth telling them about.
+func auditDurableSyncWarning(st config.AuditDurableSyncStatus) string {
+	if !st.InEffect {
+		return "storage.database.insecure_audit_skip_durable_sync is set but IGNORED -- not in effect: " +
+			st.NotInEffectReason + ". Audit durability is UNCHANGED (the audit record is still durably " +
+			"committed before a secret value is returned). Remove the setting to silence this."
+	}
+	return "storage.database.insecure_audit_skip_durable_sync is ENABLED -- the audit record is still written " +
+		"and committed before a secret value is returned, and a failed audit write still fails the request, but " +
+		"the commit NO LONGER WAITS for a disk sync. An OS or database-server crash can lose the last fraction " +
+		"of a second of audit entries (up to ~3x wal_writer_delay). This is HashiCorp Vault's guarantee, not a " +
+		"safe one. Only appropriate where power is guaranteed (UPS, battery-backed write cache, replicated " +
+		"cloud block storage); disable it otherwise."
+}
+
+// auditDurableSyncSkippedStartup records, at every boot while
+// storage.database.insecure_audit_skip_durable_sync is enabled, a system-actor
+// audit event (no UserID, never machine-identity-typed) -- the same shape and
+// the same reasoning as auditKeylessModeStartup above, so the tamper-evident
+// chain carries its own repeated record of the weaker mode.
+//
+// Note the self-reference this deliberately accepts: this event is itself
+// written through the very audit path whose durability the setting relaxes, so
+// an OS crash moments after startup could lose it. That is not a defect to
+// engineer around -- the event's purpose is to mark a WINDOW (every subsequent
+// boot re-marks it, and the setting is also reported live by /system/info and
+// `admin validate`), not to be the single unforgeable record of one instant.
+func auditDurableSyncSkippedStartup(store corestorage.Storage) {
+	ok := true
+	if err := store.LogAuditEvent(context.Background(), &models.AuditEvent{
+		EventType:   "admin.audit_durable_sync_skipped_at_startup",
+		Description: "server started with storage.database.insecure_audit_skip_durable_sync enabled -- audit commits no longer wait for a disk sync, so an OS crash or power loss can lose the most recent audit entries",
+		Success:     &ok,
+		ActorType:   core.ActorTypeSystem,
+		EventTime:   time.Now(),
+	}); err != nil {
+		log.Printf("note: could not record the audit-durable-sync-skipped startup event to the audit chain (%v)", err)
 	}
 }

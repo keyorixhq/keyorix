@@ -23,6 +23,8 @@ AnomalyAlert	db_table	internal/storage/models	1
 AnomalyConfigRecord	db_table	internal/storage/models	1
 AuditCheckpoint	db_table	internal/storage/models	1
 AuditEvent	db_table	internal/storage/models	1
+AuditJournalOrigin	db_table	internal/storage/models	1
+AuditJournalReplayState	db_table	internal/storage/models	1
 BreakGlassActivation	db_table	internal/storage/models	1
 CompliancePostureSnapshot	db_table	internal/storage/models	1
 ConnectRefGrant	db_table	internal/storage/models	1
@@ -97,6 +99,8 @@ cli/internal/credstore/file.go (os.OpenFile)	file_write	cli/internal/credstore	2
 cli/internal/securefiles/securefiles.go (os.OpenFile)	file_write	cli/internal/securefiles	1
 cmd/statemapgen/main.go (os.WriteFile)	file_write	cmd/statemapgen	2
 internal/audit/siem/spool.go (os.OpenFile)	file_write	internal/audit/siem	1
+internal/auditjournal/reader.go (os.OpenFile)	file_write	internal/auditjournal	1
+internal/auditjournal/writer.go (os.OpenFile)	file_write	internal/auditjournal	1
 internal/backupfmt/reader.go (os.WriteFile)	file_write	internal/backupfmt	1
 internal/config/config.go (securefiles.SecureWriteFileSync)	file_write	internal/config	1
 internal/config/roundtrip.go (securefiles.SecureWriteFileSync)	file_write	internal/config	1
@@ -118,11 +122,12 @@ internal/storage/factory.go (os.OpenFile)	file_write	internal/storage	1
 internal/storage/factory_sqlite_migration_lock.go (os.OpenFile)	file_write	internal/storage	1
 migrate/cmd/cloud_common.go (os.Create)	file_write	migrate/cmd	1
 migrate/cmd/vault.go (os.Create)	file_write	migrate/cmd	1
+migrate/cmd/vaultapplyaccess.go (os.OpenFile)	file_write	migrate/cmd	1
 migrate/cmd/vaultscan.go (os.Create)	file_write	migrate/cmd	1
 migrate/internal/apiclient/gen/filterspec.go (os.WriteFile)	file_write	migrate/internal/apiclient/gen	1
 pkg/bundleverify/bundleverify.go (os.OpenFile)	file_write	pkg/bundleverify	2
 scripts/e2e/harness/harness.go (os.Create)	file_write	scripts/e2e/harness	1
-scripts/e2e/harness/harness.go (os.WriteFile)	file_write	scripts/e2e/harness	2
+scripts/e2e/harness/harness.go (os.WriteFile)	file_write	scripts/e2e/harness	3
 scripts/fuzzing/autofuzzgen/main.go (os.WriteFile)	file_write	scripts/fuzzing/autofuzzgen	2
 scripts/fuzzing/reencode-seeds.go (os.WriteFile)	file_write	scripts/fuzzing	1
 server/admin/audit_export_checkpoint.go (os.OpenFile)	file_write	server/admin	1
@@ -131,6 +136,7 @@ server/admin/backup.go (os.WriteFile)	file_write	server/admin	1
 server/admin/backup_v1_legacy.go (os.WriteFile)	file_write	server/admin	1
 server/admin/init.go (os.OpenFile)	file_write	server/admin	2
 server/admin/init.go (securefiles.SecureWriteFileSync)	file_write	server/admin	1
+server/admin/init_secure.go (securefiles.SecureCreateFileSync)	file_write	server/admin	2
 server/admin/recovery_key_encrypt.go (os.OpenFile)	file_write	server/admin	1
 server/admin/restore.go (os.WriteFile)	file_write	server/admin	1
 #

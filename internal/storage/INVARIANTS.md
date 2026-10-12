@@ -10,18 +10,30 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 ## Schema epoch (ADR-097, ADR-101)
 
 - **INV-STORAGE-01** An older binary refuses to start against a database migrated by a newer
-  schema epoch. Why: ADR-097. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`.
-- **INV-STORAGE-02** `currentSchemaEpoch` has not silently bumped past 1 without the
+  schema epoch, unless an ADR-101 compatibility floor recorded by that newer migration
+  explicitly covers the older binary (INV-STORAGE-04). With no floor recorded, the refusal is
+  unconditional. Why: ADR-097, ADR-101. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`,
+  `TestSchemaEpochFloor_RefusesOutsideSupportedRange/db_epoch_above_binary,_no_floor_recorded`.
+- **INV-STORAGE-02** `currentSchemaEpoch` (now 2 for the additive `secret_nodes.purge_at`, #3021; floor stays 1) has not silently bumped without the
   accompanying ADR-101 compatibility-floor work landing — this is a deliberate tripwire, not a
-  claim that raising the epoch is wrong. Guard: `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_StillOne_SeeADR101`.
+  claim that raising the epoch is wrong. Guard: `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_Is2_SeeADR101`.
 - **INV-STORAGE-03** A corrupt (non-integer) `schema_epoch` value in `system_metadata` fails
   closed (refuses boot), not proceed silently. Why: ADR-097 "Corrupt value" section. UNGUARDED
   (#issue: no test located beyond the two epoch tests above directly asserting this; likely
   covered incidentally by `checkSchemaEpoch`'s own tests — confirm and cite precisely, or add).
-- **INV-STORAGE-04** Rolling back past a future `minCompatibleEpoch` floor must still refuse;
-  an additive-safe migration must NOT raise that floor. Why: ADR-101 design (not yet
-  implemented — `minCompatibleEpoch` does not exist in `system_metadata` yet). UNGUARDED
-  (#issue: implement `minCompatibleEpoch` per ADR-101 before any migration that would need it).
+- **INV-STORAGE-04** Rolling back past a recorded `minCompatibleEpoch` floor
+  (`system_metadata` key `schema_min_compatible_epoch`, declared by `minCompatibleSchemaEpoch`
+  in `factory.go`) must still refuse; an additive-safe migration must NOT raise that floor; a
+  recorded epoch or floor is never lowered by an older binary; a corrupt or sub-1 floor fails
+  closed. Why: ADR-101 (#2502). Guard: `factory_schema_epoch_floor_test.go`
+  (`TestSchemaEpochFloor_RefusesOutsideSupportedRange`, `_StartsInsideSupportedRange`,
+  `_AdditiveMigrationDoesNotRaiseFloor`, `_RecordNeverLowersEpochOrFloor`,
+  `_FreshInstall_RecordsDeclaredFloor`, `TestMinCompatibleSchemaEpoch_WithinRange`); Postgres
+  sibling `factory_schema_epoch_floor_postgres_test.go:TestSchemaEpochFloor_Postgres_RecordAndRefuse`.
+  `admin restore` deliberately keeps the strict no-floor rule (`SchemaEpochTooNew`): a backup
+  manifest carries no floor. `internal/backupfmt` skips the archived floor row exactly like the
+  `schema_epoch` row (guarded by the backup/restore round-trip tests, which fail on a UNIQUE
+  violation without the skip).
 
 ## AutoMigrate completeness
 
@@ -72,6 +84,15 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   created by migration. Guard: `factory_break_glass_index_test.go:TestBreakGlassActiveIndex_CreatedByMigration`.
 - **INV-STORAGE-14** Companion/sibling indexes are created on upgrade, not only fresh install.
   Guard: `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade`.
+- **INV-STORAGE-36** The anomaly hot-path indexes — `idx_anomaly_alerts_dedup` (matching
+  `CreateAnomalyAlert`'s dedup predicate), `idx_secret_access_logs_secret_time`,
+  `idx_secret_access_logs_access_time` — exist on a fresh install (struct tags) AND converge on
+  an upgraded one (`CREATE INDEX IF NOT EXISTS` in `migrateDatabase`), on both dialects. They
+  are additive, so no schema-epoch bump. Why: PERF-2 performance study (the dedup count was
+  the single most expensive query; per-secret access-log reads full-scanned). Guard:
+  `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade` (SQLite),
+  `factory_anomaly_index_postgres_test.go:TestAnomalyIndexes_Postgres_CreatedOnUpgrade`
+  (pg-gated).
 
 ## Backfills and fatal-migration discipline
 
@@ -117,10 +138,21 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   `TestResolveConfigRelativePath_*`, `TestLoad_DatabasePathTraversal_Rejected` — these live in
   `internal/config`, not `internal/storage`, but gate `factory.go`'s `createLocalStorage` input
   directly.
-- **INV-STORAGE-22** Opening a missing SQLite path should eventually refuse rather than
-  silently create an empty DB. Why: ADR-095 "Task 3". UNGUARDED (#issue: `createLocalStorage`
-  currently doesn't check for the file's prior existence; ADR-095 itself recommends this but it
-  was not built).
+- **INV-STORAGE-22** Opening a missing SQLite path should refuse rather than silently create an
+  empty DB. Why: ADR-095 "Task 3". Built as the OPT-IN `database.require_existing_path`
+  (#2504): `createLocalStorage` resolves the configured path through `localStorageDBFile` and
+  refuses when the file is absent, naming `keyorix system init --database` as the deliberate way
+  to create one. In-memory DSNs are exempt by construction (no file to pre-exist); the Postgres
+  backend is out of scope. Guard: `factory_local_storage_missing_path_log_test.go`
+  (`TestCreateLocalStorage_RequireExistingPath_RefusesMissing` — asserts the EFFECT, that a
+  refused boot created neither the file nor its parent directory, not just the returned error —
+  plus `_OpensExisting`, `_InMemoryExempt` and `_DSNQuerySuffix_...`, so the refusal cannot be
+  satisfied by refusing unconditionally). **The default is still false, i.e. create-if-missing**,
+  deliberately: nothing in the supported first-boot paths (`server/entrypoint.sh`,
+  `docker-compose.yml`) creates the file before the server starts, so defaulting it on would
+  break every containerized first boot. Flipping the default is the deliberate sign-off ADR-095
+  Task 3 asks for and is NOT settled here — it needs first boot to run
+  `keyorix system init --database` (or equivalent) first.
 - **INV-STORAGE-23** Two processes migrating the same SQLite file are serialized by SQLite
   itself: `withMigrationLock` runs the whole migration inside one `BEGIN EXCLUSIVE` transaction
   on a dedicated connection (`withSQLiteInDBMigrationLock`), so it holds however each process
@@ -148,6 +180,76 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   them — and foreign-key enforcement actually rejects an orphan insert. Guard:
   `factory_sqlite_pragma_test.go` (`TestSQLitePragmas_EnabledOnFreshConnection`,
   `TestSQLiteForeignKeyEnforcement_RejectsOrphanInsert`).
+
+- **INV-STORAGE-37** In-process SQLite write transactions are serialized by a FIFO write gate
+  (`openSQLiteGorm`, `sqlite_write_gate.go`) instead of contending inside SQLite's polling busy
+  handler, which starves waiters past `busy_timeout` under concurrency (`SQLITE_BUSY`). Every
+  production SQLite open goes through the gate; read-only (`mode=ro`) opens are the only,
+  allowlisted exceptions. A gate wait is bounded (`sqliteWriteGateMaxWait`, equal to the
+  busy_timeout) and fails with `storage.ErrSQLiteWriteContention`, or with the caller's ctx
+  error. The error is classified as contention by `internal/storage/store`'s
+  `isSQLiteBusyErr` (via `errors.Is`, which is why the sentinel lives in
+  `internal/core/storage` — `internal/storage` imports `internal/storage/store`, so the gate's
+  own package is unreachable from the classifier), so the audit-chain busy-retry budget covers
+  it; `commitAuditBatch` deliberately does NOT bisect on it, because it is batch-global rather
+  than item-specific.
+
+  Scope, stated precisely because the earlier wording overclaimed: the gate is
+  **per-`*sql.DB` handle**, not per-process — `newSQLiteWriteGate()` is called once per
+  `openSQLiteGorm`. A process that opens the same database file through two handles has one
+  gate each and they do not serialize against each other; those handles meet SQLite's raw busy
+  handler as before. In practice the extra openers are one-shot CLI paths
+  (`server/admin/{backup,diagnose,restore}.go`, `internal/encryptionops/*`) that do not run
+  concurrently with a serving process, which is why this is a documented limit rather than an
+  active bug.
+
+  Also not covered: autocommit writes outside a transaction (none via GORM today: no
+  `SkipDefaultTransaction`); and the window between a ctx cancellation releasing the gate
+  (`context.AfterFunc(ctx, t.release)`) and `database/sql`'s own rollback completing — a second
+  writer can enter during it and meet the raw busy handler. That ordering is deliberate (the
+  alternative is wedging the gate on a rollback that never returns) but it is a real gap, and
+  it means a future caller that leaks a transaction on a background context would wedge every
+  write in the process permanently where it previously degraded to `busy_timeout` retries.
+
+  The gate is held across `BeginTx`'s wait for a free pool connection, bounded only by the
+  caller's ctx (an HTTP request ctx often has no deadline). The pool defaults to 8 connections
+  (`DefaultSQLiteMaxOpenConns` in `factory.go`, shared with readers), so a writer that cannot get a connection — all 8
+  held by readers or by a stuck query — blocks every other writer behind the gate until its ctx
+  ends. This is an ACCEPTED tradeoff, not an oversight: bounding the connection wait would
+  need a derived ctx, and `database/sql` rolls a transaction back when the ctx passed to
+  `BeginTx` is cancelled, so a timeout ctx would end the transaction it just opened. Before
+  the gate those writers each waited inside SQLite's busy handler for the same starved
+  connections, so the failure mode is unchanged in kind (writes stall until the client
+  timeout); it is only now visible as one queue. Recorded for the coordinator to accept or
+  reject (#2637 review, Finding 2).
+
+  A gate wait that ends on the caller's ctx deadline (auditWriteTimeout, the gate bound and
+  `busy_timeout` are all 10s and the ctx starts first) returns a wrapped `ctx.Err()` rather
+  than the sentinel, so `isBatchGlobalContentionErr` also treats `context.DeadlineExceeded` /
+  `context.Canceled` as batch-global; matching only the sentinel left the audit path's real
+  error bisecting.
+
+  The read-only bypass has no non-test caller today. It is correct as implemented (modernc
+  `tx.go` only applies `beginMode` when `!opts.ReadOnly`, so a read-only tx takes a plain
+  DEFERRED `BEGIN` and cannot hold the write lock), but SQLite does not ENFORCE read-only at
+  the transaction level: a future caller that sets `sql.TxOptions{ReadOnly: true}` and then
+  writes would both escape the gate and reopen the deferred-upgrade window INV-STORAGE-25
+  closes. The AST guard covers open paths, not `TxOptions`.
+
+  Test-suite scope: the guard allowlists `internal/testhelper` and `internal/testutil`, which
+  open SQLite ungated, as does the fuzzworld harness — so production runs gated while most
+  handler/core/store tests do not. The gate's own behaviour is covered by its own tests; what
+  is NOT covered is the rest of the suite exercising code under the gate.
+
+  Why: #2630 (PERF-2: 2.7–6.4% write failures, p99 at the client
+  timeout). Guard: `sqlite_concurrent_write_test.go`
+  (`TestSQLite_ConcurrentDistinctSecretWrites_SucceedOrFailFast` green,
+  `TestSQLite_ConcurrentDistinctSecretWrites_UngatedControlFails` red control,
+  `TestSQLiteWriteGate_FailsFastWithClearError`),
+  `sqlite_open_paths_guard_test.go:TestSQLiteOpenPaths_AllGoThroughTheWriteGate` (which proves
+  the OPEN path, not the per-process property the earlier wording claimed),
+  `store/local_audit_chain_gate_contention_test.go` (the classifier recognises the sentinel,
+  and a batch-global contention failure is not bisected).
 
 ## Connection / transaction hazards — Postgres
 

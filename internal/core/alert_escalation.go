@@ -81,7 +81,11 @@ func (c *KeyorixCore) dispatchPolicyChannels(ctx context.Context, alert *models.
 			continue
 		}
 		cid := uint(cid64) // safe: parsed with the platform's uint bit width
-		ch, err := c.storage.GetNotificationChannel(ctx, cid)
+		// GetNotificationChannel (the core-layer wrapper), not c.storage.GetNotificationChannel
+		// directly (#2433): the raw storage row's URL is encrypted (URLEnc/URLMeta) --
+		// only the wrapper decrypts it into ch.URL, which dispatchToChannel below needs
+		// to actually dial.
+		ch, err := c.GetNotificationChannel(ctx, cid)
 		if err != nil {
 			log.Printf("alert escalation: policy %d: channel %d: %v", policy.ID, cid, err)
 			continue

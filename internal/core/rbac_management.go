@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"sort"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -269,13 +270,18 @@ func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID,
 	if _, err := c.storage.GetGroup(ctx, groupID); err != nil {
 		return fmt.Errorf("group not found: %w", err)
 	}
-	write := func(ctx context.Context) error {
-		if err := c.storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
-			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
-		}
-		c.LogGroupRoleRemoved(ctx, actorID, groupID, roleID, scope)
-		return nil
-	}
+	return c.withGroupRoleRemovalGuards(ctx, groupID, roleID, scope, func(ctx context.Context) error {
+		return c.removeGroupRoleWriteOn(ctx, c.storage, c.auditNow(), actorID, groupID, roleID, scope)
+	})
+}
+
+// withGroupRoleRemovalGuards runs write under exactly the named lock and
+// last-admin guard a group-role removal at this scope requires — hoisted out of
+// RemoveRoleFromGroup for the same reason as withUserRoleRemovalGuards: the
+// access-review revoke transaction performs the same removal through a
+// transaction-scoped handle and must reuse this decision rather than restate it
+// (#2676).
+func (c *KeyorixCore) withGroupRoleRemovalGuards(ctx context.Context, groupID, roleID uint, scope Scope, write func(ctx context.Context) error) error {
 	switch {
 	case scope.ProjectID == 0 && scope.EnvironmentID == 0:
 		return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
@@ -298,6 +304,19 @@ func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID,
 		// last route to it.
 		return write(ctx)
 	}
+}
+
+// removeGroupRoleWriteOn is the group-role removal's persistent effect through
+// an explicit storage handle and audit target — the group counterpart of
+// removeUserRoleWriteOn. No cache eviction to exclude: a group-role removal
+// never evicted the auth cache (its members' effective permissions are resolved
+// per request through core.Authorize, not cached in the token entry).
+func (c *KeyorixCore) removeGroupRoleWriteOn(ctx context.Context, st storage.Storage, tgt auditTarget, actorID, groupID, roleID uint, scope Scope) error {
+	if err := st.RemoveRoleFromGroup(ctx, groupID, roleID, scope); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.LogGroupRoleRemovedOn(ctx, tgt, actorID, groupID, roleID, scope)
+	return nil
 }
 
 // ListRolesWithPermissions returns all roles with their permission sets.
@@ -672,35 +691,58 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 			return nil
 		}
 	}
-	if scope.ProjectID != 0 && scope.EnvironmentID == 0 {
-		// #1646/TOCTOU-1: the guard's read (existing roles), the guard's verdict,
-		// and the removal itself must all happen under ONE WithNamedLock
-		// acquisition, matching SetProjectMemberRole/RemoveProjectMember's shape
-		// (project_members.go) — two concurrent removals of two different project
-		// admins' grants must never both observe "another admin survives" before
-		// either write commits. An earlier version of this function ran the guard
-		// inside WithNamedLock but released the lock BEFORE calling
-		// removeUserRoleUnguarded below, so the lock only serialized the reads,
-		// not the read-then-write sequence; live-reproduced by
-		// TestConcurrency_RemoveUserRole_ProjectScope_ExactlyOneOfTwoAdminsRemoved.
-		return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
-			existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
-			if err != nil {
-				return err
-			}
-			after := make([]uint, 0, len(existing))
-			for _, id := range existing {
-				if id != roleID {
-					after = append(after, id)
-				}
-			}
-			if err := c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after); err != nil {
-				return err
-			}
-			return c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
-		})
+	return c.withUserRoleRemovalGuards(ctx, userID, roleID, scope, func(ctx context.Context) error {
+		return c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
+	})
+}
+
+// withUserRoleRemovalGuards runs write under exactly the named lock and
+// last-admin guard a user-role removal at this scope requires — the
+// non-global-scope half of RemoveUserRole, hoisted so a SECOND caller that must
+// perform the same removal through a different storage handle (the access-review
+// revoke transaction, #2676) reuses this decision instead of restating it.
+//
+// That reuse is the point: a copy of "which lock, which guard, at which scope"
+// is the same separately-maintained-second-implementation shape #2496 had to
+// unwind, and the one here is load-bearing for the last-admin invariant. One
+// source of truth, two writes.
+//
+// #1646/TOCTOU-1: the guard's read (existing roles), the guard's verdict, and
+// the removal itself must all happen under ONE WithNamedLock acquisition,
+// matching SetProjectMemberRole/RemoveProjectMember's shape
+// (project_members.go) — two concurrent removals of two different project
+// admins' grants must never both observe "another admin survives" before either
+// write commits. An earlier version of RemoveUserRole ran the guard inside
+// WithNamedLock but released the lock BEFORE the removal, so the lock only
+// serialized the reads, not the read-then-write sequence; live-reproduced by
+// TestConcurrency_RemoveUserRole_ProjectScope_ExactlyOneOfTwoAdminsRemoved.
+// write therefore runs INSIDE the lock, and receives the lock-marked ctx so a
+// nested same-key acquisition (or a transaction opened within it) stays correct
+// — see WithNamedLock's doc comment on threading the ctx it passes.
+func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, roleID uint, scope Scope, write func(ctx context.Context) error) error {
+	if scope.ProjectID == 0 || scope.EnvironmentID != 0 {
+		// Global scope is handled by RemoveUserRole's own earlier branch
+		// (RemoveGlobalAdminRoleGuarded fuses guard and write into one storage
+		// call, so it has no separable write); an environment-scoped grant never
+		// carries a project's roles.assign authority, so neither guard applies.
+		return write(ctx)
 	}
-	return c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
+	return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
+		existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
+		if err != nil {
+			return err
+		}
+		after := make([]uint, 0, len(existing))
+		for _, id := range existing {
+			if id != roleID {
+				after = append(after, id)
+			}
+		}
+		if err := c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after); err != nil {
+			return err
+		}
+		return write(ctx)
+	})
 }
 
 // removeUserRoleUnguarded performs the actual role removal, audit log, and
@@ -726,18 +768,36 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 // relying on its own already-correct, whole-operation guard instead of
 // RemoveUserRole's necessarily narrower, single-call one.
 func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
-	if err := c.storage.RemoveRole(ctx, userID, roleID, scope); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	if err := c.removeUserRoleWriteOn(ctx, c.storage, c.auditNow(), actorID, userID, roleID, scope); err != nil {
+		return err
 	}
-	c.LogRoleRemoved(ctx, actorID, userID, roleID, scope)
 	c.evictUserSessionCache(ctx, userID)
 	return nil
 }
 
+// removeUserRoleWriteOn is the user-role removal's persistent effect — the
+// storage delete plus its audit event — through an explicit storage handle and
+// audit target, so the access-review revoke transaction performs the IDENTICAL
+// write it would outside a transaction (#2676).
+//
+// Deliberately excludes the auth-cache eviction: that is a process-local side
+// effect with no transaction to belong to, and evicting before a commit that
+// then rolls back would let a concurrent request re-cache the pre-removal state
+// and keep serving it for the rest of the TTL. The transactional caller evicts
+// AFTER its commit instead.
+func (c *KeyorixCore) removeUserRoleWriteOn(ctx context.Context, st storage.Storage, tgt auditTarget, actorID, userID, roleID uint, scope Scope) error {
+	if err := st.RemoveRole(ctx, userID, roleID, scope); err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	c.LogRoleRemovedOn(ctx, tgt, actorID, userID, roleID, scope)
+	return nil
+}
+
 // removeGlobalAdminRoleIfApplicable performs RemoveUserRole's global-scope
-// admin-conferring-role removal (the #340/#525 atomic path) when roleID is one
-// of installAdminRoleNames, returning handled=true (removal performed or
-// refused) in that case. handled=false means roleID is not a global-admin role
+// admin-conferring-role removal (the #340/#525 atomic path) when roleID carries
+// the structural admin-bypass flag (adminBypassRoleIDSlice, #2496), returning
+// handled=true (removal performed or refused) in that case. handled=false means
+// roleID is not a global-admin role
 // and the caller should fall through to the ordinary removal path. Split out of
 // RemoveUserRole so globalAdminGuardMu's critical section stays scoped to
 // exactly this branch — it must never be held while the function's OTHER branch
@@ -759,13 +819,17 @@ func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, user
 // it (WithNamedLock is re-entrant per ctx) and then takes the mutex, the same
 // named-lock-then-mutex order as here, so the two can never invert.
 func (c *KeyorixCore) removeGlobalAdminRoleIfApplicable(ctx context.Context, userID, roleID uint) (handled bool, err error) {
-	adminIDs := c.installAdminRoleIDSet(ctx)
-	if !adminIDs[roleID] {
-		return false, nil
+	ids, err := c.adminBypassRoleIDSlice(ctx)
+	if err != nil {
+		// #2496: fail closed. Treating a resolution failure as "roleID is not an
+		// admin role" would hand the caller the unguarded removal path on exactly
+		// the failure mode this guard exists to survive. handled=true so
+		// RemoveUserRole stops here and surfaces the error rather than falling
+		// through.
+		return true, err
 	}
-	ids := make([]uint, 0, len(adminIDs))
-	for id := range adminIDs {
-		ids = append(ids, id)
+	if !slices.Contains(ids, roleID) {
+		return false, nil
 	}
 	err = c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
 		c.globalAdminGuardMu.Lock()
@@ -775,21 +839,9 @@ func (c *KeyorixCore) removeGlobalAdminRoleIfApplicable(ctx context.Context, use
 	return true, err
 }
 
-// installAdminRoleNames are the roles that confer install-wide administration when
-// held at the global scope (project 0). Removing the last such assignment leaves the
-// install with no one able to manage users, roles, or settings.
-var installAdminRoleNames = []string{"super_admin", "admin", "system_admin"}
-
-// installAdminRoleIDSet resolves installAdminRoleNames to their role IDs (skipping
-// any that a given install did not seed). Used by RemoveUserRole's global-admin
-// guard (RemoveGlobalAdminRoleGuarded, #340/#525) and by the group-level admin
-// guards in authz.go (guardLastGlobalAdminGroupRole/GroupDelete/Membership).
-func (c *KeyorixCore) installAdminRoleIDSet(ctx context.Context) map[uint]bool {
-	set := make(map[uint]bool, len(installAdminRoleNames))
-	for _, name := range installAdminRoleNames {
-		if role, err := c.storage.GetRoleByName(ctx, name); err == nil && role != nil {
-			set[role.ID] = true
-		}
-	}
-	return set
-}
+// The roles that confer install-wide administration when held at the global
+// scope (project 0) are resolved structurally, from
+// models.Role.BypassesPermissionChecks — see adminBypassRoleIDSet
+// (admin_roles.go), the single source of truth (#2496). Removing the last such
+// assignment leaves the install with no one able to manage users, roles, or
+// settings, which is what the guards above refuse.

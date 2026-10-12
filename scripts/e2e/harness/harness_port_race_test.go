@@ -12,7 +12,6 @@ package harness
 import (
 	"errors"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -71,7 +70,7 @@ func TestWaitHealthy_PortConflictDetection(t *testing.T) {
 func TestWaitHealthy_RetriesOnBindFailure(t *testing.T) {
 	serverBin, _ := BuildBinaries(t)
 	dir := t.TempDir()
-	env := []string{"HOME=" + dir, "PATH=" + os.Getenv("PATH"), "KEYORIX_MASTER_PASSWORD=e2e-bind-retry-test"}
+	env := append(BaseServerEnv(dir), "KEYORIX_MASTER_PASSWORD=e2e-bind-retry-test")
 	const configPath = "./keyorix.yaml"
 
 	run := func(args ...string) {
@@ -80,19 +79,18 @@ func TestWaitHealthy_RetriesOnBindFailure(t *testing.T) {
 			t.Fatalf("keyorix-server admin %s: %v\n%s", strings.Join(args, " "), err, out)
 		}
 	}
-	run("init", "--config", configPath)
+	run("init", "--dev", "--config", configPath)
 	run("encryption", "init", "--config", configPath)
 	run("migrate", "--config", configPath)
 
-	// Wildcard bind (":0"), not "127.0.0.1:0" -- server/main.go's own
-	// startHTTPServer binds server.Addr = ":PORT" (wildcard, all
-	// interfaces). A listener scoped to 127.0.0.1 specifically does NOT
-	// reliably collide with that on every OS (confirmed live on macOS: the
-	// server's wildcard bind succeeded anyway, and 127.0.0.1 traffic was
-	// routed to the more-specific listener instead -- no EADDRINUSE, no
-	// bind failure, just an unrelated hang). Matching the real bind shape
-	// exactly is what makes this deterministic.
-	occupied, err := net.Listen("tcp", ":0")
+	// Bind the same address shape the server uses: since #2946 the server
+	// binds server.http.host (default 127.0.0.1), not the wildcard. A
+	// wildcard listener does NOT reliably collide with a 127.0.0.1 bind on
+	// every OS (confirmed on macOS: the server's bind succeeds anyway and
+	// traffic goes to the more-specific listener -- no EADDRINUSE, just a
+	// hang). Matching the real bind shape exactly is what makes this
+	// deterministic.
+	occupied, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("occupy a port: %v", err)
 	}

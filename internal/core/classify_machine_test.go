@@ -72,9 +72,7 @@ func TestClassifyMachineToken(t *testing.T) {
 		c := newMachineCore(store)
 		store.On("GetMachineIdentity", mock.Anything, uint(1)).Return(&models.MachineIdentity{ID: 1, ProjectID: 2}, nil)
 		store.On("GetMachineIdentityCredentialByID", mock.Anything, uint(5)).Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 1}, nil)
-		store.On("UpdateMachineIdentityCredential", mock.Anything, mock.MatchedBy(func(cr *models.MachineIdentityCredential) bool {
-			return cr.Classification == "confidential"
-		})).Return(nil)
+		store.On("SetMachineIdentityCredentialClassification", mock.Anything, uint(5), "", "confidential").Return(true, nil)
 		store.On("LogAuditEvent", mock.Anything, mock.MatchedBy(func(e *models.AuditEvent) bool {
 			return e.EventType == "machine_identity.token_classified"
 		})).Return(nil)
@@ -91,7 +89,7 @@ func TestClassifyMachineToken(t *testing.T) {
 		store.On("GetMachineIdentityCredentialByID", mock.Anything, uint(5)).Return(&models.MachineIdentityCredential{ID: 5, MachineIdentityID: 99}, nil)
 		_, err := c.ClassifyMachineToken(ctx, 2, 1, 5, ClassificationPublic, 9)
 		require.Error(t, err)
-		store.AssertNotCalled(t, "UpdateMachineIdentityCredential", mock.Anything, mock.Anything)
+		store.AssertNotCalled(t, "SetMachineIdentityCredentialClassification", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 }
 

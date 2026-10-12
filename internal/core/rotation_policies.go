@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -140,16 +141,31 @@ func (c *KeyorixCore) UpdateRotationPolicy(ctx context.Context, actorID uint, re
 		return nil, fmt.Errorf("failed to get rotation policy: %w", err)
 	}
 
+	// #2700: a column-scoped write of the six fields this request owns, onto a
+	// row that is still live. The previous full-row Save persisted the whole
+	// pre-read struct: its upsert fallback brought a concurrently deleted policy
+	// back ACTIVE (resuming rotation and breach alerts), and it reverted the
+	// executor's rotation_state/last_rotation_error, hiding a failed rotation.
+	matched, err := c.storage.UpdateRotationPolicyFields(ctx, policy.ID, storage.RotationPolicyFieldUpdate{
+		Name:            req.Name,
+		Description:     req.Description,
+		IntervalDays:    req.IntervalDays,
+		AlertDaysBefore: req.AlertDaysBefore,
+		NotifyOnBreach:  req.NotifyOnBreach,
+		IsActive:        req.IsActive,
+	}, c.now())
+	if err != nil {
+		return nil, fmt.Errorf("failed to update rotation policy: %w", err)
+	}
+	if !matched {
+		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+	}
 	policy.Name = req.Name
 	policy.Description = req.Description
 	policy.IntervalDays = req.IntervalDays
 	policy.AlertDaysBefore = req.AlertDaysBefore
 	policy.NotifyOnBreach = req.NotifyOnBreach
 	policy.IsActive = req.IsActive
-
-	if err := c.storage.UpdateRotationPolicy(ctx, policy); err != nil {
-		return nil, fmt.Errorf("failed to update rotation policy: %w", err)
-	}
 	c.writeAuditEvent(ctx, EventRotationPolicyUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("rotation policy %q (id %d) updated", policy.Name, policy.ID))
 	return policy, nil

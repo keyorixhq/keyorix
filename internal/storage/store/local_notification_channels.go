@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -51,19 +52,29 @@ func (ls *LocalStorage) GetNotificationChannelByName(ctx context.Context, name s
 
 func (ls *LocalStorage) CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error {
 	if err := ls.db.WithContext(ctx).Create(ch).Error; err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("%w: %v", storage.ErrDuplicateNotificationChannelName, err)
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil
 }
 
 func (ls *LocalStorage) UpdateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error {
+	// url_enc/url_meta (#2433), not the legacy plaintext "url" column: the core
+	// layer (notification_channels.go) is responsible for encrypting ch.URL into
+	// ch.URLEnc/ch.URLMeta before calling this -- this map update must carry
+	// those fields through explicitly since ch.URL's own gorm:"-" tag means
+	// Model(ch).Updates would otherwise silently skip it AND it must never write
+	// the plaintext URL back into a column.
 	res := ls.db.WithContext(ctx).Model(ch).Updates(map[string]interface{}{
-		"name":    ch.Name,
-		"type":    ch.Type,
-		"enabled": ch.Enabled,
-		"url":     ch.URL,
-		"email":   ch.Email,
-		"events":  ch.Events,
+		"name":     ch.Name,
+		"type":     ch.Type,
+		"enabled":  ch.Enabled,
+		"url_enc":  ch.URLEnc,
+		"url_meta": ch.URLMeta,
+		"email":    ch.Email,
+		"events":   ch.Events,
 	})
 	if res.Error != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)

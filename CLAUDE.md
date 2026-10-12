@@ -100,6 +100,14 @@ Guidance for Claude Code (claude.ai/code) when working in this repository.
   even though the bare subcommand is guarded, since they never move HEAD.
   Respects `-C <path>` in the command being gated.
 
+- **Changelog: add a `changelog.d/` fragment, never edit `CHANGELOG.md`.** One file
+  per PR, `changelog.d/<PR-number>-<slug>.md` (or `<branch-slug>.md` before the PR
+  number exists), containing `### <Section>` heading(s) and the bullets exactly as they
+  would have appeared under "Unreleased". Format and sections: `changelog.d/README.md`;
+  `scripts/changelog-assemble.sh --check` validates. The maintainer assembles fragments
+  into `CHANGELOG.md` at release (`RELEASING.md`). Editing `CHANGELOG.md` directly
+  reintroduces the merge-main conflict churn this removed.
+
 ## Engineering practices
 
 Reasoning and incidents behind these: `docs/g80-remediation-notes.md`.
@@ -346,10 +354,12 @@ same idea applied to a mechanism already in front of you.
 
 - Add a file to `docs/security-closures.d/<claim_id>.tsv` (one row: claim id,
   package, proving test, **verification**, commit, **issue** — see
-  `docs/security-closures.d/README.md`), then run
-  `scripts/gen-security-closures-tsv.sh` and commit the regenerated
-  `docs/security-closures.tsv` alongside it — CI fails if it drifts. Added
-  2026-09-28 (C1) so two closure PRs open at once no longer conflict on one
+  `docs/security-closures.d/README.md`)
+  and commit just that file. `docs/security-closures.tsv` is a generated,
+  gitignored build artifact (never commit it): `scripts/check-closures.sh`
+  builds it from the fragments on every run, and CI runs
+  `scripts/gen-security-closures-tsv.sh --check` to validate the fragments.
+  Added 2026-09-28 (C1) so two closure PRs open at once no longer conflict on one
   shared file. `scripts/check-closures.sh` fails the build if the named test
   does not exist, or does not produce a `--- PASS` line in the environment its
   `verification` column claims. Verify by test, never by commit — this repo
@@ -401,6 +411,53 @@ tranche detail for the rest, and QUEUE.md for the incremental-population
 follow-up). Don't transcribe a row from that matrix without re-running its
 test first — a property verified during that pass is not the same claim as
 "this test exists and passes right now."
+
+## Shared ledgers: new rows go in `<name>.d/`
+
+`docs/adr-conformance-enforced.tsv`, `docs/review-coverage.tsv` and
+`docs/check-then-act-lock-exempt.tsv` are dual-read: their readers
+(`scripts/check-adr-conformance.sh`, `scripts/check-review-coverage.sh`,
+`TestCheckThenActLockGuard_UnlockedSecurityCheck`) read the flat file PLUS
+every one-row `*.tsv` fragment in the sibling `<name>.d/` directory, and fail
+on a duplicate key involving a fragment. **Add a new row as a new fragment
+file (`docs/<name>.d/<key>.tsv`, naming in that directory's `README.md`), never
+by appending to the flat file** — appends to one shared file were the main
+reason approved PRs fell out of the merge queue on 2026-10-03/04. Existing
+rows stay in the flat files until the coordinator runs
+`scripts/ledgers/migrate-to-fragments.sh` in a quiet window; don't run it on a
+feature branch. `docs/security-closures.tsv` is different: it is no longer
+committed at all, only built from `docs/security-closures.d/` on demand (see
+"Closing a security fix" above).
+
+### Test registry tables: one file per entry, never append to a shared list
+
+The exemption/guard tables that every fuzzer or security PR used to append to are
+filled by **one test file per row**, each calling a `register…` function from
+`init()`. **To add a row, add a new file** — never edit the table's declaration
+(those literals are empty on purpose) and never append to a shared list.
+
+- `server/faultops`: `knownOpenTolerances`, `opScopedBestEffortTables`,
+  `effectThenErrorExtraExclusions`, `bestEffortTables`, `nonLoadBearingAuthzReadExceptions`,
+  `multiStepAmbiguousCommitExceptions`, `oracleAByDesignErrors`, `toleranceDeadPendingTriage`,
+  `toleranceStalenessUndrivable`. File names and register functions:
+  `server/faultops/REGISTRY-ENTRIES.md`.
+- `internal/core`: `mfaStepUpPurposeAllowlist`, the `FuzzCrossReplicaInvariants` seeds
+  (`g4FuzzSeedPrograms`), `pendingSeedFix`; new `TestCTAReview_*` tests go in their own
+  `cta_review_<name>_postgres_test.go`. See `internal/core/REGISTRY-ENTRIES.md`.
+
+The registries keep order deterministic (sorted by registered name) and panic at
+package init on a duplicate name/key. When a PR you are rebasing still appends to one
+of the old literals, move the row into its own file (the conflict is then gone).
+Not covered: `FuzzCrossReplicaInvariants`' numbered op-kind `switch` / `g4NumOpKinds`
+(kind numbers are part of the fuzz corpus encoding, so two PRs adding "the next kind"
+still collide on the number itself).
+
+### `internal/faultstorage/faulty_storage_generated.go` conflicts
+
+It is generated: **on a merge conflict take main's version, then run
+`go generate ./internal/faultstorage/...` (genfaultystorage) — never hand-merge it.**
+`TestFaultyStorageGenerated_IsFresh` (default `go test`, so CI) fails on any drift.
+`.gitattributes` marks it `linguist-generated=true merge=ours`.
 
 ## Code-scanning alerts
 

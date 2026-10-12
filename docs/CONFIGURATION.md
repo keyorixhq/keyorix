@@ -39,6 +39,86 @@ the file:
 | `KEYORIX_DOMAIN` | substituted into `server` origins in the shipped example configs |
 | _(operator-named)_ | the raw KEK, when `key_provider.type: env` (see [key_provider](#encryption--kek-providers)) |
 
+### Secrets from files (`<NAME>_FILE`)
+
+Every secret the server reads from the environment can instead be read from a
+file, by setting `<NAME>_FILE` to the file's path. This is the Docker-secrets
+and Kubernetes-Secret-volume convention: the value never appears in
+`docker inspect`, `/proc/<pid>/environ` or a child process's environment.
+
+```sh
+KEYORIX_DB_PASSWORD_FILE=/run/secrets/db_password
+KEYORIX_MASTER_PASSWORD_FILE=/run/secrets/master_password
+KEYORIX_BOOTSTRAP_TOKEN_FILE=/run/secrets/bootstrap_token
+```
+
+Supported for: `KEYORIX_MASTER_PASSWORD`, `KEYORIX_DB_PASSWORD`,
+`KEYORIX_BOOTSTRAP_TOKEN`, `KEYORIX_API_KEY`, `KEYORIX_SIEM_TOKEN`,
+`KEYORIX_SCIM_TOKEN`, `KEYORIX_SSO_<NAME>_CLIENT_SECRET`, `KEYORIX_SMTP_PASSWORD`,
+`KEYORIX_EVIDENCE_WEBHOOK_TOKEN`, `KEYORIX_NOTIFY_SMTP_PASSWORD`,
+`KEYORIX_NOTIFY_WEBHOOK_TOKEN`, `KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET`,
+`KEYORIX_NOTIFY_SLACK_WEBHOOK`, `KEYORIX_NOTIFY_TEAMS_WEBHOOK`, and the
+operator-named variables: the `key_provider` `env_var` and `shamir_share_env`
+entries, a rotation backend's `dsn_env`, and a Vault connector's `token_env`
+(default `VAULT_TOKEN`). `KEYORIX_CONFIG_PATH` is a path, not a secret, and has no
+`_FILE` form.
+
+Rules (all enforced at startup; the server refuses to start rather than guess):
+
+- **`X_FILE` set:** the file is read and one line terminator is removed: one
+  trailing `\n`, then one trailing `\r` (so `\n`, `\r\n` or a lone `\r`). Nothing
+  else is trimmed -- no leading or trailing spaces, no second newline -- so a secret
+  may contain them. The container entrypoint and `keyorix system init` apply the
+  same rule. For
+  `KEYORIX_MASTER_PASSWORD_FILE` this yields the same bytes as
+  `--passphrase-file`, so both derive the same KEK. (The plain
+  `KEYORIX_MASTER_PASSWORD` *environment variable* keeps its historical
+  whitespace trim; a passphrase with leading/trailing spaces must be supplied from
+  a file.) Symlinks are followed (Kubernetes mounts every Secret key as one).
+- **Both `X` and `X_FILE` set:** error, naming both variables. There is no
+  precedence. An empty variable counts as unset, so `X=${X:-}` passthrough in a
+  compose file does not trigger this.
+- **File missing, unreadable, empty, not a regular file, or larger than 1 MiB:**
+  error. The server does not fall back to `X` or to a value in `keyorix.yaml`.
+- **Nothing is logged:** errors and warnings name the variable and the path, never
+  the value or the file contents.
+- **File permissions -- key material is refused, other secrets follow the
+  file-permission policy.** The rule is the one the KEK file and
+  `--passphrase-file` already follow: `0600` or `0400`. One exception exists for
+  files an orchestrator mounts: a file *not owned by the running user* may also be
+  group-readable (`0440`, or `0640`) when its group is one the process belongs to --
+  which is exactly what a Kubernetes Secret volume with `fsGroup` produces (the
+  kubelet makes it root-owned, group = `fsGroup`, and adds group-read even with
+  `defaultMode: 0400`) and what a Docker secret with `group_add` looks like. Access
+  for *other*, group-write and setuid/setgid/sticky are never accepted, and a
+  group-readable file owned by the running user is refused.
+  - **Master password (`KEYORIX_MASTER_PASSWORD_FILE`), key-provider KEK
+    (`key_provider.env_var`) and Shamir shares (`shamir_share_env`):** a file that
+    breaks the rule is **always refused**, in the server, the CLI and every admin
+    command alike. There is no override. The check runs on the opened file
+    descriptor, so the file cannot be swapped between the check and the read.
+  - **`KEYORIX_ADMIN_PASSWORD_FILE` / `KEYORIX_BOOTSTRAP_TOKEN_FILE`** (the
+    container entrypoint's first-boot bootstrap and `keyorix system init`): the
+    entrypoint and the CLI refuse a file that breaks the rule, always. (The server's
+    own read of `KEYORIX_BOOTSTRAP_TOKEN_FILE` follows the last bullet.) Both
+    resolve `_FILE` with the same rules as the server, so a `_FILE`-only deployment
+    auto-bootstraps.
+  - **All other `*_FILE` secrets** (database password, API/SIEM/SCIM tokens, SSO,
+    SMTP, notification and evidence secrets, Vault token, ...): the same rule, but
+    with the policy of the other key files -- refused at startup when
+    `security.enable_file_permission_check` is on and
+    `security.allow_unsafe_file_permissions` is off, otherwise a loud warning.
+    While the ADR-112 upgrade grace period is active (an upgraded deployment that
+    never set `security.enable_file_permission_check` explicitly), these files only
+    warn and the boot is recorded as softened; set the key to `true` once the files
+    comply. Key material above never gets this grace.
+- **`--passphrase-fd`, `--passphrase-file` and `--passphrase-stdin` still win**
+  over `KEYORIX_MASTER_PASSWORD[_FILE]`, as they do over the plain variable.
+
+For a raw KEK (`key_provider.type: env`) the file holds the hex or base64 form,
+as the variable would. A 32-byte raw key ending in a newline byte cannot be
+stored this way; use `key_provider.type: file` for raw keys.
+
 ---
 
 ## environment
@@ -61,6 +141,7 @@ locale:
 server:
   http:
     enabled: true
+    host: "127.0.0.1"             # bind address; default 127.0.0.1 (this machine only). "0.0.0.0" = all interfaces
     port: "8080"
     protocol_versions: ["1.1", "2.0"]
     swagger_enabled: false        # keep false in production
@@ -81,11 +162,14 @@ server:
       enabled: true
       requests_per_second: 50
       burst: 100
+    metrics_token: ""             # GET /metrics then requires "Authorization: Bearer <token>"
+    metrics_token_file: ""        # or read the token from this file (secret-file rules, see below); set one, not both
   grpc:
     # Partial surface, off by default. HTTP is the complete interface; enable this
     # only if you need it, and read docs/adr-105-grpc-scope-and-parity.md first —
     # governance controls such as classification cannot be set over gRPC.
     enabled: false
+    host: "127.0.0.1"             # same default and meaning as server.http.host
     port: "9090"
     protocol_versions: ["2.0"]
     reflection_enabled: false     # keep false in production
@@ -133,6 +217,10 @@ storage:
   database:
     # SQLite:
     path: /app/data/keyorix.db
+    # require_existing_path: false  # default false. When true, the server
+    #   REFUSES to start if the SQLite file above does not already exist,
+    #   instead of creating a new, empty one in its place — see
+    #   "Refusing to vivify a missing database" below.
     # PostgreSQL (recommended for production) — set type: postgres above:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # password: ""                # prefer KEYORIX_DB_PASSWORD
@@ -150,63 +238,69 @@ storage:
     #   safe default; only set this if production
     #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
     #   the server's /metrics endpoint) justify it for your own load shape.
+    # insecure_audit_skip_durable_sync: false   # default: false. POSTGRES ONLY
+    #   -- a SQLite install that sets this REFUSES TO START. DO NOT ENABLE
+    #   without reading docs/security/hardening-guide.md §5a. Drops the audit
+    #   commit's WAIT for a disk sync (the row is still written and committed
+    #   before the secret is returned, and a failed audit write still fails the
+    #   request). Buys Vault-equivalent read latency; costs the durability of
+    #   the most recent audit entries on an OS or database-server crash.
+    #   Config file only -- no API, CLI flag or env var can set it.
 ```
 
-### Connection pool
+### Refusing to vivify a missing database
 
-| Key | Default | What it does |
-|---|---|---|
-| `max_open_conns` | **8** on SQLite, **25** on Postgres | Upper bound on open database connections. A request that needs one while all are busy waits in Go's pool. |
-| `max_idle_conns` | the effective `max_open_conns` | How many connections stay open and warm when idle. A lower value closes connections after each burst and re-opens them (on Postgres, a full TCP + SCRAM handshake each time). |
-| `conn_max_lifetime_minutes` | 0 (never recycle) when unset; the generated config sets 30 | Recycles connections after this age. Useful behind a load balancer or connection proxy, or across a Postgres failover; it has no effect on throughput. |
+`require_existing_path` (SQLite only, default `false`).
 
-The defaults were picked from measurements (#2631, PERF-2 follow-up, 4 vCPU host, Postgres 16 on
-the same host). Two harnesses were used: the real server over HTTP (30s runs, 10s client
-timeout), and `BenchmarkPoolSize` in `internal/storage`, which drives the same workload through
-`core`.
+A mistyped `path`, or a volume mount that silently failed to attach, does not produce an error
+today — SQLite happily creates the file, the migration runs, and you get a healthy-looking
+server with zero secrets in it, while your real data sits untouched at the path you meant. An
+absolute `path` does not help: it stops two processes diverging onto two different files, but a
+single wrong absolute path still vivifies cleanly.
 
-**SQLite: 8.** SQLite has one writer at a time, and the embedded driver is pure Go, so every
-connection's queries compete for the same CPUs. Past about twice the core count, more
-connections only add contention.
+Set `require_existing_path: true` and the server refuses to start instead:
 
-| `max_open_conns` | `BenchmarkPoolSize` ms/op | read p99 | HTTP, 5 writers + 50 readers: writes/s, reads/s (with #2420 + #2637) |
-|---|---|---|---|
-| 4 | 1.23–1.26 | 356–411 ms | 57, 630 |
-| **8** | 1.25–1.40 | 469–654 ms | 51–52, 701–721 |
-| 25 (old default) | 1.46–1.49 | 912–948 ms | 30–31, 724–725 |
+```
+no database found at /app/data/keyorix.db (configured database.path: "/app/data/keyorix.db")
+and database.require_existing_path is set: run 'keyorix system init --database' to create one
+deliberately, or verify database.path and the working directory -- refusing to create a new,
+empty database in its place
+```
 
-On current `main` (before #2420 and #2637) the HTTP runs point the same way: 8 vs 25 gave
-+38% writes / −10% reads with 5 writers + 50 readers, and +63% writes / −27% reads with
-50 writers + 20 readers, plus a third fewer audit appends lost to the pre-#2420 backlog.
+Create the database deliberately with `keyorix system init --database` (which creates the file
+with `O_CREATE|O_EXCL`), then start the server.
 
-**Postgres: 25.** Between 10 and 50 connections, reads were flat within run-to-run noise, and 25
-was best for writes (`BenchmarkPoolSize`: 0.67 ms/op at 25 vs 0.74 at 10 and 0.68 at 50). At
-**100**, 150 concurrent readers made **1.6% of reads and 0.3% of writes fail** with
-`SQLSTATE 53300 "sorry, too many clients already"`: Postgres's own `max_connections` defaults
-to 100, and every replica brings its own pool. Keep `replicas × max_open_conns` below
-`max_connections − superuser_reserved_connections`. At startup, the server logs a warning when
-a single pool already exceeds that.
+In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
+pre-exist. The Postgres backend is unaffected too.
 
-Raising `max_open_conns` does not make a database-bound workload faster: the wait moves from
-Go's pool into the database. If profiles show goroutines waiting for a pool connection, check
-the database's own latency first.
+**Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
+`docker-compose.yml`) start the server directly and let it create the database, so turning this
+on by default would break every first boot that does not run `keyorix system init --database`
+first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
+after that, a missing file can only mean something went wrong.
+### Audit commit durability (`insecure_audit_skip_durable_sync`)
 
-`type: remote` points the CLI at a Keyorix server over the API; see the remote
-section of the client config. **It is work in progress:** 202 of 428
-`RemoteStorage` methods (47%) return `ErrRemoteUnsupported`, and audit retrieval
-in particular is 2-of-27 implemented. Use `type: local` for anything that
-matters — see `docs/REMOTE_CLI_SETUP.md` for the per-area status. Remote TLS verification is **on by default** —
-an omitted `tls_verify` does not disable certificate checks.
+By default Keyorix will not return a secret value until that read's audit
+record is **durably** committed (ADR-112 §3). That is stricter than Vault,
+OpenBao, Conjur and Infisical, none of which wait for a disk sync before
+answering — and it is most of why a single-client read costs ~17ms on a busy
+spinning disk rather than ~1ms.
 
-**`type: remote` is a CLI/client mode only.** It cannot back a running Keyorix
-server: `Config.Validate()` refuses to boot when `storage.type: remote` is
-combined with `server.http.enabled` or `server.grpc.enabled` (ADR-083) — none
-of RemoteStorage's RBAC primitives are implemented, so every permission check
-on every route would fail closed for every caller. Use `type: local` or
-`type: postgres` for a deployed server.
+`insecure_audit_skip_durable_sync: true` (ADR-112 Amendment 1) removes only
+that wait, and **only on PostgreSQL**:
 
----
+| `storage.type` | Behaviour |
+|---|---|
+| `postgres` / `postgresql` | Supported. `SET LOCAL synchronous_commit = off` on the audit transaction only. |
+| `local` / `sqlite` | **Refuses to start.** `PRAGMA synchronous` is per-connection and the pool is shared, so relaxing it would relax *every* table — a power loss could undo a just-committed secret rotation. The measured p99 also got worse under concurrency. |
+| `remote` | Not applicable; a server cannot run with remote storage (ADR-083). |
 
+It is appropriate **only** where power is genuinely guaranteed — a UPS, a
+healthy battery-backed RAID write cache, or replicated cloud block storage.
+[`security/hardening-guide.md` §5a](security/hardening-guide.md) states exactly
+what you give up, the measured before/after, and the four places the setting is
+surfaced once it is on (startup warning, an audit event in the hash chain at
+every boot, `admin validate`, and `GET /api/v1/system/info`).
 ## Encryption & KEK providers
 
 Envelope encryption (ADR-004): a per-process **DEK** encrypts secrets/tokens and
@@ -354,26 +448,341 @@ secrets:
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
 
+**Both `enable_file_permission_check` and `require_mfa` default to `true` when
+omitted** (ADR-112, secure-by-default baseline) — a fresh install enforces both
+from its first start with no config changes needed: the first admin to log in is
+asked to enrol MFA (TOTP or passkey) before doing anything else, and a problem
+with the encryption key material or the database file (missing, undersized,
+readable beyond its owner) refuses to start. The config file and TLS cert/key —
+inputs an orchestrator usually mounts (a Kubernetes ConfigMap/Secret is
+root-owned 0644 by default) — only get a warning naming the file, the mismatch
+and the fix while the key is left at its default; set
+`enable_file_permission_check: true` explicitly to refuse on those too.
+
+The files behind `KEYORIX_*_FILE` secret variables ([above](#secrets-from-files-name_file))
+count as key material: strict on the default as well (accessible to other users,
+or writable by the group, refuses to start), with the same upgrade grace period
+as the key files.
+
+The shipped `keyorix.docker.yaml` and Helm chart **omit this key on purpose**, so
+they run with the check on (the default) and the bind-mounted / ConfigMap-mounted
+config file only warns. Writing `enable_file_permission_check: true` into either
+would audit that orchestrator-owned file strictly and the container would refuse
+to start.
+
+**Upgrading an existing deployment** that never set
+`enable_file_permission_check`: the server tells a fresh install from an upgrade
+by its database (users already exist). An upgrade gets a grace period — a
+problem the startup checks find is logged as a loud `ADR-112` warning instead of
+refusing to start. The grace period ends for good the first time the deployment
+boots with the checks passing (recorded in the database as
+`adr112.file_permission_check.enforced`); from then on it fails closed like a
+fresh install. Setting the key explicitly (`true`, or `false` to opt out
+visibly) also ends it.
+
+While in the grace period the deployment is **not** reported as compliant: every
+start logs `WARNING: security.insecure_skip_startup_validation is in effect
+(grace-warn-only)`, and `admin validate --posture` counts it as a deviation. The
+setting's state (`off`, `grace-warn-only`, `enforcing-implicit` or
+`enforcing-explicit`) is recorded in the start-to-start settings diff, so
+entering or leaving the grace period is audited. The first start after upgrading
+to this version records one such change, because the recorded value changed
+from `true`/`false` to these names.
+
+`require_mfa` on an upgraded deployment that never set it gets the same kind of
+grace period: MFA is **not** enforced yet, and every start logs a loud `ADR-112
+grace period` warning. Have every interactive admin enrol, then set
+`require_mfa: true` explicitly to enforce it (or `false` to opt out visibly). A
+fresh install is enforced from its first start and recorded in the database
+(`adr112.require_mfa.enforced`), so it stays enforced after its admins exist.
+
+`require_mfa` is an ADR-112 opt-out like the `insecure_*` settings: its registry
+entry is `security.insecure_disable_mfa_requirement`. An explicit
+`require_mfa: false` logs `WARNING: security.insecure_disable_mfa_requirement is
+in effect (off)` on every start, is recorded in the start-to-start settings
+diff, and `admin validate --posture` counts it as a deviation. The grace period
+reads `grace-not-enforced` and is treated the same way. (The YAML key keeps its
+current name; only the registry identifier carries the `insecure_` prefix.)
+
+| State (settings-diff value) | When | Counts as a deviation |
+|---|---|---|
+| `off` | `require_mfa: false` written in the config | yes |
+| `grace-not-enforced` | key absent, upgraded deployment inside the grace period | yes |
+| `enforcing-implicit` | key absent, fresh install or past the grace period | no |
+| `enforcing-explicit` | `require_mfa: true` written in the config | no |
+
+The first start after upgrading to this version records one settings-diff
+change for this entry, because it did not appear in the previous snapshot.
+
 ```yaml
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true
-  allow_unsafe_file_permissions: false
-  require_mfa: false              # true = mandate a second factor for interactive login
+  insecure_allow_unsafe_file_permissions: false   # deprecated alias: allow_unsafe_file_permissions
+  require_mfa: true               # false = don't mandate a second factor for interactive login
   login_lockout:
     enabled: false                # opt-in per-account lockout (brute-force protection)
     max_attempts: 5               # failed password logins within the window before locking
     window: "15m"                 # consecutive-failure window
     base_cooldown: "1m"           # lock duration for the first lockout
     max_cooldown: "1h"            # ceiling for the exponential backoff
+    insecure_disable_login_lockout: false   # deprecated alias: disabled
+  auth_rate_limit_fallback:
+    replicas: 1                   # server replicas sharing the auth rate limits (see below)
 ```
 
-With `require_mfa: true`, an interactive (session-authenticated) user **without** a
-second factor is confined to the MFA-enrolment endpoints until they enrol. A TOTP
-secret **or** a passkey satisfies it. Non-interactive credentials — personal
-access tokens, machine tokens, OIDC — are **exempt** so automation is never broken.
-Per-project MFA (ADR-037) is set per project via the API
+**Auth rate limits during a database fault** (`auth_rate_limit_fallback`). The auth
+rate limits are kept in the database, so they hold across replicas:
+- the per-IP login, password-reset and SSO/SAML-begin budgets;
+- the per-account lockout.
+
+If that storage fails, no limit is switched off. Each server process enforces the same
+limits from memory until the database recovers (ADR-040 amendment). While it does:
+
+- **Each replica counts on its own.** With `replicas: N`, each process allows 1/N of
+  every limit (at least one attempt), so the cluster as a whole stays near the normal
+  limit. Set it to your replica count. Left at `1` with several replicas, an attacker
+  who reaches every replica gets up to N times the limit during the outage. Normal
+  operation is unaffected: a count read from the database is already cluster-wide.
+- **Password reset is tighter.** Each replica allows half the per-IP reset limit,
+  divided by `replicas`, and at most the same number of reset emails per account per
+  window. Requests over the limit still get the usual "if that email is registered"
+  response; the email is just not sent.
+- **It is visible.** Every fallback writes an `auth.rate_limit_error` audit event and
+  increments `keyorix_auth_rate_limit_fallback_total{budget}`. `/health` reports
+  `"auth_rate_limit": "degraded"` until no limit has needed the fallback for one
+  limit window (15 minutes). It names no budget, account or address, and `/health`
+  still returns 200.
+
+Every setting named `insecure_*` is part of ADR-112's opt-out rule: it weakens
+the baseline below its secure default, is warned about at every start it's in
+effect, appears in the start-to-start settings diff audit, is reported as a
+deviation by the posture report below, and (renamed settings only, for now)
+keeps its old name working as a deprecated alias that also warns when used.
+
+**`keyorix-server admin validate --posture`** (ADR-112 §4) reports every
+secure-baseline deviation in one place instead of warnings scattered across
+separate start-up log lines, and exits non-zero if any is found. **Every
+security-weakening setting in effect counts** — encryption-at-rest disabled,
+database TLS disabled, unauthenticated `/metrics`, a log-delivered setup link —
+because of what it does, independently of whether its `insecure_` naming has
+been settled yet. Also reported: `enable_file_permission_check` disabled, a real
+file-permission/encryption/database problem, an incomplete key-file set, a
+cleartext listener contradicting `require_transport_tls`, and an admin without
+MFA or a passkey.
+
+Each deviation says whether it comes from a **shipped default** or an
+**explicit** config choice, so "this install has not been hardened yet" is
+distinguishable from "someone turned this off" — both count toward the exit
+code. *Explicit* means the config file literally writes the setting's key (even
+to its default value — `server/config/production.yaml` writes
+`require_transport_tls: false`, so there it is explicit); *shipped default*
+means the file is silent and the weak state is what an absent key resolves to.
+A key that arrives only through a YAML merge key (`<<:`) reads as not written.
+Startup checks are reported only if they ran: validation stops at the first
+failed check, and any check after it is listed as "not evaluated" rather than
+as a second failure. An upgraded deployment in the `enable_file_permission_check`
+or `require_mfa` grace period is a deviation even when nothing is wrong yet, because
+the server would only warn, or not enforce at all, if something were. The report
+works this out from the database the same way the server does; if it cannot read
+the database it counts the deviation instead of assuming the deployment enforces.
+A setting on its implicit default with a real problem is also its own deviation. Only TLS mode and the KEK salt
+file's age are informational: no rotation-age threshold is defined anywhere in
+this codebase, so a number there would be a guess.
+
+Like every `admin` command, `admin validate --posture` needs the database to
+itself: it refuses while the server runs (stop it, or in Docker Compose use
+`docker compose stop backend` then `docker compose run --rm backend ./keyorix-server admin validate --posture`).
+
+### The generated config is the secure baseline
+
+`keyorix-server admin init` writes a config on which `admin validate --posture`
+prints `No deviations found.` (ADR-112 §4; guarded in CI by
+`server/admin_init_secure_baseline_test.go`). In the same run it generates the
+files that config references, each `0600` in a `0700` directory, and prints
+none of their contents:
+
+| File | What | Config key |
+|---|---|---|
+| `certs/server.crt`, `certs/server.key` | self-signed ECDSA P-256 certificate for `localhost`, the host name, `127.0.0.1`, `::1`, valid 397 days | `server.http/grpc.tls.cert_file`/`key_file`, with `tls.enabled: true` and `security.require_transport_tls: true` |
+| `secrets/metrics_token` | 32 random bytes, base64url | `server.http/grpc.metrics_token_file` |
+
+Rate limiting is on (`50`/`100` HTTP, `25`/`50` gRPC, as in
+`server/config/production.yaml`); the request-body cap stays at its default.
+
+- **Existing files are kept.** A certificate/key pair or token already at those
+  paths is used as is (only one of cert/key present is an error). To use your own
+  certificate, put it there before `admin init`, or change `cert_file`/`key_file`.
+- **An existing config is never changed**, and nothing is generated for it
+  (ADR-112: no silent change on upgrade). Re-running `admin init` next to one is a
+  no-op for the config.
+- **Fail closed.** A missing certificate, or an unreadable/empty
+  `metrics_token_file`, stops the server at startup. `metrics_token_file` follows
+  the secret-file rules (regular file, one trailing newline stripped, not readable
+  by others; the startup permission check covers it). Setting both
+  `metrics_token` and `metrics_token_file` is refused.
+- **The CLI must trust the self-signed certificate:**
+  `keyorix config set ca_file /abs/path/certs/server.crt` (stored in the CLI's
+  credentials file), `KEYORIX_CA_FILE`, or `--ca-file` on one command, in that
+  order of precedence: flag, env, stored. The CLI then trusts exactly that file's
+  certificates (not the OS store); a missing file, one with no certificate, one
+  holding a private key, or one writable by group/others is refused. `admin init`
+  prints the exact line. `SSL_CERT_FILE` only works on Linux.
+- **Behind a TLS-terminating proxy** instead: set `server.http.tls.enabled: false`,
+  list the proxy in `server.http.trusted_proxies`, and accept that the posture
+  report then lists `security.insecure_allow_cleartext_transport` if you also set
+  `require_transport_tls: false` (it must be false for a cleartext listener to start).
+
+Docker Compose and Helm reach the same baseline with `docker-compose.secure.yml`
+and the chart's `secureBaseline.enabled` (docs/SELF_HOSTING.md §7);
+`keyorix-server admin init --secure-files` is the generation step on its own,
+for a config an orchestrator supplies.
+
+**`admin init --dev`** writes the relaxed config for a throwaway local demo: TLS
+off and not required, rate limiting off, no metrics token. Its first lines are a
+`DEV-ONLY CONFIG` banner naming those three, and the posture report lists them
+and exits 1. It generates no certificate or token. `require_mfa` stays on. The
+demo and e2e scripts in `scripts/` that talk plain HTTP use it explicitly.
+
+### Hardening an older config (clearing the posture report)
+
+A config written by an earlier `admin init` (and `keyorix.docker.yaml`) is a dev
+baseline: on it the report lists the three `insecure_*` settings below
+(cleartext transport, unauthenticated `/metrics`, no API rate limit), and exits
+1. Upgrading does not change it. Verified on a fresh SQLite install: setting
+exactly these keys makes `admin validate --posture` print `No deviations found.`
+and exit 0 (the startup warning text for each is the `insecure_*` name, not the
+YAML key, so the mapping is:)
+
+| Report names | Set in `keyorix.yaml` |
+|---|---|
+| `security.insecure_allow_cleartext_transport` | `server.http.tls.enabled: true` (with `cert_file`/`key_file`) and `security.require_transport_tls: true`; or terminate TLS at a proxy you trust and list it in `server.http.trusted_proxies` |
+| `server.insecure_allow_unauthenticated_metrics` | `metrics_token: "<long random string>"` or `metrics_token_file: <path to a 0600 file>` on **both** `server.http` and `server.grpc` (the entry checks both listeners); `/metrics` then answers 401 without `Authorization: Bearer <token>` and 200 with it |
+| `server.insecure_disable_api_ratelimit` | `server.http.ratelimit.enabled: true` and `server.grpc.ratelimit.enabled: true` (the entry checks both listeners, even with gRPC off) |
+
+Also keep the key and config files `0600` and owned by the server's user. In
+Docker Compose the bind-mounted `keyorix.docker.yaml` arrives as the host's
+owner/mode (typically `0664`, uid 1000, while the container runs as uid 1001),
+which the report counts as a file-permission deviation until you
+`chmod 600 keyorix.docker.yaml && sudo chown 1001 keyorix.docker.yaml` (tracked in #2922).
+
+The renamed settings, with the deprecated name each still accepts (same
+meaning, a start-up warning when the old name is used; when both are set the
+new name wins and the old one is reported). `[]` marks a list: the rename
+applies to every entry.
+
+| Deprecated name | Current name |
+|---|---|
+| `security.allow_unsafe_file_permissions` | `security.insecure_allow_unsafe_file_permissions` |
+| `security.login_lockout.disabled` | `security.login_lockout.insecure_disable_login_lockout` |
+| `security.recover_admin.keyless_mode` | `security.recover_admin.insecure_keyless_admin_recovery` |
+| `audit.siem.allow_private_network_target` | `audit.siem.insecure_allow_private_network_siem_target` |
+| `audit.siem.allow_insecure_transport` | `audit.siem.insecure_allow_plaintext_siem_transport` |
+| `evidence_delivery.webhook.allow_private_network_target` | `evidence_delivery.webhook.insecure_allow_private_network_evidence_target` |
+| `evidence_delivery.webhook.allow_insecure_transport` | `evidence_delivery.webhook.insecure_allow_plaintext_evidence_transport` |
+| `notifications.webhook.allow_private_network_target` | `notifications.webhook.insecure_allow_private_network_notify_target` |
+| `notifications.webhook.allow_insecure_transport` | `notifications.webhook.insecure_allow_plaintext_notify_transport` |
+| `dynamic_secrets.allow_private_network_targets` | `dynamic_secrets.insecure_allow_private_network_dynamic_secret_targets` |
+| `dynamic_secrets.allow_insecure_transport` | `dynamic_secrets.insecure_allow_plaintext_dynamic_secret_transport` |
+| `storage.encryption.key_provider.kms_allow_context_fallback` | `storage.encryption.key_provider.insecure_allow_kms_context_fallback` |
+| `storage.encryption.key_provider.allow_weaker_fallback` | `storage.encryption.key_provider.insecure_allow_weaker_kek_fallback` |
+| `storage.encryption.key_provider.fallbacks[].kms_allow_context_fallback` | `storage.encryption.key_provider.fallbacks[].insecure_allow_kms_context_fallback` |
+| `storage.encryption.key_provider.fallbacks[].allow_weaker_fallback` | `storage.encryption.key_provider.fallbacks[].insecure_allow_weaker_kek_fallback` |
+| `sso.providers[].trust_asserted_email` | `sso.providers[].insecure_trust_saml_asserted_email` |
+| `sso.providers[].saml.allow_idp_initiated` | `sso.providers[].saml.insecure_allow_idp_initiated_saml` |
+| `audit_checkpoints.disabled` | `audit_checkpoints.insecure_disable_audit_checkpoints` |
+
+With `require_mfa: true` (the default), an interactive (session-authenticated) user
+**without** a second factor is confined to the MFA-enrolment endpoints until they
+enrol. A TOTP secret **or** a passkey satisfies it. Non-interactive credentials —
+personal access tokens, machine tokens, OIDC — are **exempt** so automation is
+never broken. Per-project MFA (ADR-037) is set per project via the API
 (`PUT /projects/{id}` `{ "require_mfa": true }`), independent of this flag.
+
+An account that must also replace its password (a one-time password from `admin
+recover-admin` or `user create --one-time-password`, an admin-forced reset, an expired
+password) and has no second factor logs in to a **setup session**: at most 15 minutes,
+confined to `change-password` and MFA/passkey enrolment, in either order. When both are
+done the session ends and the next login is a normal two-step MFA login (#3024;
+walkthrough in [operator/j5-lost-admin.md](operator/j5-lost-admin.md)). Every other
+endpoint answers 403 with `pending_steps`.
+
+**One-time passwords expire.** Every one-time password the system issues is stored with an
+expiry, and the command or API call that issues it reports that time (UTC):
+
+```yaml
+security:
+  recovery_one_time_password_ttl: 24h   # keyorix-server admin recover-admin (default 24h)
+  one_time_password_ttl: 72h            # keyorix user create --one-time-password (default 72h)
+```
+
+Both are Go durations (write days as hours: `168h`). Leave a key empty for the default; a value
+that is set but is not a duration, is zero or negative, or exceeds 168h (7 days) is refused at
+start-up with the key named, rather than silently becoming the default. There is deliberately
+no setting that means "never expires". The 24h default for recovery is
+because it is an admin credential printed on a terminal and should be used the same day; the
+72h default for new users covers a weekend between an admin creating an account and the
+colleague first logging in. After the expiry, login with the password is refused exactly like
+a wrong password (same response, no hint that it was merely late), audited server-side as
+`auth.one_time_password_expired` (written asynchronously, so the refusal costs the same time as a
+wrong password), and counted toward `login_lockout`. Expiry is enforced at login only: a session
+that already exists keeps working, and `change-password`, own-profile updates and re-authentication
+inside that session do not re-check it. A new password (the
+user's own, via `change-password` or a setup link) removes the expiry, so a password the user
+chose never expires this way. A fresh admin-forced reset (`user force-password-reset`) issues no
+password and has no expiry (but see *Upgrading*). To get an account past an expired one-time password: re-run
+`recover-admin` (admins, on the host), have **another administrator reissue it** (below), or
+`user resend-setup-link` / re-create the user.
+
+**Reissuing a one-time password** (REISSUE-1). An administrator issues a new one-time
+password for an existing user — one whose first password expired, was lost, or who was never
+told it:
+
+```sh
+keyorix user reissue-one-time-password bob@example.com     # or a numeric user ID
+```
+
+REST `POST /api/v1/users/{id}/reissue-one-time-password`, gRPC `UserService.ReissueOneTimePassword`.
+
+- **Who:** the same permission as creating a user with a one-time password (`users.write`), plus
+  the usual admin-rank ceiling over the target (you cannot reissue the password of an account
+  that holds permissions you do not). There is no separate step-up or re-authentication: none of
+  the existing user-management actions (suspend, force-logout, `require-password-reset`, resend
+  setup link) asks for one, and this action is no more powerful than they are.
+- **What the admin gets:** a freshly generated password, printed **once** — it is not stored
+  in clear, is never written to the audit log, and a repeated call issues a different one — and
+  the UTC time it expires (`security.one_time_password_ttl`, default 72h).
+- **What happens to the account:** it goes to `password_reset_required` like a newly created
+  one-time-password user, so the first login is confined to `change-password` (and, under
+  `require_mfa`, to MFA enrolment, as in the setup session above); any login lockout is cleared;
+  and **every existing session of the user ends**. Personal access tokens are treated as
+  `user require-password-reset` treats them: the restriction applies to them at once (they stop
+  working for anything but the password change) and they are revoked when the user sets the new
+  password, like any password change. An enrolled second factor is **kept** — reissuing a
+  password must not be a way to strip MFA from someone else's account; an MFA device that is
+  lost needs its own reset.
+- **Refused:** your own account (`400`, use `keyorix-server admin recover-admin` — see
+  [operator/j5-lost-admin.md](operator/j5-lost-admin.md)); an account managed by an external
+  identity provider (SSO/SCIM — a local password would bypass the IdP; `409`); a suspended or
+  inactive account (`409` — reactivate it first, deliberately, rather than having a password
+  reissue reactivate it); an actor who does not meet the rank ceiling (`403`). A refusal changes
+  nothing.
+- **Audit:** `user.one_time_password_reissued` (actor = the administrator, the description
+  names the target and the expiry) and the existing `credential.displayed_out_of_band`; neither
+  contains the password.
+
+*Upgrading:* accounts already in `password_reset_required` when this version first starts
+have no recorded expiry and cannot be told apart (a one-time password, an admin-forced reset
+and an expired-password gate leave the same state), so they get **24 hours from the upgrade**.
+An account whose owner changes the password in that window is unaffected; one that does not
+is then refused at login until an admin re-issues access. **This includes accounts an admin
+forced to reset and accounts held by the password max-age gate**, not only one-time passwords.
+This happens once, in the same migration (SQLite and PostgreSQL) that adds the column, and is
+logged at start-up with the count.
+
+*Mixed-version rollouts:* the schema epoch is unchanged, so replicas still running the previous
+version keep accepting an expired one-time password until they are upgraded. Expiry is fully in
+force only once every replica runs this version; do not count on it during a rolling upgrade.
 
 **Per-account login lockout** (`login_lockout`, opt-in) is brute-force protection
 distinct from the per-IP rate limiter (ADR-040): after `max_attempts` failed
@@ -744,6 +1153,29 @@ token, so set it via the env var.
 > / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
 > back to the YAML value — keep secrets out of the config file.
 
+### Runtime-managed channels: URL encryption at rest, and one upgrade caveat
+
+A notification channel created at runtime (the channel CRUD API, as opposed to
+the `notifications:` block above) stores its destination URL **encrypted** when
+`storage.encryption.enabled` is set — the URL embeds the platform's bearer
+token, so it is treated as a credential. The ciphertext is bound to the
+channel's own id, so it cannot be moved to another channel's row, and the URL
+never appears in an audit diff.
+
+**If you are upgrading an install that already had runtime channels**, the first
+boot after the upgrade migrates each row's URL into the encrypted column and
+clears the old plaintext one. That clears it from anything that *reads* the
+database — but not from its storage: the old bytes survive in SQLite free pages
+and the WAL, and in PostgreSQL dead tuples, until reclaimed. If you treat those
+webhook URLs as credentials, run a `VACUUM` (PostgreSQL: `VACUUM FULL` or
+`pg_repack` on `notification_channels`) after that first boot. Keyorix does not
+do this for you: `VACUUM` is a long, exclusive, whole-database operation and
+must not fire implicitly from a startup path.
+
+If the migration cannot complete, the server **refuses to start** rather than
+serve with webhook credentials still in plaintext on an install that asked for
+encryption. The error names the channel to investigate.
+
 ## compliance_digest
 
 An opt-in scheduler that periodically **broadcasts a compliance summary** to the
@@ -839,6 +1271,26 @@ authenticity is provable later — verify with `keyorix compliance verify --file
 <pack>` (it asks the server, which recomputes the HMAC; a signature made under a
 pre-rotation DEK is reported as unverifiable rather than tampered).
 
+### Who "the project's admins" are (all project-level alerts)
+
+Every notification addressed to "the project's admins" — new and
+awaiting-approval access requests, anomaly alerts, secret-expiry, rotation,
+certificate-expiry and access-recertification reminders, and break-glass
+activation / overdue-review alerts — goes to the same audience:
+
+- members holding an approver role on that project (`project_admin`,
+  `system_admin`, `admin`, `super_admin`), **and**
+- every active **install-wide admin** (an admin-bypass role held at global scope,
+  directly or through a group whose membership of them is global; a member of
+  that group scoped to a single project does not count), because they have admin
+  authority on every project even though they hold no project-scoped role row.
+
+Each person is notified once however many grants they hold. Deactivated,
+suspended, deprovisioned or deleted accounts are never notified, and the person who filed an access request
+is never alerted about their own request. License-expiry and machine-credential
+expiry have no project and go to every install-wide admin; personal-token,
+role-grant and read-quota reminders go to the owner of the item.
+
 ## rotation_reminders
 
 An opt-in background scheduler that notifies project admins (in-app) of secrets
@@ -886,6 +1338,7 @@ encryption off the scheduler logs a warning and does nothing.
 audit_checkpoints:
   enabled: true
   schedule: "12h"         # Go duration between checkpoint writes (default 24h)
+  insecure_disable_audit_checkpoints: false   # deprecated alias: disabled
 ```
 
 **External-notary anchoring** (`audit.checkpoint_notary`, opt-in). The checkpoint
@@ -976,18 +1429,69 @@ jit_access_expiry:
 
 ## break_glass
 
-Opt-in **self-service emergency access** (incident response — NIS2/DORA). When
-enabled, any authenticated user can `POST /api/v1/projects/{id}/break-glass` (or run
-`keyorix break-glass activate`) to **immediately** self-grant the configured
-emergency role at that project — no approval. The activation is **time-bound** (it
+Opt-in **self-service emergency access** (incident response — NIS2/DORA). **Disabled
+by default** (a deliberate secure default): until `break_glass.enabled: true` is set
+and the server restarted, every activation attempt is refused with
+`permission denied: break-glass is not enabled on this server; set
+break_glass.enabled: true in keyorix.yaml and restart`. When enabled, any
+**member of the project** (a user holding a role scoped to that project, directly or
+through a group; a global role such as the install-wide viewer does not count) can
+`POST /api/v1/projects/{id}/break-glass` (or run `keyorix break-glass activate`) to
+**immediately** self-grant the configured emergency role at that project — no
+approval. A non-member is refused with `403 permission denied: break-glass is
+available only to members of the project`, so in practice it elevates a lower project
+role (for example `project_viewer`) to the emergency role. The role is added on top of
+what the member already holds, so a user who can already read a secret sees the *extra*
+permissions (printed by `activate`), not new read access. The activation is **time-bound** (it
 auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
 **written justification**, is **loudly audited** (`break_glass.activated`), and
 **alerts the project's admins**. Each activation is a queryable record for post-hoc
 review (`GET …/break-glass`, `keyorix break-glass list`).
 
-Deliberately not RBAC-gated — the point is access the caller does *not* have — so
-the controls are: it must be enabled here, every use is justified + audited +
-alerted, the grant expires, and an admin can revoke it early.
+Deliberately not RBAC-gated on the *emergency* permissions — the point is access the
+caller does *not* have — but gated on project membership, so the controls are: it
+must be enabled here, the caller must belong to the project, every use is
+justified + audited + alerted, the grant expires, and an admin can revoke it early.
+
+Operating it from the CLI (verified end to end with a `project_viewer` user):
+`keyorix break-glass activate --project-id N --justification "..." --ttl 1h`,
+then an admin runs `keyorix break-glass list --project-id N` (in the test the
+activating user's own `list` printed "No break-glass activations", only the admin's
+did show it) and `keyorix break-glass revoke
+--project-id N --activation-id ID`. There is no CLI command for the review below:
+call `POST /api/v1/projects/N/break-glass/ID/review` with `{"note": "..."}` and a
+bearer token (response `Break-glass activation reviewed`).
+
+`POST …/break-glass/{activationId}/review` (ADR-112 §3) records a separate,
+after-the-fact check — who reviewed it, when, and a note — exactly once per
+activation. Activation itself stays single-person by design (decided
+2026-10-02: an emergency path needing a second person fails exactly when it's
+needed); review is not a second approver, it's the record that someone
+independent looked afterwards. Three things are refused:
+
+- **the activating user reviewing their own activation** (403). This is what
+  makes single-person activation acceptable at all; self-review would collapse
+  it to one person end to end.
+- **an unattributable reviewer** (403) — a machine identity, or an
+  unauthenticated local-CLI invocation. A review attributed to nobody records
+  accountability to nobody.
+- **reviewing a still-active activation** (400). Revoke it or let it expire
+  first; a reviewer cannot assess access that is still being used.
+
+`review_window` is how long an activation may go unreviewed before it is
+reported. Past that it shows up as `emergency_access.unreviewed_activations`
+in the compliance posture report (alongside
+`oldest_unreviewed_age_hours` and the `review_window_hours` it was measured
+against), and a recurring check — on startup, then every 6h — logs a
+`SECURITY:` warning and writes one `break_glass.review_overdue` audit event
+per pass.
+
+That reporting is the entire enforcement, deliberately. An unreviewed
+activation is never locked out, never cut short, and never blocks the user who
+activated it: an emergency path that unfiled paperwork can disable fails
+exactly when it is needed. The check runs even when `enabled: false`, because
+an install that has since turned break-glass off can still be holding
+unreviewed activations from when it was on.
 
 ```yaml
 break_glass:
@@ -997,6 +1501,8 @@ break_glass:
                                        # is REJECTED at activation time
   default_ttl: "4h"                 # grant lifetime when none is requested
   max_ttl: "24h"                    # ceiling on a requested TTL
+  review_window: "72h"               # how long an activation may go unreviewed
+                                      # before it's a posture-report deviation
 ```
 
 ## dual_control
@@ -1238,6 +1744,32 @@ group memberships, or both). Changes are audited as `auth.sso_roles_synced`.
 > for tightly controlled groups. Keyorix trusts the IdP's `groups` claim (verified
 > id_token) as the source of truth, so the IdP's group governance *is* your Keyorix
 > RBAC governance for these roles.
+
+**A reconcile that cannot be fully applied refuses the login.** For a SAML or OIDC
+provider, if any part of `group_sync` or `group_role_map` fails to apply on login — most
+importantly a **removal** the IdP asked for (the user was dropped from a group at the
+IdP) — the login is **refused** and no session is issued, because a session would carry
+the access the IdP just revoked. Steps that did apply before the failure are kept (the
+next successful login converges the rest). Each refusal is audited as a failed
+`auth.sso_reconcile_refused` event naming every step that failed and what had already
+been applied, and the browser is told the login was refused because the IdP's group or
+role assertion could not be applied.
+
+> **The last administrator.** If the IdP stops asserting the group (or mapped role) that
+> makes a user the install's **only** administrator, Keyorix's last-admin guard refuses
+> the removal and that user's SSO login stays refused — the IdP's revocation wins. This
+> is audited as `auth.sso_reconcile_last_admin_removal_refused`, logged with the two ways
+> back: re-add the user to the admin group at the IdP, or run
+> `keyorix-server admin recover-admin <user>` with the recovery key on the server host
+> (it works for an SSO-only account that never had a password: it issues a one-time
+> password), then create a second administrator. Keep at least two administrators, and
+> a recovery key, on an SSO-managed install.
+
+> **SAML: empty vs. absent groups attribute.** A groups attribute that is **present with
+> no values** means "this user is in no groups": every synced membership and mapped role
+> is removed. A groups attribute that is **absent** from the assertion is a no-op
+> (memberships and roles are left as they are), as for a missing OIDC claim — make sure
+> your IdP releases the attribute on every assertion.
 
 ## membership
 

@@ -28,6 +28,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -69,7 +70,7 @@ func TestGetProjectDrift_HappyPath(t *testing.T) {
 
 func TestListEnvironments_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/environments", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
@@ -354,10 +355,22 @@ func newHandlerCoreS4(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	sharedS4CoreOnce.Do(func() {
-		db, err := gorm.Open(sqlite.Open("file:kxhandlers_s4?mode=memory&cache=shared&_timeout=30000"), &gorm.Config{})
+		// Process-wide singleton, so sqlitetest.Open (which closes the DB on the
+		// first caller's t.Cleanup) does not fit; take its DSN and apply the same
+		// single-connection pool cap by hand. The DB is never closed: the binary
+		// exits first.
+		db, err := gorm.Open(sqlite.Open(sqlitetest.DSN("kxhandlers_s4_")), &gorm.Config{})
 		if err != nil {
 			panic("newHandlerCoreS4: open DB: " + err.Error())
 		}
+		sqlDB, err := db.DB()
+		if err != nil {
+			panic("newHandlerCoreS4: reach *sql.DB: " + err.Error())
+		}
+		sqlDB.SetMaxOpenConns(1)
+		sqlDB.SetMaxIdleConns(1)
+		sqlDB.SetConnMaxLifetime(0)
+		sqlDB.SetConnMaxIdleTime(0)
 		if err := db.AutoMigrate(
 			&models.User{}, &models.Role{}, &models.UserRole{}, &models.Permission{},
 			&models.RolePermission{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
@@ -5628,7 +5641,7 @@ func TestSecretHandler_ListAccessors_HappyPath(t *testing.T) {
 
 func TestCatalogHandler_ListEnvironments_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil)) // #2780: authorizes in-handler
 	w := httptest.NewRecorder()
 	h.ListEnvironments(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

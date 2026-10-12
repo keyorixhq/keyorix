@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"time"
 )
 
@@ -52,10 +53,14 @@ func (c *KeyorixCore) ExtendExpiringSecrets(ctx context.Context, projectID uint,
 		if s.Expiration != nil && !s.Expiration.Before(newExpiry) {
 			continue
 		}
-		s.Expiration = &newExpiry
-		if _, err := c.storage.UpdateSecret(ctx, s); err != nil {
+		// #2695: expiration only — see ClassifySecret's comment.
+		matched, uerr := c.storage.UpdateSecretFields(ctx, s.ID, storage.SecretFieldUpdate{
+			SetExpiration: true, Expiration: &newExpiry,
+		})
+		if uerr != nil || !matched {
 			continue // best-effort: skip per-secret failures, keep going
 		}
+		s.Expiration = &newExpiry
 		c.LogSecretUpdatedWithProject(ctx, actorID, s.ID, projectID, actor, s.Name, "", "")
 		extended++
 	}

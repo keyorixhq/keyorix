@@ -59,6 +59,34 @@ type SecurityInfo struct {
 	// escape hatch -- one of the three places design §5 requires this to be
 	// flagged (alongside the startup warning and the startup audit event).
 	KeylessRecoveryMode bool `json:"keyless_recovery_mode"`
+	// AuditDurableSyncSkipped surfaces
+	// storage.database.insecure_audit_skip_durable_sync (ADR-112 Amendment 1,
+	// docs/specs/fast-audit-mode.md) -- one of the four places that amendment
+	// requires the setting to be flagged, and specifically the one a buyer's
+	// auditor can reach WITHOUT host access, so "is this install still
+	// committing audit durably before disclosing a secret?" is answerable over
+	// the API.
+	//
+	// true means it is NOT: the audit record is still written and committed
+	// before the secret is returned, and a failed audit write still fails the
+	// request, but the commit no longer waits for a disk sync.
+	//
+	// This reports IN EFFECT, not merely "configured" -- so it is false on a
+	// backend where the setting does nothing. Deliberately that way round: the
+	// question this field answers is "is my audit durability weakened right
+	// now", and on a remote backend the truthful answer is no. A configured
+	// setting that is being ignored shows up in
+	// AuditDurableSyncSkipNotInEffectReason below, so the two states stay
+	// distinguishable from this response alone.
+	AuditDurableSyncSkipped bool `json:"audit_durable_sync_skipped"`
+	// AuditDurableSyncSkipNotInEffectReason is non-empty ONLY when
+	// insecure_audit_skip_durable_sync is present in the config but is not in
+	// effect on this backend -- so a non-empty value always means "the
+	// operator wrote this and it is doing nothing", and never anything else
+	// (Andrei's decision, 2026-10-05: show it as off, WITH the reason, as a
+	// field rather than only as log text). Omitted when empty, so a default
+	// install's response is unchanged.
+	AuditDurableSyncSkipNotInEffectReason string `json:"audit_durable_sync_skip_not_in_effect_reason,omitempty"`
 	// RecoveryKey is a read-only recovery-key configuration status (F6,
 	// recovery-key visibility) -- nil for any caller who does not hold
 	// system.write (global-admin tier). Never carries the key or its hash,
@@ -160,6 +188,10 @@ func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) ht
 			}
 		}
 
+		// One computation, read twice below, so "in effect" and "why not"
+		// cannot disagree within a single response.
+		fastAuditStatus := cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type)
+
 		tlsEnabled := cfg.Server.HTTP.TLS.Enabled
 		encryptionEnabled := cfg.Storage.Encryption.Enabled
 		grpcEnabled := cfg.Server.GRPC.Enabled
@@ -198,7 +230,14 @@ func MakeSystemInfoHandler(cfg *config.Config, coreService *core.KeyorixCore) ht
 				EncryptionMethod:    "AES-256-GCM",
 				AuditEnabled:        true,
 				KeylessRecoveryMode: cfg.Security.RecoverAdmin.KeylessMode,
-				RecoveryKey:         recoveryKeyStatus,
+				// Read from the already-loaded *config.Config, exactly like
+				// KeylessRecoveryMode above -- no request body ever reaches
+				// these values, which is what keeps the setting
+				// config-file-only (ADR-112 Amendment 1; the guard is
+				// TestInsecureAuditSkipDurableSync_NoWriteAssignment).
+				AuditDurableSyncSkipped:               fastAuditStatus.InEffect,
+				AuditDurableSyncSkipNotInEffectReason: fastAuditStatus.NotInEffectReason,
+				RecoveryKey:                           recoveryKeyStatus,
 			},
 		}
 

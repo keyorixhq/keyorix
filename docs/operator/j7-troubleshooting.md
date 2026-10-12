@@ -59,7 +59,11 @@ unrelated problem.
 Error: a Keyorix server (or another admin command) appears to be using this database
 (another process holds this database (a live server, or another admin command) via
 <path>/keyorix.db.server.lock) — admin commands must not run concurrently with either;
-stop it first, or pass --force if you are certain this is safe
+stop it first, or pass --force if you are certain this is safe.
+With Docker Compose, run admin commands in a throwaway container while the server is stopped:
+  docker compose stop backend
+  docker compose run --rm backend ./keyorix-server admin <command>
+  docker compose start backend
 ```
 
 This is exactly right — every `admin` subcommand (`init`, `migrate`, `backup`,

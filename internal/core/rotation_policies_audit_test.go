@@ -20,7 +20,12 @@ func TestRotationPolicyCRUDAudit(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(&models.RotationPolicy{}, &models.AuditEvent{}))
-	c := &KeyorixCore{storage: store.NewLocalStorage(db)}
+	// NewKeyorixCore, not a bare struct literal: the literal leaves the `now`
+	// clock nil, and #2700's UpdateRotationPolicy stamps updated_at through it
+	// (as most of core already does). The literal only ever worked here because
+	// this one function happened not to need a clock — a fixture defect, not a
+	// reason to avoid the seam.
+	c := NewKeyorixCore(store.NewLocalStorage(db))
 	ctx := context.Background()
 
 	count := func(eventType string) int64 {

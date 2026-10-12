@@ -60,8 +60,15 @@ import (
 // deadline fires and this is a correct no-op (tx.Exec above already did the
 // real drop); if db really is a distinct, already-free connection, the drop
 // still completes immediately, well inside the timeout.
+//
+// The tx-side drop goes straight to tx's connection (Statement.ConnPool: the
+// *sql.Tx inside a transaction, the pool otherwise), not through tx.Exec: tx is
+// the hooked statement's own *gorm.DB and carries its Error, so after a
+// First() that found nothing ("record not found") tx.Exec silently did
+// nothing, and only the second-handle drop below did the work, which it can
+// only do when no transaction holds the single connection.
 func dropTableBothHandles(tx, db *gorm.DB, tableName string) {
-	tx.Exec("DROP TABLE IF EXISTS " + tableName)
+	_, _ = tx.Statement.ConnPool.ExecContext(context.Background(), "DROP TABLE IF EXISTS "+tableName)
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 	db.WithContext(ctx).Exec("DROP TABLE IF EXISTS " + tableName)

@@ -4,6 +4,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -41,7 +42,7 @@ shares, and the audit trail are preserved. Requires secrets.write.`,
 			return err
 		}
 		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return fmt.Errorf("suspend secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("suspend secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Secret %d suspended -- value reads are now blocked.\n", secretSuspendID)
 		return nil
@@ -65,7 +66,7 @@ var secretResumeCmd = &cobra.Command{
 			return err
 		}
 		if resp.StatusCode() < 200 || resp.StatusCode() >= 300 {
-			return fmt.Errorf("resume secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("resume secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Secret %d resumed -- value reads are restored.\n", secretResumeID)
 		return nil
@@ -111,19 +112,28 @@ with 'secret restore --id <id>'. Requires secrets.read at the project scope.`,
 			return err
 		}
 		if resp.JSON200 == nil || resp.JSON200.Data == nil {
-			return fmt.Errorf("list deleted secrets: HTTP %d", resp.StatusCode())
+			return httpStatusError("list deleted secrets", resp.StatusCode(), resp.Body)
 		}
 		rows := derefDeletedSecretSlice(resp.JSON200.Data.Deleted)
 		if len(rows) == 0 {
 			fmt.Println("Recycle bin is empty.")
 			return nil
 		}
-		fmt.Printf("%-8s %-24s %-12s %-14s %s\n", "ID", "NAME", "TYPE", "CLASS", "DELETED")
+		fmt.Printf("%-8s %-24s %-12s %-14s %-26s %s\n", "ID", "NAME", "TYPE", "CLASS", "DELETED", "PURGE AFTER (UTC)")
 		for _, r := range rows {
-			fmt.Printf("%-8d %-24s %-12s %-14s %s\n", derefSecretInt(r.Id), derefStr(r.Name), derefStr(r.Type), derefStr(r.Classification), derefStr(r.DeletedAt))
+			fmt.Printf("%-8d %-24s %-12s %-14s %-26s %s\n", derefSecretInt(r.Id), derefStr(r.Name), derefStr(r.Type), derefStr(r.Classification), derefStr(r.DeletedAt), purgeAtCell(r.PurgeAt))
 		}
 		return nil
 	},
+}
+
+// purgeAtCell renders a trash row's purge instant in UTC RFC 3339, or "-" when the server
+// (older than the field) did not send one.
+func purgeAtCell(t *time.Time) string {
+	if t == nil || t.IsZero() {
+		return "-"
+	}
+	return t.UTC().Format(time.RFC3339)
 }
 
 var secretRestoreCmd = &cobra.Command{
@@ -145,7 +155,7 @@ live list. Find restorable secrets with 'secret trash --project <id>'.`,
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("restore secret: HTTP %d", resp.StatusCode())
+			return httpStatusError("restore secret", resp.StatusCode(), resp.Body)
 		}
 		fmt.Printf("Secret %d restored.\n", secretRestoreID)
 		return nil

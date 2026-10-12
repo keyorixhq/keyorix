@@ -39,7 +39,15 @@ var (
 var shareCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Share a secret with another user or group",
-	RunE:  runShareCreate,
+	Long: `Share a secret with another user or group. The recipient must be a member of
+the secret's project.
+
+  read   the recipient can read the secret.
+  write  the recipient can also update its value and metadata (description, tags)
+         and rotate it. A write share never lets them suspend or resume it, change
+         its expiry or read limit, move it, roll it back, transfer ownership,
+         re-share it, change access rules or delete it: those need a project role.`,
+	RunE: runShareCreate,
 }
 
 var shareListSecretID int
@@ -99,7 +107,7 @@ func init() {
 	shareCreateCmd.Flags().IntVar(&shareCreateSecretID, "secret-id", 0, "Secret ID (required)")
 	shareCreateCmd.Flags().IntVar(&shareCreateRecipientID, "recipient-id", 0, "Recipient ID (required)")
 	shareCreateCmd.Flags().BoolVar(&shareCreateIsGroup, "is-group", false, "Whether the recipient is a group")
-	shareCreateCmd.Flags().StringVar(&shareCreatePermission, "permission", "read", "Permission level (read or write)")
+	shareCreateCmd.Flags().StringVar(&shareCreatePermission, "permission", "read", "Permission level: read, or write (read + update value/metadata + rotate; see --help)")
 	shareCreateCmd.Flags().StringVar(&shareCreateExpires, "expires", "", "Make the share time-bound: absolute expiry (RFC3339, e.g. 2026-07-01T15:00:00Z)")
 	shareCreateCmd.Flags().StringVar(&shareCreateTTL, "ttl", "", "Make the share time-bound: lifetime from now (Go duration, e.g. 24h, 30m); mutually exclusive with --expires")
 	_ = shareCreateCmd.MarkFlagRequired("secret-id")    // #nosec G104
@@ -109,7 +117,7 @@ func init() {
 	_ = shareListCmd.MarkFlagRequired("secret-id") // #nosec G104
 
 	shareUpdateCmd.Flags().IntVar(&shareUpdateShareID, "share-id", 0, "Share ID (required)")
-	shareUpdateCmd.Flags().StringVar(&shareUpdatePermission, "permission", "", "Permission level (read or write) (required)")
+	shareUpdateCmd.Flags().StringVar(&shareUpdatePermission, "permission", "", "Permission level: read, or write (read + update value/metadata + rotate) (required)")
 	shareUpdateCmd.Flags().StringVar(&shareUpdateExpires, "expires", "", "Set/extend the time-bound expiry: absolute (RFC3339)")
 	shareUpdateCmd.Flags().StringVar(&shareUpdateTTL, "ttl", "", "Set/extend the time-bound expiry: lifetime from now (Go duration, e.g. 24h); mutually exclusive with --expires")
 	shareUpdateCmd.Flags().BoolVar(&shareUpdateClearExpiry, "clear-expiry", false, "Make the share permanent (remove its expiry)")
@@ -185,7 +193,7 @@ func formatShareExpiry(expiresAt *time.Time) string {
 	if expiresAt == nil {
 		return "never"
 	}
-	return expiresAt.Format("2006-01-02 15:04:05")
+	return expiresAt.UTC().Format("2006-01-02 15:04:05")
 }
 
 func runShareCreate(cmd *cobra.Command, args []string) error {
@@ -215,7 +223,7 @@ func runShareCreate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return fmt.Errorf("failed to share secret: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to share secret", resp.StatusCode(), resp.Body)
 	}
 	s := resp.JSON201.Data
 	fmt.Printf("✅ Secret shared successfully!\n")
@@ -240,7 +248,7 @@ func runShareList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("failed to list shares: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list shares", resp.StatusCode(), resp.Body)
 	}
 	var shares []apiclient.Share
 	if resp.JSON200.Data != nil && resp.JSON200.Data.Shares != nil {
@@ -287,7 +295,7 @@ func runShareUpdate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to update share permission: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to update share permission", resp.StatusCode(), resp.Body)
 	}
 	s := resp.JSON200.Data
 	fmt.Printf("Share permission updated successfully!\n")
@@ -312,7 +320,7 @@ func runShareRevoke(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("failed to revoke share: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to revoke share", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Share revoked successfully!\n")
 	fmt.Printf("Share ID: %d\n", shareRevokeShareID)
@@ -333,7 +341,7 @@ func runShareSelfRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("remove self from share: HTTP %d", resp.StatusCode())
+		return httpStatusError("remove self from share", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Removed yourself from secret %d.\n", secretID)
 	return nil
@@ -352,7 +360,7 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("failed to list shared secrets: HTTP %d", resp.StatusCode())
+			return httpStatusError("failed to list shared secrets", resp.StatusCode(), resp.Body)
 		}
 		if resp.JSON200.Data != nil && resp.JSON200.Data.Secrets != nil {
 			secrets = *resp.JSON200.Data.Secrets
@@ -363,7 +371,7 @@ func runSharedSecrets(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		if resp.JSON200 == nil {
-			return fmt.Errorf("failed to list shared secrets: HTTP %d", resp.StatusCode())
+			return httpStatusError("failed to list shared secrets", resp.StatusCode(), resp.Body)
 		}
 		if resp.JSON200.Data != nil && resp.JSON200.Data.Secrets != nil {
 			secrets = *resp.JSON200.Data.Secrets
@@ -392,7 +400,7 @@ func runGroupShares(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("failed to list group shares: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list group shares", resp.StatusCode(), resp.Body)
 	}
 	var shares []apiclient.Share
 	if resp.JSON200.Data != nil && resp.JSON200.Data.Shares != nil {

@@ -102,7 +102,40 @@ func TestWriteJSON_SchemaVersion(t *testing.T) {
 		t.Errorf("score = %d, want 75", decoded.Score)
 	}
 	if decoded.ScoreFormula == "" {
-		t.Error("expected score_formula to be present in JSON")
+		t.Error("expected a non-empty score formula")
+	}
+}
+
+// TestWriteJSON_FindingAndNotCheckedFieldsAreSnakeCase guards the casing bug fixed when
+// SchemaVersion went to 3: Finding/NotChecked had no json tags at all, so every entry in
+// top_risks/findings/not_checked rendered Go's PascalCase field names (ID, WhyItMatters, ...)
+// inconsistent with the rest of this envelope's snake_case convention — a real blemish on the
+// one JSON surface this tool explicitly invites a customer to hand to an external consumer
+// ("Sharing the JSON with us," docs/vault-health-scan.md). Asserts the actual serialized text,
+// not a Go-side round-trip, since a round-trip through the SAME untagged struct would pass
+// either way.
+func TestWriteJSON_FindingAndNotCheckedFieldsAreSnakeCase(t *testing.T) {
+	var buf bytes.Buffer
+	if err := WriteJSON(&buf, sampleReport()); err != nil {
+		t.Fatalf("WriteJSON: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		`"id"`, `"title"`, `"severity"`, `"evidence"`, `"why_it_matters"`, `"remediation"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("findings/top_risks entry missing snake_case key %s, got:\n%s", want, out)
+		}
+	}
+	for _, want := range []string{`"id"`, `"reason"`, `"policy_line"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("not_checked entry missing snake_case key %s, got:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{`"ID"`, `"Title"`, `"WhyItMatters"`, `"Remediation"`, `"Reason"`, `"PolicyLine"`} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("findings/not_checked entry has leftover PascalCase key %s, got:\n%s", unwanted, out)
+		}
 	}
 }
 

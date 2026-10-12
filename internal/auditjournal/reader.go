@@ -60,7 +60,7 @@ func listSegments(dir string) ([]segmentFile, error) {
 type CorruptionError struct {
 	Segment string // path of the segment containing the bad record
 	Offset  int64  // byte offset within Segment where the bad record starts
-	Reason  error  // the underlying decode error (ErrCorrupt or ErrChainMismatch)
+	Reason  error  // the underlying decode error (ErrCorrupt, ErrChainMismatch or ErrSeqMismatch)
 }
 
 func (e *CorruptionError) Error() string {
@@ -119,6 +119,16 @@ type ValidationResult struct {
 //
 // An ErrChainMismatch failure (self-consistent bytes in the wrong place) is
 // always corruption, regardless of position -- see that error's doc comment.
+// So is ErrSeqMismatch: every record's seq must equal its position in the
+// journal, and the first record of each segment must carry the seq the
+// segment is named for.
+//
+// What Validate cannot detect on its own: the journal being cut short at a
+// record boundary (the tail of the last segment truncated, or whole trailing
+// segments deleted). The result is a shorter journal that is still a valid
+// chain. Nothing inside the journal records its expected length; the caller
+// has to compare NextSeq against an external witness (the store does this
+// against its DB replay cursor, see store.EnableLocalAuditJournal).
 func Validate(dir string) (*ValidationResult, error) {
 	segs, err := listSegments(dir)
 	if err != nil {
@@ -146,6 +156,9 @@ func Validate(dir string) (*ValidationResult, error) {
 		for len(buf) > 0 {
 			rec, consumed, decErr := decodeRecord(buf, prevHash)
 			if decErr == nil {
+				if rec.Seq != nextSeq || (off == 0 && rec.Seq != sb.seg.StartSeq) {
+					return nil, &CorruptionError{Segment: sb.seg.Path, Offset: off, Reason: ErrSeqMismatch}
+				}
 				result.Records = append(result.Records, rec)
 				prevHash = rec.LocalEntryHash
 				nextSeq = rec.Seq + 1

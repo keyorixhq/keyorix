@@ -105,6 +105,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	r.Use(customMiddleware.PrometheusMiddleware)
 	r.Use(customMiddleware.MaxBodyBytes(cfg.Server.HTTP.EffectiveMaxRequestBodyBytes()))
 	r.Use(middleware.Timeout(60 * time.Second))
+	// RESIL-1 (#2637 follow-up): a request whose write timed out on the SQLite write
+	// gate answers 503 + Retry-After instead of a generic 500. Inside Timeout (it must
+	// see the context the handlers see) and outside every handler; the credential
+	// surface (/auth/) is exempt inside the middleware itself.
+	r.Use(customMiddleware.WriteContention)
 
 	// A tighter body-size limit for the three routes that carry a secret VALUE
 	// (create/update/rotate), scoped in addition to (not instead of) the global
@@ -224,7 +229,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 	// Health check endpoint — lightweight liveness signal (does not touch the DB, so a
 	// transient DB outage won't get the pod restarted).
-	r.Get("/health", handlers.HealthCheck)
+	r.Get("/health", handlers.HealthCheckWithAuthRateLimit(coreService.AuthRateLimitDegraded))
 
 	// Version-skew endpoint (ADR-108 PR 0, docs/cli-split-inventory.md §5): unauthenticated,
 	// like /health, so a thin CLI can check compatibility before it has credentials. Kept
@@ -236,24 +241,24 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// this replica. Unauthenticated, like /health (k8s probes are unauthenticated).
 	r.Get("/readyz", handlers.ReadinessCheck(coreService))
 
-	// Prometheus metrics. When cfg.HTTP.MetricsToken is set, require a matching
-	// "Authorization: Bearer <token>" header — suitable for internet-facing deploys
-	// where network perimeter control is not available. When unset, the endpoint is
-	// unauthenticated (standard for in-cluster Prometheus scraping); keep it inside
-	// your perimeter. Exposes HTTP request metrics + Go runtime/process.
-	metricsHandler := customMiddleware.MetricsHandler()
-	if tok := cfg.Server.HTTP.MetricsToken; tok != "" {
-		inner := metricsHandler
-		metricsHandler = http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-			auth := req.Header.Get("Authorization")
-			if len(auth) < 8 || auth[:7] != "Bearer " || subtle.ConstantTimeCompare([]byte(auth[7:]), []byte(tok)) != 1 {
-				http.Error(w, "Unauthorized", http.StatusUnauthorized)
-				return
-			}
-			inner.ServeHTTP(w, req)
-		})
-	}
-	r.Handle(pathMetrics, metricsHandler)
+	// Prometheus metrics. When server.http.metrics_token (or metrics_token_file,
+	// which `keyorix-server admin init` generates at 0600) is set, require a
+	// matching "Authorization: Bearer <token>" header — suitable for
+	// internet-facing deploys where network perimeter control is not available.
+	// When unset, the endpoint is unauthenticated (standard for in-cluster
+	// Prometheus scraping); keep it inside your perimeter. Exposes HTTP request
+	// metrics + Go runtime/process.
+	//
+	// The token check lives in metricsHandlerFor at the end of this file: an
+	// unresolvable token source answers 401 there, never an open /metrics.
+	// (Moved out of line without changing this function's line count, so
+	// scripts/e2e/routes.json's router_go_line entries for every route below
+	// stay valid.) The comparison is constant-time (subtle.ConstantTimeCompare).
+	//
+	// Config.Validate refuses to start on an unreadable metrics_token_file or on
+	// both metrics_token and metrics_token_file being set (SECURE-DEFAULT-1).
+	//
+	r.Handle(pathMetrics, metricsHandlerFor(cfg.Server.HTTP))
 
 	// Status page endpoint - serves stylish status dashboard
 	r.Get(pathStatus, func(w http.ResponseWriter, r *http.Request) {
@@ -333,12 +338,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// (Phase 1 auth-cookie migration) — no-op for Bearer-only callers (PATs,
 		// machine tokens, CI/API clients), see RequireCSRF's doc comment.
 		r.Use(customMiddleware.RequireCSRF)
-		// Confine restricted (must-change-password) sessions to the password-change
-		// allowlist (ADR-025).
-		r.Use(customMiddleware.EnforceAccountRestriction)
-		// When the deployment mandates MFA, confine interactive sessions without
-		// MFA to the enrolment endpoints (security.require_mfa). No-op when off.
-		r.Use(customMiddleware.EnforceMFAEnrollment(cfg.Security.RequireMFA))
+		// Confine a principal that still owes account setup to the endpoints of the
+		// steps it owes: change-password while restricted (ADR-025), MFA enrolment for
+		// an interactive session without a second factor when the deployment mandates
+		// MFA (security.require_mfa, ADR-112). Owing both opens both, in either order
+		// (#3024). core learns the same policy so a login owing both steps gets a
+		// short-lived setup-only session that is revoked once setup is done.
+		coreService.SetRequireMFA(cfg.Security.RequireMFA)
+		r.Use(customMiddleware.EnforceAccountSetup(cfg.Security.RequireMFA))
+		// A restricted PAT is refused on every ungated write core's table marks
+		// refused (ADR-042, PAT-GUARD-3): the self-service writes below never reach
+		// Authorize, so its restriction would mean nothing there.
+		r.Use(customMiddleware.RefuseRestrictedPATUngatedWrites(r, "/api/v1"))
 
 		// Self-service account endpoints (My Account). Authenticated but not
 		// permission-gated — every user manages their own profile, password,
@@ -464,7 +475,14 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permRolesRead)).Get("/connect/ref-grants", connectHandler.ListRefGrants)
 		r.With(customMiddleware.RequirePermission(permRolesWrite)).Post("/connect/ref-grants", connectHandler.CreateRefGrant)
 		r.With(customMiddleware.RequirePermission(permRolesWrite)).Delete("/connect/ref-grants/{id}", connectHandler.DeleteRefGrant)
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get(pathProjects, catalogHandler.ListProjects)
+		// ListProjects authorizes INSIDE the handler (no RequirePermission here) so a
+		// project-scoped reader receives the projects they can actually read instead of
+		// a blanket 403 — the same shape, and the same reasoning, as ListSecrets below.
+		// #2780: the global gate here made the UI's project switcher, /projects page and
+		// New Secret dialog come up empty for a persona that could read the project's
+		// secrets perfectly well. The handler's own doc comment carries the full
+		// argument, including why ?include_deleted=true keeps the global requirement.
+		r.Get(pathProjects, catalogHandler.ListProjects)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsRead, projectScope)).Get(pathProjectsID, catalogHandler.GetProject)
 		r.With(customMiddleware.RequirePermission(permSecretsWrite)).Post(pathProjects, catalogHandler.CreateProject)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope)).Put(pathProjectsID, catalogHandler.UpdateProject)
@@ -486,6 +504,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// view the roster; mutations require roles.assign at the project scope, so
 		// a project_admin can manage their own project's members.
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get(pathProjectMembers, catalogHandler.ListProjectMembers)
+		// Share-dialog recipient search (SHARE-2): the active members of the project a
+		// caller who can share there (secrets.write at the project) may pick from, so a
+		// project-only admin no longer needs the global users.read of GET /users. Core
+		// adds the owner-must-be-a-member rule and shows emails only to a caller who
+		// may already read them (users.read at the project).
+		r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, projectScope,
+			customMiddleware.DenyMessage(core.ShareRecipientSearchDeniedMessage))).Get("/projects/{id}/share-recipients", shareHandler.SearchShareRecipients)
 		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/access-review", catalogHandler.GetProjectAccessReview)
 		// Recertification decisions (ISO 27001 A.5.18): attest is a reviewer action
 		// (roles.read); revoke removes the grant and needs roles.assign.
@@ -560,6 +585,18 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
 		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
+		// #2461 watchdog review (2026-10-09): blocked while impersonating, same
+		// reasoning as ActivateBreakGlass above. ReviewBreakGlass's self-review
+		// refusal compares actorID against activation.UserID -- an impersonating
+		// actor's context carries the IMPERSONATED user's ID, not the real
+		// admin's, so an activator who can impersonate any roles.assign holder
+		// could impersonate one and pass the self-review check, forging an
+		// independent "reviewed" record for their own activation. Blocking
+		// impersonation here outright is the same structural fix as the
+		// activation route: the whole point of ADR-112's independent review is
+		// defeated by a puppet identity, so no impersonated session may submit
+		// one, regardless of whose account it is impersonating.
+		r.With(customMiddleware.BlockWhenImpersonating, customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/review", catalogHandler.ReviewBreakGlass)
 		// Machine identities (ADR-023): non-human members, segmented from humans.
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities", catalogHandler.ListMachineIdentities)
 		r.With(customMiddleware.RequireScopedPermission(permUsersRead, projectScope)).Get("/projects/{id}/machine-identities/stale", catalogHandler.ListStaleMachineIdentities)
@@ -639,7 +676,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// (#161), not secrets.write — same shape as the project-restore fix above.
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, customMiddleware.ScopeFromProjectParam("projectId"))).Post("/projects/{projectId}/environments/{id}/restore", catalogHandler.RestoreEnvironment)
 		r.With(customMiddleware.RequireScopedPermission(permSecretsDelete, customMiddleware.ScopeFromEnvParam("id"))).Delete(pathEnvironmentsID, catalogHandler.DeleteEnvironment)
-		r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/environments", catalogHandler.ListEnvironments)
+		// The cross-project environment list, same treatment as ListProjects above and
+		// for the same reason (#2780, fix-siblings): the web New Secret dialog's
+		// required Environment select is populated from HERE, so scoping the project
+		// list alone would leave that dialog unsatisfiable for a project-scoped reader.
+		r.Get("/environments", catalogHandler.ListEnvironments)
 
 		// Secrets endpoints. Per-secret routes resolve scope from the secret's
 		// own project/environment via RequireScopedSecretPermission, which ALSO
@@ -699,7 +740,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 			// Secret version comments — free-text annotations on a specific version.
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/versions/{versionId}/comments", versionCommentHandler.ListComments)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/versions/{versionId}/comments", versionCommentHandler.CreateComment)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionCommentVersion)).Post("/{id}/versions/{versionId}/comments", versionCommentHandler.CreateComment)
 			// Delete is gated on secrets.manage (admin-only), matching the ACL delete pattern.
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsManage, "id")).Delete("/{id}/versions/{versionId}/comments/{commentId}", versionCommentHandler.DeleteComment)
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/risk", secretHandler.GetSecretRisk)
@@ -712,12 +753,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/audit", secretHandler.AuditTrail)
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/ownership-history", secretHandler.OwnershipHistory)
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/tags", secretHandler.GetTags)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Put("/{id}/tags", secretHandler.SetTags)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionUpdateMetadata)).Put("/{id}/tags", secretHandler.SetTags)
 
 			// Secret dependency graph (ADR-052).
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/dependencies", secretHandler.ListSecretDependencies)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionAddDependency)).Post("/{id}/dependencies", secretHandler.AddSecretDependency)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionRemoveDep)).Delete("/{id}/dependencies/{depId}", secretHandler.RemoveSecretDependency)
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/impact", secretHandler.GetSecretImpact)
 			// Blast-radius report: richer impact view with OwnerID, ProjectID, and risk level.
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Get("/{id}/blast-radius", secretHandler.GetBlastRadius)
@@ -753,23 +794,23 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 
 			// Create: authorized inside the handler (scope comes from the body).
 			r.With(secretBodyLimit).Post("/", secretHandler.CreateSecret)
-			r.With(secretBodyLimit, customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Put("/{id}", secretHandler.UpdateSecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/classification", secretHandler.ClassifySecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/description", secretHandler.DescribeSecret)
+			r.With(secretBodyLimit, customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionUpdate)).Put("/{id}", secretHandler.UpdateSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionClassify)).Patch("/{id}/classification", secretHandler.ClassifySecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionUpdateMetadata)).Patch("/{id}/description", secretHandler.DescribeSecret)
 			// Copy into another environment: read the source ({id}); the handler also
 			// authorizes secrets.write at the target environment's scope.
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Post("/{id}/copy", secretHandler.CopySecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
-			r.With(secretBodyLimit, customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/rotate", secretHandler.RotateSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionSetAutoRotate)).Patch("/{id}/auto-rotate", secretHandler.SetAutoRotate)
+			r.With(secretBodyLimit, customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionRotate)).Post("/{id}/rotate", secretHandler.RotateSecret)
 			// Rotation dry-run / simulation (ADR-047): validates the rotation config without
 			// making any live change. Read-only — requires only secrets.read.
 			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsRead, "id")).Post("/{id}/rotation/simulate", secretHandler.SimulateRotation)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/rollback", secretHandler.RollbackSecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/move", secretHandler.MoveSecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/suspend", secretHandler.SuspendSecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/resume", secretHandler.ResumeSecret)
-			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id")).Post("/{id}/share", shareHandler.ShareSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionRollback)).Post("/{id}/rollback", secretHandler.RollbackSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionTransferOwner)).Post("/{id}/transfer-ownership", secretHandler.TransferOwnership)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionMove)).Post("/{id}/move", secretHandler.MoveSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionSuspend)).Post("/{id}/suspend", secretHandler.SuspendSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionResume)).Post("/{id}/resume", secretHandler.ResumeSecret)
+			r.With(customMiddleware.RequireScopedSecretPermission(permSecretsWrite, "id", core.SecretActionShare)).Post("/{id}/share", shareHandler.ShareSecret)
 			// Self-service: a recipient removes their OWN direct share. No scoped
 			// permission — the action is on the caller's own grant (core only removes a
 			// share whose RecipientID == the caller), so it needs just authentication.
@@ -785,6 +826,13 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		shareScope := customMiddleware.ScopeFromShareParam("id")
 		r.Route("/shares", func(r chi.Router) {
 			r.With(customMiddleware.RequirePermission(permSecretsRead)).Get("/", shareHandler.ListShares)
+			// Owner-scoped list (SHARE-3) for the Sharing Management page when the caller
+			// lacks global secrets.read: only shares they created, on secrets in projects
+			// they are a member of now (core.ListOwnedShareViews). A separate route rather
+			// than a ?owner= variant of GET /shares, so GET /shares keeps its global gate
+			// byte for byte and each route has one gate the registries can name.
+			r.With(customMiddleware.RequirePermissionInAnyScope(permSecretsRead,
+				customMiddleware.DenyMessage(core.OwnedShareListDeniedMessage))).Get("/owned", shareHandler.ListOwnedShares)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, shareScope)).Put("/{id}", shareHandler.UpdateSharePermission)
 			r.With(customMiddleware.RequireScopedPermission(permSecretsWrite, shareScope)).Delete("/{id}", shareHandler.RevokeShare)
 		})
@@ -908,6 +956,10 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/require-password-reset", handlers.RequirePasswordReset)
 			// Credential-delivery resend (ADR-028): reissue + redeliver a setup link.
 			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/resend-setup-link", handlers.ResendSetupLink)
+			// Reissue a one-time password for an existing user (REISSUE-1): the same gate
+			// as creating a user with a one-time password (users.write); core adds the
+			// admin-rank ceiling and the own-account / SSO-only refusals.
+			r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/{id}/reissue-one-time-password", handlers.ReissueOneTimePassword)
 			// roles.read, not the group-wide users.read (#141) — matches the gRPC
 			// RoleService.GetUserRoles gate for the same data. users.read is held by
 			// nearly every seeded role (project_viewer, editor, …), so gating a user's
@@ -1055,8 +1107,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 			r.Use(customMiddleware.RequirePermission(permAuditRead))
 			r.Get("/logs", auditHandler.GetAuditLogs)
 			r.Get("/search", auditHandler.SearchAuditLogs)
-			r.Get("/export", auditHandler.ExportAuditLogs)
-			r.Get("/export.csv", auditHandler.ExportAuditLogsCSV)
+			// FIX-1 sibling of ANOMALY-04 (#2733's bug class): both export routes
+			// return AuditExportEntry's full-fidelity shape, including IPAddress and
+			// the tamper-evidence hash chain -- deliberately never included in
+			// /logs or /search's AuditLogEntry shape. A handler-file doc comment
+			// (audit.go's toAuditLogEntries) already asserted these routes have
+			// "their own gate" above bare audit.read, but no such elevation was
+			// ever registered here -- raise the gate above the group's audit.read
+			// with system.read, same bar as /anomalies, so the base viewer/
+			// project_auditor tier cannot read other users' IP addresses via export.
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/export", auditHandler.ExportAuditLogs)
+			r.With(customMiddleware.RequirePermission(permSystemRead)).Get("/export.csv", auditHandler.ExportAuditLogsCSV)
 			r.Get("/rbac-logs", auditHandler.GetRBACAuditLogs)
 			r.Get("/retention", auditHandler.GetAuditRetention)
 			r.Get("/verify", auditHandler.VerifyAuditChain)
@@ -1486,5 +1547,30 @@ func setCacheHeaders(next http.Handler) http.Handler {
 			}
 		}
 		next.ServeHTTP(w, r)
+	})
+}
+
+// metricsHandlerFor serves GET /metrics, gated on inst's metrics token when
+// one is configured. Config.Validate already refuses to start on an
+// unresolvable metrics_token_file (or both token keys set); if that were ever
+// bypassed, this still answers 401 and never serves /metrics unauthenticated.
+func metricsHandlerFor(inst config.ServerInstanceConfig) http.Handler {
+	metricsHandler := customMiddleware.MetricsHandler()
+	tok, err := inst.ResolveMetricsToken()
+	if err != nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		})
+	}
+	if tok == "" {
+		return metricsHandler
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		auth := req.Header.Get("Authorization")
+		if len(auth) < 8 || auth[:7] != "Bearer " || subtle.ConstantTimeCompare([]byte(auth[7:]), []byte(tok)) != 1 {
+			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+			return
+		}
+		metricsHandler.ServeHTTP(w, req)
 	})
 }

@@ -1,0 +1,94 @@
+# Exemptions for TestChildParentLiveness_EveryChildInsertLocksItsParent
+# (internal/storage/store/child_parent_liveness_registry_test.go): a storage function
+# that inserts or un-deletes a child row without lockLiveParent on one of its
+# soft-deletable/disableable parents in the same transaction.
+#
+# Columns: function <TAB> child <TAB> parent <TAB> reason <TAB> expires <TAB> added_by <TAB> reviewed_by
+#
+# Reason classes:
+#   NO-CASCADE   the parent's delete path does not sweep, revoke or disable this child at
+#                all, so a child created just after the delete ends in the same state as
+#                one created just before: serial-equivalent for this class. (Whether the
+#                missing cascade is itself a gap is a separate question.)
+#   GATED-ON-USE the cascade does sweep it, but every consumer re-checks the parent's
+#                liveness on use, so an orphan grants nothing.
+#   TRANSITIVE   another parent's lock implies this one (the chain is stated).
+#   SERIALIZED   caller and delete path share a named lock / row lock and re-check inside it.
+#   PARENT-IS-SELF-RESTORE  an un-delete inside the parent's own restore transaction.
+#   UNSAFE-OPEN  a real race; the issue tracks the fix. Remove the row when it lands.
+#   pending: #N  an open PR fixes this site (expires; fails once #N has merged, see
+#                internal/core/exempt_ledger_review_test.go).
+#   arrives with #N  pre-registered for a site an open PR creates or renames.
+#
+# expires: YYYY-MM-DD (pending/arrives rows only) or -.
+AddPasswordHistory	PasswordHistory	User	NO-CASCADE: no user delete/deactivate path (core.DeleteUser users.go, DeprovisionSCIMUser scim.go) or PurgeDeletedUsersBefore (local_purge.go) touches password_history; append-only hash history.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+AddUserToGroup	UserGroup	Group	NO-CASCADE: LocalStorage.DeleteGroup soft-deletes only the group and deliberately keeps memberships (restorable); no group purge; group-derived authority excludes deleted groups.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+AddUserToGroup	UserGroup	Project	NO-CASCADE: deleteProjectCascade never touches user_groups; PurgeDeletedProjectsBefore removes only UserRole/GroupRole.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+AddUserToGroup	UserGroup	User	NO-CASCADE: user soft-delete/deactivation does not touch user_groups; PurgeDeletedUsersBefore removes them by user_id at purge time, so a row created just after the delete is reclaimed like one created just before.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+AssignMachineRole	MachineIdentityRole	Environment	NO-CASCADE: DeleteEnvironment soft-deletes only the environment row; machine-role resolution joins environments.deleted_at IS NULL (local_machine_credentials.go), so the row is inert either way.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+AssignMachineRole	MachineIdentityRole	Project	NO-CASCADE: deleteProjectCascade and PurgeDeletedProjectsBefore never touch machine_identity_roles; resolution joins projects.deleted_at IS NULL.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateAccessRequest	AccessRequest	Project	NO-CASCADE: deleteProjectCascade does not cancel pending access requests, so a request filed just before the delete stays pending identically.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateAccessRequest	AccessRequest	SecretNode	NO-CASCADE: DeleteSecret sweeps only ShareRecord/SecretACL; the secret purge only versions/dependencies/ACLs.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateAccessRequest	AccessRequest	User	NO-CASCADE: the user delete cascade touches only sessions and PATs; the user purge does not touch access_requests.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateAccessRequestApproval	AccessRequestApproval	User	NO-CASCADE: no user delete/deactivate/purge path touches approvals; aged out only by the retention purge.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateAccessReviewCampaign	AccessReviewCampaign	Project	NO-CASCADE: the project cascade and purge do not touch campaigns; aged out only by DeleteClosedAccessReviewsBefore.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateBreakGlassActivation	BreakGlassActivation	Project	NO-CASCADE: the project cascade and purge never touch break_glass_activations; only the retention purge reaps them.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateBreakGlassActivation	BreakGlassActivation	User	NO-CASCADE: the user cascade touches only sessions and PATs; any use goes through the user's own liveness-gated authentication (auth.go ValidateSessionToken).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateConnectorProjectBinding	ConnectorProjectBinding	Project	NO-CASCADE: deleteProjectCascade and PurgeDeletedProjectsBefore never touch connector bindings.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateDynamicSecretConfig	DynamicSecretConfig	Environment	NO-CASCADE: DeleteEnvironment does not disable configs; only the project cascade does (and the Project parent is the #2651 row).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateDynamicSecretLease	DynamicSecretLease	Environment	NO-CASCADE: DeleteEnvironment neither disables configs nor revokes leases; that cascade is project-only.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateDynamicSecretLease	DynamicSecretLease	Project	pending: #2673 (on main the lease insert is bare: #2652, UNSAFE until then). On merge replace this reason with: TRANSITIVE: the lease locks its live, enabled config FOR SHARE after the insert; deleteProjectCascade row-locks every project config to disabled and core revokes leases after commit; Lease.ProjectID is always cfg.ProjectID. Rests on no path re-enabling a deleted project's config: #2691 and SetDynamicSecretConfigEnabled(true) (no project-liveness check) are open holes in that premise.	2026-10-18	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateEnvironment	Environment	Project	UNSAFE-OPEN #2710 (dup #2702): core.CreateEnvironment checks GetProject, then a bare insert with no re-check; a DeleteProject in between leaves a live, never-purged environment under a deleted project.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateMFAChallenge	MFAChallenge	User	NO-CASCADE: no user delete/deactivate/purge path touches MFA challenges.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateMFARecoveryCodes	MFARecoveryCode	User	NO-CASCADE: DeleteMFAForUser/DeleteMFARecoveryCodes are called only from MFA flows and the offline recover-admin command (server/admin/recover_admin_logic.go), never from a user delete/deactivate/purge path; the user purge does not list them.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateMFAStepUpGrant	MFAStepUpGrant	User	NO-CASCADE: DeleteMFAStepUpGrantsFor has no caller in any user delete/deactivate path; the purge does not list it.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateMachineIdentity	MachineIdentity	Project	NO-CASCADE: deleteProjectCascade and PurgeDeletedProjectsBefore never touch machine_identities; machine-role resolution excludes deleted projects.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateNotification	Notification	Project	NO-CASCADE: the project cascade and purge never touch notifications (informational history).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateNotification	Notification	SecretNode	NO-CASCADE: DeleteSecret sweeps only shares and ACLs; the secret purge only versions/dependencies/ACLs.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateNotification	Notification	User	NO-CASCADE: the user cascade touches only sessions and PATs; the user purge does not list notifications.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateOrUpdateSecretACL	SecretACL	User	NO-CASCADE: user soft-delete/deactivation does not touch ACLs; PurgeDeletedUsersBefore removes grantee ACLs by user_id at purge time, so creation timing is irrelevant.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreatePersonalAccessToken	PersonalAccessToken	User	UNSAFE-OPEN #2701: a PAT committed after DeleteUser/SuspendUser's revoke sweep survives un-revoked; ReactivateUser (and RestoreUser + ReactivateUser) revives it with no revocation. Inert while the user is blocked; under RestoreUser's restricted state it reaches only change-password/profile.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateProjectInvitation	ProjectInvitation	Project	NO-CASCADE: the project cascade does not touch invitations; accepting one into a deleted project is refused (membership_lifecycle.go).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateProjectMembership	ProjectMembership	Project	NO-CASCADE: deleteProjectCascade and PurgeDeletedProjectsBefore never touch project_memberships.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateProjectMembership	ProjectMembership	User	NO-CASCADE: no user delete/deactivate/purge path touches project_memberships.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateRotationPolicy	RotationPolicy	Environment	NO-CASCADE: DeleteEnvironment soft-deletes only the environment row; rotation policies are untouched.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateRotationPolicy	RotationPolicy	Project	NO-CASCADE: deleteProjectCascade does not soft-delete or disable rotation policies; the project purge does not list them.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecret	SecretNode	Environment	SERIALIZED: core.CreateSecret/CreateFolder take EnvironmentSecretGuardLockKey and re-check GetEnvironment inside it; DeleteEnvironment's count+delete holds the same key. The project cascade deletes environments without that lock: that path is the CreateSecret/Project row (#2711).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecret	SecretNode	Project	UNSAFE-OPEN #2711 (dup #2702): the environment lock does not serialize against deleteProjectCascade, which takes no environment lock; a live secret value can land in a deleted project, never purged.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecret	SecretNode	SecretNode	NO-CASCADE: deleting a folder deletes only that node plus its shares/ACLs; children are never swept, so a child created just after looks the same as one created just before.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecret	SecretNode	User	NO-CASCADE: OwnerID; user delete does not clear or reassign secret ownership, and the owner check also needs live project membership.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecretDependency	SecretDependency	Project	NO-CASCADE: the project cascade never touches edges.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecretDependency	SecretDependency	SecretNode	NO-CASCADE: DeleteSecret leaves edges; the purge reaps them by endpoint at purge time.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecretDependencyExclusive	SecretDependency	Project	NO-CASCADE: the project cascade does not touch secret_dependencies; edges outlive soft-delete by design (ADR-052).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecretDependencyExclusive	SecretDependency	SecretNode	NO-CASCADE: DeleteSecret does not touch edges; PurgeDeletedSecretsBefore deletes incident edges at purge time. (The cross-replica cycle in this function is #2660/#2670, a different class.)	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecretVersion	SecretVersion	SecretNode	NO-CASCADE: DeleteSecret does not touch versions; PurgeDeletedSecretsBefore hard-deletes them by secret_node_id at purge time, so a version written just after the soft-delete is reclaimed like one written just before.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecretVersionComment	SecretVersionComment	SecretNode	NO-CASCADE: neither DeleteSecret nor PurgeDeletedSecretsBefore touches version comments.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSecretVersionComment	SecretVersionComment	User	NO-CASCADE: the user cascade and purge never touch version comments (annotation history).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSession	Session	User	UNSAFE-OPEN #2701: a session committed after the user's session sweep survives; inert while the user is blocked, live again after reactivation until expiry.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateSetupToken	SetupToken	User	NO-CASCADE: no user delete/deactivate/purge path touches setup tokens.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateUserWithRoleGrants	UserRole	Environment	NO-CASCADE: DeleteEnvironment sweeps nothing; env-scoped grants on a deleted env are excluded at resolution (local_rbac.go).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateUserWithRoleGrants	UserRole	Project	NO-CASCADE: deleteProjectCascade deliberately keeps UserRole; PurgeDeletedProjectsBefore removes it by project_id at purge time; resolution excludes deleted projects.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateUserWithRoleGrants	UserRole	User	SERIALIZED: the parent user is inserted in the same transaction as the grants; no other transaction can see (so delete) the uncommitted user.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateWebAuthnCredential	WebAuthnCredential	User	NO-CASCADE: no user delete/deactivate/purge path touches WebAuthn credentials.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+CreateWebAuthnSession	WebAuthnSession	User	NO-CASCADE: no user delete/deactivate/purge path touches WebAuthn ceremony sessions.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreProject	Environment	Project	UNSAFE-OPEN #2724: the cascade's statements each take a fresh snapshot and its deleted_at-scoped project lock does not serialize against RestoreProject; a delete straddling the restore commit leaves revived environments live under a deleted project.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreProject	SecretNode	Environment	UNSAFE-OPEN #2724: RestoreProject takes no environment guard lock, so DeleteEnvironment's count-then-delete can delete a just-revived environment with active secrets inside.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreProject	SecretNode	Project	UNSAFE-OPEN #2724: a DeleteProject whose secret sweep ran before the restore commits and whose project UPDATE runs after leaves revived secrets live under a deleted project.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreProject	SecretNode	SecretNode	NO-CASCADE: folder delete never sweeps children; cascade-deleted folders are revived by the same statement.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreProject	SecretNode	User	NO-CASCADE: user delete does not touch secret ownership.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreSecret	SecretNode	Environment	SERIALIZED: the un-delete runs under EnvironmentSecretGuardLockKey with requireLiveEnvironment re-checked inside, the key DeleteEnvironment holds. The project cascade bypasses this lock, but #2881 added a separate lockLiveParent re-check against Project inside the same restore transaction, so no Project row is needed here.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreSecret	SecretNode	SecretNode	NO-CASCADE: the parent folder may be deleted, but folder delete never sweeps children, so the outcome is serial-equivalent.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RestoreSecret	SecretNode	User	NO-CASCADE: user delete does not touch secret ownership.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+RotateSession	Session	User	UNSAFE-OPEN #2701: as CreateSession; RotateSession's UPDATE-then-Create can insert after the sweep's DELETE snapshot.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+SetSecretAccessSchedule	SecretAccessSchedule	SecretNode	NO-CASCADE: DeleteSecret does not touch schedules and no purge lists them.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+SetSecretTags	SecretTag	SecretNode	NO-CASCADE: neither DeleteSecret nor PurgeDeletedSecretsBefore touches secret tags.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+UpsertMFASecret	MFASecret	User	NO-CASCADE: DeleteMFAForUser is called only from the MFA disable flow and the offline recover-admin command, never from user delete/deactivate; the user purge does not list it. (The full-row overwrite in this upsert is #2692, a different class.)	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+UpsertMFAStepupToken	MFAStepupToken	User	NO-CASCADE: no user delete/deactivate/purge path touches MFA step-up tokens.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+assignGroupRole	GroupRole	Environment	NO-CASCADE: DeleteEnvironment sweeps nothing; resolution excludes deleted envs (local_rbac.go).	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+assignGroupRole	GroupRole	Group	NO-CASCADE: DeleteGroup deliberately keeps GroupRole for RestoreGroup; no group purge; group-derived authority excludes deleted groups.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+assignGroupRole	GroupRole	Project	NO-CASCADE: deleteProjectCascade keeps GroupRole; the purge removes it by project_id at purge time; resolution excludes deleted projects.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+assignUserRole	UserRole	Environment	NO-CASCADE: DeleteEnvironment sweeps nothing; resolution excludes deleted envs.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+assignUserRole	UserRole	Project	NO-CASCADE: deleteProjectCascade keeps UserRole by design; PurgeDeletedProjectsBefore reaps it at purge time; resolution excludes deleted projects.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+assignUserRole	UserRole	User	NO-CASCADE: user soft-delete/deactivation does not touch user_roles; PurgeDeletedUsersBefore reaps them at purge time; authority flows only through liveness-gated authentication.	-	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+createShareRecordTx	ShareRecord	Group	arrives with #2671 (on merge drop this phrase and set expires to -). NO-CASCADE: LocalStorage.DeleteGroup soft-deletes only the group row and sweeps no shares; group-share enforcement queries exclude deleted groups.	2026-10-18	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW
+createShareRecordTx	ShareRecord	User	arrives with #2671 (on merge drop this phrase and set expires to -). NO-CASCADE: user soft-delete/deactivation does not revoke shares; PurgeDeletedUsersBefore hard-deletes shares by recipient/owner at purge time. The SecretNode parent is locked by the caller.	2026-10-18	C-GUARD-3	C-GUARD3-EXEMPT-REVIEW

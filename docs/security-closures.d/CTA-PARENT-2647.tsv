@@ -1,0 +1,1 @@
+CTA-PARENT-2647	./internal/core	TestCTAReview_ShareSecretWithGroup_vs_DeleteSecret_CrossReplicaPostgres	pg-gated	pending-merge	2647	ShareSecretWithGroup vs DeleteSecret across replicas: same CreateShareRecord window as #2646 for a group share; closed by the same write-then-FOR-SHARE parent re-check (INV-STORE-21)
