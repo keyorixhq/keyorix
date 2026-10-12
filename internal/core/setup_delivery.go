@@ -202,6 +202,9 @@ func (c *KeyorixCore) CreateUserWithSetupLink(ctx context.Context, req *CreateUs
 type OneTimePasswordResult struct {
 	Email    string `json:"email"`
 	OTPValue string `json:"one_time_password"`
+	// ExpiresAt is when the one-time password stops working (UTC); after it, login is
+	// refused like a wrong password and an administrator has to issue another.
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // CreateUserWithOneTimePassword creates a user with a server-generated initial password
@@ -223,6 +226,9 @@ func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *Cr
 	reqCopy := *req
 	reqCopy.Password = otp
 	reqCopy.AccountState = AccountPasswordResetRequired
+	// The expiry is written by the same insert as the password (OTP-EXPIRY-1).
+	expiresAt := c.now().Add(c.effectiveOneTimePasswordTTL()).UTC()
+	reqCopy.OneTimePasswordExpiresAt = &expiresAt
 	user, err := c.CreateUser(ctx, &reqCopy)
 	if err != nil {
 		return nil, nil, err
@@ -238,7 +244,7 @@ func (c *KeyorixCore) CreateUserWithOneTimePassword(ctx context.Context, req *Cr
 	actor := actorOrSubject(createdBy, &user.ID)
 	c.auditCredentialDisplayedOutOfBand(ctx, actor, req.Email, "one_time_password")
 
-	return user, &OneTimePasswordResult{Email: user.Email, OTPValue: otp}, nil
+	return user, &OneTimePasswordResult{Email: user.Email, OTPValue: otp, ExpiresAt: expiresAt}, nil
 }
 
 // ResendAccountSetupLink reissues an account_setup link for an existing user,
@@ -279,8 +285,8 @@ func (c *KeyorixCore) ResendAccountSetupLink(ctx context.Context, userID, create
 }
 
 // checkResendThrottle enforces the per-subject resend limits: a minimum interval
-// between issues and a daily cap (ADR-028 abuse section). Counting failures fail
-// open — a throttle-store error must not block a legitimate resend.
+// between issues and a daily cap (ADR-028 abuse section). A count error fails
+// closed (ErrResendThrottleUnverifiable), as the comment below explains.
 func (c *KeyorixCore) checkResendThrottle(ctx context.Context, purpose, email string) error {
 	key := strings.TrimSpace(strings.ToLower(email))
 

@@ -63,12 +63,11 @@ package store
 
 import (
 	"context"
-	"fmt"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -81,16 +80,10 @@ import (
 // helpers
 // ---------------------------------------------------------------------------
 
-// s29DBSeq makes each in-memory DB unique within the process, even across
-// repeated invocations of the same test (e.g. `go test -count=N`).
-var s29DBSeq atomic.Int64
-
 // newS29Store opens a unique in-memory SQLite DB with requested models migrated.
 func newS29Store(t *testing.T, mods ...any) *LocalStorage {
 	t.Helper()
-	dsn := fmt.Sprintf("file:%s_s29_%d?mode=memory&cache=shared", t.Name(), s29DBSeq.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.OpenWithDialector(t, "stores29_", sqlite.Open, &gorm.Config{})
 	if len(mods) > 0 {
 		require.NoError(t, db.AutoMigrate(mods...))
 	}

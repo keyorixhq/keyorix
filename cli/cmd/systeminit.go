@@ -45,10 +45,15 @@ This is the network-bootstrap half only. Local host setup (config file, encrypti
 keys, database) is "keyorix-server admin init", a separate host-filesystem tool this
 network-only CLI does not run.
 
+The admin password is read from KEYORIX_ADMIN_PASSWORD, or prompted for (hidden)
+when that is unset. The bootstrap token is read from KEYORIX_BOOTSTRAP_TOKEN. Do
+not pass either on the command line: arguments are visible via ps/proc and saved
+in shell history.
+
 Examples:
   keyorix system init --server http://localhost:8080
   keyorix system init --server https://vault.example.com \
-      --admin-username admin --admin-password secret --admin-email admin@example.com`,
+      --admin-username admin --admin-email admin@example.com`,
 	SilenceUsage: true,
 	RunE:         runSystemInit,
 }
@@ -77,7 +82,10 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	token := resolveSystemInitBootstrapToken(cmd)
+	token, err := resolveSystemInitBootstrapToken(cmd)
+	if err != nil {
+		return err
+	}
 
 	client, err := newAPIClient(server, "")
 	if err != nil {
@@ -133,7 +141,7 @@ func runSystemInit(cmd *cobra.Command, _ []string) error {
 	fmt.Printf("  +-- Admin user: %s (change password after first login)\n", username)
 	fmt.Printf("\nNext steps:\n")
 	fmt.Printf("  keyorix login --server %s\n", server)
-	fmt.Printf("  keyorix secret create my-first-secret --value \"hello\"\n")
+	fmt.Printf("  keyorix secret create --name my-first-secret --interactive\n")
 	return nil
 }
 
@@ -147,10 +155,16 @@ func resolveSystemInitAdminPassword(cmd *cobra.Command) (string, error) {
 		warnInsecureFlag(cmd, "admin-password", "prefer the KEYORIX_ADMIN_PASSWORD environment variable, or omit it to be prompted.")
 		return systemInitAdminPassword, nil
 	}
-	if p := os.Getenv("KEYORIX_ADMIN_PASSWORD"); p != "" {
+	// KEYORIX_ADMIN_PASSWORD_FILE is accepted too; both set, an unreadable file or
+	// a file with loose permissions is an error, never a silent prompt/fallback.
+	p, found, err := lookupSecretEnv("KEYORIX_ADMIN_PASSWORD")
+	if err != nil {
+		return "", err
+	}
+	if found {
 		return p, nil
 	}
-	p, err := promptPassword("Enter admin password for the new account: ")
+	p, err = promptPassword("Enter admin password for the new account: ")
 	if err != nil {
 		return "", fmt.Errorf("read admin password: %w", err)
 	}
@@ -164,12 +178,18 @@ func resolveSystemInitAdminPassword(cmd *cobra.Command) (string, error) {
 // warned) --bootstrap-token flag, else KEYORIX_BOOTSTRAP_TOKEN. Never logged,
 // echoed, or included in any error message -- it is as sensitive as the admin
 // password this same request carries.
-func resolveSystemInitBootstrapToken(cmd *cobra.Command) string {
+func resolveSystemInitBootstrapToken(cmd *cobra.Command) (string, error) {
 	if systemInitBootstrapToken != "" {
 		warnInsecureFlag(cmd, "bootstrap-token", "prefer the KEYORIX_BOOTSTRAP_TOKEN environment variable.")
-		return systemInitBootstrapToken
+		return systemInitBootstrapToken, nil
 	}
-	return strings.TrimSpace(os.Getenv("KEYORIX_BOOTSTRAP_TOKEN"))
+	// KEYORIX_BOOTSTRAP_TOKEN_FILE is accepted too (both set, unreadable or too
+	// open is an error).
+	v, _, err := lookupSecretEnv("KEYORIX_BOOTSTRAP_TOKEN")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(v), nil
 }
 
 // warnIfInsecureEndpoint warns before this command's admin credentials and

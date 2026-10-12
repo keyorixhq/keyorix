@@ -97,3 +97,56 @@ func TestDisableMFA_KeepsTheCallingSessionButPurgesOthers(t *testing.T) {
 	_, err = c.storage.GetSession(ctx, "other-session")
 	require.Error(t, err, "every OTHER session must still be purged")
 }
+
+// #2978: the calling session survives ActivateMFA/DisableMFA, but its HTTP
+// auth-cache entry carries the user's MFAEnabled flag from BEFORE the change.
+// Left in place, the very next request on that session (the web UI's recovery-code
+// status refetch) was still judged "MFA not enrolled" and 403'd with
+// MFAEnrollmentRequired for the cache TTL. The kept session's entry must be
+// cleared so the next request re-reads the user.
+func TestActivateMFA_ClearsTheKeptSessionsStaleAuthCacheEntry(t *testing.T) {
+	t.Parallel()
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+
+	var cleared []string
+	c.SetTokenCacheClearer(func(h string) { cleared = append(cleared, h) })
+
+	expiry := fixed.Add(time.Hour)
+	_, err := c.storage.CreateSession(ctx, &models.Session{UserID: 1, SessionToken: "calling-session", ExpiresAt: &expiry})
+	require.NoError(t, err)
+
+	_, secret, err := c.BeginMFAEnrollment(ctx, 1)
+	require.NoError(t, err)
+	code, err := totp.GenerateCode(secret, fixed.Add(-30*time.Second))
+	require.NoError(t, err)
+
+	_, err = c.ActivateMFA(ctx, 1, code, mfaTestPassword, "calling-session")
+	require.NoError(t, err)
+
+	s, err := c.storage.GetSession(ctx, "calling-session")
+	require.NoError(t, err)
+	require.Contains(t, cleared, s.SessionToken, "the kept session's stale auth-cache entry must be cleared")
+}
+
+func TestDisableMFA_ClearsTheKeptSessionsStaleAuthCacheEntry(t *testing.T) {
+	t.Parallel()
+	c, _, fixed := newMFATestCore(t)
+	ctx := context.Background()
+	secret, _ := activateMFAForTest(t, c, fixed)
+
+	expiry := fixed.Add(time.Hour)
+	_, err := c.storage.CreateSession(ctx, &models.Session{UserID: 1, SessionToken: "calling-session", ExpiresAt: &expiry})
+	require.NoError(t, err)
+
+	var cleared []string
+	c.SetTokenCacheClearer(func(h string) { cleared = append(cleared, h) })
+
+	code, err := totp.GenerateCode(secret, fixed)
+	require.NoError(t, err)
+	require.NoError(t, c.DisableMFA(ctx, 1, code, "calling-session"))
+
+	s, err := c.storage.GetSession(ctx, "calling-session")
+	require.NoError(t, err)
+	require.Contains(t, cleared, s.SessionToken, "the kept session's stale auth-cache entry must be cleared")
+}

@@ -25,6 +25,18 @@ on:
   # Manual trigger for the full -race test-suite matrix outside a PR/queue
   # context (e.g. investigating a suspected flake on a specific ref).
   workflow_dispatch:
+  # Nightly full run on main. A push to main skips test-suite, e2e-smoke and
+  # most other jobs whenever the merge queue already passed that exact SHA
+  # (changes.queue_verified), so "main green" said nothing about the journeys:
+  # TestJourney_BreakGlass failed deterministically on main after #2454 and
+  # looked like a flake. The schedule event takes the same `changes` path as
+  # workflow_dispatch (queue_verified=false, every *_only filter false), so
+  # everything that runs on push also runs here; test-suite, build-and-test's
+  # gate and the boot-smoke jobs list `schedule` explicitly below. The
+  # nightly-failure-issue job at the end files an issue when the run fails.
+  # Scheduled runs always use the default branch (main).
+  schedule:
+    - cron: '17 2 * * *'
 
 # Workflow-level default: zero permissions. No job here writes to the repo,
 # comments on PRs, or publishes anything — a compromised dependency/action in
@@ -47,9 +59,12 @@ permissions: {}
 # left ~20 approved PRs with an all-cancelled run reported as a build-and-test
 # failure. A push (synchronize), reopen, or the ci:full label still supersede
 # the in-flight run exactly as before.
+# Only pull_request runs are ever superseded. push to main, merge_group and
+# workflow_dispatch get a group of their own (run_id), so neither an in-flight
+# nor a queued run of those is cancelled by a newer one.
 concurrency:
-  group: ci-${{ github.ref }}${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:full') && format('-label-{0}', github.run_id) || '' }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.run_id }}${{ (github.event.action == 'labeled' && github.event.label.name != 'ci:full') && format('-label-{0}', github.run_id) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
@@ -220,6 +235,30 @@ jobs:
       # moot for push/merge_group/dispatch today -- computed the same way
       # regardless, so it stays correct if that restriction is ever lifted).
       web_e2e_relevant: ${{ steps.filter.outputs.web_e2e_relevant }}
+      # True (POSITIVE match, same shape as boot_smoke_relevant) when this run
+      # could plausibly affect scripts/demo/up.sh|down.sh or what they build
+      # on top of: scripts/demo/** itself, server/Dockerfile (the image up.sh
+      # builds), server/webui/** (populate-webui-dist's target, embedded into
+      # that image), or ci.yml itself (same self-skip-proofing reasoning as
+      # every other positive-match output above). Gates demo-up-smoke below.
+      demo_smoke_relevant: ${{ steps.filter.outputs.demo_smoke_relevant }}
+      # True (POSITIVE match) when this run could plausibly affect the
+      # fault-tolerance issue-state check (adr-numbers job, "Verify every
+      # fault-injection tolerance cites an open issue" below): server/faultops/
+      # (knownOpenTolerances itself, and TestDumpKnownOpenTolerances that reads
+      # it) or scripts/check-fault-tolerance-issues.sh (the check itself), or
+      # ci.yml (same self-skip-proofing reasoning as every other positive-match
+      # output above). Computed the same way for pull_request and merge_group
+      # (both have a real file list); defaults true for push/workflow_dispatch,
+      # same as boot_smoke_relevant/web_e2e_relevant, since there's no file
+      # list to check there and both are rare enough that running it
+      # unconditionally costs nothing. Deliberately NOT run on every PR
+      # regardless of path: this check calls the GitHub API per tolerance row,
+      # and a transient API error or a routinely-closed issue would otherwise
+      # turn CI red for every unrelated PR until someone edits the table. The
+      # nightly schedule (.github/workflows/fault-tolerance-nightly.yml) is
+      # the unconditional full check; this is the narrow PR-time one.
+      fault_tolerance_relevant: ${{ steps.filter.outputs.fault_tolerance_relevant }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -242,8 +281,11 @@ jobs:
             fi
             echo "Changed files (merge group):"
             echo "$changed"
-            echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
-            echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "boot_smoke_relevant=true"
+              echo "web_e2e_relevant=true"
+              echo "demo_smoke_relevant=true"
+            } >> "$GITHUB_OUTPUT"
           elif [ "${{ github.event_name }}" != "pull_request" ]; then
             queue_verified=false
             if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref }}" = "refs/heads/main" ]; then
@@ -261,6 +303,8 @@ jobs:
               echo "operator_only=false"
               echo "boot_smoke_relevant=true"
               echo "web_e2e_relevant=true"
+              echo "demo_smoke_relevant=true"
+              echo "fault_tolerance_relevant=true"
             } >> "$GITHUB_OUTPUT"
             exit 0
           else
@@ -284,6 +328,13 @@ jobs:
             echo "boot_smoke_relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "boot_smoke_relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "demo_smoke_relevant=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(scripts/demo/|server/Dockerfile$|server/webui/|web/src/|server/http/)'; then
+            echo "demo_smoke_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "demo_smoke_relevant=false" >> "$GITHUB_OUTPUT"
           fi
           if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
@@ -318,10 +369,19 @@ jobs:
           fi
           if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
             echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
-          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(web/|server/http/)'; then
+          # scripts/e2e/web-real-smoke.sh IS the harness this job runs (#2738): a change
+          # confined to it previously skipped the one job that would exercise it.
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^(web/|server/http/|scripts/e2e/web-real-smoke\.sh$)'; then
             echo "web_e2e_relevant=true" >> "$GITHUB_OUTPUT"
           else
             echo "web_e2e_relevant=false" >> "$GITHUB_OUTPUT"
+          fi
+          if echo "$changed" | grep -qx '\.github/workflows/ci\.yml'; then
+            echo "fault_tolerance_relevant=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$changed" ] && echo "$changed" | grep -qE '^server/faultops/|^scripts/check-fault-tolerance-issues\.sh$'; then
+            echo "fault_tolerance_relevant=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "fault_tolerance_relevant=false" >> "$GITHUB_OUTPUT"
           fi
 
   # web/ (ADR-070) has its own pnpm-workspace.yaml. pnpm resolves its
@@ -448,12 +508,14 @@ jobs:
   # regardless of what this specific PR touches, matching
   # pnpm-workspace-root-guard's reasoning for staying ungated.
   adr-numbers:
+    needs: [changes]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # issues: read is for the informational report step only (gh issue list)
-      # -- nothing else in this job touches issues, and that step never fails
-      # the job (see its own step and script header for why).
+      # issues: read is for the informational report step and the
+      # fault-tolerance issue-state check below -- nothing else in this job
+      # touches issues, and the informational step never fails the job (see
+      # its own step and script header for why).
       issues: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -461,19 +523,39 @@ jobs:
       - name: Assert every docs/adr-NNN-*.md number is unique
         run: ./scripts/check-adr-numbers.sh
 
+      # CHURN-1: unreleased entries are changelog.d/ fragments, assembled into
+      # CHANGELOG.md at release time. --check validates every fragment.
+      - name: Validate changelog.d/ fragments
+        run: ./scripts/changelog-assemble.sh --check
+
+      # NON-FAILING for now (about 30 open PRs still edit CHANGELOG.md directly).
+      # A hard check can follow once they have drained. Needs the base ref.
+      - name: Notice if the PR edits CHANGELOG.md directly
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          # HEAD is the PR merge commit, so a two-dot diff against the base tip
+          # is exactly the PR's own change; depth 1 of the base is enough.
+          git fetch --no-tags --depth=1 origin "${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}" || true
+          ./scripts/changelog-assemble.sh --notice
+
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
-      - name: Verify docs/security-closures.tsv is generated from security-closures.d/*.tsv
+      # docs/security-closures.tsv is no longer committed (generated from
+      # docs/security-closures.d/ on demand); this validates the fragments.
+      - name: Validate docs/security-closures.d/*.tsv fragments
         run: scripts/gen-security-closures-tsv.sh --check
 
       - name: Self-test the closure guard (must be able to go red)
         run: ./scripts/check-closures.sh --self-test
 
       # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
-      # docs/security-closures.tsv gate-skips here by design -- that is
+      # docs/security-closures.d/ gate-skips here by design -- that is
       # expected, not a failure (see the ledger's own header). The test-suite
       # job's `core` leg below runs this SAME script again, WITH the DSN, and
       # is what actually proves those rows.
@@ -489,6 +571,13 @@ jobs:
       - name: Self-test the review-coverage guard (must be able to go red both ways)
         run: ./scripts/check-review-coverage.sh --self-test
 
+      # server/entrypoint.sh (container image): bootstrap password never in argv
+      # (#241), bootstrap over the TLS URL with the server's own CA, config copy
+      # at 0600 (#2922), arguments run instead of the server. It ran nowhere
+      # before SECURE-DEFAULT-1 and had gone stale (no bootstrap token in its env).
+      - name: Container entrypoint tests (server/entrypoint_test.sh)
+        run: bash server/entrypoint_test.sh
+
       # Scope is derived from `go list ./...` at run time, never hand-enumerated
       # -- see docs/review-coverage.tsv's own header for why (a hand-maintained
       # package list is the exact failure mode this exists to prevent). Fails
@@ -501,13 +590,40 @@ jobs:
       # exits 0, and continue-on-error is set as a second, belt-and-suspenders
       # layer in case a future edit ever changes that). See the script's own
       # header for why an issue missing from this report is not proof nothing
-      # is owed, and docs/security-closures.tsv's header for the same caveat
+      # is owed, and docs/security-closures.d/HEADER.txt for the same caveat
       # on its `issue` column.
       - name: Report closed security-labeled issues the ledger doesn't cite (informational)
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: ./scripts/report-unlisted-security-issues.sh
+
+      # GATING, unlike the informational step above, and the difference is the
+      # signal each one keys on. That step keys on the `security` LABEL, which
+      # this repo applies unreliably (its header documents four confirmed
+      # misses), so its silence proves nothing and it must never fail a build.
+      # This one keys on issue STATE, which is not a human convention anyone has
+      # to remember to apply -- a closed issue is closed. See the script's own
+      # header, and #2844.
+      #
+      # It fails rather than passes when it cannot reach the API: green would
+      # otherwise mean "no closed issues found" when it actually means "nothing
+      # was looked at". The offline backstop is
+      # TestKnownOpenTolerances_CarryIssueAndExpiry's expiry check, which runs
+      # in the test-suite job regardless.
+      #
+      # Gated on fault_tolerance_relevant (the tolerance table/script changed,
+      # or this run has no PR file list to check): see that output's own
+      # comment in the changes job for why this does NOT run on every PR --
+      # it calls the GitHub API per tolerance row, and a transient error or a
+      # routinely-closed issue must not turn CI red for every unrelated PR.
+      # The unconditional nightly run is
+      # .github/workflows/fault-tolerance-nightly.yml.
+      - name: Verify every fault-injection tolerance cites an open issue
+        if: needs.changes.outputs.fault_tolerance_relevant == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-fault-tolerance-issues.sh
 
   # Backstop for the actionlint pre-commit hook (.pre-commit-config.yaml) --
   # not a replacement for it. That hook is the PRIMARY guard: it runs on the
@@ -723,7 +839,7 @@ jobs:
     # pull_request push instead gets test-quick-root/test-quick-cli below --
     # see build-and-test's own gate-logic step for the pass/fail truth table
     # this split creates.
-    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: needs.preflight.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     strategy:
       fail-fast: false
       matrix:
@@ -1034,7 +1150,7 @@ jobs:
 
       # This job is the ONLY one with a Postgres service container (see this
       # job's own KEYORIX_TEST_PG_DSN comment above), so it is the only place
-      # a pg-gated docs/security-closures.tsv row can ever be genuinely
+      # a pg-gated docs/security-closures.d/ row can ever be genuinely
       # proven rather than gate-skipped. Restricted to the `core` leg: every
       # pg-gated row today lives in ./internal/core, and running the full
       # ledger sweep once per leg would just repeat the same ~17-row check 15
@@ -1195,7 +1311,7 @@ jobs:
       # |------------------------------------------|----------------|-----------------------------------|
       # | pull_request                              | absent         | test-quick-root, test-quick-cli   |
       # | pull_request                              | present        | test-suite                        |
-      # | merge_group / push / workflow_dispatch    | n/a            | test-suite                        |
+      # | merge_group / push / workflow_dispatch / schedule | n/a     | test-suite                        |
       #
       # static-analysis is required in every row. Fail CLOSED: the tier that
       # SHOULD have run reporting anything other than 'success' -- including
@@ -1206,7 +1322,7 @@ jobs:
         id: gate
         run: |
           is_full_tier=false
-          if [ "${{ github.event_name }}" = "merge_group" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          if [ "${{ github.event_name }}" = "merge_group" ] || [ "${{ github.event_name }}" = "push" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.event_name }}" = "schedule" ]; then
             is_full_tier=true
           elif [ "${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full') }}" = "true" ]; then
             is_full_tier=true
@@ -1289,14 +1405,16 @@ jobs:
   # server on a freshly migrated database and calls every REST route, failing
   # on any 5xx. It exists for the bug class #2258 fixed (7 shipped features
   # that 500'd on every fresh install because no test used a fresh database).
-  # Runs on merge_group / push / dispatch only -- on pull_request it reports
-  # "skipped", which the ruleset treats as satisfied, so it can be a required
-  # check without adding a job to every PR push. Same docs/web/go-unaffected
+  # Runs on pull_request too (Andrei 2026-10-11): while it ran on merge_group
+  # / push / dispatch only, a smoke failure first showed up inside the merge
+  # queue, where it ejected the PR and every entry queued behind it (5 of 5
+  # PRs failed their first merge_group run on 2026-10-11). On the PR the
+  # failure is visible before the PR is queued. Same docs/web/go-unaffected
   # gating as the test matrix. The slower PostgreSQL, upgrade-path and web UI
   # legs run nightly in e2e-nightly.yml.
   e2e-smoke:
     needs: [changes]
-    if: github.event_name != 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1328,25 +1446,36 @@ jobs:
   # re-run of the identical SQLite-only check the PR already passed adds
   # cost without adding confidence.
   #
-  # Runtime budget: measured live at ~25s end to end (go build ~11s +
-  # web-real-smoke.sh ~25s including pnpm/playwright) against today's 2 spec
-  # files/1 budget group (scripts/e2e/web-real-smoke.sh's own
-  # MAX_SPECS_PER_GROUP=2 grouping, SESSION-WEB-E2E) -- comfortably inside
-  # the ~10 minute target with real margin for CI-environment overhead
-  # (checkout, dependency install, Playwright browser setup) this local
-  # measurement doesn't include. Each additional group adds roughly another
-  # 20-30s sequentially (this job runs every group in one step, matching how
-  # the nightly e2e-web-smoke job already invokes the same script) -- if the
-  # spec count grows enough to approach the budget (rough rule of thumb:
-  # more than ~15-20 groups), split this into a matrix over groups instead
-  # of adding more sequential time to one job; not done here because it
-  # isn't needed yet and a speculative matrix split today would be
-  # unverifiable complexity against a problem that doesn't exist.
-  web-e2e-real-smoke:
+  # Runtime budget. 2026-10-05 (#2738): scripts/e2e/web-real-smoke.sh moved to
+  # MAX_SPECS_PER_GROUP=1 (one spec file per freshly-booted server, so no
+  # group's login budget is ever a sum of per-file counts -- see that script's
+  # own comment). Each group costs 15-45s (boot + bootstrap + seed +
+  # Playwright; the MFA files wait out real 30-second TOTP steps) and
+  # ui-route-walk ~2m. 2026-10-11: with 17 spec files the single job was
+  # killed at its 10-minute timeout (10m06s on #3065, with every group
+  # passing), so it is now split into two parallel shards of the SAME specs:
+  # KEYORIX_E2E_SHARD=i/n gives spec k of the sorted list to shard k%n+1, and
+  # the script fails if any spec would belong to no shard. Measured on CI
+  # (PR #3100, run 38165198610): shard 1/2 = 9 specs, 7m06s job time (incl.
+  # ~1m checkout/pnpm/Playwright setup); shard 2/2 = 8 specs, 4m27s. Shard 1
+  # is the longer one because round-robin lands ui-route-walk (~2m) in it.
+  # Each shard keeps the 10-minute timeout. A spec file costs ~30s, so past
+  # ~25 spec files shard 1 gets close to the limit again: check the shard
+  # durations rather than assume, and raise the shard count in the matrix
+  # and in KEYORIX_E2E_SHARD below.
+  #
+  # The matrix job is web-e2e-real-smoke-shard; web-e2e-real-smoke further down
+  # is the aggregate under the original name.
+  web-e2e-real-smoke-shard:
     needs: [changes]
     if: github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.web_e2e_relevant == 'true'
+    name: web-e2e-real-smoke-shard (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     permissions:
       contents: read
     steps:
@@ -1386,14 +1515,33 @@ jobs:
         working-directory: web
         run: pnpm exec playwright install-deps chromium
       - name: Real-backend web UI smoke
+        env:
+          KEYORIX_E2E_SHARD: ${{ matrix.shard }}/2
         run: make e2e-web-smoke
       - name: Upload Playwright report
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: web-e2e-real-smoke-playwright-report
+          name: web-e2e-real-smoke-playwright-report-${{ matrix.shard }}
           path: web/playwright-report/
           retention-days: 7
+
+  # Aggregate under the job's ORIGINAL name, so anything that refers to
+  # `web-e2e-real-smoke` (a required-check entry, nightly-failure-issue's needs)
+  # keeps working: it fails if either shard failed or was cancelled, and is
+  # skipped exactly when the shards are (same gate as the shards).
+  web-e2e-real-smoke:
+    needs: [changes, web-e2e-real-smoke-shard]
+    if: always() && github.event_name == 'pull_request' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.web_e2e_relevant == 'true'
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Require both shards to pass
+        env:
+          SHARDS_RESULT: ${{ needs.web-e2e-real-smoke-shard.result }}
+        run: |
+          echo "web-e2e-real-smoke-shard matrix result: $SHARDS_RESULT"
+          [ "$SHARDS_RESULT" = "success" ]
 
   # repo-guards (2026-10-05): the repo-wide structural guard tests (every
   # Test...Guard / ...Sweep / ...Completeness test: state-map completeness,
@@ -1519,7 +1667,7 @@ jobs:
   # output is real either way; this is a separate, event-level gate).
   docker-boot-smoke:
     needs: [changes]
-    if: (github.event_name == 'pull_request' && needs.changes.outputs.boot_smoke_relevant == 'true') || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.boot_smoke_relevant == 'true') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1583,6 +1731,82 @@ jobs:
         if: always()
         run: docker compose down -v
 
+  # DEMO-2: scripts/demo/up.sh builds its OWN local air-gapped image (the
+  # published ghcr.io/keyorixhq/keyorix-server-airgap image never embeds the
+  # web UI -- #2752) and seeds a realistic org through the public API/CLI.
+  # This job proves two things CI had no coverage for before: (1) up.sh
+  # actually runs end to end and seeds what it claims to -- not just that it
+  # parses as shell; (2) the air-gapped image genuinely makes zero outbound
+  # network calls, via scripts/airgap-e2e.sh's own `--network none` drill
+  # (already proven standalone, 2026-09-28 -- this wires it into CI instead
+  # of only ever running by hand). Path-filtered via demo_smoke_relevant, the
+  # same shape as boot_smoke_relevant just above, so it doesn't run on every
+  # unrelated PR.
+  demo-up-smoke:
+    needs: [changes]
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.demo_smoke_relevant == 'true') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - name: scripts/demo/up.sh (builds the image, seeds the demo)
+        run: ./scripts/demo/up.sh
+
+      - name: Verify the seed through the public API (not the database)
+        run: |
+          set -e
+          # up.sh enrols TOTP for the admin (#2982), so a password login needs a
+          # code, and every accepted code is single-use (anti-replay): a second
+          # login here replays up.sh's window (-> 401) or has to wait out a step,
+          # and every login AND MFA verify spends a slot of the per-IP budget
+          # (10 per 15 min) that up.sh (3) and the check.sh step below (6) already
+          # nearly use up (the 11th attempt is the 429). So reuse the admin
+          # session up.sh obtained with its code login instead of logging in again.
+          TOKEN=$(cat .demo-2-cli-home/.admin-session-token)
+          [ -n "$TOKEN" ] || { echo "up.sh left no admin session token in .demo-2-cli-home" >&2; exit 1; }
+          projects=$(curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/projects | \
+            jq -r '.data.projects | length')
+          [ "$projects" = "3" ] || { echo "expected 3 seeded projects, got $projects" >&2; exit 1; }
+          audit=$(curl -s -H "Authorization: Bearer $TOKEN" "http://localhost:8080/api/v1/audit/logs?page_size=1" | \
+            jq -r '.data.total')
+          [ "$audit" -gt "0" ] || { echo "expected a non-empty seeded audit trail, got $audit events" >&2; exit 1; }
+          echo "seed verified: $projects projects, $audit audit events"
+
+      - name: "scripts/demo/up.sh again (idempotency: must be a no-op reprint)"
+        run: |
+          out=$(./scripts/demo/up.sh)
+          echo "$out"
+          echo "$out" | grep -q "already running and seeded" || { echo "expected the idempotent no-op path, got a reseed" >&2; exit 1; }
+
+      - name: Demo readiness check (fast API-only leg -- DEMO-READY-1)
+        run: ./scripts/demo/check.sh --url http://localhost:8080 --no-ui
+
+      - name: scripts/demo/down.sh
+        run: ./scripts/demo/down.sh --wipe
+
+      - name: Offline guarantee -- scripts/airgap-e2e.sh --network none against the same image
+        run: |
+          KEYORIX_AIRGAP_E2E_IMAGE=keyorix-demo:airgap ./scripts/airgap-e2e.sh
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs keyorix-demo 2>&1 || true
+
   # RELEASE-BLOCKERS item 5, Helm half: a kind cluster + `helm install` with
   # chart defaults (readOnlyRootFilesystem: true, the bundled Postgres) must
   # reach Ready -- the check that would have caught the second, independent
@@ -1592,7 +1816,7 @@ jobs:
   # identical comment just above for why.
   helm-boot-smoke:
     needs: [changes]
-    if: (github.event_name == 'pull_request' && needs.changes.outputs.boot_smoke_relevant == 'true') || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'pull_request' && needs.changes.outputs.boot_smoke_relevant == 'true') || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -1827,7 +2051,7 @@ jobs:
   # "moved out, not dropped" decision in docs/cli-split-inventory.md). The service container
   # makes internal/vaultsource's and internal/e2e's VAULT_ADDR-gated tests
   # (docs/design-keyorix-migrate.md's "Testing" section) actually run here as `default-ci`
-  # (docs/security-closures.tsv's verification tiers) rather than silently skip forever --
+  # (docs/security-closures.d/HEADER.txt's verification tiers) rather than silently skip forever --
   # the same failure mode CLAUDE.md's Postgres-container comment above documents for
   # KEYORIX_TEST_PG_DSN, avoided here by wiring the container from this job's first commit
   # instead of adding it later.
@@ -2234,6 +2458,12 @@ jobs:
           helm template kx deploy/helm/keyorix \
             --set auth.masterPassword=ci --set postgresql.enabled=false \
             --set externalDatabase.host=db.example.com --set externalDatabase.password=ci \
+            | ./kubeconform -strict -summary -kubernetes-version 1.29.0
+          # secureBaseline (SECURE-DEFAULT-1): TLS server/web/postgres, the
+          # prepare-files initContainer and the generated Secret.
+          helm template kx deploy/helm/keyorix \
+            --set auth.masterPassword=ci --set postgresql.auth.password=ci \
+            --set auth.adminPassword=Ci-Render-Only-Pw1! --set secureBaseline.enabled=true \
             | ./kubeconform -strict -summary -kubernetes-version 1.29.0
 
       - name: Pinned default image tag + Secret-sourced passwords (#137)
@@ -2726,12 +2956,20 @@ jobs:
             --ignore-test container-image-pull-policy
 
   # The 3,000-line openapi.yaml is the contract between the server and every
-  # client (dashboard, CLI remote mode, SDK users). Spectral validates structural
+  # client (dashboard, CLI remote mode, SDK users). vacuum validates structural
   # correctness (response schemas present, security schemes consistent, no
   # trailing slashes, typed enums) so drift between the spec and handler intent
-  # is caught in CI rather than discovered by a consumer. The OAS ruleset is
-  # used as-is: it only fails on ERRORs by default, so warnings are surfaced
-  # without blocking, and the .spectral.yaml at the repo root controls overrides.
+  # is caught in CI rather than discovered by a consumer. .vacuum.yaml at the
+  # repo root selects the rules (the spectral:oas set plus a few zero-finding
+  # extras); the job fails on ERRORs only, warnings are surfaced without
+  # blocking. vacuum replaced @stoplight/spectral-cli, whose dependency tree
+  # carries braces GHSA-vfj7-8cjw-p6xm with no patched release.
+  #
+  # vacuum is built from source at the exact version in devtools/vacuum/go.mod;
+  # every module it needs is verified against devtools/vacuum/go.sum (and
+  # GOFLAGS=-mod=readonly forbids any drift), the Scorecard-friendly
+  # equivalent of npm ci against a lockfile. The canary step proves the
+  # ruleset is loaded and error rules fire.
   #
   # Skipped on merge_group (CI-1, 2026-10-03): same reasoning as smoke's own
   # comment above -- no event gating, already runs on every pull_request push
@@ -2747,8 +2985,96 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Spectral (lockfile-pinned, lifecycle scripts disabled)
-        run: npm ci --ignore-scripts
+      # Go toolchain + module/build cache keyed on devtools/vacuum/go.sum, so a
+      # warm run only relinks vacuum.
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: devtools/vacuum/go.sum
 
       - name: Lint OpenAPI spec
-        run: ./node_modules/.bin/spectral lint --ruleset .spectral.yaml server/http/handlers/openapi.yaml
+        env:
+          GOWORK: 'off'
+          GOFLAGS: -mod=readonly
+        run: go tool -modfile=devtools/vacuum/go.mod vacuum lint -r .vacuum.yaml --no-update-check -b -q server/http/handlers/openapi.yaml
+
+      # A guard nobody has watched fail is not a guard: the canary is a
+      # deliberately broken spec, and this step fails if vacuum accepts it.
+      - name: Ruleset canary (a broken spec must fail)
+        env:
+          GOWORK: 'off'
+          GOFLAGS: -mod=readonly
+        run: |
+          if go tool -modfile=devtools/vacuum/go.mod vacuum lint -r .vacuum.yaml --no-update-check -b -q -x devtools/vacuum/canary-bad.yaml; then
+            echo "::error::vacuum accepted devtools/vacuum/canary-bad.yaml; .vacuum.yaml is not enforcing its error rules"
+            exit 1
+          fi
+
+  # Nightly failure report. Runs only for the scheduled run, after every other
+  # job, and only when at least one of them failed. Opens an issue titled
+  # "Nightly main CI failed", or comments on the existing open one so a
+  # multi-night outage is one thread, not one issue per night. No labels.
+  #
+  # The ONLY job in this workflow with issues: write (job-level, so nothing else
+  # inherits it). No checkout and no contents/actions scope: the failing jobs
+  # are named from `needs` (job ids; a matrix such as test-suite is reported
+  # under its job id) rather than from the Actions jobs API, which would need
+  # actions: read. The run link points at the per-leg detail.
+  nightly-failure-issue:
+    needs:
+      - changes
+      - pnpm-workspace-root-guard
+      - base-branch-check
+      - bug-origin-block-check
+      - adr-numbers
+      - workflow-lint
+      - preflight
+      - test-quick-root
+      - test-quick-cli
+      - test-suite
+      - exclusion-freshness
+      - assert-leg-completeness
+      - static-analysis
+      - build-and-test
+      - e2e-smoke
+      - web-e2e-real-smoke
+      - repo-guards
+      - lint
+      - smoke
+      - docker-boot-smoke
+      - demo-up-smoke
+      - helm-boot-smoke
+      - operator
+      - cli
+      - migrate
+      - fuzz-targets
+      - fuzz-reach
+      - licenses
+      - gitleaks
+      - helm-chart
+      - helm-chart-security
+      - helm-chart-policy
+      - openapi-lint
+    if: always() && github.event_name == 'schedule' && contains(needs.*.result, 'failure')
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the "Nightly main CI failed" issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          RUN_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          failed=$(printf '%s' "$NEEDS_JSON" | jq -r 'to_entries[] | select(.value.result == "failure") | "- " + .key')
+          title="Nightly main CI failed"
+          body=$(printf 'The scheduled full CI run on main (%s) failed.\n\nRun: %s\n\nFailing jobs:\n%s\n\nA failing test-suite or e2e-smoke here means main is red even if its push run looked green: push runs skip both when the merge queue already passed the SHA.\n' "$RUN_SHA" "$RUN_URL" "$failed")
+          existing=$(gh issue list --state open --search "\"$title\" in:title" --json number,title --jq "[.[] | select(.title == \"$title\")][0].number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$title" --body "$body"
+          fi

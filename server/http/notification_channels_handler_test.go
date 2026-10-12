@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,12 +29,8 @@ import (
 // handler tests have a database that matches the real production schema.
 func newNotificationChannelCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	err = db.AutoMigrate(
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
+	err := db.AutoMigrate(
 		&models.SecretNode{},
 		&models.SecretVersion{},
 		&models.User{},
@@ -496,12 +492,8 @@ func itoa(n int) string {
 func newBrokenNotificationChannelCore(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	// Full migration first (needed for auth to work), then drop only the NC table.
-	db, err := gorm.Open(sqlite.Open(uniqueMemDSN("&_timeout=30000&_journal_mode=WAL")), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	err = db.AutoMigrate(
+	db := sqlitetest.OpenWithConfig(t, "kxtest_", &gorm.Config{})
+	err := db.AutoMigrate(
 		&models.SecretNode{},
 		&models.SecretVersion{},
 		&models.User{},

@@ -126,13 +126,6 @@ var consumeFirstExemptions = []consumeFirstExemption{
 		maxRowsRemoved:     map[string]int{"SSOLoginState": 1},
 		why:                "ConsumeSSOLoginState deleted the single-use RelayState row before assertion validation and user resolution; it must stay consumed so a captured response cannot be replayed",
 	},
-	// ActivateMFA and RegenerateMFARecoveryCodes are DisableMFA's siblings: all
-	// three burn MFASecret.LastUsedStep before their own WithTransaction, so all
-	// three leave it burned when that transaction fails. Found by this session's
-	// derived sweep of the auth/MFA/SSO ops (ORACLE-A-1 item 4), not by a CI
-	// failure -- these are the next (method, nth) pairs CI's randomized
-	// fuzz-changed would have surfaced one at a time, on 7 distinct storage
-	// methods between them:
 	// ActivateMFA and RegenerateMFARecoveryCodes are DisableMFA's siblings:
 	// all three call requireReauth (class B) before their own
 	// WithTransaction, so all three leave MFASecret.LastUsedStep burned when
@@ -190,39 +183,6 @@ var consumeFirstExemptions = []consumeFirstExemption{
 	// exemption. A planted class-A bug of exactly that shape SURVIVED. The
 	// stacked follow-up seeds those rows and kills it; until that lands, read
 	// this entry as covering the TOTP-step consumption only.
-	// LEDGER GAP, flagged rather than papered over: ActivateMFA makes a SECOND
-	// consume of this same column on its own (internal/core/mfa.go's own
-	// MarkTOTPStepUsed on the just-validated enrolment code, outside
-	// requireReauth), for the identical anti-replay reason. ActivateMFA itself
-	// has no row in docs/atomicity-exempt.tsv, so fn below names requireReauth
-	// -- the consume that IS classified -- and the unclassified sibling consume
-	// is noted here. It writes the same column for the same reason, and the
-	// "everything outside the declared consumption is byte-identical" check is
-	// what actually bounds this entry either way; but the ledger should
-	// probably carry a row for ActivateMFA, and this comment is the ask.
-	{
-		op:              "REST POST /api/v1/auth/mfa/activate",
-		fn:              "(*KeyorixCore).ActivateMFA",
-		consumedColumns: map[string][]string{"MFASecret": {"LastUsedStep"}},
-		why:             "ActivateMFA's own MarkTOTPStepUsed burned the matched enrolment-code time-step before the activation transaction; it must stay burned so a stolen enrolment code cannot be replayed",
-	},
-	// fn is requireReauth here (and for mfa/disable above), unlike the activate
-	// entry: these two ops run with MFA already ENABLED and send a real TOTP
-	// code, so requireReauth DOES take its TOTP branch and its own
-	// MarkTOTPStepUsed is the consume. Verified per-op rather than assumed after
-	// the activate mis-attribution -- both ops' Execute sends {"code": <TOTP>}
-	// and their Setup (enrolMFADirect) sets MFAEnabled=true, matching the
-	// production shape where DisableMFA/RegenerateMFARecoveryCodes
-	// re-authenticate against an already-active factor.
-	//
-	// SCOPE OF THIS ENTRY'S GREEN, per coordinator review: with the fixture as it
-	// stands on this PR's base, a green here does NOT cover the
-	// zero-recovery-codes hazard (#2838) -- enrolMFADirect seeds no
-	// MFARecoveryCode rows, so a partial commit that wipes the old codes without
-	// writing new ones is structurally unobservable on this op, exemption or no
-	// exemption. A planted class-A bug of exactly that shape SURVIVED. The
-	// stacked follow-up seeds those rows and kills it; until that lands, read
-	// this entry as covering the TOTP-step consumption only.
 	// SCOPE OF THIS ENTRY'S GREEN. A green here used to cover LESS than it
 	// looked: enrolMFADirect seeded no MFARecoveryCode rows, so a partial commit
 	// that wiped the old codes without writing new ones was structurally
@@ -240,6 +200,28 @@ var consumeFirstExemptions = []consumeFirstExemption{
 		fn:              "(*KeyorixCore).requireReauth",
 		consumedColumns: map[string][]string{"MFASecret": {"LastUsedStep"}},
 		why:             "requireReauth burned the matched TOTP time-step before the recovery-code replacement transaction; it must stay burned so the same code cannot be replayed",
+	},
+	// ORPHAN-2 (#2844 triage class B). VerifyMFAStepUp's verifyMFAStepUpCode is
+	// class B in the ledger: MarkTOTPStepUsed burns the matched step before
+	// CreateMFAStepUpGrant, and the step stays burned if the grant write fails,
+	// panics, or lands-then-errors, so one code cannot buy two grants. Before
+	// this entry the oracle knew the shape only as a per-tuple by-design row
+	// (CreateMFAStepUpGrant#1/error), and the panic and effect-then-error
+	// siblings failed. Now that oracle (d) consults this list too, one entry
+	// covers every kind.
+	//
+	// Deliberately NOT added: /auth/mfa/verify. VerifyMFACredentials is class B
+	// too, but no post-verdict tuple on that op is the consumption ALONE. The
+	// error/effect-then-error tuples also keep the LoginAttempt slot (#2880,
+	// pinned per tuple with the consumption in oracleAByDesignErrors). The one
+	// shape that IS consumption-only, [MFASecret] on a post-verdict PANIC, is
+	// #3048's bug (the slot was handed back), and an entry here would accept it.
+	// TestConsumeFirst_NonExemptOpStillFailsTheOracle pins that.
+	{
+		op:              "REST POST /api/v1/auth/mfa/stepup",
+		fn:              "(*KeyorixCore).verifyMFAStepUpCode",
+		consumedColumns: map[string][]string{"MFASecret": {"LastUsedStep"}},
+		why:             "verifyMFAStepUpCode burned the matched TOTP time-step before the step-up grant write; it must stay burned so the same code cannot be replayed for a second grant",
 	},
 }
 

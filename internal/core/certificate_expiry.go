@@ -12,6 +12,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -68,20 +69,17 @@ func (c *KeyorixCore) ScanCertificateExpiry(ctx context.Context, leadDays int) (
 		if projectID == 0 || (ct.expired == 0 && ct.soon == 0) {
 			continue
 		}
-		members, err := c.storage.ListProjectMembers(ctx, projectID)
-		if err != nil {
-			continue
+		recipients, rerr := c.projectAdminRecipients(ctx, projectID) // partial result still notified (best-effort)
+		if rerr != nil {
+			log.Printf("SECURITY: ScanCertificateExpiry: failed to fully resolve project %d admins (%d resolved), some admins may not be notified: %v", projectID, len(recipients), rerr)
 		}
 		pid := projectID
 		msg := certificateExpiryMessage(c.projectLabel(ctx, projectID), ct.expired, ct.soon)
-		for _, mbr := range members {
-			if !isApproverRole(mbr.RoleName) {
-				continue
-			}
-			if c.hasUnreadCertificateExpiry(ctx, mbr.UserID, projectID) {
+		for _, uid := range recipients {
+			if c.hasUnreadCertificateExpiry(ctx, uid, projectID) {
 				continue // a standing reminder already exists — don't pile up
 			}
-			c.notify(ctx, mbr.UserID, NotificationCertificateExpiry,
+			c.notify(ctx, uid, NotificationCertificateExpiry,
 				"Certificates expiring", msg, &pid, "/secrets")
 			sent++
 		}

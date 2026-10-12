@@ -70,8 +70,11 @@ spec:
         {{- include "keyorix.labels" . | nindent 8 }}
         app.kubernetes.io/component: postgresql
       annotations:
+        {{- if .Values.secureBaseline.enabled }}
+        checksum/secure-baseline: {{ include "keyorix.secureBaseline.checksum" . }}
+        {{- end }}
         # kube-score, each with an already-settled reason elsewhere:
-        #   - container-security-context-user-group-id: fixed uid 999 to match
+        #   - container-security-context-user-group-id: fixed uid to match
         #     the official postgres:*-alpine image's own user (see the
         #     securityContext comment below) -- same already-reviewed tradeoff
         #     as this repo's checkov CKV_K8S_40 exclusion.
@@ -90,15 +93,72 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       securityContext:
-        # 999 is the postgres user in the official postgres:*-alpine images; fsGroup
-        # makes the PVC group-writable by it so a fresh (non-root-initialised)
-        # volume doesn't need the entrypoint's root-owned chown step.
+        # postgresql.runAsUser must be the uid of the postgres image: 70 in the
+        # official postgres:*-alpine images (the default tag, and what
+        # docker-compose.yml runs), 999 in the Debian-based ones -- deploy/hardening
+        # pins the pairing. Earlier charts ran this pod as 999 even on the alpine
+        # image, so a volume they created is owned by 999: see postgresql.runAsUser
+        # and postgresql.migrateOwnership in values.yaml for upgrading it.
+        # fsGroup makes a fresh PVC group-writable by it so no root-owned chown
+        # step is needed.
         runAsNonRoot: true
-        runAsUser: 999
-        runAsGroup: 999
-        fsGroup: 999
+        runAsUser: {{ .Values.postgresql.runAsUser }}
+        runAsGroup: {{ .Values.postgresql.runAsUser }}
+        fsGroup: {{ .Values.postgresql.runAsUser }}
         seccompProfile:
           type: RuntimeDefault
+      {{- if and .Values.postgresql.persistence.enabled .Values.postgresql.migrateOwnership }}
+      initContainers:
+        # Opt-in one-time migration (postgresql.migrateOwnership): a volume created by
+        # an older chart is owned by uid 999, and Postgres will not start on a data
+        # directory its own uid does not own. Root with CHOWN + DAC_READ_SEARCH only
+        # (the data directory is 0700, so root needs search permission to descend into
+        # it once it is owned by someone else); touches the data volume only and only
+        # entries not already owned by the target uid; a no-op on later starts.
+        - name: fix-data-ownership
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          command:
+            - find
+            - /var/lib/postgresql/data
+            - -xdev
+            - "("
+            - "!"
+            - -user
+            - {{ .Values.postgresql.runAsUser | quote }}
+            - -o
+            - "!"
+            - -group
+            - {{ .Values.postgresql.runAsUser | quote }}
+            - ")"
+            - -exec
+            - chown
+            - -h
+            - {{ printf "%d:%d" (int .Values.postgresql.runAsUser) (int .Values.postgresql.runAsUser) | quote }}
+            - "{}"
+            - "+"
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_READ_SEARCH"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+              ephemeral-storage: 8Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi
+              ephemeral-storage: 8Mi
+      {{- end }}
       containers:
         - name: postgresql
           image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
@@ -110,6 +170,20 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+          {{- if .Values.secureBaseline.enabled }}
+          # secureBaseline (SECURE-DEFAULT-1): TLS with the chart's self-signed
+          # certificate (the server connects with ssl_mode: require). The key is
+          # root-owned 0440 (group = fsGroup 999), which PostgreSQL accepts.
+          # `postgres` first: args replace the image's CMD.
+          args:
+            - postgres
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgresql/tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgresql/tls/tls.key
+          {{- end }}
           ports:
             - name: postgres
               containerPort: 5432
@@ -119,7 +193,7 @@ spec:
             - name: POSTGRES_USER
               value: {{ .Values.postgresql.auth.username | quote }}
             # The official image's own *_FILE convention: the password is a mounted
-            # file (fsGroup 999 + defaultMode 0440), not an environment value.
+            # file (fsGroup + defaultMode 0440), not an environment value.
             - name: POSTGRES_PASSWORD_FILE
               value: /run/secrets/keyorix/db-password
             - name: PGDATA
@@ -140,6 +214,11 @@ spec:
               readOnly: true
             - name: data
               mountPath: /var/lib/postgresql/data
+            {{- if .Values.secureBaseline.enabled }}
+            - name: tls
+              mountPath: /etc/postgresql/tls
+              readOnly: true
+            {{- end }}
             - name: run
               mountPath: /var/run/postgresql
             - name: tmp
@@ -163,10 +242,24 @@ spec:
           persistentVolumeClaim:
             claimName: {{ include "keyorix.postgresql.fullname" . }}
           {{- else }}
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: {{ .Values.postgresql.persistence.size | quote }}
           {{- end }}
+        {{- if .Values.secureBaseline.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ include "keyorix.fullname" . }}-secure-baseline
+            defaultMode: 0440
+            items:
+              - key: postgres.crt
+                path: tls.crt
+              - key: postgres.key
+                path: tls.key
+        {{- end }}
         - name: run
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 1Mi
         - name: tmp
-          emptyDir: {}
+          emptyDir:
+            sizeLimit: 64Mi
 {{- end -}}

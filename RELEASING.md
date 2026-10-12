@@ -5,7 +5,14 @@ tag fires three workflows that publish everything a user consumes.
 
 ## Cut a release
 
-1. Make sure `main` is green and `CHANGELOG.md` has an entry for the new version.
+1. Make sure `main` is green, then assemble the changelog: run
+   `scripts/changelog-assemble.sh vX.Y.Z` (optionally a second `YYYY-MM-DD`
+   argument; default today). It merges every `changelog.d/*.md` fragment into
+   `CHANGELOG.md` under a new `## vX.Y.Z — <date>` heading, keeps any legacy
+   `## Unreleased` body under it, and deletes the fragments. Review the result
+   and commit it. `scripts/changelog-assemble.sh --check` validates fragments
+   without changing anything (CI runs it on every PR). Normal PRs never edit
+   `CHANGELOG.md`; they add a fragment (`changelog.d/README.md`).
 2. (If the chart changed) bump `version`/`appVersion` in
    `deploy/helm/keyorix/Chart.yaml`.
 3. Bump the image pins in `docker-compose.yml` (`keyorix-server` and `keyorix-web`)
@@ -13,6 +20,13 @@ tag fires three workflows that publish everything a user consumes.
    same PR as the `CHANGELOG.md` entry. `go test ./deploy/` (`TestComposeImagePinsMatchLatestRelease`)
    fails if the pins don't match the newest `## vX.Y.Z` heading in `CHANGELOG.md`.
    The images only exist once the tag is pushed, so tag right after that PR merges.
+   **The first release after v0.95.3 only:** in the same PR, fold
+   `docker-compose.secure.yml` into `docker-compose.yml` and
+   `keyorix.docker.secure.yaml` into `keyorix.docker.yaml`, delete both, and set
+   the chart's `secureBaseline.enabled` default to `true` (SECURE-DEFAULT-1: the
+   secure baseline needs an image newer than v0.95.3). `go test ./deploy/`
+   (`TestComposeSecureBaselineFoldedAfterRelease`, `TestHelmSecureBaselineOnByDefaultAfterRelease`)
+   fails until that is done.
 4. Tag and push:
 
    ```sh

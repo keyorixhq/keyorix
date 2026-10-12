@@ -70,6 +70,11 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// be bounded over HTTP. Streams are intentionally exempt (StreamAuditLogs is
 			// long-lived), so the stream chain carries no timeout.
 			interceptors.TimeoutInterceptor(grpcUnaryTimeout),
+			// RESIL-1 (#2637 follow-up): a handler whose write timed out on the SQLite
+			// write gate answers codes.Unavailable + retry-after instead of Internal.
+			// Inside Timeout (sees the handlers' context), outside Auth so it needs no
+			// principal; Metrics/Logging above record the converted status.
+			interceptors.WriteContentionInterceptor(),
 			interceptors.AuthInterceptor(coreService, cfg.Security.RequireMFA),
 			// Per-principal token-bucket rate limit mirroring the HTTP PrincipalRateLimit
 			// middleware so an authenticated caller cannot bypass the rate limit by
@@ -91,6 +96,10 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 			// PrincipalRateLimit (post-auth, per-principal) and the inline per-IP
 			// token-failure budget in its auth middleware (server/middleware/auth.go).
 			interceptors.GRPCRateLimitInterceptor(cfg.Server.GRPC.RateLimit),
+			// Innermost: a per-RPC recorder for share elevations, committed to the audit
+			// log only when the handler succeeds (an elevated action is audited when
+			// performed). Without it core refuses write-share elevation, so it must stay.
+			interceptors.ShareElevationAuditInterceptor(coreService),
 		),
 		// The stream chain intentionally carries no metrics interceptor: MetricsInterceptor
 		// (and the keyorix_grpc_requests_total / _duration_seconds_total series it feeds)

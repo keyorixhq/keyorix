@@ -240,3 +240,55 @@ func TestAdminEncryptionRotate_RefusedWhileExclusiveLockHeld_Postgres(t *testing
 		t.Fatalf("expected encryption rotate to refuse while the exclusive lock is held, got (err=%v):\n%s", err, out)
 	}
 }
+
+// TestAdminInitEncryptionInitMigrate_Postgres_NoStraySQLite is the #2980 proof:
+// with storage.type: postgres (and the template's leftover database.path), the
+// first-run admin sequence must not create or open a SQLite file.
+func TestAdminInitEncryptionInitMigrate_Postgres_NoStraySQLite(t *testing.T) {
+	base := adminPgTestDSN(t)
+	dsn := adminPgIsolatedDatabaseDSN(t, base)
+
+	bin := buildServerBinary(t)
+	dir := t.TempDir()
+	const passphrase = "test-passphrase-2980-postgres"
+	env := append(baseEnv(dir), "KEYORIX_MASTER_PASSWORD="+passphrase)
+
+	cfg := fmt.Sprintf(`storage:
+  type: postgres
+  database:
+    path: keyorix.db
+    dsn: %q
+  encryption:
+    enabled: true
+    dek_path: keys/dek.key
+    salt_path: keys/kek.salt
+server:
+  http:
+    enabled: true
+    port: "8090"
+  grpc:
+    enabled: false
+`, dsn)
+	if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(cfg), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	for _, args := range [][]string{
+		{"init", "--config", "./keyorix.yaml"},
+		{"encryption", "init", "--config", "./keyorix.yaml"},
+		{"migrate", "--config", "./keyorix.yaml"},
+	} {
+		out, err := runAdmin(t, bin, dir, env, args...)
+		if err != nil {
+			t.Fatalf("admin %v failed: %v\n%s", args, err, out)
+		}
+		if strings.Contains(out, "SQLite database") {
+			t.Errorf("admin %v opened a SQLite database under storage.type: postgres:\n%s", args, out)
+		}
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(dir, "*.db*"))
+	if len(matches) != 0 {
+		t.Fatalf("stray SQLite file(s) under storage.type: postgres: %v", matches)
+	}
+}

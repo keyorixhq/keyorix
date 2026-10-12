@@ -191,6 +191,35 @@ func MustT(messageID string, templateData map[string]interface{}) string {
 	return GetLocalizer().MustLocalize(messageID, templateData)
 }
 
+// RegisterPseudoLocaleForTesting registers lang (a tag with CLDR plural rules
+// that no shipped locale uses, such as "it" -- private-use tags like "qaa" have
+// no plural rule and are rejected) whose messages are exactly overrides, then
+// switches the process-global localizer to it; every other message ID falls
+// back to the fallback language. It exists so a test can CHANGE a translation
+// and prove that code which used to classify errors by their translated text no
+// longer depends on it (#2905): the shipped locales leave several error
+// messages in English, so flipping to one of them proves nothing. The returned
+// func switches back to the language that was active before the call.
+func RegisterPseudoLocaleForTesting(lang string, overrides map[string]string) (restore func(), err error) {
+	l := GetLocalizer()
+	tag, err := language.Parse(lang)
+	if err != nil {
+		return nil, fmt.Errorf("pseudo-locale %q: %w", lang, err)
+	}
+	msgs := make([]*i18n.Message, 0, len(overrides))
+	for id, text := range overrides {
+		msgs = append(msgs, &i18n.Message{ID: id, One: text, Other: text})
+	}
+	if err := l.bundle.AddMessages(tag, msgs...); err != nil {
+		return nil, fmt.Errorf("pseudo-locale %q: %w", lang, err)
+	}
+	l.mutex.RLock()
+	prev := l.currentLang
+	l.mutex.RUnlock()
+	l.SetLanguage(lang)
+	return func() { l.SetLanguage(prev) }, nil
+}
+
 // ResetForTesting resets the global i18n state for testing purposes
 func ResetForTesting() {
 	globMu.Lock()

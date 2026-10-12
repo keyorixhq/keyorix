@@ -37,8 +37,8 @@ service SecretService {
   // Update an existing secret (a new value creates a new version)
   rpc UpdateSecret(UpdateSecretRequest) returns (Secret);
 
-  // Delete a secret
-  rpc DeleteSecret(DeleteSecretRequest) returns (google.protobuf.Empty);
+  // Soft-delete a secret; the response says until when it can be restored.
+  rpc DeleteSecret(DeleteSecretRequest) returns (DeleteSecretResponse);
 
   // List secrets with filtering and pagination
   rpc ListSecrets(ListSecretsRequest) returns (ListSecretsResponse);
@@ -100,6 +100,12 @@ service UserService {
 
   // List users with filtering and pagination
   rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+
+  // Issue a new one-time password for an existing user (REISSUE-1). Same
+  // permission as creating a user with a one-time password (users.write). The
+  // password is returned once. Refused for the caller's own account, SSO-only
+  // and suspended users.
+  rpc ReissueOneTimePassword(ReissueOneTimePasswordRequest) returns (ReissueOneTimePasswordResponse);
 }
 
 // Role service for managing roles and assignments
@@ -228,6 +234,11 @@ message Secret {
   bool is_owned_by_user = 18;
   string user_permission = 19; // "read" | "write" | ""
   uint32 share_count = 20;
+  // Lifetime count of reads of this secret's value (core.SecretTotalReads: access-log
+  // rows with action read). Set only by GetSecret when the request sets
+  // include_total_reads (an O(reads) count, so opt-in); absent otherwise and on lists. Not the per-version
+  // read_count, which counts only reads charged against max_reads. (#2971)
+  optional int64 total_reads = 21;
 }
 
 message SecretValue {
@@ -266,6 +277,8 @@ message CreateSecretRequest {
 message GetSecretRequest {
   uint32 id = 1;
   bool include_value = 2;
+  // Opt in to Secret.total_reads, which costs an O(reads) count; off by default.
+  bool include_total_reads = 3;
 }
 
 message UpdateSecretRequest {
@@ -280,6 +293,15 @@ message UpdateSecretRequest {
 
 message DeleteSecretRequest {
   uint32 id = 1;
+}
+
+// DeleteSecretResponse replaces google.protobuf.Empty as DeleteSecret's result. Wire
+// compatible with it: an older client decoding this as Empty skips the unknown field.
+message DeleteSecretResponse {
+  // The instant (UTC) before which the purge job will not hard-delete the secret,
+  // i.e. the restore deadline. The same value the REST trash listing reports as
+  // purge_at.
+  google.protobuf.Timestamp purge_at = 1;
 }
 
 message ListSecretsRequest {
@@ -330,6 +352,9 @@ message SecretVersion {
 
 message GetSecretVersionsResponse {
   repeated SecretVersion versions = 1;
+  // Lifetime count of reads of the secret's value (core.SecretTotalReads). Each
+  // version's read_count counts only reads charged against max_reads. (#2971)
+  optional int64 total_reads = 2;
 }
 
 // --- Secret dependency graph (ADR-052) ---
@@ -464,6 +489,21 @@ message CreateUserResponse {
   // Out-of-band credential artifacts, set only for the matching mode.
   optional string setup_link = 2;
   optional string one_time_password = 3;
+  // When one_time_password stops working (UTC, RFC 3339); set with it.
+  optional string one_time_password_expires_at = 4;
+}
+
+message ReissueOneTimePasswordRequest {
+  uint32 id = 1;
+}
+
+message ReissueOneTimePasswordResponse {
+  uint32 user_id = 1;
+  string email = 2;
+  // Shown once, never stored in clear and never audited.
+  string one_time_password = 3;
+  // When one_time_password stops working (UTC, RFC 3339).
+  string one_time_password_expires_at = 4;
 }
 
 message GetUserRequest {

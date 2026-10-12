@@ -368,6 +368,12 @@ func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
+	return unexpiredSecret(secret)
+}
+
+// unexpiredSecret is GetSecret's expiration check: the secret itself, or
+// ErrorSecretExpired once its Expiration has passed.
+func unexpiredSecret(secret *models.SecretNode) (*models.SecretNode, error) {
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
 		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
 	}
@@ -375,14 +381,21 @@ func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 }
 
 // GetSecretWithPermissionCheck retrieves a secret by ID with read permission enforcement.
+//
+// It runs the same read check as EnforceSecretReadPermission (checkSecretPermission with
+// PermissionRead and no action) and returns the secret that check fetched, instead of
+// fetching it again with GetSecret (PERF-FIX-5). The order is unchanged: permission,
+// then the access schedule, then GetSecret's expiration check, evaluated here at the
+// same point it used to be.
 func (c *KeyorixCore) GetSecretWithPermissionCheck(ctx context.Context, id, userID uint) (*models.SecretNode, error) {
-	if _, err := c.EnforceSecretReadPermission(ctx, id, userID); err != nil {
+	_, secret, err := c.checkSecretPermission(ctx, id, userID, PermissionRead, "")
+	if err != nil {
 		return nil, err
 	}
 	if err := c.checkSecretAccessSchedule(ctx, id); err != nil {
 		return nil, err
 	}
-	return c.GetSecret(ctx, id)
+	return unexpiredSecret(secret)
 }
 
 // GetSecretByName resolves a secret by its name within a project/environment. Like
@@ -546,10 +559,30 @@ func (c *KeyorixCore) UpdateSecretWithPermissionCheck(ctx context.Context, req *
 	if req.UserID == 0 {
 		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "user ID is required for permission checking")
 	}
-	if _, err := c.EnforceSecretWritePermission(ctx, req.ID, req.UserID); err != nil {
+	if _, err := c.EnforceSecretActionPermission(ctx, req.ID, req.UserID, c.updateSecretAction(ctx, req)); err != nil {
 		return nil, err
 	}
 	return c.UpdateSecret(ctx, req)
+}
+
+// updateSecretAction classifies an update for the share allowlist: SecretActionUpdate
+// (value, type, description, metadata, tags) unless it CHANGES the expiry or the read
+// limit, which is SecretActionUpdateLifecycle. Re-sending the stored values is not a
+// change, so an edit form that echoes them back is still a plain update. If the
+// secret cannot be read the update is classified as lifecycle (not elevated): fail
+// closed, and the permission check that follows reports the read error anyway.
+func (c *KeyorixCore) updateSecretAction(ctx context.Context, req *UpdateSecretRequest) SecretAction {
+	cur, err := c.storage.GetSecret(ctx, req.ID)
+	if err != nil {
+		return SecretActionUpdateLifecycle
+	}
+	switch {
+	case req.ClearExpiration && cur.Expiration != nil,
+		req.Expiration != nil && (cur.Expiration == nil || !req.Expiration.Equal(*cur.Expiration)),
+		req.MaxReads != nil && (cur.MaxReads == nil || *req.MaxReads != *cur.MaxReads):
+		return SecretActionUpdateLifecycle
+	}
+	return SecretActionUpdate
 }
 
 // EventSecretRotateNoop is audited when RotateSecret is invoked with a value that is
@@ -722,7 +755,7 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	sid := id
-	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, fmt.Sprintf("secret %d restored", id))
+	c.writeAuditEvent(ctx, "secret.restored", actorPtr(actorID), &sid, c.auditRef(ctx, c.storage, auditKindSecret, id)+" restored")
 	// Emit an audit event for every dependency edge that is now re-active so
 	// operators know which rotation plans are unblocked (best-effort).
 	if secret != nil {

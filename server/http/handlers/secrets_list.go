@@ -174,6 +174,23 @@ func (h *SecretHandler) ListSecrets(w http.ResponseWriter, r *http.Request) { //
 			h.sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
 			return
 		}
+		// A machine owns no secrets and has none shared with it (ADR-030), and
+		// ListSecretsInScope deliberately applies neither ownership filter. Ignoring
+		// them would return everything in scope for a request that asked for a
+		// subset, so fail closed to the empty set instead.
+		if filter.ShowOwnedOnly || filter.ShowSharedOnly {
+			page, pageSize := filter.Page, filter.PageSize
+			if page < 1 {
+				page = 1
+			}
+			if pageSize < 1 {
+				pageSize = 20
+			}
+			h.sendSuccess(w, newSecretListResponseWire(&models.SecretListResponse{
+				Secrets: nil, Page: page, PageSize: pageSize, TotalPages: 1,
+			}), "")
+			return
+		}
 		response, err = h.coreService.ListSecretsInScope(r.Context(), filter)
 		if err != nil {
 			log.Printf("Error listing secrets: %v", err)

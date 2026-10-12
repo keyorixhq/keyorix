@@ -127,7 +127,7 @@ func runInviteSend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to send invitation: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil || resp.JSON201.Data.Invitation == nil {
-		return fmt.Errorf("failed to send invitation: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to send invitation", resp.StatusCode(), resp.Body)
 	}
 	inv := *resp.JSON201.Data.Invitation
 	if resp.JSON201.Data.DeliveryError != nil && *resp.JSON201.Data.DeliveryError != "" {
@@ -177,7 +177,7 @@ func runInviteList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to list invitations: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to list invitations: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to list invitations", resp.StatusCode(), resp.Body)
 	}
 	invitations := derefInvitationSlice(resp.JSON200.Data.Invitations)
 	if inviteListStaleDays > 0 {
@@ -260,7 +260,7 @@ func runInviteRevoke(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to revoke invitation: %w", err)
 	}
 	if resp.StatusCode() != 200 {
-		return fmt.Errorf("failed to revoke invitation: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to revoke invitation", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Invitation %d revoked.\n", inviteRevokeID)
 	return nil
@@ -307,7 +307,7 @@ func runInviteResend(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to resend invitation link: %w", err)
 	}
 	if resp.JSON200 == nil {
-		return fmt.Errorf("failed to resend invitation link: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to resend invitation link", resp.StatusCode(), resp.Body)
 	}
 	fmt.Printf("Invitation link reissued for invitation %d.\n", inviteResendID)
 	printProvisionResult(resp.JSON200.Data.SetupLink)

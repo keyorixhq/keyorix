@@ -10,7 +10,6 @@ import (
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 
@@ -45,13 +44,19 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 	}
 	activation, err := h.coreService.ActivateBreakGlass(r.Context(), uint(id), actor.UserID, body.Justification, body.TTL)
 	if err != nil {
+		// PAT-GUARD-2: the same refusal shape as ErrRestrictedPATCannotMintPAT.
+		if errors.Is(err, core.ErrRestrictedPATCannotBreakGlass) {
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
+		// #2905: mapped by sentinel (errors.Is), not by matching text that
+		// embeds i18n.T's locale-dependent output.
 		switch {
-		case strings.Contains(msg, "permission denied"), strings.Contains(msg, "not enabled"):
+		case errors.Is(err, core.ErrBreakGlassDisabled), errors.Is(err, core.ErrBreakGlassNotProjectMember):
 			status = http.StatusForbidden
-		case strings.Contains(msg, "required") || strings.Contains(msg, "ttl must") ||
-			strings.Contains(msg, "no emergency role") || strings.Contains(msg, "not found"):
+		case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 			status = http.StatusBadRequest
 		default:
 			log.Printf("Error activating break-glass for project %d: %v", id, err)
@@ -106,10 +111,12 @@ func (h *CatalogHandler) RevokeBreakGlass(w http.ResponseWriter, r *http.Request
 	if err := h.coreService.RevokeBreakGlass(r.Context(), actor.UserID, machineID(r), uint(id), uint(activationID)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
+		// #2905: by sentinel, as in ActivateBreakGlass above. A genuine
+		// retrieval FAILURE is deliberately not a 404: it falls to the 500.
 		switch {
-		case strings.Contains(msg, "not found"):
+		case errors.Is(err, storage.ErrBreakGlassNotFound):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "not active") || strings.Contains(msg, "required"):
+		case errors.Is(err, storage.ErrBreakGlassNotActive), errors.Is(err, core.ErrBreakGlassInvalidRequest):
 			status = http.StatusBadRequest
 		default:
 			log.Printf("Error revoking break-glass activation %d for project %d: %v", activationID, id, err)

@@ -65,22 +65,22 @@ func TestBreakGlass_RevokedActivation_ProtoCarriesRevocationFields(t *testing.T)
 // breakGlassError's classification switch — only the InvalidArgument branch is
 // exercised by the per-RPC tests; directly drive the rest as a table test.
 func TestBreakGlassError_Classification(t *testing.T) {
+	// #2905: keyed by sentinel, not by message text.
 	cases := []struct {
 		name string
-		msg  string
+		err  error
 		want codes.Code
 	}{
-		{"not found", "activation not found", codes.NotFound},
-		{"permission", "permission denied for this project", codes.PermissionDenied},
-		{"denied", "access denied", codes.PermissionDenied},
-		{"already revoked", "activation already revoked", codes.FailedPrecondition},
-		{"not active", "activation is not active", codes.FailedPrecondition},
-		{"expired", "activation expired", codes.FailedPrecondition},
-		{"default", "something went sideways", codes.Internal},
+		{"not found", errBGNotFound, codes.NotFound},
+		{"invalid request", errBGInvalidRequest, codes.InvalidArgument},
+		{"disabled", errBGDisabled, codes.PermissionDenied},
+		{"not a member", errBGNotMember, codes.PermissionDenied},
+		{"already revoked / not active / expired", errBGNotActive, codes.FailedPrecondition},
+		{"default", errors.New("something went sideways"), codes.Internal},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := breakGlassError(errors.New(c.msg))
+			got := breakGlassError(c.err)
 			assert.Equal(t, c.want, status.Code(got))
 		})
 	}

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -91,6 +92,13 @@ type ActivityItem struct {
 	SecretName string    `json:"secretName"`
 	Timestamp  time.Time `json:"timestamp"`
 	Actor      string    `json:"actor"`
+	// EventType is the raw audit event type (e.g. "secret.dependency_invalidated"),
+	// always present. Type is the dashboard's short category for the events it
+	// styles ("accessed", "created", ...) and the raw type for the rest. Label is
+	// the readable phrase to show after the actor (ActivityLabel); clients show it
+	// instead of a raw type and keep EventType for a tooltip or JSON.
+	EventType string `json:"eventType"`
+	Label     string `json:"label"`
 }
 
 // ActivityFeed is the paginated response for the activity endpoint.
@@ -137,25 +145,34 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	//
 	// A caller with audit.read still gets the DEPLOYMENT-wide total instead, further
 	// down (fetchAdminDashboardStats) — unchanged.
-	total, err := c.CountReadableSecrets(ctx, userID, principalID)
-	if err != nil {
+	total, exact, err := c.CountReadableSecrets(ctx, userID, principalID)
+	switch {
+	case err != nil:
 		total = 0
 		stats.degrade("total_secrets", err)
+	case !exact:
+		// The listing hit its per-scope bound, so `total` is a floor. Degrade rather
+		// than show it as a count: a number that is quietly short is the same defect
+		// this tile was fixed for, just smaller. Degraded is exactly the signal for
+		// "treat this as incomplete".
+		stats.degrade("total_secrets", errUnexactReadableSecretCount)
 	}
 
 	outgoing, err := c.storage.ListSharesByOwner(ctx, userID, c.shareEffectiveNow())
 	sharedSecrets := 0
 	if err == nil {
-		sharedSecrets = len(outgoing)
-	} else {
+		sharedSecrets, err = c.countSharesVisibleToPAT(ctx, outgoing)
+	}
+	if err != nil {
 		stats.degrade("shared_secrets", err)
 	}
 
 	incoming, err := c.storage.ListSharesByUser(ctx, userID, c.shareEffectiveNow())
 	sharedWithMe := 0
 	if err == nil {
-		sharedWithMe = len(incoming)
-	} else {
+		sharedWithMe, err = c.countSharesVisibleToPAT(ctx, incoming)
+	}
+	if err != nil {
 		stats.degrade("shared_with_me", err)
 	}
 
@@ -171,22 +188,18 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	// read.
 	hasAuditRead, _ := c.AuthorizePrincipal(ctx, actorTypeFromContext(ctx), principalID, "audit.read", Scope{})
 
-	var auditActor *uint
-	if !hasAuditRead {
-		auditActor = &userID
+	var events []*models.AuditEvent
+	if hasAuditRead {
+		// audit.read (honoured through AuthorizePrincipal, so a restricted PAT has it
+		// only at global scope) authorizes the deployment-wide log, as on GET /audit.
+		events, _, err = c.storage.GetAuditLogs(ctx, &storage.AuditFilter{Page: 1, PageSize: dashboardRecentActivity})
+	} else {
+		events, err = c.ownRecentActivity(ctx, userID)
 	}
-	events, _, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-		UserID:   auditActor,
-		Page:     1,
-		PageSize: 5,
-	})
 	if err != nil {
 		stats.degrade("recent_activity", err)
 	}
-	recent := make([]ActivityItem, 0, len(events))
-	for _, e := range events {
-		recent = append(recent, mapAuditEventToActivity(e, username))
-	}
+	recent := c.activityItems(ctx, events)
 
 	expiringSecrets, err := c.getExpiringSecrets(ctx, username)
 	if err != nil {
@@ -216,7 +229,10 @@ func (c *KeyorixCore) GetDashboardStats(ctx context.Context, userID uint, userna
 	if hasAuditRead {
 		c.saveDeploymentSnapshot(ctx, stats)
 	}
-	c.saveUserSnapshot(ctx, userID, stats, total, sharedSecrets, sharedWithMe)
+	// The per-user snapshot is the user's trend baseline. A restricted PAT's numbers
+	// describe only its restriction, so saving them would skew the user's own trend.
+	// It still reads the baseline for its trend arrows.
+	c.saveUserSnapshot(ctx, userID, stats, total, sharedSecrets, sharedWithMe, patRestrictionFromContext(ctx) == nil)
 
 	return stats, nil
 }
@@ -255,13 +271,16 @@ func (c *KeyorixCore) saveDeploymentSnapshot(ctx context.Context, stats *Dashboa
 }
 
 // saveUserSnapshot persists per-user stats and back-fills trend fields.
-func (c *KeyorixCore) saveUserSnapshot(ctx context.Context, userID uint, stats *DashboardStats, total int64, sharedSecrets, sharedWithMe int) {
+func (c *KeyorixCore) saveUserSnapshot(ctx context.Context, userID uint, stats *DashboardStats, total int64, sharedSecrets, sharedWithMe int, persist bool) {
 	prev, err := c.storage.GetPreviousStatsSnapshot(ctx, userID)
 	if err == nil && prev != nil {
 		stats.TotalSecretsTrend = computeTrend(float64(prev.TotalSecrets), float64(total))
 		stats.SharedSecretsTrend = computeTrend(float64(prev.SharedSecrets), float64(sharedSecrets))
 		stats.SharedWithMeTrend = computeTrend(float64(prev.SecretsSharedWithMe), float64(sharedWithMe))
 		stats.PrevTotalSecrets = &prev.TotalSecrets
+	}
+	if !persist {
+		return
 	}
 	today := time.Now().UTC().Truncate(24 * time.Hour)
 	existing, _ := c.storage.GetPreviousStatsSnapshot(ctx, userID)
@@ -338,10 +357,7 @@ func (c *KeyorixCore) GetActivityFeed(ctx context.Context, userID uint, username
 		return &ActivityFeed{Items: []ActivityItem{}, Total: 0, Page: page, PageSize: pageSize}, nil
 	}
 
-	items := make([]ActivityItem, 0, len(events))
-	for _, e := range events {
-		items = append(items, mapAuditEventToActivity(e, username))
-	}
+	items := c.activityItems(ctx, events)
 
 	return &ActivityFeed{Items: items, Total: total, Page: page, PageSize: pageSize}, nil
 }
@@ -370,6 +386,7 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) (
 	const pageSize = 200
 	var result []ExpiringSecret
 	var pageErr error
+	scanned := 0
 	for page := 1; ; page++ {
 		secrets, total, err := c.storage.ListSecrets(ctx, &storage.SecretFilter{
 			CreatedBy:     &username,
@@ -381,9 +398,13 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) (
 			pageErr = err
 			break
 		}
+		scanned += len(secrets)
 		for _, s := range secrets {
 			if s.Expiration == nil {
 				continue // defensive; the filter already excludes nulls
+			}
+			if !patAllowsSecretRead(ctx, s) {
+				continue // names a secret outside the PAT restriction (PAT-GUARD-1)
 			}
 			exp := s.Expiration.UTC()
 			envName := envNames[s.EnvironmentID]
@@ -399,7 +420,7 @@ func (c *KeyorixCore) getExpiringSecrets(ctx context.Context, username string) (
 				Expired:     exp.Before(now),
 			})
 		}
-		if len(secrets) < pageSize || int64(len(result)) >= total {
+		if len(secrets) < pageSize || int64(scanned) >= total {
 			break
 		}
 	}
@@ -435,6 +456,8 @@ func computeTrend(prev, current float64) *StatTrend {
 // Type mapping — what the frontend receives:
 //
 //	secret.read     → "accessed"
+//	secret.versions_listed → "versions_listed" (a listing, not a value read)
+//	secret.metadata_read → "metadata_read" (a by-name lookup, not a value read)
 //	secret.created  → "created"
 //	secret.updated  → "updated"
 //	secret.deleted  → "deleted"
@@ -455,6 +478,12 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 	// Secret events — extract secret name from description
 	case "secret.read":
 		eventType = "accessed"
+		secretName = extractSecretName(e.Description)
+	case EventSecretVersionsListed:
+		eventType = "versions_listed"
+		secretName = extractSecretName(e.Description)
+	case EventSecretMetadataRead:
+		eventType = "metadata_read"
 		secretName = extractSecretName(e.Description)
 	case "secret.created":
 		eventType = "created"
@@ -488,13 +517,79 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 		eventType = e.EventType
 	}
 
+	if activityNameFromSubject[e.EventType] {
+		secretName = "" // the description does not end in the secret's name; the feed looks it up
+	}
+
 	return ActivityItem{
 		ID:         e.ID,
 		Type:       eventType,
 		SecretName: secretName,
 		Timestamp:  e.EventTime,
 		Actor:      actor,
+		EventType:  e.EventType,
+		Label:      ActivityLabel(e.EventType),
 	}
+}
+
+// activityItems maps audit events to dashboard rows. Each row names the
+// principal that acted (system for events with no user), not the viewer, and
+// carries the subject secret's name where the event has one. Both are display
+// lookups; the audit rows are not touched.
+func (c *KeyorixCore) activityItems(ctx context.Context, events []*models.AuditEvent) []ActivityItem { // nosemgrep: keyorix-unbounded-bulk-slice-param -- events is an already-paginated GetAuditLogs result (PageSize-bounded), not a raw client-supplied array; the only per-item work is in-memory mapping, the lookups are batched
+	actors := c.ResolveUsernames(ctx, events)
+	secretNames := c.activitySecretNames(ctx, events)
+	items := make([]ActivityItem, 0, len(events))
+	for _, e := range events {
+		var uid uint
+		if e.UserID != nil {
+			uid = *e.UserID
+		}
+		item := mapAuditEventToActivity(e, actors[uid])
+		if e.SecretNodeID != nil && (item.SecretName == "" || activityNameFromSubject[e.EventType]) {
+			if name := secretNames[*e.SecretNodeID]; name != "" {
+				item.SecretName = name
+			}
+		}
+		items = append(items, item)
+	}
+	return items
+}
+
+// activityNameFromSubject lists event types whose description is not of the form
+// "... secret <name>", so extractSecretName would return junk (or nothing); the
+// name comes from the event's SecretNodeID instead.
+var activityNameFromSubject = map[string]bool{
+	"secret.restored":               true,
+	"secret.dependency_added":       true,
+	"secret.dependency_removed":     true,
+	"secret.dependency_invalidated": true,
+	"secret.dependency_restored":    true,
+}
+
+// activitySecretNames batch-resolves the secret names for the events that have a
+// SecretNodeID. A secret that is gone (soft-deleted) simply has no entry.
+func (c *KeyorixCore) activitySecretNames(ctx context.Context, events []*models.AuditEvent) map[uint]string { // nosemgrep: keyorix-unbounded-bulk-slice-param -- events is an already-paginated GetAuditLogs result (PageSize-bounded), not a raw client-supplied array; the lookup is one batched GetSecretsByIDs call, not a per-item round trip
+	var ids []uint
+	seen := map[uint]bool{}
+	for _, e := range events {
+		if e.SecretNodeID != nil && !seen[*e.SecretNodeID] {
+			seen[*e.SecretNodeID] = true
+			ids = append(ids, *e.SecretNodeID)
+		}
+	}
+	names := map[uint]string{}
+	if len(ids) == 0 {
+		return names
+	}
+	secrets, err := c.storage.GetSecretsByIDs(ctx, ids)
+	if err != nil {
+		return names
+	}
+	for _, s := range secrets {
+		names[s.ID] = s.Name
+	}
+	return names
 }
 
 // extractSecretName pulls the secret name from audit description strings.
@@ -503,6 +598,11 @@ func mapAuditEventToActivity(e *models.AuditEvent, actor string) ActivityItem {
 // Returns empty string if the pattern is not found.
 func extractSecretName(description string) string {
 	const marker = " secret "
+	// A secret.deleted description ends in a soft-delete note (softDeleteNoteMarker)
+	// that is not part of the name, and may itself contain " secret ".
+	if i := strings.Index(description, softDeleteNoteMarker); i >= 0 {
+		description = description[:i]
+	}
 	if idx := lastIndex(description, marker); idx >= 0 {
 		return description[idx+len(marker):]
 	}

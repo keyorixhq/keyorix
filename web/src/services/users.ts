@@ -22,6 +22,8 @@ export interface SetupLinkResult {
 export interface OneTimePasswordResult {
     email: string;
     one_time_password: string;
+    // UTC RFC 3339 instant after which login with it is refused like a wrong password.
+    expires_at?: string;
 }
 
 export interface CreateUserResult {
@@ -71,6 +73,11 @@ export interface UserMembership {
     // True when the membership comes only from a group grant — the project's own
     // Members tab has no row to remove for it.
     via_group: boolean;
+    // True when the project has been soft-deleted. The grant survives a soft-delete
+    // (a restore reinstates it), so the row is shown rather than hidden — but it is
+    // not counted by the per-user project tallies on the admin Users list, and it
+    // used to come back with an empty project_name.
+    project_deleted: boolean;
 }
 
 // ProjectAssignment is one project-scoped role grant applied atomically at
@@ -195,6 +202,7 @@ export const usersApi = {
                 roles: m.roles ?? m.Roles ?? (role ? [role] : []),
                 state: m.state ?? m.State ?? '',
                 via_group: m.via_group ?? m.ViaGroup ?? false,
+                project_deleted: m.project_deleted ?? m.ProjectDeleted ?? false,
             };
         });
     },

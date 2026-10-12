@@ -135,7 +135,7 @@ func (h *AuthHandler) CompleteSSO(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, _, returnTo, err := h.coreService.CompleteSSO(r.Context(), provider, code, state, r.Header.Get("User-Agent"), r.RemoteAddr)
+	session, _, returnTo, err := h.coreService.CompleteSSO(r.Context(), provider, code, state, r.Header.Get("User-Agent"), clientIP(r))
 	if err != nil {
 		msg := err.Error()
 		if !isSafeSSOError(msg) {

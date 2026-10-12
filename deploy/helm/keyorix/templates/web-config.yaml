@@ -41,6 +41,9 @@ data:
         {{- end }}
       }
 
+      # HSTS only behind a trusted TLS-terminating proxy (web.trustedProxies).
+      {{- include "keyorix.web.hsts" . | nindent 6 }}
+
       # Baseline security headers. NOTE: nginx's add_header does not inherit into
       # any location block that defines its own add_header (see the comment on
       # keyorix.web.securityHeaders in _helpers.tpl) — every location below that
@@ -64,11 +67,36 @@ data:
         # /api/ = authenticated API, /auth/ = public auth (login/refresh/logout,
         # served at the root), /system/ = first-boot init. Proxy all to the server.
         location ~ ^/(api|auth|system)/ {
+          {{- if .Values.secureBaseline.enabled }}
+          # secureBaseline (SECURE-DEFAULT-1): the server serves TLS; verify it
+          # against exactly its own certificate (server.crt from the
+          # <fullname>-secure-baseline Secret, mounted at /etc/keyorix/tls).
+          proxy_pass https://{{ include "keyorix.server.fullname" . }}:{{ .Values.server.service.port }};
+          proxy_ssl_verify on;
+          proxy_ssl_verify_depth 1;
+          proxy_ssl_trusted_certificate /etc/keyorix/tls/ca.crt;
+          proxy_ssl_name {{ include "keyorix.server.fullname" . }};
+          proxy_ssl_server_name on;
+          proxy_ssl_protocols TLSv1.2 TLSv1.3;
+          {{- else }}
           proxy_pass http://{{ include "keyorix.server.fullname" . }}:{{ .Values.server.service.port }};
+          {{- end }}
           proxy_set_header Host $host;
           proxy_set_header X-Real-IP $remote_addr;
           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
           proxy_set_header X-Forwarded-Proto $scheme;
+          # The backend adds the same security headers to its own responses
+          # (server/middleware/security_headers.go); drop its copy so the set
+          # added below is the only one (DEMO-WALK-3 finding 23).
+          proxy_hide_header X-Frame-Options;
+          proxy_hide_header X-Content-Type-Options;
+          proxy_hide_header X-XSS-Protection;
+          proxy_hide_header Referrer-Policy;
+          proxy_hide_header Content-Security-Policy;
+          proxy_hide_header Cross-Origin-Resource-Policy;
+          proxy_hide_header Cross-Origin-Embedder-Policy;
+          proxy_hide_header Cross-Origin-Opener-Policy;
+          proxy_hide_header Strict-Transport-Security;
           {{- include "keyorix.web.securityHeaders" . | nindent 10 }}
           add_header Access-Control-Allow-Origin $cors_allowed_origin always;
           add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;

@@ -28,7 +28,7 @@ func resolveRBACGroupID(ctx context.Context, client *apiclient.ClientWithRespons
 		return 0, "", fmt.Errorf("failed to list groups: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Groups == nil {
-		return 0, "", fmt.Errorf("failed to list groups: HTTP %d", resp.StatusCode())
+		return 0, "", httpStatusError("failed to list groups", resp.StatusCode(), resp.Body)
 	}
 	for _, g := range *resp.JSON200.Data.Groups {
 		if g.Name != nil && strings.EqualFold(*g.Name, nameOrID) {
@@ -132,7 +132,7 @@ func runRBACAssignRoleToGroup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to assign role: %w", err)
 	}
 	if resp.JSON201 == nil {
-		return fmt.Errorf("failed to assign role: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to assign role", resp.StatusCode(), resp.Body)
 	}
 	suffix := scopeSuffix(rbacGroupRoleProject, rbacGroupRoleEnv)
 	if rbacGroupRoleTTL > 0 {
@@ -212,7 +212,7 @@ func runRBACRemoveRoleFromGroup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to remove role: %w", err)
 	}
 	if resp.StatusCode() != 204 {
-		return fmt.Errorf("failed to remove role: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to remove role", resp.StatusCode(), resp.Body)
 	}
 	suffix := scopeSuffix(rbacRemoveGroupRoleProject, rbacRemoveGroupRoleEnv)
 	fmt.Printf("Successfully removed role '%s' from group '%s'%s\n", rbacRemoveGroupRoleName, groupName, suffix)
@@ -254,7 +254,7 @@ func runRBACListGroupRoles(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to get group roles: %w", err)
 	}
 	if resp.JSON200 == nil || resp.JSON200.Data == nil {
-		return fmt.Errorf("failed to get group roles: HTTP %d", resp.StatusCode())
+		return httpStatusError("failed to get group roles", resp.StatusCode(), resp.Body)
 	}
 	roles := derefGroupRoleGrantSlice(resp.JSON200.Data.Roles)
 	if len(roles) == 0 {
