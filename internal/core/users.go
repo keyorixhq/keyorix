@@ -598,7 +598,6 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 					patHashes = hashes
 				}
 				sessionErr = tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
-				purgeStepUpGrants(ctx, tx, req.ID)
 				// Best-effort, not fatal: the conditional write this switch case
 				// exists for (UpdateUserIfActiveStateMatches) has ALREADY matched
 				// and applied by this point -- the deactivation itself durably
@@ -679,6 +678,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	if deactivating {
 		c.invalidateTokenCache(sessionHashes...)
 		c.invalidateTokenCache(patHashes...)
+		purgeStepUpGrants(ctx, c.storage, req.ID)
 	}
 	c.writeAuditEvent(ctx, EventUserUpdated, actorPtr(req.ActorID), nil,
 		fmt.Sprintf("updated user %d (%s)", updated.ID, updated.Username))
@@ -821,13 +821,13 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 				return err
 			}
 			patHashes = hashes
-			purgeStepUpGrants(ctx, tx, id)
 			return tx.DeleteUser(ctx, id)
 		}); err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		c.invalidateTokenCache(sessionHashes...)
 		c.invalidateTokenCache(patHashes...)
+		purgeStepUpGrants(ctx, c.storage, id)
 		c.writeAuditEvent(ctx, EventUserDeleted, actorPtr(actorID), nil,
 			fmt.Sprintf("deleted user %d (%s)", id, user.Username))
 		return nil

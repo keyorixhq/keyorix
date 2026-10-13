@@ -839,7 +839,12 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
 		if !secondFactorEnrolled {
 			ok = true
-		} else if !c.userStillActiveForGrant(ctx, user.ID) {
+		} else if active, aerr := c.userStillActiveForGrant(ctx, user.ID); aerr != nil {
+			// The password was confirmed correct; only the account re-read failed.
+			// Same arm as a failed grant consumption (#2888): mfa.error, still
+			// counts toward the lockout, identical client response.
+			postVerdictErr = aerr
+		} else if !active {
 			// A suspended/deactivated account's grant is refused exactly like an
 			// absent one (no ok, no postVerdictErr: the generic "invalid code or
 			// password" and the same failed-attempt bookkeeping). Defence in depth

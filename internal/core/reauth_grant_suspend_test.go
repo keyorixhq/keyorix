@@ -6,8 +6,8 @@
 // deactivated / deleted / SCIM-deprovisioned, and consuming it did not check the
 // account was still active, so a user suspended right after re-authenticating
 // kept an elevated grant. Two layers now close that:
-//  1. every account-disabling path purges the user's grants in the same
-//     transaction as the disable (purgeStepUpGrants);
+//  1. every account-disabling path purges the user's grants right after the
+//     disable commits (purgeStepUpGrants, best-effort);
 //  2. requireReauth re-reads the account before spending a grant
 //     (userStillActiveForGrant), so a grant inserted AFTER the purge (the
 //     suspend-between-check-and-insert race) is refused with the same generic

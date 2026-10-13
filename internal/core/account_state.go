@@ -329,6 +329,9 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 	} else if needsCacheClearSweep {
 		c.clearCachedTokens(sessionHashes...)
 	}
+	if AccountLoginBlocked(userID, state) {
+		purgeStepUpGrants(ctx, c.storage, userID)
+	}
 	aid := adminID
 	c.writeAuditEventFull(ctx, eventType, &aid, nil, nil, "",
 		fmt.Sprintf("%s account state set to %s", c.auditRef(ctx, c.storage, auditKindUser, userID), state))
@@ -402,7 +405,6 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 		// evicted from the auth cache alongside the session hashes after commit.
 		if AccountLoginBlocked(userID, state) {
 			_ = tx.DeleteSessionsForUserExcept(ctx, userID, 0)
-			purgeStepUpGrants(ctx, tx, userID)
 			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, userID); herr == nil {
 				sessionHashes = append(sessionHashes, hashes...)
 			}
@@ -412,14 +414,16 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 }
 
 // purgeStepUpGrants deletes every MFA step-up grant (re-auth and
-// restricted-secret-read purposes) the user holds, in the caller's transaction,
-// alongside the session/PAT revocation of an account-disabling path. Best-effort
-// like those: a grant a failed delete leaves behind is still refused at use,
-// because requireReauth re-reads the account and refuses a non-active one
-// (userStillActiveForGrant).
-func purgeStepUpGrants(ctx context.Context, tx storage.Storage, userID uint) {
+// restricted-secret-read purposes) the user holds. It must be called AFTER the
+// account-disabling write has committed, never inside the transaction:
+// besteffort.Run is post-commit only (a failure there must not be reported as
+// a failure of the already-durable disable, and inside a Postgres transaction a
+// failed statement would instead abort it). A grant a failed delete leaves
+// behind is still refused at use, because requireReauth re-reads the account
+// and refuses a non-active one (userStillActiveForGrant).
+func purgeStepUpGrants(ctx context.Context, s storage.Storage, userID uint) {
 	besteffort.Run(ctx, "account.purgeStepUpGrants", func() error {
-		return tx.DeleteMFAStepUpGrantsFor(ctx, userID)
+		return s.DeleteMFAStepUpGrantsFor(ctx, userID)
 	})
 }
 
@@ -427,13 +431,17 @@ func purgeStepUpGrants(ctx context.Context, tx storage.Storage, userID uint) {
 // spend a step-up grant: active and not login-blocked. It reads fresh state, not
 // the caller's struct, because the race it closes (a suspension landing between a
 // grant's creation and its use) is invisible to a struct loaded before the
-// suspension. Any read error fails closed.
-func (c *KeyorixCore) userStillActiveForGrant(ctx context.Context, userID uint) bool {
+// suspension. A read error fails closed (false) AND is returned, so the caller
+// can audit it as mfa.error instead of a plain failed attempt (#2888).
+func (c *KeyorixCore) userStillActiveForGrant(ctx context.Context, userID uint) (bool, error) {
 	fresh, err := c.storage.GetUser(ctx, userID)
-	if err != nil || fresh == nil {
-		return false
+	if err != nil {
+		return false, err
 	}
-	return fresh.IsActive && !AccountLoginBlocked(fresh.ID, fresh.AccountState)
+	if fresh == nil {
+		return false, nil
+	}
+	return fresh.IsActive && !AccountLoginBlocked(fresh.ID, fresh.AccountState), nil
 }
 
 // activePATHashes returns the token hashes of all non-revoked PATs that have a hash,

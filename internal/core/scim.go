@@ -289,9 +289,6 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 			var err error
 			updated, deactivated, err = c.scimUpdateUserTx(ctx, tx, id, displayName, email, active)
-			if err == nil && deactivated {
-				purgeStepUpGrants(ctx, tx, id)
-			}
 			return err
 		})
 	})
@@ -313,6 +310,7 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		// Suspension must be effective immediately — terminate sessions AND evict from
 		// auth cache so an offboarded user doesn't keep access for the cache TTL.
 		_ = c.deleteSessionsForUserAndEvict(ctx, id, 0, "")
+		purgeStepUpGrants(ctx, c.storage, id)
 	}
 	c.writeAuditEvent(ctx, EventSCIMUserUpdated, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM updated user %d", id))
@@ -649,7 +647,6 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 				return err
 			}
 			sessionHashes = append(sessionHashes, patHashes...)
-			purgeStepUpGrants(ctx, tx, id)
 			return tx.DeleteUser(ctx, id)
 		})
 	})
@@ -666,6 +663,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	// (offboarded) user's live session stops authenticating immediately instead of
 	// lingering for the cache TTL.
 	c.invalidateTokenCache(sessionHashes...)
+	purgeStepUpGrants(ctx, c.storage, id)
 	c.writeAuditEvent(ctx, EventSCIMUserDeprovisioned, actorPtr(actorID), nil,
 		fmt.Sprintf("SCIM deprovisioned user %d (%s)", id, username))
 	return nil
