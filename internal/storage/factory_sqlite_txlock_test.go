@@ -33,7 +33,7 @@ func TestSqliteDSN_TxlockImmediate(t *testing.T) {
 // TestSqliteDSN_PostgresPathUntouched pins that the _txlock=immediate DSN
 // pragma (a SQLite-only concept — Postgres has no BEGIN IMMEDIATE/DEFERRED
 // distinction on this axis) never leaks into the Postgres connection string.
-// createPostgresStorage builds its DSN via config.ResolvePostgresDSN, an
+// createPostgresStorage connects via config.ResolvePostgresConnConfig, an
 // entirely separate function from sqliteDSN — this test guards that
 // separation structurally so a future refactor that accidentally routes both
 // backends through one shared DSN builder gets caught here.
@@ -44,9 +44,9 @@ func TestSqliteDSN_PostgresPathUntouched(t *testing.T) {
 		Name: "keyorix",
 		User: "keyorix",
 	}
-	dsn, err := config.ResolvePostgresDSN(d)
+	cc, err := config.ResolvePostgresConnConfig(d)
 	require.NoError(t, err)
-	require.NotContains(t, dsn, "_txlock", "Postgres DSN must never carry the SQLite-only _txlock pragma")
-	require.NotContains(t, dsn, "_busy_timeout", "Postgres DSN must never carry the SQLite-only _busy_timeout pragma")
-	require.NotContains(t, dsn, "_journal_mode", "Postgres DSN must never carry the SQLite-only _journal_mode pragma")
+	for _, k := range []string{"_txlock", "_busy_timeout", "_journal_mode"} {
+		require.NotContains(t, cc.RuntimeParams, k, "Postgres connection must never carry the SQLite-only %s pragma", k)
+	}
 }

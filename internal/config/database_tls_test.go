@@ -205,28 +205,27 @@ func TestValidate_DSN_Unparseable_RefusesWithoutEchoingIt(t *testing.T) {
 	assert.NotContains(t, err.Error(), "hunter2")
 }
 
-// ResolvePostgresDSN is the guard every connection goes through (the factory,
-// OpenGormDB, serverguard, admin restore/verify-audit): it returns the same
-// refusal instead of a DSN, so an entry point that never ran Validate still
-// cannot connect.
-func TestResolvePostgresDSN_RefusesWhatValidateRefuses(t *testing.T) {
-	dsn, err := ResolvePostgresDSN(pgFields("verify-full", ""))
+// ResolvePostgresConnConfig is the guard every connection goes through (the
+// factory, OpenGormDB, serverguard, admin restore/verify-audit): it returns the
+// same refusal instead of a config, so an entry point that never ran Validate
+// still cannot connect.
+func TestResolvePostgresConnConfig_RefusesWhatValidateRefuses(t *testing.T) {
+	cc, err := ResolvePostgresConnConfig(pgFields("verify-full", ""))
 	require.Error(t, err)
-	assert.Empty(t, dsn)
+	assert.Nil(t, cc)
 	assert.Contains(t, err.Error(), "storage.database.ssl_root_cert")
 
-	dsn, err = ResolvePostgresDSN(&DatabaseConfig{DSN: "host=db sslmode=verify-full"})
+	cc, err = ResolvePostgresConnConfig(&DatabaseConfig{DSN: "host=db sslmode=verify-full"})
 	require.Error(t, err)
-	assert.Empty(t, dsn)
+	assert.Nil(t, cc)
 }
 
-func TestResolvePostgresDSN_PassesSSLRootCert(t *testing.T) {
+func TestResolvePostgresConnConfig_PassesSSLRootCert(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), `ca dir with 'quote`)
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	ca := writeTestCA(t, dir, "pg ca.pem")
 
-	dsn, err := ResolvePostgresDSN(pgFields("verify-full", ca))
-	require.NoError(t, err)
+	dsn := buildPostgresDSNFromFields(pgFields("verify-full", ca))
 	assert.Contains(t, dsn, "sslmode='verify-full'")
 	assert.Contains(t, dsn, `sslrootcert='`+strings.ReplaceAll(ca, `'`, `\'`)+`'`)
 
@@ -237,9 +236,17 @@ func TestResolvePostgresDSN_PassesSSLRootCert(t *testing.T) {
 	assert.Equal(t, "verify-full", mode)
 	assert.Equal(t, ca, root)
 
-	dsn, err = ResolvePostgresDSN(pgFields("require", ""))
+	assert.NotContains(t, buildPostgresDSNFromFields(pgFields("require", "")), "sslrootcert", "no CA configured: none passed")
+
+	// The driver gets exactly that CA, verifying the configured host name.
+	cc, err := ResolvePostgresConnConfig(pgFields("verify-full", ca))
 	require.NoError(t, err)
-	assert.NotContains(t, dsn, "sslrootcert", "no CA configured: none passed")
+	want, _, err := LoadDatabaseCAPool(ca)
+	require.NoError(t, err)
+	require.NotNil(t, cc.TLSConfig)
+	assert.True(t, want.Equal(cc.TLSConfig.RootCAs))
+	assert.False(t, cc.TLSConfig.InsecureSkipVerify)
+	assert.Equal(t, cc.Host, cc.TLSConfig.ServerName)
 }
 
 func TestLoad_SSLRootCert_AnchoredToConfigDir(t *testing.T) {

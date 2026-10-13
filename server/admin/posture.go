@@ -392,7 +392,7 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 // unusable CA file) is a deviation carrying the same message as the boot
 // refusal. Through the real command that branch is defense in depth, like
 // collectTLSPosture's: runAdminValidate's server-presence check
-// (acquireDatabaseLock -> serverguard -> config.ResolvePostgresDSN) already
+// (acquireDatabaseLock -> serverguard -> config.ResolvePostgresConnConfig) already
 // fails the command with that same message before this runs (verified on the
 // e2e VM against a TLS PostgreSQL). ssl_mode: disable itself is already
 // counted by the insecure-settings registry

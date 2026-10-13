@@ -14,6 +14,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/keyorixhq/keyorix/cli/internal/apiclient"
+	"github.com/keyorixhq/keyorix/cli/internal/regularfile"
 )
 
 // ── create ──────────────────────────────────────────────────────────────────────
@@ -68,7 +69,7 @@ func readSecretValueFromFile(path string) ([]byte, error) {
 	if fileInfo.Mode()&os.ModeSymlink != 0 {
 		return nil, fmt.Errorf("symlinks are not allowed: %s", cleanPath)
 	}
-	return os.ReadFile(cleanPath) // #nosec G304 -- cleanPath is relative-only and symlink-checked above
+	return regularfile.ReadFile("secret value file", cleanPath)
 }
 
 // readHiddenValue prompts on stderr and reads a value from stdin with echo
@@ -410,6 +411,7 @@ var (
 	secretUpdateFromFile    string
 	secretUpdateInteractive bool
 	secretUpdateClearExp    bool
+	secretUpdateClearReads  bool
 )
 
 var secretUpdateCmd = &cobra.Command{
@@ -420,7 +422,8 @@ var secretUpdateCmd = &cobra.Command{
 
 func init() {
 	secretUpdateCmd.Flags().IntVar(&secretUpdateID, "id", 0, "Secret ID (required)")
-	secretUpdateCmd.Flags().IntVar(&secretUpdateMaxReads, "max-reads", -1, "Update max reads (-1 = no change, 0 = unlimited)")
+	secretUpdateCmd.Flags().IntVar(&secretUpdateMaxReads, "max-reads", -1, "Update max reads (-1 = no change, minimum 1; use --clear-max-reads to remove the limit)")
+	secretUpdateCmd.Flags().BoolVar(&secretUpdateClearReads, "clear-max-reads", false, "Remove the read limit (unlimited)")
 	secretUpdateCmd.Flags().StringVar(&secretUpdateExpiration, "expires", "", "Update expiration (RFC3339 format)")
 	secretUpdateCmd.Flags().StringVar(&secretUpdateValue, "value", "", "New secret value")
 	secretUpdateCmd.Flags().StringVar(&secretUpdateFromFile, "from-file", "", "Read new value from file")
@@ -454,7 +457,15 @@ func runSecretUpdate(cmd *cobra.Command, args []string) error {
 		v := string(value)
 		body.Value = &v
 	}
-	if secretUpdateMaxReads >= 0 {
+	switch {
+	case secretUpdateClearReads && secretUpdateMaxReads >= 0:
+		return fmt.Errorf("--max-reads and --clear-max-reads are mutually exclusive")
+	case secretUpdateClearReads:
+		t := true
+		body.ClearMaxReads = &t
+	case secretUpdateMaxReads == 0:
+		return fmt.Errorf("--max-reads must be at least 1; to remove the read limit use --clear-max-reads")
+	case secretUpdateMaxReads > 0:
 		body.MaxReads = &secretUpdateMaxReads
 	}
 	if secretUpdateClearExp {

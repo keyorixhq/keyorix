@@ -121,13 +121,13 @@ func TestDSNTLSSettings_RejectsWhatPgxRejects(t *testing.T) {
 	}
 }
 
-// ResolvePostgresDSN quotes every value it splices into the keyword/value DSN,
+// buildPostgresDSNFromFields quotes every value it writes into the keyword/value DSN,
 // so a field carrying ` sslmode=disable` (a password from KEYORIX_DB_PASSWORD,
 // a user or database name) stays that field's literal value. Unquoted, pgx
 // reads it as a second sslmode, which wins over the first: the connection
 // would skip the verification ValidateDatabaseTLS approved. Checked against
 // what pgx actually builds, not against the DSN text.
-func TestResolvePostgresDSN_FieldValuesCannotInjectKeywords(t *testing.T) {
+func TestResolvePostgresConnConfig_FieldValuesCannotInjectKeywords(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PGSSLMODE", "")
 	t.Setenv("PGSSLROOTCERT", "")
@@ -147,9 +147,7 @@ func TestResolvePostgresDSN_FieldValuesCannotInjectKeywords(t *testing.T) {
 			case "dbname":
 				d.Name = value
 			}
-			dsn, err := ResolvePostgresDSN(d)
-			require.NoError(t, err)
-			pc, err := pgconn.ParseConfig(dsn)
+			pc, err := ResolvePostgresConnConfig(d)
 			require.NoError(t, err)
 
 			require.NotNil(t, pc.TLSConfig, "sslmode=verify-full must stay a TLS connection")
@@ -162,12 +160,12 @@ func TestResolvePostgresDSN_FieldValuesCannotInjectKeywords(t *testing.T) {
 	}
 }
 
-// The password from KEYORIX_DB_PASSWORD (#3159) is added to the connection
-// string by ResolvePostgresDSN, in all three DSN shapes. Whatever it contains
+// The password from KEYORIX_DB_PASSWORD (#3159) is set on the parsed config
+// by ResolvePostgresConnConfig, in all three DSN shapes. Whatever it contains
 // -- here a quote followed by a second host and sslmode -- it must stay the
-// password: pgx reads the final string back with the configured host, the
-// verifying TLS settings and the exact password.
-func TestResolvePostgresDSN_EnvPasswordCannotInjectKeywords(t *testing.T) {
+// password: the final config has the configured host, the verifying TLS
+// settings and the exact password.
+func TestResolvePostgresConnConfig_EnvPasswordCannotInjectKeywords(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PGSSLMODE", "")
 	t.Setenv("PGSSLROOTCERT", "")
@@ -186,9 +184,7 @@ func TestResolvePostgresDSN_EnvPasswordCannotInjectKeywords(t *testing.T) {
 				"url":     {DSN: "postgres://u@db.internal/k?sslmode=verify-full&sslrootcert=" + url.QueryEscape(ca)},
 			}
 			for name, d := range cases {
-				dsn, err := ResolvePostgresDSN(d)
-				require.NoError(t, err, name)
-				pc, err := pgconn.ParseConfig(dsn)
+				pc, err := ResolvePostgresConnConfig(d)
 				require.NoError(t, err, name)
 				assert.Equal(t, pw, pc.Password, name)
 				assert.Equal(t, "db.internal", pc.Host, name)

@@ -13,7 +13,7 @@ import (
 
 // A FIFO named as ssl_root_cert is refused, not opened and waited on: a
 // blocking open(2) on a FIFO with no writer never returns, which would hang
-// server boot (and every ResolvePostgresDSN caller) instead of failing closed.
+// server boot (and every ResolvePostgresConnConfig caller) instead of failing closed.
 func TestLoadDatabaseCAPool_FIFORefusedWithoutBlocking(t *testing.T) {
 	fifo := filepath.Join(t.TempDir(), "ca.pem")
 	require.NoError(t, syscall.Mkfifo(fifo, 0o644))

@@ -493,11 +493,18 @@ type UpdateSecretRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	Id    uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	// A non-empty value rotates the secret to a new version.
-	Value         *string                `protobuf:"bytes,2,opt,name=value,proto3,oneof" json:"value,omitempty"`
-	MaxReads      *int32                 `protobuf:"varint,3,opt,name=max_reads,json=maxReads,proto3,oneof" json:"max_reads,omitempty"`
-	Expiration    *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expiration,proto3,oneof" json:"expiration,omitempty"`
-	Metadata      map[string]string      `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	Tags          []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	Value      *string                `protobuf:"bytes,2,opt,name=value,proto3,oneof" json:"value,omitempty"`
+	MaxReads   *int32                 `protobuf:"varint,3,opt,name=max_reads,json=maxReads,proto3,oneof" json:"max_reads,omitempty"`
+	Expiration *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expiration,proto3,oneof" json:"expiration,omitempty"`
+	Metadata   map[string]string      `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Tags       []string               `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	// Remove an existing expiration (mirrors REST clear_expiration). Mutually
+	// exclusive with expiration. Absent/false keeps the current expiration.
+	ClearExpiration bool `protobuf:"varint,7,opt,name=clear_expiration,json=clearExpiration,proto3" json:"clear_expiration,omitempty"`
+	// Remove the read limit (mirrors REST clear_max_reads, #3172). max_reads keeps
+	// its minimum of 1, so 0 does not mean "clear". Mutually exclusive with
+	// max_reads. Absent/false keeps the current limit.
+	ClearMaxReads bool `protobuf:"varint,8,opt,name=clear_max_reads,json=clearMaxReads,proto3" json:"clear_max_reads,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -572,6 +579,20 @@ func (x *UpdateSecretRequest) GetTags() []string {
 		return x.Tags
 	}
 	return nil
+}
+
+func (x *UpdateSecretRequest) GetClearExpiration() bool {
+	if x != nil {
+		return x.ClearExpiration
+	}
+	return false
+}
+
+func (x *UpdateSecretRequest) GetClearMaxReads() bool {
+	if x != nil {
+		return x.ClearMaxReads
+	}
+	return false
 }
 
 type DeleteSecretRequest struct {
@@ -4492,7 +4513,7 @@ type BreakGlassActivation struct {
 	State         string                 `protobuf:"bytes,7,opt,name=state,proto3" json:"state,omitempty"` // active | expired | revoked
 	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=expires_at,json=expiresAt,proto3,oneof" json:"expires_at,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	RevokedBy     *uint32                `protobuf:"varint,10,opt,name=revoked_by,json=revokedBy,proto3,oneof" json:"revoked_by,omitempty"` // set on early revoke
+	RevokedBy     *uint32                `protobuf:"varint,10,opt,name=revoked_by,json=revokedBy,proto3,oneof" json:"revoked_by,omitempty"` // set on early revoke; unset when the response scope is "own"
 	RevokedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=revoked_at,json=revokedAt,proto3,oneof" json:"revoked_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -4710,8 +4731,11 @@ func (x *ListBreakGlassActivationsRequest) GetProjectId() uint32 {
 }
 
 type ListBreakGlassActivationsResponse struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Activations   []*BreakGlassActivation `protobuf:"bytes,1,rep,name=activations,proto3" json:"activations,omitempty"`
+	state       protoimpl.MessageState  `protogen:"open.v1"`
+	Activations []*BreakGlassActivation `protobuf:"bytes,1,rep,name=activations,proto3" json:"activations,omitempty"`
+	// "project": every activation of the project (the caller holds roles.read there).
+	// "own": only the caller's own activations (a user without roles.read).
+	Scope         string `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4751,6 +4775,13 @@ func (x *ListBreakGlassActivationsResponse) GetActivations() []*BreakGlassActiva
 		return x.Activations
 	}
 	return nil
+}
+
+func (x *ListBreakGlassActivationsResponse) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
 }
 
 type RevokeBreakGlassRequest struct {
@@ -10989,7 +11020,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x10GetSecretRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12#\n" +
 	"\rinclude_value\x18\x02 \x01(\bR\fincludeValue\x12.\n" +
-	"\x13include_total_reads\x18\x03 \x01(\bR\x11includeTotalReads\"\xe6\x02\n" +
+	"\x13include_total_reads\x18\x03 \x01(\bR\x11includeTotalReads\"\xb9\x03\n" +
 	"\x13UpdateSecretRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x19\n" +
 	"\x05value\x18\x02 \x01(\tH\x00R\x05value\x88\x01\x01\x12 \n" +
@@ -10998,7 +11029,9 @@ const file_keyorix_proto_rawDesc = "" +
 	"expiration\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampH\x02R\n" +
 	"expiration\x88\x01\x01\x12I\n" +
 	"\bmetadata\x18\x05 \x03(\v2-.keyorix.v1.UpdateSecretRequest.MetadataEntryR\bmetadata\x12\x12\n" +
-	"\x04tags\x18\x06 \x03(\tR\x04tags\x1a;\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\x12)\n" +
+	"\x10clear_expiration\x18\a \x01(\bR\x0fclearExpiration\x12&\n" +
+	"\x0fclear_max_reads\x18\b \x01(\bR\rclearMaxReads\x1a;\n" +
 	"\rMetadataEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\b\n" +
@@ -11455,9 +11488,10 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x03ttl\x18\x03 \x01(\tR\x03ttl\"A\n" +
 	" ListBreakGlassActivationsRequest\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\x01 \x01(\rR\tprojectId\"g\n" +
+	"project_id\x18\x01 \x01(\rR\tprojectId\"}\n" +
 	"!ListBreakGlassActivationsResponse\x12B\n" +
-	"\vactivations\x18\x01 \x03(\v2 .keyorix.v1.BreakGlassActivationR\vactivations\"]\n" +
+	"\vactivations\x18\x01 \x03(\v2 .keyorix.v1.BreakGlassActivationR\vactivations\x12\x14\n" +
+	"\x05scope\x18\x02 \x01(\tR\x05scope\"]\n" +
 	"\x17RevokeBreakGlassRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\rR\tprojectId\x12#\n" +

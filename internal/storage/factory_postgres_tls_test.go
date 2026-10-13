@@ -1,6 +1,6 @@
 // factory_postgres_tls_test.go -- PG-VERIFYFULL-1: storage.database.ssl_root_cert
 // reaches the driver and decides the TLS handshake, through the real factory
-// path (config.ResolvePostgresDSN -> gorm/pgx -> crypto/tls).
+// path (config.ResolvePostgresConnConfig -> stdlib.OpenDB/pgx -> crypto/tls).
 //
 // No TLS-enabled PostgreSQL is needed (kpg and CI's Postgres are plaintext):
 // a PostgreSQL client opens with an 8-byte SSLRequest and starts TLS on the

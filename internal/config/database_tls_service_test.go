@@ -26,14 +26,6 @@ func writeServiceFile(t *testing.T) string {
 	return p
 }
 
-func clearPGEnv(t *testing.T) {
-	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	for _, k := range []string{"PGSSLMODE", "PGSSLROOTCERT", "PGSERVICE", "PGSERVICEFILE"} {
-		t.Setenv(k, "")
-	}
-}
-
 func TestValidateDatabaseTLS_ConnectionServiceIsRefused(t *testing.T) {
 	clearPGEnv(t)
 	sf := writeServiceFile(t)
@@ -62,9 +54,9 @@ func TestValidateDatabaseTLS_ConnectionServiceIsRefused(t *testing.T) {
 			assert.Contains(t, err.Error(), "connection service")
 			assert.NotContains(t, err.Error(), "svc", "service and file names stay out of the error")
 
-			dsn, err := ResolvePostgresDSN(tc.d)
-			require.Error(t, err, "ResolvePostgresDSN is the guard every connection goes through")
-			assert.Empty(t, dsn)
+			cc, err := ResolvePostgresConnConfig(tc.d)
+			require.Error(t, err, "ResolvePostgresConnConfig is the guard every connection goes through")
+			assert.Nil(t, cc)
 		})
 	}
 }
