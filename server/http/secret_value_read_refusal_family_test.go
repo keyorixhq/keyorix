@@ -76,10 +76,12 @@ func refusalCases() []refusalCase {
 		}, http.StatusForbidden, "SecretAccessOutsideSchedule",
 			"secret access is not permitted outside the configured time window", codes.PermissionDenied},
 		{core.ErrSecretExpired, "expired", func(t *testing.T, w *guardParityWorld, sec *models.SecretNode) {
-			// Raw write on purpose (a not-yet-swept expiry); UTC, so BeforeSave's
-			// normalization would be a no-op.
+			// Through Save(), so SecretNode's BeforeSave hook runs (G1619).
+			var row models.SecretNode
+			require.NoError(t, w.db.First(&row, sec.ID).Error)
 			past := time.Now().UTC().Add(-time.Hour)
-			require.NoError(t, w.db.Model(&models.SecretNode{}).Where("id = ?", sec.ID).Update("expiration", past).Error)
+			row.Expiration = &past
+			require.NoError(t, w.db.Save(&row).Error)
 		}, http.StatusConflict, "SecretExpired",
 			"secret has expired; its value can no longer be read", codes.FailedPrecondition},
 		{core.ErrSecretSuspended, "suspended", func(t *testing.T, w *guardParityWorld, sec *models.SecretNode) {
