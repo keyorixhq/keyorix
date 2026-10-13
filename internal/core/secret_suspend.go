@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -94,6 +95,27 @@ const projectSuspendPageSize = 500
 // below) is skipped so one bad secret doesn't abort the freeze. The caller must have
 // enforced scoped secrets.write on the project.
 func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, actorID uint, reason string) (int, error) {
+	return c.SuspendProjectSecretsWithOptions(ctx, projectID, actorID, reason, SuspendOptions{})
+}
+
+// ErrBulkSuspendAuditUnavailable is returned, with no secret touched, when a project-wide
+// suspension that asks to clear synced copies could not record that decision first.
+var ErrBulkSuspendAuditUnavailable = errors.New("bulk suspend audit event could not be recorded; nothing was suspended")
+
+// SuspendProjectSecretsWithOptions is SuspendProjectSecrets with the same per-suspension
+// options as SuspendSecretWithOptions, applied to every secret it affects: each gets the
+// per-suspension marker exactly as a single-secret suspend would (an already-suspended
+// secret without the marker is upgraded, one that has it is left alone), and a later
+// ResumeProjectSecrets / ResumeSecret clears it.
+//
+// The project-level audit event (secret.bulk_suspend_attempted) is written BEFORE any
+// secret is touched and records the choice and how many secrets this request will try to
+// affect (the ones the actor may write, that are not already in the requested state).
+// When opts.ClearSyncedCopies is set, a failure to record it aborts the request with
+// ErrBulkSuspendAuditUnavailable and nothing is suspended: a decision to empty copies in
+// other clusters is never taken without a trail. A plain suspend keeps its historical
+// best-effort audit. The per-secret events (secret.suspended) are unchanged.
+func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, projectID, actorID uint, reason string, opts SuspendOptions) (int, error) {
 	if projectID == 0 || actorID == 0 {
 		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and actor ID are required")
 	}
@@ -101,10 +123,10 @@ func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, acto
 	if err != nil {
 		return 0, err
 	}
-	n := 0
+	var targets []*models.SecretNode
 	for _, s := range secrets {
-		if s.Status == SecretStatusSuspended {
-			continue
+		if s.Status == SecretStatusSuspended && (!opts.ClearSyncedCopies || s.SuspendClearSyncedCopies) {
+			continue // already suspended, nothing to add
 		}
 		// Re-check per-secret write authorization (owner/share). The project-wide
 		// secrets.write route gate is not sufficient on its own — the single-secret PUT
@@ -114,18 +136,30 @@ func (c *KeyorixCore) SuspendProjectSecrets(ctx context.Context, projectID, acto
 		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
 			continue
 		}
-		if _, err := c.SuspendSecret(ctx, s.ID, actorID, reason); err == nil {
+		targets = append(targets, s)
+	}
+	// Written unconditionally and before any effect: a project with nothing to suspend
+	// (all already suspended, or none writable by actorID) would otherwise leave no trail
+	// that this bulk operation was attempted (F5, audit-completeness campaign), and the
+	// clear-copies choice must be on record before it can empty anything.
+	pid := projectID
+	desc := fmt.Sprintf("project %d bulk-suspend attempted: %d secret(s) targeted", projectID, len(targets))
+	if reason != "" {
+		desc += ": " + reason
+	}
+	if opts.ClearSyncedCopies {
+		desc += " (clear_synced_copies=true)"
+	}
+	persisted := c.writeAuditEventFull(ctx, "secret.bulk_suspend_attempted", actorPtr(actorID), nil, &pid, "", desc)
+	if !persisted && opts.ClearSyncedCopies {
+		return 0, ErrBulkSuspendAuditUnavailable
+	}
+	n := 0
+	for _, s := range targets {
+		if _, err := c.SuspendSecretWithOptions(ctx, s.ID, actorID, reason, opts); err == nil {
 			n++
 		}
 	}
-	// Written unconditionally: SuspendSecret audits each individual
-	// suspension, but a project with nothing left to suspend (all already
-	// suspended, or none owned/writable by actorID) would otherwise leave no
-	// trail that this bulk operation was attempted (F5, audit-completeness
-	// campaign).
-	pid := projectID
-	c.writeAuditEventFull(ctx, "secret.bulk_suspend_attempted", actorPtr(actorID), nil, &pid, "",
-		fmt.Sprintf("project %d bulk-suspend attempted: %d secret(s) suspended", projectID, n))
 	return n, nil
 }
 
