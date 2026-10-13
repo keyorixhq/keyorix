@@ -308,7 +308,11 @@ func urlParams(dsn string) (map[string]string, error) {
 		if kerr != nil || verr != nil {
 			return nil, errors.New("malformed percent-encoding in the connection URL's query")
 		}
-		out[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		// pgx's uriDecode drops leading/trailing ASCII spaces only: a key
+		// "sslrootcert\r" is a runtime parameter to pgx, not sslrootcert
+		// (fuzz-found by FuzzResolvePostgresConnConfig_PasswordCannotChangeConnection
+		// through checkFinalPostgresTLS).
+		out[strings.Trim(key, " ")] = strings.Trim(value, " ")
 	}
 	return out, nil
 }

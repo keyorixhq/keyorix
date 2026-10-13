@@ -77,6 +77,12 @@ func TestCheckFinalPostgresTLS_RefusesEveryWeakerFinalConfig(t *testing.T) {
 		{"require ok", pgFields("require", ""), nil, ""},
 		{"prefer makes no claim", &DatabaseConfig{DSN: "host=db.internal sslmode=prefer"}, func(cc *pgx.ConnConfig) { cc.TLSConfig = nil }, ""},
 		{"multi-host verify-full ok", multi("verify-full", ca), nil, ""},
+		// A Unix-domain socket is local and never TLS (pgx and libpq): no TLS claim to check.
+		// Fuzz-found: B first refused it.
+		{"unix socket verify-full ok", &DatabaseConfig{DSN: "host=/var/run/postgresql sslmode=verify-full sslrootcert=system"}, nil, ""},
+		{"unix socket, host moved to TCP", &DatabaseConfig{DSN: "host=/var/run/postgresql sslmode=verify-full sslrootcert=system"}, func(cc *pgx.ConnConfig) {
+			cc.Host = "evil.internal"
+		}, "not the configured one"},
 
 		{"tls off", pgFields("verify-full", ca), func(cc *pgx.ConnConfig) { cc.TLSConfig = nil }, "would not use TLS"},
 		{"plaintext fallback", multi("verify-full", ca), lastFallbackPlaintext, "would not use TLS"},

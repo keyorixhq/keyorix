@@ -146,6 +146,9 @@ func checkFinalConfigIsTheValidatedOne(t *testing.T, dsn, pw string, pc *pgconn.
 		cands = append(cands, cand{fb.Host, fb.TLSConfig})
 	}
 	for _, c := range cands {
+		if network, _ := pgconn.NetworkAddress(c.host, cc.Port); network == "unix" {
+			continue // local socket, never TLS
+		}
 		switch {
 		case c.tls == nil:
 			t.Fatalf("validated sslmode=%q sslrootcert=%q, but a final candidate (%q) has no TLS: %q", mode, root, c.host, dsn)

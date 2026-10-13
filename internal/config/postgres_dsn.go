@@ -199,7 +199,9 @@ func uriDecodeLoose(s string) string {
 // of the validated connection string alone (storage.database.dsn, or the
 // field-built one): verify-full against sslrootcert=system checks the host
 // name it is given, so a moved host would still "verify". Modes that
-// verify nothing (prefer, allow, disable) make no TLS claim. Errors name
+// verify nothing (prefer, allow, disable) make no TLS claim. A Unix-domain
+// socket candidate (a host starting with '/') is not checked for TLS: it is
+// local, and neither libpq nor pgx uses TLS on it. Errors name
 // settings, never the DSN or the password.
 func checkFinalPostgresTLS(d *DatabaseConfig, cc *pgx.ConnConfig) error {
 	validated := d.DSN
@@ -253,6 +255,9 @@ func checkFinalPostgresTLS(d *DatabaseConfig, cc *pgx.ConnConfig) error {
 		cands = append(cands, candidate{fb.Host, fb.TLSConfig})
 	}
 	for _, c := range cands {
+		if network, _ := pgconn.NetworkAddress(c.host, cc.Port); network == "unix" {
+			continue // a Unix-domain socket: local, and never TLS (libpq and pgx alike)
+		}
 		switch {
 		case c.tls == nil:
 			return finalTLSMismatch("a connection attempt would not use TLS")
