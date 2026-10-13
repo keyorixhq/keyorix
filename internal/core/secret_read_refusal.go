@@ -47,6 +47,9 @@ var (
 type secretStateError struct {
 	msg      string
 	sentinel error
+	// clearSyncedCopies is set on a suspended refusal whose suspension carries the
+	// "also clear synced Kubernetes copies" marker (SecretNode.SuspendClearSyncedCopies).
+	clearSyncedCopies bool
 }
 
 func (e *secretStateError) Error() string { return e.msg }
@@ -56,8 +59,8 @@ func errSecretExpired() error {
 	return &secretStateError{msg: i18n.T("ErrorSecretExpired", nil), sentinel: ErrSecretExpired}
 }
 
-func errSecretSuspended() error {
-	return &secretStateError{msg: "secret is suspended", sentinel: ErrSecretSuspended}
+func errSecretSuspended(clearSyncedCopies bool) error {
+	return &secretStateError{msg: "secret is suspended", sentinel: ErrSecretSuspended, clearSyncedCopies: clearSyncedCopies}
 }
 
 func errSecretMaxReadsExhausted() error {
@@ -91,6 +94,10 @@ type SecretReadRefusal struct {
 	Kind    SecretReadRefusalKind
 	Code    string
 	Message string
+	// ClearSyncedCopies is true only on a SecretSuspended refusal whose suspension asked
+	// for the synced Kubernetes copies to be cleared. Authorization has already passed
+	// when a refusal is built (see the file comment), so it reveals nothing new.
+	ClearSyncedCopies bool
 }
 
 // secretReadRefusals is the whole family, in the order ClassifySecretReadRefusal
@@ -100,14 +107,14 @@ var secretReadRefusals = []struct {
 	sentinel error
 	refusal  SecretReadRefusal
 }{
-	{ErrAccessOutsideSchedule, SecretReadRefusal{SecretReadRefusalDenied, SecretReadRefusalCodeOutsideSchedule,
-		"secret access is not permitted outside the configured time window"}},
-	{ErrSecretExpired, SecretReadRefusal{SecretReadRefusalState, SecretReadRefusalCodeExpired,
-		"secret has expired; its value can no longer be read"}},
-	{ErrSecretSuspended, SecretReadRefusal{SecretReadRefusalState, SecretReadRefusalCodeSuspended,
-		"secret is suspended; its value cannot be read until it is resumed"}},
-	{ErrSecretMaxReadsExhausted, SecretReadRefusal{SecretReadRefusalState, SecretReadRefusalCodeMaxReadsExhausted,
-		"secret has reached its maximum number of reads"}},
+	{ErrAccessOutsideSchedule, SecretReadRefusal{Kind: SecretReadRefusalDenied, Code: SecretReadRefusalCodeOutsideSchedule,
+		Message: "secret access is not permitted outside the configured time window"}},
+	{ErrSecretExpired, SecretReadRefusal{Kind: SecretReadRefusalState, Code: SecretReadRefusalCodeExpired,
+		Message: "secret has expired; its value can no longer be read"}},
+	{ErrSecretSuspended, SecretReadRefusal{Kind: SecretReadRefusalState, Code: SecretReadRefusalCodeSuspended,
+		Message: "secret is suspended; its value cannot be read until it is resumed"}},
+	{ErrSecretMaxReadsExhausted, SecretReadRefusal{Kind: SecretReadRefusalState, Code: SecretReadRefusalCodeMaxReadsExhausted,
+		Message: "secret has reached its maximum number of reads"}},
 }
 
 // ClassifySecretReadRefusal reports whether err is one of the secret-state
@@ -119,7 +126,12 @@ func ClassifySecretReadRefusal(err error) (SecretReadRefusal, bool) {
 	}
 	for _, r := range secretReadRefusals {
 		if errors.Is(err, r.sentinel) {
-			return r.refusal, true
+			out := r.refusal
+			var se *secretStateError
+			if errors.As(err, &se) && se.sentinel == ErrSecretSuspended {
+				out.ClearSyncedCopies = se.clearSyncedCopies
+			}
+			return out, true
 		}
 	}
 	return SecretReadRefusal{}, false

@@ -219,7 +219,7 @@ func (c *KeyorixCore) enforceSecretReadGuardsWith(ctx context.Context, secret *m
 		return errSecretExpired()
 	}
 	if secret.Status == SecretStatusSuspended {
-		return errSecretSuspended()
+		return errSecretSuspended(secret.SuspendClearSyncedCopies)
 	}
 	if err := c.checkRestrictedSecretReadApproval(ctx, secret, userID); err != nil {
 		return err

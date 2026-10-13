@@ -27,17 +27,40 @@ const (
 )
 
 // SuspendSecret freezes value reads of a secret (idempotent). The caller (transport)
-// must have enforced scoped secrets.write.
+// must have enforced scoped secrets.write. The synced Kubernetes copies follow each
+// resource's own onSuspend setting; use SuspendSecretWithOptions to also clear them.
 func (c *KeyorixCore) SuspendSecret(ctx context.Context, secretID, actorID uint, reason string) (*models.SecretNode, error) {
+	return c.SuspendSecretWithOptions(ctx, secretID, actorID, reason, SuspendOptions{})
+}
+
+// SuspendOptions are the per-suspension choices a suspend request can carry.
+type SuspendOptions struct {
+	// ClearSyncedCopies asks the operator and k8s-sync to empty the copies of this
+	// secret synced to Kubernetes clusters for the duration of THIS suspension, as if
+	// the resource said onSuspend: Clear (a compromise response). The marker lives with
+	// the suspension: resume removes it and the next sync restores the copies.
+	ClearSyncedCopies bool
+}
+
+// SuspendSecretWithOptions is SuspendSecret with per-suspension options.
+//
+// Already suspended: without opts.ClearSyncedCopies it is a no-op (no duplicate audit,
+// and an existing marker is never downgraded; only resume removes it). With it, a
+// suspension that lacks the marker is upgraded in place, because "I suspended it, and
+// now I know it leaked" is the commonest way to reach this choice. That upgrade is
+// audited like any suspend, before it takes effect for a reader.
+func (c *KeyorixCore) SuspendSecretWithOptions(ctx context.Context, secretID, actorID uint, reason string, opts SuspendOptions) (*models.SecretNode, error) {
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-	if secret.Status == SecretStatusSuspended {
-		return secret, nil // already suspended — no-op, no duplicate audit
+	alreadySuspended := secret.Status == SecretStatusSuspended
+	if alreadySuspended && (!opts.ClearSyncedCopies || secret.SuspendClearSyncedCopies) {
+		return secret, nil // already suspended (and nothing to add) — no-op, no duplicate audit
 	}
 	fromStatus := secret.Status
 	secret.Status = SecretStatusSuspended
+	secret.SuspendClearSyncedCopies = opts.ClearSyncedCopies
 	secret.UpdatedAt = c.now()
 	matched, err := c.storage.TransitionSecretStatus(ctx, secret, fromStatus)
 	if err != nil {
@@ -54,6 +77,9 @@ func (c *KeyorixCore) SuspendSecret(ctx context.Context, secretID, actorID uint,
 	desc := fmt.Sprintf("suspended secret %q", secret.Name)
 	if reason != "" {
 		desc += ": " + reason
+	}
+	if opts.ClearSyncedCopies {
+		desc += " (clear_synced_copies=true)"
 	}
 	c.writeAuditEvent(ctx, EventSecretSuspended, &uid, &sid, desc)
 	return secret, nil
@@ -165,6 +191,7 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 	}
 	fromStatus := secret.Status
 	secret.Status = SecretStatusActive
+	secret.SuspendClearSyncedCopies = false // the marker lives only as long as the suspension
 	secret.UpdatedAt = c.now()
 	matched, err := c.storage.TransitionSecretStatus(ctx, secret, fromStatus)
 	if err != nil {

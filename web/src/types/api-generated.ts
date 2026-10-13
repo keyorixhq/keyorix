@@ -5151,6 +5151,8 @@ export interface components {
             expiration?: string | null;
             classification?: string;
             status?: string;
+            /** @description True while the secret is suspended with the choice to also clear its copies synced to Kubernetes clusters; omitted otherwise. Resume removes it. */
+            clear_synced_copies?: boolean;
             created_by?: string;
             owner_id?: number;
             owner_machine_identity_id?: number;
@@ -5593,6 +5595,8 @@ export interface components {
             expiration?: string | null;
             classification?: string;
             status?: string;
+            /** @description True while the secret is suspended with the choice to also clear its copies synced to Kubernetes clusters; omitted otherwise. Resume removes it. */
+            clear_synced_copies?: boolean;
             created_by?: string;
             owner_id?: number;
             owner_machine_identity_id?: number;
@@ -6063,7 +6067,7 @@ export interface components {
                 };
             };
         };
-        /** @description The caller may read this secret, but the secret's own state refuses the value read (ERRMAP-1). `error` is a stable code clients can branch on and `message` a fixed, client-safe sentence: SecretExpired (its expiration has passed; an operator can extend or clear it), SecretSuspended (resume it to allow reads), SecretMaxReadsExhausted (its max_reads budget is spent; an operator can raise it). A read outside the secret's access schedule is a permission decision and answers 403 with error SecretAccessOutsideSchedule instead. 409, not 410: each state is reversible. Only a caller who may read the secret ever sees these; any other caller gets the same 403/404 as for a secret it cannot see. The gRPC GetSecretValue twin is FailedPrecondition (PermissionDenied for the schedule) with the same message and an ErrorInfo detail (domain keyorix.secrets, reason = the code). */
+        /** @description The caller may read this secret, but the secret's own state refuses the value read (ERRMAP-1). `error` is a stable code clients can branch on and `message` a fixed, client-safe sentence: SecretExpired (its expiration has passed; an operator can extend or clear it), SecretSuspended (resume it to allow reads), SecretMaxReadsExhausted (its max_reads budget is spent; an operator can raise it). A SecretSuspended answer whose suspension asked for the synced Kubernetes copies to be cleared also carries `details: {clear_synced_copies: true}`, which the operator and k8s-sync read. A read outside the secret's access schedule is a permission decision and answers 403 with error SecretAccessOutsideSchedule instead. 409, not 410: each state is reversible. Only a caller who may read the secret ever sees these; any other caller gets the same 403/404 as for a secret it cannot see. The gRPC GetSecretValue twin is FailedPrecondition (PermissionDenied for the schedule) with the same message and an ErrorInfo detail (domain keyorix.secrets, reason = the code). */
         SecretReadRefused: {
             headers: {
                 [name: string]: unknown;
@@ -6074,6 +6078,10 @@ export interface components {
                     code?: number;
                     error?: components["schemas"]["SecretReadRefusalCode"];
                     message?: string;
+                    /** @description Present only on SecretSuspended when the suspension asked to clear synced Kubernetes copies. */
+                    details?: {
+                        clear_synced_copies?: boolean;
+                    };
                 };
             };
         };
@@ -10428,6 +10436,8 @@ export interface operations {
                 "application/json": {
                     /** @description Optional reason recorded in the audit event. */
                     reason?: string;
+                    /** @description Also clear the copies of this secret synced to Kubernetes clusters, for THIS suspension only: the operator and k8s-sync treat the secret as `onSuspend: Clear` whatever the resource's own setting says (they empty only the keys Keyorix manages and never delete a Secret they do not own). Meant as a compromise response; rotate the secret afterwards. Resuming removes the request and the next sync restores the copies. Needs the same permission as suspending and is recorded in the `secret.suspended` audit event (`clear_synced_copies=true`). On a secret that is already suspended without it, the flag upgrades the suspension in place; an existing request is never downgraded by a suspend. */
+                    clear_synced_copies?: boolean;
                 };
             };
         };

@@ -40,6 +40,9 @@ type stateFetcher struct {
 	expired    map[string]bool
 	transient  map[string]error
 	expiration map[string]time.Time
+	// clearRequested marks suspended refs whose suspension asked to clear the synced
+	// copies (409 SecretSuspended with details.clear_synced_copies), SUSPEND-PURGE-1.
+	clearRequested map[string]bool
 }
 
 func (f *stateFetcher) FetchValue(ctx context.Context, ref string) ([]byte, error) {
@@ -51,6 +54,8 @@ func (f *stateFetcher) FetchValueInfo(_ context.Context, ref string) (keyorix.Va
 	switch {
 	case f.transient[ref] != nil:
 		return keyorix.Value{}, f.transient[ref]
+	case f.suspended[ref] && f.clearRequested[ref]:
+		return keyorix.Value{}, fmt.Errorf("secret reference %q: SecretSuspended (HTTP 409, clear_synced_copies): %w: %w", ref, keyorix.ErrSecretSuspended, keyorix.ErrClearSyncedCopies)
 	case f.suspended[ref]:
 		return keyorix.Value{}, fmt.Errorf("secret reference %q: SecretSuspended (HTTP 409): %w", ref, keyorix.ErrSecretSuspended)
 	case f.expired[ref]:
@@ -70,6 +75,8 @@ func newStateFetcher() *stateFetcher {
 		expired:    map[string]bool{},
 		transient:  map[string]error{},
 		expiration: map[string]time.Time{},
+
+		clearRequested: map[string]bool{},
 	}
 }
 
