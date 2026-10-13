@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -84,7 +83,10 @@ func logSafeRequestURI(r *http.Request) string {
 // use it for account takeover.
 func Logger() func(next http.Handler) http.Handler {
 	formatter := &middleware.DefaultLogFormatter{
-		Logger: log.Default(),
+		// Not log.Default(): its mutex is held across the write syscall, which
+		// serialised every request at high concurrency. Same destination, prefix
+		// and line format; see accessLogWriter.
+		Logger: newAccessLogWriter(),
 		// #G29: server access logs are captured non-interactively (container
 		// logs, a log-aggregation SaaS) where ANSI color codes are noise at
 		// best and an unnecessary terminal-control byte stream at worst if
