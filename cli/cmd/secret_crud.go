@@ -41,7 +41,7 @@ func init() {
 	secretCreateCmd.Flags().StringVar(&secretCreateName, "name", "", "Secret name (required)")
 	secretCreateCmd.Flags().StringVar(&secretCreateType, "type", "generic", "Secret type")
 	secretCreateCmd.Flags().IntVar(&secretCreateProjectID, "project", 1, "Project ID")
-	secretCreateCmd.Flags().IntVar(&secretCreateEnvironmentID, "environment", 1, "Environment ID (default: the project's development environment; see `keyorix project environments <project-id>`)")
+	secretCreateCmd.Flags().IntVar(&secretCreateEnvironmentID, "environment", 1, "Environment ID. With --project and no --environment the project's \"development\" environment is used; if it has none, --environment is required (see `keyorix project environments <project-id>`). Without --project: 1")
 	secretCreateCmd.Flags().IntVar(&secretCreateMaxReads, "max-reads", 0, "Maximum number of reads (0 = unlimited)")
 	secretCreateCmd.Flags().StringVar(&secretCreateExpiration, "expires", "", "Expiration time (RFC3339 format)")
 	secretCreateCmd.Flags().StringVar(&secretCreateValue, "value", "", "Secret value")
@@ -121,7 +121,11 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 	// --environment defaults to 1, which is only right for project 1: when the flag was
 	// not given, use the chosen project's own development environment (#3155).
 	if !cmd.Flags().Changed("environment") && secretCreateProjectID > 0 {
-		if envID, ok := defaultEnvironmentForProject(context.Background(), client, secretCreateProjectID); ok {
+		envID, ok, derr := defaultEnvironmentForProject(context.Background(), client, secretCreateProjectID)
+		if derr != nil {
+			return derr
+		}
+		if ok {
 			secretCreateEnvironmentID = envID
 		}
 	}
@@ -165,20 +169,22 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// defaultEnvironmentForProject returns the ID of the project's "development" environment, or
-// its first one when it has none by that name. ok is false when the list cannot be read (a
-// caller without access to it keeps the flag's literal default and the server's verdict).
-func defaultEnvironmentForProject(ctx context.Context, client *apiclient.ClientWithResponses, projectID int) (int, bool) {
-	envs, err := listEnvironments(ctx, client, uint(projectID)) // #nosec G115 -- guarded > 0 by the caller
-	if err != nil || len(envs) == 0 {
-		return 0, false
+// defaultEnvironmentForProject returns the ID of the project's "development" environment. It
+// never guesses another one: a project without a "development" environment (the first listed
+// could be production) is an error that names the environments and asks for --environment.
+// ok is false, with a nil error, when the list cannot be read or is empty (a caller without
+// access to it keeps the flag's literal default and the server's verdict).
+func defaultEnvironmentForProject(ctx context.Context, client *apiclient.ClientWithResponses, projectID int) (id int, ok bool, err error) {
+	envs, lerr := listEnvironments(ctx, client, uint(projectID)) // #nosec G115 -- guarded > 0 by the caller
+	if lerr != nil || len(envs) == 0 {
+		return 0, false, nil
 	}
 	for _, e := range envs {
 		if strings.EqualFold(e.Name, "development") {
-			return int(e.ID), true // #nosec G115 -- DB auto-increment ID
+			return int(e.ID), true, nil // #nosec G115 -- DB auto-increment ID
 		}
 	}
-	return int(envs[0].ID), true // #nosec G115 -- DB auto-increment ID
+	return 0, false, fmt.Errorf("project %d has no \"development\" environment, so --environment is required\n%s", projectID, validEnvironmentsHint(ctx, client, projectID))
 }
 
 // validEnvironmentsHint names the environments a project does have, for the "environment N

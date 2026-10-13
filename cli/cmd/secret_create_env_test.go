@@ -68,6 +68,62 @@ func TestSecretCreate_DefaultEnvironmentIsTheProjectsDevelopment(t *testing.T) {
 	}
 }
 
+// A project with no "development" environment must not silently fall back to its first
+// listed environment (here production): the create is refused client-side, naming the
+// environments, and nothing is sent. An explicit --environment still works.
+func TestSecretCreate_NoDevelopmentEnvironmentRequiresTheFlag(t *testing.T) {
+	var created bool
+	var gotEnv int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/projects/3/environments":
+			_, _ = fmt.Fprint(w, `{"data":{"environments":[{"id":9,"name":"production"},{"id":8,"name":"staging"}]}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/secrets":
+			created = true
+			raw, _ := io.ReadAll(r.Body)
+			var body struct {
+				EnvironmentID int `json:"environment_id"`
+			}
+			_ = json.Unmarshal(raw, &body)
+			gotEnv = body.EnvironmentID
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"data":{"id":9,"name":"s","type":"generic","project_id":3,"environment_id":%d}}`, body.EnvironmentID)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	setPATCreds(t, srv)
+	secretCreateName, secretCreateValue, secretCreateProjectID = "s", "v", 3
+	defer resetSecretCreateFlags()
+
+	err := runSecretCreate(secretCreateCmd, nil)
+	if err == nil {
+		t.Fatal("expected an error: project 3 has no development environment and --environment was not given")
+	}
+	if created {
+		t.Fatalf("a secret was created (environment %d) without --environment", gotEnv)
+	}
+	for _, want := range []string{"no \"development\" environment", "--environment is required", "9 (production)", "8 (staging)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err.Error(), want)
+		}
+	}
+
+	if err := secretCreateCmd.Flags().Set("environment", "8"); err != nil {
+		t.Fatal(err)
+	}
+	captureStdout(t, func() {
+		if err := runSecretCreate(secretCreateCmd, nil); err != nil {
+			t.Fatalf("explicit --environment 8: %v", err)
+		}
+	})
+	if !created || gotEnv != 8 {
+		t.Fatalf("explicit --environment not sent as given: created=%v env=%d", created, gotEnv)
+	}
+}
+
 func TestSecretCreate_ExplicitWrongEnvironmentNamesTheValidOnes(t *testing.T) {
 	var gotEnv int
 	setPATCreds(t, secretEnvServer(t, &gotEnv))

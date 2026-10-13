@@ -115,9 +115,16 @@ func AuditSystemActorWhere() (string, []interface{}) {
 // AuditActorName returns the actor shown beside AuditActorKind: the acting
 // user's name from names (core.ResolveUsernames), "system" for a kind-system
 // row, the machine identity's name from machineNames (core.ResolveMachineNames)
-// for a machine-actor row (#3150), and "unknown" for any other row with no acting
-// principal (a failed login), so a row is never shown as actor "system" with
-// another kind.
+// for a machine-actor row (#3150), "admin_cli" for a host-admin command that
+// names no user, and "unknown" for any other row with no acting principal (a
+// failed login), so a row is never shown as actor "system" with another kind.
+//
+// "system" is only for genuine server-internal events (kind system). A
+// `keyorix-server admin ...` command (backup, restore, key rotation, checkpoint
+// export, ...) is a deliberate action by whoever holds the host, so it stays
+// attributed as the admin CLI: the same value as its kind and as the
+// actor_type=admin_cli filter (AuditActorKindWhere), and never the "system" that
+// a search for "system" would not find (#2951).
 func AuditActorName(e *models.AuditEvent, names, machineNames map[uint]string) string {
 	if e.UserID != nil && *e.UserID != 0 {
 		if n := names[*e.UserID]; n != "" {
@@ -134,12 +141,8 @@ func AuditActorName(e *models.AuditEvent, names, machineNames map[uint]string) s
 	if AuditActorKind(e) == auditKindSystem {
 		return auditKindSystem
 	}
-	// A `keyorix-server admin ...` command run on the host (migrate, encryption
-	// init, ...) records no principal and no client address by design; it is part
-	// of the platform's own start-up and maintenance, so it reads as "system", not
-	// "unknown" (#3155). The stored actor_type stays "admin_cli" (hash-chained).
 	if e.ActorType == AuditAdminCLIType {
-		return auditKindSystem
+		return AuditAdminCLIType
 	}
 	return "unknown"
 }
