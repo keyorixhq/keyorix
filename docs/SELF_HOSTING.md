@@ -107,7 +107,9 @@ docker compose start backend
 ```
 
 Each run writes an `admin.login_lockout_cleared` audit event naming what it
-cleared. An admin who can still log in can unlock an account online instead
+is about to clear, before it clears anything: if the audit write fails, nothing
+is cleared and the command fails. If the clear itself then fails, an
+`admin.login_lockout_clear_failed` event follows. An admin who can still log in can unlock an account online instead
 (`POST /api/v1/users/{id}/unlock`).
 
 ## 3. Configuration (`.env` and `./secrets`)
@@ -403,6 +405,13 @@ newer than the pinned v0.95.3: until that release, build the backend from this
 checkout (`build:` in docker-compose.secure.yml). With the next release it
 becomes the default compose file. For Helm, the same baseline is
 `secureBaseline.enabled=true` (see `deploy/helm/keyorix/README.md`).
+
+**ArgoCD / GitOps with Helm.** ArgoCD renders charts with `helm template`, which
+cannot look up the cluster, so the baseline's generated certificates and
+`/metrics` token would change on every sync. Create the Secret yourself and set
+`secureBaseline.existingSecret` (and `auth.existingSecret`); the chart then
+generates nothing. Keys and a `kubectl create secret` example:
+[`deploy/helm/keyorix/README.md`](../deploy/helm/keyorix/README.md#secure-baseline-with-an-existing-secret-argocd--gitops).
 
 The default stack serves plain HTTP on `8088`. Two ways to get HTTPS:
 
