@@ -137,3 +137,5 @@ def test_no_files_key_produces_empty_summary(capsys, monkeypatch, tmp_path):
     assert summary["total_mutants"] == 0
     assert summary["counts"] == {}
     assert summary["test_efficacy_pct"] is None
+
+# TEMP (CI-FLAKE-SONAR-1): touch a .py so the Sonar Python sensor runs on this PR; reverted before merge.
