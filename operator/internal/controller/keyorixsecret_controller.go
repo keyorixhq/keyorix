@@ -112,10 +112,15 @@ const (
 	// match it keep firing, although the Secret is now kept. The precise cause is in the
 	// Ready message ("KeyorixAuthFailed: ...") and in the Event reason.
 	reasonUpstreamAccessRevoked = "UpstreamAccessRevoked"
-	// reasonKeyorixUnreachable is the Ready condition reason (and Warning Event reason) set
-	// when Keyorix could not answer a value read: unreachable, timed out or 5xx. The target
-	// Secret is kept. reasonKeyorixRecovered is the Normal Event raised when the next
-	// reconcile reads successfully again.
+	// reasonSyncError is the generic Ready reason for a failed sync. It is also the Ready
+	// reason of an outage, so alerts matching it keep firing.
+	reasonSyncError = "SyncError"
+	// reasonInvalidSpec is the Ready reason of a spec with a duplicate spec.data secretKey.
+	reasonInvalidSpec = "InvalidSpec"
+	// reasonKeyorixUnreachable leads the Ready message and is the Warning Event reason set
+	// when Keyorix could not answer a value read: unreachable, timed out or 5xx. The Ready
+	// reason itself stays SyncError. The target Secret is kept. reasonKeyorixRecovered is
+	// the Normal Event raised when the next reconcile reads successfully again.
 	reasonKeyorixUnreachable = "KeyorixUnreachable"
 	reasonKeyorixRecovered   = "KeyorixRecovered"
 )
@@ -383,6 +388,14 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	secretName := ks.Spec.Target.Name
 	if secretName == "" {
 		secretName = ks.Name
+	}
+
+	// Duplicate secretKey values are rejected by the CRD schema (listType=map), but a CR
+	// stored before that schema existed can still carry them. With a duplicate, a readable
+	// entry could overwrite a key another entry holds frozen, so nothing is fetched or
+	// written until the spec is fixed.
+	if dup := duplicateSecretKey(ks.Spec.Data); dup != "" {
+		return r.failInvalidSpec(ctx, &ks, dup)
 	}
 
 	desired, token, rep, err := r.buildDesired(ctx, &ks)
@@ -731,12 +744,42 @@ const (
 // ran first and could fail independently of a later buildDesired/applySecret failure;
 // reordering the wipe to run last removed that combination entirely.
 func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
-	r.setReady(ks, metav1.ConditionFalse, "SyncError", cause.Error())
+	r.setReady(ks, metav1.ConditionFalse, reasonSyncError, cause.Error())
 	if err := r.Status().Update(ctx, ks); err != nil {
 		return ctrl.Result{}, err
 	}
 	// Return the cause so the controller's rate-limited workqueue backs off.
 	return ctrl.Result{}, cause
+}
+
+// duplicateSecretKey returns the first secretKey that appears in more than one spec.data
+// entry, "" when all are unique.
+func duplicateSecretKey(data []secretsv1alpha1.KeyorixSecretData) string {
+	seen := make(map[string]struct{}, len(data))
+	for _, d := range data {
+		if _, dup := seen[d.SecretKey]; dup {
+			return d.SecretKey
+		}
+		seen[d.SecretKey] = struct{}{}
+	}
+	return ""
+}
+
+// failInvalidSpec records a spec that cannot be reconciled safely (duplicate secretKey):
+// Ready=False/InvalidSpec, a Warning Event once per entry, and nothing read or written.
+// No error is returned: retrying cannot help, and the next spec edit triggers a reconcile.
+func (r *KeyorixSecretReconciler) failInvalidSpec(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, key string) (ctrl.Result, error) {
+	alreadyReported := readyReason(ks) == reasonInvalidSpec
+	msg := fmt.Sprintf("spec.data has more than one entry with secretKey %q; each secretKey must be unique. Nothing was read or written; fix the spec and syncing resumes.", key)
+	r.setReady(ks, metav1.ConditionFalse, reasonInvalidSpec, msg)
+	if r.Recorder != nil && !alreadyReported {
+		r.Recorder.Eventf(ks, nil, corev1.EventTypeWarning, reasonInvalidSpec, "InvalidSpec",
+			"spec.data has a duplicate secretKey %q; the target Secret was left unchanged", key)
+	}
+	if err := r.Status().Update(ctx, ks); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, nil
 }
 
 // failAuth records that Keyorix rejected the operator's own bearer token (HTTP 401) and
@@ -771,18 +814,31 @@ func readyReason(ks *secretsv1alpha1.KeyorixSecret) string {
 	return ""
 }
 
+// readyIsKeyorixUnreachable reports whether the Ready condition currently records an outage
+// (Ready=False, reason SyncError, message starting "KeyorixUnreachable"). The Ready reason
+// stays SyncError so alerts that match it keep firing; the detail lives in the message.
+func readyIsKeyorixUnreachable(ks *secretsv1alpha1.KeyorixSecret) bool {
+	for _, c := range ks.Status.Conditions {
+		if c.Type == conditionReady {
+			return c.Status == metav1.ConditionFalse && c.Reason == reasonSyncError &&
+				strings.HasPrefix(c.Message, reasonKeyorixUnreachable)
+		}
+	}
+	return false
+}
+
 // failFetch records that Keyorix could not answer a value read (unreachable, timeout or
 // 5xx) and leaves the target Secret completely untouched: Ready=False with reason
-// KeyorixUnreachable, a Warning Event (once per entry into the state, not on every backoff
+// SyncError (unchanged, for existing alerts) and a message starting KeyorixUnreachable, a Warning Event (once per entry into the state, not on every backoff
 // retry) and keyorix_operator_fetch_errors_total{reason}. It returns the cause so the
 // rate-limited workqueue retries with backoff; the first successful read raises the
 // Normal KeyorixRecovered Event (noteFetchRecovered) and Ready goes back to True.
 func (r *KeyorixSecretReconciler) failFetch(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
 	reason := fetchFailureReason(cause)
-	alreadyReported := readyReason(ks) == reasonKeyorixUnreachable
-	msg := fmt.Sprintf("%s — Keyorix could not answer the read (%s); the target Secret was left unchanged. Syncing resumes on the next successful retry.",
-		cause.Error(), reason)
-	r.setReady(ks, metav1.ConditionFalse, reasonKeyorixUnreachable, msg)
+	alreadyReported := readyIsKeyorixUnreachable(ks)
+	msg := fmt.Sprintf("%s: %s — Keyorix could not answer the read (%s); the target Secret was left unchanged. Syncing resumes on the next successful retry.",
+		reasonKeyorixUnreachable, cause.Error(), reason)
+	r.setReady(ks, metav1.ConditionFalse, reasonSyncError, msg)
 	if r.Recorder != nil && !alreadyReported {
 		r.Recorder.Eventf(ks, nil, corev1.EventTypeWarning, reasonKeyorixUnreachable, "FetchFailed",
 			"Keyorix could not answer the read (%s) for server %q; the target Secret was left unchanged", reason, ks.Spec.Server)
@@ -799,7 +855,7 @@ func (r *KeyorixSecretReconciler) failFetch(ctx context.Context, ks *secretsv1al
 // before anything rewrites the Ready condition; the caller's own success/hold/fail path
 // then replaces the reason, so the Event is raised once per recovery.
 func (r *KeyorixSecretReconciler) noteFetchRecovered(ks *secretsv1alpha1.KeyorixSecret) {
-	if r.Recorder != nil && readyReason(ks) == reasonKeyorixUnreachable {
+	if r.Recorder != nil && readyIsKeyorixUnreachable(ks) {
 		r.Recorder.Eventf(ks, nil, corev1.EventTypeNormal, reasonKeyorixRecovered, "FetchRecovered",
 			"Keyorix answered the read again; syncing resumed")
 	}

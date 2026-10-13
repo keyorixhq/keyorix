@@ -27,15 +27,16 @@ sets a `Ready` condition and requeues after `refreshInterval`.
 A fetch failure is handled differently depending on what it means:
 
 - **Keyorix cannot answer** (server unreachable, timeout, 5xx): the target Secret is left
-  completely untouched — no partial write, no wipe. `Ready` goes `False` with reason
-  `KeyorixUnreachable` and the cause in the message; one Warning Event `KeyorixUnreachable`
-  is raised when the state is entered (not on every retry),
+  completely untouched — no partial write, no wipe. `Ready` goes `False` with its
+  historical reason `SyncError` (unchanged, so existing alerts keep firing); the detail is
+  in the message, which starts with `KeyorixUnreachable:`; one Warning Event
+  `KeyorixUnreachable` is raised when the state is entered (not on every retry),
   `keyorix_operator_fetch_errors_total{reason="unreachable|timeout|server_error"}` counts
   each failed reconcile, and the controller backs off and retries. The first successful
   read raises a Normal Event `KeyorixRecovered` and `Ready` returns to `True`. Other
   failures (token Secret missing or unlabelled, server not in `allowedServers`, a
-  Kubernetes API error while applying) are the generic `SyncError`: `Ready=False`, no
-  Event, no dedicated counter.
+  Kubernetes API error while applying) are also `SyncError`: `Ready=False`, no
+  `KeyorixUnreachable` message prefix, no Event, no dedicated counter.
 - **The operator's own credential is rejected** (Keyorix returns **401**: the token in
   `tokenSecretRef` is invalid, expired or rotated): every synced Secret is **kept
   untouched**, whatever `spec.prunePolicy` says. A 401 is about the operator's credential,
@@ -62,7 +63,7 @@ revoked grant, so neither deletes the target Secret. What happens, by cause:
 
 | Cause | Target Secret | `Ready` | Also raised |
 | --- | --- | --- | --- |
-| Server **unreachable, timeout, 5xx** | **Never modified or deleted.** Retried with backoff; syncs normally once Keyorix answers | `False`, reason `KeyorixUnreachable` | Warning Event `KeyorixUnreachable` (once on entry), counter `keyorix_operator_fetch_errors_total{reason="unreachable\|timeout\|server_error"}`, Normal Event `KeyorixRecovered` on recovery |
+| Server **unreachable, timeout, 5xx** | **Never modified or deleted.** Retried with backoff; syncs normally once Keyorix answers | `False`, reason `SyncError` (unchanged), message `KeyorixUnreachable: …` | Warning Event `KeyorixUnreachable` (once on entry), counter `keyorix_operator_fetch_errors_total{reason="unreachable\|timeout\|server_error"}`, Normal Event `KeyorixRecovered` on recovery |
 | Token Secret missing / unlabelled, apply error | **Never modified or deleted.** Retried with backoff | `False`, reason `SyncError` | — |
 | **401** — the operator's own credential rejected | **Kept** (never wiped, whatever `prunePolicy` is). Retried with backoff; syncs normally once the token is fixed | `False`, reason `UpstreamAccessRevoked` (historical reason, kept for alerts), message `KeyorixAuthFailed: …` | Warning Event `KeyorixAuthFailed`, counter `keyorix_operator_auth_failures_total` |
 | **403 / 404** — grant revoked / secret deleted | **Pruned per `spec.prunePolicy`** (Delete by default; Keep leaves it), behind the mass-revocation circuit breaker | `False`, reason `UpstreamSecretGone` | — |
@@ -255,15 +256,16 @@ Deleting the `KeyorixSecret` removes the `db-creds` Secret it created (owner ref
 | `spec.tokenSecretRef.name` / `.key` | Secret holding the machine token (`key` defaults to `token`). |
 | `spec.refreshInterval` | Re-read cadence (default `5m`). |
 | `spec.target.name` / `.type` | Target Secret name (defaults to the CR name) and type (default `Opaque`). |
-| `spec.data[].secretKey` | Key to set in the target Secret. |
+| `spec.data[].secretKey` | Key to set in the target Secret. Must be unique across entries: the CRD rejects duplicates, and a stored CR that still has one is refused by the controller (`Ready=False`, reason `InvalidSpec`, Warning Event `InvalidSpec`, nothing read or written) until it is fixed. |
 | `spec.data[].ref` | Keyorix `project/environment/name` reference to read. |
 
 ## Status & observability
 
 - `status.conditions[Ready]` — `True` when the target Secret is up to date; `False` on
   failure, with the cause in the message and one of these reasons: `SyncError`
-  (other failure — target Secret untouched), `KeyorixUnreachable` (unreachable, timeout
-  or 5xx — target Secret kept), `UpstreamAccessRevoked` (401 — target Secret kept; the message starts with
+  (any other failure, and also unreachable / timeout / 5xx, where the message starts with
+  `KeyorixUnreachable:` — target Secret kept), `InvalidSpec` (duplicate `spec.data[].secretKey`
+  — nothing read or written), `UpstreamAccessRevoked` (401 — target Secret kept; the message starts with
   `KeyorixAuthFailed:`), `SourceSecretExpired` / `SourceSecretSuspended` (held keys kept, the
   other keys synced), or `UpstreamSecretGone` (404/403 — wipes the target Secret per `prunePolicy`, see "How
   it works" above).
