@@ -386,12 +386,15 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 }
 
 // collectDatabaseTLSPosture reports how the PostgreSQL connection is
-// protected (PG-VERIFYFULL-1). A TLS trust setting the server would refuse to
-// boot on (verify-full with no ssl_root_cert, an unusable CA file) is a
-// deviation carrying the same message as the boot refusal; this command loads
-// the config without Validate, so it is the place an operator sees it before
-// a restart does. Otherwise one informational line says what is encrypted and
-// what is verified against which CA. ssl_mode: disable itself is already
+// protected (PG-VERIFYFULL-1): one informational line saying what is
+// encrypted and what is verified against which CA. A TLS trust setting the
+// server would refuse to boot on (verify-full with no ssl_root_cert, an
+// unusable CA file) is a deviation carrying the same message as the boot
+// refusal. Through the real command that branch is defense in depth, like
+// collectTLSPosture's: runAdminValidate's server-presence check
+// (acquireDatabaseLock -> serverguard -> config.BuildPostgresDSN) already
+// fails the command with that same message before this runs (verified on the
+// e2e VM against a TLS PostgreSQL). ssl_mode: disable itself is already
 // counted by the insecure-settings registry
 // (storage.database.insecure_disable_database_tls), and require without a CA
 // is the Helm secure baseline's bundled-database shape, so neither is a

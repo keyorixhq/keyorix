@@ -91,10 +91,12 @@ func TestCollectDatabaseTLSPosture(t *testing.T) {
 	})
 }
 
-// End to end through the command: the deviation is printed and counted, and
+// Through runAdminValidatePosture: the deviation is printed and counted, and
 // the database step fails on the TLS refusal itself -- BuildPostgresDSN
 // refuses before any connection is attempted (port 1 would otherwise answer
-// with a connection error).
+// with a connection error). The full `admin validate --posture` command stops
+// one step earlier, at its server-presence check, with the same message
+// (serverguard also builds its DSN through BuildPostgresDSN).
 func TestRunAdminValidatePosture_VerifyFullWithoutCA(t *testing.T) {
 	yaml := `
 locale:
