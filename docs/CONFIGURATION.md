@@ -158,6 +158,8 @@ server:
       cert_cache_dir: "certs"     # ACME only: where autocert persists certs between restarts
       allowed_ciphers: []         # optional allowlist of TLS 1.2 cipher suite names; leave empty for the built-in secure default
     tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
+    trusted_proxies: []           # IPs/CIDRs of your TLS-terminating proxy/LB; their X-Forwarded-For/-Proto are honored
+    hsts_preload: false           # add "preload" to Strict-Transport-Security (see below)
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -208,6 +210,33 @@ while planning 1.2's phase-out, and OT/legacy clients still commonly need
 every client can be required to speak 1.3. `tls.allowed_ciphers` has no
 effect under strict mode (TLS 1.3 negotiates its own, always-AEAD suite set)
 and logs a warning if both are set.
+
+**Strict-Transport-Security (HSTS).** The backend sends
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` only on a request
+that reached the client over TLS:
+
+- the listener serves TLS itself (`server.http.tls.enabled`), or
+- the TCP peer is listed in `server.http.trusted_proxies` and its
+  `X-Forwarded-Proto` is `https` (TLS terminated at your load balancer).
+
+It is never sent for plain http, and `X-Forwarded-Proto` from any peer not in
+`trusted_proxies` is ignored, so a client cannot turn HSTS on by forging the
+header. If the header has several values, the last one counts (the one your proxy
+added); your proxy must set or overwrite `X-Forwarded-Proto`, not pass a
+client's value through. `trusted_proxies` is the same list that governs
+`X-Forwarded-For` for client IPs, rate limits and audit.
+
+- `max-age` is one year, the web nginx's default too.
+- `includeSubDomains` is always sent. A secrets manager's session cookies should
+  not share a domain with a sibling host left on plain http. If some subdomains
+  of yours cannot do https, have your proxy replace the header.
+- `preload` is off unless you set `hsts_preload: true`. Preload-list submission
+  covers the whole registrable domain and is slow to undo, so only the domain's
+  owner should opt in.
+
+The web container's nginx makes its own HSTS decision and strips the backend's
+header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
+behind a TLS-terminating load balancer").
 
 ## storage
 
@@ -657,8 +686,9 @@ Rate limiting is on (`50`/`100` HTTP, `25`/`50` gRPC, as in
   report then lists `security.insecure_allow_cleartext_transport` if you also set
   `require_transport_tls: false` (it must be false for a cleartext listener to start).
 
-Docker Compose and Helm reach the same baseline with `docker-compose.secure.yml`
-and the chart's `secureBaseline.enabled` (docs/SELF_HOSTING.md §7);
+Docker Compose and Helm reach the same baseline by default since v0.96.0
+(`docker-compose.yml` with `keyorix.docker.yaml`, and the chart's
+`secureBaseline.enabled`; docs/SELF_HOSTING.md §7);
 `keyorix-server admin init --secure-files` is the generation step on its own,
 for a config an orchestrator supplies.
 
@@ -670,8 +700,8 @@ demo and e2e scripts in `scripts/` that talk plain HTTP use it explicitly.
 
 ### Hardening an older config (clearing the posture report)
 
-A config written by an earlier `admin init` (and `keyorix.docker.yaml`) is a dev
-baseline: on it the report lists the three `insecure_*` settings below
+A config written by an earlier `admin init` (or a `keyorix.docker.yaml` from before
+v0.96.0) is a dev baseline: on it the report lists the three `insecure_*` settings below
 (cleartext transport, unauthenticated `/metrics`, no API rate limit), and exits
 1. Upgrading does not change it. Verified on a fresh SQLite install: setting
 exactly these keys makes `admin validate --posture` print `No deviations found.`
@@ -684,11 +714,13 @@ YAML key, so the mapping is:)
 | `server.insecure_allow_unauthenticated_metrics` | `metrics_token: "<long random string>"` or `metrics_token_file: <path to a 0600 file>` on **both** `server.http` and `server.grpc` (the entry checks both listeners); `/metrics` then answers 401 without `Authorization: Bearer <token>` and 200 with it |
 | `server.insecure_disable_api_ratelimit` | `server.http.ratelimit.enabled: true` and `server.grpc.ratelimit.enabled: true` (the entry checks both listeners, even with gRPC off) |
 
-Also keep the key and config files `0600` and owned by the server's user. In
-Docker Compose the bind-mounted `keyorix.docker.yaml` arrives as the host's
-owner/mode (typically `0664`, uid 1000, while the container runs as uid 1001),
-which the report counts as a file-permission deviation until you
-`chmod 600 keyorix.docker.yaml && sudo chown 1001 keyorix.docker.yaml` (tracked in #2922).
+Also keep the key and config files `0600` and owned by the server's user. The
+Docker Compose stack since v0.96.0 does this for you: its entrypoint copies the
+bind-mounted `keyorix.docker.yaml` (which arrives as the host's owner/mode,
+typically `0664`, uid 1000, while the container runs as uid 1001) to a private
+0600 file owned by uid 1001 (#2922). A hand-rolled container setup that mounts the
+config directly needs `chmod 600 keyorix.docker.yaml && sudo chown 1001 keyorix.docker.yaml`,
+or the report counts a file-permission deviation.
 
 The renamed settings, with the deprecated name each still accepts (same
 meaning, a start-up warning when the old name is used; when both are set the
