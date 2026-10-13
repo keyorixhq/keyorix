@@ -3,7 +3,6 @@ package storage
 import (
 	"fmt"
 
-	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -31,16 +30,9 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 	case "remote":
 		return nil, fmt.Errorf("this command needs direct database access and cannot run against a remote backend; run it on the server host")
 	case "postgres", "postgresql":
-		dsn, err := config.ResolvePostgresDSN(&cfg.Storage.Database)
+		db, err := openPostgresGorm(&cfg.Storage.Database, gormConfig())
 		if err != nil {
 			return nil, err
-		}
-		if dsn == "" {
-			return nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
-		}
-		db, err := gorm.Open(postgres.Open(dsn), gormConfig())
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 		}
 		if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
 			return nil, err

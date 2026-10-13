@@ -85,6 +85,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -287,15 +288,16 @@ func acquireSQLiteExclusive(cfg *config.Config) (*Exclusive, error) {
 // guard (or, for AcquireExclusive, held open for the caller's entire
 // operation).
 func pgConn(cfg *config.Config) (*sql.DB, *sql.Conn, error) {
-	dsn, err := config.ResolvePostgresDSN(&cfg.Storage.Database)
+	cc, err := config.ResolvePostgresConnConfig(&cfg.Storage.Database)
 	if err != nil {
 		return nil, nil, err
 	}
-	if dsn == "" {
-		return nil, nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
-	}
-	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	// From the parsed config, never a DSN string: the resolved password is
+	// set on it and cannot change any other connection setting.
+	pool := stdlib.OpenDB(*cc)
+	db, err := gorm.Open(postgres.New(postgres.Config{Conn: pool}), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
+		_ = pool.Close()
 		return nil, nil, fmt.Errorf("connect to postgres for server-presence check: %w", err)
 	}
 	sqlDB, err := db.DB()
