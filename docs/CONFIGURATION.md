@@ -158,6 +158,8 @@ server:
       cert_cache_dir: "certs"     # ACME only: where autocert persists certs between restarts
       allowed_ciphers: []         # optional allowlist of TLS 1.2 cipher suite names; leave empty for the built-in secure default
     tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
+    trusted_proxies: []           # IPs/CIDRs of your TLS-terminating proxy/LB; their X-Forwarded-For/-Proto are honored
+    hsts_preload: false           # add "preload" to Strict-Transport-Security (see below)
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -208,6 +210,33 @@ while planning 1.2's phase-out, and OT/legacy clients still commonly need
 every client can be required to speak 1.3. `tls.allowed_ciphers` has no
 effect under strict mode (TLS 1.3 negotiates its own, always-AEAD suite set)
 and logs a warning if both are set.
+
+**Strict-Transport-Security (HSTS).** The backend sends
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` only on a request
+that reached the client over TLS:
+
+- the listener serves TLS itself (`server.http.tls.enabled`), or
+- the TCP peer is listed in `server.http.trusted_proxies` and its
+  `X-Forwarded-Proto` is `https` (TLS terminated at your load balancer).
+
+It is never sent for plain http, and `X-Forwarded-Proto` from any peer not in
+`trusted_proxies` is ignored, so a client cannot turn HSTS on by forging the
+header. If the header has several values, the last one counts (the one your proxy
+added); your proxy must set or overwrite `X-Forwarded-Proto`, not pass a
+client's value through. `trusted_proxies` is the same list that governs
+`X-Forwarded-For` for client IPs, rate limits and audit.
+
+- `max-age` is one year, the web nginx's default too.
+- `includeSubDomains` is always sent. A secrets manager's session cookies should
+  not share a domain with a sibling host left on plain http. If some subdomains
+  of yours cannot do https, have your proxy replace the header.
+- `preload` is off unless you set `hsts_preload: true`. Preload-list submission
+  covers the whole registrable domain and is slow to undo, so only the domain's
+  owner should opt in.
+
+The web container's nginx makes its own HSTS decision and strips the backend's
+header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
+behind a TLS-terminating load balancer").
 
 ## storage
 
@@ -271,6 +300,27 @@ with `storage.database.dsn already contains a password and KEYORIX_DB_PASSWORD i
 also set; ... remove the password from storage.database.dsn ... or unset
 KEYORIX_DB_PASSWORD`. Fix it by keeping the password in one place only. The
 message names the setting and never prints either password or the DSN.
+
+If Postgres rejects the credentials (SQLSTATE `28P01` or `28000`), or the server
+(or a proxy/pooler in front of it) drops the connection while authenticating, the
+server and the admin commands stop with one message: `postgres authentication failed
+for user "..." at host:port ... Check the database user ... and the password source:
+KEYORIX_DB_PASSWORD, KEYORIX_DB_PASSWORD_FILE, storage.database.password, or the
+password in storage.database.dsn`. It never contains the password or the DSN; the
+server also prints the driver's own text on a second line with the password and DSN
+redacted. A connection reset during the login exchange is treated as an
+authentication failure only when it happens after the TCP connection was
+established; a refused or timed-out connection is reported as before.
+
+### Starting with PostgreSQL: `admin init --storage-type postgres`
+
+`keyorix-server admin init` writes a SQLite config by default and creates the
+SQLite file. For a PostgreSQL deployment run `admin init --storage-type postgres`
+in a fresh directory: the config is written with `storage.type: postgres` and no
+SQLite path, and nothing SQLite is created. Set `storage.database.dsn` (or the
+host/name/user fields plus `KEYORIX_DB_PASSWORD`) and run `admin init` again to
+finish. `--storage-type` only applies to a config init writes; with an existing
+config of a different type init refuses and changes nothing.
 
 ### Refusing to vivify a missing database
 
