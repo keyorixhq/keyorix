@@ -37,6 +37,7 @@ func bgOwnCore(t *testing.T, roleIDs []uint, hasRolesRead bool, roleErr error) (
 	m.On("RoleSetBypassesPermissionChecks", mock.Anything, mock.Anything).Return(false, nil).Maybe()
 	m.On("RoleSetHasPermission", mock.Anything, mock.Anything, permRolesRead).Return(hasRolesRead, nil).Maybe()
 	m.On("ListBreakGlassActivations", mock.Anything, uint(2)).Return(bgOwnRows(), nil).Maybe()
+	m.On("IsProjectMember", mock.Anything, uint(10), uint(2)).Return(true, nil).Maybe()
 	return &KeyorixCore{storage: m}, m
 }
 
@@ -116,6 +117,29 @@ func TestListBreakGlassActivationsForCaller_PATRestriction(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, BreakGlassListScopeOwn, scope)
 	assert.Len(t, rows, 2)
+}
+
+// The own view is for current members only; a failed membership read fails closed.
+func TestListBreakGlassActivationsForCaller_NonMemberRefused(t *testing.T) {
+	for name, member := range map[string]struct {
+		ok  bool
+		err error
+	}{
+		"not_a_member":     {false, nil},
+		"membership_error": {false, errors.New("connection reset by peer")},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := new(MockStorage)
+			m.On("GetUserRoleIDsAt", mock.Anything, uint(10), storage.Scope{ProjectID: 2}).Return([]uint(nil), nil)
+			m.On("GetUserGroupRoleIDsAt", mock.Anything, uint(10), storage.Scope{ProjectID: 2}).Return([]uint(nil), nil)
+			m.On("IsProjectMember", mock.Anything, uint(10), uint(2)).Return(member.ok, member.err)
+			c := &KeyorixCore{storage: m}
+			rows, _, err := c.ListBreakGlassActivationsForCaller(context.Background(), ActorTypeUser, 10, 10, 2)
+			require.ErrorIs(t, err, ErrBreakGlassListForbidden)
+			assert.Nil(t, rows)
+			m.AssertNotCalled(t, "ListBreakGlassActivations", mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func TestListBreakGlassActivationsForCaller_ProjectRequired(t *testing.T) {

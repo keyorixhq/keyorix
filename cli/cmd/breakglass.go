@@ -43,7 +43,7 @@ var bgActivateCmd = &cobra.Command{
 
 var bgListCmd = &cobra.Command{
 	Use:          "list",
-	Short:        "List a project's break-glass activations (all with roles.read, else your own)",
+	Short:        "List a project's break-glass activations (all with roles.read, else your own as a member)",
 	SilenceUsage: true,
 	RunE:         runBGList,
 }
@@ -154,9 +154,9 @@ func runBGList(_ *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	// #2981: a refusal (e.g. a machine identity without roles.read) used to fall into "No break-glass activations" below, telling alice there
-	// were none while the admin's own list showed hers. Only a successful empty list
-	// may say that.
+	// #2981: a refusal (e.g. a machine identity without roles.read) used to fall into
+	// "No break-glass activations" below, telling alice there were none while the
+	// admin's own list showed hers. Only a successful empty list may say that.
 	if resp.StatusCode() != 200 {
 		return httpStatusError("list break-glass activations failed", resp.StatusCode(), resp.Body)
 	}

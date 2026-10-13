@@ -475,12 +475,18 @@ var ErrBreakGlassListForbidden = errors.New("break-glass: listing not permitted"
 //     bypass and machine roles apply exactly as at the old route gate): every
 //     activation of the project, scope "project". Unchanged.
 //   - otherwise a USER (never a machine identity, which keeps today's refusal)
-//     whose PAT restriction, if any, allows roles.read at the project: only the
-//     rows whose UserID is the caller, scope "own", with the same fields. Nothing
-//     about anyone else's rows (not even how many) reaches the answer, and an
-//     unknown project answers like a project where the caller has none.
-//   - anything else, including a failed authorization lookup (fail closed, never
-//     a silent downgrade to the own view): ErrBreakGlassListForbidden.
+//     who is a member of the project NOW (IsProjectMember, the definition
+//     activation uses) and whose PAT restriction, if any, allows roles.read at the
+//     project: only the rows whose UserID is the caller, scope "own", with the same
+//     fields. Nothing about anyone else's rows (not even how many) reaches the answer.
+//   - anything else, including a failed authorization or membership lookup (fail
+//     closed, never a silent downgrade to the own view): ErrBreakGlassListForbidden.
+//
+// Membership keeps a non-member's answer exactly what it was before: the same 403
+// for every project id, existing or not. Without it a non-member would reach the
+// transport's MFA check, whose ProjectMFARequired answer (only for a project that
+// exists and requires MFA) would tell them which projects exist and how they are
+// configured.
 //
 // userID is the authenticated user's id. The own view requires principalID ==
 // userID so a context whose actor kind and principal disagree can never filter by
@@ -510,6 +516,13 @@ func (c *KeyorixCore) ListBreakGlassActivationsForCaller(ctx context.Context, ac
 	// A restricted PAT sees its owner's rows only where it could have been granted
 	// the project view: the same check AuthorizePrincipal made above, minus the role.
 	if !patRestrictionFromContext(ctx).Allows(permRolesRead, scope) {
+		return nil, "", ErrBreakGlassListForbidden
+	}
+	member, err := c.IsProjectMember(ctx, userID, projectID)
+	if err != nil {
+		return nil, "", fmt.Errorf("%w: %w", ErrBreakGlassListForbidden, err)
+	}
+	if !member {
 		return nil, "", ErrBreakGlassListForbidden
 	}
 	rows, err := c.ListBreakGlassActivations(ctx, projectID)

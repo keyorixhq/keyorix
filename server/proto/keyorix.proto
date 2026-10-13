@@ -178,7 +178,7 @@ service BreakGlassService {
   rpc ActivateBreakGlass(ActivateBreakGlassRequest) returns (BreakGlassActivation);
 
   // List a project's break-glass activations: all of them with scoped roles.read,
-  // otherwise only the calling user's own (scope says which). A machine identity
+  // otherwise, for a project member, only their own (scope says which). A machine identity
   // without roles.read is refused.
   rpc ListBreakGlassActivations(ListBreakGlassActivationsRequest) returns (ListBreakGlassActivationsResponse);
 

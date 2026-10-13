@@ -86,14 +86,13 @@ func TestBreakGlassGRPC_OwnList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []uint32{bobP1}, bgOwnIDs(resp))
 
-	// Cross-project: A at 2 sees only the activation at 2; B (not a member) sees none.
+	// Cross-project: A at 2 sees only the activation at 2; B (not a member) is refused.
 	resp, err = svc.ListBreakGlassActivations(alice, &pb.ListBreakGlassActivationsRequest{ProjectId: 2})
 	require.NoError(t, err)
 	assert.Equal(t, []uint32{aliceP2}, bgOwnIDs(resp))
-	resp, err = svc.ListBreakGlassActivations(bob, &pb.ListBreakGlassActivationsRequest{ProjectId: 2})
-	require.NoError(t, err)
-	assert.Empty(t, resp.GetActivations())
-	assert.Equal(t, core.BreakGlassListScopeOwn, resp.GetScope())
+	_, err = svc.ListBreakGlassActivations(bob, &pb.ListBreakGlassActivationsRequest{ProjectId: 2})
+	require.Error(t, err)
+	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 
 	// roles.read: the whole project, unchanged.
 	resp, err = svc.ListBreakGlassActivations(bgCtx(), &pb.ListBreakGlassActivationsRequest{ProjectId: 1})

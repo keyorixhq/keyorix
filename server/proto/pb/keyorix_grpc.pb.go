@@ -2141,7 +2141,7 @@ type BreakGlassServiceClient interface {
 	// may break the glass (it must work in an emergency); every activation is audited.
 	ActivateBreakGlass(ctx context.Context, in *ActivateBreakGlassRequest, opts ...grpc.CallOption) (*BreakGlassActivation, error)
 	// List a project's break-glass activations: all of them with scoped roles.read,
-	// otherwise only the calling user's own (scope says which). A machine identity
+	// otherwise, for a project member, only their own (scope says which). A machine identity
 	// without roles.read is refused.
 	ListBreakGlassActivations(ctx context.Context, in *ListBreakGlassActivationsRequest, opts ...grpc.CallOption) (*ListBreakGlassActivationsResponse, error)
 	// Revoke an active break-glass activation early. Requires scoped roles.assign.
@@ -2196,7 +2196,7 @@ type BreakGlassServiceServer interface {
 	// may break the glass (it must work in an emergency); every activation is audited.
 	ActivateBreakGlass(context.Context, *ActivateBreakGlassRequest) (*BreakGlassActivation, error)
 	// List a project's break-glass activations: all of them with scoped roles.read,
-	// otherwise only the calling user's own (scope says which). A machine identity
+	// otherwise, for a project member, only their own (scope says which). A machine identity
 	// without roles.read is refused.
 	ListBreakGlassActivations(context.Context, *ListBreakGlassActivationsRequest) (*ListBreakGlassActivationsResponse, error)
 	// Revoke an active break-glass activation early. Requires scoped roles.assign.

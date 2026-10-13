@@ -540,8 +540,9 @@ var noPermissionGateAllowlist = map[string]string{
 		"(BREAKGLASS-OWN-1, Andrei 2026-10-13: a member lists their OWN activations): roles.read at the " +
 		"project through AuthorizePrincipal (PAT restriction, admin bypass and machine roles exactly as " +
 		"the old RequireScopedPermission(roles.read) gate) returns every activation, unchanged; any other " +
-		"USER whose PAT restriction allows roles.read there gets only rows whose user_id is theirs; a " +
-		"machine identity without roles.read, a restricted PAT outside the project, or a failed " +
+		"USER who is a current project member (IsProjectMember) and whose PAT restriction allows " +
+		"roles.read there gets only rows whose user_id is theirs; a non-member (same 403 for every " +
+		"project id), a machine identity without roles.read, a restricted PAT outside the project, or a failed " +
 		"authorization read is refused with the gate's old 403. The handler applies ProjectMFABlocked to " +
 		"both views, as the gate did. Guard: server/http/break_glass_own_list_test.go.",
 

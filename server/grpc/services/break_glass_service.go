@@ -49,7 +49,7 @@ func (s *BreakGlassGRPCService) ActivateBreakGlass(ctx context.Context, req *pb.
 
 // ListBreakGlassActivations lists a project's activations. Same decision as the HTTP
 // route (core.ListBreakGlassActivationsForCaller): scoped roles.read lists them all,
-// any other user only their own, anyone else is refused PermissionDenied exactly as
+// any other project member only their own, anyone else is refused PermissionDenied exactly as
 // the roles.read check used to refuse them. The per-project MFA policy applies to
 // both views.
 func (s *BreakGlassGRPCService) ListBreakGlassActivations(ctx context.Context, req *pb.ListBreakGlassActivationsRequest) (*pb.ListBreakGlassActivationsResponse, error) {

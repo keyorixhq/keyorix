@@ -198,16 +198,15 @@ func TestBreakGlassOwnList_RolesReadSeesWholeProjectUnchanged(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, raw)
 	assert.Equal(t, core.BreakGlassListScopeProject, out.Data.Scope, raw)
 	assert.Len(t, out.Data.Activations, 5, raw)
-	// ...and only her own (none) at payments, where she holds nothing.
-	code, out, raw = f.list(t, sess.SessionToken, f.paymentsID)
-	require.Equal(t, http.StatusOK, code, raw)
-	assert.Equal(t, core.BreakGlassListScopeOwn, out.Data.Scope, raw)
-	assert.Empty(t, out.Data.Activations, raw)
+	// ...and nothing at payments, where she is not a member: refused, as before.
+	code, _, raw = f.list(t, sess.SessionToken, f.paymentsID)
+	assert.Equal(t, http.StatusForbidden, code, raw)
 	assert.NotContains(t, raw, bgOwnJustificationPrefix, raw)
 }
 
 // Cross-project: a member's own view of P never includes their activations elsewhere,
-// and an outsider (or an unknown project) learns nothing, not even existence.
+// and a non-member gets the old 403 for every project id, existing or not, so they
+// learn nothing, not even existence.
 func TestBreakGlassOwnList_CrossProjectAndOutsiders(t *testing.T) {
 	f := newBGOwnFixture(t)
 
@@ -218,17 +217,17 @@ func TestBreakGlassOwnList_CrossProjectAndOutsiders(t *testing.T) {
 	require.Equal(t, http.StatusOK, code, raw)
 	assert.NotContains(t, bgIDs(out), f.alicePayments, raw)
 
-	// bob is not a member of payments: alice's activation there is invisible to him.
-	code, out, raw = f.list(t, f.bobTok, f.paymentsID)
-	require.Equal(t, http.StatusOK, code, raw)
-	assert.Empty(t, out.Data.Activations, raw)
+	// bob is not a member of payments: refused, alice's activation there unseen.
+	code, _, raw = f.list(t, f.bobTok, f.paymentsID)
+	assert.Equal(t, http.StatusForbidden, code, raw)
+	assert.NotContains(t, raw, bgOwnJustificationPrefix, raw)
 
 	// oscar holds nothing anywhere: the existing project with five activations and a
-	// project that does not exist answer byte-for-byte the same.
+	// project that does not exist answer the same.
 	code, _, rawP := f.list(t, f.oscarTok, f.d.projectID)
-	require.Equal(t, http.StatusOK, code, rawP)
+	assert.Equal(t, http.StatusForbidden, code, rawP)
 	code, _, rawNone := f.list(t, f.oscarTok, 987654)
-	require.Equal(t, http.StatusOK, code, rawNone)
+	assert.Equal(t, http.StatusForbidden, code, rawNone)
 	assert.JSONEq(t, rawNone, rawP, "an outsider must not tell a populated project from a missing one")
 	assert.NotContains(t, rawP, bgOwnJustificationPrefix, rawP)
 }
@@ -314,6 +313,14 @@ func TestBreakGlassOwnList_ProjectMFAPolicyApplies(t *testing.T) {
 	// payments does not require MFA: alice's own view there is unaffected.
 	code, _, raw = f.list(t, f.aliceTok, f.paymentsID)
 	assert.Equal(t, http.StatusOK, code, raw)
+
+	// A non-member must not learn that P exists and requires MFA: they get the same
+	// generic 403 as for a project that does not exist, never ProjectMFARequired.
+	code, _, rawP := f.list(t, f.oscarTok, f.d.projectID)
+	assert.Equal(t, http.StatusForbidden, code, rawP)
+	assert.NotContains(t, rawP, "ProjectMFARequired", rawP)
+	_, _, rawNone := f.list(t, f.oscarTok, 987654)
+	assert.JSONEq(t, rawNone, rawP, "an outsider must not tell an MFA project from a missing one")
 }
 
 // Listing writes no audit event, for either view: it never did.

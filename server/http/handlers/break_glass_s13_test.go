@@ -88,9 +88,11 @@ func TestListBreakGlassActivations_BadProjectID_S13(t *testing.T) {
 }
 
 func TestListBreakGlassActivations_EmptyProject_S13(t *testing.T) {
-	h := newCatalogHandlerBreakGlassS13(t)
 	// BREAKGLASS-OWN-1: the handler authorizes the caller itself now (the route has no
-	// permission gate), so the request carries an authenticated user, as it does live.
+	// permission gate), so the request carries an authenticated caller allowed to list:
+	// user 1, the fixture's global admin.
+	cs, _ := freshCoreS12WithAdmin(t)
+	h := NewCatalogHandler(cs)
 	req := withUserCtxS7(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "9999"))
 	w := httptest.NewRecorder()
 	h.ListBreakGlassActivations(w, req)

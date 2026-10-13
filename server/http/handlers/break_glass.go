@@ -2,7 +2,7 @@
 // RBAC-gated (the point is access the caller does not have); the controls are
 // config-enablement, a mandatory justification, loud audit, and auto-expiry. Revoke
 // and review ARE gated (roles.assign) — they're review actions. List is authorized in
-// core: roles.read sees the project's activations, any other user only their own.
+// core: roles.read sees the project's activations, any other member only their own.
 package handlers
 
 import (
@@ -78,7 +78,7 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 
 // ListBreakGlassActivations handles GET /api/v1/projects/{id}/break-glass. The route
 // carries no permission gate: core.ListBreakGlassActivationsForCaller is the
-// authorization (roles.read at the project lists every activation; any other user
+// authorization (roles.read at the project lists every activation; any other project member
 // lists only their own; anyone else is refused with the 403 the old roles.read gate
 // gave). The per-project MFA policy applies to both views, as it did at the gate.
 func (h *CatalogHandler) ListBreakGlassActivations(w http.ResponseWriter, r *http.Request) {
