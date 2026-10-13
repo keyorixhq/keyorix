@@ -122,6 +122,13 @@ const (
 	RotationPolicyScopeProject     RotationPolicyScope = "project"
 )
 
+// Defines values for SecretReadRefusalCode.
+const (
+	SecretExpired           SecretReadRefusalCode = "SecretExpired"
+	SecretMaxReadsExhausted SecretReadRefusalCode = "SecretMaxReadsExhausted"
+	SecretSuspended         SecretReadRefusalCode = "SecretSuspended"
+)
+
 // Defines values for SecretRiskScoreBand.
 const (
 	High   SecretRiskScoreBand = "high"
@@ -366,6 +373,21 @@ type BreakGlassActivation struct {
 
 // BreakGlassActivationState defines model for BreakGlassActivation.State.
 type BreakGlassActivationState string
+
+// BreakGlassSettings The server's effective break-glass limits, returned with the activations list to a caller it allowed. Deployment limits only: no secret, no admin-only data.
+type BreakGlassSettings struct {
+	// DefaultTtlSeconds Lifetime granted when none is requested (already capped at max_ttl_seconds)
+	DefaultTtlSeconds *int64 `json:"default_ttl_seconds,omitempty"`
+
+	// EmergencyRole Name of the role an activation grants
+	EmergencyRole *string `json:"emergency_role,omitempty"`
+
+	// Enabled break_glass.enabled; false means activation is refused with BreakGlassDisabled
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// MaxTtlSeconds Ceiling a requested lifetime is capped at
+	MaxTtlSeconds *int64 `json:"max_ttl_seconds,omitempty"`
+}
 
 // BulkDeleteResult defines model for BulkDeleteResult.
 type BulkDeleteResult struct {
@@ -1163,6 +1185,9 @@ type SecretNameViolation struct {
 	Type           *string `json:"type,omitempty"`
 }
 
+// SecretReadRefusalCode Stable code of a 409 secret-state read refusal (see the SecretReadRefused response).
+type SecretReadRefusalCode string
+
 // SecretRenameOutcome defines model for SecretRenameOutcome.
 type SecretRenameOutcome struct {
 	Id      *int    `json:"id,omitempty"`
@@ -1301,6 +1326,16 @@ type Error struct {
 	// PendingSteps Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order.
 	PendingSteps *[]string `json:"pending_steps,omitempty"`
 	Success      *bool     `json:"success,omitempty"`
+}
+
+// SecretReadRefused defines model for SecretReadRefused.
+type SecretReadRefused struct {
+	Code *int `json:"code,omitempty"`
+
+	// Error Stable code of a 409 secret-state read refusal (see the SecretReadRefused response).
+	Error   *SecretReadRefusalCode `json:"error,omitempty"`
+	Message *string                `json:"message,omitempty"`
+	Success *bool                  `json:"success,omitempty"`
 }
 
 // BulkApproveAccessRequestsJSONBody defines parameters for BulkApproveAccessRequests.
