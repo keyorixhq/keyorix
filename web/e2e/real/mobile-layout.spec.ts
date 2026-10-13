@@ -98,14 +98,15 @@ test('no main page scrolls sideways at 390 px', async ({ browser }, testInfo) =>
     try {
         await login(page);
 
-        // The project routes need a real project id: take the first project the
-        // Projects list links to (the demo seed's backend-api is 2; the smoke
+        // The project routes need a real project id: open the first project in the
+        // Projects list (its rows are div[role=button], not links) and read the id
+        // from the URL it navigates to (the demo seed's backend-api is 2; the smoke
         // backend has the one web-real-smoke.sh created).
         await page.goto('/projects');
-        await page.waitForLoadState('networkidle', { timeout: 15_000 });
-        const href = await page.locator('a[href^="/projects/"]').first().getAttribute('href');
-        const projectId = href?.match(/^\/projects\/(\d+)/)?.[1];
-        expect(projectId, `no project link on /projects (href=${href})`).toBeTruthy();
+        await page.locator('main div[role="button"]').first().click({ timeout: 15_000 });
+        await page.waitForURL(/\/projects\/\d+/, { timeout: 15_000 });
+        const projectId = new URL(page.url()).pathname.match(/^\/projects\/(\d+)/)?.[1];
+        expect(projectId, `could not read a project id from ${page.url()}`).toBeTruthy();
 
         // The routes DEMO-WALK-4 measured, plus the ones it found fitting (a
         // regression guard: they must stay that way).
