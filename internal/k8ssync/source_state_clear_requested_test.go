@@ -92,17 +92,61 @@ func TestSourceStateClearRequested_UnknownDetailsShapeIsPlainSuspend(t *testing.
 	}
 }
 
-// The request marker is honoured only on a suspended refusal.
-func TestSourceStateClearRequested_IgnoredOnExpired(t *testing.T) {
+// #3215: the server judges expiry first, so a secret that is expired AND suspended with the
+// request answers SecretExpired carrying the marker. The copies are cleared (the user was
+// told they would be), with the usual Clear semantics, and restored on resume.
+func TestSourceStateClearRequested_HonouredOnExpiredWhenSuspendedWithRequest(t *testing.T) {
+	w := newLifecycleWorld(t) // on_suspend: retain
+	w.pass(t)
+	original, _ := w.kube.snapshot("app/db-creds")
+	require.Equal(t, b64("s3cr3t-value"), original.Data["password"])
+	w.kx.clearRequested = true
+	w.kx.set("SecretExpired")
+	res, _ := w.pass(t)
+	got, ok := w.kube.snapshot("app/db-creds")
+	require.True(t, ok, "the Secret object is never deleted")
+	assert.Empty(t, got.Data, "expired + suspended + request: copies cleared")
+	assert.Equal(t, original.Labels, got.Labels)
+	assert.Zero(t, res.Failed+res.Revoked+res.Suspected, "%+v", res)
+
+	w.kx.clearRequested = false
+	w.kx.set("")
+	w.pass(t)
+	restored, _ := w.kube.snapshot("app/db-creds")
+	assert.Equal(t, original, restored)
+}
+
+// An expired secret that is NOT suspended with the request keeps its copies (keep + warn).
+func TestSourceStateClearRequested_ExpiredOnlyStillRetained(t *testing.T) {
 	w := newLifecycleWorld(t)
 	w.pass(t)
 	original, _ := w.kube.snapshot("app/db-creds")
-	w.kx.clearRequested = true
 	w.kx.set("SecretExpired")
 	res, _ := w.pass(t)
 	got, _ := w.kube.snapshot("app/db-creds")
 	assert.Equal(t, original, got)
 	assert.Equal(t, 1, res.SourceExpired, "%+v", res)
+}
+
+// Expired + request keeps the Clear guard rails: unowned Secrets untouched, none created.
+func TestSourceStateClearRequested_ExpiredLeavesUnownedAndAbsentAlone(t *testing.T) {
+	t.Run("unowned", func(t *testing.T) {
+		w := newLifecycleWorld(t)
+		w.kube.put("app/db-creds", fakeKubeSecret{Labels: map[string]string{}, Data: map[string]string{"THEIRS": b64("keep")}})
+		w.kx.clearRequested = true
+		w.kx.set("SecretExpired")
+		w.pass(t)
+		got, _ := w.kube.snapshot("app/db-creds")
+		assert.Equal(t, map[string]string{"THEIRS": b64("keep")}, got.Data)
+	})
+	t.Run("absent", func(t *testing.T) {
+		w := newLifecycleWorld(t)
+		w.kx.clearRequested = true
+		w.kx.set("SecretExpired")
+		w.pass(t)
+		_, ok := w.kube.snapshot("app/db-creds")
+		assert.False(t, ok, "no empty Secret is created")
+	})
 }
 
 // Clear semantics are exactly FIX-3175B's.

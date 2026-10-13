@@ -120,6 +120,19 @@ func secretStateRefusal(resp *http.Response) error {
 		}
 		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrSourceSuspended)
 	case "SecretExpired":
+		// An expired secret that is also suspended with the clear marker answers
+		// SecretExpired carrying details.clear_synced_copies (#3215): clear, not retain.
+		// Wrapped as suspended+clear (the engine tests suspended first); ErrSourceExpired
+		// stays in the chain. An expired secret without the marker is unchanged.
+		var details struct {
+			ClearSyncedCopies bool `json:"clear_synced_copies"`
+		}
+		if len(env.Details) > 0 {
+			_ = json.Unmarshal(env.Details, &details)
+		}
+		if details.ClearSyncedCopies {
+			return fmt.Errorf("%s (HTTP %d, clear_synced_copies): %w: %w: %w", env.Error, resp.StatusCode, ErrSourceSuspended, ErrSourceClearRequested, ErrSourceExpired)
+		}
 		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrSourceExpired)
 	case "SecretAccessOutsideSchedule", "SecretMaxReadsExhausted":
 		return fmt.Errorf("value read refused: %s (HTTP %d)", env.Error, resp.StatusCode)

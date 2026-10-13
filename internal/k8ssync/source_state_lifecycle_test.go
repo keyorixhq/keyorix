@@ -158,7 +158,9 @@ func (f *fakeKeyorix) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}})
 		default:
 			w.WriteHeader(http.StatusConflict)
-			if state != "SecretSuspended" {
+			// The server carries the marker on a SecretExpired refusal too, when the
+			// secret is also suspended with it (#3215).
+			if state != "SecretSuspended" && state != "SecretExpired" {
 				details = ""
 			}
 			_, _ = fmt.Fprintf(w, `{"success":false,"code":409,"error":%q,"message":"refused"%s}`, state, details)

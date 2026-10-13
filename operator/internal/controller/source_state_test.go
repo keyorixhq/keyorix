@@ -58,6 +58,10 @@ func (f *stateFetcher) FetchValueInfo(_ context.Context, ref string) (keyorix.Va
 		return keyorix.Value{}, fmt.Errorf("secret reference %q: SecretSuspended (HTTP 409, clear_synced_copies): %w: %w", ref, keyorix.ErrSecretSuspended, keyorix.ErrClearSyncedCopies)
 	case f.suspended[ref]:
 		return keyorix.Value{}, fmt.Errorf("secret reference %q: SecretSuspended (HTTP 409): %w", ref, keyorix.ErrSecretSuspended)
+	case f.expired[ref] && f.clearRequested[ref]:
+		// What the real client returns for an expired secret that is also suspended with the
+		// clear request (#3215; client_test.go pins this chain).
+		return keyorix.Value{}, fmt.Errorf("secret reference %q: SecretExpired (HTTP 409, clear_synced_copies): %w: %w: %w", ref, keyorix.ErrSecretSuspended, keyorix.ErrClearSyncedCopies, keyorix.ErrSecretExpired)
 	case f.expired[ref]:
 		return keyorix.Value{}, fmt.Errorf("secret reference %q: SecretExpired (HTTP 409): %w", ref, keyorix.ErrSecretExpired)
 	}
