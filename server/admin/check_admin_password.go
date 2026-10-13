@@ -27,6 +27,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// adminPasswordRejectedExitCode is the exit status of a password the policy
+// refuses. It is distinct from 1 (stdin read error, flag error, ...) so the
+// container entrypoint can tell a verdict from a failure to produce one.
+const adminPasswordRejectedExitCode = 2
+
 // maxAdminPasswordBytes bounds the stdin read; the server's own secret-file
 // ceiling is 1 MiB, anything near that is already not a password.
 const maxAdminPasswordBytes = 1 << 20
@@ -45,8 +50,11 @@ process in the container could read) and checks it against the password policy
 the server enforces on POST /system/init, for the given admin identity. Exits 0
 when the password would be accepted; otherwise prints the policy's reason
 ("admin password rejected: password must not contain your username, ...") and
-exits 1. It does not touch the database or the network, and never prints the
-password.
+exits 2. Exit 1 is any other failure (unreadable or oversized stdin, bad flags):
+it is no verdict on the password. It does not touch the database or the
+network, and never prints the password.
+
+Exit codes: 0 accepted, 2 refused by the password policy, 1 anything else.
 
 The container entrypoint runs it before the first-boot bootstrap so a rejected
 password is reported once, with its real cause.`,
@@ -102,7 +110,7 @@ func adminPasswordRejection(policy rules.PasswordPolicy, pw, username, email, di
 		displayName = username
 	}
 	if err := policy.Validate(pw, &models.User{Username: username, Email: email, DisplayName: displayName}); err != nil {
-		return fmt.Errorf("admin password rejected: %w", err)
+		return newExitCodeError(adminPasswordRejectedExitCode, fmt.Errorf("admin password rejected: %w", err))
 	}
 	return nil
 }
@@ -139,7 +147,7 @@ func readAdminPassword(r io.Reader) (string, error) {
 	pw := strings.TrimSuffix(string(raw), "\n")
 	pw = strings.TrimSuffix(pw, "\r")
 	if pw == "" {
-		return "", errors.New("admin password rejected: the password is empty")
+		return "", newExitCodeError(adminPasswordRejectedExitCode, errors.New("admin password rejected: the password is empty"))
 	}
 	return pw, nil
 }

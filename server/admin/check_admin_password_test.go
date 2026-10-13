@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -15,7 +16,21 @@ import (
 // stdin. Every flag is passed explicitly: cobra flag values persist between runs.
 func runCheckAdminPasswordCaptured(t *testing.T, pw, username, email string) (string, int) {
 	t.Helper()
-	t.Chdir(t.TempDir()) // no keyorix.yaml here: the default policy applies
+	return runCheckAdminPasswordWithConfig(t, "", pw, username, email)
+}
+
+// runCheckAdminPasswordWithConfig is runCheckAdminPasswordCaptured with a
+// keyorix.yaml (cfgYAML, "" = none, so the default policy applies) in the
+// working directory, which is where config.Load("") finds it.
+func runCheckAdminPasswordWithConfig(t *testing.T, cfgYAML, pw, username, email string) (string, int) {
+	t.Helper()
+	dir := t.TempDir()
+	if cfgYAML != "" {
+		if err := os.WriteFile(filepath.Join(dir, "keyorix.yaml"), []byte(cfgYAML), 0o600); err != nil {
+			t.Fatalf("write config: %v", err)
+		}
+	}
+	t.Chdir(dir)
 	rootCmd.SetIn(strings.NewReader(pw))
 	t.Cleanup(func() { rootCmd.SetIn(nil) })
 	r, w, err := os.Pipe()
@@ -87,6 +102,63 @@ func TestCheckAdminPassword_EmptyStdinIsRefused(t *testing.T) {
 		t.Fatalf("code=%d out=%s", code, out)
 	}
 }
+
+// The configured password_policy (non-default) is what the check applies, not
+// the built-in default: a password the default accepts is refused under
+// min_length: 40, and the refusal names the configured length.
+func TestCheckAdminPassword_HonoursConfiguredPasswordPolicy(t *testing.T) {
+	const pw = "Correct-Horse-Battery-2026" // 26 chars: fine under the default
+	if out, code := runCheckAdminPasswordCaptured(t, pw, "admin", "admin@keyorix.local"); code != 0 {
+		t.Fatalf("precondition: default policy must accept the password (code=%d):\n%s", code, out)
+	}
+	out, code := runCheckAdminPasswordWithConfig(t, "password_policy:\n  min_length: 40\n", pw, "admin", "admin@keyorix.local")
+	if code != adminPasswordRejectedExitCode || !strings.Contains(out, "at least 40 characters") {
+		t.Fatalf("configured min_length 40 not applied (code=%d):\n%s", code, out)
+	}
+}
+
+// ResolvePasswordPolicy applies a configured value over the default and leaves
+// every rule the operator did not set at its default.
+func TestResolvePasswordPolicy_ConfiguredValueOverridesOnlyThatRule(t *testing.T) {
+	n := 40
+	got := ResolvePasswordPolicy(config.PasswordPolicyConfig{MinLength: &n})
+	want := rules.DefaultPasswordPolicy()
+	want.MinLength = 40
+	if got != want {
+		t.Fatalf("ResolvePasswordPolicy(min_length 40) = %+v, want %+v", got, want)
+	}
+}
+
+// Exit codes: a policy refusal is 2 (a verdict the entrypoint acts on); a
+// failure to produce a verdict (stdin read error) is the generic 1.
+func TestCheckAdminPassword_ExitCodes(t *testing.T) {
+	if _, code := runCheckAdminPasswordCaptured(t, "Dw5-Admin-Passphrase#2026\n", "admin", "admin@keyorix.local"); code != 2 {
+		t.Fatalf("policy refusal exit code = %d, want 2", code)
+	}
+	if _, code := runCheckAdminPasswordCaptured(t, "\n", "admin", "admin@keyorix.local"); code != 2 {
+		t.Fatalf("empty password exit code = %d, want 2", code)
+	}
+	if _, code := runCheckAdminPasswordCaptured(t, "Correct-Horse-Battery-2026", "admin", "admin@keyorix.local"); code != 0 {
+		t.Fatalf("accepted password exit code = %d, want 0", code)
+	}
+
+	// A stdin that cannot be read is not a verdict: exit 1, not 2.
+	t.Chdir(t.TempDir())
+	rootCmd.SetIn(errReader{})
+	t.Cleanup(func() { rootCmd.SetIn(nil) })
+	if code := Execute([]string{"check-admin-password", "--username", "admin", "--email", "admin@keyorix.local", "--display-name", "Administrator"}); code != 1 {
+		t.Fatalf("stdin read error exit code = %d, want 1", code)
+	}
+	// A flag error is not a verdict either.
+	rootCmd.SetIn(strings.NewReader("x"))
+	if code := Execute([]string{"check-admin-password", "--no-such-flag"}); code != 1 {
+		t.Fatalf("flag error exit code = %d, want 1", code)
+	}
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, io.ErrUnexpectedEOF }
 
 // ResolvePasswordPolicy with no password_policy block is exactly the built-in
 // default (#G37), so a partial config can never zero a rule.
