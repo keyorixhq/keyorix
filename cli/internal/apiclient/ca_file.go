@@ -33,9 +33,7 @@ const maxCAFileBytes = 1 << 20
 // write it can make this CLI trust their server).
 func LoadCAPool(path string) (*x509.CertPool, error) {
 	// regularfile.Open opens with O_NONBLOCK (a plain open(2) of a FIFO blocks until a
-	// writer appears, before any regular-file check could refuse it) and fstats the same
-	// descriptor, so there is no swap window. Same behaviour and error text as the
-	// direct open this replaced (#3186); the cli read-guard requires this route.
+	// writer appears) and refuses a non-regular file on the opened descriptor.
 	f, info, err := regularfile.Open("read CA file", path)
 	if err != nil {
 		if errors.Is(err, regularfile.ErrNotRegular) {
@@ -44,6 +42,7 @@ func LoadCAPool(path string) (*x509.CertPool, error) {
 		return nil, fmt.Errorf("read CA file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
+
 	if perm := info.Mode().Perm(); perm&0o022 != 0 {
 		return nil, fmt.Errorf("CA file %s has permissions %#o: writable by group or others, refusing to trust it; fix with chmod go-w %s", path, perm, path)
 	}
