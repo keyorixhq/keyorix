@@ -24,6 +24,7 @@
 # CLOSURE_PKG_ERR when the package is refused. For the root module
 # CLOSURE_MOD_PKG is PKG unchanged.
 
+# shellcheck disable=SC2034  # CLOSURE_* results are read by the sourcing scripts
 # Modules a closure row may name. Add a module here only together with a self-test case.
 CLOSURE_KNOWN_MODULES=". cli"
 
