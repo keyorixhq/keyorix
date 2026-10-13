@@ -24,6 +24,30 @@ import (
 // indefinitely (which a plain, unclassified fetch error did).
 var ErrUpstreamGone = errors.New("k8ssync: secret not found or access revoked upstream")
 
+// secretStateRefusal classifies a 403/409 whose envelope names a secret-state
+// refusal of a value read (server/http/handlers/openapi.yaml, SecretReadRefused;
+// ERRMAP-1), or returns nil for any other body. A suspended or expired secret may
+// no longer be served: ErrUpstreamGone, so its materialized value is removed. A read
+// outside the secret's access schedule, or with its max-reads budget spent, is
+// transient for this agent: a plain error, so the synced value stays (removing it
+// whenever a schedule window closes would be a recurring outage). It reads at most
+// maxResponseBodyBytes of the body.
+func secretStateRefusal(resp *http.Response) error {
+	var env struct {
+		Error string `json:"error"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&env) != nil {
+		return nil
+	}
+	switch env.Error {
+	case "SecretSuspended", "SecretExpired":
+		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrUpstreamGone)
+	case "SecretAccessOutsideSchedule", "SecretMaxReadsExhausted":
+		return fmt.Errorf("value read refused: %s (HTTP %d)", env.Error, resp.StatusCode)
+	}
+	return nil
+}
+
 // maxServerPageSize is the Keyorix server's maximum accepted page_size for
 // GET /api/v1/secrets (server/http/handlers/secrets_list.go: 1 <= page_size <= 100;
 // anything outside that range is silently ignored and the server falls back to its
@@ -277,6 +301,11 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface
 	}
 	defer drainAndClose(resp)
 
+	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusConflict {
+		if err := secretStateRefusal(resp); err != nil {
+			return err
+		}
+	}
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return fmt.Errorf("not authorized (HTTP %d) — check the agent's token and its permissions: %w", resp.StatusCode, ErrUpstreamGone)
 	}

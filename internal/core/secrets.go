@@ -375,7 +375,7 @@ func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 // ErrorSecretExpired once its Expiration has passed.
 func unexpiredSecret(secret *models.SecretNode) (*models.SecretNode, error) {
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
+		return nil, errSecretExpired()
 	}
 	return secret, nil
 }
@@ -407,7 +407,7 @@ func (c *KeyorixCore) GetSecretByName(ctx context.Context, name string, projectI
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretExpired", nil))
+		return nil, errSecretExpired()
 	}
 	return secret, nil
 }

@@ -3,6 +3,7 @@ package keyorix
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -246,6 +247,40 @@ func TestIsLoopbackHost(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.host, func(t *testing.T) {
 			assert.Equal(t, tc.want, isLoopbackHost(tc.host))
+		})
+	}
+}
+
+// ERRMAP-1: the server names a secret-state refusal with a code. Suspended and
+// expired mean the value may no longer be served (ErrSecretGone, wipe); outside the
+// access schedule and max-reads exhausted keep the synced Secret (ErrSecretUnavailable,
+// never ErrSecretGone). A bare 403 without a code stays ErrSecretGone, and an
+// unrelated 409 is neither.
+func TestClient_FetchValueSecretStateRefusals(t *testing.T) {
+	cases := []struct {
+		status            int
+		code              string
+		gone, unavailable bool
+	}{
+		{http.StatusForbidden, "SecretAccessOutsideSchedule", false, true},
+		{http.StatusConflict, "SecretMaxReadsExhausted", false, true},
+		{http.StatusConflict, "SecretSuspended", true, false},
+		{http.StatusConflict, "SecretExpired", true, false},
+		{http.StatusForbidden, "Forbidden", true, false},
+		{http.StatusConflict, "ConflictError", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tc.status)
+				_, _ = fmt.Fprintf(w, `{"success":false,"code":%d,"error":%q,"message":"refused"}`, tc.status, tc.code)
+			}))
+			defer srv.Close()
+			_, err := New(srv.URL, "tok").FetchValue(context.Background(), "a/b/c")
+			require.Error(t, err)
+			assert.Equal(t, tc.gone, errors.Is(err, ErrSecretGone), "ErrSecretGone for %d %s: %v", tc.status, tc.code, err)
+			assert.Equal(t, tc.unavailable, errors.Is(err, ErrSecretUnavailable), "ErrSecretUnavailable for %d %s: %v", tc.status, tc.code, err)
 		})
 	}
 }
