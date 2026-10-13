@@ -4026,7 +4026,7 @@ func TestListBreakGlassActivations_BadID(t *testing.T) {
 
 func TestListBreakGlassActivations_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
+	req := withUserCtxS7(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
 	w := httptest.NewRecorder()
 	h.ListBreakGlassActivations(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

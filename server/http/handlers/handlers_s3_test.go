@@ -414,8 +414,15 @@ func TestBreakGlass_Unauthorized(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, w.Code)
 	})
 
-	t.Run("ListBreakGlassActivations_happy_path", func(t *testing.T) {
+	t.Run("ListBreakGlassActivations_no_user", func(t *testing.T) {
 		req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
+		w := httptest.NewRecorder()
+		h.ListBreakGlassActivations(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code)
+	})
+
+	t.Run("ListBreakGlassActivations_happy_path", func(t *testing.T) {
+		req := withUserCtxS7(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
 		w := httptest.NewRecorder()
 		h.ListBreakGlassActivations(w, req)
 		assert.Equal(t, http.StatusOK, w.Code)

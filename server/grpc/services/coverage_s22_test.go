@@ -91,10 +91,21 @@ func TestListBreakGlassActivations_Unauthenticated_S22(t *testing.T) {
 	assert.Equal(t, codes.Unauthenticated, status.Code(err))
 }
 
-func TestListBreakGlassActivations_PermissionDenied_S22(t *testing.T) {
+// BREAKGLASS-OWN-1 (Andrei 2026-10-13): a USER without roles.read is no longer
+// refused; they get their own activations only (none here), scope "own". A machine
+// identity without roles.read is still refused, as before.
+func TestListBreakGlassActivations_UserWithoutRolesReadGetsOwnView_S22(t *testing.T) {
 	svc := newBreakGlassService(t)
 	ctx := authCtx(999, "nobody")
-	_, err := svc.ListBreakGlassActivations(ctx, &pb.ListBreakGlassActivationsRequest{ProjectId: 1})
+	resp, err := svc.ListBreakGlassActivations(ctx, &pb.ListBreakGlassActivationsRequest{ProjectId: 1})
+	require.NoError(t, err)
+	assert.Equal(t, "own", resp.GetScope())
+	assert.Empty(t, resp.GetActivations())
+}
+
+func TestListBreakGlassActivations_PermissionDenied_S22(t *testing.T) {
+	svc := newBreakGlassService(t)
+	_, err := svc.ListBreakGlassActivations(machineCtx(999), &pb.ListBreakGlassActivationsRequest{ProjectId: 1})
 	require.Error(t, err)
 	assert.Equal(t, codes.PermissionDenied, status.Code(err))
 }

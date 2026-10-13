@@ -4710,8 +4710,11 @@ func (x *ListBreakGlassActivationsRequest) GetProjectId() uint32 {
 }
 
 type ListBreakGlassActivationsResponse struct {
-	state         protoimpl.MessageState  `protogen:"open.v1"`
-	Activations   []*BreakGlassActivation `protobuf:"bytes,1,rep,name=activations,proto3" json:"activations,omitempty"`
+	state       protoimpl.MessageState  `protogen:"open.v1"`
+	Activations []*BreakGlassActivation `protobuf:"bytes,1,rep,name=activations,proto3" json:"activations,omitempty"`
+	// "project": every activation of the project (the caller holds roles.read there).
+	// "own": only the caller's own activations (a user without roles.read).
+	Scope         string `protobuf:"bytes,2,opt,name=scope,proto3" json:"scope,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4751,6 +4754,13 @@ func (x *ListBreakGlassActivationsResponse) GetActivations() []*BreakGlassActiva
 		return x.Activations
 	}
 	return nil
+}
+
+func (x *ListBreakGlassActivationsResponse) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
 }
 
 type RevokeBreakGlassRequest struct {
@@ -11455,9 +11465,10 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x03ttl\x18\x03 \x01(\tR\x03ttl\"A\n" +
 	" ListBreakGlassActivationsRequest\x12\x1d\n" +
 	"\n" +
-	"project_id\x18\x01 \x01(\rR\tprojectId\"g\n" +
+	"project_id\x18\x01 \x01(\rR\tprojectId\"}\n" +
 	"!ListBreakGlassActivationsResponse\x12B\n" +
-	"\vactivations\x18\x01 \x03(\v2 .keyorix.v1.BreakGlassActivationR\vactivations\"]\n" +
+	"\vactivations\x18\x01 \x03(\v2 .keyorix.v1.BreakGlassActivationR\vactivations\x12\x14\n" +
+	"\x05scope\x18\x02 \x01(\tR\x05scope\"]\n" +
 	"\x17RevokeBreakGlassRequest\x12\x1d\n" +
 	"\n" +
 	"project_id\x18\x01 \x01(\rR\tprojectId\x12#\n" +
