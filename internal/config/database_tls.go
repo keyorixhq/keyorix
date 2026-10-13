@@ -202,7 +202,7 @@ func ValidateDatabaseTLS(d *DatabaseConfig) error {
 func refuseConnectionService(d *DatabaseConfig) error {
 	const fix = "Put the connection settings (host, ssl_mode, ssl_root_cert, ...) in storage.database or " +
 		"in the dsn itself instead of a service file; Keyorix does not read service files, so it " +
-		"cannot check the TLS trust they would set."
+		"cannot check the TLS trust they would set"
 	if d.DSN != "" {
 		selects, err := dsnSelectsService(d.DSN)
 		if err != nil {
