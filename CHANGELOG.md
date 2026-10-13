@@ -95,25 +95,40 @@ that section is the text written before the switch.
   (`SSL_CERT_FILE` is ignored on macOS). `login` remembers the CA file it used.
 - **One-time passwords expire.** The one-time password `keyorix-server admin recover-admin` issues is valid for 24h and an admin-created one (`keyorix user create --one-time-password`) for 72h (`security.recovery_one_time_password_ttl`, `security.one_time_password_ttl`; Go durations up to `168h`, a set but invalid or out-of-range value is refused at start-up, empty means the default; there is no "never"). After the expiry the correct password is refused exactly like a wrong one (same response and timing, counted toward `login_lockout`) and audited server-side as `auth.one_time_password_expired`. Choosing a new password clears the expiry. Expiry is a login gate: an already-open session is not cut off by it.
 - **Upgrade effect: every account in `password_reset_required` gets 24 hours from the upgrade.** Before this change nothing recorded which accounts hold a one-time password, so the one-off migration stamps every live `password_reset_required` account, including accounts an admin forced to reset and accounts held by the password max-age gate. Those users who have not changed their password within 24h of the upgrade are refused at login until an admin re-issues access (`recover-admin`, `user resend-setup-link`). The same rule is applied when a pre-upgrade backup is restored (`admin restore` of an archive without the column). During a rolling upgrade, replicas still on the previous version keep accepting an expired one-time password until they are upgraded (the schema epoch is unchanged).
-- **Compose and Helm can run on the secure baseline** (`admin validate
-  --posture`: no deviations, file permissions included, #2922):
-  `docker-compose.secure.yml` (backend TLS with a generated certificate that
-  nginx verifies, rate limiting, `/metrics` token, a private 0600 config copy)
-  and the chart's `secureBaseline.enabled` (Helm-generated certificates and
-  token kept across upgrades, bundled Postgres over TLS, an initContainer that
-  copies runtime files to 0600). Both need a server image newer than v0.95.3,
-  so they are opt-in until the next release makes them the default. New
-  `keyorix-server admin init --secure-files` (generate only the files an
-  existing config references); the server image's entrypoint is now its
+- **BREAKING: Docker Compose and the Helm chart now run the secure baseline by
+  default.** The baseline (`admin validate --posture`: no deviations, file
+  permissions included, #2922) is no longer a separate opt-in. What changes for
+  operators:
+  - **Compose:** the stock `docker-compose.yml` is the secure stack.
+    `docker-compose.secure.yml` and `keyorix.docker.secure.yaml` no longer exist
+    (drop `-f docker-compose.secure.yml` from your commands). The backend serves
+    TLS on 8080 inside the compose network with a generated certificate that
+    nginx verifies (the published port 8088 is unchanged), `/metrics` needs the
+    generated token, API rate limiting is on, and the server runs from a private
+    0600 config copy. New volumes `keyorix_tls` and `keyorix_tls_public`; the
+    config is mounted at `/app/config/keyorix.docker.yaml`. Anything that spoke
+    plain HTTP to the backend on 8080, or scraped `/metrics` without a token,
+    must switch to HTTPS with the generated CA and send the token.
+  - **Helm:** `secureBaseline.enabled` now defaults to `true`. `helm upgrade`
+    turns on TLS between the pods (Helm-generated certificate, kept across
+    upgrades), the `/metrics` token and rate limiting, switches the bundled
+    Postgres to TLS, and rolls the server, web and Postgres pods. If you pin an
+    older `image.tag` (no secure-baseline support), set
+    `secureBaseline.enabled=false`. With the bundled Postgres the data
+    directory ownership also changes (uid 999 to 70): see
+    `docs/UPGRADING.md` "v0.95.x to v0.96.0".
+  - Both need the 0.96.0 server image; they do not work on v0.95.3 or older.
+
+  Also new: `keyorix-server admin init --secure-files` (generate only the files
+  an existing config references); the server image's entrypoint is now its
   ENTRYPOINT (`docker run <image> <cmd>` runs `<cmd>` after the config copy).
-  `docker-compose.secure.yml` mounts a small private tmpfs at `/app/data` for
-  the config copy (the backend's root filesystem is read-only). With
-  `secureBaseline.enabled=true` the server, web and bundled-Postgres pods carry a
-  `checksum/secure-baseline` annotation, so rotating the Secret (delete it,
-  `helm upgrade`) rolls them.
-  `keyorix.docker.secure.yaml` sets `server.http.host: "0.0.0.0"` (the server's
-  default bind is 127.0.0.1 since #2939, which left the web container and the
-  health check unable to reach the TLS backend).
+  The compose backend mounts a small private tmpfs at `/app/data` for the config
+  copy (its root filesystem is read-only). In the chart, rotating the generated
+  Secret (delete it, `helm upgrade`) rolls the server, web and bundled-Postgres
+  pods through their `checksum/secure-baseline` annotation. The compose config
+  sets `server.http.host: "0.0.0.0"` (the server's default bind is 127.0.0.1
+  since #2939, which left the web container and the health check unable to reach
+  the TLS backend).
 - **A panic after the credential check keeps the per-IP login slot counted (#3048, #3064).** Previously a panic in a login, MFA or passkey step that ran after the credential had been judged released the per-IP reservation, so a correct-credential request that crashed cost nothing against the budget. Post-verdict panics are now charged like a wrong credential, matching the rule for post-verdict storage errors; pre-verdict panics still release the slot.
 - **A storage fault while looking up a session token no longer spends the per-IP
   login budget on `POST /auth/refresh`** (#2880). When the session lookup itself

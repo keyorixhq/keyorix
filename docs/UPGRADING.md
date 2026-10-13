@@ -112,6 +112,28 @@ was booted on the e2e VM (see the v0.96.0 release PR).
   upgrade of a release that did not set it turns on TLS between pods, the
   `/metrics` token and rate limiting, and rolls the pods. Pin `image.tag` to
   v0.95.3 or older? Then set `secureBaseline.enabled=false`: those images cannot run it.
+- **Helm with the bundled PostgreSQL: the data volume must change owner (uid 999 to 70).**
+  The chart now runs the bundled Postgres as uid 70 (`postgresql.runAsUser`, the
+  `postgres:15-alpine` user); v0.95.x charts ran it as 999 and own the existing data
+  directory as 999. **Symptom if you skip this:** after `helm upgrade` the Postgres pod
+  goes into `CrashLoopBackOff` on the existing volume (log:
+  `initdb: could not access directory ".../pgdata": Permission denied`, or
+  `data directory ... has wrong ownership`), and the server stays unready behind it.
+  Run the upgrade with the one-time ownership migration:
+
+  ```sh
+  helm upgrade <release> <chart> --version 0.96.0 --reuse-values \
+    --set postgresql.migrateOwnership=true
+  ```
+
+  The init container chowns the data volume to uid 70 (root with only `CHOWN` and
+  `DAC_READ_SEARCH`, data volume only) and is a no-op on later starts. Once the pod is
+  healthy you may unset it on the next upgrade (`--set postgresql.migrateOwnership=false`
+  or drop it from your values); leaving it on is harmless. Alternatively keep running as the
+  old owner with `--set postgresql.runAsUser=999` (needed for a Debian-based `postgres:*`
+  image). A Pod Security "restricted" namespace rejects the init container. Rolling back
+  to a 0.95.x chart afterwards needs the volume chowned back to 999. Details: §5
+  "Bundled PostgreSQL uid". Compose volumes need nothing.
 
 ## 3. Upgrading from v0.94.x or v0.93.x (version skip)
 
