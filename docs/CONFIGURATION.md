@@ -158,8 +158,8 @@ server:
       cert_cache_dir: "certs"     # ACME only: where autocert persists certs between restarts
       allowed_ciphers: []         # optional allowlist of TLS 1.2 cipher suite names; leave empty for the built-in secure default
     tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
-    trusted_proxies: []           # IPs/CIDRs of your TLS-terminating proxy/LB; their X-Forwarded-For/-Proto are honored
-    hsts_preload: false           # add "preload" to Strict-Transport-Security (see below)
+    trusted_proxies: []           # IPs/CIDRs of your TLS-terminating proxy/LB; their X-Forwarded-For/-Proto are honored (client IP, HSTS, Secure cookies). HTTP only
+    hsts_preload: false           # add "preload" to Strict-Transport-Security (see below). HTTP only
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -234,6 +234,23 @@ client's value through. `trusted_proxies` is the same list that governs
   covers the whole registrable domain and is slow to undo, so only the domain's
   owner should opt in.
 
+**Secure cookies.** The same decision, made once per request, sets the `Secure`
+attribute of every cookie the server sets: the session cookie (`kx_session`), the
+CSRF cookie (`csrf_token`) and the impersonation stash cookie
+(`kx_admin_session`), including the ones that clear them on logout. A cookie is
+`Secure` when the listener serves TLS itself, or when the request came from a peer
+in `server.http.trusted_proxies` with `X-Forwarded-Proto: https`; otherwise it is
+not. So behind a TLS-terminating load balancer, list the balancer in
+`trusted_proxies` and the cookies are `Secure` with no other setting. Without that
+entry they go out without `Secure`, exactly as before. A forged
+`X-Forwarded-Proto: https` from any other peer changes nothing, and `Secure` is
+never removed from a cookie that has it today.
+
+**HTTP only.** `trusted_proxies` and `hsts_preload` are read by the HTTP server
+only. The keys parse under `server.grpc` too (both listeners share one config
+shape) but the gRPC server never reads them, so setting either there logs a
+`WARNING` at every start and has no effect. Set them under `server.http`.
+
 The web container's nginx makes its own HSTS decision and strips the backend's
 header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
 behind a TLS-terminating load balancer").
@@ -288,11 +305,17 @@ connection settings:
 
 | `storage.database.dsn` | A password source is set | Result |
 |---|---|---|
-| empty (host/port/name/user fields) | yes | password added to the connection string |
-| set, **no** password in it | yes | the password is added to the DSN |
+| empty (host/port/name/user fields) | yes | the password is used for the connection |
+| set, **no** password in it | yes | the password is used with the DSN's settings |
 | set, no password in it | no | DSN used as written (e.g. trust auth, `.pgpass`) |
 | set, **with** a password (`password=...` or `postgres://user:pw@...`) | no | DSN used as written |
 | set, **with** a password | **yes** | **refused at startup** |
+
+The password is never written into the DSN: Keyorix parses the DSN with the
+PostgreSQL driver's own parser and sets the password on the parsed settings, so
+no character in it (quotes, backslashes, spaces, `=`, `?`, `@`, ...) can change
+the host, `sslmode`, `sslrootcert` or any other setting the DSN names. A DSN the
+driver cannot parse is refused at startup.
 
 The last row is an error, not a silent choice: the server and every command that
 opens the database (`admin migrate`, `admin validate`, `admin restore`, ...) stop
@@ -300,6 +323,27 @@ with `storage.database.dsn already contains a password and KEYORIX_DB_PASSWORD i
 also set; ... remove the password from storage.database.dsn ... or unset
 KEYORIX_DB_PASSWORD`. Fix it by keeping the password in one place only. The
 message names the setting and never prints either password or the DSN.
+
+If Postgres rejects the credentials (SQLSTATE `28P01` or `28000`), or the server
+(or a proxy/pooler in front of it) drops the connection while authenticating, the
+server and the admin commands stop with one message: `postgres authentication failed
+for user "..." at host:port ... Check the database user ... and the password source:
+KEYORIX_DB_PASSWORD, KEYORIX_DB_PASSWORD_FILE, storage.database.password, or the
+password in storage.database.dsn`. It never contains the password or the DSN; the
+server also prints the driver's own text on a second line with the password and DSN
+redacted. A connection reset during the login exchange is treated as an
+authentication failure only when it happens after the TCP connection was
+established; a refused or timed-out connection is reported as before.
+
+### Starting with PostgreSQL: `admin init --storage-type postgres`
+
+`keyorix-server admin init` writes a SQLite config by default and creates the
+SQLite file. For a PostgreSQL deployment run `admin init --storage-type postgres`
+in a fresh directory: the config is written with `storage.type: postgres` and no
+SQLite path, and nothing SQLite is created. Set `storage.database.dsn` (or the
+host/name/user fields plus `KEYORIX_DB_PASSWORD`) and run `admin init` again to
+finish. `--storage-type` only applies to a config init writes; with an existing
+config of a different type init refuses and changes nothing.
 
 ### Refusing to vivify a missing database
 
@@ -1502,7 +1546,17 @@ permissions (printed by `activate`), not new read access. The activation is **ti
 auto-expires via the JIT mechanism, so it stops authorizing on its own), requires a
 **written justification**, is **loudly audited** (`break_glass.activated`), and
 **alerts the project's admins**. Each activation is a queryable record for post-hoc
-review (`GET …/break-glass`, `keyorix break-glass list`).
+review (`GET …/break-glass`, `keyorix break-glass list`): a caller with `roles.read` at
+the project lists every activation (`"scope": "project"`); any other current member of
+the project lists only their own, active, expired and revoked (`"scope": "own"`), and
+learns nothing about anyone else's. The own view shows state, timestamps, justification,
+expiry, and whether it was reviewed (`reviewed_at`) and revoked (`state`, `revoked_at`),
+but omits the reviewer's note and the reviewer's and revoker's identities (`review_note`,
+`reviewed_by`, `revoked_by`, `revoked_by_machine_identity_id`); `"scope": "project"`
+carries them. A non-member, a machine
+identity without `roles.read`, and a restricted personal access token whose restriction
+does not allow `roles.read` at the project are refused with 403. Listing is not audited
+(it never was).
 
 Deliberately not RBAC-gated on the *emergency* permissions — the point is access the
 caller does *not* have — but gated on project membership, so the controls are: it
@@ -1511,9 +1565,9 @@ justified + audited + alerted, the grant expires, and an admin can revoke it ear
 
 Operating it from the CLI (verified end to end with a `project_viewer` user):
 `keyorix break-glass activate --project-id N --justification "..." --ttl 1h`,
-then an admin runs `keyorix break-glass list --project-id N` (in the test the
-activating user's own `list` printed "No break-glass activations", only the admin's
-did show it) and `keyorix break-glass revoke
+then the activating user's own `keyorix break-glass list --project-id N` shows it
+under "Your break-glass activations", an admin's `list` shows every activation of the
+project, and the admin can `keyorix break-glass revoke
 --project-id N --activation-id ID`. There is no CLI command for the review below:
 call `POST /api/v1/projects/N/break-glass/ID/review` with `{"note": "..."}` and a
 bearer token (response `Break-glass activation reviewed`).

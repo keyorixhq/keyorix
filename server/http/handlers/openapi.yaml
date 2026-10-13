@@ -330,7 +330,7 @@ paths:
       operationId: getAuthProfile
       security: [{bearerAuth: []}]
       responses:
-        '200': {description: "Self profile (id, username, email, display_name, role, roles, permissions, last_login_at)"}
+        '200': {description: "Self profile (id, username, email, display_name, role, roles, permissions, last_login_at; pending_steps = the account-setup steps this session still owes, omitted when none)"}
         '401': {$ref: '#/components/responses/Error'}
     put:
       tags: [Auth]
@@ -1408,17 +1408,25 @@ paths:
         '403': {$ref: '#/components/responses/Error'}
     get:
       tags: [Projects]
-      summary: List break-glass activations (for review)
+      summary: List break-glass activations (all for review, or your own)
       description: >-
-        The project's emergency-access activations, newest first (an active grant
-        past its expiry reads as expired). Requires roles.read.
+        Emergency-access activations, newest first (an active grant past its expiry
+        reads as expired). A caller holding roles.read at the project gets every
+        activation of the project (scope "project"). Any other current member of the
+        project (a role scoped to it, as for activation) gets only their
+        OWN activations in the project, active, expired and revoked, with the same
+        fields (scope "own"); nothing about other users' activations, not even a
+        count. A non-member (the same 403 for every project id), a machine identity
+        without roles.read, or a restricted personal access
+        token whose restriction does not allow roles.read at the project, is refused
+        with 403. The per-project MFA policy applies to both views.
       operationId: listBreakGlassActivations
       security: [{bearerAuth: []}]
       parameters:
         - {name: id, in: path, required: true, schema: {type: integer, format: uint32}}
       responses:
         '200':
-          description: "Envelope {data}. data: {activations[] of {id, user_id, role_name, justification, state, expires_at, created_at}, count}."
+          description: "Envelope {data}. data: {activations[] of {id, user_id, role_name, justification, state, expires_at, created_at}, count, scope}."
           content:
             application/json:
               schema:
@@ -1431,6 +1439,12 @@ paths:
                         type: array
                         items: {$ref: '#/components/schemas/BreakGlassActivation'}
                       count: {type: integer}
+                      scope:
+                        type: string
+                        enum: [project, own]
+                        description: >-
+                          "project": every activation of the project (caller holds
+                          roles.read). "own": only the caller's own activations.
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
@@ -7559,6 +7573,14 @@ components:
         permissions: {type: array, items: {type: string}}
         password_change_required: {type: boolean}
         account_state: {type: string}
+        pending_steps:
+          type: array
+          items: {type: string, enum: [change_password, enroll_mfa]}
+          description: >-
+            Account-setup steps this session still owes (omitted when none). While present the session is
+            confined to those steps' endpoints (account-setup gate, #3024), so a client should route
+            straight to the setup page rather than render protected pages. Informational: it changes
+            nothing about what the session may access.
     MFAChallengeData:
       type: object
       description: >-

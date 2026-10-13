@@ -170,6 +170,7 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// current insecure_ form) found in this config file gets a warning on EVERY
 	// start — never silent. See warnDeprecatedSettingAliases below.
 	warnDeprecatedSettingAliases(cfg)
+	warnHTTPOnlySettingsUnderGRPC(cfg)
 
 	// ADR-112: decide, once and from the database, whether this boot is an upgraded
 	// deployment still inside the file-permission-check grace period, then warn about
@@ -271,6 +272,10 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// this does not re-wrap it in a generic "failed to acquire..." prefix.
 	presence, err := serverguard.AcquirePresence(cfg)
 	if err != nil {
+		var authErr *config.PostgresAuthError
+		if errors.As(err, &authErr) {
+			log.Fatalf("%v\n(driver detail, secrets redacted: %s)", err, authErr.Detail())
+		}
 		log.Fatalf("%v", err)
 	}
 	defer presence.Release() //nolint:errcheck
@@ -1990,30 +1995,11 @@ func startHTTPServer(ctx context.Context, cfg *config.Config, coreService *core.
 // safe default instead of collapsing to the Go zero value (#G37). config.PasswordPolicyConfig
 // can't return a core.PasswordPolicy directly (internal/config can't import internal/core —
 // it would cycle back through internal/encryption), so the conversion happens here instead.
+//
+// The conversion itself lives in admin.ResolvePasswordPolicy so that
+// `admin check-admin-password` (#3201) applies the very same policy.
 func resolvePasswordPolicy(pp config.PasswordPolicyConfig) core.PasswordPolicy {
-	d := core.DefaultPasswordPolicy()
-	resolved := pp.Resolve(config.PasswordPolicyValues{
-		MinLength:             d.MinLength,
-		RequireUppercase:      d.RequireUppercase,
-		RequireLowercase:      d.RequireLowercase,
-		RequireDigit:          d.RequireDigit,
-		RequireSpecial:        d.RequireSpecial,
-		RejectPersonalInfo:    d.RejectPersonalInfo,
-		RejectCommonPasswords: d.RejectCommonPasswords,
-		HistoryCount:          d.HistoryCount,
-		MaxAgeDays:            d.MaxAgeDays,
-	})
-	return core.PasswordPolicy{
-		MinLength:             resolved.MinLength,
-		RequireUppercase:      resolved.RequireUppercase,
-		RequireLowercase:      resolved.RequireLowercase,
-		RequireDigit:          resolved.RequireDigit,
-		RequireSpecial:        resolved.RequireSpecial,
-		RejectPersonalInfo:    resolved.RejectPersonalInfo,
-		RejectCommonPasswords: resolved.RejectCommonPasswords,
-		HistoryCount:          resolved.HistoryCount,
-		MaxAgeDays:            resolved.MaxAgeDays,
-	}
+	return admin.ResolvePasswordPolicy(pp)
 }
 
 // checkTransportTLSPosture guards against silently serving credentials/secret values in
@@ -2355,6 +2341,18 @@ func logWarnOnImplicitRequireMFADefault(cfg *config.Config) {
 func warnDeprecatedSettingAliases(cfg *config.Config) {
 	for _, w := range cfg.DeprecatedSettingWarnings {
 		log.Printf("WARNING: deprecated config key: %s", w)
+	}
+}
+
+// warnHTTPOnlySettingsUnderGRPC logs a start-up warning for every security setting
+// written under server.grpc that only the HTTP server implements (the two
+// listeners share one config struct). The gRPC server has no client-IP rewrite and
+// sends no HSTS, so these keys would otherwise be accepted and silently do nothing.
+// The loader does not reject other HTTP-only keys under grpc either, so this warns
+// rather than failing the boot.
+func warnHTTPOnlySettingsUnderGRPC(cfg *config.Config) {
+	for _, w := range config.HTTPOnlySettingsSetUnderGRPC(cfg) {
+		log.Printf("WARNING: %s", w)
 	}
 }
 

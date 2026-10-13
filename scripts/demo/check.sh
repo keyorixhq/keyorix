@@ -179,7 +179,8 @@ bring_up_postgres() {
     echo "==> building keyorix-demo:airgap (shared with the SQLite path)"
     command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required to build the web UI (see web/package.json)"; return 1; }
     make -C "$REPO_ROOT" populate-webui-dist >/dev/null || { echo "make populate-webui-dist failed"; return 1; }
-    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp -t keyorix-demo:airgap "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
+    demo_stamp_build_args "$REPO_ROOT"
+    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp ${DEMO_STAMP_ARGS[@]+"${DEMO_STAMP_ARGS[@]}"} -t keyorix-demo:airgap "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
       cat "$SCRATCH/image-build.log"; echo "docker build failed"; return 1
     }
     git -C "$REPO_ROOT" checkout -- server/webui/dist/index.html 2>/dev/null || true
@@ -324,7 +325,9 @@ seed_demo_org() {
   return 0
 }
 
-teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe >/dev/null 2>&1 || true; }
+# check.sh brought this demo up itself (with whatever KEYORIX_DEMO_* names are set), so it
+# owns the default names too: --force-default is the explicit opt-in down.sh asks for (#3149).
+teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe --force-default >/dev/null 2>&1 || true; }
 teardown_postgres() {
   docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
   rm -f "$REPO_ROOT/.demo-2-pg-state"
@@ -576,6 +579,42 @@ step_acl_can_read() {
 step_acl_cannot_read() {
   get_secret_by_ref "$ALICE_TOKEN" "default/development/stripe-api-key"
   [ "$HTTP_CODE" = "403" ] || [ "$HTTP_CODE" = "404" ] || { echo "alice (no role on 'default') got $HTTP_CODE reading default/development/stripe-api-key, expected 403/404 -- an ACL regression"; return 1; }
+  return 0
+}
+
+# GOLDEN-PATH "Optional: emergency access (break-glass)" (#3202), run as written:
+# scripts/demo/golden-path-breakglass.sh extracts the doc's commands and runs them
+# with the host CLI (alice activates on project 2, an administrator lists and
+# revokes). ALICE_TOKEN is the MFA-enrolled stand-in with alice's exact grant
+# (project_viewer on backend-api; see step_mfa). Only up.sh enables break-glass
+# (the --postgres compose stack does not), so that is the only backend checked.
+audit_total() { # audit_total ACTION -> prints the number of audit events with that action
+  req GET "/api/v1/audit/logs?action=$1&page_size=1" "$ADMIN_TOKEN"
+  [ "$HTTP_CODE" = "200" ] || { echo "GET /api/v1/audit/logs?action=$1 returned $HTTP_CODE: $RESP_BODY" >&2; return 1; }
+  jget 'd["data"]["total"]'
+}
+step_breakglass() {
+  if [ "$BACKEND" != "sqlite" ]; then
+    echo "SKIP: break-glass is enabled by scripts/demo/up.sh only; the --postgres compose stack leaves it off"
+    return 0
+  fi
+  [ -n "$ALICE_TOKEN" ] || { echo "no viewer session (the mfa step must pass first)"; return 1; }
+  [ -x "$REPO_ROOT/bin/keyorix" ] || { echo "bin/keyorix not found (make build-cli); scripts/demo/up.sh builds it"; return 1; }
+  local actions="break_glass.activated break_glass.revoked role.assigned role.removed" a
+  local before_file="$SCRATCH/bg-audit-before"
+  : > "$before_file"
+  for a in $actions; do
+    echo "$a $(audit_total "$a")" >> "$before_file"
+  done
+  KEYORIX_BG_SERVER="$SERVER_URL" KEYORIX_BG_ALICE_TOKEN="$ALICE_TOKEN" KEYORIX_BG_ADMIN_TOKEN="$ADMIN_TOKEN" \
+    "$SCRIPT_DIR/golden-path-breakglass.sh" || return 1
+  local was now
+  for a in $actions; do
+    was="$(awk -v a="$a" '$1 == a { print $2 }' "$before_file")"
+    now="$(audit_total "$a")"
+    [ "${now:-0}" -gt "${was:-0}" ] 2>/dev/null || { echo "audit: no new $a event after the break-glass section (was $was, now $now) -- docs/demo/GOLDEN-PATH.md says it records one"; return 1; }
+  done
+  echo "break-glass section ran as written; audit recorded $actions"
   return 0
 }
 
@@ -850,6 +889,7 @@ run_step "verify-write: rotate"               step_verify_rotate
 run_step "verify-write: version history"      step_verify_history
 run_step "acl: alice can read backend-api secret"   step_acl_can_read
 run_step "acl: alice cannot read default secret"    step_acl_cannot_read
+run_step "break-glass: GOLDEN-PATH section as written (alice activates, admin lists/revokes)" step_breakglass
 run_step "machine identity: read secret by ref"     step_machine_read_by_ref
 run_step "audit: log shows actions"   step_audit_logs
 run_step "audit: machine value read is attributed to ci-app" step_machine_read_audited

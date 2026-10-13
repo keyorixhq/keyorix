@@ -3,11 +3,22 @@ package storage
 import (
 	"fmt"
 
-	"gorm.io/driver/postgres"
+	"github.com/jackc/pgx/v5"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 )
+
+// postgresConnectError is the error for a failed Postgres open: a clear
+// config.PostgresAuthError when the failure is an authentication one (the
+// original stays wrapped), otherwise the usual wrapped driver error.
+func postgresConnectError(err error, cc *pgx.ConnConfig) error {
+	classified := config.ClassifyPostgresConnectErrorConfig(err, cc)
+	if classified != err {
+		return classified
+	}
+	return fmt.Errorf("failed to connect to postgres: %w", err)
+}
 
 // OpenGormDB opens a raw *gorm.DB for the configured local backend, switching on
 // cfg.Storage.Type with the same mapping the factory uses (postgres/postgresql →
@@ -31,16 +42,9 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 	case "remote":
 		return nil, fmt.Errorf("this command needs direct database access and cannot run against a remote backend; run it on the server host")
 	case "postgres", "postgresql":
-		dsn, err := config.ResolvePostgresDSN(&cfg.Storage.Database)
+		db, err := openPostgresGorm(&cfg.Storage.Database, gormConfig())
 		if err != nil {
 			return nil, err
-		}
-		if dsn == "" {
-			return nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
-		}
-		db, err := gorm.Open(postgres.Open(dsn), gormConfig())
-		if err != nil {
-			return nil, fmt.Errorf("failed to connect to postgres: %w", err)
 		}
 		if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
 			return nil, err
