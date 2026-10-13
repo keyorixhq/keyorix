@@ -59,6 +59,7 @@ log "Building keyorix-server, keyorix, keyorix-migrate"
 (cd "$ROOT" && go build -o "${BIN}/keyorix-server" ./server)
 (cd "${ROOT}/cli" && GOWORK=off go build -o "${BIN}/keyorix" .)
 (cd "${ROOT}/migrate" && GOWORK=off go build -o "${BIN}/keyorix-migrate" .)
+(cd "$ROOT" && GOWORK=off go build -o "${BIN}/totpgen" scripts/totpgen/main.go)
 ok "binaries in ${BIN}"
 
 # ── 1. Seed a realistic Vault ────────────────────────────────────────────────────
@@ -165,10 +166,17 @@ HOME="$WORKDIR" KEYORIX_ADMIN_PASSWORD="$DEMO_ADMIN_PASSWORD" \
   --admin-username admin --admin-email admin@demo.local >/dev/null
 ok "Keyorix running at http://localhost:${KEYORIX_PORT}, admin bootstrapped"
 
-ADMIN_TOKEN_JSON="$(printf '{"username":"admin","password":"%s"}' "$DEMO_ADMIN_PASSWORD" \
-  | curl -sf -X POST http://localhost:"${KEYORIX_PORT}"/auth/login \
-  -H 'Content-Type: application/json' --data-binary @-)"
-ADMIN_TOKEN="$(echo "$ADMIN_TOKEN_JSON" | jq -r '.data.token')"
+# security.require_mfa is on by default (ADR-112): the bootstrapped admin is confined to
+# MFA enrolment until it enrols TOTP, so enrol through the API (lib.sh, shared with
+# up.sh / check.sh; totpgen stands in for an authenticator app) and use the post-MFA
+# session token below.
+# shellcheck source=scripts/demo/lib.sh
+source "${ROOT}/scripts/demo/lib.sh"
+TOTPGEN_BIN="${BIN}/totpgen"
+DEMO_STEP_DIR="${WORKDIR}/.totp-steps"
+demo_enroll_mfa "http://localhost:${KEYORIX_PORT}" admin "$DEMO_ADMIN_PASSWORD" \
+  || { echo "MFA enrolment for the demo admin failed" >&2; exit 1; }
+ADMIN_TOKEN="$DEMO_TOKEN"
 ADMIN_HDR="${WORKDIR}/admin.hdr"
 printf 'Authorization: Bearer %s\n' "$ADMIN_TOKEN" >"$ADMIN_HDR"
 AUTH=(-H "@${ADMIN_HDR}")

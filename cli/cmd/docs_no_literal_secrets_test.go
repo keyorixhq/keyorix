@@ -21,8 +21,8 @@
 //     secretFlags flag followed by a value on a non-comment line is a hit. There is
 //     no allowlist: a script that needs a secret uses KEYORIX_* env vars (the
 //     *_FILE form where a file is natural), --from-file, or a stdin pipe. This
-//     covers flag-style argv only; curl -H/-d, docker -e and helm --set are not
-//     scanned (see docs/operator or the PR for the remaining sites).
+//     covers flag-style argv only: a secret in curl -H/-d, docker -e, helm --set,
+//     kubectl --from-literal or an interpreter's argv is NOT detected here.
 //   - Only the flags in secretFlags. A new secret-carrying flag must be added.
 //
 // An intentional "don't do this" example opts out per line with the marker
