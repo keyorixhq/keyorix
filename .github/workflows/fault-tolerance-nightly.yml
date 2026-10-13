@@ -1,0 +1,58 @@
+name: Fault-tolerance issue state (nightly)
+
+# ci.yml's adr-numbers job runs scripts/check-fault-tolerance-issues.sh too, but
+# only when fault_tolerance_relevant is true (server/faultops/ or the script
+# itself changed -- see that output's own comment in ci.yml's changes job).
+# That gating is deliberate: the check calls the GitHub API once per
+# knownOpenTolerance row, and a transient API error or a routinely-closed
+# issue must not turn CI red for every unrelated PR until someone edits the
+# table (#2844). This workflow is the other half: an unconditional nightly
+# run, so a tolerance row whose issue closed on a day nobody touched
+# server/faultops/ still gets caught -- just not on every PR in between.
+on:
+  schedule:
+    # 04:09 UTC nightly, off the round minute, clear of this repo's other
+    # nightly cron slots (anchore-syft 4:12, sonarcloud 4:27, pg-race-tests
+    # 4:47).
+    - cron: '9 4 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  check-fault-tolerance-issues:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # The check reads each cited issue's state through the API; without
+      # this the token is refused and the job fails closed every night.
+      issues: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Verify every fault-injection tolerance cites an open issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: ./scripts/check-fault-tolerance-issues.sh
+
+  # Before 2026-09-28 a red scheduled run alerted nobody. Same one-issue-per-
+  # job mechanism as e2e-nightly.yml / govulncheck-scheduled.yml.
+  alert:
+    needs: [check-fault-tolerance-issues]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Open, update or close the alert issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) && 'failure' || 'success' }}
+        run: ./scripts/ci/failure-issue.sh "$OUTCOME" "Scheduled fault-tolerance issue-state check is failing"

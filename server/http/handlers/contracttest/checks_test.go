@@ -89,6 +89,8 @@ func TestSpecLoadsAndValidates(t *testing.T) {
 func TestEnforcedSetMatchesADR074(t *testing.T) {
 	want := map[string]bool{
 		"authGetSetupToken":             true,
+		"searchShareRecipients":         true,
+		"listOwnedShares":               true,
 		"authLogin":                     true,
 		"authRefresh":                   true,
 		"healthCheck":                   true,
@@ -266,6 +268,11 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		// view gained a response schema when it stopped answering from the ADR-022
 		// onboarding journal -- users_memberships_2781_test.go.
 		"getUserMembershipsForUser": true,
+
+		// #3024: change-password's 200 gained data.reauthentication_required (a
+		// setup-only session ends when the password change finishes setup) --
+		// openapi_contract_recover1_test.go.
+		"changePassword": true,
 	}
 
 	loadSpec()

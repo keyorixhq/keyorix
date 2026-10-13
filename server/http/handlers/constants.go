@@ -35,6 +35,7 @@ const (
 	errInvalidRotationPolicyID   = "Invalid rotation policy ID"
 	errInvalidSecretID           = "Invalid secret ID"
 	errInvalidUserID             = "Invalid user ID"
+	errLoginIncomplete           = "Login could not be completed. Please try again."
 	errMachineCredentialNotFound = "machine credential not found"
 	errNotFound                  = "not found"
 	errOnlyPending               = "only a pending"

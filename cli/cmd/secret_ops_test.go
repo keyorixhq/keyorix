@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -278,6 +279,59 @@ func TestSecretAccess_MatchesOldCLIOutputShape(t *testing.T) {
 	}
 }
 
+// The effective level and every grant behind it are shown, so a write share that
+// elevates a viewer role is visible (#2941).
+func TestSecretAccess_ShowsEffectiveLevelAndGrants(t *testing.T) {
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/access",
+		`{"data":{"accessors":[{"username":"alice","permission":"write","source":"direct_share","grants":["role:read","direct_share:write"]},`+
+			`{"username":"bob","permission":"read","source":"role","grants":["role:read"]}]}}`))
+	setPATCreds(t, srv)
+	secretAccessID = 1
+	defer func() { secretAccessID = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := secretAccessCmd.RunE(secretAccessCmd, nil); err != nil {
+			t.Fatalf("secretAccessCmd: %v", err)
+		}
+	})
+	if !containsAll(out, "GRANTS", "alice", "write", "role:read, direct_share:write", "bob", "role") {
+		t.Fatalf("output missing the effective level or grants, got: %q", out)
+	}
+	if strings.Contains(out, "WARNING") {
+		t.Fatalf("a complete list must not carry the incomplete warning, got: %q", out)
+	}
+}
+
+// A degraded list (part withheld from this caller, or a lookup failed) is an
+// under-count: the CLI must say so with the server's reasons, whether or not any
+// accessor is listed, instead of printing a shortened list as if it were complete.
+func TestSecretAccess_WarnsWhenDegraded(t *testing.T) {
+	for name, body := range map[string]string{
+		"with rows": `{"data":{"accessors":[{"username":"owner","permission":"owner","source":"owner","grants":["owner:owner"]}],` +
+			`"degraded":true,"degraded_reasons":["project_members: the caller lacks users.read in the project","secret_acls: the caller lacks secrets.manage on the secret"]}}`,
+		"no rows": `{"data":{"accessors":[],"degraded":true,` +
+			`"degraded_reasons":["project_members: the caller lacks users.read in the project","secret_acls: the caller lacks secrets.manage on the secret"]}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/secrets/1/access", body))
+			setPATCreds(t, srv)
+			secretAccessID = 1
+			defer func() { secretAccessID = 0 }()
+
+			out := captureStdout(t, func() {
+				if err := secretAccessCmd.RunE(secretAccessCmd, nil); err != nil {
+					t.Fatalf("secretAccessCmd: %v", err)
+				}
+			})
+			if !containsAll(out, "WARNING: this list is incomplete",
+				"project_members: the caller lacks users.read in the project",
+				"secret_acls: the caller lacks secrets.manage on the secret") {
+				t.Fatalf("degraded list printed without the warning and its reasons, got: %q", out)
+			}
+		})
+	}
+}
+
 func TestSecretAccessLog_RequiresID(t *testing.T) {
 	secretAccessLogID = 0
 	if err := secretAccessLogCmd.RunE(secretAccessLogCmd, nil); err == nil {
@@ -381,6 +435,32 @@ func TestSecretTrash_MatchesOldCLIOutputShape(t *testing.T) {
 	})
 	if !containsAll(out, "4", "old-key", "generic") {
 		t.Fatalf("output missing expected fields, got: %q", out)
+	}
+}
+
+// RETENTION-1: the trash listing prints the server's real purge date per row, and "-" (not
+// a guessed one) for a row from a server that predates the field.
+func TestSecretTrash_PrintsPurgeDate(t *testing.T) {
+	srv := secretOpsServer(t, secretJSONRoute(http.MethodGet, "/api/v1/projects/1/secrets/deleted",
+		`{"data":{"deleted":[`+
+			`{"id":4,"name":"old-key","type":"generic","deleted_at":"2026-01-02T00:00:00Z","purge_at":"2026-02-01T00:00:00Z"},`+
+			`{"id":5,"name":"legacy","type":"generic","deleted_at":"2026-01-03T00:00:00Z"}]}}`))
+	setPATCreds(t, srv)
+	secretTrashProject = 1
+	defer func() { secretTrashProject = 0 }()
+
+	out := captureStdout(t, func() {
+		if err := secretTrashCmd.RunE(secretTrashCmd, nil); err != nil {
+			t.Fatalf("secretTrashCmd: %v", err)
+		}
+	})
+	if !containsAll(out, "PURGE AFTER (UTC)", "2026-02-01T00:00:00Z") {
+		t.Fatalf("trash output missing the purge column / date: %q", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "legacy") && !strings.HasSuffix(strings.TrimSpace(line), "-") {
+			t.Fatalf("a row without purge_at must show '-', got %q", line)
+		}
 	}
 }
 

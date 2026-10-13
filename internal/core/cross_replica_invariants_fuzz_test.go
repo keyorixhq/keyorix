@@ -880,6 +880,16 @@ func g4CheckInvariants(t testing.TB, w *g4World) {
 // returning it as a violation string would let a typo'd column name read as a
 // real finding.
 func g4FindViolation(t testing.TB, w *g4World) string {
+	if v := g4FindStateViolation(t, w); v != "" {
+		return v
+	}
+	return g4FindAuditChainViolation(t, w)
+}
+
+// g4FindStateViolation is g4FindViolation minus the audit-chain check — the
+// bounded, per-run half. See g4FindAuditChainViolation for why the split
+// exists.
+func g4FindStateViolation(t testing.TB, w *g4World) string {
 	t.Helper()
 	ctx := context.Background()
 
@@ -1011,13 +1021,6 @@ func g4FindViolation(t testing.TB, w *g4World) string {
 		return fmt.Sprintf("GLOBAL INVARIANT VIOLATED (#2651 class): %d enabled dynamic-secret config(s) exist under a soft-deleted project", enabledConfigUnderDeletedProject)
 	}
 
-	// 13. the audit hash chain still verifies end to end (ADR-029).
-	v, err := w.c0.VerifyAuditChain(ctx)
-	require.NoError(t, err)
-	if !v.Valid {
-		return fmt.Sprintf("GLOBAL INVARIANT VIOLATED: audit hash chain broken: %s (first broken id=%v)", v.Reason, v.FirstBrokenID)
-	}
-
 	// 14. a password hash a successful ChangePassword superseded is never the
 	// stored hash again (#2654 class). GUARD-5 addition: invariant 7 above
 	// watches account_state, which is #2653's half of that pair and says
@@ -1053,6 +1056,31 @@ func g4FindViolation(t testing.TB, w *g4World) string {
 	return ""
 }
 
+// g4FindAuditChainViolation checks invariant 13 (the audit hash chain verifies
+// end to end, ADR-029) on its own.
+//
+// Split out of g4FindViolation (GUARD-5 item 3) because it is the one
+// invariant whose cost grows with the audit log, and the audit log grows
+// monotonically for the life of a world. Every other invariant is a bounded
+// indexed query; this one re-hashes every row. Checking it after each of the
+// ordering sweep's 174 runs made the sweep quadratic and it blew the 60-minute
+// test timeout without finishing. The sweep calls g4FindStateViolation
+// per-run and this one ONCE at the end instead — so a broken chain is still
+// caught, just not re-verified 174 times.
+//
+// The per-issue regression tests and the fuzz target keep checking it every
+// time, which is where per-operation granularity actually matters: there, a
+// chain break needs to be attributable to one pair.
+func g4FindAuditChainViolation(t testing.TB, w *g4World) string {
+	t.Helper()
+	v, err := w.c0.VerifyAuditChain(context.Background())
+	require.NoError(t, err)
+	if !v.Valid {
+		return fmt.Sprintf("GLOBAL INVARIANT VIOLATED: audit hash chain broken: %s (first broken id=%v)", v.Reason, v.FirstBrokenID)
+	}
+	return ""
+}
+
 // --- fuzz target ---------------------------------------------------------
 
 const g4MaxPairs = 8
@@ -1074,21 +1102,12 @@ func FuzzCrossReplicaInvariants(f *testing.F) {
 	w := buildG4World(f)
 
 	// Seeds: only the issues already fixed on main (see header comment) — a
-	// seed for a still-open issue would fail this test on main today.
-	f.Add([]byte{9, 0, 8, 0})   // #2648: RevokeShare vs UpdateSharePermission (fixed, #2666)
-	f.Add([]byte{36, 0, 37, 0}) // #2658 class: both admins' global role removed concurrently (fixed, #2665)
-	f.Add([]byte{28, 0, 29, 0}) // #2660: AddSecretDependency both directions (fixed, #2670)
-	f.Add([]byte{0, 0, 6, 0})   // #2646: ShareSecret vs DeleteSecret (fixed, #2785)
-	f.Add([]byte{0, 0, 7, 0})   // #2647: ShareSecretWithGroup vs DeleteSecret (fixed, #2785)
-	f.Add([]byte{0, 0, 10, 0})  // #2649: GrantSecretACL vs DeleteSecret (fixed, #2785)
-	f.Add([]byte{2, 0, 30, 0})  // #2652: IssueLease vs DeleteProject (fixed, #2785)
-	f.Add([]byte{21, 0, 23, 0}) // #2653: UpdateUser vs SuspendUser (fixed, #2785)
-	f.Add([]byte{25, 0, 24, 0}) // #2654: UpdateOwnProfile vs ChangePassword (fixed, #2785)
-	f.Add([]byte{27, 0, 26, 0}) // #2655: ActivateMFA vs BeginMFAEnrollment (fixed, #2667)
-	f.Add([]byte{2, 0, 5, 0})   // #2656: RestoreEnvironment vs DeleteProject (fixed, #2785)
-	f.Add([]byte{14, 0, 13, 0}) // #2657: TransitionMembership activate vs revoke (fixed, #2669)
-	f.Add([]byte{2, 0, 39, 0})  // #2651: DeleteProject vs CreateDynamicSecretConfig (fixed, #2675)
-	f.Add([]byte{14, 0, 12, 0}) // #2659: open-mode InviteMember vs revoke (fixed, #2852 — the race by #2669, the oracle here)
+	// seed for a still-open issue would fail this test on main today. They live
+	// one per file (cross_replica_seed_entry_<issue>_test.go, registered into
+	// g4FuzzSeedPrograms; see registry_entries_test.go), never in a list here.
+	for _, s := range g4FuzzSeedPrograms {
+		f.Add(s.program)
+	}
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, program []byte) {

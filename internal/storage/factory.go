@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -38,7 +37,7 @@ const (
 // column encodes). NOT bumped for pure comment/refactor changes that don't
 // touch what gets written to the database. Every bump must also decide
 // minCompatibleSchemaEpoch below (ADR-101).
-const currentSchemaEpoch = 1
+const currentSchemaEpoch = 2
 
 // schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
 // key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
@@ -63,7 +62,12 @@ const schemaEpochMetadataKey = "schema_epoch"
 // (TestMinCompatibleSchemaEpoch_WithinRange). A floor already recorded in the
 // database is never lowered by recordSchemaEpoch, so declaring a lower value
 // here cannot reopen a floor a newer binary raised.
-const minCompatibleSchemaEpoch = 1
+//
+// Currently 2: an epoch-1 binary's RestoreSecret/RestoreProject do not clear
+// secret_nodes.purge_at and its DeleteSecret does not re-stamp it, so a
+// restore + re-delete on an old replica would leave a stale date that the
+// epoch-2 purge job honours, hard-deleting before the date shown (#3021).
+const minCompatibleSchemaEpoch = 2
 
 // schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's
 // compatibility floor (minCompatibleSchemaEpoch) is recorded under. #nosec
@@ -587,7 +591,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 	// switch; every later Open against an already-WAL file is a same-mode pragma
 	// no-op that always succeeds immediately, regardless of other open connections.
 	migrationMu.Lock()
-	db, err := gorm.Open(sqlite.Open(sqliteDSN(dbPath)), gormConfig())
+	db, err := openSQLiteGorm(sqliteDSN(dbPath))
 	migrationMu.Unlock()
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to database: %w", err)
@@ -607,6 +611,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 	// No SetAuditSkipDurableSync here, deliberately: ADR-112 Amendment 1's
 	// fast audit mode is PostgreSQL-only and config validation refuses to
 	// start a SQLite backend that sets it, so there is nothing to propagate --
@@ -639,6 +644,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (stora
 
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
+	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 	// ADR-112 Amendment 1: read the computed status rather than the raw bool,
 	// so "configured" and "actually in effect" cannot drift apart between
 	// here and the surfaces that report it (start-up log, posture, API). This
@@ -1259,6 +1265,23 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return err
 		}
 	}
+	// Frozen purge date (models.SecretNode.PurgeAt). Additive, nil = live secret or one
+	// soft-deleted before this column existed. secret_nodes is NOT re-AutoMigrated on an
+	// existing database (freshInstallComplete returns early), so without this ALTER every
+	// secret create/delete on an upgraded install fails with "no column named purge_at".
+	// The type is per dialect: SQLite's driver only scans a non-NULL value into *time.Time
+	// when the declared type is DATETIME (what AutoMigrate creates on a fresh install);
+	// "TIMESTAMP WITH TIME ZONE" is stored but fails on read with "unsupported Scan,
+	// storing driver.Value type string into type *time.Time".
+	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "purge_at") {
+		purgeAtType := "DATETIME"
+		if db.Dialector.Name() == "postgres" {
+			purgeAtType = "TIMESTAMP WITH TIME ZONE"
+		}
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN purge_at " + purgeAtType); err != nil {
+			return err
+		}
+	}
 	// Data classification (ISO A.5.12). Additive classification ("" = unclassified).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "classification") {
 		if err := exec("ALTER TABLE secret_nodes ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
@@ -1334,6 +1357,24 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := ensureSecretNodeNameIndex(db); err != nil {
 			return err
 		}
+		// The UPGRADE call site for cache_epoch (the read-path cache's generation
+		// stamp — see store.EnsureSecretNodeCacheEpoch). It needs BOTH this one
+		// and the one in the transactional tail, for the same reason
+		// ensureSecretNodeNameIndex does and in the opposite direction:
+		// freshInstallComplete below returns early on EVERY boot of an
+		// already-initialised database, so the tail covers only a fresh (or
+		// half-migrated) install, while this tableExists-gated call is the only
+		// thing that reaches an existing deployment. Caught by
+		// TestSecretNodeCacheEpoch_FreshInstallAndUpgrade_{SQLite,Postgres}, which
+		// failed with "cache_epoch missing" when only the tail call existed.
+		//
+		// The two never both ALTER in one boot (on a fresh install secret_nodes
+		// does not exist yet at this point, so this call no-ops), so this cannot
+		// re-trip the pgx "insufficient arguments" hazard that re-inspecting a
+		// just-ALTERed table in the bulk AutoMigrate loop causes.
+		if err := store.EnsureSecretNodeCacheEpoch(db); err != nil {
+			return err
+		}
 	}
 	// Anomaly alerting: additive `alerted` flag (false = not yet pushed out).
 	if tableExists(db, "anomaly_alerts") && !columnExists(db, "anomaly_alerts", "alerted") {
@@ -1368,6 +1409,12 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return err
 		}
 		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_access_time ON secret_access_logs (access_time, secret_node_id)"); err != nil {
+			return err
+		}
+		// (secret_node_id, action) answers a secret's lifetime read count
+		// (total_reads, core.SecretTotalReads) from the index alone; with only the
+		// (secret_node_id, access_time) index it needed a heap lookup per row.
+		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_secret_action ON secret_access_logs (secret_node_id, action)"); err != nil {
 			return err
 		}
 	}
@@ -1428,6 +1475,26 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			if err := exec("ALTER TABLE users ADD COLUMN login_lockout_count INTEGER NOT NULL DEFAULT 0"); err != nil {
 				return err
 			}
+		}
+	}
+
+	// One-time-password expiry (OTP-EXPIRY-1). Adding the column and the one-off
+	// legacy backfill share one transaction, so a crash between them cannot leave the
+	// column present with the backfill never run (the column's absence is what
+	// gates the backfill, so it must not be re-runnable on a later boot).
+	if tableExists(db, "users") && !columnExists(db, "users", "one_time_password_expires_at") {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			// Via the Migrator, not a hand-written ALTER: it picks the dialect's own
+			// timestamp type (datetime on SQLite, timestamptz on Postgres). A literal
+			// "TIMESTAMP WITH TIME ZONE" makes the SQLite driver hand the value back as
+			// a string that cannot be scanned into the model's *time.Time, which would
+			// fail every login of an account carrying a backfilled expiry.
+			if err := tx.Migrator().AddColumn(&models.User{}, "OneTimePasswordExpiresAt"); err != nil {
+				return err
+			}
+			return backfillLegacyOneTimePasswordExpiry(tx, time.Now().UTC())
+		}); err != nil {
+			return fmt.Errorf("failed to add users.one_time_password_expires_at: %w", err)
 		}
 	}
 
@@ -1521,6 +1588,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 		if !columnExists(db, "sessions", "impersonation_started_at") {
 			if err := exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at TIMESTAMP WITH TIME ZONE"); err != nil {
+				return err
+			}
+		}
+		// #3024: setup-only sessions (restricted, factor-less account under
+		// security.require_mfa). false on legacy rows = an ordinary session.
+		if !columnExists(db, "sessions", "setup_only") {
+			if err := exec("ALTER TABLE sessions ADD COLUMN setup_only BOOLEAN NOT NULL DEFAULT false"); err != nil {
 				return err
 			}
 		}
@@ -1725,6 +1799,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := db.AutoMigrate(&models.MFAChallenge{}); err != nil {
 			return fmt.Errorf("failed to migrate mfa_challenges table: %w", err)
 		}
+	} else if m := db.Migrator(); !m.HasColumn(&models.MFAChallenge{}, "LoginAttemptID") {
+		// #2936 item 4: the login-budget slot the password step keeps. Additive
+		// and nullable (nil = nothing to hand back), via the Migrator like the
+		// other columns added to existing tables here.
+		if err := m.AddColumn(&models.MFAChallenge{}, "LoginAttemptID"); err != nil {
+			return fmt.Errorf("failed to add mfa_challenges.login_attempt_id column: %w", err)
+		}
 	}
 	// mfa_step_up_grants. store-mfa-002 found that MFAStepUpGrant "was never
 	// migrated anywhere" and fixed it by adding the model to the bulk
@@ -1819,12 +1900,27 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := db.AutoMigrate(&models.WebAuthnSession{}); err != nil {
 			return fmt.Errorf("failed to migrate web_authn_sessions table: %w", err)
 		}
+	} else if m := db.Migrator(); !m.HasColumn(&models.WebAuthnSession{}, "LoginAttemptID") {
+		// #2936 review: the login-budget slot a WebAuthn Begin keeps. Additive
+		// and nullable, as for mfa_challenges above.
+		if err := m.AddColumn(&models.WebAuthnSession{}, "LoginAttemptID"); err != nil {
+			return fmt.Errorf("failed to add web_authn_sessions.login_attempt_id column: %w", err)
+		}
 	}
 
 	// Create the login_attempts table if missing (ADR-040 rate limiting, additive).
 	if !loginAttemptExists {
 		if err := db.AutoMigrate(&models.LoginAttempt{}); err != nil {
 			return fmt.Errorf("failed to migrate login_attempts table: %w", err)
+		}
+	} else if m := db.Migrator(); !m.HasColumn(&models.LoginAttempt{}, "ReservationKey") {
+		// Identifiable login-budget reservations (#2956 follow-up). Additive and
+		// nullable (existing rows were never reservations), plus its unique index.
+		if err := m.AddColumn(&models.LoginAttempt{}, "ReservationKey"); err != nil {
+			return fmt.Errorf("failed to add login_attempts.reservation_key column: %w", err)
+		}
+		if err := m.CreateIndex(&models.LoginAttempt{}, "idx_login_attempt_reservation_key"); err != nil {
+			return fmt.Errorf("failed to index login_attempts.reservation_key: %w", err)
 		}
 	}
 
@@ -1949,6 +2045,22 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if !breakGlassExists {
 		if err := db.AutoMigrate(&models.BreakGlassActivation{}); err != nil {
 			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
+		}
+	} else {
+		// ADR-112 §3 (break-glass review item 5): ReviewedBy/ReviewedAt/ReviewNote
+		// were added to BreakGlassActivation after this table could already exist in
+		// the field — same "never full-AutoMigrate an existing table here" constraint
+		// as AccessReviewCampaign above; add the new columns via the Migrator so an
+		// upgraded install picks them up. Without this, ReviewBreakGlassActivation's
+		// conditional UPDATE would hard-fail on every upgraded install that predates
+		// this feature (the column it sets simply wouldn't exist).
+		m := db.Migrator()
+		for _, col := range []string{"ReviewedBy", "ReviewedAt", "ReviewNote"} {
+			if !m.HasColumn(&models.BreakGlassActivation{}, col) {
+				if err := m.AddColumn(&models.BreakGlassActivation{}, col); err != nil {
+					return fmt.Errorf("failed to add break_glass_activations.%s column: %w", col, err)
+				}
+			}
 		}
 	}
 	// Enforce at most one ACTIVE break-glass activation per (project, user), even
@@ -2613,6 +2725,24 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return err
 		}
 		if err := ensureSecretVersionIndex(tx); err != nil {
+			return err
+		}
+		// Runs here, in the final block, rather than in the early
+		// additive-migration section: this block is reached on BOTH a fresh
+		// install and an upgrade (the old `if projectsExists { return nil }` gate
+		// is long gone), and being after the bulk AutoMigrate loop it cannot
+		// trip the pgx "insufficient arguments" hazard that re-inspecting a
+		// just-ALTERed table causes (see automigrate_altered_table_hazard_test.go
+		// and the AutoMigrate list's own NOTEs). The cache_epoch COLUMN is a
+		// field on models.SecretNode so the bulk AutoMigrate loop above already
+		// created it; the TRIGGER that maintains it is not something AutoMigrate
+		// can create, and this is the ONLY thing that does — on every path.
+		// Defined in package store (store.EnsureSecretNodeCacheEpoch), not here,
+		// so the cache's own tests (which live in that package) build their
+		// schema with the same call rather than a second copy of the SQL that
+		// could drift — and so they fail loudly instead of running against a
+		// trigger-less schema, i.e. a stamp that never moves, passing vacuously.
+		if err := store.EnsureSecretNodeCacheEpoch(tx); err != nil {
 			return err
 		}
 		// ADR-097: only after every migration step above has succeeded -- a crash

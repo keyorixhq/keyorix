@@ -384,13 +384,13 @@ const (
 
 	// justSelfServiceOwnAccount covers the My Account / MFA / WebAuthn /
 	// sessions / PAT / notifications family inside /api/v1: authenticated (the
-	// group's Authentication/RequireCSRF/EnforceAccountRestriction/
-	// EnforceMFAEnrollment middleware all still apply), but acts ONLY on the
+	// group's Authentication/RequireCSRF/EnforceAccountSetup middleware all
+	// still apply), but acts ONLY on the
 	// calling principal's OWN account/session/token/notification, so no RBAC
 	// permission concept applies -- ADR-021/ADR-024/ADR-027 establish this
 	// whole family as authenticated-but-not-permission-gated by design.
 	justSelfServiceOwnAccount = "Self-service: authenticated (this whole route sits inside the /api/v1 group's " +
-		"Authentication/RequireCSRF/EnforceAccountRestriction/EnforceMFAEnrollment " +
+		"Authentication/RequireCSRF/EnforceAccountSetup " +
 		"middleware -- see router.go:304-325), but acts ONLY on the calling principal's " +
 		"OWN account/session/token/notification. ADR-021/ADR-024/ADR-027 establish this " +
 		"whole family (My Account, MFA/WebAuthn self-enrolment, session/PAT self-service, " +
@@ -474,7 +474,9 @@ var noPermissionGateAllowlist = map[string]string{
 		"(classification_gate.go's own doc comment explains why the weaker project/role family's " +
 		"permission doesn't fit a grant that carries no role at all). A route-level permission gate " +
 		"here would either be wrong (roles.assign is not sufficient) or a duplicate of the exact " +
-		"check core already performs. See ResolveSecretAccessRequest.",
+		"check core already performs. For a restricted PAT core also applies the restriction first " +
+		"(requireAccessRequestAuthorityAt: roles.assign at the request's project), so the route is " +
+		"ALLOWED to restricted PATs in core.restrictedPATUngatedWrites (PAT-GUARD-3). See ResolveSecretAccessRequest.",
 	"POST /api/v1/secret-access-requests/{requestId}/withdraw": "Self-service, same reasoning as WithdrawAccessRequest above: POST " +
 		"secret-access-requests/{requestId}/withdraw cancels only the CALLER'S OWN pending request " +
 		"(core.WithdrawAccessRequest, reused unchanged, scopes to the requester -- #G14's identical " +
@@ -532,7 +534,8 @@ var noPermissionGateAllowlist = map[string]string{
 		"instead by deployment config + a mandatory justification + full audit trail + automatic " +
 		"expiry (NIS2/DORA incident response). Blocked under impersonation (BlockWhenImpersonating) " +
 		"so an admin acting as a user cannot mint a durable emergency role grant attributed to the " +
-		"target. See router.go's own adjacent comment.",
+		"target. A restricted PAT is refused in core (ErrRestrictedPATCannotBreakGlass, ADR-042 " +
+		"addendum of 2026-10-11). See router.go's own adjacent comment.",
 
 	"GET /api/v1/projects": "GET /projects (ListProjects) performs its own authorization INSIDE the handler " +
 		"(#2780), exactly like GET /secrets below and for the same reason: the route used to require " +
@@ -602,6 +605,7 @@ var permissionGateMiddleware = map[string]bool{
 	"RequireScopedPermission":           true,
 	"RequireScopedSecretPermission":     true,
 	"RequireScopedSecretRefPermission":  true,
+	"RequirePermissionInAnyScope":       true,
 	"RequireNodeCredential":             true,
 	"RequireNodeCredentialOrPermission": true,
 	// SCIMToken is not permission-shaped (no `permission string` argument) but

@@ -24,23 +24,53 @@ The stack is three containers:
 git clone https://github.com/keyorixhq/keyorix.git
 cd keyorix
 cp .env.example .env
-# Edit .env and set strong values (see below). Then:
+./scripts/selfhost/init-secrets.sh     # generates ./secrets/* and records KEYORIX_SECRETS_GID in .env
 docker compose up -d
 ```
 
-Open **http://localhost:8088** and log in with the admin credentials you set in
-`.env`. That's it.
+Open **http://localhost:8088** and log in as `admin` with the password in
+`./secrets/admin_password`. That's it.
 
 > Building from source instead of pulling published images: edit
 > `docker-compose.yml` and swap the `backend` service's `image:` for the
-> commented-out `build:` block.
+> commented-out `build:` block (the `web` image is still pulled). The first
+> `docker compose build backend` takes about 3 minutes and the first `up -d`
+> about 1–2 minutes more (image pulls); nothing is printed for the 15–35 s the
+> backend spends on first-boot migrations and key derivation.
+
+**First boot check.** With `KEYORIX_ADMIN_PASSWORD_FILE` + `KEYORIX_BOOTSTRAP_TOKEN_FILE` set
+(the shipped compose file does) the backend creates the admin by calling `/system/init` as soon as the server
+answers `GET /health`. The entrypoint waits for that for up to
+`KEYORIX_READY_TIMEOUT` seconds (default 180, so a slow first boot on a loaded
+host is fine), then retries the bootstrap call up to `KEYORIX_BOOTSTRAP_ATTEMPTS`
+times (default 10, 3 s apart). It fails loudly: if the admin still cannot be
+created, the entrypoint logs `ERROR: admin bootstrap did not complete ...`, stops
+the server and exits non-zero, so the backend restarts instead of sitting
+"healthy" with no usable login. On success the log shows `Server is ready after
+Ns`, `Bootstrapping admin user` and `Admin bootstrap complete.` in
+`docker compose logs backend`. If you see the `ERROR:` lines instead, check that
+`./secrets/bootstrap_token` exists and is the one the backend reads, then fix it and run
+`docker compose up -d` again (or create the admin by hand with
+`keyorix system init --server http://localhost:8088 --admin-username admin --admin-email admin@keyorix.local`
+with `KEYORIX_BOOTSTRAP_TOKEN` exported in your shell: the CLI reads the token
+and prompts for the admin password; neither goes on the command line).
+`docker compose ps` shows `web` as `healthy`: its healthcheck probes
+`127.0.0.1` (busybox resolves `localhost` to IPv6 first and nginx listens on IPv4
+only).
+
+**Using the CLI against the stack.** The backend's port is not published; the
+CLI talks to it through the web container's proxy:
+`keyorix login --server http://localhost:8088 --username admin` (and
+`--server https://<KEYORIX_DOMAIN>` with the `tls` profile). The first admin
+login is confined to MFA enrolment, as in [QUICK_START.md](../QUICK_START.md#enrol-mfa-required-on-first-login).
 
 **Generate your admin recovery key now, before you need it.** If every admin
 account is ever locked out (lost password, lost MFA device), the only way back
 in is `keyorix-server admin recover-admin` on the server host — and by
-default it also requires this key (`security.recover_admin.keyless_mode` is an
+default it also requires this key (`security.recover_admin.insecure_keyless_admin_recovery`, formerly
+`keyless_mode`, is an
 explicit, less-secure opt-out documented in `configs/keyorix.yaml.tpl`, not the
-default, `security.recover_admin.keyless_mode: true` in server config opts
+default, `security.recover_admin.insecure_keyless_admin_recovery: true` in server config opts
 out). No key exists until you generate one. Like every `keyorix-server admin`
 command except a Postgres backup, it needs the database to itself — it holds
 the exclusive admin lock for the whole rotation, so a concurrent
@@ -60,20 +90,81 @@ never written to a log file or the audit chain in plaintext, and losing it
 means running the command again (which invalidates the old key). See
 `docs/design-b2-recover-admin.md` for the full design.
 
-## 3. Configuration (`.env`)
+**"Too many login attempts" (HTTP 429).** Each IP address gets
+`LoginMaxAttempts` (10) *failed* login attempts per 15 minutes, shared by the
+password, TOTP, passkey and refresh endpoints; successful logins do not count
+(#2936), and an MFA or passkey login counts once however many requests it
+takes. The count lives in the database, so restarting the server does not
+reset it. To lift it early for one address, or to clear one account's
+failed-login lockout, use the audited host-side command (it needs the database
+to itself, like every admin command):
 
-All secrets come from `.env` — there are **no baked-in default passwords**; the
-stack refuses to start if the required ones are missing. Generate strong values
-with `openssl rand -base64 32`.
+```sh
+docker compose stop backend
+docker compose run --rm backend ./keyorix-server admin clear-login-lockout --ip 203.0.113.9
+docker compose run --rm backend ./keyorix-server admin clear-login-lockout --user alice@example.com
+docker compose start backend
+```
 
-| Variable                  | Required | Notes |
-|---------------------------|----------|-------|
-| `KEYORIX_DB_PASSWORD`     | ✅       | PostgreSQL password (shared by `postgres` and `backend`). |
-| `KEYORIX_MASTER_PASSWORD` | ✅       | Passphrase the encryption KEK is derived from. **See the warning below.** |
-| `KEYORIX_ADMIN_PASSWORD`  | optional | If set, the first admin is created on first boot (idempotent). Leave blank to run `keyorix-server admin init` manually on the server host. |
-| `KEYORIX_BOOTSTRAP_TOKEN` | required if `KEYORIX_ADMIN_PASSWORD` is set | `/system/init` always requires a matching bootstrap token. Setting `KEYORIX_ADMIN_PASSWORD` without this silently skips admin creation (a WARN is logged, but the container still reports healthy). |
-| `KEYORIX_ADMIN_USERNAME`  | optional | Defaults to `admin`. |
-| `KEYORIX_ADMIN_EMAIL`     | optional | Defaults to `admin@keyorix.local`. |
+Each run writes an `admin.login_lockout_cleared` audit event naming what it
+is about to clear, before it clears anything: if the audit write fails, nothing
+is cleared and the command fails. If the clear itself then fails, an
+`admin.login_lockout_clear_failed` event follows. An admin who can still log in can unlock an account online instead
+(`POST /api/v1/users/{id}/unlock`).
+
+## 3. Configuration (`.env` and `./secrets`)
+
+Credentials are **Docker secrets files** under `./secrets` (or `$KEYORIX_SECRETS_DIR`),
+not environment variables: they never appear in `docker inspect` or in a container's
+process environment. There are **no baked-in default passwords**; the stack refuses to
+start if `./scripts/selfhost/init-secrets.sh` has not been run. The script generates
+strong values, never overwrites an existing file, and never prints a value.
+
+| File in `./secrets`  | Read through | Notes |
+|----------------------|--------------|-------|
+| `db_password`        | `KEYORIX_DB_PASSWORD_FILE`, `POSTGRES_PASSWORD_FILE` | PostgreSQL password (shared by `postgres` and `backend`). |
+| `master_password`    | `KEYORIX_MASTER_PASSWORD_FILE` | Passphrase the encryption KEK is derived from. **See the warning below.** |
+| `admin_password`     | `KEYORIX_ADMIN_PASSWORD_FILE` | The first admin is created on first boot (idempotent). To initialise manually with `keyorix-server admin init` instead, delete the `KEYORIX_ADMIN_PASSWORD_FILE` and `KEYORIX_BOOTSTRAP_TOKEN_FILE` lines from the `backend` service. |
+| `bootstrap_token`    | `KEYORIX_BOOTSTRAP_TOKEN_FILE` | `/system/init` always requires a matching bootstrap token; the admin bootstrap needs both. Setting the admin password file without this makes the backend exit at startup with an `ERROR:` message. |
+
+Non-secret settings stay in `.env`: `KEYORIX_ADMIN_USERNAME` (default `admin`),
+`KEYORIX_ADMIN_EMAIL` (default `admin@keyorix.local`), `KEYORIX_DOMAIN`, and
+`KEYORIX_SECRETS_GID` (written by `init-secrets.sh`).
+
+**Why a group id.** Compose bind-mounts a file secret as-is and ignores its
+`uid`/`gid`/`mode` (it warns "not supported"), so a `0600` file on the host would be
+unreadable by the containers' non-root users. `init-secrets.sh` writes the files
+`0640` with your primary group and records that gid as `KEYORIX_SECRETS_GID`; the
+`postgres` and `backend` containers join that group. Nothing is world-readable, and
+the server's secret-file permission check (nothing for "other", no group write; a
+group-readable file must not be owned by the container's own user) passes. Run the
+script as a regular user, not root. If your uid is `1001` (the uid the server
+container runs as) the server would refuse the group-readable files it "owns", and the
+script says so: hand them to another owner with `sudo chown root:<your gid> secrets/*`
+and re-run it. Docker Desktop (macOS/Windows) maps file ownership
+differently; this layout is for Linux hosts.
+
+**Upgrading an install that keeps its passwords in `.env`:**
+
+```sh
+./scripts/selfhost/init-secrets.sh --from-env .env   # copies the four values byte for byte
+# then delete KEYORIX_DB_PASSWORD, KEYORIX_MASTER_PASSWORD, KEYORIX_ADMIN_PASSWORD and
+# KEYORIX_BOOTSTRAP_TOKEN from .env, and:
+docker compose up -d
+```
+
+The master password and the database password are copied unchanged, which is what keeps
+your stored secrets decryptable and the existing `postgres_data` volume working.
+
+**Secrets as files, in general.** The server accepts any of its secrets as a file:
+set `KEYORIX_<NAME>_FILE` to a path (Docker secrets mount under `/run/secrets/`, a
+Kubernetes Secret volume wherever you mount it). Setting both `X` and `X_FILE` is a
+startup error, not a precedence rule, and an unreadable or empty file stops the server.
+The master-password file must be `0600`/`0400` (or a `0440` mount owned by another user,
+e.g. root, in a group the container holds -- Kubernetes `fsGroup`, Docker `group_add`);
+a looser one is refused. The container entrypoint passes `X_FILE` through to the server
+unchanged and never exports a value it read from a file. Details and the full list of
+supported variables: [CONFIGURATION.md](CONFIGURATION.md#secrets-from-files-name_file).
 
 Server configuration (storage, encryption paths, ports) lives in
 `keyorix.docker.yaml`, mounted read-only into the `backend` container. The full,
@@ -145,6 +236,13 @@ docker compose exec backend ./keyorix-server admin backup --output /tmp/backup.t
 docker compose cp backend:/tmp/backup.tar.gz ./keyorix-backup-$(date +%F).tar.gz
 ```
 
+> **Version note.** The live (beside-the-server) Postgres backup below is not in
+> the published `0.95.3` images that `docker-compose.yml` pins: there the same
+> command fails with `failed to acquire the encryption key lock (another process
+> is using it)`. With those images stop `backend` first and use
+> `docker compose run --rm -v "$PWD/backups:/out" backend ./keyorix-server admin backup --output /out/keyorix-backup.tar.gz`
+> (`mkdir -m 777 backups` first: the container user is uid 1001).
+
 On Postgres, this reads through a single `REPEATABLE READ` snapshot
 transaction by default — every table sees the identical point-in-time view,
 without taking the database offline, so it runs beside the live `backend`
@@ -168,14 +266,27 @@ config the backup was taken from). `admin restore` always takes this
 database's own exclusive lock and refuses if a live server already holds it
 — stop the `backend` service first, and run restore via `docker compose run`
 (a fresh, throwaway container) rather than `exec` (which needs an already-
-running one):
+running one). The throwaway container has its own filesystem, so mount the
+archive into it with `-v` (a `docker compose cp` into the stopped `backend`
+container is not visible to `run`, and fails outright after `down -v` because
+no container exists). The container user is uid 1001: the archive must be
+readable by it (`chmod 644`).
 
 ```sh
-docker compose stop backend
-docker compose cp ./keyorix-backup-YYYY-MM-DD.tar.gz backend:/tmp/backup.tar.gz
-docker compose run --rm backend ./keyorix-server admin restore --input /tmp/backup.tar.gz
-docker compose up -d backend
+docker compose stop backend            # (no-op on a freshly wiped host)
+chmod 644 ./keyorix-backup-YYYY-MM-DD.tar.gz
+docker compose run --rm -v "$PWD/keyorix-backup-YYYY-MM-DD.tar.gz:/tmp/backup.tar.gz:ro" \
+  backend ./keyorix-server admin restore --input /tmp/backup.tar.gz
+docker compose up -d
 ```
+
+`run` starts `postgres` for you and `restore` migrates and loads the empty
+database and the (also empty) `keyorix_keys` volume, then runs `verify-audit`
+(`verify-audit on the restored database: VALID`). Measured for the whole drill
+on a 2-vCPU VM with ~200 rows: backup 1.4 s, restore 24 s, back to serving about
+40 s after `up -d`. Restore into the wiped volumes before the first `up -d`,
+as above (a stack that has already booted holds a non-empty database and keys,
+which restore refuses without `--overwrite-existing`).
 
 Restore refuses a non-empty target by default (`--overwrite-existing` to
 proceed anyway on a genuine disaster-recovery restore) — the normal flow is
@@ -268,15 +379,39 @@ path.
 ## 6. Upgrades
 
 ```sh
-docker compose pull          # fetch newer published images
+# docker-compose.yml pins both images to one release tag (e.g. :0.95.3, no
+# leading "v"). `pull` alone fetches nothing new: first edit the `backend` and
+# `web` tags to the release you are moving to, then:
+docker compose pull          # fetch the published images for those tags
 docker compose up -d         # recreate with the new images
 ```
 
 Schema migrations run automatically on boot and are additive. **Back up first**
-(section 5). To pin a version instead of `latest`, set the image tags in
-`docker-compose.yml` to a release tag (e.g. `:v0.3.0`).
+(section 5, mind its version note). Verified: a stack on the published `0.95.3`
+images with a secret in Postgres, then `docker compose up -d` on a `main`
+build — the secret read back unchanged, `verify-audit` VALID, schema epoch
+matches. See [UPGRADING.md](UPGRADING.md) for what changes on upgrade (MFA
+grace period).
 
 ## 7. TLS
+
+**Secure baseline (from the release after v0.95.3).** `docker compose -f
+docker-compose.yml -f docker-compose.secure.yml up -d` runs the backend on TLS
+with a certificate its entrypoint generates on first start, has nginx verify
+it, turns on rate limiting and the `/metrics` token, and copies the config to a
+private 0600 file (so the host file's owner and mode no longer matter, #2922).
+`admin validate --posture` then reports no deviations. It needs a backend image
+newer than the pinned v0.95.3: until that release, build the backend from this
+checkout (`build:` in docker-compose.secure.yml). With the next release it
+becomes the default compose file. For Helm, the same baseline is
+`secureBaseline.enabled=true` (see `deploy/helm/keyorix/README.md`).
+
+**ArgoCD / GitOps with Helm.** ArgoCD renders charts with `helm template`, which
+cannot look up the cluster, so the baseline's generated certificates and
+`/metrics` token would change on every sync. Create the Secret yourself and set
+`secureBaseline.existingSecret` (and `auth.existingSecret`); the chart then
+generates nothing. Keys and a `kubectl create secret` example:
+[`deploy/helm/keyorix/README.md`](../deploy/helm/keyorix/README.md#secure-baseline-with-an-existing-secret-argocd--gitops).
 
 The default stack serves plain HTTP on `8088`. Two ways to get HTTPS:
 
@@ -293,21 +428,104 @@ docker compose --profile tls up -d
 Caddy automatically provisions and renews a publicly-trusted certificate
 (Let's Encrypt / ZeroSSL). Issued certs persist on the `caddy_data` volume so
 restarts don't re-request them. For a `localhost` value Caddy uses its internal
-CA (browsers warn unless you trust Caddy's root). When running the `tls` profile,
+CA (browsers warn unless you trust Caddy's root). To use the CLI against it,
+export that root and point the CLI at it:
+`docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt`
+then `keyorix --ca-file $PWD/caddy-root.crt login --server https://localhost ...`, or
+store it once with `keyorix config set ca_file $PWD/caddy-root.crt` (CLI releases
+after 0.95.3; with an older CLI, `SSL_CERT_FILE=$PWD/caddy-root.crt` works on Linux
+only) (verified: login over `https://localhost` works, `http://localhost` answers 308). When running the `tls` profile,
 don't also expose web's `8088` publicly — front everything through Caddy on
 80/443.
+
+Caddy runs as uid:gid `65532` (not root), with every capability dropped except
+`NET_BIND_SERVICE` and a read-only root filesystem. Earlier releases ran it as
+root, so an existing `caddy_data` / `caddy_config` volume is root-owned. **Upgrading
+needs no manual step:** the one-shot `caddy-init` service (same profile) chowns
+both volumes to `65532:65532` before Caddy starts, and Caddy waits for it to
+complete. It is idempotent, so it also runs harmlessly on a fresh or
+already-migrated volume; the issued certificates and Caddy's internal CA are
+kept. `caddy-init` is the only container in the stack that runs as root, with
+only `CHOWN` and `DAC_READ_SEARCH` (read/search, not write: Caddy creates its
+storage directories `0700`, so once they belong to `65532` root could not open
+them on a second run without it) and no network. It touches only the two Caddy
+volumes, changes only entries not already owned by `65532:65532`, and exits.
+
+**Memory limits on scratch space.** Every `tmpfs` in the compose file has an
+explicit `size=` (`/tmp` 16-64 MiB, nginx cache 64 MiB, nginx logs 32 MiB, runtime
+dirs 1 MiB), and every `emptyDir` in the Helm chart has a `sizeLimit`, so a
+runaway writer fills its own capped mount instead of the host's RAM or the node's
+ephemeral storage. The backend's `/tmp` (64 MiB) also holds `admin restore`
+staging: raise that `size=` if you restore a backup larger than it.
+
+**PostgreSQL user.** The bundled `postgres:15-alpine` runs as uid:gid `70:70` in
+both the compose file and the Helm chart (the Debian-based `postgres:*` images use
+`999`; if you change the image flavour, change the uid in both places -- the Helm
+value is `postgresql.runAsUser`). Compose volumes from earlier releases are already
+owned by `70`, so that upgrade needs no `chown`. Helm volumes created by charts
+older than this one are owned by `999`: see [UPGRADING.md](UPGRADING.md) §5.
 
 **Your own proxy.** Or terminate TLS at an existing Caddy/Traefik/nginx/LB in
 front of the `web` container: point it at `web:80` and forward
 `X-Forwarded-Proto: https`.
 
+### HSTS behind a TLS-terminating load balancer
+
+The `web` nginx itself only speaks plain HTTP, and `Strict-Transport-Security`
+over `http://` is wrong, so it sends HSTS **only** when the request came through
+a trusted proxy that says `X-Forwarded-Proto: https`. The header is never
+trusted from any other client, and never sent for direct HTTP. (The bundled
+Caddy profile adds its own HSTS; the backend adds it only when it serves TLS
+itself. API responses keep the backend's API CSP and every other security
+header exactly as before; only the `Strict-Transport-Security` decision is new.)
+
+| Setting (`.env`, passed to `web`) | Default | Meaning |
+|---|---|---|
+| `KEYORIX_WEB_TRUSTED_PROXIES` | empty | Comma-separated IPs/CIDRs of the load balancer(s), **as `web` sees them** (the TCP peer address). Keep it equal to the backend's `server.http.trusted_proxies`. Empty = nothing trusted = no HSTS. |
+| `KEYORIX_WEB_HSTS` | `auto` | `auto`: on when trusted proxies are set; `on`: same; `off`: never send HSTS from `web`. |
+| `KEYORIX_WEB_HSTS_MAX_AGE` | `31536000` | `max-age` in seconds. |
+| `KEYORIX_WEB_HSTS_INCLUDE_SUBDOMAINS` | `true` | Adds `includeSubDomains`; `false` drops it. |
+
+Invalid values (anything that is not an IP/CIDR, a bad mode, a non-numeric
+`max-age`) stop the container at start rather than trusting more than intended.
+These variables need a `web` image that contains this feature (releases after
+0.95.3); older images ignore them and send no HSTS.
+
+Helm: `web.trustedProxies` (list of CIDRs; the address the web pod sees, i.e.
+the ingress-controller pods for an in-cluster ingress, not the cloud LB's public
+address), `web.hsts.mode` (`auto`|`on`|`off`; `on` without `web.trustedProxies`
+fails the render), `web.hsts.maxAge`, `web.hsts.includeSubDomains`. All default to
+"no HSTS from this layer". Example:
+
+```yaml
+web:
+  trustedProxies: ["10.42.0.0/16"]   # ingress-nginx pod CIDR
+```
+
+Check it with the proxy's address and header (a request from an untrusted
+address must show no `Strict-Transport-Security` even with the header forged):
+
+```sh
+curl -sI -H 'X-Forwarded-Proto: https' http://web-host/health | grep -i strict
+```
+
 The single-binary `keyorix-server` also supports TLS directly
-(`server.http.tls` in the config) for non-Docker deployments.
+(`server.http.tls` in the config) for non-Docker deployments. A config written by
+`keyorix-server admin init` already has it on, with a generated self-signed
+certificate (`certs/server.crt`) and `security.require_transport_tls: true`;
+replace the certificate with a CA-issued one, or see
+[CONFIGURATION.md](CONFIGURATION.md#the-generated-config-is-the-secure-baseline)
+for the proxy-terminated variant.
 
 ## 8. Metrics (Prometheus)
 
-The backend exposes Prometheus metrics at **`GET /metrics`** (unauthenticated by
-design — keep it inside your perimeter, don't expose it publicly). It includes Go
+The backend exposes Prometheus metrics at **`GET /metrics`**. With
+`server.http.metrics_token` or `metrics_token_file` set it requires
+`Authorization: Bearer <token>`; a config written by `admin init` points
+`metrics_token_file` at a generated `secrets/metrics_token` (0600), so give
+Prometheus that token (`authorization: { credentials_file: ... }` in its scrape
+config). Without a token it is unauthenticated: keep it inside your perimeter,
+don't expose it publicly. It includes Go
 runtime + process collectors and per-route HTTP metrics
 (`keyorix_http_requests_total`, `keyorix_http_request_duration_seconds`). Point
 your own Prometheus at `backend:8080/metrics`.
@@ -373,11 +591,45 @@ dropping or failing audit events is a compliance gap.
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `KEYORIX_DB_PASSWORD is required` on `up` | No `.env`, or the required vars are blank. `cp .env.example .env` and fill them in. |
+| `KEYORIX_SECRETS_GID is required` on `up` | `./scripts/selfhost/init-secrets.sh` has not been run (it creates `./secrets/*` and writes the gid to `.env`). |
+| `bind source path does not exist: .../secrets/...` on `up` | Same: run `./scripts/selfhost/init-secrets.sh`, or point `KEYORIX_SECRETS_DIR` at your secrets directory. |
+| Backend exits with `KEYORIX_MASTER_PASSWORD_FILE ... permission denied` | `KEYORIX_SECRETS_GID` in `.env` is not the group of the files in `./secrets`. Re-run `init-secrets.sh` (it fixes the gid in `.env` and keeps your files). |
 | Backend logs `password authentication failed` | The `postgres_data` volume was initialised with a different password. For a *new* install, `docker compose down -v` and start fresh (this wipes data — only for a clean install). |
 | Backend can't decrypt secrets after a change | `KEYORIX_MASTER_PASSWORD` changed or the `keyorix_keys` volume was lost. Restore both from backup (section 5). |
 | Login returns 404 | Reverse proxy not forwarding `/auth/` — Keyorix serves login at the root path, not under `/api/`. The bundled `web` image already handles this. |
 | Server refuses to start: `database schema epoch N is newer than this binary's schema epoch M` (multi-replica deployments only — see [ADR-039](adr-039-ha-deployment.md); the bundled Helm chart is pinned to 1 replica and cannot hit this) | Two possible causes, and the message can't tell them apart on its own — check the "recorded at ... ago" timestamp in the log line against your own rollout: **(a) rolling upgrade in progress** — a sibling replica already migrated to the new schema epoch, and this pod is still running the old binary. Expected and self-resolving: this pod will be replaced by the new image (or crash-loop briefly) until the rollout completes, then it stops recurring. This repo does not orchestrate that rollout for you (see ADR-039). **(b) genuine downgrade** — this binary was rolled back against a schema a newer version already migrated. Upgrade this binary to match, or restore a backup taken before the newer version ran. The server deliberately refuses to start rather than guess which case applies — see [ADR-097](adr-097-schema-epoch-downgrade-guard.md) and [ADR-101](adr-101-schema-epoch-compatibility-floor.md). |
+
+### SQLite write contention (`503` + `Retry-After`)
+
+SQLite allows one writer at a time, so a single Keyorix process queues its write
+transactions behind an in-process gate (first come, first served). A write waits
+up to **10 seconds** for its turn. If it does not get one, the request fails fast
+with **`503 Service Unavailable`** and a `Retry-After: 5` header (gRPC:
+`UNAVAILABLE` with a `retry-after` trailer) instead of stalling or returning a
+generic `500`. The response body is fixed and carries no storage detail; the
+server logs one `write gate contention: <method> <path> answered 503` line per
+affected request.
+
+What to do when you see it:
+
+- **Occasional, during a burst** (bulk import, a rotation job, a CI fleet
+  starting at once): expected back-pressure. Clients should honour `Retry-After`
+  and retry; idempotent requests can be retried blindly, others should check
+  state first, because a request that runs several write transactions may have
+  committed an earlier one.
+- **Sustained** (a steady stream of `write gate contention` lines): the instance
+  is write-saturated. Reduce concurrent writers (stagger jobs, lower client
+  parallelism), make sure the database file is on local SSD rather than network
+  storage, and check that nothing else holds the file open for writing (a backup
+  or admin CLI command running beside the server holds the lock too). If the
+  workload is genuinely write-heavy or multi-replica, move to Postgres (see
+  "Moving from SQLite to Postgres" in section 5): the gate exists only for SQLite.
+- Raising `storage.database.max_open_conns` does **not** help: writes are
+  serialized regardless of pool size, and a bigger pool only adds readers.
+
+The login and MFA endpoints (`/auth/...`) are deliberately exempt from the
+`503`: a storage failure there after a credential matched is reported exactly as a
+wrong credential, so the response cannot be used to confirm a guess.
 
 ## 10. Single-binary / air-gapped deployment
 
@@ -394,8 +646,9 @@ KEYORIX_MASTER_PASSWORD=… KEYORIX_DB_PASSWORD=… ./bin/keyorix-server
 ```
 
 Copy `keyorix-server` to the target host, point it at PostgreSQL, and the API +
-UI are served on one port (default 8080). Set TLS directly via `server.http.tls`
-in the config for HTTPS without a proxy.
+UI are served on one port (default 8080). A config from `admin init` serves HTTPS
+there with a generated self-signed certificate; point `server.http.tls` at a
+CA-issued one for production.
 
 `make build` (without the UI) produces an API-only binary that serves a small
 placeholder page in place of the dashboard — use `make build-ui` for the full

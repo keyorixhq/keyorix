@@ -35,14 +35,27 @@
 # outright on a named file that doesn't exist -- on every individual PR
 # branch that doesn't yet have every other in-flight real-backend spec file
 # merged into it. Today's real per-file login counts run 2-5 each.
-# MAX_SPECS_PER_GROUP=2 (not 3): confirmed live that 3 of today's 5 files
-# (access-control + audit-and-session + mfa-login, alphabetically the first
-# chunk) sum to EXACTLY 10 logins -- the hard ceiling, zero margin, one more
-# login anywhere in any of those three files away from breaking again. At 2
-# per group the worst real pairing today is 7 (mfa-login + pages), leaving
-# real headroom.
+# MAX_SPECS_PER_GROUP=1 (2026-10-05, #2738): one spec file per freshly-booted
+# server, so NO group's budget is ever a sum of per-file counts. The previous
+# value of 2 was a hand-tuned number ("the worst real pairing today is 7"), and
+# the comment it replaced was itself a hand-tuned 3 that had already broken
+# once -- every added spec file re-opens the arithmetic, and the failure mode is
+# a mid-suite 429 that reads as a broken test. Adding mfa-disable-dialog.spec.ts
+# would have put the [mfa-disable-dialog + mfa-login] pairing at 9 plus the
+# group's own 1 project-seeding login = the ceiling exactly, zero margin: the
+# precise trap the old comment warned about, two spec files later. At 1 per
+# group the binding constraint is a SINGLE file's own login count against the
+# full budget, which a spec author can see while writing that file instead of
+# having to know what else exists and how the alphabetical chunking lands.
+# Today's worst single file is mfa-login at 6 (+1 seeding = 7 of 10).
+# Cost: one server boot per spec file instead of per pair.
 #
-# Usage: scripts/e2e/web-real-smoke.sh
+# Usage: scripts/e2e/web-real-smoke.sh [spec-file ...]
+#   With no arguments: every e2e/real/*.spec.ts file (what CI runs).
+#   With arguments: only those spec files, each still in its own group with its
+#   own freshly-booted server -- for iterating on one spec without booting a
+#   server for every other file. Paths are relative to web/ (e.g.
+#   e2e/real/mfa-disable-dialog.spec.ts).
 #   Requires: go, pnpm, a working `pnpm exec playwright install` (browsers
 #   already cached locally is fine -- this script does not re-install them).
 set -euo pipefail
@@ -50,7 +63,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 SERVER_BIN="$REPO_ROOT/bin/keyorix-server"
 WEB_DIR="$REPO_ROOT/web"
-MAX_SPECS_PER_GROUP=2
+MAX_SPECS_PER_GROUP=1
 
 # KEYORIX_E2E_SPECS optionally narrows the run to a space-separated list of
 # spec paths (relative to web/), for iterating on one file without paying for
@@ -63,10 +76,47 @@ if [ -n "${KEYORIX_E2E_SPECS:-}" ]; then
     # shellcheck disable=SC2206
     ALL_SPECS=(${KEYORIX_E2E_SPECS})
     echo "==> KEYORIX_E2E_SPECS is set: running only ${ALL_SPECS[*]}"
+elif [ "$#" -gt 0 ]; then
+    ALL_SPECS=("$@")
+    for spec in "${ALL_SPECS[@]}"; do
+        [ -f "$WEB_DIR/$spec" ] || { echo "no such spec file: $WEB_DIR/$spec" >&2; exit 1; }
+    done
 else
     mapfile -t ALL_SPECS < <(cd "$WEB_DIR" && find e2e/real -maxdepth 1 -name '*.spec.ts' | sort)
 fi
 [ "${#ALL_SPECS[@]}" -gt 0 ] || { echo "no e2e/real/*.spec.ts files found under $WEB_DIR" >&2; exit 1; }
+
+# KEYORIX_E2E_SHARD=i/n (CI: 1/2 and 2/2 as parallel jobs) runs only shard i of n.
+# Spec k (0-based, in the sorted ALL_SPECS order) belongs to shard (k % n) + 1:
+# deterministic, no hand-kept file list, so a new spec lands in a shard on its own.
+# Round-robin over the sorted names puts mfa-disable-dialog and mfa-login (the slow
+# TOTP-step files) in different shards. Before narrowing, every shard's selection is
+# computed and checked to cover ALL_SPECS exactly once, so a spec can never be
+# assigned to no shard (or two) -- the run fails instead of silently dropping it.
+if [ -n "${KEYORIX_E2E_SHARD:-}" ]; then
+    case "$KEYORIX_E2E_SHARD" in
+    [1-9]*/[1-9]*) ;;
+    *) echo "KEYORIX_E2E_SHARD must look like i/n (e.g. 1/2), got: $KEYORIX_E2E_SHARD" >&2; exit 1 ;;
+    esac
+    shard_idx="${KEYORIX_E2E_SHARD%%/*}"
+    shard_cnt="${KEYORIX_E2E_SHARD##*/}"
+    [ "$shard_idx" -le "$shard_cnt" ] || { echo "KEYORIX_E2E_SHARD index $shard_idx exceeds count $shard_cnt" >&2; exit 1; }
+    SHARD_SPECS=()
+    for ((k = 0; k < ${#ALL_SPECS[@]}; k++)); do
+        owners=0
+        for ((s = 1; s <= shard_cnt; s++)); do
+            [ $((k % shard_cnt + 1)) -eq "$s" ] && owners=$((owners + 1))
+        done
+        if [ "$owners" -ne 1 ]; then
+            echo "spec ${ALL_SPECS[$k]} is assigned to $owners shards of $shard_cnt (want exactly 1)" >&2
+            exit 1
+        fi
+        [ $((k % shard_cnt + 1)) -eq "$shard_idx" ] && SHARD_SPECS+=("${ALL_SPECS[$k]}")
+    done
+    [ "${#SHARD_SPECS[@]}" -gt 0 ] || { echo "shard $KEYORIX_E2E_SHARD has no specs (${#ALL_SPECS[@]} total)" >&2; exit 1; }
+    echo "==> shard $KEYORIX_E2E_SHARD: ${#SHARD_SPECS[@]} of ${#ALL_SPECS[@]} spec files: ${SHARD_SPECS[*]}"
+    ALL_SPECS=("${SHARD_SPECS[@]}")
+fi
 
 SPEC_GROUPS=()
 current_group=""
@@ -86,6 +136,41 @@ fail() {
     echo "" >&2
     echo "WEB E2E SMOKE FAILED: $1" >&2
     exit 1
+}
+
+# free_port prints the first TCP port at or above $1 that nothing is listening on.
+#
+# 2026-10-05 (#2738): this harness used FIXED ports -- 18189+group for the server and
+# 18190+group for the Vite dev server -- two ranges that INTERLEAVE, so group N+1's
+# server port IS group N's web port. Two failures follow from that, both confirmed live
+# on this machine:
+#
+#   1. A second concurrent run of this script on the same host collides outright. The
+#      colliding server then fails to bind while the /health poll SUCCEEDS, because the
+#      other run's server answers it -- so the script sails past its own
+#      "did-it-start?" gate and sends the rest of the group's setup, including POST
+#      /system/init, to a stranger's server. (Harmless in the event: /system/init on an
+#      already-initialised system is a no-op. The next call, /auth/login with this run's
+#      own password, 401s against that other admin, and the failure looks like a broken
+#      spec.)
+#   2. Any lingering dev server from group N makes group N+1's server fail to bind the
+#      same way. MAX_SPECS_PER_GROUP=1 multiplies the number of groups, so this went
+#      from unlikely to likely.
+#
+# Probing for a free port cannot be atomic (something may grab it between the probe and
+# the bind), but it removes both deterministic collisions. Uses bash's own /dev/tcp
+# rather than nc, so it needs nothing extra installed.
+free_port() {
+    local p=$1
+    while [ "$p" -lt 65000 ]; do
+        if ! (exec 3<>"/dev/tcp/127.0.0.1/$p") 2>/dev/null; then
+            echo "$p"
+            return 0
+        fi
+        exec 3<&- 2>/dev/null || true
+        p=$((p + 1))
+    done
+    fail "no free TCP port found at or above $1"
 }
 
 if [ ! -x "$SERVER_BIN" ]; then
@@ -251,9 +336,13 @@ run_group() {
     local group_label="$1"
     shift
     local specs=("$@")
-    local server_port=$((18189 + group_label))
+    # Disjoint ranges (server 182xx, web 183xx), each probed for availability -- see
+    # free_port's comment for the interleaved-fixed-ports failures this replaces.
+    local server_port
+    server_port="$(free_port $((18200 + group_label)))"
     local server_url="http://127.0.0.1:$server_port"
-    local web_port=$((18190 + group_label))
+    local web_port
+    web_port="$(free_port $((18300 + group_label)))"
 
     local smoke_dir
     smoke_dir="$(mktemp -d)"
@@ -296,10 +385,53 @@ run_group() {
     local config_path="$smoke_dir/keyorix.yaml"
 
     echo "==> [group $group_label] keyorix-server admin init"
-    (cd "$smoke_dir" && "$SERVER_BIN" admin init --config "$config_rel") || fail "admin init exited non-zero"
+    # --dev: the browser specs run against plain HTTP; the secure default (TLS +
+    # metrics token) is covered by scripts/smoke.sh and the server tests.
+    (cd "$smoke_dir" && "$SERVER_BIN" admin init --dev --config "$config_rel") || fail "admin init exited non-zero"
     [ -f "$config_path" ] || fail "admin init did not create $config_path"
     sed -i.bak -E "s/port: \"8080\"/port: \"$server_port\"/" "$config_path"
     rm -f "$config_path.bak"
+    # ADR-112 item 1: security.require_mfa defaults on, which confines a session
+    # without MFA to the enrolment endpoints. Every spec here logs in as the
+    # shared bootstrap admin, whose MFA state is deliberately never touched (see
+    # mfa-login.spec.ts's header: enabling MFA is one-way and would make every
+    # other spec's admin login order-dependent). MFA enrolment and MFA login are
+    # driven through the real UI by mfa-login.spec.ts on throwaway users, and the
+    # default's confinement by scripts/smoke.sh (CLI) and the server tests. Opt
+    # out visibly here, for this harness only, by flipping the explicit
+    # `require_mfa: true` admin init writes (configs/keyorix.yaml.tpl).
+    sed -i.bak -E 's/^  require_mfa: true$/  require_mfa: false/' "$config_path"
+    rm -f "$config_path.bak"
+    grep -q '^  require_mfa: false$' "$config_path" ||
+        fail "could not set security.require_mfa: false in $config_path (did configs/keyorix.yaml.tpl change?)"
+
+    # A spec that needs the deployment policy security.require_mfa=true declares it
+    # with a line starting `// e2e-server: require_mfa=true` in its own file; its
+    # group (one spec per group, MAX_SPECS_PER_GROUP=1) then boots with that policy.
+    # Every other spec -- the default -- boots exactly as before, with require_mfa
+    # unset (false). The policy confines every interactive session of an account
+    # without MFA to the enrolment endpoints, so a group that sets it must not use
+    # the shared admin's Bearer token for fixtures (see seed_demo_data below).
+    local require_mfa=false spec
+    for spec in "${specs[@]}"; do
+        if grep -q '^// e2e-server: require_mfa=true' "$WEB_DIR/$spec"; then
+            require_mfa=true
+        fi
+    done
+    if [ "$require_mfa" = true ]; then
+        echo "==> [group $group_label] ${specs[*]} asks for security.require_mfa=true"
+        # Flip the explicit line back (never insert a second one: a duplicate
+        # require_mfa key is a parse error or last-wins, i.e. the policy silently off).
+        sed -i.bak -E 's/^  require_mfa: false$/  require_mfa: true/' "$config_path"
+        rm -f "$config_path.bak"
+    fi
+    # Exactly one require_mfa line, with the value this group asked for.
+    local want_mfa=false
+    [ "$require_mfa" = true ] && want_mfa=true
+    [ "$(grep -c '^[[:space:]]*require_mfa:' "$config_path")" = 1 ] ||
+        fail "[group $group_label] expected exactly one require_mfa line in $config_path"
+    grep -q "^  require_mfa: $want_mfa\$" "$config_path" ||
+        fail "[group $group_label] security.require_mfa is not $want_mfa in $config_path"
 
     echo "==> [group $group_label] keyorix-server admin encryption init"
     (cd "$smoke_dir" && "$SERVER_BIN" admin encryption init --config "$config_rel") ||
@@ -351,8 +483,15 @@ except Exception:
     print("")' "$smoke_dir/login-response.json")"
     [ -n "$token" ] ||
         fail "[group $group_label] POST /auth/login did not return a token: $(cat "$smoke_dir/login-response.json")"
-    seed_demo_data "$group_label" "$server_url" "$token" "$seed_project_name" \
-        "$lowpriv_username" "$lowpriv_password"
+    if [ "$require_mfa" = true ]; then
+        # This Bearer token is an interactive session of an account with no MFA, so
+        # the policy 403s every seeding call (MFAEnrollmentRequired). The spec that
+        # asked for the policy owns what it needs.
+        echo "==> [group $group_label] require_mfa group: skipping seed_demo_data"
+    else
+        seed_demo_data "$group_label" "$server_url" "$token" "$seed_project_name" \
+            "$lowpriv_username" "$lowpriv_password"
+    fi
 
     echo "==> [group $group_label] running Playwright specs against the real backend: ${specs[*]}"
     export HOME="$REAL_HOME"

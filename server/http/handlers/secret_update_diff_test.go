@@ -99,6 +99,11 @@ func TestDiffSecretUpdate_EveryFieldBehavesAsClassified(t *testing.T) {
 		{"Name", secretFieldRejected, func(s *models.SecretNode) { s.Name = "renamed" }},
 		{"IsSecret", secretFieldRejected, func(s *models.SecretNode) { s.IsSecret = false }},
 		{"ReadCount", secretFieldRejected, func(s *models.SecretNode) { s.ReadCount = 42 }},
+		// CacheEpoch: the read-path cache's generation stamp, owned by a database
+		// trigger and read-only to GORM. A client proposing one must be rejected,
+		// not ignored — silently dropping it would hide a caller that believes it
+		// controls cache invalidation.
+		{"CacheEpoch", secretFieldRejected, func(s *models.SecretNode) { s.CacheEpoch = 99 }},
 		{"Classification", secretFieldRejected, func(s *models.SecretNode) { s.Classification = "restricted" }},
 		{"Status", secretFieldRejected, func(s *models.SecretNode) { s.Status = "suspended" }},
 		{"CreatedBy", secretFieldRejected, func(s *models.SecretNode) { s.CreatedBy = "someone-else" }},
@@ -115,6 +120,7 @@ func TestDiffSecretUpdate_EveryFieldBehavesAsClassified(t *testing.T) {
 		{"CertNotAfter", secretFieldRejected, func(s *models.SecretNode) { now := time.Unix(4000, 0); s.CertNotAfter = &now }},
 		{"DeletedAt", secretFieldRejected, func(s *models.SecretNode) { s.DeletedAt.Valid = true; s.DeletedAt.Time = time.Unix(5000, 0) }},
 		{"RetentionOverrideDays", secretFieldRejected, func(s *models.SecretNode) { s.RetentionOverrideDays = 30 }},
+		{"PurgeAt", secretFieldRejected, func(s *models.SecretNode) { at := time.Unix(6000, 0); s.PurgeAt = &at }},
 		{"ParentID", secretFieldRejected, func(s *models.SecretNode) { id := uint(7); s.ParentID = &id }},
 	}
 

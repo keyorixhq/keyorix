@@ -8,10 +8,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -20,9 +18,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
-
-var retryPolicyDBCounter atomic.Int64
 
 // freshCoreRetryPolicy opens a unique in-memory SQLite DB that includes
 // models.NotificationChannel (plus the dependencies AuditEvent needs) and
@@ -30,10 +27,7 @@ var retryPolicyDBCounter atomic.Int64
 func freshCoreRetryPolicy(t *testing.T) *core.KeyorixCore {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := retryPolicyDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_retry_policy_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_retry_policy_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
@@ -62,10 +56,7 @@ func seedChannel(t *testing.T, db *gorm.DB) uint {
 func freshCoreRetryPolicyWithChannel(t *testing.T) (*core.KeyorixCore, *gorm.DB, uint) {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
-	n := retryPolicyDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_retry_policy_ch_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_retry_policy_ch_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
@@ -269,10 +260,7 @@ func TestSetRetryPolicy_InternalError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
-	n := retryPolicyDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_retry_set_ie_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_retry_set_ie_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},
@@ -306,10 +294,7 @@ func TestGetRetryPolicy_InternalError(t *testing.T) {
 	t.Parallel()
 	require.NoError(t, i18n.InitializeForTesting())
 
-	n := retryPolicyDBCounter.Add(1)
-	dsn := fmt.Sprintf("file:kx_retry_get_ie_%d?mode=memory&cache=shared&_timeout=30000", n)
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kx_retry_get_ie_")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{},
 		&models.AuditEvent{},

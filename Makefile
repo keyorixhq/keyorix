@@ -23,6 +23,7 @@ BINARY_SERVER_AIRGAP=$(BINARY_SERVER)-airgap
 BUILD_DIR=./bin
 VERSION?=dev
 GIT_COMMIT?=$(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+BUILD_DATE?=$(shell TZ=UTC git log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)
 # Air-gap trust keys (ADR-062): embed the trusted update/license signing PUBLIC keys at
 # build time, each "keyID=base64pub". Empty by default → a dev build trusts no keys and
 # verification fails closed; release builds set these. `keyorix trust keygen` prints the
@@ -31,8 +32,9 @@ TRUST_UPDATE_KEYS?=
 TRUST_LICENSE_KEYS?=
 # Inject the build identity into keyorix-server plus the shared internal/version package
 # (read by the server's /health + /system/info). Commit is deterministic per source
-# revision, so release builds stay reproducible (no build date).
-VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/pkg/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/pkg/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
+# revision, so release builds stay reproducible: BUILD_DATE is the commit date, never the
+# wall clock.
+VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/internal/version.Version=$(VERSION) -X github.com/keyorixhq/keyorix/internal/version.Commit=$(GIT_COMMIT) -X github.com/keyorixhq/keyorix/internal/version.BuildDate=$(BUILD_DATE) -X github.com/keyorixhq/keyorix/pkg/trust.updateKeysB64=$(TRUST_UPDATE_KEYS) -X github.com/keyorixhq/keyorix/pkg/trust.licenseKeysB64=$(TRUST_LICENSE_KEYS)
 LDFLAGS=-ldflags "$(VERSION_LDFLAGS)"
 # RELEASE_LDFLAGS additionally strips the symbol table + DWARF debug info (-s -w):
 # ~92MB -> ~62MB for keyorix-server. Only the `release` target uses this — build-cli/
@@ -53,7 +55,7 @@ CLI_RELEASE_LDFLAGS=-ldflags "-s -w $(CLI_VERSION_LDFLAGS)"
 MIGRATE_VERSION_LDFLAGS=-X github.com/keyorixhq/keyorix/migrate/internal/migrateversion.Version=$(VERSION)
 MIGRATE_RELEASE_LDFLAGS=-ldflags "-s -w $(MIGRATE_VERSION_LDFLAGS)"
 
-.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e k8s-e2e
+.PHONY: build build-cli build-server build-server-airgap airgap-dependency-guard build-ui populate-webui-dist install install-cli install-server clean run db-up dev docker-build docker-up docker-down docker-logs proto proto-deps proto-lint release sbom _sbom-generate smoke check-release-assets airgap-e2e k8s-e2e demo-check
 
 # Pinned protoc-gen plugin versions (match google.golang.org/{protobuf,grpc} in go.mod).
 PROTOC_GEN_GO_VERSION=v1.36.11
@@ -285,6 +287,14 @@ smoke: build-cli build-server
 airgap-e2e:
 	@./scripts/airgap-e2e.sh
 
+# demo-check: "will the demo work?" in about 5 minutes -- brings up (or
+# checks, with DEMO_CHECK_ARGS="--url ...") the demo golden path
+# (docs/demo/GOLDEN-PATH.md) end to end through the public API/CLI only, one
+# ✅/❌ line per step. See scripts/demo/check.sh's own header for every flag
+# (--sqlite/--postgres, --keep, --ui, --offline).
+demo-check:
+	@./scripts/demo/check.sh $(DEMO_CHECK_ARGS)
+
 # e2e-smoke: SESSION-I's fresh-install FEATURE smoke, distinct from `smoke`
 # above -- that target proves the QUICK_START.md happy path (project/secret/
 # share/machine, one CRUD each) on the SHIPPED CLI binary; this one proves
@@ -395,6 +405,10 @@ vet:
 	go vet ./...
 lint:
 	golangci-lint run ./...
+# Same command as ci.yml's openapi-lint job (vacuum, version pinned in devtools/vacuum/go.mod).
+.PHONY: openapi-lint
+openapi-lint:
+	GOWORK=off GOFLAGS=-mod=readonly go tool -modfile=devtools/vacuum/go.mod vacuum lint -r .vacuum.yaml --no-update-check server/http/handlers/openapi.yaml
 test:
 	go test -race ./...
 test-cover:

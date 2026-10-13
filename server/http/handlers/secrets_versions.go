@@ -61,22 +61,32 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Log as a secret read — fetching versions means the caller is accessing the
-	// secret value. SESSION-PERF #2403 follow-up (item 3, audit-before-disclosure):
-	// `versions` is only sent below AFTER its audit entry has been durably
-	// committed.
+	// Audit the listing as secret.versions_listed, not secret.read: the response
+	// carries version metadata, never a value (EncryptedValue is json:"-"), and
+	// secret.read means a value disclosure (AUDIT-UX-2, #2951). Still
+	// audit-before-response (SESSION-PERF #2403 follow-up, item 3): `versions` is
+	// only sent below AFTER its audit entry has been durably committed.
 	secret, sErr := h.coreService.GetSecret(r.Context(), uint(id))
 	if sErr == nil && secret != nil {
-		ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+		ip, ua := clientIP(r), r.Header.Get("User-Agent")
 		auditCtx := core.DetachedAuditContext(r.Context())
-		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua); auditErr != nil {
-			log.Printf("SECURITY: audit write failed for secret versions read (secret=%d): %v -- failing closed", id, auditErr)
+		if auditErr := h.coreService.LogSecretVersionsListed(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua); auditErr != nil {
+			log.Printf("SECURITY: audit write failed for secret versions listing (secret=%d): %v -- failing closed", id, auditErr)
 			h.sendError(w, "InternalError", "Failed to record audit trail", http.StatusInternalServerError, nil)
 			return
 		}
 	}
 
-	h.sendSuccess(w, map[string]any{"versions": versions}, "")
+	resp := map[string]any{"versions": versions}
+	// total_reads: the secret's lifetime value-read count (core.SecretTotalReads),
+	// next to each version's ReadCount (max_reads accounting only, #2963).
+	// Display only: omitted if it cannot be read.
+	if n, terr := h.coreService.SecretTotalReads(r.Context(), uint(id)); terr == nil {
+		resp["total_reads"] = n
+	} else {
+		log.Printf("total_reads for secret %d unavailable: %v", id, terr)
+	}
+	h.sendSuccess(w, resp, "")
 }
 
 // RotateSecret handles POST /api/v1/secrets/{id}/rotate
@@ -148,7 +158,7 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 
 	// Audit the rotation (async, detached) so the rotation inspector and the
 	// activity feed have an attributable secret.rotated event.
-	ip, ua := r.RemoteAddr, r.Header.Get("User-Agent")
+	ip, ua := clientIP(r), r.Header.Get("User-Agent")
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretRotatedWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 
@@ -98,14 +99,22 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("verify token against %s: %w", serverURL, err)
 	}
 	if profileResp.StatusCode() != http.StatusOK {
-		return fmt.Errorf("login succeeded but token verification failed: HTTP %d", profileResp.StatusCode())
+		return httpStatusError("login succeeded but token verification failed", profileResp.StatusCode(), profileResp.Body)
 	}
 
 	store, err := resolveCredStore()
 	if err != nil {
 		return fmt.Errorf("resolve credential store: %w", err)
 	}
-	if err := store.Save(credstore.Credentials{ServerURL: serverURL, Token: token}); err != nil {
+	// Keep the CA file this login was verified with (flag, env or stored), so the next
+	// command trusts the same server certificate without repeating --ca-file.
+	caFile, _ := resolveCAFile()
+	if caFile != "" {
+		if abs, aerr := filepath.Abs(caFile); aerr == nil {
+			caFile = abs
+		}
+	}
+	if err := store.Save(credstore.Credentials{ServerURL: serverURL, Token: token, CAFile: caFile}); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 
@@ -272,7 +281,7 @@ func resolveMFACode(cmd *cobra.Command) (string, error) {
 		return loginMFACode, nil
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
-		return "", fmt.Errorf("this account requires a second factor and there is no terminal to prompt on: pass --mfa-code <authenticator or recovery code>")
+		return "", fmt.Errorf("this account requires a second factor and there is no terminal to prompt on: pass --mfa-code <authenticator or recovery code>") // docs-secrets:allow -- single-use code; the only non-interactive path when there is no TTY
 	}
 	code, err := promptPassword("Authenticator code (or an unused recovery code): ")
 	if err != nil {

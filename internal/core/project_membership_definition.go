@@ -82,6 +82,13 @@ type UserProjectMembership struct {
 	// user from the project's members list will not revoke it; the group grant has
 	// to go instead.
 	ViaGroup bool `json:"via_group"`
+	// ProjectDeleted is true when the project has been SOFT-deleted. The grant
+	// survives a soft-delete by design (RestoreProject reinstates it), so the
+	// membership is real and is reported — but an auditor must be able to tell it
+	// apart from a membership of a live project, and a restore will bring it back.
+	// Before this flag existed these rows came back with an EMPTY project name,
+	// which is strictly worse than saying so.
+	ProjectDeleted bool `json:"project_deleted"`
 }
 
 // IsProjectMember reports whether userID is a member of projectID, per the
@@ -153,7 +160,7 @@ func (c *KeyorixCore) ListProjectMembershipsForUser(ctx context.Context, userID 
 	if err != nil {
 		return nil, err
 	}
-	projectNameByID, err := c.projectNamesByID(ctx)
+	projectByID, err := c.projectIndex(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -199,17 +206,19 @@ func (c *KeyorixCore) ListProjectMembershipsForUser(ctx context.Context, userID 
 			// See UserProjectMembership.State.
 			state = MembershipActive
 		}
+		ref := projectByID[pid]
 		out = append(out, UserProjectMembership{
 			ProjectID:   pid,
-			ProjectName: projectNameByID[pid],
+			ProjectName: ref.Name,
 			// primaryRole (identity.go) is the same rolePrecedence ranking every
 			// other "one primary role" consumer uses; roles is sorted, so ties
 			// among unranked custom roles resolve to the alphabetically first and
 			// the result is deterministic.
-			Role:     primaryRole(roles),
-			Roles:    roles,
-			State:    state,
-			ViaGroup: !direct,
+			Role:           primaryRole(roles),
+			Roles:          roles,
+			State:          state,
+			ViaGroup:       !direct,
+			ProjectDeleted: ref.Deleted,
 		})
 	}
 	return out, nil
@@ -238,6 +247,31 @@ func (c *KeyorixCore) ListProjectMembershipsForUser(ctx context.Context, userID 
 // scope query rather than re-deriving that predicate over a deployment-wide grant
 // dump.
 func (c *KeyorixCore) ProjectMembershipCounts(ctx context.Context, userIDs []uint) (map[uint]storage.MembershipCounts, error) {
+	if len(userIDs) == 0 {
+		return map[uint]storage.MembershipCounts{}, nil
+	}
+	// Resolved once for the whole page, not per user: the counts must exclude
+	// SOFT-DELETED projects. Role grants survive a soft-delete by design
+	// (RestoreProject reinstates them) and GetUserRoleScopes does not filter them, so
+	// without this a user showed "3 projects" where one of the three was deleted and
+	// un-navigable — a number an admin cannot reconcile with anything on screen.
+	//
+	// The per-user LIST keeps those rows, flagged ProjectDeleted, because an access
+	// review needs to see a grant that a restore would bring back. The two surfaces
+	// differ deliberately: a headline count answers "how many projects is this person
+	// in", and a deleted project is not one; a review answers "what grants exist",
+	// and that grant does.
+	projectByID, err := c.projectIndex(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("project membership counts: %w", err)
+	}
+	live := func(pid uint) bool {
+		ref, known := projectByID[pid]
+		// Unknown (hard-deleted or never existed) counts as not live: a grant
+		// pointing at nothing must not inflate the number either.
+		return known && !ref.Deleted
+	}
+
 	out := make(map[uint]storage.MembershipCounts, len(userIDs))
 	for _, uid := range dedupeUints(userIDs) {
 		scopes, err := c.storage.GetUserRoleScopes(ctx, uid)
@@ -249,6 +283,9 @@ func (c *KeyorixCore) ProjectMembershipCounts(ctx context.Context, userIDs []uin
 			if s.ProjectID == 0 {
 				continue // global scope is not a project membership.
 			}
+			if !live(s.ProjectID) {
+				continue // soft-deleted or vanished — see the comment above.
+			}
 			member[s.ProjectID] = struct{}{}
 		}
 		pending := 0
@@ -259,6 +296,9 @@ func (c *KeyorixCore) ProjectMembershipCounts(ctx context.Context, userIDs []uin
 		for pid, state := range states {
 			if state == MembershipRevoked {
 				continue
+			}
+			if !live(pid) {
+				continue // an invite into a soft-deleted project is not pending onboarding
 			}
 			if _, isMember := member[pid]; !isMember {
 				pending++
@@ -285,20 +325,40 @@ func (c *KeyorixCore) roleNamesByID(ctx context.Context) (map[uint]string, error
 	return byID, nil
 }
 
-// projectNamesByID loads project names for display. A project the caller's grant
-// points at that no longer exists (or is soft-deleted, which ListProjects excludes)
-// simply gets an empty name — the membership row is still reported, because the
-// grant really is there and an admin reviewing access needs to see it.
-func (c *KeyorixCore) projectNamesByID(ctx context.Context) (map[uint]string, error) {
-	projects, err := c.storage.ListProjects(ctx)
+// projectRef is a project's display identity for a membership row.
+type projectRef struct {
+	Name    string
+	Deleted bool
+}
+
+// projectIndex loads every project's name INCLUDING soft-deleted ones, with a flag.
+//
+// It used to call ListProjects, which GORM soft-delete-scopes, so a membership on a
+// soft-deleted project came out with an EMPTY name — a row an auditor cannot act on
+// or even identify. Role grants scoped to a project deliberately survive a
+// soft-delete (so RestoreProject can reinstate them), so these rows are real and
+// must not be reported anonymously.
+//
+// ListProjectsWithCounts(includeDeleted=true) is the one call that returns a
+// soft-deleted project's name together with its deleted flag, in one query; its own
+// raw SQL is explicit about the deleted_at filters.
+//
+// It is also more expensive than this function needs: two LEFT JOINs and
+// COUNT(DISTINCT ...) aggregates, every column of which is discarded here — and
+// this runs on the hot path of GET /api/v1/users. Flagged by the coordinator's
+// review of #2874 (F6) and deliberately NOT changed in that pass: the cheap shape
+// is a new storage primitive returning (id, name, deleted) only, which means an
+// interface method, both backends and their tests, and that does not belong in a
+// PR fixing two visibility blockers. Correct but wasteful, with the waste written
+// down, rather than a hurried new primitive.
+func (c *KeyorixCore) projectIndex(ctx context.Context) (map[uint]projectRef, error) {
+	projects, err := c.storage.ListProjectsWithCounts(ctx, true)
 	if err != nil {
 		return nil, fmt.Errorf("list project memberships: list projects: %w", err)
 	}
-	byID := make(map[uint]string, len(projects))
+	byID := make(map[uint]projectRef, len(projects))
 	for _, p := range projects {
-		if p != nil {
-			byID[p.ID] = p.Name
-		}
+		byID[p.ID] = projectRef{Name: p.Name, Deleted: p.Deleted}
 	}
 	return byID, nil
 }

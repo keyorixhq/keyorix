@@ -154,7 +154,15 @@ func (ls *LocalStorage) GetRoleByName(ctx context.Context, name string) (*models
 	var role models.Role
 	if err := ls.db.WithContext(ctx).Where("name = ?", name).First(&role).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorRoleNotFound", nil))
+			// Wraps storage.ErrRoleNotFound so a caller can tell "this role does
+			// not exist" (a configuration fact) from "the lookup failed" (unknown
+			// state) with errors.Is, instead of string-matching a TRANSLATABLE
+			// message -- which silently stops working the moment the key is
+			// actually translated. GetRole's sibling path already does this; this
+			// one did not, and internal/core's SSO role reconciliation needs the
+			// distinction to decide whether to skip a role or refuse the login
+			// (#2839 item 1).
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), storage.ErrRoleNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -616,6 +624,15 @@ func (ls *LocalStorage) RemoveGlobalAdminRoleGuarded(ctx context.Context, userID
 // TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked (internal/core)
 // fails if the two lists drift.
 var globalAdminLiveAccountStates = []string{"active", "pending_first_login", "password_reset_required"}
+
+// loginCapableAccountStates is globalAdminLiveAccountStates under the name that
+// describes what the set actually IS, for the #2701 credential-owner re-check
+// (requireLiveCredentialOwner, local_auth.go). Deliberately the SAME slice, not
+// a copy of the values: both uses need exactly "the account_state values that do
+// not block login", and TestGlobalAdminLiveAccountStates_MatchAccountLoginBlocked
+// already pins that set against core.AccountLoginBlocked. A second literal would
+// be a second thing to keep in step.
+var loginCapableAccountStates = globalAdminLiveAccountStates
 
 // GlobalAdminLiveAccountStates returns a copy of globalAdminLiveAccountStates,
 // for the drift test in internal/core.

@@ -431,7 +431,7 @@ func (km *KeyManager) ensureSaltExists() ([]byte, error) {
 func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 	dekFullPath := filepath.Join(km.baseDir, km.dekPath)
 
-	if _, err := os.Stat(dekFullPath); os.IsNotExist(err) {
+	if !km.wrappedDEKExists() {
 		dek, err := GenerateRandomKey(32)
 		if err != nil {
 			return fmt.Errorf("failed to generate DEK: %w", err)
@@ -458,6 +458,15 @@ func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 	}
 
 	return nil
+}
+
+// wrappedDEKExists reports whether the wrapped DEK file is present. Any stat
+// error other than "not exist" counts as present, exactly as the first-run
+// generation gate in ensureWrappedDEKExists has always treated it (never
+// generate over a file we merely failed to stat).
+func (km *KeyManager) wrappedDEKExists() bool {
+	_, err := os.Stat(filepath.Join(km.baseDir, km.dekPath))
+	return !os.IsNotExist(err)
 }
 
 // unwrapDEK reads the wrapped DEK from disk and decrypts it with the KEK.

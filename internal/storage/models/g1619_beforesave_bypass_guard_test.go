@@ -477,6 +477,15 @@ var beforeSaveBypassAllowlistG1619 = map[string]string{
 		"exactly the one that motivated adding ExpiresAt to BreakGlassActivation.BeforeSave's normalization in " +
 		"the first place; protected because the value is canonical, not because this read path is immune (it " +
 		"is not).",
+	"internal/storage/store/local_break_glass_test.go::TestListUnreviewedBreakGlassActivationsBefore_FiltersCorrectly::BreakGlassActivation.CreatedAt#1": "BreakGlassActivation.CreatedAt — " +
+		"time.Now().UTC().Add(-48*time.Hour), already canonical. This test deliberately exercises the real SQL " +
+		"range-query read path for this exact column (ListUnreviewedBreakGlassActivationsBefore's " +
+		"created_at <= cutoff, ADR-112 break-glass review item 5) — protected because the value is " +
+		"canonical, not because the read path is immune (it is not).",
+	"internal/storage/store/local_break_glass_test.go::TestListUnreviewedBreakGlassActivationsBefore_FiltersCorrectly::BreakGlassActivation.CreatedAt#2": "BreakGlassActivation.CreatedAt — " +
+		"second occurrence in the same test (the reviewed row, backdated so it's old AND reviewed, to prove " +
+		"ListUnreviewedBreakGlassActivationsBefore excludes it for being reviewed rather than for failing the " +
+		"age cutoff), same canonical value and reasoning as #1 above.",
 }
 
 // TestBeforeSaveBypassGuard_NoUnrecognizedRawWritesToHookedColumns is #1619's

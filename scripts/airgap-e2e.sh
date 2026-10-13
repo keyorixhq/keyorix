@@ -128,6 +128,18 @@ storage:
     salt_path: keys/kek.salt
 audit_checkpoints:
   schedule: "3s"
+# ADR-112 item 1: security.require_mfa defaults on, which would confine the
+# bootstrap admin's session to the MFA-enrolment endpoints
+# (EnforceAccountSetup) until it enrols -- blocking the secret create/read
+# calls below. scripts/smoke.sh and the release-qa scenarios enrol for real
+# via the CLI's \`mfa enroll\`/\`mfa activate\`; this script drives the raw
+# HTTP API with wget/jq instead of the CLI (see this file's own header: it
+# proves the admin backup/restore round trip inside a --network none
+# container, not the CLI), and has no dependency-free way to compute a TOTP
+# code from inside that container. Opt out visibly (not silently) rather
+# than add a new host/image dependency just to simulate an authenticator app.
+security:
+  require_mfa: false
 EOF
 
 # --- exec helpers: every HTTP call goes through the container's own
@@ -236,6 +248,17 @@ $ENGINE run --rm --network none --workdir /app/data \
 cp "$SRC_DIR/checkpoint-export.json" "$EXTERNAL_DIR/checkpoint-export.json"
 [ -s "$EXTERNAL_DIR/checkpoint-export.json" ] || fail "checkpoint export is empty"
 
+echo "==> Extracting the checkpoint verification key (admin audit export-checkpoint-key, F12)"
+$ENGINE run --rm --network none --workdir /app/data \
+    -v "$SRC_DIR:/app/data" \
+    -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
+    -e KEYORIX_MASTER_PASSWORD="$MASTER_PW" \
+    --entrypoint /app/keyorix-server \
+    "$IMAGE" admin --config /app/data/keyorix.yaml audit export-checkpoint-key --output /app/data/checkpoint.key >/dev/null \
+    || fail "admin audit export-checkpoint-key failed"
+cp "$SRC_DIR/checkpoint.key" "$EXTERNAL_DIR/checkpoint.key"
+[ -s "$EXTERNAL_DIR/checkpoint.key" ] || fail "checkpoint key export is empty"
+
 echo "==> admin backup (--network none)"
 $ENGINE run --rm --network none --workdir /app/data \
     -v "$SRC_DIR:/app/data" \
@@ -263,6 +286,10 @@ storage:
     salt_path: keys/kek.salt
 audit_checkpoints:
   schedule: "3s"
+# ADR-112 item 1 -- see the identical override + comment on \$SRC_DIR's
+# config above; the restored admin here never enrolled MFA either.
+security:
+  require_mfa: false
 EOF
 cp "$WORK_DIR/backup.tar.gz" "$DST_DIR/backup.tar.gz"
 $ENGINE run --rm --network none --workdir /app/data \
@@ -275,17 +302,21 @@ $ENGINE run --rm --network none --workdir /app/data \
 
 echo "==> admin verify-audit against the restored database, cross-checked against the externally-held anchor"
 cp "$EXTERNAL_DIR/checkpoint-export.json" "$DST_DIR/checkpoint-export.json"
+cp "$EXTERNAL_DIR/checkpoint.key" "$DST_DIR/checkpoint.key"
 VERIFY_OUT="$($ENGINE run --rm --network none --workdir /app/data \
     -v "$DST_DIR:/app/data" \
     -e KEYORIX_CONFIG_PATH=/app/data/keyorix.yaml \
     --entrypoint /app/keyorix-server \
     "$IMAGE" admin --config /app/data/keyorix.yaml verify-audit --json \
-        --anchor /app/data/checkpoint-export.json)" || fail "admin verify-audit (restored db) failed: $VERIFY_OUT"
+        --anchor /app/data/checkpoint-export.json \
+        --checkpoint-key-file /app/data/checkpoint.key)" || fail "admin verify-audit (restored db) failed: $VERIFY_OUT"
 echo "$VERIFY_OUT" | jq -e '.verdict == "VALID"' >/dev/null \
     || fail "verify-audit on the restored database did not report VALID: $VERIFY_OUT"
 echo "$VERIFY_OUT" | jq -e '.external_anchor.supplied == true' >/dev/null \
     || fail "verify-audit did not report the external anchor as supplied: $VERIFY_OUT"
-echo "    verify-audit: VALID, external anchor cross-checked"
+echo "$VERIFY_OUT" | jq -e '.external_anchor.authenticated == true' >/dev/null \
+    || fail "verify-audit did not authenticate the external anchor with the extracted key: $VERIFY_OUT"
+echo "    verify-audit: VALID, external anchor cross-checked and authenticated"
 
 echo "==> Booting a server against the RESTORED data to confirm the secret VALUE survived"
 $ENGINE run -d --name "$RESTORE_CONTAINER" --network none --workdir /app/data \

@@ -78,7 +78,7 @@ func (m *MockStorage) RecordLoginAttempt(_ context.Context, _ string, _ time.Tim
 func (m *MockStorage) CountRecentLoginAttempts(_ context.Context, _ string, _ time.Time) (int64, error) {
 	return 0, nil
 }
-func (m *MockStorage) ReserveLoginAttempt(_ context.Context, _ string, _ time.Time) (uint, error) {
+func (m *MockStorage) ReserveLoginAttempt(_ context.Context, _ string, _ time.Time, _ string) (uint, error) {
 	return 0, nil
 }
 func (m *MockStorage) ReleaseLoginAttempt(_ context.Context, _ uint) error { return nil }
@@ -608,6 +608,19 @@ func (m *MockStorage) RevokeBreakGlassActivation(ctx context.Context, id, revoke
 	return args.Error(0)
 }
 
+func (m *MockStorage) ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error {
+	args := m.Called(ctx, id, reviewerID, note, reviewedAt)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error) {
+	args := m.Called(ctx, cutoff)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.BreakGlassActivation), args.Error(1)
+}
+
 func (m *MockStorage) GetEnvironment(_ context.Context, id uint) (*models.Environment, error) {
 	return &models.Environment{ID: id, ProjectID: 1, Name: "test"}, nil
 }
@@ -688,7 +701,26 @@ func (m *MockStorage) RestoreSecret(ctx context.Context, id uint) error {
 	return m.Called(ctx, id).Error(0)
 }
 
+// mockHasExpectation reports whether a test stubbed method. The audit-description
+// name lookups (audit_refs.go) are best-effort reads on code paths that predate them,
+// so for an unstubbed method the lookup-only getters below answer "not found" instead
+// of failing the mock's unexpected-call panic; a test that stubs the method still gets
+// exactly what it stubbed.
+func (m *MockStorage) mockHasExpectation(method string) bool {
+	for _, c := range m.ExpectedCalls {
+		if c.Method == method {
+			return true
+		}
+	}
+	return false
+}
+
+var errMockLookupNotStubbed = fmt.Errorf("mock: lookup not stubbed")
+
 func (m *MockStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) (*models.SecretNode, error) {
+	if !m.mockHasExpectation("GetSecretIncludingDeleted") {
+		return nil, errMockLookupNotStubbed
+	}
 	a := m.Called(ctx, id)
 	v, _ := a.Get(0).(*models.SecretNode)
 	return v, a.Error(1)
@@ -916,6 +948,11 @@ func (m *MockStorage) CheckSharePermission(ctx context.Context, secretID, userID
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockStorage) ReassignSecretShareOwner(ctx context.Context, secretID, newOwnerID uint) (int64, error) {
+	args := m.Called(ctx, secretID, newOwnerID)
+	return int64(args.Int(0)), args.Error(1)
+}
+
 func (m *MockStorage) DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error) {
 	args := m.Called(ctx, before)
 	if args.Get(0) == nil {
@@ -938,6 +975,9 @@ func (m *MockStorage) CreateUser(ctx context.Context, user *models.User, _ ...st
 }
 
 func (m *MockStorage) GetUser(ctx context.Context, id uint) (*models.User, error) {
+	if !m.mockHasExpectation("GetUser") {
+		return nil, errMockLookupNotStubbed
+	}
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -993,6 +1033,11 @@ func (m *MockStorage) ClaimUserExternalIDIfUnset(ctx context.Context, id uint, e
 
 func (m *MockStorage) SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error {
 	args := m.Called(ctx, id, hash, changedAt)
+	return args.Error(0)
+}
+
+func (m *MockStorage) SetOneTimePasswordExpiry(ctx context.Context, id uint, expiresAt *time.Time, updatedAt time.Time) error {
+	args := m.Called(ctx, id, expiresAt, updatedAt)
 	return args.Error(0)
 }
 
@@ -1123,6 +1168,9 @@ func (m *MockStorage) CreateGroup(ctx context.Context, group *models.Group) (*mo
 }
 
 func (m *MockStorage) GetGroup(ctx context.Context, id uint) (*models.Group, error) {
+	if !m.mockHasExpectation("GetGroup") {
+		return nil, errMockLookupNotStubbed
+	}
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -1208,6 +1256,9 @@ func (m *MockStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleI
 }
 
 func (m *MockStorage) GetRole(ctx context.Context, id uint) (*models.Role, error) {
+	if !m.mockHasExpectation("GetRole") {
+		return nil, errMockLookupNotStubbed
+	}
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -2236,6 +2287,27 @@ func (m *MockStorage) ListNotifications(ctx context.Context, userID uint, unread
 	return args.Get(0).([]*models.Notification), args.Error(1)
 }
 
+func (m *MockStorage) ListScopedNotifications(ctx context.Context, userID uint, scope storage.NotificationScope, unreadOnly bool, limit int) ([]*models.Notification, error) {
+	args := m.Called(ctx, userID, scope, unreadOnly, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.Notification), args.Error(1)
+}
+
+func (m *MockStorage) CountUnreadScopedNotifications(ctx context.Context, userID uint, scope storage.NotificationScope) (int64, error) {
+	args := m.Called(ctx, userID, scope)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStorage) MarkScopedNotificationRead(ctx context.Context, id, userID uint, scope storage.NotificationScope) error {
+	return m.Called(ctx, id, userID, scope).Error(0)
+}
+
+func (m *MockStorage) MarkAllScopedNotificationsRead(ctx context.Context, userID uint, scope storage.NotificationScope) error {
+	return m.Called(ctx, userID, scope).Error(0)
+}
+
 func (m *MockStorage) CountUnreadNotifications(ctx context.Context, userID uint) (int64, error) {
 	args := m.Called(ctx, userID)
 	return args.Get(0).(int64), args.Error(1)
@@ -2321,6 +2393,9 @@ func (m *MockStorage) UpdateDynamicSecretConfig(_ context.Context, _ *models.Dyn
 func (m *MockStorage) SetDynamicSecretConfigAdminDSN(_ context.Context, _ uint, _, _ []byte) error {
 	return nil
 }
+func (m *MockStorage) SetDynamicSecretConfigClassification(_ context.Context, _ uint, _, _ string, _ time.Time) (bool, error) {
+	return true, nil
+}
 func (m *MockStorage) TransitionDynamicSecretConfigDisabled(ctx context.Context, c *models.DynamicSecretConfig, fromDisabled bool) (bool, error) {
 	if m.TransitionDynamicSecretConfigDisabledFunc != nil {
 		return m.TransitionDynamicSecretConfigDisabledFunc(ctx, c, fromDisabled)
@@ -2344,6 +2419,12 @@ func (m *MockStorage) CountActiveLeases(_ context.Context, _ uint) (int64, error
 }
 func (m *MockStorage) UpdateDynamicSecretLease(_ context.Context, _ *models.DynamicSecretLease) error {
 	return nil
+}
+func (m *MockStorage) ExtendDynamicSecretLeaseExpiry(_ context.Context, _ string, _ time.Time) (bool, error) {
+	return true, nil
+}
+func (m *MockStorage) RecordDynamicSecretLeaseRevocation(_ context.Context, _, _, _, _ string, _ *time.Time) (bool, error) {
+	return true, nil
 }
 func (m *MockStorage) ListExpiredActiveLeases(_ context.Context, _ time.Time) ([]*models.DynamicSecretLease, error) {
 	return nil, nil

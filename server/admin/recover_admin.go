@@ -25,7 +25,9 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/spf13/cobra"
@@ -47,7 +49,7 @@ key alone, or holding the host alone, is not enough.
 
 --recovery-key must be exactly "-": the key is always read from stdin, never
 a command-line argument, to keep it out of shell history and process listings.
-Omit it entirely if security.recover_admin.keyless_mode is enabled in this
+Omit it entirely if security.recover_admin.insecure_keyless_admin_recovery is enabled in this
 host's config (a labs/demo escape hatch -- see the config field's own doc
 comment for why this is not recommended for a real deployment).
 
@@ -65,7 +67,7 @@ Exit codes: 0 on success, 1 on any failure (see the printed error message).`,
 
 func init() {
 	recoverAdminCmd.Flags().StringVar(&recoverAdminUser, "user", "", "The account to recover: numeric user ID or email address (required)")
-	recoverAdminCmd.Flags().StringVar(&recoverAdminKey, "recovery-key", "", `Must be "-" -- the key is read from stdin, never a CLI argument (required unless security.recover_admin.keyless_mode is enabled)`)
+	recoverAdminCmd.Flags().StringVar(&recoverAdminKey, "recovery-key", "", `Must be "-" -- the key is read from stdin, never a CLI argument (required unless security.recover_admin.insecure_keyless_admin_recovery is enabled)`)
 	rootCmd.AddCommand(recoverAdminCmd)
 }
 
@@ -86,7 +88,7 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 		// into one trust boundary -- loud every time, never a silent
 		// downgrade, matching the startup warning's own "every boot, not
 		// just the first" posture.
-		fmt.Fprintln(os.Stderr, "WARNING: keyless mode is enabled (security.recover_admin.keyless_mode) -- "+
+		fmt.Fprintln(os.Stderr, "WARNING: keyless mode is enabled (security.recover_admin.insecure_keyless_admin_recovery) -- "+
 			"proceeding on HOST ACCESS ALONE, no recovery key required or checked. This collapses host access "+
 			"and admin access into one trust boundary; see docs/design-b2-recover-admin.md §1/§5.")
 		if recoverAdminKey != "" && recoverAdminKey != "-" {
@@ -113,7 +115,8 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 
 	var summary *recoverAdminSummary
 	err = withUsableStorage(cfg, func(store corestorage.Storage) error {
-		s, err := performRecoverAdmin(context.Background(), store, recoverAdminUser, rawKey, keyless)
+		s, err := performRecoverAdminWithTTL(context.Background(), store, recoverAdminUser, rawKey, keyless,
+			cfg.Security.GetRecoveryOneTimePasswordTTL())
 		summary = s
 		return err
 	})
@@ -136,7 +139,17 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 	// same constraint documented at its own suppression site).
 	// codeql[go/clear-text-logging]
 	fmt.Printf("  %s\n", summary.oneTimePassword)
-	fmt.Printf("Log in as %q with this password; you will be required to set a new one immediately.\n", summary.username)
+	fmt.Printf("Expires: %s (UTC). After that, login with it is refused like a wrong password; run recover-admin again for a new one.\n",
+		summary.oneTimePasswordExpiresAt.UTC().Format(time.RFC3339))
+	if cfg.Security.RequireMFA {
+		// #3024: the login this password allows is a setup-only session.
+		fmt.Printf("Log in as %q with this password. That session lasts at most %d minutes and can only set a new\n",
+			summary.username, int(core.SetupSessionTTL.Minutes()))
+		fmt.Println("password (keyorix change-password) and enrol a second factor (keyorix mfa enroll + activate), in either")
+		fmt.Println("order. When both are done it ends; log in again with the new password and a code.")
+	} else {
+		fmt.Printf("Log in as %q with this password; you will be required to set a new one immediately.\n", summary.username)
+	}
 	if summary.auditChainBroken {
 		fmt.Fprintf(os.Stderr, "WARNING: the audit chain was already broken before this run (first broken row: %d). "+
 			"This recovery was still performed and is recorded as a new chain segment -- see the audit log.\n",
@@ -149,9 +162,9 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 			keyDetail = "KEYLESS MODE (host access alone, no recovery key checked)"
 		}
 		notifyAllAdmins(store, "Admin account recovered",
-			fmt.Sprintf("keyorix-server admin recover-admin restored account %q (user id %d) on this host, "+
+			fmt.Sprintf("keyorix-server admin recover-admin, run by host user %s, restored account %q (user id %d) on this host, "+
 				"using %s. If you did not expect this, investigate immediately.",
-				summary.username, summary.userID, keyDetail))
+				summary.operator, summary.username, summary.userID, keyDetail))
 		return nil
 	})
 	if notifyErr != nil {

@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -51,6 +52,9 @@ func (ls *LocalStorage) GetNotificationChannelByName(ctx context.Context, name s
 
 func (ls *LocalStorage) CreateNotificationChannel(ctx context.Context, ch *models.NotificationChannel) error {
 	if err := ls.db.WithContext(ctx).Create(ch).Error; err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("%w: %v", storage.ErrDuplicateNotificationChannelName, err)
+		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil

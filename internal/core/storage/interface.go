@@ -43,7 +43,13 @@ type Storage interface {
 	// RecordLoginAttempt; only /auth/mfa/verify needs this pair today.
 	// RecordLoginAttempt; only /auth/mfa/verify and /auth/webauthn/login/finish
 	// need this pair today.
-	ReserveLoginAttempt(ctx context.Context, ip string, at time.Time) (id uint, err error)
+	//
+	// key is a caller-generated reservation identifier, unique per reservation
+	// (#2956 follow-up). The write is idempotent per key: reserving the same key
+	// again writes nothing and returns the existing row's id. That is what lets a
+	// caller whose write landed but reported an error retry with the same key and
+	// get the reservation back instead of losing it or counting it twice.
+	ReserveLoginAttempt(ctx context.Context, ip string, at time.Time, key string) (id uint, err error)
 	// ReleaseLoginAttempt deletes the LoginAttempt row `id`, undoing a prior
 	// ReserveLoginAttempt. A no-op, not an error, if the row is already gone
 	// (e.g. a maintenance prune raced it).
@@ -473,6 +479,15 @@ type Storage interface {
 	GetSecretAccessSchedule(ctx context.Context, secretNodeID uint) (*models.SecretAccessSchedule, error)
 	SetSecretAccessSchedule(ctx context.Context, schedule *models.SecretAccessSchedule) error
 	DeleteSecretAccessSchedule(ctx context.Context, secretNodeID uint) error
+	// GetSecretScheduleAndLatestVersion is GetSecretAccessSchedule plus
+	// GetLatestSecretVersion for one secret, for a latest-version value read
+	// (PERF-FIX-4, collapse C5): the schedule row and the latest-version cache
+	// generation come from ONE statement (one snapshot), and the version row is
+	// read only when the version cache misses. The returned error is the shared
+	// statement's failure only; a latest-version failure is carried in
+	// LatestVersionErr, exactly as GetLatestSecretVersion would have returned it,
+	// so the caller still judges the schedule first.
+	GetSecretScheduleAndLatestVersion(ctx context.Context, secretNodeID uint) (*SecretScheduleAndLatestVersion, error)
 
 	// Legal hold (ISO 27001 A.5.34 / eDiscovery) — a deployment-wide hold that
 	// blocks the purge jobs from hard-deleting records while active.
@@ -555,6 +570,25 @@ type Storage interface {
 	// revoke because of what a clock-derived State happens to read; only an
 	// already-'revoked' row is excluded.
 	RevokeBreakGlassActivation(ctx context.Context, id, revokedBy, revokedByMachineID uint, revokedAt time.Time) error
+	// ReviewBreakGlassActivation (ADR-112 §3, break-glass review item 5)
+	// atomically records a post-activation review -- reviewer, when, and an
+	// optional note -- via a single conditional UPDATE guarded on
+	// reviewed_at IS NULL, the same shape as RevokeBreakGlassActivation's
+	// guard, so two concurrent review submissions for the same activation
+	// cannot both "win": only the first is recorded, the second gets
+	// ErrBreakGlassAlreadyReviewed. This storage-layer primitive itself does
+	// not condition on active/expired/revoked state -- it records a review
+	// against whatever row id names. #2461 round 2: that is NOT the same as
+	// "a review is allowed at any state" -- core.ReviewBreakGlass, the only
+	// production caller, refuses a still-active activation BEFORE reaching
+	// here (ErrBreakGlassStillActive), so in practice this is only ever
+	// called once the activation has concluded.
+	ReviewBreakGlassActivation(ctx context.Context, id, reviewerID uint, note string, reviewedAt time.Time) error
+	// ListUnreviewedBreakGlassActivationsBefore returns every activation
+	// (across all projects) with reviewed_at still NULL and created_at at or
+	// before cutoff -- the posture report's (item 4) source for "open
+	// break-glass activations without review."
+	ListUnreviewedBreakGlassActivationsBefore(ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error)
 	// Machine identities (ADR-023) — non-human project members.
 	CreateMachineIdentity(ctx context.Context, m *models.MachineIdentity) (*models.MachineIdentity, error)
 	GetMachineIdentity(ctx context.Context, id uint) (*models.MachineIdentity, error)
@@ -669,6 +703,12 @@ type Storage interface {
 	AssignMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
 	RemoveMachineRole(ctx context.Context, machineID, roleID uint, scope Scope) error
 	GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope Scope) ([]uint, error)
+	// ResolveMachinePermissionAt is GetMachineRoleIDsAt plus RoleSetHasPermission
+	// for one machine-principal decision (PERF-FIX-6, collapse C4): the role ids
+	// and the role->permission cache generation come from ONE statement (one
+	// snapshot), and the permission join runs only when that cache misses.
+	// BypassesPermissionChecks is never set: a machine never bypasses (ADR-030).
+	ResolveMachinePermissionAt(ctx context.Context, machineID uint, scope Scope, permission string) (*PrincipalPermission, error)
 	GetMachineRoles(ctx context.Context, machineID uint) ([]*models.Role, error)
 	// GetMachineRoleScopes returns the distinct (project, environment) scopes at
 	// which machineID holds ANY role grant (machine_identity_roles) — the
@@ -738,6 +778,15 @@ type Storage interface {
 	// MarkNotificationRead marks one notification read, scoped to its owner.
 	MarkNotificationRead(ctx context.Context, id, userID uint) error
 	MarkAllNotificationsRead(ctx context.Context, userID uint) error
+	// The Scoped variants see only the user's notifications inside scope (see
+	// NotificationScope): the feed of a restricted personal access token. The
+	// narrowing is in the query, so limit and the count apply to the rows the token
+	// can see, not to a newest-N window of all of them (PAT-GUARD-1).
+	ListScopedNotifications(ctx context.Context, userID uint, scope NotificationScope, unreadOnly bool, limit int) ([]*models.Notification, error)
+	CountUnreadScopedNotifications(ctx context.Context, userID uint, scope NotificationScope) (int64, error)
+	// MarkScopedNotificationRead returns not-found for a notification outside scope.
+	MarkScopedNotificationRead(ctx context.Context, id, userID uint, scope NotificationScope) error
+	MarkAllScopedNotificationsRead(ctx context.Context, userID uint, scope NotificationScope) error
 	// ListUserProjectMemberships returns all membership rows for a single user,
 	// newest first (powers the per-user assignments view).
 	ListUserProjectMemberships(ctx context.Context, userID uint) ([]*models.ProjectMembership, error)
@@ -953,6 +1002,17 @@ type Storage interface {
 	// and at or before the cutoff, returning the removed rows so the caller can audit
 	// each expiry. Server-side only (run by the JIT expiry scheduler).
 	DeleteExpiredShareRecords(ctx context.Context, before time.Time) ([]*models.ShareRecord, error)
+	// ReassignSecretShareOwner re-stamps ShareRecord.OwnerID to newOwnerID on EVERY row
+	// of secretID — live, expired-unswept and soft-deleted (revoked) alike — and returns
+	// how many rows it wrote (#3102). Only owner_id is written: permission, expires_at,
+	// recipient and deleted_at are untouched, so no recipient's access changes and a
+	// revoked share stays revoked. It exists for ONE caller, the ownership transfer
+	// (core.transferOwnership), and MUST run in the same WithTransaction as the
+	// secret's owner_id write: ShareRecord.OwnerID is the key of the owner-scoped share
+	// lists while revoke/update are gated on owning the SECRET, so the two have to move
+	// together. Every soft-deleted row is re-stamped too, so nothing that ever
+	// resurrects a row can bring the previous owner back as the share's owner.
+	ReassignSecretShareOwner(ctx context.Context, secretID, newOwnerID uint) (int64, error)
 
 	// User Management
 	//
@@ -1062,7 +1122,17 @@ type Storage interface {
 	// told their password changed when it silently didn't. Any accompanying
 	// account_state clear (a restricted state resetting to active) is persisted
 	// separately via SetAccountState, not folded into this primitive.
+	//
+	// It also CLEARS one_time_password_expires_at: any newly set password supersedes
+	// a one-time password, so the expiry must never outlive the credential it
+	// belonged to (OTP-EXPIRY-1). A caller that installs a one-time password calls
+	// SetOneTimePasswordExpiry AFTER this, in the same transaction.
 	SetPasswordHash(ctx context.Context, id uint, hash string, changedAt time.Time) error
+	// SetOneTimePasswordExpiry persists ONLY one_time_password_expires_at (plus
+	// updated_at): the instant after which the current one-time password is refused
+	// at login (OTP-EXPIRY-1). nil clears it. Must run in the same transaction as
+	// the SetPasswordHash that installs the one-time password.
+	SetOneTimePasswordExpiry(ctx context.Context, id uint, expiresAt *time.Time, updatedAt time.Time) error
 	// UpdateLoginLockoutState persists ONLY the four login-lockout accounting columns
 	// (failed_login_attempts, last_failed_login_at, login_locked_until,
 	// login_lockout_count) — the same #454 rationale as SetAccountState above. Unlike
@@ -1296,6 +1366,14 @@ type Storage interface {
 	// resolve-by-ID replacement for roleSetContainsAdmin's old fixed-name-list
 	// lookup (internal/core/authz.go). Mirrors RoleSetHasPermission's shape.
 	RoleSetBypassesPermissionChecks(ctx context.Context, roleIDs []uint) (bool, error)
+	// ResolveUserPermissionAt is one user-principal role decision's reads
+	// (PERF-FIX-6, collapse C4): GetUserRoleIDsAt ∪ GetUserGroupRoleIDsAt,
+	// RoleSetBypassesPermissionChecks over that set and the role->permission
+	// cache generation come from ONE statement (one snapshot); RoleSetHasPermission
+	// is then answered from the cache under that generation, or by the live join
+	// on a miss. The permission is not resolved (HasPermission false) when the
+	// set is empty or bypasses, exactly as core.Authorize never asked then.
+	ResolveUserPermissionAt(ctx context.Context, userID uint, scope Scope, permission string) (*PrincipalPermission, error)
 	// ListAdminBypassRoleIDs enumerates every role ID carrying
 	// BypassesPermissionChecks = true (ADR-084) -- the ENUMERATION counterpart to
 	// RoleSetBypassesPermissionChecks' membership test, and the single source of
@@ -1612,6 +1690,13 @@ type Storage interface {
 	// already-rotated token (a reuse signal) apart from one that never existed.
 	GetSessionAny(ctx context.Context, token string) (*models.Session, error)
 	GetSessionByID(ctx context.Context, id uint) (*models.Session, error)
+	// GetSessionAuthLiveness is GetUser(userID) plus GetSessionByID(sessionID)
+	// in ONE statement (PERF-FIX-7, collapse C6): the HTTP auth middleware's
+	// session cache-hit check reads the owning account's state and the session
+	// row from one snapshot. Each half reports what its per-statement method
+	// would have (see SessionAuthLiveness); a failure of the combined statement
+	// is answered through those methods (ComposeSessionAuthLiveness).
+	GetSessionAuthLiveness(ctx context.Context, userID, sessionID uint) (*SessionAuthLiveness, error)
 	ListSessionsByUser(ctx context.Context, userID uint) ([]*models.Session, error)
 	// EnforceSessionLimit deletes a user's oldest sessions beyond the `keep` most-recent
 	// (by created_at), bounding concurrent sessions per user. No-op when under the cap.
@@ -1685,6 +1770,20 @@ type Storage interface {
 	// (a full-row Save) and wrote disabled=false back over a concurrent DeleteProject's
 	// #369 disable. Returns an error when no row matched.
 	SetDynamicSecretConfigAdminDSN(ctx context.Context, id uint, enc, meta []byte) error
+	// SetDynamicSecretConfigClassification persists ONLY the classification
+	// column (plus updated_at), and only if the row's CURRENT classification is
+	// still fromClassification (the value the caller read). matched=false (no
+	// error) means another classifier moved it; the caller must fail closed.
+	//
+	// ClassifyDynamicSecretConfig used the full-row UpdateDynamicSecretConfig
+	// (a bare Save) and therefore wrote `disabled=false` back over a concurrent
+	// SetDynamicSecretConfigEnabled(false) — the incident kill switch, which
+	// also revokes the config's live leases — so IssueLease could mint real
+	// database credentials again, with an audit trail reading "config_disabled"
+	// then only "classified" and nothing recording the re-enable (#2698). The
+	// same column is what DeleteProject's #369 cascade sets, so the same write
+	// also re-enabled a config under a deleted project.
+	SetDynamicSecretConfigClassification(ctx context.Context, id uint, fromClassification, toClassification string, updatedAt time.Time) (matched bool, err error)
 	// TransitionDynamicSecretConfigDisabled persists cfg's full row via a single
 	// conditional write — "UPDATE ... WHERE id = ? AND disabled = ?" — succeeding
 	// only if the row's CURRENT persisted disabled value still equals fromDisabled
@@ -1722,6 +1821,27 @@ type Storage interface {
 	// still live) — used to enforce the config's MaxActiveLeases ceiling.
 	CountActiveLeases(ctx context.Context, configID uint) (int64, error)
 	UpdateDynamicSecretLease(ctx context.Context, l *models.DynamicSecretLease) error
+	// ExtendDynamicSecretLeaseExpiry persists ONLY expires_at, and only for a
+	// lease whose status is STILL "active": "UPDATE ... SET expires_at WHERE
+	// lease_id = ? AND status = 'active'". matched=false (no error) means the
+	// lease is no longer active (revoked, expired, or revoke_failed) and the
+	// renewal must be refused.
+	//
+	// RenewLease used the full-row UpdateDynamicSecretLease (a bare Save) and
+	// therefore wrote the stale Status/RevokeError/RevokedAt back (#2698): a
+	// concurrent successful RevokeLease became `active` again with a LATER
+	// expiry, so the row lied about a dead credential and kept holding a
+	// MaxActiveLeases slot until the sweep; a revoke that had recorded
+	// `revoke_failed` was erased outright, its error cleared. Renew is a no-op
+	// on several backends, so nothing downstream would have noticed.
+	ExtendDynamicSecretLeaseExpiry(ctx context.Context, leaseID string, newExpiry time.Time) (matched bool, err error)
+	// RecordDynamicSecretLeaseRevocation persists ONLY status, revoke_reason,
+	// revoke_error and revoked_at. Deliberately NOT conditional on the current
+	// status: it records what already happened to the credential at the
+	// backend, so it must land regardless of what else moved meanwhile — a
+	// lease whose target drop failed must never be left reading `active`.
+	// What it must not do is carry the caller's whole pre-read row with it.
+	RecordDynamicSecretLeaseRevocation(ctx context.Context, leaseID, status, revokeReason, revokeError string, revokedAt *time.Time) (matched bool, err error)
 	ListExpiredActiveLeases(ctx context.Context, before time.Time) ([]*models.DynamicSecretLease, error)
 
 	CreateMFAChallenge(ctx context.Context, c *models.MFAChallenge) error
@@ -2122,6 +2242,29 @@ type SecretFilter struct {
 	IsSecret *bool
 }
 
+// PrincipalPermission is ResolveUserPermissionAt's / ResolveMachinePermissionAt's
+// result. RoleIDs is the de-duplicated role set that applies at the scope (the
+// set core's scopedRoleIDs / GetMachineRoleIDsAt returned; order unspecified).
+// BypassesPermissionChecks reports whether any of them carries the ADR-084
+// flag (users only). HasPermission is RoleSetHasPermission(RoleIDs, permission),
+// resolved only when RoleIDs is non-empty and does not bypass.
+type PrincipalPermission struct {
+	RoleIDs                  []uint
+	BypassesPermissionChecks bool
+	HasPermission            bool
+}
+
+// SecretScheduleAndLatestVersion is GetSecretScheduleAndLatestVersion's result.
+// Schedule is nil when the secret has no access schedule (no restriction, as
+// GetSecretAccessSchedule's nil, nil). Exactly one of LatestVersion and
+// LatestVersionErr is set; LatestVersionErr is the error GetLatestSecretVersion
+// would have returned (wrapping ErrSecretVersionNotFound when there is none).
+type SecretScheduleAndLatestVersion struct {
+	Schedule         *models.SecretAccessSchedule
+	LatestVersion    *models.SecretVersion
+	LatestVersionErr error
+}
+
 // DriftSecretRow is one secret's drift-relevant projection: which environment it
 // lives in, its name (the cross-environment key), its type, and whether it has
 // an expiration / max-reads cap set. Used to build the per-key × per-environment
@@ -2175,6 +2318,13 @@ type MembershipCounts struct {
 }
 
 // AuditFilter defines filtering options for audit log queries
+// NotificationScope selects the notifications that carry a project: every such row
+// when ProjectID is 0, otherwise only that project's. A notification with no project
+// is never in any scope.
+type NotificationScope struct {
+	ProjectID uint
+}
+
 type AuditFilter struct {
 	ProjectID *uint
 	UserID    *uint

@@ -185,3 +185,50 @@ func TestContractPR9_ListGroupShares(t *testing.T) {
 	contracttest.AssertOpenAPIResponse(t, req, w)
 	require.Equal(t, http.StatusOK, w.Code)
 }
+
+// TestContractShare2_SearchShareRecipients validates GET
+// /api/v1/projects/{id}/share-recipients (SHARE-2) against its response schema,
+// which forbids any field beyond id, username, display_name and email.
+func TestContractShare2_SearchShareRecipients(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	require.NoError(t, db.Create(&models.Project{Name: "contract-share2-proj"}).Error)
+	u := &models.User{Username: "contract-share2-recip", Email: "contract-share2-recip@example.test", DisplayName: "R", AccountState: "active"}
+	require.NoError(t, db.Create(u).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: u.ID, RoleID: 1, ProjectID: 1}).Error)
+
+	h, err := NewShareHandler(cs)
+	require.NoError(t, err)
+
+	req := withUserCtx(withChiParamsPR2(
+		httptest.NewRequest(http.MethodGet, "/api/v1/projects/1/share-recipients?q=contract&page_size=5", nil),
+		"id", "1",
+	))
+	w := httptest.NewRecorder()
+	h.SearchShareRecipients(w, req)
+
+	contracttest.AssertOpenAPIResponse(t, req, w)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), `"username":"contract-share2-recip"`)
+}
+
+// TestContractShare3_ListOwnedShares validates GET /api/v1/shares/owned (SHARE-3)
+// against its response schema, which forbids any field beyond the ShareView set.
+func TestContractShare3_ListOwnedShares(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	require.NoError(t, db.Create(&models.Project{Name: "contract-share3-proj"}).Error)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 1}).Error)
+	secret := &models.SecretNode{Name: "contract-share3-secret", IsSecret: true, OwnerID: 1, ProjectID: 1}
+	require.NoError(t, db.Create(secret).Error)
+	require.NoError(t, db.Create(&models.ShareRecord{SecretID: secret.ID, OwnerID: 1, RecipientID: 2, Permission: "read"}).Error)
+
+	h, err := NewShareHandler(cs)
+	require.NoError(t, err)
+
+	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/shares/owned", nil))
+	w := httptest.NewRecorder()
+	h.ListOwnedShares(w, req)
+
+	contracttest.AssertOpenAPIResponse(t, req, w)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Contains(t, w.Body.String(), fmt.Sprintf(`"secretId":%d`, secret.ID))
+}

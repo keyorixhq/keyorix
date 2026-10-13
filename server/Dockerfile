@@ -47,6 +47,8 @@ COPY . .
 # docker-publish workflow passes the git tag + sha. Mirrors the Makefile LDFLAGS.
 ARG VERSION=dev
 ARG GIT_COMMIT=none
+# Commit date (RFC 3339 UTC), not wall-clock time, so the image stays reproducible.
+ARG BUILD_DATE=unknown
 # Set by buildx to the requested target platform, independent of the builder's
 # own (BUILDPLATFORM) arch above -- same CGO_ENABLED=0 cross-compile shape the
 # release Makefile already uses (modernc.org/sqlite is pure Go, no cgo needed).
@@ -73,7 +75,8 @@ RUN set -- \
     "-s -w" \
     "-X github.com/keyorixhq/keyorix/internal/cli.version=${VERSION}" \
     "-X github.com/keyorixhq/keyorix/internal/version.Version=${VERSION}" \
-    "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" && \
+    "-X github.com/keyorixhq/keyorix/internal/version.Commit=${GIT_COMMIT}" \
+    "-X github.com/keyorixhq/keyorix/internal/version.BuildDate=${BUILD_DATE}" && \
     GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -tags "${BUILD_TAGS}" -ldflags "$*" \
     -o bin/keyorix-server ./server
 
@@ -97,10 +100,20 @@ RUN apk add --no-cache ca-certificates tzdata && \
 WORKDIR /app
 COPY --from=builder /app/bin/keyorix-server .
 COPY --from=builder /app/server/entrypoint.sh .
+# tls/ (0700: generated certificate, key and metrics token) and tls-public/
+# (0755: the certificate copy a proxy container reads) exist in the image so a
+# named volume mounted there starts with this ownership and mode
+# (docker-compose.secure.yml, SECURE-DEFAULT-1).
 RUN chmod +x entrypoint.sh && \
-    mkdir -p data keys && chown -R keyorix:keyorix /app
+    mkdir -p data keys tls tls-public && chown -R keyorix:keyorix /app && \
+    chmod 0700 data keys tls && chmod 755 tls-public
 USER 1001:1001
 EXPOSE 8080
+# KEYORIX_LOCAL_URL / KEYORIX_LOCAL_CA_FILE: see entrypoint.sh (https + the
+# server's own certificate when TLS is on; plain http://localhost by default).
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
-    CMD ["sh", "-c", "wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1"]
-CMD ["./entrypoint.sh"]
+    CMD ["sh", "-c", "if [ -n \"$KEYORIX_LOCAL_CA_FILE\" ]; then SSL_CERT_FILE=\"$KEYORIX_LOCAL_CA_FILE\"; export SSL_CERT_FILE; fi; wget --no-verbose --tries=1 --spider \"${KEYORIX_LOCAL_URL:-http://localhost:8080}/health\" || exit 1"]
+# ENTRYPOINT (not CMD) so `docker compose run --rm backend ./keyorix-server
+# admin ...` also gets entrypoint.sh's config preparation; with arguments it
+# runs them instead of the server.
+ENTRYPOINT ["./entrypoint.sh"]

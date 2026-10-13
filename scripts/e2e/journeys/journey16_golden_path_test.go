@@ -60,7 +60,7 @@ func TestJourney_GoldenPath(t *testing.T) {
 	// exited one is a no-op), so one unconditional Cleanup covers both.
 	t.Cleanup(s.Close)
 
-	adminToken := adminLogin(t, s, n16AdminUser, harness.BootstrapAdminPassword)
+	adminToken := mfaLogin(t, s, n16AdminUser, harness.BootstrapAdminPassword)
 	aEnv := adminEnv(s, adminToken)
 
 	// ── Org structure ───────────────────────────────────────────────────────────
@@ -74,7 +74,7 @@ func TestJourney_GoldenPath(t *testing.T) {
 	runCLI(t, cliBin, aEnv, "rbac", "assign-role", "--user", n16LeastPrivEmail,
 		"--role", "project_viewer", "--project", n16ProjectName)
 
-	aliceToken := adminLogin(t, s, n16LeastPrivUser, n16LeastPrivPass)
+	aliceToken := mfaPersonaLogin(t, s, n16LeastPrivUser, n16LeastPrivPass)
 	// She can read the ONE project she was granted...
 	restExpect(t, s, aliceToken, http.MethodGet, "/api/v1/projects/"+strconv.Itoa(projID), nil, http.StatusOK)
 	// ...and since #2780 the all-projects list is least-privilege rather than
@@ -114,10 +114,22 @@ func TestJourney_GoldenPath(t *testing.T) {
 		t.Fatalf("secret versions after one rotate: want 2 total versions, got:\n%s", versionsOut)
 	}
 
-	runCLI(t, cliBin, aEnv, "secret", "delete", "--id", strconv.Itoa(secID), "--force")
+	deleteOut := runCLI(t, cliBin, aEnv, "secret", "delete", "--id", strconv.Itoa(secID), "--force")
 	trashOut := runCLI(t, cliBin, aEnv, "secret", "trash", "--project", strconv.Itoa(projID))
 	if !strings.Contains(trashOut, n16SecretName) {
 		t.Fatalf("secret trash after delete: want %q listed, got:\n%s", n16SecretName, trashOut)
+	}
+	// RETENTION-1: `secret delete` prints the REAL purge date (UTC RFC 3339, not a guessed
+	// "default 30 days"), and the trash listing shows that same instant.
+	purgeAt := regexp.MustCompile(`Restorable until (\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z) \(UTC\)`).FindStringSubmatch(deleteOut)
+	if purgeAt == nil {
+		t.Fatalf("secret delete: want a 'Restorable until <UTC RFC 3339>' line, got:\n%s", deleteOut)
+	}
+	if strings.Contains(deleteOut, "30 days") {
+		t.Fatalf("secret delete still prints a guessed retention window:\n%s", deleteOut)
+	}
+	if !strings.Contains(trashOut, purgeAt[1]) {
+		t.Fatalf("secret trash: want the purge date %s that delete reported, got:\n%s", purgeAt[1], trashOut)
 	}
 	runCLI(t, cliBin, aEnv, "secret", "restore", "--id", strconv.Itoa(secID))
 	getOut = runCLI(t, cliBin, aEnv, "secret", "get", "--id", strconv.Itoa(secID), "--show-value")

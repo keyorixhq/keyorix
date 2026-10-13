@@ -8,7 +8,6 @@
 package handlers
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -38,7 +37,7 @@ func NewFolderHandler(coreService *core.KeyorixCore) *FolderHandler {
 func (h *FolderHandler) sendSuccess(w http.ResponseWriter, data interface{}, message string) {
 	w.Header().Set(hdrContentType, mimeApplicationJSON)
 	w.Header().Set(hdrXContentTypeOptions, "nosniff")
-	if err := json.NewEncoder(w).Encode(SuccessResponse{Success: true, Data: data, Message: message}); err != nil {
+	if err := encodeJSONResponse(w, SuccessResponse{Success: true, Data: data, Message: message}); err != nil {
 		log.Printf("Error encoding folder JSON response: %v", err)
 		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
 	}
@@ -48,7 +47,7 @@ func (h *FolderHandler) sendError(w http.ResponseWriter, errorType, message stri
 	w.Header().Set(hdrContentType, mimeApplicationJSON)
 	w.Header().Set(hdrXContentTypeOptions, "nosniff")
 	w.WriteHeader(statusCode)
-	if err := json.NewEncoder(w).Encode(ErrorResponse{
+	if err := encodeJSONResponse(w, ErrorResponse{
 		Error:   errorType,
 		Message: message,
 		Code:    statusCode,
@@ -128,7 +127,7 @@ func (h *FolderHandler) CreateFolder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(hdrContentType, mimeApplicationJSON)
 	w.Header().Set(hdrXContentTypeOptions, "nosniff")
 	w.WriteHeader(http.StatusCreated)
-	if err := json.NewEncoder(w).Encode(SuccessResponse{Success: true, Data: newSecretNodeWire(folder), Message: "Folder created"}); err != nil {
+	if err := encodeJSONResponse(w, SuccessResponse{Success: true, Data: newSecretNodeWire(folder), Message: "Folder created"}); err != nil {
 		log.Printf("Error encoding created folder: %v", err)
 	}
 }
@@ -222,7 +221,7 @@ func (h *FolderHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 	// afterward, and folders (IsSecret=false SecretNode rows deleted via the
 	// same core call) need the identical call (F3, audit-completeness campaign).
 	uid, fID, uname := userCtx.UserID, uint(id), userCtx.Username
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretDeletedWithProject(auditCtx, uid, fID, node.ProjectID, uname, node.Name, ip, ua)

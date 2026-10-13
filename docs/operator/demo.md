@@ -22,10 +22,15 @@ Produces `./bin/keyorix` (CLI) and `./bin/keyorix-server`.
 
 ```bash
 export KEYORIX_MASTER_PASSWORD='choose-a-strong-passphrase'
-./bin/keyorix-server admin init --config ./keyorix.yaml
+./bin/keyorix-server admin init --dev --config ./keyorix.yaml
 ./bin/keyorix-server admin encryption init --config ./keyorix.yaml
 ./bin/keyorix-server admin migrate --config ./keyorix.yaml
 ```
+
+`--dev` writes the relaxed DEV-ONLY config (no TLS, no rate limit, open
+`/metrics`) so this demo runs over plain `http://localhost`. A real install
+drops `--dev` and gets TLS with a generated certificate; see
+[QUICK_START.md](../../QUICK_START.md#initialise-the-server-host).
 
 Expected: each command prints its own success banner. `admin init`'s config
 file is created at `./keyorix.yaml`; `admin encryption init` generates
@@ -41,9 +46,11 @@ export KEYORIX_BOOTSTRAP_TOKEN='choose-a-bootstrap-token'
 
 ./bin/keyorix system init --server http://localhost:8080 \
   --admin-username admin \
-  --admin-email admin@keyorix.local \
-  --bootstrap-token "$KEYORIX_BOOTSTRAP_TOKEN"
+  --admin-email admin@keyorix.local
 ```
+
+The CLI reads the bootstrap token from `KEYORIX_BOOTSTRAP_TOKEN` (exported above),
+so there is no `--bootstrap-token` argument to leak.
 
 Omitting `--admin-password` makes the CLI prompt for it interactively
 (hidden input) instead of putting it on the command line, where it would be
@@ -67,10 +74,10 @@ spelled out here rather than left for you to discover the hard way:
   three; something like `admin-password1` will not, because it contains
   `admin`.
 
-This page uses `http://localhost:8080` throughout because it's genuinely
-local — the server and client are the same machine. Talking to a real,
-non-local server should always use `https://`; the CLI does not add TLS for
-you.
+This page uses `http://localhost:8080` throughout because it runs the
+`--dev` config on one machine. Talking to a real, non-local server should
+always use `https://` (the default `admin init` config); the CLI does not add
+TLS for you.
 
 ## 3. Log in and store your first secret (1 min)
 
@@ -83,9 +90,13 @@ Enter `Correct-Horse-Battery9` (or whatever you chose in step 2) at the
 out of shell history and process listings.
 
 ```bash
-./bin/keyorix secret create --name my-first-secret --value "hello"
+./bin/keyorix secret create --name my-first-secret --interactive
 ./bin/keyorix secret get --id 1 --show-value
 ```
+
+Type `hello` at the hidden `Secret value` prompt (`--interactive` keeps the
+value out of shell history and process listings; `--from-file <path>` works
+too).
 
 Expected: `Logged in to http://localhost:8080 as admin.`, then a created-secret
 confirmation with `ID: 1`, then `Decrypted Value` / `hello`.
@@ -99,8 +110,10 @@ credentials to see the same secret in the dashboard.
 ./bin/keyorix user create --username alice --email alice@keyorix.local --one-time-password
 ```
 
-This prints a one-time password — relay it to alice; she'll be forced to
-change it on first login.
+This prints a one-time password and the UTC time it expires (72 hours by default) —
+relay it to alice; she'll be forced to change it on first login. After the expiry the
+password is refused like a wrong one; give alice a setup link instead
+(`keyorix user resend-setup-link`).
 
 Before you can share anything, both you (the owner) and alice (the
 recipient) need an explicit role in the project the secret lives in —
@@ -116,6 +129,31 @@ holding the global `admin` role from bootstrap is not enough:
 
 Expected: `✅ Secret shared successfully!`, then a one-row share list showing
 alice (recipient ID 2) with `read` permission.
+
+(Skipping the two `rbac assign-role` lines makes `share create` refuse with
+the reason: you, or alice, are not a member of the secret's project.)
+
+**What the share does, and what revoking shows.** alice must already hold a
+project role to receive a share, and with `project_viewer` she can read the
+secret through that role. Access is the union of owner, shares, ACLs and roles, so
+a `read` share is an *additional* path:
+
+```bash
+./bin/keyorix share revoke --share-id 1     # the share record is gone (share list is empty)
+# alice can STILL read secret 1: her project_viewer role grants it.
+./bin/keyorix rbac remove-role --user alice@keyorix.local --role project_viewer --project default
+# NOW alice's access is gone.
+```
+
+Demo it in that order: share, `share list`, revoke (the record and the
+`share.revoked` audit event are the visible effect), then remove the role to show
+access actually ending. Do not present "revoke the share" alone as the moment alice
+loses access.
+
+A `write` share is different: share with `--permission write` and alice, a
+`project_viewer`, can `secret update --id 1` (value, metadata, rotate; not
+suspend, move or anything else a role would grant); `share revoke` takes exactly
+that away again while her role's read stays.
 
 (Skipping the two `rbac assign-role` lines and going straight to
 `share create` is what QUICK_START.md's own sharing example currently shows

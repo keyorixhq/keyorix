@@ -134,6 +134,72 @@ func TestVisibleProjects_GroupGrantCounts(t *testing.T) {
 	assert.False(t, vis.Allows(2))
 }
 
+// TestVisibleProjects_ProjectRestrictedPATSeesOnlyItsProject is the ADR-042 case,
+// and it was a real gap found by the follow-up review's own test request.
+//
+// A project-restricted PAT whose OWNER is a global reader saw NOTHING, while
+// `GET /api/v1/projects/{id}` on that same project succeeded for it — #2780's defect
+// one mechanism over. Neither step of the resolution could produce the project:
+// the global check is denied for such a token by design, and GetReadableScopes
+// enumerates the owner's PROJECT-scoped grants, of which a globally-granted owner has
+// none.
+func TestVisibleProjects_ProjectRestrictedPATSeesOnlyItsProject(t *testing.T) {
+	t.Parallel()
+	c, db := visibilityFixture(t)
+	// The owner is a GLOBAL reader — so if the restriction were ignored, the answer
+	// would be All=true and the token would see every project.
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
+
+	ctx := WithPATRestriction(context.Background(), &PATRestriction{ProjectID: 1})
+
+	// Precondition: the token really can read project 1 by id, and really cannot read
+	// project 2 or the global scope. That is what makes the assertion below a
+	// consistency claim about the LISTING rather than a guess.
+	okA, err := c.AuthorizePrincipal(ctx, ActorTypeUser, 1, "secrets.read", Scope{ProjectID: 1})
+	require.NoError(t, err)
+	require.True(t, okA, "the restricted token is authorized for its own project")
+	okB, err := c.AuthorizePrincipal(ctx, ActorTypeUser, 1, "secrets.read", Scope{ProjectID: 2})
+	require.NoError(t, err)
+	require.False(t, okB, "and not for any other")
+	okGlobal, err := c.AuthorizePrincipal(ctx, ActorTypeUser, 1, "secrets.read", Scope{})
+	require.NoError(t, err)
+	require.False(t, okGlobal, "nor at global scope — which is why All cannot be the answer")
+
+	vis, err := c.VisibleProjects(ctx, ActorTypeUser, 1, "secrets.read")
+	require.NoError(t, err)
+	assert.False(t, vis.All, "a restricted token must never resolve to All, however broad its owner is")
+	assert.True(t, vis.Allows(1),
+		"the listing must serve the project the token can already GET by id — returning nothing here "+
+			"is the same listing-vs-item inconsistency #2780 was about")
+	assert.False(t, vis.Allows(2), "and nothing else")
+}
+
+// TestVisibleProjects_EnvironmentRestrictedPATSeesNoProject is the complementary
+// case, and the one that must stay empty: PATRestriction.EnvironmentID denies any
+// project-LEVEL check (environment 0), so such a token cannot read the project by id
+// either, and the listing must agree. No special handling — the project-scope
+// authorization pass does it, which is the point of having that pass.
+func TestVisibleProjects_EnvironmentRestrictedPATSeesNoProject(t *testing.T) {
+	t.Parallel()
+	c, db := visibilityFixture(t)
+	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 1, ProjectID: 0}).Error)
+
+	// Environment 1 belongs to project 1 in this fixture.
+	ctx := WithPATRestriction(context.Background(), &PATRestriction{ProjectID: 1, EnvironmentID: 1})
+
+	ok, err := c.AuthorizePrincipal(ctx, ActorTypeUser, 1, "secrets.read", Scope{ProjectID: 1})
+	require.NoError(t, err)
+	require.False(t, ok,
+		"precondition: an environment-restricted token is denied the project-level scope, so it cannot "+
+			"GET the project by id")
+
+	vis, err := c.VisibleProjects(ctx, ActorTypeUser, 1, "secrets.read")
+	require.NoError(t, err)
+	assert.True(t, vis.Empty(),
+		"so the listing must not surface the parent project — adding the restriction's project as a "+
+			"CANDIDATE is safe precisely because the authorization pass still refuses it here")
+}
+
 // TestVisibleProjects_WrongPermissionYieldsNothing pins that the helper answers for
 // the permission it was asked about, not "any grant at this scope" — so passing
 // secrets.write would not hand back every project a reader can see.

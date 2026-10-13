@@ -34,6 +34,11 @@ func membershipDefinitionFixture(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{},
+		// SecretNode: the membership path resolves project names via
+		// ListProjectsWithCounts (so a SOFT-DELETED project's name and flag come
+		// back rather than an empty string), and that query LEFT JOINs secret_nodes
+		// for its per-project count. Needed even though no secret is seeded.
+		&models.SecretNode{},
 		&models.ProjectMembership{}, &models.AuditEvent{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db

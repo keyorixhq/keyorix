@@ -180,14 +180,28 @@ test('secrets lifecycle: project/env creation, reveal gating, update, delete, re
     await expect(page.getByRole('row', { name: new RegExp(secretName) })).toHaveCount(0);
 
     await page.goto(`${projectUrl}/settings`);
-    await expect(page.getByText('Recycle bin')).toBeVisible();
+    // #2788: getByText('Recycle bin') is a case-insensitive SUBSTRING match, so it also hit the
+    // "Recycle bin is empty." placeholder. ProjectSettingsTab renders that placeholder for as
+    // long as the deleted-secrets query is still loading (`data: deletedSecrets = []`), i.e.
+    // right after page.goto, and a strict-mode violation (two matches) throws immediately
+    // instead of being retried. Target the heading by role; the recycleRow wait below is what
+    // actually covers the query finishing.
+    await expect(page.getByRole('heading', { name: 'Recycle bin', exact: true })).toBeVisible();
     const recycleRow = page.locator('li', { hasText: secretName });
     await expect(recycleRow).toBeVisible({ timeout: 10_000 });
+    // RETENTION-1: the recycle bin shows the server's real purge date for the secret.
+    await expect(recycleRow).toContainText('restorable until');
     await recycleRow.getByRole('button', { name: 'Restore' }).click();
     await expect(recycleRow).toHaveCount(0, { timeout: 10_000 });
 
     await page.goto(`${projectUrl}/secrets?env=${envName}`);
     await expect(page.getByRole('row', { name: new RegExp(secretName) })).toBeVisible({ timeout: 10_000 });
+
+    // DEMO-UI-2: the restore event names the secret (it used to say only "secret 12 restored").
+    await page.goto('/audit');
+    await expect(page.getByText(new RegExp(`secret \\d+ \\("${secretName}"\\) restored`)).first()).toBeVisible({
+        timeout: 15_000,
+    });
 });
 
 test('revealing a secret value shows the plaintext without crashing the page (regression test for #2450)', async ({
@@ -228,4 +242,109 @@ test('revealing a secret value shows the plaintext without crashing the page (re
     // RouteErrorBoundary fallback.
     await expect(page.getByText('Page failed to load')).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Secret Value' })).toBeVisible();
+});
+
+// DEMO-UI-2: the History and Recent access panels must follow the secret's own
+// mutations without a reload. Before, History kept showing only "Created" after
+// a rotation and Recent access never learned about a Reveal until a manual refresh.
+test('secret detail History and Recent access update after rotate and reveal, without a reload', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 2600 });
+
+    const unique = Date.now();
+    const secretName = `e2e-secret-${unique}`;
+    const envName = `e2eenv${unique}`;
+
+    await realLogin(page);
+    await createProjectEnvAndSecret(page, {
+        projectName: `e2e-history-${unique}`,
+        envName,
+        secretName,
+        value: `value-${unique}`,
+    });
+
+    await page
+        .getByRole('row', { name: new RegExp(secretName) })
+        .getByTitle('View')
+        .click();
+
+    const history = page.locator('div', { has: page.getByRole('heading', { name: 'History', exact: true }) }).last();
+    await expect(history.getByText('Created', { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(history.getByText('Rotated', { exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'Rotate', exact: true }).click();
+    await page.getByLabel('New value').fill(`rotated-${unique}`);
+    await page.getByRole('button', { name: 'Rotate secret' }).click();
+    await expect(page.getByText(`Rotate ${secretName}`)).not.toBeVisible({ timeout: 10_000 });
+    // No reload, no navigation: the rotation shows up in History by itself.
+    await expect(history.getByText('Rotated', { exact: true })).toBeVisible({ timeout: 10_000 });
+
+    // Reveal is a read: it lands in Recent access and History without a refresh.
+    const recent = page
+        .locator('div', { has: page.getByRole('heading', { name: 'Recent access', exact: true }) })
+        .last();
+    // #3141: Recent access lists reads only; the rotation is in History (asserted above).
+    await expect(recent.getByText(/^Rotated/)).toHaveCount(0);
+    // (A row reads "Read · <ip>"; the panel subtitle "Reads of this secret…" must not count as a row.)
+    // Opening the view may already log reads; what matters is that Reveal adds one without a refresh.
+    const readsBefore = await recent.getByText(/^Read( ·|$)/).count();
+    const historyReadsBefore = await history.getByText('Read', { exact: true }).count();
+    await page.getByRole('button', { name: 'Reveal', exact: true }).click();
+    await expect(page.getByText(`rotated-${unique}`, { exact: true })).toBeVisible({ timeout: 10_000 });
+    await expect(recent.getByText(/^Read( ·|$)/)).toHaveCount(readsBefore + 1, { timeout: 10_000 });
+    await expect(history.getByText('Read', { exact: true })).toHaveCount(historyReadsBefore + 1, { timeout: 10_000 });
+});
+
+// #3141 (from #2977 item 7): one click on Reveal must write exactly ONE secret.read audit
+// event. The server writes one per GET /secrets/{id}?include_value=true, so this counts
+// both the include_value requests the web sends and the secret.read rows the server stored.
+// secret.read is logged by a detached goroutine, so the count is polled until it holds
+// steady rather than read once.
+test('one Reveal click writes exactly one secret.read audit event (#3141)', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 2600 });
+
+    const unique = Date.now();
+    const secretName = `e2e-secret-${unique}`;
+    await realLogin(page);
+    await createProjectEnvAndSecret(page, {
+        projectName: `e2e-one-read-${unique}`,
+        envName: `e2eenv${unique}`,
+        secretName,
+        value: `value-${unique}`,
+    });
+
+    const idSeen = page.waitForRequest(/\/api\/v1\/secrets\/\d+\/access-log/);
+    await page
+        .getByRole('row', { name: new RegExp(secretName) })
+        .getByTitle('View')
+        .click();
+    const secretId = (await idSeen).url().match(/\/secrets\/(\d+)\/access-log/)![1];
+    await expect(page.getByRole('heading', { name: 'Secret Value' })).toBeVisible();
+
+    const countReads = async (): Promise<number> => {
+        const res = await page.context().request.get(`/api/v1/audit/logs?action=secret.read&secret_id=${secretId}`);
+        expect(res.ok()).toBeTruthy();
+        return (await res.json()).data.total as number;
+    };
+    // Let anything opening the view triggered settle, then take the baseline.
+    await page.waitForTimeout(2_000);
+    const before = await countReads();
+
+    let valueRequests = 0;
+    page.on('request', (req) => {
+        if (req.method() === 'GET' && /\/secrets\/\d+\?.*include_value=true/.test(req.url())) valueRequests++;
+    });
+    await page.getByRole('button', { name: 'Reveal', exact: true }).click();
+    await expect(page.locator('body')).toContainText(`value-${unique}`, { timeout: 10_000 });
+
+    // Poll until the count has held steady for 3 consecutive seconds (max 20s).
+    let last = -1;
+    let steady = 0;
+    for (let i = 0; i < 20 && steady < 3; i++) {
+        await page.waitForTimeout(1_000);
+        const n = await countReads();
+        steady = n === last ? steady + 1 : 0;
+        last = n;
+    }
+    expect(valueRequests, 'the web must send exactly one include_value GET per Reveal click').toBe(1);
+    expect(last - before, 'one Reveal click must write exactly one secret.read').toBe(1);
 });

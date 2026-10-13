@@ -120,11 +120,11 @@ func EnableAuthEncryptionWithConfig(cfg *config.Config, force bool, passSrc cryp
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	status := authEnc.GetAuthEncryptionStatus()
-	if status["enabled"].(bool) && status["initialized"].(bool) && !force {
-		fmt.Println("✅ Authentication encryption is already enabled")
-		return nil
-	}
+	// #2915: "already enabled" is read from disk BEFORE Initialize — a fresh
+	// AuthEncryption is never initialized, so IsInitialized() here could never be
+	// true. Initialize (which verifies the passphrase against the existing DEK) and
+	// the lock still run; only the final message differs.
+	alreadyEnabled := cfg.Storage.Encryption.Enabled && authEnc.WrappedDEKExists() && !force
 	passphrase, _ := MasterPassphrase(cfg, passSrc)
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
@@ -137,6 +137,10 @@ func EnableAuthEncryptionWithConfig(cfg *config.Config, force bool, passSrc cryp
 		return fmt.Errorf("%w — a live server or an in-progress rotation/migrate-provider is using this key directory; stop it or wait for it to finish, then retry", err)
 	}
 	defer authEnc.Shutdown()
+	if alreadyEnabled {
+		fmt.Println("✅ Authentication encryption is already enabled")
+		return nil
+	}
 	fmt.Println("✅ Authentication encryption enabled successfully")
 	fmt.Println("🔑 New authentication tokens will be encrypted")
 	fmt.Println("💡 Use 'auth-encryption migrate' to encrypt existing plaintext data")

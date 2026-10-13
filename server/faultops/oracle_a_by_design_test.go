@@ -100,6 +100,54 @@ type oracleAByDesignError struct {
 	// anything else is a different, unexplained divergence and still fails.
 	// Required and non-empty.
 	tables []string
+	// outcomeLogs names the outcome-log tables (AuditEvent, ...) the same
+	// reported failure deliberately writes ALONGSIDE tables -- e.g. the
+	// auth.login_error audit event a post-verdict login fault records (#2894).
+	// Kept apart from tables so tables stays business-state only (the
+	// outcome-log check in TestOracleAByDesign_RowsAreFullyAttributed still
+	// applies to it unchanged), and so every outcome log a row accepts is named
+	// per row rather than stripped from every diff. onlyOutcomeLogTables
+	// accepts an outcome-log-ONLY diff on its own; it never accepts a MIXED one,
+	// which is the only case this field matters for. Optional.
+	outcomeLogs []string
+	// wrongCredentialResponse marks a #2880 post-verdict login row. The recorded
+	// decision is that a storage fault after a CORRECT credential is answered
+	// like a wrong one, audited and counted. When set, this is the exact op
+	// result ("HTTP <status>: <body>") a WRONG credential gets on this op, and
+	// the row then matches only a run that shows that whole outcome. The check
+	// runs on every fuzz input; it is not recorded once and trusted:
+	//   - answered like a wrong credential: in.result.Detail is byte-identical
+	//     to this string;
+	//   - counted: the diff contains EVERY table in tables (LoginAttempt), not
+	//     just a subset of them;
+	//   - audited: the diff contains every outcome log in outcomeLogs.
+	// TestOracleAByDesign_WrongCredentialOutcomesAreReal derives each value
+	// from a real wrong-credential run of the same op, so this string cannot
+	// drift from what a wrong credential actually gets.
+	//
+	// It is also the only way a row may name KindEffectThenError. For these
+	// tuples the decided state is "a wrong credential's state, plus the class-B
+	// consumption below", which is neither of oracle (d)'s accepted states (old,
+	// or the fault-free login's). The per-run check above pins that one state and
+	// response. That is narrower than anything (d) accepts for another op, so (d)
+	// consults these rows and no others. Optional.
+	wrongCredentialResponse string
+	// consumedBy names the docs/atomicity-exempt.tsv class-B function whose
+	// single-use consumption explains a table in tables that a wrong credential
+	// leaves untouched. Example: MFASecret on /auth/mfa/verify, where the code
+	// matched, so VerifyMFACredentials burned its TOTP step before the
+	// post-verdict fault. consumedColumns are the only columns of each such table
+	// the row lets differ, checked per run. Both are required exactly when tables
+	// names something the wrong-credential run does not change, and consumedBy
+	// must read B in the ledger (TestOracleAByDesign_WrongCredentialOutcomesAreReal).
+	consumedBy      string
+	consumedColumns map[string][]string
+	// pureReadEffectThenError (FUZZ-RULES-2, #3091) lets oracle (d) consult this
+	// KindError row for an effect-then-error fault on the same (op, method, nth):
+	// the method is a pure read (pureReadMethods), so effect-then-error leaves
+	// exactly the state its error leaves. Checked per run and per row, see
+	// oracle_d_pure_read_by_design_test.go. Optional.
+	pureReadEffectThenError bool
 	// designComment names where in PRODUCTION code the intent is stated, so a
 	// reader can check the claim at its source rather than trusting this row.
 	// Required.
@@ -118,49 +166,89 @@ type oracleAByDesignError struct {
 // back it. If you are not sure, it belongs in knownOpenTolerances (a filed,
 // expiring, tracked-open bug) instead — that is the honest instrument for
 // "this looks wrong and nobody has fixed it yet".
-var oracleAByDesignErrors = []oracleAByDesignError{
-	{
-		op:     "REST POST /api/v1/auth/mfa/stepup",
-		method: "CreateMFAStepUpGrant",
-		kind:   faultstorage.KindError,
-		nth:    1,
-		tables: []string{"MFASecret"},
-		designComment: "internal/core/mfa_stepup.go: VerifyMFAStepUp consumes the TOTP step " +
-			"(advancing MFASecret's replay window) BEFORE minting the step-up grant, and fails " +
-			"closed if the grant write fails",
-		provingTest: "internal/core/TestVerifyMFAStepUp_GrantFailureAfterConsume_FailsClosed",
-		why: "The consume is not a side effect of the grant — it is the single-use enforcement. " +
-			"Rolling it back when CreateMFAStepUpGrant fails would hand the caller a code that is " +
-			"still valid, so a caller who can induce a storage failure could replay one TOTP code " +
-			"indefinitely. The reported ERROR is correct (no grant was issued, so no elevated " +
-			"action is authorized), and MFASecret's advance is the security property, not a " +
-			"partial commit. Previously carried as a knownOpenTolerance citing #2549, which " +
-			"mis-labelled intended behaviour as a filed-but-unfixed bug and so guaranteed " +
-			"perpetual re-filing at each expiry.",
-	},
-}
+//
+// Rows live one per file (oracle_a_by_design_entry_<slug>_test.go calling
+// registerOracleAByDesign, see registry_entries_test.go and REGISTRY-ENTRIES.md);
+// this literal is empty on purpose. Add a row as a NEW FILE, never here.
+var oracleAByDesignErrors = []oracleAByDesignError{}
+
+// The exact results a WRONG credential gets on the two class-A ops, as
+// httpResult formats them. TestOracleAByDesign_WrongCredentialOutcomesAreReal
+// re-derives both from real wrong-credential runs.
+const (
+	wrongPasswordResponse = "HTTP 401: {\"code\":401,\"error\":\"Unauthorized\",\"message\":\"Invalid credentials\",\"success\":false}\n"
+	wrongTOTPCodeResponse = "HTTP 401: {\"code\":401,\"error\":\"Unauthorized\",\"message\":\"Invalid or expired code\",\"success\":false}\n"
+)
+
+const (
+	loginPostVerdictDesign = "internal/core/auth.go LoginWithIdentityPending: the identity read runs after " +
+		"authenticatePasswordLogin matched the password and is denied via denyAfterCredentialMatched " +
+		"(ErrLoginPostVerdict, counted toward the lockout); a mint failure is LoginCompletion.Failed; " +
+		"server/http/handlers/auth.go Login answers ErrLoginPostVerdict with the wrong-password 401, audits " +
+		"auth.login_error, and returns the per-IP slot only for a delivered login (#2936)"
+	loginPostVerdictWhy = "The password matched before the storage fault, so the login is refused and must cost " +
+		"exactly what a wrong password costs (#2880, #2894): the same 401, the LoginAttempt slot kept, the lockout " +
+		"counted. Answering or charging it differently would tell an attacker the password was right. The AuditEvent " +
+		"is auth.login_error, which lets an operator tell the fault apart from a guess. No session is minted."
+	mfaVerifyPostVerdictDesign = "internal/core/mfa.go VerifyMFALoginPending: the identity read runs after " +
+		"VerifyMFACredentials matched and consumed the code and is denied via denyAfterCredentialMatched " +
+		"(ErrLoginPostVerdict, counted toward the lockout, the step NOT given back); server/http/handlers/mfa.go " +
+		"VerifyMFA answers it with the wrong-code 401, audits auth.login_error, and releases the slot only for " +
+		"ErrMFAVerificationUnavailable"
+	mfaVerifyPostVerdictWhy = "The code matched before the identity read failed, so the login is refused and costs " +
+		"exactly what a wrong code costs (#2880, #2894): the same 401, the LoginAttempt slot kept, the lockout counted, " +
+		"audited auth.login_error. MFASecret.LastUsedStep is VerifyMFACredentials' class-B anti-replay consumption " +
+		"(docs/atomicity-exempt.tsv), deliberately not released here: the code was already used once."
+)
 
 // oracleAErrorByDesign reports whether an error-reporting-branch oracle (a)
-// divergence is covered by a reviewed row. Mirrors acceptableByDesign /
+// divergence (or, for a wrongCredentialResponse row, an oracle (d) one) is
+// covered by a reviewed row. Mirrors acceptableByDesign /
 // opScopedAcceptableByDesign's subset semantics deliberately, so all three
-// exemption mechanisms narrow a diff the same way.
-func oracleAErrorByDesign(op, method string, kind faultstorage.FaultKind, nth int, diff []string) *oracleAByDesignError {
+// exemption mechanisms narrow a diff the same way. A wrongCredentialResponse
+// row additionally requires the whole decided outcome (postVerdictOutcomeHolds).
+func oracleAErrorByDesign(in oracleInput, diff []string) *oracleAByDesignError {
 	if len(diff) == 0 {
 		return nil
 	}
 	for i := range oracleAByDesignErrors {
 		e := &oracleAByDesignErrors[i]
-		if e.op != op || e.method != method || e.kind != kind {
+		if e.op != in.op || e.method != in.method || e.kind != in.kind {
 			continue
 		}
-		if e.nth > 0 && e.nth != nth {
+		if e.nth > 0 && e.nth != in.nth {
 			continue
 		}
-		if diffSubsetOf(diff, e.tables) {
-			return e
+		allowed := append(append([]string{}, e.tables...), e.outcomeLogs...)
+		if !diffSubsetOf(diff, allowed) {
+			continue
 		}
+		if e.wrongCredentialResponse != "" && !postVerdictOutcomeHolds(e, in, diff, allowed) {
+			continue
+		}
+		return e
 	}
 	return nil
+}
+
+// postVerdictOutcomeHolds checks a wrongCredentialResponse row's decided outcome
+// against one run: the reported failure is byte-identical to a wrong
+// credential's, every table and outcome log the row names really diverged
+// (counted AND audited, not merely "nothing else moved"), and a class-B
+// consumed table moved only in its declared columns.
+func postVerdictOutcomeHolds(e *oracleAByDesignError, in oracleInput, diff, allowed []string) bool {
+	if in.result.Success || in.result.Detail != e.wrongCredentialResponse {
+		return false
+	}
+	if !diffSubsetOf(allowed, diff) {
+		return false
+	}
+	for tbl, cols := range e.consumedColumns {
+		if rowsHashExcludingColumns(in.before.Tables[tbl].Rows, cols) != rowsHashExcludingColumns(in.after.Tables[tbl].Rows, cols) {
+			return false
+		}
+	}
+	return true
 }
 
 // ── Guards on the mechanism itself ──────────────────────────────────────────
@@ -184,9 +272,18 @@ func TestOracleAByDesign_RowsAreFullyAttributed(t *testing.T) {
 				"nobody reviewed. Name the ordinal the reviewed case actually uses (1 for the first call)",
 				label, e.nth)
 		}
-		if e.kind == faultstorage.KindEffectThenError {
+		if e.kind == faultstorage.KindEffectThenError && e.wrongCredentialResponse == "" {
 			t.Errorf("oracleAByDesignError %q: KindEffectThenError belongs to oracle (d), which has its own "+
-				"exclusions and its own reasoning — this mechanism covers the error-reporting branch only", label)
+				"exclusions and its own reasoning — this mechanism covers the error-reporting branch only, "+
+				"except for a #2880 post-verdict row whose wrongCredentialResponse pins the whole outcome", label)
+		}
+		if (e.consumedBy == "") != (len(e.consumedColumns) == 0) {
+			t.Errorf("oracleAByDesignError %q: consumedBy and consumedColumns come together -- a class-B "+
+				"citation without the columns it may change, or columns with no class-B function behind them, "+
+				"is an unexplained divergence", label)
+		}
+		if e.consumedBy != "" && e.wrongCredentialResponse == "" {
+			t.Errorf("oracleAByDesignError %q: consumedBy is only meaningful on a wrongCredentialResponse row", label)
 		}
 		if len(e.tables) == 0 {
 			t.Errorf("oracleAByDesignError %q: tables is empty, which would accept ANY divergence for this "+
@@ -197,6 +294,12 @@ func TestOracleAByDesign_RowsAreFullyAttributed(t *testing.T) {
 				t.Errorf("oracleAByDesignError %q: table %q is an outcome log, already accepted "+
 					"unconditionally by onlyOutcomeLogTables — a row for it would be dead on arrival "+
 					"(exactly how #2549's four bulk-op tolerances went stale)", label, tb)
+			}
+		}
+		for _, tb := range e.outcomeLogs {
+			if !isOutcomeLogTable(tb) {
+				t.Errorf("oracleAByDesignError %q: outcomeLogs lists %q, which is not an outcome log — "+
+					"business state belongs in tables, where the outcome-log check above applies", label, tb)
 			}
 		}
 		if e.designComment == "" {
@@ -255,15 +358,63 @@ func TestOracleAByDesign_RowsAreLoadBearing(t *testing.T) {
 					"onlyOutcomeLogTables before this mechanism is consulted — the row is dead. Remove it",
 					label, diff)
 			}
-			if got := oracleAErrorByDesign(e.op, e.method, e.kind, e.nth, diff); got == nil {
-				t.Fatalf("oracleAByDesignError %q: the real diff is %v, which this row's tables %v do not "+
-					"cover — either the behaviour changed or the row's table list is wrong. NOT widened "+
-					"automatically: an unexplained table is a different finding", label, diff, e.tables)
+			if got := oracleAErrorByDesign(in, diff); got == nil {
+				t.Fatalf("oracleAByDesignError %q: the real diff is %v (response %q), which this row (tables %v, "+
+					"outcome logs %v, wrong-credential response %q) does not cover — either the behaviour changed "+
+					"or the row is wrong. NOT widened automatically: an unexplained table is a different finding",
+					label, diff, in.result.Detail, e.tables, e.outcomeLogs, e.wrongCredentialResponse)
+			}
+			// Counterfactual, through the REAL oracle rather than a re-derivation
+			// of its layer order: with this row the case passes, without it the
+			// case is reported. A row that some earlier layer (onlyOutcomeLogTables,
+			// consume-first, an op-scoped best-effort entry, another row) already
+			// shadows passes both ways, and is dead.
+			if f := oracleFindingsWithout(t, in, func() func() { return withoutByDesignRow(e) }); len(f) == 0 {
+				t.Fatalf("oracleAByDesignError %q: with the row removed the oracle STILL accepts this case, so "+
+					"something earlier already covers it and the row is dead. Remove it", label)
+			}
+			if f := oracleFindingsWithout(t, in, func() func() { return func() {} }); len(f) > 0 {
+				t.Fatalf("oracleAByDesignError %q: with the row in place the oracle still reports: %v", label, f)
 			}
 			t.Logf("load-bearing: %s diverges in %v, covered by the reviewed row (proving test: %s)",
 				label, diff, e.provingTest)
 		})
 	}
+}
+
+// oracleFindingsWithout runs the real checkOraclesReporting on one already
+// driven case, with remove() applied for the duration (it edits a package-level
+// exemption list and returns the restore). Callers are sequential top-level
+// tests: Go starts parallel top-level tests only after every sequential one
+// has finished, so the swap cannot race with t.Parallel readers.
+func oracleFindingsWithout(t *testing.T, in oracleInput, remove func() func()) []string {
+	t.Helper()
+	restore := remove()
+	defer restore()
+	sink := &driveSink{t: t}
+	func() {
+		defer func() { rethrowUnlessDriveAbort(recover()) }()
+		checkOraclesReporting(sink, in)
+	}()
+	if sink.notEvaluated != "" {
+		t.Fatalf("the oracle could not evaluate the case: %s", sink.notEvaluated)
+	}
+	return sink.findings
+}
+
+// withoutByDesignRow removes exactly e from oracleAByDesignErrors and returns
+// the restore.
+func withoutByDesignRow(e oracleAByDesignError) func() {
+	saved := oracleAByDesignErrors
+	kept := make([]oracleAByDesignError, 0, len(saved))
+	for _, r := range saved {
+		if r.op == e.op && r.method == e.method && r.kind == e.kind && r.nth == e.nth {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	oracleAByDesignErrors = kept
+	return func() { oracleAByDesignErrors = saved }
 }
 
 // TestKnownOpenTolerances_AreLoadBearing is the same staleness check applied to
@@ -294,10 +445,12 @@ func TestKnownOpenTolerances_AreLoadBearing(t *testing.T) {
 
 	for _, label := range c.underspecified {
 		if !toleranceStalenessUndrivable[label] {
-			t.Errorf("knownOpenTolerance %q is not fully specified (blank method and/or nth==0) so this "+
-				"staleness check cannot drive it, and it is not listed in "+
-				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is "+
-				"visible rather than silent", label)
+			t.Errorf("knownOpenTolerance %q wildcards at least one of method/kind/nth, so there is no single "+
+				"fault for this staleness check to arm and it cannot be driven — and it is not listed in "+
+				"toleranceStalenessUndrivable. Add it there with a note, so the coverage gap is visible "+
+				"rather than silent. (A wildcard row is still constrained by its mandatory non-empty "+
+				"tables, enforced by TestKnownOpenTolerances_CarryIssueAndExpiry; what it is NOT covered by "+
+				"is this staleness check.)", label)
 		}
 	}
 
@@ -396,7 +549,12 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 	var c toleranceStaleness
 	for _, k := range knownOpenTolerances {
 		label := fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth)
-		if k.method == "" || k.nth == 0 {
+		// A row wildcarded in ANY dimension cannot be driven: there is no
+		// single (method, nth, kind) to arm. Derived from the one shared
+		// definition of "wildcarded" (#2844) rather than re-spelled here, so
+		// this check and matchingKnownOpen's matching cannot disagree about
+		// which rows those are.
+		if len(toleranceWildcardedDimensions(k)) > 0 {
 			c.underspecified = append(c.underspecified, label)
 			continue
 		}
@@ -445,8 +603,8 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 }
 
 // TestKnownToleranceStaleness_DetectsDeadAndLiveRows is the calibration for
-// TestKnownOpenTolerances_AreLoadBearing: both directions, on the real list,
-// through the real classifier.
+// TestKnownOpenTolerances_AreLoadBearing: both directions, through the real
+// classifier.
 //
 // The thing that can silently break is the `consulted` signal — it comes from
 // observeKnownOpenMatch, a hook matchingKnownOpen calls. If that hook stops
@@ -457,30 +615,23 @@ func classifyToleranceStaleness(t *testing.T) toleranceStaleness {
 // reads as load-bearing and the check passes forever while verifying nothing.
 // That is the failure this test catches.
 //
-// It asserts that the classifier puts at least one real row in the live bucket
-// AND at least one in a not-live bucket. A stuck signal can satisfy only one of
-// those. Deliberately NOT asserted: which specific rows land where — that
-// changes every time a bug is fixed or a tolerance added, and pinning it would
-// make this test a second copy of the list.
+// Live direction: at least one REAL row must classify live. Not-live
+// direction: a PLANTED known-dead row must classify dead. A stuck signal can
+// satisfy only one of those.
+//
+// Why the not-live half is planted rather than read off the real list: it used
+// to require at least one real row in a not-live bucket, which only held while
+// some debt happened to be outstanding. TOL-1 cleared the last baselined dead
+// row (#2548's GetMFASecret), and a calibration that depends on a bug staying
+// unfixed is one cleanup away from vanishing — this file's own comment on the
+// #2606 precedent says as much. The planted row is that exact real shape:
+// GetMFASecret#1/error on /auth/mfa/verify fires, but its diff is [AuditEvent]
+// only, accepted by onlyOutcomeLogTables before matchingKnownOpen runs, so a
+// correct classifier must call it dead. Deliberately NOT asserted: which real
+// rows land where — that changes every time a bug is fixed or a tolerance
+// added, and pinning it would make this test a second copy of the list.
 func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 	c := classifyToleranceStaleness(t)
-
-	notLive := len(c.dead) + len(c.undrivable) + len(c.inconclusive)
-	for label := range toleranceDeadPendingTriage {
-		// A baselined row that stayed dead is in no reported bucket (it is the
-		// expected steady state), but it IS a not-live observation, which is
-		// what this calibration needs.
-		isRevived := false
-		for _, r := range c.revivedLive {
-			if r == label {
-				isRevived = true
-			}
-		}
-		if !isRevived {
-			notLive++
-		}
-	}
-
 	if len(c.live) == 0 {
 		t.Errorf("the staleness classifier found NO load-bearing tolerance among %d entries. Either every "+
 			"tolerance really is dead (then TestKnownOpenTolerances_AreLoadBearing is already failing and "+
@@ -490,18 +641,38 @@ func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v",
 			len(knownOpenTolerances), c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive)
 	}
-	if notLive == 0 {
-		t.Errorf("the staleness classifier found EVERY drivable tolerance load-bearing, with nothing dead, "+
-			"undrivable, inconclusive, or baselined-and-still-dead. That is the dangerous direction: a "+
-			"`consulted` signal stuck TRUE makes this check pass forever while verifying nothing. If the "+
-			"list genuinely has no debt left, delete toleranceDeadPendingTriage and replace this assertion "+
-			"with one that plants a known-dead row, rather than weakening it.\n"+
-			"buckets: live=%v dead=%v revivedLive=%v undrivable=%v inconclusive=%v baseline=%d",
-			c.live, c.dead, c.revivedLive, c.undrivable, c.inconclusive, len(toleranceDeadPendingTriage))
+
+	planted := knownOpenTolerance{
+		op: "REST POST /auth/mfa/verify", method: "GetMFASecret", kind: faultstorage.KindError,
+		nth: 1, oracle: "a", issue: "#calibration", expires: "2099-01-01",
+		findingDoc: "TestKnownToleranceStaleness_DetectsDeadAndLiveRows planted known-dead row",
 	}
-	t.Logf("staleness classifier discriminates: %d live, %d not-live (dead=%d undrivable=%d inconclusive=%d "+
-		"baselined=%d)", len(c.live), notLive, len(c.dead), len(c.undrivable), len(c.inconclusive),
-		len(toleranceDeadPendingTriage))
+	plantedLabel := fmt.Sprintf("%s/%s/%s#%d", planted.op, planted.method, planted.kind, planted.nth)
+	real := knownOpenTolerances
+	knownOpenTolerances = append(append([]knownOpenTolerance{}, real...), planted)
+	pc := classifyToleranceStaleness(t)
+	knownOpenTolerances = real
+
+	plantedDead := false
+	for _, l := range pc.dead {
+		if l == plantedLabel {
+			plantedDead = true
+		}
+	}
+	if !plantedDead {
+		t.Errorf("the planted known-dead row %q was NOT classified dead. Either the `consulted` signal is "+
+			"stuck TRUE — the dangerous direction: this check would pass forever while verifying nothing — "+
+			"or that tuple's behaviour changed so it is no longer dead (then pick another tuple whose fault "+
+			"fires and whose diff the oracle accepts before matchingKnownOpen; never drop this half).\n"+
+			"buckets with the plant: live=%v dead=%v undrivable=%v inconclusive=%v",
+			plantedLabel, pc.live, pc.dead, pc.undrivable, pc.inconclusive)
+	}
+	if len(pc.live) != len(c.live) {
+		t.Errorf("planting one dead row changed the real rows' live count (%d -> %d) — the classification "+
+			"is not independent per row", len(c.live), len(pc.live))
+	}
+	t.Logf("staleness classifier discriminates: %d real rows live, planted %q classified dead=%v",
+		len(c.live), plantedLabel, plantedDead)
 }
 
 // toleranceDeadPendingTriage is the ratchet baseline: knownOpenTolerances
@@ -543,27 +714,23 @@ func TestKnownToleranceStaleness_DetectsDeadAndLiveRows(t *testing.T) {
 // baseline entry with no row behind it is pure noise — it can never go red
 // again, so it only hides the fact that the exemption it names is already
 // retired.)
-var toleranceDeadPendingTriage = map[string]string{
-	"REST POST /auth/mfa/verify/GetMFASecret/error#1": "#2548",
-}
+//
+// (#2548's GetMFASecret entry is GONE: TOL-1 deleted the dead row it baselined,
+// so the baseline went with it. The map is empty, not deleted -- the next row
+// found dead while its issue is still open belongs here.)
+var toleranceDeadPendingTriage = map[string]string{}
 
 // toleranceStalenessUndrivable names the knownOpenTolerances entries
 // TestKnownOpenTolerances_AreLoadBearing cannot drive, with why. Keeping the
 // list explicit is the point: an unlisted undrivable entry fails the test, so
 // the uncovered set cannot grow silently.
-var toleranceStalenessUndrivable = map[string]bool{
-	// method is deliberately blank (wildcard): the finding's root cause is
-	// reserveLoginAttempt's unconditional write before the faulted call runs,
-	// so ANY fault on this op shows the same LoginAttempt-only diff. There is
-	// no single method to drive. Both fault kinds have their own entry (#2548).
-	"REST POST /auth/mfa/verify//error#1": true,
-	"REST POST /auth/mfa/verify//panic#1": true,
-	// Same wildcard shape: a webauthn-login-finish failure's diff comes from a
-	// write that lands before whichever call is faulted. Both fault kinds have
-	// their own entry in knownOpenTolerances (#2565), and both are wildcards.
-	"REST POST /auth/webauthn/login/finish//error#1": true,
-	"REST POST /auth/webauthn/login/finish//panic#1": true,
-}
+//
+// (Empty since TOL-1: the four wildcard rows that used to be listed here --
+// /auth/mfa/verify and /auth/webauthn/login/finish, error and panic -- were
+// deleted as dead or pinned to ReserveLoginAttempt (those two pins were deleted
+// as dead by #2956), so every remaining row is
+// fully specified and actually driven.)
+var toleranceStalenessUndrivable = map[string]bool{}
 
 // isOutcomeLogTable reports whether t is one of outcomeLogTables.
 func isOutcomeLogTable(t string) bool {
@@ -691,14 +858,19 @@ func TestOracleAErrorBranch_BulkAccessRequestAuditDiffIsAcceptedWithoutAToleranc
 	for _, c := range []struct{ op, method string }{
 		{"REST POST /api/v1/access-requests/bulk-reject", "GetAccessRequest"},
 		{"REST POST /api/v1/access-requests/bulk-approve", "GetAccessRequest"},
-		{"REST POST /api/v1/access-requests/bulk-approve", "RoleSetBypassesPermissionChecks"},
+		// The deleted tolerance recorded RoleSetBypassesPermissionChecks#4: the
+		// bypass read of bulk-approve's 4th Authorize (the one right after
+		// GetRolePermissions#1). Since PERF-FIX-6 every Authorize reads its role
+		// ids and bypass flag in one ResolveUserPermissionAt call, in the same
+		// order, so that same call site is ResolveUserPermissionAt#4.
+		{"REST POST /api/v1/access-requests/bulk-approve", "ResolveUserPermissionAt"},
 		{"REST POST /api/v1/access-requests/bulk-approve", "GetRolePermissions"},
 	} {
 		c := c
 		t.Run(strings.ReplaceAll(c.op+"/"+c.method, "/", "_"), func(t *testing.T) {
 			nth := 1
-			if c.method == "RoleSetBypassesPermissionChecks" {
-				nth = 4 // the ordinal the deleted tolerance recorded
+			if c.method == "ResolveUserPermissionAt" {
+				nth = 4 // the 4th Authorize: the call site the deleted tolerance recorded
 			}
 			in, outcome, reason := driveFaultCase(t, c.op, c.method, nth, faultstorage.KindError)
 			if outcome != driveObserved {

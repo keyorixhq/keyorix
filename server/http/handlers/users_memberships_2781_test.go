@@ -34,12 +34,13 @@ type membershipsEnvelope struct {
 	Success bool `json:"success"`
 	Data    struct {
 		Memberships []struct {
-			ProjectID   uint     `json:"project_id"`
-			ProjectName string   `json:"project_name"`
-			Role        string   `json:"role"`
-			Roles       []string `json:"roles"`
-			State       string   `json:"state"`
-			ViaGroup    bool     `json:"via_group"`
+			ProjectID      uint     `json:"project_id"`
+			ProjectName    string   `json:"project_name"`
+			Role           string   `json:"role"`
+			Roles          []string `json:"roles"`
+			State          string   `json:"state"`
+			ViaGroup       bool     `json:"via_group"`
+			ProjectDeleted bool     `json:"project_deleted"`
 		} `json:"memberships"`
 	} `json:"data"`
 }
@@ -64,7 +65,11 @@ func get2781Memberships(t *testing.T, h *UsersRolesHandler, target uint) members
 func new2781Fixture(t *testing.T) (*UsersRolesHandler, *gorm.DB) {
 	t.Helper()
 	db := openTestDB(t)
-	require.NoError(t, db.AutoMigrate(&models.ProjectMembership{}, &models.AuditEvent{}))
+	// SecretNode: the membership view resolves project names through
+	// ListProjectsWithCounts, so that a SOFT-DELETED project's name and flag come back
+	// rather than an empty string, and that query LEFT JOINs secret_nodes for its
+	// per-project count. Required even though no secret is seeded here.
+	require.NoError(t, db.AutoMigrate(&models.ProjectMembership{}, &models.AuditEvent{}, &models.SecretNode{}, &models.Environment{}))
 	return NewUsersRolesHandler(core.NewKeyorixCore(store.NewLocalStorage(db))), db
 }
 

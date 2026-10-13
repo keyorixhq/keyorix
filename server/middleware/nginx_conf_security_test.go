@@ -72,3 +72,52 @@ func TestNginxConfSecurityHeadersMatchGoMiddleware(t *testing.T) {
 		assert.Contains(t, csp, "frame-ancestors 'none'", "CSP must explicitly set frame-ancestors 'none': %q", csp)
 	}
 }
+
+// TestNginxConfSingleLayerHeadersAndNoPlainHTTPHSTS guards two properties of
+// the compose stack's web tier found in DEMO-WALK-3 (finding 23):
+//
+//  1. HSTS is never sent over plain http by this nginx. HSTS over http:// is
+//     wrong; it is sent only for a trusted TLS-terminating proxy (#3058, via
+//     $keyorix_hsts), by the Caddyfile, or by the backend when it serves TLS
+//     (SecurityHeaders(tlsEnabled)).
+//  2. Every security header nginx adds at server scope is hidden from the
+//     proxied backend response with proxy_hide_header, so API responses carry
+//     each header exactly once (the backend adds the same set itself).
+//
+// It checks the config text, not a running nginx: it cannot see a header the
+// backend starts sending that is not in the list below.
+func TestNginxConfSingleLayerHeadersAndNoPlainHTTPHSTS(t *testing.T) {
+	data, err := os.ReadFile("../../web/nginx.conf") // #nosec G304 -- fixed relative path to a repo file
+	require.NoError(t, err)
+	conf := string(data)
+
+	// #3058: HSTS may be added, but never with a literal value: only through
+	// $keyorix_hsts, which is empty unless the peer is a trusted proxy that says
+	// X-Forwarded-Proto=https (behaviour: deploy TestWebNginxHSTS_ComposeImage).
+	stsRe := regexp.MustCompile(`(?m)^\s*add_header\s+Strict-Transport-Security\s+(\S+)\s+always;`)
+	for _, m := range stsRe.FindAllStringSubmatch(conf, -1) {
+		assert.Equal(t, "$keyorix_hsts", m[1], "web/nginx.conf must send HSTS only via $keyorix_hsts, never unconditionally")
+	}
+	assert.Regexp(t, stsRe, conf, "web/nginx.conf must send HSTS via $keyorix_hsts for a trusted TLS-terminating proxy (#3058)")
+	defaults, err := os.ReadFile("../../web/nginx-hsts.conf") // #nosec G304 -- fixed relative path to a repo file
+	require.NoError(t, err)
+	assert.NotRegexp(t, regexp.MustCompile(`(?m)^\s*"~`), string(defaults),
+		"the shipped default (no trusted proxy configured) must not define an HSTS value")
+	assert.NotRegexp(t, regexp.MustCompile(`(?m)^\s+[0-9a-fA-F:.]+(/\d+)?\s+1;`), string(defaults),
+		"the shipped default must trust no proxy")
+
+	addRe := regexp.MustCompile(`(?m)^\s*add_header\s+([A-Za-z-]+)\s`)
+	hideRe := regexp.MustCompile(`(?m)^\s*proxy_hide_header\s+([A-Za-z-]+);`)
+	hidden := map[string]bool{}
+	for _, m := range hideRe.FindAllStringSubmatch(conf, -1) {
+		hidden[m[1]] = true
+	}
+	for _, m := range addRe.FindAllStringSubmatch(conf, -1) {
+		name := m[1]
+		if name == "Cache-Control" { // varies per response; the backend's API Cache-Control must pass through
+			continue
+		}
+		assert.True(t, hidden[name], "nginx adds %s but does not proxy_hide_header it: proxied API responses would carry it twice", name)
+	}
+	assert.True(t, hidden["Strict-Transport-Security"], "a backend HSTS must not leak through the plain-HTTP proxy")
+}

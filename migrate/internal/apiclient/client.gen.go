@@ -1792,6 +1792,22 @@ func NewGetSecretRequest(server string, id int, params *GetSecretParams) (*http.
 
 		}
 
+		if params.Include != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "include", runtime.ParamLocationQuery, *params.Include); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
@@ -2055,6 +2071,7 @@ type CreatePATResponse struct {
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
+	JSON403 *Error
 }
 
 // Status returns HTTPResponse.Status
@@ -2544,11 +2561,19 @@ type ListSecretsResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *struct {
 		Data *struct {
-			Page       *int               `json:"page,omitempty"`
-			PageSize   *int               `json:"page_size,omitempty"`
-			Secrets    *[]SecretListEntry `json:"secrets,omitempty"`
-			Total      *int               `json:"total,omitempty"`
-			TotalPages *int               `json:"total_pages,omitempty"`
+			Page     *int               `json:"page,omitempty"`
+			PageSize *int               `json:"page_size,omitempty"`
+			Secrets  *[]SecretListEntry `json:"secrets,omitempty"`
+
+			// Total Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true.
+			Total      *int `json:"total,omitempty"`
+			TotalPages *int `json:"total_pages,omitempty"`
+
+			// Truncated Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response.
+			Truncated *bool `json:"truncated,omitempty"`
+
+			// TruncatedReason Names the bound and the scopes it affected. Absent unless truncated.
+			TruncatedReason *string `json:"truncated_reason,omitempty"`
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -3113,6 +3138,13 @@ func ParseCreatePATResponse(rsp *http.Response) (*CreatePATResponse, error) {
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
 
 	}
 
@@ -3954,11 +3986,19 @@ func ParseListSecretsResponse(rsp *http.Response) (*ListSecretsResponse, error) 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest struct {
 			Data *struct {
-				Page       *int               `json:"page,omitempty"`
-				PageSize   *int               `json:"page_size,omitempty"`
-				Secrets    *[]SecretListEntry `json:"secrets,omitempty"`
-				Total      *int               `json:"total,omitempty"`
-				TotalPages *int               `json:"total_pages,omitempty"`
+				Page     *int               `json:"page,omitempty"`
+				PageSize *int               `json:"page_size,omitempty"`
+				Secrets  *[]SecretListEntry `json:"secrets,omitempty"`
+
+				// Total Every secret the caller can read under the requested filter. A FLOOR rather than a count when `truncated` is true.
+				Total      *int `json:"total,omitempty"`
+				TotalPages *int `json:"total_pages,omitempty"`
+
+				// Truncated Present and true only when assembling the caller's multi-scope union hit its per-scope bound, so `total` is a floor and later pages may be incomplete. A client must not present `total` as a complete count when this is set. Absent on an ordinary response.
+				Truncated *bool `json:"truncated,omitempty"`
+
+				// TruncatedReason Names the bound and the scopes it affected. Absent unless truncated.
+				TruncatedReason *string `json:"truncated_reason,omitempty"`
 			} `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {

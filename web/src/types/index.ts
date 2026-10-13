@@ -38,6 +38,11 @@ export interface Secret {
     environment: string;
     isShared: boolean;
     shareCount: number;
+    // The signed-in user's per-secret grant from the list response ('read' | 'write' for a
+    // share or ACL grant), '' / undefined when they hold none. A 'write' share elevates the
+    // user on this one secret even when their roles do not (the role union in useCan cannot
+    // see that), so Edit / Rotate follow it.
+    userPermission?: string;
     lastModified: string;
     owner: string;
     permissions: string[];
@@ -129,8 +134,21 @@ export interface SecretPolicy {
 export interface SecretAccessor {
     user_id: number;
     username: string;
+    // The EFFECTIVE level: for a project member, the higher of their role and any
+    // active share (#2941).
     permission: string; // read | write | owner
-    source: string; // owner | direct_share | group_share:<group>
+    source: string; // the grant giving it: owner | role | acl | direct_share | group_share:<group>
+    // Every grant the user holds on the secret, e.g. ['role:read', 'direct_share:write'].
+    grants?: string[];
+}
+
+// SecretAccessReport is GET /secrets/{id}/access. When degraded is true the list is an
+// under-count (part of it was withheld from this caller, or a lookup failed), and the
+// UI must say so.
+export interface SecretAccessReport {
+    accessors: SecretAccessor[];
+    degraded: boolean;
+    degradedReasons: string[];
 }
 
 export interface Recipient {
@@ -186,10 +204,14 @@ export interface DashboardStats {
 
 export interface ActivityItem {
     id: number;
-    type: 'created' | 'updated' | 'shared' | 'accessed';
+    type: 'created' | 'updated' | 'shared' | 'accessed' | 'versions_listed' | 'metadata_read' | (string & {});
     secretName: string;
     timestamp: string;
     actor: string;
+    /** Raw audit event type, e.g. "secret.dependency_invalidated" (absent on older servers). */
+    eventType?: string;
+    /** Readable phrase to show after the actor (absent on older servers). */
+    label?: string;
 }
 
 // Navigation types
@@ -224,6 +246,9 @@ export interface ApiError {
     error: string;
     message: string;
     details?: Record<string, unknown> | null;
+    // On a 403 from the account-setup gate (#3024): the setup steps still owed
+    // ("change_password", "enroll_mfa").
+    pending_steps?: string[];
 }
 
 // Form types

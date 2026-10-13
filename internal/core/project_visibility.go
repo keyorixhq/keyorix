@@ -99,12 +99,36 @@ func (c *KeyorixCore) VisibleProjects(ctx context.Context, actorType string, pri
 	if err != nil {
 		return ProjectVisibility{}, fmt.Errorf("visible projects: enumerate readable scopes: %w", err)
 	}
-	candidates := make(map[uint]struct{}, len(scopes))
+	candidates := make(map[uint]struct{}, len(scopes)+1)
 	for _, s := range scopes {
 		if s.ProjectID == 0 {
 			continue // GetReadableScopes already skips the global scope; belt and braces.
 		}
 		candidates[s.ProjectID] = struct{}{}
+	}
+
+	// A project-restricted PAT (ADR-042) needs its own project added as a candidate,
+	// because neither of the two steps above can produce it:
+	//
+	//   - the global check is DENIED for such a token by design (PATRestriction.ProjectID
+	//     rejects any check at a different project AND at global scope), so All is false;
+	//   - GetReadableScopes enumerates the OWNER's project-scoped grants and skips the
+	//     global scope — so an owner whose authority is expressed only globally (an
+	//     admin, or any global secrets.read holder) contributes ZERO scopes.
+	//
+	// The result was that a token legitimately narrowed to one project listed NOTHING,
+	// while `GET /api/v1/projects/{id}` on that same project succeeded for it. That is
+	// #2780's defect again, one mechanism over — fail-safe rather than leaky, but the
+	// same inconsistency between a listing and the per-item read.
+	//
+	// Adding the candidate cannot over-disclose: the project-scope authorization pass
+	// below still has to pass, and for this token it passes for exactly the restricted
+	// project and fails for every other. An ENVIRONMENT-restricted token is excluded by
+	// that same pass without special handling, because PATRestriction.EnvironmentID
+	// denies a project-level (environment 0) check — which is correct, since such a
+	// token cannot read the project by id either.
+	if r := patRestrictionFromContext(ctx); r != nil && r.ProjectID != 0 {
+		candidates[r.ProjectID] = struct{}{}
 	}
 
 	// The decisive check, and the reason this second pass exists: a project is

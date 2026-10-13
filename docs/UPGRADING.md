@@ -23,17 +23,59 @@ valid, restorable v2 archive.
 
 ## 2. Upgrading from v0.95.x → v0.95.2
 
+(Latest release at the time of writing is v0.95.3; the steps are the same.)
+
 This is the normal, in-place upgrade path: same major/minor line, schema
 migrations run automatically and are additive.
 
 ```sh
-# Docker Compose
+# Docker Compose: docker-compose.yml pins the image tags, so edit the backend and
+# web tags to the target release first (otherwise `pull` fetches nothing new)
 docker compose pull
 docker compose up -d
 
 # Single binary
 # stop the old process, replace the binary, restart
 ```
+
+Confirm which build is installed with `keyorix-server --version` (or `keyorix-server
+admin version`; in Compose, `docker compose run --rm backend ./keyorix-server
+--version`): it prints the version, commit, build date and Go version, and needs no
+config file.
+
+**What you will see when moving a v0.95.3 install to `main`** (verified, SQLite
+single binary and Compose + Postgres): a secret written by v0.95.3 reads back
+unchanged, `admin verify-audit` is VALID, and the first start logs
+`ADR-112 grace period: security.require_mfa now defaults to true, but this is an
+upgraded deployment` — MFA is not enforced yet and `admin validate --posture`
+(run with the server stopped, like every `admin` command) counts it as a
+deviation until each admin enrols (`keyorix mfa enroll` /
+`activate`; the v0.95.3 CLI has no `mfa enroll`, so use the new CLI or the web
+UI) and `security.require_mfa: true` is set explicitly. Back up with the *old*
+release's tooling before swapping: on the v0.95.3 Compose image
+`admin backup` beside the live server fails with `failed to acquire the
+encryption key lock`; stop `backend` and use `docker compose run` (see
+SELF_HOSTING.md §5).
+
+**Your config is not changed.** From the release after v0.95.3, a *fresh*
+`keyorix-server admin init` writes the secure baseline (TLS with a generated
+self-signed certificate, rate limiting on, a generated `/metrics` token file;
+see [CONFIGURATION.md](CONFIGURATION.md#the-generated-config-is-the-secure-baseline)).
+An existing `keyorix.yaml` keeps its values, and re-running `admin init` next to
+it generates nothing, so `admin validate --posture` keeps reporting the same
+deviations until you set the keys listed in
+[CONFIGURATION.md](CONFIGURATION.md#hardening-an-older-config-clearing-the-posture-report)
+yourself. Scripts that ran `admin init` and then talked plain HTTP need
+`admin init --dev` (relaxed, labelled DEV-ONLY) or the generated certificate
+(`keyorix config set ca_file <path>`, `--ca-file`, `KEYORIX_CA_FILE`).
+
+**Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
+CMD). `docker run <image> <command>` and `docker compose run backend <command>`
+still run `<command>`, after the optional config copy (`KEYORIX_CONFIG_SOURCE`);
+only an explicit `--entrypoint` bypasses it. Compose and Helm can opt into the
+secure baseline: `docker-compose.secure.yml` / `secureBaseline.enabled=true`
+(docs/SELF_HOSTING.md §7); turning it on changes `/metrics` (token required)
+and the backend's listener (TLS only).
 
 Schema migrations run on boot. If a rolling multi-replica upgrade hits
 `database schema epoch N is newer than this binary's schema epoch M`, that's
@@ -110,10 +152,11 @@ skip.
   terms regardless of what happens to the target's keys afterward.
 - **What happens after `keyorix-server admin encryption rotate`:** this
   command rotates the **DEK** (the key that encrypts your data), not the
-  KEK — the KEK is derived from `KEYORIX_MASTER_PASSWORD`, which this
-  product has no supported "rotate" operation for at all (changing the
-  master password after first boot makes every stored secret
-  undecryptable; see `docs/SELF_HOSTING.md` §4). Since the backup manifest
+  KEK — the KEK is derived from `KEYORIX_MASTER_PASSWORD`. To change that
+  passphrase use `keyorix-server admin encryption rotate-kek`
+  ([operator/j6-key-rotation.md](operator/j6-key-rotation.md)); editing the
+  variable by hand makes every stored secret undecryptable (see
+  `docs/SELF_HOSTING.md` §4). Since the backup manifest
   signing key is HKDF-derived from the KEK alone — never the DEK — a DEK
   rotation does not change it, and does not retroactively affect any
   existing backup archive: an archive taken before the rotation carries its
@@ -141,6 +184,21 @@ skip.
   upgrade`) — the server requires this token to authorize `POST
   /system/init`. `NOTES.txt` prints the retrieval command for a manual
   `keyorix system init` if you need it.
+- **Credentials are mounted files, not env vars (needs a server image that
+  supports `*_FILE`, i.e. a release containing #2968).** The Secret is mounted
+  at `/run/secrets/keyorix` and the pods read `KEYORIX_MASTER_PASSWORD_FILE`,
+  `KEYORIX_DB_PASSWORD_FILE`, … (and `POSTGRES_PASSWORD_FILE` for the bundled
+  Postgres). The Secret's keys are unchanged, so no Secret edit is needed. With
+  `auth.existingSecret`, `helm upgrade` finds the optional
+  `KEYORIX_ADMIN_PASSWORD` / `KEYORIX_BOOTSTRAP_TOKEN` keys in the live Secret
+  by itself; when rendering with `helm template` or a GitOps tool that cannot
+  look the Secret up, set `auth.existingSecretKeys.adminPassword` /
+  `.bootstrapToken` to `true`. `helm upgrade --reuse-values` works.
+- **Docker Compose: credentials moved from `.env` to `./secrets`.** Run
+  `./scripts/selfhost/init-secrets.sh --from-env .env` before `docker compose up
+  -d` (details in `docs/SELF_HOSTING.md` §3); it keeps the same master and
+  database passwords. The `tls` profile's Caddy now runs as non-root after a
+  one-shot `caddy-init` chown of its volumes — no manual step.
 - **Password-length gate.** The chart refuses to render if
   `auth.adminPassword` is under 16 characters. **Check your values file's
   `adminPassword` length before upgrading the chart** — a value that
@@ -149,6 +207,22 @@ skip.
   (e.g. containing the admin username) no longer leaves the database
   half-seeded. The whole bootstrap runs in one transaction, so a rejected
   attempt writes nothing and retrying with a corrected password just works.
+- **Bundled PostgreSQL uid (70 on the alpine image).** The chart now runs the
+  bundled Postgres as the uid of its image, `postgresql.runAsUser` (default
+  `70`, what `postgres:15-alpine` and `docker-compose.yml` use). Charts since
+  v0.87.0 ran it as `999`, so a data volume they created is owned by `999`, and
+  Postgres refuses to start on a data directory it does not own (the pod
+  CrashLoops with `data directory ... has wrong ownership`). Pick one on the
+  `helm upgrade` that introduces this chart:
+  - `--set postgresql.runAsUser=999` -- keep running as the volume's owner (no
+    change to the volume; a Debian-based `postgres:*` image also needs 999); or
+  - `--set postgresql.migrateOwnership=true` -- a one-time, opt-in init container
+    chowns the volume to `runAsUser`. It runs as root with only `CHOWN` and
+    `DAC_READ_SEARCH`, touches only the data volume and only entries not already
+    owned by `runAsUser`, and is a no-op on later starts (remove the flag again
+    once migrated). A Pod Security "restricted" namespace rejects it. Rolling
+    back to an older chart afterwards needs the volume chowned back to `999`.
+  Compose volumes need nothing: the compose stack always ran as `70`.
 
 **VERIFIED** — real `helm install` and `helm upgrade` against a kind
 cluster with locally built server/web images: the password-length gate
@@ -195,6 +269,28 @@ Also confirmed the air-gapped profile links **zero** AWS/Azure/GCP SDK
 packages (`go list -tags "noaws noazure nogcp" -deps ./server`, 666 total
 packages, none matching; cross-checked those three SDK families ARE
 present in the unfiltered dependency graph, so this isn't a vacuous pass).
+
+## 6a. BREAKING: the server now binds 127.0.0.1 by default
+
+`server.http.host` and `server.grpc.host` now default to `127.0.0.1` (loopback
+only) instead of every interface (#2939 / #2946). An install that keeps its own
+config file with **no `host:` line** and is reached from another machine, a
+reverse proxy on another host, or through a published container port stops
+accepting those connections after the upgrade.
+
+Add the bind address explicitly under `server.http` (and `server.grpc` if you
+enable gRPC), then restart:
+
+```yaml
+server:
+  http:
+    host: "0.0.0.0"   # all interfaces; or a specific interface address
+```
+
+The shipped `docker-compose.yml` / `keyorix.docker.yaml`, the Helm chart and
+`scripts/demo/up.sh` already set `0.0.0.0`; only configs you wrote or mounted
+yourself need the line. The startup log prints the bound address, with a note
+when it is reachable from the network.
 
 ## 7. Rollback
 

@@ -5,6 +5,7 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -125,7 +126,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid, sID, uname, sname := userCtx.UserID, response.ID, userCtx.Username, response.Name
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	// #2545: a client-asserted origin (e.g. keyorix-migrate's source path) is recorded as a
 	// labelled note on the audit event — never as attribution; see core.ClientOriginHeader.
 	auditCtx := core.WithClientOrigin(core.DetachedAuditContext(r.Context()), r.Header.Get(core.ClientOriginHeader))
@@ -246,6 +247,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	isMachine := userCtx.MachineIdentityID != nil
 
 	var secret *models.SecretNode
+	// Human principals: the read-permission proof the value branch below reuses, so
+	// the same permission check is not evaluated twice in one request (PERF-FIX-3).
+	var permitted *core.ReadPermittedSecret
 	if isMachine {
 		// SESSION-PERF (#2403 follow-up): reuse the EXACT resolution
 		// RequireScopedSecretPermission already fetched to compute the
@@ -280,7 +284,10 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			}
 		}
 	} else {
-		secret, err = h.coreService.GetSecretWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+		permitted, err = h.coreService.GetSecretForValueRead(r.Context(), uint(id), userCtx.UserID)
+		if err == nil {
+			secret = permitted.Secret()
+		}
 	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
@@ -296,7 +303,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		return
 	}
 
-	var response interface{} = newSecretNodeWire(secret)
+	var response interface{}
 	valueIncluded := r.URL.Query().Get("include_value") == "true" //nolint:goconst
 	if valueIncluded {
 		var value []byte
@@ -306,7 +313,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			// follow-up).
 			value, err = h.coreService.GetSecretValueResolved(r.Context(), secret)
 		} else {
-			value, err = h.coreService.GetSecretValueWithPermissionCheck(r.Context(), uint(id), userCtx.UserID)
+			value, err = h.coreService.GetPermittedSecretValue(r.Context(), permitted)
 		}
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)
@@ -323,17 +330,62 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		// never reaches this branch at all — it doesn't expose the sensitive payload
 		// and must not be conflated with a value read in the audit trail.
 		uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, secret.Name
-		ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+		ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 		auditCtx := core.DetachedAuditContext(r.Context())
 		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
 			log.Printf("SECURITY: audit write failed for secret read (secret=%d): %v -- failing closed, value NOT returned", sID, auditErr)
 			h.sendError(w, "InternalError", "Failed to record audit trail", http.StatusInternalServerError, nil)
 			return
 		}
-		response = map[string]interface{}{"secret": newSecretNodeWire(secret), "value": string(value)}
+		response = map[string]interface{}{"secret": h.secretWireForGet(r, secret), "value": string(value)}
+	} else {
+		response = h.secretWireForGet(r, secret)
 	}
 
 	h.sendSuccess(w, response, "")
+}
+
+// includeTotalReads is the `include` query token that opts GET /secrets/{id} in to
+// total_reads. The count is O(reads) over the secret's access log, so it is never
+// computed unless the caller asks for it.
+const includeTotalReads = "total_reads"
+
+// wantsTotalReads reports whether the request's `include` parameter (repeated
+// and/or comma-separated) contains total_reads.
+func wantsTotalReads(r *http.Request) bool {
+	for _, v := range r.URL.Query()["include"] {
+		for _, tok := range strings.Split(v, ",") {
+			if strings.TrimSpace(tok) == includeTotalReads {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// secretWireForGet is the wire form for GET /secrets/{id}: total_reads is added
+// only when the caller opted in with include=total_reads. Authorization is
+// unchanged (the caller already passed the read check to get here).
+func (h *SecretHandler) secretWireForGet(r *http.Request, secret *models.SecretNode) SecretNodeWire {
+	if wantsTotalReads(r) {
+		return h.secretWireWithTotalReads(r.Context(), secret)
+	}
+	return newSecretNodeWire(secret)
+}
+
+// secretWireWithTotalReads is newSecretNodeWire plus total_reads, the secret's
+// lifetime value-read count (core.SecretTotalReads), for the single-secret GET
+// when requested. Display only: if the count cannot be read the field is omitted
+// and the response is otherwise unchanged. On a value read it is computed after
+// that read's own audit + access-log write, so it includes this read.
+func (h *SecretHandler) secretWireWithTotalReads(ctx context.Context, secret *models.SecretNode) SecretNodeWire {
+	w := newSecretNodeWire(secret)
+	if n, err := h.coreService.SecretTotalReads(ctx, secret.ID); err == nil {
+		w.TotalReads = &n
+	} else {
+		log.Printf("total_reads for secret %d unavailable: %v", secret.ID, err)
+	}
+	return w
 }
 
 // GetSecretByName handles GET /api/v1/secrets/by-name?name=X&project_id=Y&environment_id=Z
@@ -390,16 +442,19 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 
 	// Metadata-only response (no value disclosed below) — stays fire-and-forget,
 	// unlike the value-disclosing read paths in this file. Still logged, not
-	// silently discarded.
+	// silently discarded, but as secret.metadata_read, not secret.read: secret.read
+	// means a value disclosure (AUDIT-UX-3).
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
-		if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
+		if auditErr := h.coreService.LogSecretMetadataRead(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
 			log.Printf("SECURITY: audit write failed for secret-by-name read (secret=%d): %v", sID, auditErr)
 		}
 	}) // #nosec G118
 
+	// No total_reads here: this lookup is itself audited as a secret.read (async, above),
+	// so a count would be non-deterministic and would include non-value reads.
 	h.sendSuccess(w, newSecretNodeWire(secret), "")
 }
 
@@ -454,7 +509,7 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 	// SESSION-PERF #2403 follow-up (item 3, audit-before-disclosure): the value is
 	// only sent below AFTER its audit entry has been durably committed.
 	uid, sID, uname, sname := userCtx.UserID, secret.ID, userCtx.Username, secret.Name
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	if auditErr := h.coreService.LogSecretReadWithProject(auditCtx, uid, sID, secret.ProjectID, uname, sname, ip, ua); auditErr != nil {
 		log.Printf("SECURITY: audit write failed for secret read by ref (secret=%d): %v -- failing closed, value NOT returned", sID, auditErr)
@@ -595,7 +650,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid, sID, uname, sname := userCtx.UserID, uint(id), userCtx.Username, response.Name
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	diff := core.BuildSecretUpdateDiff(oldSecret, req, reqBody.Value != "")
 	auditCtx := core.WithClientOrigin(core.DetachedAuditContext(r.Context()), r.Header.Get(core.ClientOriginHeader)) // #2545, see CreateSecret
 	goSafe(func() {
@@ -664,12 +719,19 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 
 	uid, sID, uname := userCtx.UserID, uint(id), userCtx.Username
-	ip, ua := r.RemoteAddr, r.Header.Get(hdrUserAgent)
+	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
 	goSafe(func() {
 		h.coreService.LogSecretDeletedWithProject(auditCtx, uid, sID, secretProjectID, uname, secretName, ip, ua)
 	}) // #nosec G118
 
+	// Tell the caller until when this delete is undoable. A failed read-back must not
+	// turn a completed delete into an error, so the header is simply omitted then.
+	if purgeAt, perr := h.coreService.DeletedSecretPurgeAt(r.Context(), uint(id)); perr == nil {
+		w.Header().Set(purgeAtHeader, formatPurgeAt(purgeAt))
+	} else {
+		log.Printf("Deleted secret %d but could not read back its purge date: %v", id, perr)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -686,6 +748,12 @@ func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) 
 	// InternalError branch).
 	if errors.Is(err, core.ErrSecretVersionContentionExhausted) {
 		h.sendError(w, "Conflict", "High write contention on this secret; retry the request", http.StatusConflict, nil)
+		return
+	}
+	// A write share covers the update but not its lifecycle change (expiry / read
+	// limit): say so, with core's fixed reason.
+	if msg, ok := core.ShareRefusalMessage(err); ok {
+		h.sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
 		return
 	}
 	if strings.Contains(err.Error(), "not found") {

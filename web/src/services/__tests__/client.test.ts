@@ -97,6 +97,7 @@ function makeAuthStore(overrides: Partial<Record<string, unknown>> = {}) {
         logout: vi.fn().mockResolvedValue(undefined),
         refreshToken: vi.fn().mockResolvedValue(undefined),
         setError: vi.fn(),
+        endSessionForReauth: vi.fn(),
         ...overrides,
     };
 }
@@ -336,6 +337,50 @@ describe('response interceptor (error): 401 handling', () => {
     });
 });
 
+describe('response interceptor: the server ended the session (reauthentication_required, #3024)', () => {
+    it('after a 200 that says the session ended, the next 401 sends the user to sign in again, without a refresh', async () => {
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+
+        // The setup-finishing call itself succeeds and is returned untouched (the page can still
+        // show recovery codes / "password changed").
+        const done = { status: 200, data: { success: true, data: { reauthentication_required: true } } };
+        expect(responseOnFulfilled(done)).toBe(done);
+        expect(store.endSessionForReauth).not.toHaveBeenCalled();
+
+        const err = axiosErr({ config: { url: '/api/v1/secrets' }, response: { status: 401, data: {} } });
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+
+        expect(store.endSessionForReauth).toHaveBeenCalledTimes(1);
+        expect(store.refreshToken).not.toHaveBeenCalled();
+        expect(store.logout).not.toHaveBeenCalled();
+        expect(store.setError).not.toHaveBeenCalled();
+    });
+
+    it('a 401 that itself carries reauthentication_required also goes to sign-in, not through a refresh', async () => {
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ response: { status: 401, data: { reauthentication_required: true } } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+
+        expect(store.endSessionForReauth).toHaveBeenCalledTimes(1);
+        expect(store.refreshToken).not.toHaveBeenCalled();
+    });
+
+    it('an ordinary 200 or an ordinary 401 is unaffected (refresh as before)', async () => {
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        responseOnFulfilled({ status: 200, data: { success: true, data: { reauthentication_required: false } } });
+        const err = axiosErr({ config: undefined, response: { status: 401, data: {} } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+
+        expect(store.endSessionForReauth).not.toHaveBeenCalled();
+        expect(store.refreshToken).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('response interceptor (error): 403 handling (ADR-025 password-change gate)', () => {
     let location: { pathname: string; href: string };
 
@@ -362,6 +407,32 @@ describe('response interceptor (error): 403 handling (ADR-025 password-change ga
 
         await expect(responseOnRejected(err)).rejects.toBe(err);
         expect(location.href).toBe('');
+    });
+
+    // #2924 / ADR-112: security.require_mfa confines a session with no second factor to the
+    // enrolment endpoints; everything else answers 403 MFAEnrollmentRequired.
+    it('redirects to MFA enrolment on an MFAEnrollmentRequired error, without a permission error', async () => {
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ response: { status: 403, data: { error: 'MFAEnrollmentRequired' } } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+        expect(location.href).toBe('/profile?tab=security&mfa=required');
+        expect(store.setError).not.toHaveBeenCalled();
+    });
+
+    it('does not redirect (or complain) on MFAEnrollmentRequired when already on /profile', async () => {
+        // The Security tab's own recovery-code status call 403s for a user who has not
+        // enrolled yet; redirecting again would loop, and a generic "no permission"
+        // error would be wrong.
+        location.pathname = '/profile';
+        const store = makeAuthStore({ isAuthenticated: true });
+        mockGetState.mockReturnValue(store);
+        const err = axiosErr({ response: { status: 403, data: { error: 'MFAEnrollmentRequired' } } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+        expect(location.href).toBe('');
+        expect(store.setError).not.toHaveBeenCalled();
     });
 
     it('sets a generic permission-error message for any other 403', async () => {
