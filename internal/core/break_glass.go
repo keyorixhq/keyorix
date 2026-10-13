@@ -532,10 +532,32 @@ func (c *KeyorixCore) ListBreakGlassActivationsForCaller(ctx context.Context, ac
 	own := make([]*models.BreakGlassActivation, 0, len(rows))
 	for _, a := range rows {
 		if a != nil && a.UserID == userID && a.ProjectID == projectID {
-			own = append(own, a)
+			own = append(own, redactBreakGlassForOwnView(a))
 		}
 	}
 	return own, BreakGlassListScopeOwn, nil
+}
+
+// redactBreakGlassForOwnView is the single place the own view (scope "own", a
+// caller without roles.read) loses the admin-side fields (FIX-3184, Andrei
+// 2026-10-13): the reviewer's note and identity, and who revoked it (user or
+// machine identity). Both transports render the rows this function returns, so
+// neither can leak what it removed; the scope that triggers it comes from
+// ListBreakGlassActivationsForCaller's own authorization, never from the client.
+//
+// State, CreatedAt, ExpiresAt, Justification, RevokedAt and ReviewedAt stay:
+// State == "revoked" / RevokedAt != nil say "revoked", ReviewedAt != nil says
+// "reviewed". The fields are zeroed (json omitempty / unset proto optional), not
+// replaced with placeholders. It returns a copy, never mutating the storage row.
+// Any new reviewer/revoker identity or note field on BreakGlassActivation must be
+// cleared here (TestBreakGlassOwnView_RedactsEveryAdminField fails otherwise).
+func redactBreakGlassForOwnView(a *models.BreakGlassActivation) *models.BreakGlassActivation {
+	cp := *a
+	cp.ReviewNote = ""
+	cp.ReviewedBy = 0
+	cp.RevokedBy = 0
+	cp.RevokedByMachineIdentityID = 0
+	return &cp
 }
 
 // RevokeBreakGlass ends an active emergency grant early: removes the role assignment

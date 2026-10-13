@@ -12,7 +12,13 @@
   so the MFA check after it can never tell a non-member that a project exists or requires
   MFA), a machine identity without roles.read, a restricted PAT outside the project, and a
   FAILED authorization or membership read, which never falls back to the own view. The per-project MFA
-  policy applies to both views (handlers). Listing writes no audit event, as before. Why:
+  policy applies to both views (handlers). The own view is redacted in ONE place,
+  `redactBreakGlassForOwnView` (FIX-3184, Andrei 2026-10-13): `ReviewNote`, `ReviewedBy`,
+  `RevokedBy` and `RevokedByMachineIdentityID` are zeroed (omitted on the wire) on a copy,
+  keyed on the scope the authorization returned, never on client input; state and the
+  `revoked_at` / `reviewed_at` timestamps stay as the reviewed / revoked status. A new
+  admin identity or note field must be cleared there
+  (`TestBreakGlassOwnView_RedactsEveryAdminField`). Listing writes no audit event, as before. Why:
   BREAKGLASS-OWN-1 (Andrei 2026-10-13: a member lists their own activations; #2981 made the
   CLI refuse honestly instead). Guard: `server/http/break_glass_own_list_test.go` (real
   router: member A vs B, cross-project, outsider vs unknown project answer identically (also on an MFA project),

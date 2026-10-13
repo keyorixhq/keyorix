@@ -8,7 +8,9 @@ package core
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -146,4 +148,103 @@ func TestListBreakGlassActivationsForCaller_ProjectRequired(t *testing.T) {
 	c := &KeyorixCore{storage: new(MockStorage)}
 	_, _, err := c.ListBreakGlassActivationsForCaller(context.Background(), ActorTypeUser, 10, 10, 0)
 	require.ErrorIs(t, err, ErrBreakGlassInvalidRequest)
+}
+
+// bgFullRow is a reviewed AND revoked activation of user 10 with every admin-side
+// field set.
+func bgFullRow() *models.BreakGlassActivation {
+	now := time.Now().UTC()
+	exp := now.Add(time.Hour)
+	return &models.BreakGlassActivation{
+		ID: 7, ProjectID: 2, UserID: 10, RoleID: 4, RoleName: "admin", Justification: "incident 42 outage",
+		State: BreakGlassRevoked, ExpiresAt: &exp, CreatedAt: now,
+		RevokedBy: 99, RevokedByMachineIdentityID: 98, RevokedAt: &now,
+		ReviewedBy: 97, ReviewedAt: &now, ReviewNote: "confidential reviewer note",
+	}
+}
+
+// The own view of a reviewed + revoked activation drops the note and both
+// identities but still says it was reviewed and revoked; the project view
+// (roles.read) is unchanged; the storage row is never mutated.
+func TestListBreakGlassActivationsForCaller_OwnViewRedactsAdminFields(t *testing.T) {
+	full := bgFullRow()
+	for _, tc := range []struct {
+		name         string
+		hasRolesRead bool
+	}{{"own", false}, {"project", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, m := bgOwnCore(t, []uint{4}, tc.hasRolesRead, nil)
+			m.ExpectedCalls = nil
+			m.On("GetUserRoleIDsAt", mock.Anything, mock.Anything, storage.Scope{ProjectID: 2}).Return([]uint{4}, nil)
+			m.On("GetUserGroupRoleIDsAt", mock.Anything, mock.Anything, storage.Scope{ProjectID: 2}).Return([]uint(nil), nil)
+			m.On("RoleSetBypassesPermissionChecks", mock.Anything, mock.Anything).Return(false, nil)
+			m.On("RoleSetHasPermission", mock.Anything, mock.Anything, permRolesRead).Return(tc.hasRolesRead, nil)
+			m.On("IsProjectMember", mock.Anything, uint(10), uint(2)).Return(true, nil)
+			m.On("ListBreakGlassActivations", mock.Anything, uint(2)).Return([]*models.BreakGlassActivation{full}, nil)
+
+			rows, scope, err := c.ListBreakGlassActivationsForCaller(context.Background(), ActorTypeUser, 10, 10, 2)
+			require.NoError(t, err)
+			require.Len(t, rows, 1)
+			r := rows[0]
+			assert.Equal(t, BreakGlassRevoked, r.State)
+			assert.NotNil(t, r.RevokedAt)
+			assert.NotNil(t, r.ReviewedAt)
+			assert.Equal(t, "incident 42 outage", r.Justification)
+			assert.NotNil(t, r.ExpiresAt)
+			if tc.hasRolesRead {
+				assert.Equal(t, BreakGlassListScopeProject, scope)
+				assert.Equal(t, "confidential reviewer note", r.ReviewNote)
+				assert.Equal(t, uint(97), r.ReviewedBy)
+				assert.Equal(t, uint(99), r.RevokedBy)
+				assert.Equal(t, uint(98), r.RevokedByMachineIdentityID)
+				return
+			}
+			assert.Equal(t, BreakGlassListScopeOwn, scope)
+			assert.Empty(t, r.ReviewNote)
+			assert.Zero(t, r.ReviewedBy)
+			assert.Zero(t, r.RevokedBy)
+			assert.Zero(t, r.RevokedByMachineIdentityID)
+			// the stored row is untouched
+			assert.Equal(t, "confidential reviewer note", full.ReviewNote)
+			assert.Equal(t, uint(99), full.RevokedBy)
+		})
+	}
+}
+
+// Guard for the class: every BreakGlassActivation field must be either listed as
+// safe for the own view or cleared by redactBreakGlassForOwnView. A new field
+// (say a second reviewer id) fails here until someone classifies it.
+func TestBreakGlassOwnView_RedactsEveryAdminField(t *testing.T) {
+	safe := map[string]bool{
+		"ID": true, "ProjectID": true, "UserID": true, "RoleID": true, "RoleName": true,
+		"Justification": true, "State": true, "ExpiresAt": true, "CreatedAt": true,
+		"RevokedAt": true, "ReviewedAt": true,
+	}
+	filled := reflect.New(reflect.TypeOf(models.BreakGlassActivation{})).Elem()
+	now := time.Now()
+	for i := 0; i < filled.NumField(); i++ {
+		f := filled.Field(i)
+		switch f.Kind() {
+		case reflect.Uint:
+			f.SetUint(5)
+		case reflect.String:
+			f.SetString("x")
+		case reflect.Pointer:
+			f.Set(reflect.ValueOf(&now))
+		case reflect.Struct:
+			f.Set(reflect.ValueOf(now))
+		default:
+			t.Fatalf("unclassified field kind %s on %s", f.Kind(), filled.Type().Field(i).Name)
+		}
+	}
+	in := filled.Addr().Interface().(*models.BreakGlassActivation)
+	out := reflect.ValueOf(redactBreakGlassForOwnView(in)).Elem()
+	for i := 0; i < out.NumField(); i++ {
+		name := out.Type().Field(i).Name
+		if safe[name] {
+			assert.False(t, out.Field(i).IsZero(), "%s is declared own-view-safe but was cleared", name)
+		} else {
+			assert.True(t, out.Field(i).IsZero(), "%s is not own-view-safe: redactBreakGlassForOwnView must clear it", name)
+		}
+	}
 }

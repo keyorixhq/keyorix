@@ -4492,7 +4492,7 @@ type BreakGlassActivation struct {
 	State         string                 `protobuf:"bytes,7,opt,name=state,proto3" json:"state,omitempty"` // active | expired | revoked
 	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=expires_at,json=expiresAt,proto3,oneof" json:"expires_at,omitempty"`
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	RevokedBy     *uint32                `protobuf:"varint,10,opt,name=revoked_by,json=revokedBy,proto3,oneof" json:"revoked_by,omitempty"` // set on early revoke
+	RevokedBy     *uint32                `protobuf:"varint,10,opt,name=revoked_by,json=revokedBy,proto3,oneof" json:"revoked_by,omitempty"` // set on early revoke; unset when the response scope is "own"
 	RevokedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=revoked_at,json=revokedAt,proto3,oneof" json:"revoked_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

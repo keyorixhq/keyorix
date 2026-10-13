@@ -769,7 +769,7 @@ message BreakGlassActivation {
   string state = 7; // active | expired | revoked
   optional google.protobuf.Timestamp expires_at = 8;
   google.protobuf.Timestamp created_at = 9;
-  optional uint32 revoked_by = 10; // set on early revoke
+  optional uint32 revoked_by = 10; // set on early revoke; unset when the response scope is "own"
   optional google.protobuf.Timestamp revoked_at = 11;
 }
 

@@ -339,3 +339,56 @@ func TestBreakGlassOwnList_NotAudited(t *testing.T) {
 	}
 	assert.Equal(t, before, count(), "listing break-glass activations must stay unaudited, as before")
 }
+
+// Andrei 2026-10-13 (FIX-3184): the own view shows status, timestamps, reason,
+// expiry and whether the activation was reviewed / revoked, but NOT the reviewer's
+// note, the reviewer's id or the revoker's id. Callers with roles.read still get
+// them. The keys are checked on the raw JSON object, so "omitted" means absent,
+// not an empty placeholder.
+func TestBreakGlassOwnList_OwnViewOmitsReviewNoteAndAdminIdentities(t *testing.T) {
+	f := newBGOwnFixture(t)
+	const note = "FIX-3184 confidential reviewer note"
+
+	// The admin (not the activator) reviews alice's revoked activation.
+	code, raw := doMachineRequest(t, f.d.srv, f.d.adminTok, http.MethodPost,
+		fmt.Sprintf("/api/v1/projects/%d/break-glass/%d/review", f.d.projectID, f.aliceRev),
+		[]byte(fmt.Sprintf(`{"note":%q}`, note)))
+	require.Equal(t, http.StatusOK, code, raw)
+
+	row := func(tok string) (map[string]any, string) {
+		t.Helper()
+		code, raw := doMachineRequest(t, f.d.srv, tok, http.MethodGet, fmt.Sprintf("/api/v1/projects/%d/break-glass", f.d.projectID), nil)
+		require.Equal(t, http.StatusOK, code, raw)
+		var out struct {
+			Data struct {
+				Activations []map[string]any `json:"activations"`
+			} `json:"data"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(raw), &out), raw)
+		for _, a := range out.Data.Activations {
+			if uint(a["id"].(float64)) == f.aliceRev {
+				return a, raw
+			}
+		}
+		t.Fatalf("activation %d missing: %s", f.aliceRev, raw)
+		return nil, raw
+	}
+
+	own, ownRaw := row(f.aliceTok)
+	for _, k := range []string{"review_note", "reviewed_by", "revoked_by", "revoked_by_machine_identity_id"} {
+		assert.NotContains(t, own, k, ownRaw)
+	}
+	assert.NotContains(t, ownRaw, note, ownRaw)
+	for _, k := range []string{"state", "created_at", "expires_at", "justification", "revoked_at", "reviewed_at"} {
+		assert.Contains(t, own, k, ownRaw)
+	}
+	assert.Equal(t, "revoked", own["state"], ownRaw)
+
+	// roles.read: unchanged.
+	full, fullRaw := row(f.d.adminTok)
+	assert.Equal(t, note, full["review_note"], fullRaw)
+	assert.Equal(t, float64(f.d.adminID), full["reviewed_by"], fullRaw)
+	assert.Equal(t, float64(f.d.adminID), full["revoked_by"], fullRaw)
+	assert.Contains(t, full, "reviewed_at", fullRaw)
+	assert.Contains(t, full, "revoked_at", fullRaw)
+}

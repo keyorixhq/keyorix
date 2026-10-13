@@ -1472,8 +1472,12 @@ auto-expires via the JIT mechanism, so it stops authorizing on its own), require
 **alerts the project's admins**. Each activation is a queryable record for post-hoc
 review (`GET …/break-glass`, `keyorix break-glass list`): a caller with `roles.read` at
 the project lists every activation (`"scope": "project"`); any other current member of
-the project lists only their own, active, expired and revoked, with the same fields
-(`"scope": "own"`), and learns nothing about anyone else's. A non-member, a machine
+the project lists only their own, active, expired and revoked (`"scope": "own"`), and
+learns nothing about anyone else's. The own view shows state, timestamps, justification,
+expiry, and whether it was reviewed (`reviewed_at`) and revoked (`state`, `revoked_at`),
+but omits the reviewer's note and the reviewer's and revoker's identities (`review_note`,
+`reviewed_by`, `revoked_by`, `revoked_by_machine_identity_id`); `"scope": "project"`
+carries them. A non-member, a machine
 identity without `roles.read`, and a restricted personal access token whose restriction
 does not allow `roles.read` at the project are refused with 403. Listing is not audited
 (it never was).

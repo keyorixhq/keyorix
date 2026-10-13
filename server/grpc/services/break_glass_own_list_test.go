@@ -80,6 +80,13 @@ func TestBreakGlassGRPC_OwnList(t *testing.T) {
 	}
 	assert.Equal(t, "revoked", states[aliceRevoked])
 	assert.Equal(t, "active", states[aliceP1])
+	// FIX-3184: the own view says "revoked" (state, revoked_at) but not WHO revoked it.
+	for _, a := range resp.GetActivations() {
+		assert.Nil(t, a.RevokedBy, "own view must not carry the revoker id (activation %d)", a.GetId())
+		if a.GetId() == aliceRevoked {
+			assert.NotNil(t, a.GetRevokedAt())
+		}
+	}
 
 	// Member B sees only B's.
 	resp, err = svc.ListBreakGlassActivations(bob, &pb.ListBreakGlassActivationsRequest{ProjectId: 1})
@@ -99,6 +106,12 @@ func TestBreakGlassGRPC_OwnList(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, core.BreakGlassListScopeProject, resp.GetScope())
 	assert.Equal(t, sorted(aliceP1, aliceRevoked, bobP1), bgOwnIDs(resp))
+	for _, a := range resp.GetActivations() {
+		if a.GetId() == aliceRevoked {
+			require.NotNil(t, a.RevokedBy, "project view keeps the revoker id")
+			assert.Equal(t, uint32(1), a.GetRevokedBy())
+		}
+	}
 
 	// A machine identity without roles.read: refused, as before.
 	_, err = svc.ListBreakGlassActivations(machineCtx(77), &pb.ListBreakGlassActivationsRequest{ProjectId: 1})
