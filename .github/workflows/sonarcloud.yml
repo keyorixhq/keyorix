@@ -225,6 +225,32 @@ jobs:
         run: sed -i 's|^SF:|SF:web/|' web/coverage/lcov.info
         if: hashFiles('web/coverage/lcov.info') != ''
 
+      # Race fix (2026-10-13). "Analyze with SonarCloud" intermittently died with
+      #   java.io.UncheckedIOException: java.nio.file.NoSuchFileException:
+      #   .../keyorix/.git/.probe-<uuid>   (e.g. run 38369244285, attempt 1)
+      # and passed on re-run. Two threads inside the scanner JVM collide:
+      #   * the SCM stage opens the repo with JGit, whose
+      #     FS.FileStoreAttributes measures the filesystem timestamp
+      #     resolution on a background thread by creating and deleting
+      #     `.git/.probe-<uuid>` (a fresh runner has no cached measurement, so
+      #     this happens on every run);
+      #   * SonarPython's PackageRootResolver.findBuildConfigFiles does an
+      #     unfiltered Files.walk() of the whole project base dir (sonar
+      #     exclusions are not consulted), which lists `.git` and then stats
+      #     each entry. If the probe is deleted between listing and stat, the
+      #     walk throws UncheckedIOException and the engine dies.
+      # Neither side has a setting to avoid it, and analysis scope must not
+      # change. JGit only measures when it can write to the git dir ("cannot
+      # measure resolution in a read-only directory" -> fixed fallback), so make
+      # the top-level `.git` directory non-writable for the duration of the
+      # scan: no probe file is ever created, and the scanner only reads the
+      # repository. (Moving the git dir out with --separate-git-dir was tried
+      # and rejected: it made the scanner's SCM-ignore check drop the changed
+      # files from the analysis.) Permissions are restored right after, always,
+      # because actions/checkout's post step writes .git/config.
+      - name: Make .git read-only for the scan
+        run: chmod a-w .git
+
       # Was SonarSource/sonarcloud-github-action, which is itself deprecated (its
       # own action.yml prints a warning on every run: "This action is deprecated
       # ... Please use the sonarqube-scan-action action instead") and was already
@@ -236,40 +262,6 @@ jobs:
       # scannerVersion+os+arch), so no additional caching needs adding here --
       # wrapping another cache around this would just duplicate what's already
       # inside the action.
-      # Race fix (2026-10-13, "Error during SonarScanner Engine execution ...
-      # NoSuchFileException: .../.git/.probe-<uuid>", e.g. run 38369244285
-      # attempt 1; re-runs passed). Two threads inside the scanner JVM collide:
-      #   * the SCM stage opens the repo with JGit, whose
-      #     FS.FileStoreAttributes measures the filesystem timestamp
-      #     resolution on a background thread by creating and deleting
-      #     `<gitdir>/.probe-<uuid>` (a fresh runner has no cached
-      #     measurement, so this happens on every run);
-      #   * SonarPython's PackageRootResolver.findBuildConfigFiles does an
-      #     unfiltered Files.walk() of the whole project base dir -- sonar
-      #     exclusions are not consulted -- which lists `.git` and then stats
-      #     each entry. If the probe is deleted between listing and stat, the
-      #     walk throws UncheckedIOException and the engine dies.
-      # Neither side has a setting to avoid this, and the scope must not
-      # change (sources, coverage and blame stay as they are). So take the
-      # git directory out of the walked tree: `git init --separate-git-dir`
-      # relocates it and leaves a `.git` gitfile behind, which git and JGit
-      # follow, so SCM / blame / new-code detection read the same repository.
-      # JGit's probe then lands in the relocated dir, which the walk never
-      # visits. Fails loudly if the relocation does not leave a working repo.
-      - name: Relocate .git out of the scanned tree
-        run: |
-          set -euo pipefail
-          before=$(git rev-parse HEAD)
-          git init --quiet --separate-git-dir "${RUNNER_TEMP}/keyorix.git"
-          test -f .git
-          after=$(git rev-parse HEAD)
-          if [ "$before" != "$after" ]; then
-            echo "::error::HEAD changed while relocating .git ($before -> $after)"
-            exit 1
-          fi
-          git rev-parse --git-dir
-          git log --oneline -1
-
       - name: Analyze with SonarCloud
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
@@ -283,3 +275,7 @@ jobs:
             -Dsonar.sourceEncoding=UTF-8
             -Dsonar.qualitygate.wait=false
           projectBaseDir: .
+
+      - name: Restore .git permissions
+        if: always()
+        run: chmod u+w .git
