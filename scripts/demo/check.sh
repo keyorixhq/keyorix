@@ -149,7 +149,12 @@ run_step() { # run_step "name" fn_name
 # bring-up / teardown
 # ---------------------------------------------------------------------------
 BROUGHT_UP=false
-PG_PROJECT="keyorix-demo-check-pg"
+PG_PROJECT="${KEYORIX_DEMO_CHECK_PG_PROJECT:-keyorix-demo-check-pg}"
+# Overridable so a session on a shared Docker host (the e2e VM) never touches
+# another run's project, published port or images.
+PG_WEB_PORT="${KEYORIX_DEMO_CHECK_PG_PORT:-8088}"
+PG_BACKEND_IMAGE="${KEYORIX_DEMO_IMAGE:-keyorix-demo:airgap}"
+PG_WEB_IMAGE="${KEYORIX_DEMO_CHECK_PG_WEB_IMAGE:-keyorix-demo-web:local}"
 PG_ENV_FILE="$SCRATCH/.env.demo-check"
 
 bring_up_sqlite() {
@@ -175,11 +180,11 @@ bring_up_postgres() {
   # the SAME locally-built, web-UI-embedded image up.sh uses for SQLite and
   # override backend to use it via an extra compose file -- the stock
   # docker-compose.yml itself is never modified.
-  if ! docker image inspect keyorix-demo:airgap >/dev/null 2>&1; then
-    echo "==> building keyorix-demo:airgap (shared with the SQLite path)"
+  if ! docker image inspect "$PG_BACKEND_IMAGE" >/dev/null 2>&1; then
+    echo "==> building $PG_BACKEND_IMAGE (shared with the SQLite path)"
     command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required to build the web UI (see web/package.json)"; return 1; }
     make -C "$REPO_ROOT" populate-webui-dist >/dev/null || { echo "make populate-webui-dist failed"; return 1; }
-    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp -t keyorix-demo:airgap "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
+    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp -t "$PG_BACKEND_IMAGE" "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
       cat "$SCRATCH/image-build.log"; echo "docker build failed"; return 1
     }
     git -C "$REPO_ROOT" checkout -- server/webui/dist/index.html 2>/dev/null || true
@@ -230,12 +235,15 @@ EOF
   cat > "$override_file" <<EOF
 services:
   backend:
-    image: keyorix-demo:airgap
+    image: $PG_BACKEND_IMAGE
   web:
-    image: keyorix-demo-web:local
+    image: $PG_WEB_IMAGE
     build:
       context: $REPO_ROOT/web
 EOF
+  if [ "$PG_WEB_PORT" != "8088" ]; then
+    printf '    ports: !override\n      - "%s:80"\n' "$PG_WEB_PORT" >> "$override_file"
+  fi
   # docker-compose.yml is the secure baseline (TLS backend behind a verifying
   # nginx, rate limiting, /metrics token, private config copy; SECURE-DEFAULT-1).
   # Before the v0.96.0 tag exists the pinned images are not pullable, so the
@@ -245,7 +253,7 @@ EOF
   cat "$SCRATCH/compose-up.log"
   [ "$rc" -eq 0 ] || return 1
 
-  SERVER_URL="http://localhost:8088"
+  SERVER_URL="http://localhost:$PG_WEB_PORT"
   # /health is nginx's own static liveness check (passes before the backend
   # upstream is actually reachable through it); /api/v1/version genuinely
   # round-trips through nginx to the backend, so wait on that instead.
@@ -750,7 +758,7 @@ step_latency() {
 }
 
 step_offline() {
-  KEYORIX_AIRGAP_E2E_IMAGE=keyorix-demo:airgap "$REPO_ROOT/scripts/airgap-e2e.sh"
+  KEYORIX_AIRGAP_E2E_IMAGE="$PG_BACKEND_IMAGE" "$REPO_ROOT/scripts/airgap-e2e.sh"
 }
 
 step_ui() {
