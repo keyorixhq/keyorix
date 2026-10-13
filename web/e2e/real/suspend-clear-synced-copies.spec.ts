@@ -69,6 +69,10 @@ async function openDetail(name: string) {
     await expect(page.getByTestId('secret-header')).toBeVisible({ timeout: 10_000 });
 }
 
+// The secret's detail view is itself a modal, so "a dialog" is not specific enough: the
+// suspend dialog is the one titled "Suspend <name>".
+const suspendDialog = () => page.getByRole('dialog', { name: /^Suspend / });
+
 const suspendCall = (name: string) =>
     page.waitForRequest(
         (r) => r.method() === 'POST' && new URL(r.url()).pathname === `/api/v1/secrets/${ids[name]}/suspend`
@@ -120,7 +124,7 @@ test.afterAll(async () => {
 test('the dialog offers the option unchecked, with a rotation note', async () => {
     await openDetail(flaggedName);
     await page.getByRole('button', { name: 'Suspend', exact: true }).click();
-    const dialog = page.getByRole('dialog');
+    const dialog = suspendDialog();
     await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel(/Also clear copies synced to Kubernetes clusters/i)).not.toBeChecked();
     await expect(dialog.getByText(/Rotate the secret if it may be compromised/i)).toBeVisible();
@@ -133,8 +137,8 @@ test('cancel sends nothing and leaves the secret active', async () => {
     page.on('request', (r) => {
         if (r.method() === 'POST' && r.url().includes('/suspend')) posted = true;
     });
-    await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await suspendDialog().getByRole('button', { name: 'Cancel' }).click();
+    await expect(suspendDialog()).toHaveCount(0);
     expect(posted).toBe(false);
     expect((await stored(cancelName)).status).toBe('active');
 });
@@ -142,7 +146,7 @@ test('cancel sends nothing and leaves the secret active', async () => {
 test('checked: the request, the stored choice and the reader all see it; resume removes it', async () => {
     await openDetail(flaggedName);
     await page.getByRole('button', { name: 'Suspend', exact: true }).click();
-    const dialog = page.getByRole('dialog');
+    const dialog = suspendDialog();
     await dialog.getByLabel(/Also clear copies synced to Kubernetes clusters/i).check();
 
     const request = suspendCall(flaggedName);
@@ -170,7 +174,7 @@ test('unchecked: no clearing request, no note, no details on the refusal', async
     await page.getByRole('button', { name: 'Suspend', exact: true }).click();
 
     const request = suspendCall(plainName);
-    await page.getByRole('dialog').getByRole('button', { name: 'Suspend secret', exact: true }).click();
+    await suspendDialog().getByRole('button', { name: 'Suspend secret', exact: true }).click();
     const body = (await request).postDataJSON() ?? {};
     expect(body).not.toHaveProperty('clear_synced_copies');
 
