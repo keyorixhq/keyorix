@@ -192,12 +192,15 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 		revokedRefs := st.revokedRefs
 
 		// Suspended / expired / soon-to-expire sources: counted and logged (not errors).
-		// A held target (expired source, or suspended with on_suspend retain) is left
-		// exactly as it is; a revoked ref in the same target still takes the revoked
-		// path below, which carries the held keys over so they stay as they were.
+		// A held key (expired source, or suspended with on_suspend retain) keeps its live
+		// value; the target's other keys keep syncing in the same single Apply (carried
+		// over below, so Apply's field ownership does not prune the held keys). Only a
+		// target whose every mapping is held, with nothing to clear or prune, is skipped
+		// outright. A revoked ref in the same target takes the revoked path below.
 		e.recordSourceStates(&res, st.t, st.rep, st.refs)
 		held := st.rep.hold(e.clearOnSuspend)
-		if held && len(revokedRefs) == 0 {
+		clearing := len(st.rep.suspended) > 0 && e.clearOnSuspend
+		if held && len(revokedRefs) == 0 && len(desired) == 0 && !clearing {
 			continue
 		}
 

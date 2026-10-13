@@ -382,7 +382,9 @@ func TestReconcile_Unauthorized_KeepsTargetSecretThenRecovers(t *testing.T) {
 			require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
 			require.Len(t, got.Status.Conditions, 1)
 			assert.Equal(t, metav1.ConditionFalse, got.Status.Conditions[0].Status)
-			assert.Equal(t, "KeyorixAuthFailed", got.Status.Conditions[0].Reason)
+			assert.Equal(t, "UpstreamAccessRevoked", got.Status.Conditions[0].Reason,
+				"the Ready reason existing alerts match on is kept (REVIEW-3175B c)")
+			assert.Contains(t, got.Status.Conditions[0].Message, "KeyorixAuthFailed:", "the precise cause is in the message")
 			assert.Contains(t, got.Status.Conditions[0].Message, "left unchanged")
 			assert.Equal(t, metricBefore+2, counterValue(authFailuresTotal), "one count per failed reconcile")
 			evs := drainEvents(rec)
@@ -554,7 +556,7 @@ func TestReconcile_Unauthorized_SharedTokenNeverWipesAnyTarget(t *testing.T) {
 		assert.True(t, errors.Is(rerr, keyorix.ErrUnauthorized), name)
 		var ks secretsv1alpha1.KeyorixSecret
 		require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "app"}, &ks))
-		assert.Equal(t, "KeyorixAuthFailed", ks.Status.Conditions[len(ks.Status.Conditions)-1].Reason, name)
+		assert.Equal(t, "UpstreamAccessRevoked", ks.Status.Conditions[len(ks.Status.Conditions)-1].Reason, name)
 	}
 	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &corev1.Secret{}))
 	assert.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "api-creds", Namespace: "app"}, &corev1.Secret{}))

@@ -7,10 +7,14 @@ package controller
 //   - A fetch that fails for any reason other than a definitive "gone / access
 //     revoked" answer (server unreachable, timeout, 5xx, a missing token Secret) never
 //     modifies the target Secret; the error condition is set and the reconcile retries.
-//   - EXPIRED: the target Secret keeps its last value (Retain). No setting.
-//   - SUSPENDED: spec.onSuspend, Retain (default) or Clear. Clear empties the keys the
-//     operator manages in a Secret it owns; it never deletes the Secret and never
-//     touches one it does not own. Resuming restores the data on the next reconcile.
+//   - EXPIRED: that ref's keys keep their last value (Retain); the target's other keys
+//     keep syncing in the same single update. No setting.
+//   - SUSPENDED: spec.onSuspend, Retain (default) freezes that ref's keys like an expiry;
+//     Clear empties them (also while a sibling is expired) in a Secret the operator owns;
+//     it never deletes the Secret and never touches one it does not own. Resuming
+//     restores the data on the next reconcile.
+//   - A held key is never overwritten or deleted. Only when EVERY ref is held (and none
+//     is being cleared) is nothing written at all.
 //   - Always: a SourceSecretHealthy=False condition, a Warning Event
 //     (SourceSecretSuspended / SourceSecretExpired / SourceSecretExpiring) and the
 //     keyorix_operator_source_secrets{state} gauge, all cleared on recovery. Ahead of
@@ -87,6 +91,30 @@ type sourceReport struct {
 	// expiring maps a warning window label ("30d", "7d", "1d") to the refs inside it
 	// (each ref in its tightest window only).
 	expiring map[string][]string
+	// heldKeys are the target Secret keys whose refs are held this reconcile: expired, or
+	// suspended with onSuspend=Retain. Their live values are carried over untouched.
+	heldKeys []string
+}
+
+// heldReason is the reason of a hold: expired wins over suspended.
+func (rp *sourceReport) heldReason() string {
+	if len(rp.expired) > 0 {
+		return reasonSourceExpired
+	}
+	return reasonSourceSuspended
+}
+
+// partialHold describes a reconcile that synced the readable keys but carried the held
+// ones over unchanged; nil when no key is held.
+func (rp *sourceReport) partialHold() *sourceHeldError {
+	if len(rp.heldKeys) == 0 {
+		return nil
+	}
+	_, _, msg, _ := rp.summary()
+	return &sourceHeldError{
+		reason: rp.heldReason(),
+		msg:    fmt.Sprintf("%s — held key(s) %s left unchanged, the other keys were synced", msg, joinSorted(rp.heldKeys)),
+	}
 }
 
 func (rp *sourceReport) noteExpiry(ref string, exp *time.Time, now time.Time) {
@@ -145,9 +173,11 @@ func joinSorted(refs []string) string {
 }
 
 // sourceHeldError is returned by buildDesired when the reconcile must not change the
-// target Secret because a referenced secret is expired, or suspended with onSuspend
-// Retain. The target keeps its last value; the reconcile requeues at the refresh
-// interval (not with error backoff), so a resume is picked up within one interval.
+// target Secret at all because EVERY referenced secret is held (expired, or suspended
+// with onSuspend Retain). The target keeps its last value; the reconcile requeues at the
+// refresh interval (not with error backoff), so a resume is picked up within one
+// interval. When only some refs are held it is not an error: partialHold builds the same
+// value for the Ready condition while the readable keys sync.
 type sourceHeldError struct {
 	reason string
 	msg    string

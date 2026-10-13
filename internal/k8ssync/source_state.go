@@ -7,10 +7,12 @@ package k8ssync
 //   - A fetch that fails for any other reason than a definitive "gone / access revoked"
 //     answer (server unreachable, timeout, 5xx) never modifies the target Secret; the
 //     pass records the failure and the next pass retries.
-//   - EXPIRED: the target Secret keeps its last value (retained). No setting.
-//   - SUSPENDED: on_suspend, "retain" (default) or "clear". Clear empties the keys the
-//     agent manages in the target Secret; it never deletes the Secret and never touches
-//     one the agent does not own. Resuming restores the data on the next pass.
+//   - EXPIRED: that ref's key keeps its last value (retained); the target's other keys
+//     keep syncing in the same Apply. No setting.
+//   - SUSPENDED: on_suspend, "retain" (default) or "clear". Retain freezes that ref's key
+//     like an expiry. Clear empties that ref's key (also while a sibling is expired); it
+//     never deletes the Secret and never touches one the agent does not own. Resuming
+//     restores the data on the next pass.
 //   - Always: a log line when a source enters or leaves a state, and the outcome labels
 //     source_suspended / source_expired / source_expiring on keyorix_k8s_sync_secrets_total
 //     (targets observed in that state during a pass). Ahead of an expiry the line is
@@ -72,8 +74,9 @@ func (rp *sourceReport) noteExpiry(ref string, exp *time.Time, now time.Time) {
 	rp.expiring[label] = append(rp.expiring[label], ref)
 }
 
-// hold reports whether the target must be left exactly as it is: an expired source, or
-// a suspended one while on_suspend is retain.
+// hold reports whether some key of the target is held: an expired source, or a suspended
+// one while on_suspend is retain. Only the held keys are frozen (carryOverHeld); the
+// target's other keys keep syncing.
 func (rp *sourceReport) hold(clearOnSuspend bool) bool {
 	return len(rp.expired) > 0 || (len(rp.suspended) > 0 && !clearOnSuspend)
 }
@@ -136,7 +139,7 @@ func (e *Engine) recordSourceStates(res *Result, t target, rp sourceReport, refs
 		if reason == "" {
 			reason = ReasonSourceSecretExpiring
 		}
-		action := "the target Secret is left unchanged"
+		action := "its key is left unchanged in the target Secret; the other keys keep syncing"
 		if st == "suspended" && e.clearOnSuspend {
 			action = "on_suspend is clear: its key is emptied in the target Secret"
 		}

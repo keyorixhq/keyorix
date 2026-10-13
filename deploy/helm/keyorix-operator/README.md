@@ -42,7 +42,9 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
   actually needs egress for.
 - **The operator's own token is rejected (401):** every synced Secret is kept
   untouched, whatever `spec.prunePolicy` says. `Ready` goes `False` with
-  reason `KeyorixAuthFailed`, a Warning Event is emitted,
+  reason `UpstreamAccessRevoked` (the historical reason, kept so existing alerts
+  keep firing; the message starts with `KeyorixAuthFailed:`), a Warning Event
+  `KeyorixAuthFailed` is emitted,
   `keyorix_operator_auth_failures_total` counts it, and the controller retries
   with backoff; fixing the token Secret resumes normal syncing.
 - **A referenced secret is deleted upstream, or access to it is revoked:**
@@ -54,9 +56,11 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
   instead, for deployments that prefer availability over immediate reap —
   see the field's own CRD description.
 - **A referenced secret is suspended or expired:** never a reason to delete.
-  The target Secret is retained by default (`spec.onSuspend: Retain`); with
-  `spec.onSuspend: Clear` the keys the operator manages are emptied while the
-  Secret itself stays. An expired source is always retained. Either way the
+  Only that reference's keys are affected: they are retained by default
+  (`spec.onSuspend: Retain`, never overwritten or deleted) while the other keys of
+  the same Secret keep syncing; with `spec.onSuspend: Clear` the suspended
+  reference's keys are emptied (also while a sibling is expired) and the Secret
+  itself stays. An expired source's keys are always retained. Either way the
   `SourceSecretHealthy` condition goes `False` (reason `SourceSecretSuspended` /
   `SourceSecretExpired`), a Warning Event is emitted, and the
   `keyorix_operator_source_secrets{state}` gauge counts it; resuming restores

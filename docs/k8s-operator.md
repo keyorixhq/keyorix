@@ -40,7 +40,9 @@ A fetch failure is handled differently depending on what it means:
   `tokenSecretRef` is invalid, expired or rotated): every synced Secret is **kept
   untouched**, whatever `spec.prunePolicy` says. A 401 is about the operator's credential,
   not about this workload's grant, so it is never grounds to wipe. `Ready` goes `False`
-  with reason `KeyorixAuthFailed`, one Warning Event `KeyorixAuthFailed` is raised when the
+  with reason `UpstreamAccessRevoked` (the reason this path has always used, kept so
+  existing alerts keep firing even though the Secret is no longer wiped) and a message that
+  starts with `KeyorixAuthFailed:`; one Warning Event `KeyorixAuthFailed` is raised when the
   state is entered, `keyorix_operator_auth_failures_total` counts each failed reconcile, and
   the controller retries with backoff. Fix or rotate the token Secret and the next retry
   syncs normally.
@@ -62,11 +64,11 @@ revoked grant, so neither deletes the target Secret. What happens, by cause:
 | --- | --- | --- | --- |
 | Server **unreachable, timeout, 5xx** | **Never modified or deleted.** Retried with backoff; syncs normally once Keyorix answers | `False`, reason `KeyorixUnreachable` | Warning Event `KeyorixUnreachable` (once on entry), counter `keyorix_operator_fetch_errors_total{reason="unreachable\|timeout\|server_error"}`, Normal Event `KeyorixRecovered` on recovery |
 | Token Secret missing / unlabelled, apply error | **Never modified or deleted.** Retried with backoff | `False`, reason `SyncError` | — |
-| **401** — the operator's own credential rejected | **Kept** (never wiped, whatever `prunePolicy` is). Retried with backoff; syncs normally once the token is fixed | `False`, reason `KeyorixAuthFailed` | Warning Event `KeyorixAuthFailed`, counter `keyorix_operator_auth_failures_total` |
+| **401** — the operator's own credential rejected | **Kept** (never wiped, whatever `prunePolicy` is). Retried with backoff; syncs normally once the token is fixed | `False`, reason `UpstreamAccessRevoked` (historical reason, kept for alerts), message `KeyorixAuthFailed: …` | Warning Event `KeyorixAuthFailed`, counter `keyorix_operator_auth_failures_total` |
 | **403 / 404** — grant revoked / secret deleted | **Pruned per `spec.prunePolicy`** (Delete by default; Keep leaves it), behind the mass-revocation circuit breaker | `False`, reason `UpstreamSecretGone` | — |
-| Referenced secret **expired** | **Retained** (last value kept; nothing is written, not even other keys) | `False`, reason `SourceSecretExpired` | `SourceSecretHealthy=False`, Warning Event `SourceSecretExpired`, gauge `expired` |
-| Referenced secret **suspended**, `spec.onSuspend: Retain` (default) | **Retained**, as above | `False`, reason `SourceSecretSuspended` | `SourceSecretHealthy=False`, Warning Event `SourceSecretSuspended`, gauge `suspended` |
-| Referenced secret **suspended**, `spec.onSuspend: Clear` | The keys of suspended refs are **emptied**; keys of readable refs stay current. The Secret object is never deleted, and a Secret the operator does not own is never touched | `True` (the rest synced) | as above |
+| Referenced secret **expired** | **Only that ref's keys are retained** (last value kept, never overwritten or deleted); the other refs' keys in the same Secret keep syncing in the same single update. When every ref is held nothing is written | `False`, reason `SourceSecretExpired` (the message names the held keys) | `SourceSecretHealthy=False`, Warning Event `SourceSecretExpired`, gauge `expired` |
+| Referenced secret **suspended**, `spec.onSuspend: Retain` (default) | **Only that ref's keys are retained**, as above | `False`, reason `SourceSecretSuspended` | `SourceSecretHealthy=False`, Warning Event `SourceSecretSuspended`, gauge `suspended` |
+| Referenced secret **suspended**, `spec.onSuspend: Clear` | The keys of suspended refs are **emptied** (also while another ref of the same target is expired: that one's keys are held, only the suspended ref's keys are cleared); keys of readable refs stay current. The Secret object is never deleted, and a Secret the operator does not own is never touched | `True` (the rest synced) | as above |
 | Within **30, 7 or 1 days** of expiring | Syncs normally | `True` | `SourceSecretHealthy=False` reason `SourceSecretExpiring`, Warning Event when each window is first entered, gauge `expiring` |
 | Resumed / extended | Next reconcile (within `spec.refreshInterval`) **restores** the data under the same name, labels and owner | `True` | condition removed, Normal Event `SourceSecretRecovered`, gauge back down |
 
@@ -244,8 +246,9 @@ Deleting the `KeyorixSecret` removes the `db-creds` Secret it created (owner ref
 - `status.conditions[Ready]` — `True` when the target Secret is up to date; `False` on
   failure, with the cause in the message and one of these reasons: `SyncError`
   (other failure — target Secret untouched), `KeyorixUnreachable` (unreachable, timeout
-  or 5xx — target Secret kept), `KeyorixAuthFailed` (401 — target Secret kept),
-  or `UpstreamSecretGone` (404/403 — wipes the target Secret per `prunePolicy`, see "How
+  or 5xx — target Secret kept), `UpstreamAccessRevoked` (401 — target Secret kept; the message starts with
+  `KeyorixAuthFailed:`), `SourceSecretExpired` / `SourceSecretSuspended` (held keys kept, the
+  other keys synced), or `UpstreamSecretGone` (404/403 — wipes the target Secret per `prunePolicy`, see "How
   it works" above).
 - `status.lastSyncTime`, `status.syncedHash`, `status.observedGeneration`.
 - The manager serves Prometheus metrics on `:8080/metrics` and health probes on

@@ -410,3 +410,125 @@ func TestSourceState_FetcherWithoutExpiryInfoStillSyncs(t *testing.T) {
 	_, ok := getTarget(t, c)
 	assert.True(t, ok)
 }
+
+// FIX-3175D (REVIEW-3175B a, b): a held ref (expired, or suspended under Retain) freezes
+// only ITS keys. The other refs' keys keep syncing in the same single Secret update, so a
+// rotation of a readable sibling propagates; a held key is never overwritten or deleted.
+func TestSourceState_PerKeyHold_ReadableSiblingKeepsSyncing(t *testing.T) {
+	cases := []struct {
+		name   string
+		mode   secretsv1alpha1.OnSuspend
+		hold   func(f *stateFetcher)
+		reason string
+	}{
+		{"expired", "", func(f *stateFetcher) { f.expired[refKey] = true }, "SourceSecretExpired"},
+		{"suspended+Retain", secretsv1alpha1.OnSuspendRetain, func(f *stateFetcher) { f.suspended[refKey] = true }, "SourceSecretSuspended"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newStateFetcher()
+			r, c, rec := stateReconciler(t, f, tc.mode)
+			_, err := reconcile(t, r)
+			require.NoError(t, err)
+			before, _ := getTarget(t, c)
+			drainEvents(rec)
+
+			tc.hold(f)
+			f.values[refKey] = []byte("must-not-be-written") // the held ref's key
+			f.values[refPW] = []byte("rotated-sibling")
+			res, err := reconcile(t, r)
+			require.NoError(t, err, "an expected state is not an error to back off from")
+			assert.Positive(t, res.RequeueAfter)
+
+			after, ok := getTarget(t, c)
+			require.True(t, ok)
+			assert.Equal(t, []byte("rotated-sibling"), after.Data["DB_PASSWORD"], "the readable sibling's rotation propagates")
+			assert.Equal(t, before.Data["API_KEY"], after.Data["API_KEY"], "the held key is untouched")
+			assert.Len(t, after.Data, 2, "the held key is never deleted")
+
+			ks := getKS(t, c)
+			ready := condition(ks, conditionReady)
+			require.NotNil(t, ready)
+			assert.Equal(t, metav1.ConditionFalse, ready.Status, "a held key keeps Ready False so alerts keep firing")
+			assert.Equal(t, tc.reason, ready.Reason)
+			assert.Contains(t, ready.Message, "API_KEY")
+			hc := condition(ks, conditionSourceHealthy)
+			require.NotNil(t, hc)
+			assert.Equal(t, tc.reason, hc.Reason)
+			ev := drainEvents(rec)
+			require.Len(t, ev, 1)
+			assert.Contains(t, ev[0], tc.reason)
+
+			// A second sibling rotation while still held propagates too, with no new Event.
+			f.values[refPW] = []byte("rotated-again")
+			_, err = reconcile(t, r)
+			require.NoError(t, err)
+			again, _ := getTarget(t, c)
+			assert.Equal(t, []byte("rotated-again"), again.Data["DB_PASSWORD"])
+			assert.Equal(t, before.Data["API_KEY"], again.Data["API_KEY"])
+			assert.Empty(t, drainEvents(rec))
+
+			// Recovery: the held key syncs again, the condition clears.
+			f.expired, f.suspended = map[string]bool{}, map[string]bool{}
+			f.values[refKey] = []byte("fresh")
+			_, err = reconcile(t, r)
+			require.NoError(t, err)
+			rec2, _ := getTarget(t, c)
+			assert.Equal(t, []byte("fresh"), rec2.Data["API_KEY"])
+			ks = getKS(t, c)
+			assert.Nil(t, condition(ks, conditionSourceHealthy))
+			assert.Equal(t, metav1.ConditionTrue, condition(ks, conditionReady).Status)
+		})
+	}
+}
+
+// Every ref held: nothing is written at all (not even a no-op update).
+func TestSourceState_PerKeyHold_AllRefsHeldWritesNothing(t *testing.T) {
+	f := newStateFetcher()
+	r, c, _ := stateReconciler(t, f, "")
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+	before, _ := getTarget(t, c)
+
+	f.expired[refPW], f.expired[refKey] = true, true
+	_, err = reconcile(t, r)
+	require.NoError(t, err)
+	after, _ := getTarget(t, c)
+	assert.Equal(t, before.Data, after.Data)
+	assert.Equal(t, before.ResourceVersion, after.ResourceVersion)
+}
+
+// A held key that was never synced has nothing to keep: the readable keys are still
+// created; the held key is simply absent until its source recovers.
+func TestSourceState_PerKeyHold_NeverSyncedHeldKeyIsAbsent(t *testing.T) {
+	f := newStateFetcher()
+	f.expired[refKey] = true
+	r, c, _ := stateReconciler(t, f, "")
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+	got, ok := getTarget(t, c)
+	require.True(t, ok)
+	assert.Equal(t, map[string][]byte{"DB_PASSWORD": []byte("p4ss")}, got.Data)
+}
+
+// onSuspend=Clear is applied to a suspended ref even while a sibling is expired: only the
+// suspended ref's key is cleared, the expired ref's key is held, nothing else changes.
+func TestSourceState_PerKeyHold_ClearAppliesWithExpiredSibling(t *testing.T) {
+	f := newStateFetcher()
+	r, c, _ := stateReconciler(t, f, secretsv1alpha1.OnSuspendClear)
+	_, err := reconcile(t, r)
+	require.NoError(t, err)
+	before, _ := getTarget(t, c)
+
+	f.suspended[refPW] = true
+	f.expired[refKey] = true
+	_, err = reconcile(t, r)
+	require.NoError(t, err)
+	got, ok := getTarget(t, c)
+	require.True(t, ok, "the Secret object stays")
+	assert.Equal(t, map[string][]byte{"API_KEY": before.Data["API_KEY"]}, got.Data,
+		"the suspended ref's key is cleared, the expired ref's key is held")
+	ready := condition(getKS(t, c), conditionReady)
+	assert.Equal(t, metav1.ConditionFalse, ready.Status)
+	assert.Equal(t, "SourceSecretExpired", ready.Reason)
+}

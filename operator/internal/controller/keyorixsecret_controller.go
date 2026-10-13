@@ -103,9 +103,15 @@ const (
 	// reader of .status can tell "wipe withheld, suspected mass event" apart from
 	// "wipe applied" or "wipe deliberately skipped by PrunePolicy Keep".
 	reasonMassRevocationSuspected = "MassRevocationSuspected"
-	// reasonKeyorixAuthFailed is the Ready condition reason (and Warning Event reason) set
-	// when Keyorix answers 401 to the operator's own credential. The target Secret is kept.
+	// reasonKeyorixAuthFailed is the Warning Event reason (and the leading word of the Ready
+	// message) set when Keyorix answers 401 to the operator's own credential. The target
+	// Secret is kept.
 	reasonKeyorixAuthFailed = "KeyorixAuthFailed"
+	// reasonUpstreamAccessRevoked is the Ready condition reason of a 401. It is the reason
+	// this path has always used (it used to wipe the Secret); it is kept so alerts that
+	// match it keep firing, although the Secret is now kept. The precise cause is in the
+	// Ready message ("KeyorixAuthFailed: ...") and in the Event reason.
+	reasonUpstreamAccessRevoked = "UpstreamAccessRevoked"
 	// reasonKeyorixUnreachable is the Ready condition reason (and Warning Event reason) set
 	// when Keyorix could not answer a value read: unreachable, timed out or 5xx. The target
 	// Secret is kept. reasonKeyorixRecovered is the Normal Event raised when the next
@@ -425,11 +431,11 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if len(desired) == 0 {
 		// onSuspend=Clear and every referenced secret is suspended: there is nothing to
 		// write. Empty the keys in a Secret we own, but never create an empty one.
-		if err := r.emptyManagedSecret(ctx, &ks, secretName); err != nil {
+		if err := r.emptyManagedSecret(ctx, &ks, secretName, rep.heldKeys); err != nil {
 			logger.Error(err, "failed to clear the target Secret")
 			return r.fail(ctx, &ks, err)
 		}
-	} else if err := r.applySecret(ctx, &ks, secretName, desired); err != nil {
+	} else if err := r.applySecret(ctx, &ks, secretName, desired, rep.heldKeys); err != nil {
 		logger.Error(err, "failed to apply target Secret")
 		return r.fail(ctx, &ks, err)
 	}
@@ -470,7 +476,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 	}
 
-	if err := r.succeed(ctx, &ks, hash, secretName, orphanWipeErr); err != nil {
+	if err := r.succeed(ctx, &ks, hash, secretName, orphanWipeErr, rep.partialHold()); err != nil {
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: interval}, nil
@@ -556,9 +562,13 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 			// Reads are switched off, not gone: never a reason to remove anything.
 			// What the target holds meanwhile is decided below by spec.onSuspend.
 			rep.suspended = append(rep.suspended, d.Ref)
+			if ks.Spec.OnSuspend != secretsv1alpha1.OnSuspendClear {
+				rep.heldKeys = append(rep.heldKeys, d.SecretKey)
+			}
 			continue
 		case errors.Is(ferr, keyorix.ErrSecretExpired):
 			rep.expired = append(rep.expired, d.Ref)
+			rep.heldKeys = append(rep.heldKeys, d.SecretKey)
 			continue
 		case ferr != nil:
 			return nil, token, nil, fmt.Errorf("fetch %q: %w", d.Ref, ferr)
@@ -566,14 +576,14 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 		rep.noteExpiry(d.Ref, exp, r.clockNow())
 		desired[d.SecretKey] = val
 	}
-	if len(rep.expired) > 0 {
-		// Expired is always Retain: the target keeps its last value, nothing is written.
+	// A held ref (expired, or suspended under Retain) freezes only ITS key: the other refs'
+	// keys keep syncing in the same single update and applySecret carries the held keys
+	// over from the live Secret. Only when nothing at all would change (every ref is held
+	// and no ref is being cleared) does the reconcile skip the write altogether.
+	clearing := len(rep.suspended) > 0 && ks.Spec.OnSuspend == secretsv1alpha1.OnSuspendClear
+	if len(rep.heldKeys) > 0 && len(desired) == 0 && !clearing {
 		_, _, msg, _ := rep.summary()
-		return nil, token, rep, &sourceHeldError{reason: reasonSourceExpired, msg: msg}
-	}
-	if len(rep.suspended) > 0 && ks.Spec.OnSuspend != secretsv1alpha1.OnSuspendClear {
-		_, _, msg, _ := rep.summary()
-		return nil, token, rep, &sourceHeldError{reason: reasonSourceSuspended, msg: msg}
+		return nil, token, rep, &sourceHeldError{reason: rep.heldReason(), msg: msg}
 	}
 	// onSuspend=Clear: the suspended refs' keys are simply absent from desired, so the
 	// applied Secret no longer carries them; keys of readable refs stay current.
@@ -596,10 +606,11 @@ func (r *KeyorixSecretReconciler) holdSource(ctx context.Context, ks *secretsv1a
 }
 
 // emptyManagedSecret removes every data key from the target Secret when onSuspend=Clear
-// leaves nothing to write. The Secret object stays (workloads that mount it keep a
-// valid, empty reference). It touches only a Secret this operator manages AND this CR
-// controls, exactly like wipeTargetSecret, and does nothing when there is none.
-func (r *KeyorixSecretReconciler) emptyManagedSecret(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, name string) error {
+// leaves nothing to write, except the held keys (an expired sibling), which keep their
+// live value. The Secret object stays (workloads that mount it keep a valid, empty
+// reference). It touches only a Secret this operator manages AND this CR controls,
+// exactly like wipeTargetSecret, and does nothing when there is none.
+func (r *KeyorixSecretReconciler) emptyManagedSecret(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, name string, held []string) error {
 	var secret corev1.Secret
 	if err := r.Get(ctx, types.NamespacedName{Namespace: ks.Namespace, Name: name}, &secret); err != nil {
 		return client.IgnoreNotFound(err)
@@ -607,10 +618,11 @@ func (r *KeyorixSecretReconciler) emptyManagedSecret(ctx context.Context, ks *se
 	if secret.Labels[ManagedByLabel] != ManagedByValue || !metav1.IsControlledBy(&secret, ks) {
 		return nil
 	}
-	if len(secret.Data) == 0 {
-		return nil
+	kept := carryOverHeld(map[string][]byte{}, secret.Data, held)
+	if len(secret.Data) == len(kept) {
+		return nil // nothing outside the held keys to remove
 	}
-	secret.Data = map[string][]byte{}
+	secret.Data = kept
 	return r.Update(ctx, &secret)
 }
 
@@ -622,8 +634,10 @@ func (r *KeyorixSecretReconciler) fetcher(server, token string) valueFetcher {
 }
 
 // applySecret create-or-updates the target Secret with an owner reference to the
-// KeyorixSecret, so deleting the CR garbage-collects the Secret.
-func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, name string, data map[string][]byte) error {
+// KeyorixSecret, so deleting the CR garbage-collects the Secret. held names the keys whose
+// source is expired or suspended (Retain): their live value is carried into the same single
+// update, so a held key is never overwritten or deleted and the write stays atomic.
+func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, name string, data map[string][]byte, held []string) error {
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ks.Namespace}}
 	secretType := ks.Spec.Target.Type
 	if secretType == "" {
@@ -647,10 +661,32 @@ func (r *KeyorixSecretReconciler) applySecret(ctx context.Context, ks *secretsv1
 		}
 		secret.Labels[ManagedByLabel] = ManagedByValue
 		secret.Type = secretType
-		secret.Data = data // operator owns the whole data set; removed keys are pruned
+		// operator owns the whole data set; removed keys are pruned, held keys are kept
+		secret.Data = carryOverHeld(data, secret.Data, held)
 		return nil
 	})
 	return err
+}
+
+// carryOverHeld returns desired plus, for every held key present in live, live's value. It
+// never replaces a key desired already carries and never mutates its inputs.
+func carryOverHeld(desired, live map[string][]byte, held []string) map[string][]byte {
+	if len(held) == 0 {
+		return desired
+	}
+	out := make(map[string][]byte, len(desired)+len(held))
+	for k, v := range desired {
+		out[k] = v
+	}
+	for _, k := range held {
+		if _, ok := out[k]; ok {
+			continue
+		}
+		if v, ok := live[k]; ok {
+			out[k] = v
+		}
+	}
+	return out
 }
 
 // adopt or overwrite a Secret it didn't create. Exported so cmd/main.go can scope the
@@ -701,15 +737,10 @@ func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.
 // rate-limited workqueue retries with backoff; once the credential is fixed the next
 // successful reconcile syncs normally and Ready goes back to True.
 func (r *KeyorixSecretReconciler) failAuth(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
-	alreadyReported := false
-	for _, c := range ks.Status.Conditions {
-		if c.Type == conditionReady && c.Reason == reasonKeyorixAuthFailed {
-			alreadyReported = true
-		}
-	}
-	msg := fmt.Sprintf("%s — the operator's own credential (tokenSecretRef %q) was rejected; the target Secret was left unchanged. Fix or rotate the token Secret; syncing resumes on the next retry.",
-		cause.Error(), ks.Spec.TokenSecretRef.Name)
-	r.setReady(ks, metav1.ConditionFalse, reasonKeyorixAuthFailed, msg)
+	alreadyReported := readyReason(ks) == reasonUpstreamAccessRevoked
+	msg := fmt.Sprintf("%s: %s — the operator's own credential (tokenSecretRef %q) was rejected; the target Secret was left unchanged. Fix or rotate the token Secret; syncing resumes on the next retry.",
+		reasonKeyorixAuthFailed, cause.Error(), ks.Spec.TokenSecretRef.Name)
+	r.setReady(ks, metav1.ConditionFalse, reasonUpstreamAccessRevoked, msg)
 	if r.Recorder != nil && !alreadyReported {
 		r.Recorder.Eventf(ks, nil, corev1.EventTypeWarning, reasonKeyorixAuthFailed, "AuthFailed",
 			"Keyorix rejected the credential in tokenSecretRef %q (HTTP 401); the target Secret was left unchanged", ks.Spec.TokenSecretRef.Name)
@@ -980,7 +1011,12 @@ func (r *KeyorixSecretReconciler) wipeTargetSecret(ctx context.Context, ks *secr
 // target Secret name (secretName in Reconcile); orphanWipeErr, when non-nil, means a
 // retarget (spec.target.name change) was detected this reconcile but wiping the
 // Secret orphaned under the OLD name failed.
-func (r *KeyorixSecretReconciler) succeed(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, hash, targetName string, orphanWipeErr error) error {
+//
+// held, when non-nil, means some keys were carried over unchanged because their source is
+// expired or suspended (Retain) while the readable keys synced: the sync fields above are
+// still recorded, but Ready stays False with the hold's reason so the stale key is not
+// reported as healthy and alerts matching SourceSecretExpired / SourceSecretSuspended fire.
+func (r *KeyorixSecretReconciler) succeed(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, hash, targetName string, orphanWipeErr error, held *sourceHeldError) error {
 	now := metav1.Now()
 	ks.Status.LastSyncTime = &now
 	ks.Status.SyncedHash = hash
@@ -1001,6 +1037,9 @@ func (r *KeyorixSecretReconciler) succeed(ctx context.Context, ks *secretsv1alph
 		r.setReady(ks, metav1.ConditionTrue, "Synced",
 			fmt.Sprintf("target Secret is up to date; WARNING: failed to wipe the orphaned Secret %q left behind by a spec.target.name change, it may still contain stale data: %v",
 				ks.Status.LastTargetName, orphanWipeErr))
+	}
+	if held != nil {
+		r.setReady(ks, metav1.ConditionFalse, held.reason, held.msg)
 	}
 	return r.Status().Update(ctx, ks)
 }

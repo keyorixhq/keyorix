@@ -135,9 +135,9 @@ agent's config file. By cause:
 | Server **unreachable, timeout, 5xx** | **Never modified or deleted**; counted `failed`, retried with backoff; syncs normally once Keyorix answers | `KeyorixUnreachable (unreachable\|timeout\|server_error)` in the pass log, outcome `keyorix_unreachable` |
 | **401** — the agent's own token rejected | **Kept** (never pruned, whatever `pruneOnRevoke` is); counted `failed`, retried with backoff; syncs normally once the token is fixed | `KeyorixAuthFailed` in the pass log, outcome `auth_failed` |
 | **403 / 404** — grant revoked / secret deleted | **Pruned** when `pruneOnRevoke` is true (default), behind the mass-revocation circuit breaker; kept when false | outcome `revoked` (or `mass_revocation_suspected`) |
-| Source **expired** | **Retained** (the target is not written at all) | `WARNING SourceSecretExpired`, outcome `source_expired` |
-| Source **suspended**, `onSuspend: retain` (default) | **Retained** | `WARNING SourceSecretSuspended`, outcome `source_suspended` |
-| Source **suspended**, `onSuspend: clear` | The suspended mapping's key is **emptied**; other keys stay current. The Secret is never deleted, and a Secret the agent does not own is never touched | as above |
+| Source **expired** | **Only that mapping's key is retained** (never overwritten or deleted); the target's other keys keep syncing in the same Apply. When every mapping is held nothing is written | `WARNING SourceSecretExpired`, outcome `source_expired` |
+| Source **suspended**, `onSuspend: retain` (default) | **Only that mapping's key is retained**, as above | `WARNING SourceSecretSuspended`, outcome `source_suspended` |
+| Source **suspended**, `onSuspend: clear` | The suspended mapping's key is **emptied** (also while another mapping of the same target is expired: that key is held); other keys stay current. The Secret is never deleted, and a Secret the agent does not own is never touched | as above |
 | Within **30, 7 or 1 days** of expiring | Syncs normally | `WARNING SourceSecretExpiring` when each window is first entered, outcome `source_expiring` |
 | Resumed / extended | The next pass **restores** the data: same name, labels and values | "readable again" line |
 
