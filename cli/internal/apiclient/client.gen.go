@@ -18927,6 +18927,9 @@ type ListBreakGlassActivationsResponse struct {
 
 			// Scope "project": every activation of the project (caller holds roles.read). "own": only the caller's own activations.
 			Scope *ListBreakGlassActivations200DataScope `json:"scope,omitempty"`
+
+			// Settings The server's effective break-glass limits, returned with the activations list to a caller it allowed. Deployment limits only: no secret, no admin-only data.
+			Settings *BreakGlassSettings `json:"settings,omitempty"`
 		} `json:"data,omitempty"`
 	}
 	JSON400 *Error
@@ -19973,6 +19976,7 @@ type RenderSecretTemplateResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *SecretReadRefused
 }
 
 // Status returns HTTPResponse.Status
@@ -20880,6 +20884,7 @@ type GetSecretValueByRefResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *SecretReadRefused
 }
 
 // Status returns HTTPResponse.Status
@@ -20934,6 +20939,7 @@ type GetSecretResponse struct {
 	JSON401 *Error
 	JSON403 *Error
 	JSON404 *Error
+	JSON409 *SecretReadRefused
 }
 
 // Status returns HTTPResponse.Status
@@ -29780,6 +29786,9 @@ func ParseListBreakGlassActivationsResponse(rsp *http.Response) (*ListBreakGlass
 
 				// Scope "project": every activation of the project (caller holds roles.read). "own": only the caller's own activations.
 				Scope *ListBreakGlassActivations200DataScope `json:"scope,omitempty"`
+
+				// Settings The server's effective break-glass limits, returned with the activations list to a caller it allowed. Deployment limits only: no secret, no admin-only data.
+				Settings *BreakGlassSettings `json:"settings,omitempty"`
 			} `json:"data,omitempty"`
 		}
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -31674,6 +31683,13 @@ func ParseRenderSecretTemplateResponse(rsp *http.Response) (*RenderSecretTemplat
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest SecretReadRefused
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -33170,6 +33186,13 @@ func ParseGetSecretValueByRefResponse(rsp *http.Response) (*GetSecretValueByRefR
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest SecretReadRefused
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	}
 
 	return response, nil
@@ -33273,6 +33296,13 @@ func ParseGetSecretResponse(rsp *http.Response) (*GetSecretResponse, error) {
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest SecretReadRefused
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	}
 
