@@ -116,7 +116,9 @@ if [ "$REBUILD" = true ] || ! docker image inspect "$IMAGE_TAG" >/dev/null 2>&1;
   step "Building the air-gapped image with the web UI embedded (needs network this one time)"
   command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required to build the web UI (see web/package.json)" >&2; exit 1; }
   make -C "$REPO_ROOT" populate-webui-dist >/dev/null
-  docker build -f server/Dockerfile --build-arg BUILD_TAGS=noaws,noazure,nogcp -t "$IMAGE_TAG" "$REPO_ROOT" >/dev/null
+  demo_stamp_build_args "$REPO_ROOT"
+  docker build -f server/Dockerfile --build-arg BUILD_TAGS=noaws,noazure,nogcp \
+    ${DEMO_STAMP_ARGS[@]+"${DEMO_STAMP_ARGS[@]}"} -t "$IMAGE_TAG" "$REPO_ROOT" >/dev/null
   git -C "$REPO_ROOT" checkout -- server/webui/dist/index.html 2>/dev/null || true
   ok "Built $IMAGE_TAG"
 else
