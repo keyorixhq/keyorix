@@ -1,0 +1,6 @@
+### Fixed
+- **A first-admin password the policy refuses now fails with its real reason (#3201).** On Helm and compose first boot, a configured admin password that contains the admin's username (for example `Dw5-Admin-...` for user `admin`) crash-looped the server pod with ten `403` retries and a hint that blamed the bootstrap token, because BusyBox `wget` cannot show the refusal body. The entrypoint now asks the new `keyorix-server admin check-admin-password` (the server's own policy, password on stdin) after the first refused POST, prints e.g. `admin password rejected: password must not contain your username, email, or display name`, and exits non-zero once. An already-initialised install with an old non-compliant password in its config still boots. The password policy itself is unchanged.
+- **The Helm chart and `init-secrets.sh` catch it before deploy.** `helm install`/`template` fails when `auth.adminPassword` contains the username, the email's local part or `Administrator`; `scripts/selfhost/init-secrets.sh` and `keyorix-server admin generate-secrets` never generate such a password, and `init-secrets.sh --from-env` warns about a supplied one.
+
+### Documentation
+- Helm README and `values.yaml` no longer say a rejected bootstrap leaves a healthy pod with no admin; the pod crash-loops (since #3025) and its log has the reason.

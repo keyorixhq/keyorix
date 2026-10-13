@@ -256,6 +256,31 @@ if [ -n "$_kx_admin_password" ]; then
                 BOOTSTRAP_OK=1
                 break
             fi
+            # The POST cannot say why it was refused (BusyBox wget drops the body of a
+            # 403), so a password that contains the username looked exactly like a
+            # wrong bootstrap token and crash-looped the container with a hint about
+            # the token (#3201). After the first failure, ask the server binary for
+            # the password policy's verdict (the password goes over stdin; printf is
+            # a shell builtin, so it never reaches an argv). Asking only AFTER a
+            # failure keeps an already-initialised install booting: its POST
+            # succeeds as already_initialized whatever the configured password is.
+            # Exit 1 = the policy refused it: say why, once, and stop retrying. Any
+            # other status (binary missing, ...) is no verdict; retry as before.
+            if [ "$attempt" -eq 1 ]; then
+                set +e
+                printf '%s' "$_kx_admin_password" | "${_kx_server_bin:-/app/keyorix-server}" admin check-admin-password \
+                    --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --display-name Administrator
+                check_rc=$?
+                set -e
+                if [ "$check_rc" -eq 1 ]; then
+                    rm -rf "$BOOTSTRAP_TMPDIR"
+                    echo "ERROR: the configured admin password (KEYORIX_ADMIN_PASSWORD or KEYORIX_ADMIN_PASSWORD_FILE) was rejected by the" >&2
+                    echo "ERROR: password policy, so the admin '$ADMIN_USER' cannot be bootstrapped. The reason is above; fix the password and restart." >&2
+                    kill -TERM "$SERVER_PID" 2>/dev/null
+                    wait "$SERVER_PID" 2>/dev/null
+                    exit 1
+                fi
+            fi
             echo "Bootstrap attempt ${attempt}/${BOOTSTRAP_ATTEMPTS} failed; retrying in 3s..."
             attempt=$((attempt + 1))
             sleep 3
@@ -263,7 +288,8 @@ if [ -n "$_kx_admin_password" ]; then
         if [ "$BOOTSTRAP_OK" -ne 1 ]; then
             rm -rf "$BOOTSTRAP_TMPDIR"
             echo "ERROR: admin bootstrap did not complete after ${BOOTSTRAP_ATTEMPTS} attempts" >&2
-            echo "ERROR: (server ready=${SERVER_READY}). Check KEYORIX_BOOTSTRAP_TOKEN matches and the server logs above." >&2
+            echo "ERROR: (server ready=${SERVER_READY}). The admin password was not refused by the password policy, so the usual cause is" >&2
+            echo "ERROR: a KEYORIX_BOOTSTRAP_TOKEN that does not match the server's; the server logs above have the server's own reason." >&2
             kill -TERM "$SERVER_PID" 2>/dev/null
             wait "$SERVER_PID" 2>/dev/null
             exit 1
