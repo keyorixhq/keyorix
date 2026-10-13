@@ -31,7 +31,7 @@ func OpenGormDB(cfg *config.Config) (*gorm.DB, error) {
 	case "remote":
 		return nil, fmt.Errorf("this command needs direct database access and cannot run against a remote backend; run it on the server host")
 	case "postgres", "postgresql":
-		dsn, err := config.BuildPostgresDSN(&cfg.Storage.Database)
+		dsn, err := config.ResolvePostgresDSN(&cfg.Storage.Database)
 		if err != nil {
 			return nil, err
 		}

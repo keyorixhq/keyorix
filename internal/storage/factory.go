@@ -623,7 +623,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 // createPostgresStorage creates a PostgreSQL-backed local storage instance
 func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (storage.Storage, error) {
-	dsn, err := config.BuildPostgresDSN(&cfg.Storage.Database)
+	dsn, err := config.ResolvePostgresDSN(&cfg.Storage.Database)
 	if err != nil {
 		return nil, err
 	}

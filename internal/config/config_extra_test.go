@@ -108,11 +108,11 @@ func TestBuildPostgresDSN_FieldsDefaults(t *testing.T) {
 	d := &DatabaseConfig{Name: "keyorix", User: "kx"}
 	dsn, err := BuildPostgresDSN(d)
 	require.NoError(t, err)
-	assert.Contains(t, dsn, "host='localhost'")
-	assert.Contains(t, dsn, "port='5432'")
-	assert.Contains(t, dsn, "sslmode='require'")
-	assert.Contains(t, dsn, "dbname='keyorix'")
-	assert.Contains(t, dsn, "user='kx'")
+	assert.Contains(t, dsn, "host=localhost")
+	assert.Contains(t, dsn, "port=5432")
+	assert.Contains(t, dsn, "sslmode=require")
+	assert.Contains(t, dsn, "dbname=keyorix")
+	assert.Contains(t, dsn, "user=kx")
 }
 
 // TestBuildPostgresDSN_ExplicitFields validates that explicit host/port/sslmode
@@ -129,10 +129,10 @@ func TestBuildPostgresDSN_ExplicitFields(t *testing.T) {
 	}
 	dsn, err := BuildPostgresDSN(d)
 	require.NoError(t, err)
-	assert.Contains(t, dsn, "host='pg.prod'")
-	assert.Contains(t, dsn, "port='5433'")
-	assert.Contains(t, dsn, "sslmode='verify-full'")
-	assert.Contains(t, dsn, "sslrootcert='system'")
+	assert.Contains(t, dsn, "host=pg.prod")
+	assert.Contains(t, dsn, "port=5433")
+	assert.Contains(t, dsn, "sslmode=verify-full")
+	assert.Contains(t, dsn, "sslrootcert=system")
 }
 
 // TestBuildPostgresDSN_Password validates that a password is appended to the DSN.
@@ -140,7 +140,7 @@ func TestBuildPostgresDSN_Password(t *testing.T) {
 	d := &DatabaseConfig{Name: "db", User: "u", Password: "s3cr3t"}
 	dsn, err := BuildPostgresDSN(d)
 	require.NoError(t, err)
-	assert.Contains(t, dsn, "password='s3cr3t'")
+	assert.Contains(t, dsn, "password=s3cr3t")
 }
 
 // TestDatabaseConfig_GetPassword_EnvVar validates the environment-variable

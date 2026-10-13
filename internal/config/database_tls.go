@@ -557,12 +557,6 @@ func unescapeDSNValue(s string) string {
 	return b.String()
 }
 
-// quoteDSNValue single-quotes v for a keyword/value DSN, escaping backslash
-// and quote, so a path with spaces or quotes stays one value.
-func quoteDSNValue(v string) string {
-	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
-}
-
 // DatabaseTLSPosture describes, in one line, how the server's PostgreSQL
 // connection is protected: what is encrypted, what is verified and against
 // which CA. Used by `admin validate --posture` and `admin init`. The second

@@ -228,7 +228,7 @@ func TestBuildPostgresDSN_PassesSSLRootCert(t *testing.T) {
 
 	dsn, err := BuildPostgresDSN(pgFields("verify-full", ca))
 	require.NoError(t, err)
-	assert.Contains(t, dsn, "sslmode='verify-full'")
+	assert.Contains(t, dsn, "sslmode=verify-full")
 	assert.Contains(t, dsn, `sslrootcert='`+strings.ReplaceAll(ca, `'`, `\'`)+`'`)
 
 	// The quoted value reads back as exactly the path (same grammar pgx uses;
