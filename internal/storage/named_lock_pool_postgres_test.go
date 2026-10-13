@@ -14,7 +14,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -104,12 +103,7 @@ func TestPostgresStorage_Close_ReleasesEveryPool(t *testing.T) {
 	require.NoError(t, i18n.InitializeForTesting())
 	defer i18n.ResetForTesting()
 
-	base := pgTestDSN(t)
-	dsn := pgIsolatedDatabaseDSN(t, base)
-	dbName := dsn[strings.LastIndex(dsn, "/")+1:]
-	if i := strings.IndexByte(dbName, '?'); i >= 0 {
-		dbName = dbName[:i]
-	}
+	dsn := pgIsolatedDatabaseDSN(t, pgTestDSN(t))
 	cfg := &config.Config{}
 	cfg.Storage.Type = "postgres"
 	cfg.Storage.Database.DSN = dsn
@@ -127,10 +121,12 @@ func TestPostgresStorage_Close_ReleasesEveryPool(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ran)
 
-	admin := pgRawOpen(t, base)
+	// Counted from a connection of its own to the same database, excluding itself.
+	observer := pgRawOpen(t, dsn)
 	backends := func() int {
 		var n int
-		require.NoError(t, admin.Raw("SELECT count(*) FROM pg_stat_activity WHERE datname = ?", dbName).Scan(&n).Error)
+		require.NoError(t, observer.Raw("SELECT count(*) FROM pg_stat_activity "+
+			"WHERE datname = current_database() AND pid <> pg_backend_pid()").Scan(&n).Error)
 		return n
 	}
 	require.GreaterOrEqual(t, backends(), 3, "the request pool and both lock pools should each have a session open")
