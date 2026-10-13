@@ -116,6 +116,10 @@ type KeyorixSecretSpec struct {
 	// fan-out in the tens, not thousands.
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=50
+	// secretKey must be unique across entries (listType=map): two entries with the same
+	// key would let a readable one overwrite a held one.
+	// +listType=map
+	// +listMapKey=secretKey
 	Data []KeyorixSecretData `json:"data"`
 	// PrunePolicy controls what happens to the target Secret when the upstream
 	// Keyorix reference is confirmed gone or this CR's access to it confirmed revoked

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -412,7 +414,7 @@ func fetchErrorCounter(reason string) float64 {
 
 // TestReconcile_FetchUnavailable_KeepsTargetSecretThenRecovers pins Andrei's 2026-10-13
 // decision for "Keyorix could not answer" (unreachable, timeout, 5xx): the target Secret
-// is kept byte-for-byte, Ready reads KeyorixUnreachable, ONE Warning Event is raised on
+// is kept byte-for-byte, Ready keeps reason SyncError with a KeyorixUnreachable message, ONE Warning Event is raised on
 // entry (not per retry), keyorix_operator_fetch_errors_total{reason} counts every failed
 // reconcile, the error is still returned for backoff, and the first successful read
 // clears the state with a Normal KeyorixRecovered Event.
@@ -465,7 +467,8 @@ func TestReconcile_FetchUnavailable_KeepsTargetSecretThenRecovers(t *testing.T) 
 			require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
 			require.Len(t, got.Status.Conditions, 1)
 			assert.Equal(t, metav1.ConditionFalse, got.Status.Conditions[0].Status)
-			assert.Equal(t, "KeyorixUnreachable", got.Status.Conditions[0].Reason)
+			assert.Equal(t, "SyncError", got.Status.Conditions[0].Reason, "the Ready reason is unchanged from before #3175")
+			assert.True(t, strings.HasPrefix(got.Status.Conditions[0].Message, "KeyorixUnreachable: "), "the detail leads the message")
 			assert.Contains(t, got.Status.Conditions[0].Message, "left unchanged")
 			assert.Contains(t, got.Status.Conditions[0].Message, tc.reason)
 			assert.Equal(t, metricBefore+2, fetchErrorCounter(tc.reason), "one count per failed reconcile")
@@ -525,6 +528,92 @@ func TestReconcile_FetchUnavailable_PlainErrorsStaySyncError(t *testing.T) {
 	for o, v := range before {
 		assert.Equal(t, v, fetchErrorCounter(o))
 	}
+}
+
+// TestReconcile_DuplicateSecretKey_RejectedNothingWritten: a spec.data with two entries
+// sharing a secretKey (a CR stored before the CRD enforced uniqueness) is refused with
+// Ready=False/InvalidSpec and a Warning Event; no value is read, no Secret is created or
+// changed, and no error is returned (retrying cannot help). Fixing the spec syncs normally.
+func TestReconcile_DuplicateSecretKey_RejectedNothingWritten(t *testing.T) {
+	values := map[string][]byte{"app/production/db-password": []byte("p4ss"), "app/production/api-key": []byte("k3y")}
+	dupData := []secretsv1alpha1.KeyorixSecretData{
+		{SecretKey: "DB_PASSWORD", Ref: "app/production/db-password"},
+		{SecretKey: "DB_PASSWORD", Ref: "app/production/api-key"},
+	}
+	nn := types.NamespacedName{Name: "db", Namespace: "app"}
+	target := types.NamespacedName{Name: "db-creds", Namespace: "app"}
+
+	t.Run("fresh CR creates nothing", func(t *testing.T) {
+		ks := ksFixture()
+		ks.Spec.Data = dupData
+		fetcher := &fakeFetcher{values: values}
+		r, c := newReconciler(t, fetcher, ks, tokenSecret())
+		rec := events.NewFakeRecorder(32)
+		r.Recorder = rec
+		for i := 0; i < 2; i++ {
+			_, err := reconcile(t, r)
+			require.NoError(t, err)
+		}
+		var s corev1.Secret
+		assert.True(t, apierrors.IsNotFound(c.Get(context.Background(), target, &s)), "no Secret may be created")
+		var got secretsv1alpha1.KeyorixSecret
+		require.NoError(t, c.Get(context.Background(), nn, &got))
+		require.Len(t, got.Status.Conditions, 1)
+		assert.Equal(t, metav1.ConditionFalse, got.Status.Conditions[0].Status)
+		assert.Equal(t, "InvalidSpec", got.Status.Conditions[0].Reason)
+		assert.Contains(t, got.Status.Conditions[0].Message, "DB_PASSWORD")
+		evs := drainEvents(rec)
+		require.Len(t, evs, 1, "one Warning Event per entry, not per reconcile")
+		assert.Contains(t, evs[0], "InvalidSpec")
+	})
+
+	t.Run("existing Secret is left untouched, fixing the spec recovers", func(t *testing.T) {
+		fetcher := &fakeFetcher{values: values}
+		r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret())
+		_, err := reconcile(t, r)
+		require.NoError(t, err)
+		var before corev1.Secret
+		require.NoError(t, c.Get(context.Background(), target, &before))
+
+		var ks secretsv1alpha1.KeyorixSecret
+		require.NoError(t, c.Get(context.Background(), nn, &ks))
+		ks.Spec.Data = dupData
+		require.NoError(t, c.Update(context.Background(), &ks))
+		_, err = reconcile(t, r)
+		require.NoError(t, err)
+
+		var after corev1.Secret
+		require.NoError(t, c.Get(context.Background(), target, &after))
+		assert.Equal(t, before.Data, after.Data)
+		assert.Equal(t, before.ResourceVersion, after.ResourceVersion, "the Secret must not be rewritten")
+		require.NoError(t, c.Get(context.Background(), nn, &ks))
+		assert.Equal(t, "InvalidSpec", ks.Status.Conditions[0].Reason)
+
+		// Unique keys again: syncs normally.
+		ks.Spec.Data = ksFixture().Spec.Data
+		require.NoError(t, c.Update(context.Background(), &ks))
+		_, err = reconcile(t, r)
+		require.NoError(t, err)
+		require.NoError(t, c.Get(context.Background(), nn, &ks))
+		assert.Equal(t, metav1.ConditionTrue, ks.Status.Conditions[0].Status)
+		assert.Equal(t, "Synced", ks.Status.Conditions[0].Reason)
+	})
+}
+
+// TestDuplicateSecretKey covers the helper directly: unique keys (including a single
+// entry) are fine, the first repeated key is returned.
+func TestDuplicateSecretKey(t *testing.T) {
+	d := func(keys ...string) []secretsv1alpha1.KeyorixSecretData {
+		var out []secretsv1alpha1.KeyorixSecretData
+		for _, k := range keys {
+			out = append(out, secretsv1alpha1.KeyorixSecretData{SecretKey: k})
+		}
+		return out
+	}
+	assert.Equal(t, "", duplicateSecretKey(d("A")))
+	assert.Equal(t, "", duplicateSecretKey(d("A", "B", "C")))
+	assert.Equal(t, "B", duplicateSecretKey(d("A", "B", "C", "B")))
+	assert.Equal(t, "A", duplicateSecretKey(d("A", "A")))
 }
 
 // TestReconcile_Unauthorized_SharedTokenNeverWipesAnyTarget: a rotated shared credential
