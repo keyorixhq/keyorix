@@ -745,6 +745,17 @@ step_ui() {
   )
 }
 
+# GOLDEN-PATH.md section 7 (backup/restore), run as written (#3145). Stops and
+# restarts the demo container, so it goes last. Only meaningful against the
+# up.sh demo (the container/volume/image names the doc uses).
+step_backup_restore() {
+  if [ "$BACKEND" != "sqlite" ] || ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${KEYORIX_DEMO_CONTAINER:-keyorix-demo}"; then
+    echo "SKIP: no up.sh demo container (keyorix-demo) to back up"
+    return 0
+  fi
+  "$SCRIPT_DIR/golden-path-s7.sh"
+}
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
@@ -779,6 +790,7 @@ fi
 if [ "$UI_MODE" != "skip" ]; then
   run_step "UI walk (Playwright, e2e/real)" step_ui
 fi
+run_step "GOLDEN-PATH s7: backup, move aside, restore (verify-audit VALID)" step_backup_restore
 
 if [ "$BROUGHT_UP" = true ] && [ "$KEEP" != true ]; then
   echo ""
