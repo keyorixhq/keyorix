@@ -16,6 +16,10 @@ package config
 //     config.DatabaseConfig (value or pointer) and whose name is DSN, Password
 //     or GetPassword. Type information, not names: it sees through
 //     `d := &cfg.Storage.Database; d.DSN` and through helper returns.
+//   - ALLOWED: comparing DSN with the empty string literal (`d.DSN == ""`,
+//     `"" != d.DSN`): a presence check reads no credential and cannot rebuild
+//     a connection string (server/admin/init.go uses it). Any other use of the
+//     value, including a comparison with a non-empty literal, is a hit.
 //   - NOT RECOGNISED: reflection, or copying the struct into another type
 //     field by field (neither exists today).
 //   - NOT RECOGNISED: test files (they build DSNs on purpose), and other DSNs
@@ -24,6 +28,7 @@ package config
 
 import (
 	"go/ast"
+	"go/token"
 	"go/types"
 	"sort"
 	"strings"
@@ -67,9 +72,21 @@ func TestPostgresCredentialsReachTheDriverOnlyAsParsedConfig(t *testing.T) {
 			if strings.HasSuffix(name, "_test.go") {
 				continue
 			}
+			presenceChecks := map[ast.Expr]bool{}
+			ast.Inspect(f, func(n ast.Node) bool {
+				if be, ok := n.(*ast.BinaryExpr); ok && (be.Op == token.EQL || be.Op == token.NEQ) {
+					if isEmptyStringLit(be.Y) {
+						presenceChecks[ast.Unparen(be.X)] = true
+					}
+					if isEmptyStringLit(be.X) {
+						presenceChecks[ast.Unparen(be.Y)] = true
+					}
+				}
+				return true
+			})
 			ast.Inspect(f, func(n ast.Node) bool {
 				sel, ok := n.(*ast.SelectorExpr)
-				if !ok || !forbidden[sel.Sel.Name] {
+				if !ok || !forbidden[sel.Sel.Name] || (sel.Sel.Name == "DSN" && presenceChecks[sel]) {
 					return true
 				}
 				tv, ok := p.TypesInfo.Types[sel.X]
@@ -96,4 +113,9 @@ func TestPostgresCredentialsReachTheDriverOnlyAsParsedConfig(t *testing.T) {
 		t.Errorf("%s is read outside internal/config; open PostgreSQL with config.ResolvePostgresConnConfig "+
 			"(the password is set on pgx's parse of the DSN, never spliced into a string)", h)
 	}
+}
+
+func isEmptyStringLit(e ast.Expr) bool {
+	lit, ok := ast.Unparen(e).(*ast.BasicLit)
+	return ok && lit.Kind == token.STRING && (lit.Value == `""` || lit.Value == "``")
 }

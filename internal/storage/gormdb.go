@@ -3,10 +3,22 @@ package storage
 import (
 	"fmt"
 
+	"github.com/jackc/pgx/v5"
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 )
+
+// postgresConnectError is the error for a failed Postgres open: a clear
+// config.PostgresAuthError when the failure is an authentication one (the
+// original stays wrapped), otherwise the usual wrapped driver error.
+func postgresConnectError(err error, cc *pgx.ConnConfig) error {
+	classified := config.ClassifyPostgresConnectErrorConfig(err, cc)
+	if classified != err {
+		return classified
+	}
+	return fmt.Errorf("failed to connect to postgres: %w", err)
+}
 
 // OpenGormDB opens a raw *gorm.DB for the configured local backend, switching on
 // cfg.Storage.Type with the same mapping the factory uses (postgres/postgresql →

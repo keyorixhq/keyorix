@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -46,7 +45,7 @@ func openPostgresGorm(d *config.DatabaseConfig, gcfg *gorm.Config) (*gorm.DB, er
 	db, err := gorm.Open(postgres.New(postgres.Config{Conn: sqlDB}), gcfg)
 	if err != nil {
 		_ = sqlDB.Close()
-		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
+		return nil, postgresConnectError(err, cc)
 	}
 	return db, nil
 }
