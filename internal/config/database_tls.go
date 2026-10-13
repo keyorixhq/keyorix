@@ -19,7 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // SSLRootCertSystem is the ssl_root_cert value that trusts the operating
@@ -70,22 +71,17 @@ func sslModeVerifies(mode string) bool {
 // writable by group or others (anyone who can write it can make the server
 // trust their database). Errors name the path, never file contents.
 func LoadDatabaseCAPool(path string) (*x509.CertPool, int, error) {
-	// O_NONBLOCK so a FIFO opens at once and is refused by the IsRegular check
-	// below; a blocking open on a FIFO with no writer would hang boot instead.
-	// It has no effect on reads from the regular file that passes that check.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) // #nosec G304 -- the operator names their own CA file in the config
+	// OpenRegular opens non-blocking and fstats the same descriptor, so a FIFO
+	// is refused at once instead of hanging boot in open(2).
+	f, info, err := secretenv.OpenRegular(path, 0)
 	if err != nil {
+		if errors.Is(err, secretenv.ErrNotRegular) {
+			return nil, 0, fmt.Errorf("CA file %s: not a regular file", path)
+		}
 		return nil, 0, fmt.Errorf("read CA file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	info, err := f.Stat()
-	if err != nil {
-		return nil, 0, fmt.Errorf("read CA file: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, 0, fmt.Errorf("CA file %s: not a regular file", path)
-	}
 	if perm := info.Mode().Perm(); perm&0o022 != 0 {
 		return nil, 0, fmt.Errorf("CA file %s has permissions %#o: writable by group or others, refusing to trust it; fix with chmod go-w %s", path, perm, path)
 	}
