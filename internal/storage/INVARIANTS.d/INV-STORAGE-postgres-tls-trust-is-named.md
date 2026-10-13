@@ -27,7 +27,15 @@
   field (a password, user or database name) can append a later `sslmode`/`sslrootcert`/`host`
   that overrides the validated one: `TestBuildPostgresDSN_FieldValuesCannotInjectKeywords`
   (parsed by pgx). A FIFO named as the CA is refused without blocking boot:
-  `TestLoadDatabaseCAPool_FIFORefusedWithoutBlocking`. **Not covered**: `service=`/`PGSERVICEFILE` settings (pgx can read
-  sslmode from a service file; the check does not), and the file is re-read by pgx at connect
+  `TestLoadDatabaseCAPool_FIFORefusedWithoutBlocking`. PG-TLS-2: the sslmode is one pgx accepts
+  (`validSSLModes`), `ssl_mode` next to a `dsn` must equal the dsn's own `sslmode`, and a dsn with
+  no `sslmode` that names a connection service (`service=`, `PGSERVICE`) is refused rather than
+  read from a service file Keyorix does not parse; every reader (validation, the insecure-settings
+  registry, the posture line) shares one resolution, `resolveDatabaseTLS`:
+  `internal/config/database_sslmode_test.go`, and against pgx's real plaintext fallback
+  `TestDSNTLSSettings_AgreesWithPgx` (plaintext comparison) and
+  `FuzzEffectiveSSLMode_NeverMissesPgxPlaintext`. **Not covered**: service-file settings other
+  than sslmode (a service's `sslrootcert` can only add verification to a dsn that states its own
+  sslmode, never remove it), and the file is re-read by pgx at connect
   time, so a CA replaced between the check and the connection is what pgx uses (only the
   owner/root can replace it, since a group/world-writable file is refused).

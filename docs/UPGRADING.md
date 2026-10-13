@@ -82,6 +82,18 @@ binary: a remaining problem is listed as a `database-tls` deviation. See
 is unchanged. UNVERIFIED as an upgrade drill; the refusal itself is covered by
 tests.
 
+**PostgreSQL: three more TLS settings now refuse to start** (the server, and
+every `admin` command that connects). (1) An `ssl_mode` outside `disable`,
+`allow`, `prefer`, `require`, `verify-ca`, `verify-full` (it used to pass
+validation and fail at the first connection); the same applies to the dsn's
+`sslmode` and to `PGSSLMODE`. (2) `ssl_mode` set next to a `dsn` whose
+`sslmode` differs or is missing (`ssl_mode` was silently ignored): put the
+same `sslmode=` in the dsn, or remove `ssl_mode`. (3) A `dsn` with no
+`sslmode` that names a connection service (`service=`, or `PGSERVICE` set):
+add `sslmode=` to the dsn. Check with `keyorix-server admin validate
+--posture` after updating the binary. See
+[CONFIGURATION.md](CONFIGURATION.md#postgresql-tls).
+
 **Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
 CMD). `docker run <image> <command>` and `docker compose run backend <command>`
 still run `<command>`, after the optional config copy (`KEYORIX_CONFIG_SOURCE`);
