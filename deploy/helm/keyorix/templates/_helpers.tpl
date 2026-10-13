@@ -37,6 +37,32 @@ is no live Secret yet for it to diverge from).
 {{- end -}}
 {{- end -}}
 
+{{/*
+Which optional keys the server's Secret carries, so the pod only gets a *_FILE
+variable for a file that will exist (the server and entrypoint treat a *_FILE that
+points at nothing as a fatal misconfiguration, not as "unset").
+  - chart-managed Secret: the admin password only when auth.adminPassword is set;
+    the bootstrap token always (secret.yaml generates it).
+  - auth.existingSecret: true when auth.existingSecretKeys.<key> says so, or when
+    the live Secret already has the key (`lookup`; empty under `helm template`/
+    `--dry-run`, so CI renders see "false" there unless the flag is set).
+Renders "true" or nothing.
+*/}}
+{{- define "keyorix.hasAdminPassword" -}}
+{{- if .Values.auth.existingSecret -}}
+{{- $k := .Values.auth.existingSecretKeys | default dict -}}
+{{- $s := lookup "v1" "Secret" .Release.Namespace .Values.auth.existingSecret -}}
+{{- if or $k.adminPassword (and $s $s.data (hasKey $s.data "KEYORIX_ADMIN_PASSWORD")) -}}true{{- end -}}
+{{- else if .Values.auth.adminPassword -}}true{{- end -}}
+{{- end -}}
+{{- define "keyorix.hasBootstrapToken" -}}
+{{- if .Values.auth.existingSecret -}}
+{{- $k := .Values.auth.existingSecretKeys | default dict -}}
+{{- $s := lookup "v1" "Secret" .Release.Namespace .Values.auth.existingSecret -}}
+{{- if or $k.bootstrapToken (and $s $s.data (hasKey $s.data "KEYORIX_BOOTSTRAP_TOKEN")) -}}true{{- end -}}
+{{- else -}}true{{- end -}}
+{{- end -}}
+
 {{/* Database host: the bundled Postgres service, or the external host. */}}
 {{- define "keyorix.dbHost" -}}
 {{- if .Values.postgresql.enabled -}}{{ include "keyorix.postgresql.fullname" . }}{{- else -}}{{ required "externalDatabase.host is required when postgresql.enabled is false" .Values.externalDatabase.host }}{{- end -}}
@@ -144,12 +170,28 @@ look up, so it renders fresh values each time.
 */}}
 {{- define "keyorix.secureBaseline.data" -}}
 {{- if not (hasKey .Values "_secureBaselineData") -}}
-{{- $name := printf "%s-secure-baseline" (include "keyorix.fullname" .) -}}
+{{- $name := include "keyorix.secureBaseline.secretName" . -}}
 {{- $existing := lookup "v1" "Secret" .Release.Namespace $name -}}
 {{- $data := dict -}}
 {{- if and $existing $existing.data -}}
 {{- $data = deepCopy $existing.data -}}
 {{- end -}}
+{{- if .Values.secureBaseline.existingSecret -}}
+{{- /* BYO Secret: generate nothing. Where Helm can see the cluster (install,
+upgrade) check the keys; under `helm template` (ArgoCD) lookup is empty, so the
+check is skipped and the workloads fail to start if a key is missing. */ -}}
+{{- if $existing -}}
+{{- $missing := list -}}
+{{- range $k := include "keyorix.secureBaseline.requiredKeys" . | fromJsonArray -}}
+{{- if not (index $data $k) -}}
+{{- $missing = append $missing $k -}}
+{{- end -}}
+{{- end -}}
+{{- if $missing -}}
+{{- fail (printf "secureBaseline.existingSecret %q is missing required key(s): %s. See deploy/helm/keyorix/README.md (Secure baseline with an existing Secret)." $name (join ", " $missing)) -}}
+{{- end -}}
+{{- end -}}
+{{- else -}}
 {{- $days := int .Values.secureBaseline.certValidityDays -}}
 {{- if not (and (hasKey $data "server.crt") (hasKey $data "server.key")) -}}
 {{- $svc := include "keyorix.server.fullname" . -}}
@@ -166,9 +208,34 @@ look up, so it renders fresh values each time.
 {{- $_ := set $data "postgres.crt" ($pgCert.Cert | b64enc) -}}
 {{- $_ := set $data "postgres.key" ($pgCert.Key | b64enc) -}}
 {{- end -}}
+{{- end -}}
 {{- $_ := set .Values "_secureBaselineData" $data -}}
 {{- end -}}
 {{- toJson .Values._secureBaselineData -}}
+{{- end -}}
+
+{{/*
+Name of the Secret the secure-baseline pods mount: the operator's
+secureBaseline.existingSecret, else the chart-generated <fullname>-secure-baseline.
+*/}}
+{{- define "keyorix.secureBaseline.secretName" -}}
+{{- if .Values.secureBaseline.existingSecret -}}
+{{- .Values.secureBaseline.existingSecret -}}
+{{- else -}}
+{{- printf "%s-secure-baseline" (include "keyorix.fullname" .) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Keys a secureBaseline Secret must carry (JSON list). The Postgres pair is only
+required when the bundled PostgreSQL is deployed.
+*/}}
+{{- define "keyorix.secureBaseline.requiredKeys" -}}
+{{- $keys := list "server.crt" "server.key" "metrics_token" -}}
+{{- if .Values.postgresql.enabled -}}
+{{- $keys = concat $keys (list "postgres.crt" "postgres.key") -}}
+{{- end -}}
+{{- toJson $keys -}}
 {{- end -}}
 
 {{/*
@@ -176,12 +243,19 @@ sha256 over "key=value\n" for the sorted secureBaseline Secret keys. A pod
 template annotation checksum/secure-baseline: <this> rolls the pods when the
 Secret changes (delete it to rotate, then helm upgrade), since Kubernetes does
 not restart pods on a mounted Secret change.
+With secureBaseline.existingSecretRevision set (BYO Secret) the revision is mixed
+in: under `helm template` (ArgoCD) the Secret is invisible, so the data part is
+constant and bumping the revision is the only way a GitOps change rolls the pods
+after the operator rotated the Secret. Empty (default): the checksum is unchanged.
 */}}
 {{- define "keyorix.secureBaseline.checksum" -}}
 {{- $d := include "keyorix.secureBaseline.data" . | fromJson -}}
 {{- $s := "" -}}
 {{- range $k := keys $d | sortAlpha -}}
 {{- $s = printf "%s%s=%s\n" $s $k (index $d $k) -}}
+{{- end -}}
+{{- if and .Values.secureBaseline.existingSecret .Values.secureBaseline.existingSecretRevision -}}
+{{- $s = printf "%sexistingSecretRevision=%s\n" $s (toString .Values.secureBaseline.existingSecretRevision) -}}
 {{- end -}}
 {{- sha256sum $s -}}
 {{- end -}}
