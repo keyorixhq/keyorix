@@ -305,9 +305,11 @@ because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
 encrypted nor verified.
 
-The Helm chart passes `externalDatabase.sslRootCert` through as
-`ssl_root_cert` (it does not mount the file; mount it yourself, or use
-`system`). `admin validate --posture` prints one informational line saying
+Helm: put the CA's PEM in a Secret and set `externalDatabase.caSecret.name`
+(and `.key`, default `ca.crt`); the chart mounts it read-only at
+`/app/db-ca/ca.crt` and renders that as `ssl_root_cert`. Or set
+`externalDatabase.sslRootCert` (`system`, or a path you mount yourself). With
+`sslMode: verify-full`/`verify-ca` and neither, the chart refuses to render. `admin validate --posture` prints one informational line saying
 what is encrypted and what is verified against which CA.
 
 ### Refusing to vivify a missing database
