@@ -179,7 +179,8 @@ bring_up_postgres() {
     echo "==> building keyorix-demo:airgap (shared with the SQLite path)"
     command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required to build the web UI (see web/package.json)"; return 1; }
     make -C "$REPO_ROOT" populate-webui-dist >/dev/null || { echo "make populate-webui-dist failed"; return 1; }
-    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp -t keyorix-demo:airgap "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
+    demo_stamp_build_args "$REPO_ROOT"
+    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp ${DEMO_STAMP_ARGS[@]+"${DEMO_STAMP_ARGS[@]}"} -t keyorix-demo:airgap "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
       cat "$SCRATCH/image-build.log"; echo "docker build failed"; return 1
     }
     git -C "$REPO_ROOT" checkout -- server/webui/dist/index.html 2>/dev/null || true
@@ -321,7 +322,9 @@ seed_demo_org() {
   return 0
 }
 
-teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe >/dev/null 2>&1 || true; }
+# check.sh brought this demo up itself (with whatever KEYORIX_DEMO_* names are set), so it
+# owns the default names too: --force-default is the explicit opt-in down.sh asks for (#3149).
+teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe --force-default >/dev/null 2>&1 || true; }
 teardown_postgres() {
   docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
   rm -f "$REPO_ROOT/.demo-2-pg-state"
