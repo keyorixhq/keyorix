@@ -251,23 +251,23 @@ func TestIsLoopbackHost(t *testing.T) {
 	}
 }
 
-// ERRMAP-1: the server names a secret-state refusal with a code. Suspended and
-// expired mean the value may no longer be served (ErrSecretGone, wipe); outside the
-// access schedule and max-reads exhausted keep the synced Secret (ErrSecretUnavailable,
-// never ErrSecretGone). A bare 403 without a code stays ErrSecretGone, and an
-// unrelated 409 is neither.
+// ERRMAP-1: the server names a secret-state refusal with a code. None of them is an
+// access-cut signal: outside the access schedule and max-reads exhausted are
+// ErrSecretUnavailable, suspended is ErrSecretSuspended and expired is ErrSecretExpired
+// (FIX-3175B: the controller retains the target Secret for all of them and never wipes).
+// A bare 403 without a code stays ErrSecretGone, and an unrelated 409 is none of them.
 func TestClient_FetchValueSecretStateRefusals(t *testing.T) {
 	cases := []struct {
-		status            int
-		code              string
-		gone, unavailable bool
+		status                                int
+		code                                  string
+		gone, unavailable, suspended, expired bool
 	}{
-		{http.StatusForbidden, "SecretAccessOutsideSchedule", false, true},
-		{http.StatusConflict, "SecretMaxReadsExhausted", false, true},
-		{http.StatusConflict, "SecretSuspended", true, false},
-		{http.StatusConflict, "SecretExpired", true, false},
-		{http.StatusForbidden, "Forbidden", true, false},
-		{http.StatusConflict, "ConflictError", false, false},
+		{http.StatusForbidden, "SecretAccessOutsideSchedule", false, true, false, false},
+		{http.StatusConflict, "SecretMaxReadsExhausted", false, true, false, false},
+		{http.StatusConflict, "SecretSuspended", false, false, true, false},
+		{http.StatusConflict, "SecretExpired", false, false, false, true},
+		{http.StatusForbidden, "Forbidden", true, false, false, false},
+		{http.StatusConflict, "ConflictError", false, false, false, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {
@@ -281,6 +281,36 @@ func TestClient_FetchValueSecretStateRefusals(t *testing.T) {
 			require.Error(t, err)
 			assert.Equal(t, tc.gone, errors.Is(err, ErrSecretGone), "ErrSecretGone for %d %s: %v", tc.status, tc.code, err)
 			assert.Equal(t, tc.unavailable, errors.Is(err, ErrSecretUnavailable), "ErrSecretUnavailable for %d %s: %v", tc.status, tc.code, err)
+			assert.Equal(t, tc.suspended, errors.Is(err, ErrSecretSuspended), "ErrSecretSuspended for %d %s: %v", tc.status, tc.code, err)
+			assert.Equal(t, tc.expired, errors.Is(err, ErrSecretExpired), "ErrSecretExpired for %d %s: %v", tc.status, tc.code, err)
+		})
+	}
+}
+
+// FetchValueInfo reports the source secret's expiration alongside the value.
+func TestClient_FetchValueInfo_Expiration(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		wantExp    string
+	}{
+		{"with expiration", `{"data":{"value":"v","secret":{"expiration":"2030-01-02T03:04:05Z"}}}`, "2030-01-02T03:04:05Z"},
+		{"null expiration", `{"data":{"value":"v","secret":{"expiration":null}}}`, ""},
+		{"no secret block", `{"data":{"value":"v"}}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			defer srv.Close()
+			v, err := New(srv.URL, "tok").FetchValueInfo(context.Background(), "a/b/c")
+			require.NoError(t, err)
+			assert.Equal(t, "v", string(v.Data))
+			if tc.wantExp == "" {
+				assert.Nil(t, v.Expiration)
+				return
+			}
+			require.NotNil(t, v.Expiration)
+			assert.Equal(t, tc.wantExp, v.Expiration.UTC().Format("2006-01-02T15:04:05Z"))
 		})
 	}
 }

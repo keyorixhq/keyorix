@@ -37,6 +37,40 @@ A fetch failure is handled differently depending on what it means:
   plaintext value sitting in the cluster indefinitely after access was deliberately cut
   would be a worse outcome than a workload losing the Secret it depends on.
 
+## Suspended and expired secrets
+
+A Keyorix secret can be *suspended* (an operator's "block value reads" switch; the
+server answers `409 SecretSuspended`) or *expire* (`409 SecretExpired`). Neither is a
+revoked grant, so neither deletes the target Secret. What happens, by cause:
+
+| Cause | Target Secret | `Ready` | Also raised |
+| --- | --- | --- | --- |
+| Server unreachable, timeout, 5xx, token Secret missing | **Never modified or deleted.** Retried with backoff | `False`, reason `SyncError` | — |
+| Referenced secret **expired** | **Retained** (last value kept; nothing is written, not even other keys) | `False`, reason `SourceSecretExpired` | `SourceSecretHealthy=False`, Warning Event `SourceSecretExpired`, gauge `expired` |
+| Referenced secret **suspended**, `spec.onSuspend: Retain` (default) | **Retained**, as above | `False`, reason `SourceSecretSuspended` | `SourceSecretHealthy=False`, Warning Event `SourceSecretSuspended`, gauge `suspended` |
+| Referenced secret **suspended**, `spec.onSuspend: Clear` | The keys of suspended refs are **emptied**; keys of readable refs stay current. The Secret object is never deleted, and a Secret the operator does not own is never touched | `True` (the rest synced) | as above |
+| Within **30, 7 or 1 days** of expiring | Syncs normally | `True` | `SourceSecretHealthy=False` reason `SourceSecretExpiring`, Warning Event when each window is first entered, gauge `expiring` |
+| Resumed / extended | Next reconcile (within `spec.refreshInterval`) **restores** the data under the same name, labels and owner | `True` | condition removed, Normal Event `SourceSecretRecovered`, gauge back down |
+
+A confirmed 404/403 or a 401 is a different signal and still follows `spec.prunePolicy`
+(see "How it works"). The state-based reconcile above does not back off: it requeues at
+`refreshInterval`, so a resume is picked up within one interval.
+
+**What running workloads see.** The operator only changes the Secret object:
+
+- Pods that took the value as **environment variables** keep what they started with until
+  they restart — the environment of a running container never changes.
+- Pods that **mount the Secret as a volume** follow the Secret: with `Retain` the files
+  stay; with `Clear` the files disappear (after the kubelet's sync delay, typically up to a
+  minute) and reappear after the resume. Mounts with `subPath` never update.
+- **New pods** that need a key `Clear` removed fail with `CreateContainerConfigError`
+  (a `secretKeyRef` to a missing key, or a Secret volume without `optional: true` whose
+  Secret has no such item) until the secret is resumed. With `Retain`, new pods start with
+  the retained value.
+
+Metric: `keyorix_operator_source_secrets{state="suspended|expired|expiring"}` is the number
+of `KeyorixSecret`s currently in each state.
+
 ## Install
 
 The operator ships as a Helm chart that installs the CRD, controller, ServiceAccount, and

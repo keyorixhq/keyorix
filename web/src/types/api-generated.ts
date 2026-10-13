@@ -2778,7 +2778,7 @@ export interface paths {
         };
         /**
          * Show a certificate secret's public X.509 metadata
-         * @description Subject, issuer, validity window, SANs, and algorithms of a certificate-valued secret. Never returns the value or any private key.
+         * @description Subject, issuer, validity window, SANs, and algorithms of a certificate-valued secret. Never returns the value or any private key. Refused like a value read: a read outside the secret's access schedule answers 403 with error SecretAccessOutsideSchedule; an expired or suspended secret answers 409 (see the SecretReadRefused response). Inspecting does not charge max_reads, so SecretMaxReadsExhausted is never returned here.
          */
         get: operations["getSecretCertificate"];
         put?: never;
@@ -10967,6 +10967,9 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["SecretReadRefused"];
         };
     };
     getSecretBlastRadius: {

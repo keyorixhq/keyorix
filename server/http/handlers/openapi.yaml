@@ -4321,7 +4321,11 @@ paths:
       summary: Show a certificate secret's public X.509 metadata
       description: >-
         Subject, issuer, validity window, SANs, and algorithms of a certificate-valued
-        secret. Never returns the value or any private key.
+        secret. Never returns the value or any private key. Refused like a value read: a
+        read outside the secret's access schedule answers 403 with error
+        SecretAccessOutsideSchedule; an expired or suspended secret answers 409 (see the
+        SecretReadRefused response). Inspecting does not charge max_reads, so
+        SecretMaxReadsExhausted is never returned here.
       operationId: getSecretCertificate
       security: [{bearerAuth: []}]
       parameters:
@@ -4337,6 +4341,9 @@ paths:
                   data: {$ref: '#/components/schemas/CertificateInfo'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/SecretReadRefused'}
   /api/v1/secrets/{id}/blast-radius:
     get:
       tags: [Secrets]

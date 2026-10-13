@@ -12,22 +12,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// ERRMAP-1: a value read the secret's own state refuses carries a code. Suspended
-// and expired are definitive (ErrUpstreamGone: the materialized value is removed);
-// outside the access schedule and max-reads exhausted are not (the synced value
-// stays). A bare 403 is still a revoked grant.
+// ERRMAP-1: a value read the secret's own state refuses carries a code. None of the
+// four is "gone": suspended wraps ErrSourceSuspended, expired ErrSourceExpired (the
+// engine retains the target and reports the state; FIX-3175B), outside the access
+// schedule and max-reads exhausted are plain transient errors. A bare 403 is still a
+// revoked grant (ErrUpstreamGone).
 func TestKeyorixFetcher_SecretStateRefusals(t *testing.T) {
 	for _, tc := range []struct {
-		status int
-		code   string
-		gone   bool
+		status             int
+		code               string
+		gone               bool
+		suspended, expired bool
 	}{
-		{http.StatusConflict, "SecretSuspended", true},
-		{http.StatusConflict, "SecretExpired", true},
-		{http.StatusForbidden, "SecretAccessOutsideSchedule", false},
-		{http.StatusConflict, "SecretMaxReadsExhausted", false},
-		{http.StatusForbidden, "Forbidden", true},
-		{http.StatusConflict, "ConflictError", false},
+		{http.StatusConflict, "SecretSuspended", false, true, false},
+		{http.StatusConflict, "SecretExpired", false, false, true},
+		{http.StatusForbidden, "SecretAccessOutsideSchedule", false, false, false},
+		{http.StatusConflict, "SecretMaxReadsExhausted", false, false, false},
+		{http.StatusForbidden, "Forbidden", true, false, false},
+		{http.StatusConflict, "ConflictError", false, false, false},
 	} {
 		t.Run(tc.code, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -40,6 +42,8 @@ func TestKeyorixFetcher_SecretStateRefusals(t *testing.T) {
 			err := NewKeyorixFetcher(srv.URL, "tok", 1).getJSON(context.Background(), "/api/v1/secrets/7?include_value=true", &out)
 			require.Error(t, err)
 			assert.Equal(t, tc.gone, errors.Is(err, ErrUpstreamGone), "%d %s: %v", tc.status, tc.code, err)
+			assert.Equal(t, tc.suspended, errors.Is(err, ErrSourceSuspended), "%d %s: %v", tc.status, tc.code, err)
+			assert.Equal(t, tc.expired, errors.Is(err, ErrSourceExpired), "%d %s: %v", tc.status, tc.code, err)
 		})
 	}
 }

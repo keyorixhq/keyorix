@@ -115,6 +115,34 @@ confirmed-revoked value must not stay readable in the cluster indefinitely) acts
 chart grants whenever `cleanup` **or** `pruneOnRevoke` is enabled (see below) — since
 `pruneOnRevoke` defaults on, a default install already has it.
 
+## Suspended and expired sources
+
+A Keyorix secret can be *suspended* (an operator's "block value reads" switch; the server
+answers `409 SecretSuspended`) or *expire* (`409 SecretExpired`). Neither is a revoked
+grant, so neither deletes the target Secret, and neither counts as a failure or a
+revocation (the loop keeps its normal interval, so a resume is picked up within one
+interval). The setting is `onSuspend: retain|clear` in the Helm values, `on_suspend` in the
+agent's config file. By cause:
+
+| Cause | Target Secret | Logged / counted |
+| --- | --- | --- |
+| Server unreachable, timeout, 5xx | **Never modified or deleted**; counted `failed`, retried with backoff | — |
+| Source **expired** | **Retained** (the target is not written at all) | `WARNING SourceSecretExpired`, outcome `source_expired` |
+| Source **suspended**, `onSuspend: retain` (default) | **Retained** | `WARNING SourceSecretSuspended`, outcome `source_suspended` |
+| Source **suspended**, `onSuspend: clear` | The suspended mapping's key is **emptied**; other keys stay current. The Secret is never deleted, and a Secret the agent does not own is never touched | as above |
+| Within **30, 7 or 1 days** of expiring | Syncs normally | `WARNING SourceSecretExpiring` when each window is first entered, outcome `source_expiring` |
+| Resumed / extended | The next pass **restores** the data: same name, labels and values | "readable again" line |
+
+The lines are logged when a source *enters or leaves* a state, not every pass; the
+`keyorix_k8s_sync_secrets_total{outcome=…}` counters (and `/status`) count the targets
+observed in each state per pass. A target that also has a confirmed-revoked mapping still
+takes the `pruneOnRevoke` path above; retained keys are carried over unchanged.
+
+**What running workloads see** — same as for the operator (`docs/k8s-operator.md`):
+environment variables of running containers stay fixed until restart; volume-mounted
+files follow the Secret (`retain` keeps them, `clear` removes them until the resume);
+new pods fail with `CreateContainerConfigError` only if `clear` removed a key they need.
+
 ## Orphan cleanup (`cleanup`)
 
 `pruneOnRevoke` above handles a target whose *upstream* secret became inaccessible.

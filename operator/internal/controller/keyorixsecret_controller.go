@@ -18,6 +18,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -185,6 +186,9 @@ type KeyorixSecretReconciler struct {
 	// tests that don't exercise the mass-revocation breaker use) falls back to
 	// time.Now via clockNow.
 	now func() time.Time
+	// sourceTracker remembers which KeyorixSecrets reference a suspended, expired or
+	// soon-to-expire secret, for the keyorix_operator_source_secrets gauge.
+	sourceTracker sourceStateTracker
 }
 
 // NewReconciler builds a KeyorixSecretReconciler with a fresh random HMAC key for
@@ -304,6 +308,9 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	var ks secretsv1alpha1.KeyorixSecret
 	if err := r.Get(ctx, req.NamespacedName, &ks); err != nil {
 		// Deleted: the owned Secret is garbage-collected via its owner reference.
+		if apierrors.IsNotFound(err) {
+			r.sourceTracker.set(req.NamespacedName, "")
+		}
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
@@ -320,8 +327,11 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		secretName = ks.Name
 	}
 
-	desired, token, err := r.buildDesired(ctx, &ks)
+	desired, token, rep, err := r.buildDesired(ctx, &ks)
 	if err != nil {
+		if held, ok := asSourceHeld(err); ok {
+			return r.holdSource(ctx, &ks, rep, held, interval)
+		}
 		logger.Error(err, "failed to assemble secret data")
 		switch {
 		case errors.Is(err, keyorix.ErrSecretGone):
@@ -348,7 +358,19 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	hash := hashData(r.hashKey, desired)
 
-	if err := r.applySecret(ctx, &ks, secretName, desired); err != nil {
+	// A resumed or healthy source clears SourceSecretHealthy; a suspended one under
+	// onSuspend=Clear (or one inside an expiry warning window) sets it. In memory
+	// here, persisted by succeed()/fail() below.
+	r.recordSourceState(&ks, rep)
+
+	if len(desired) == 0 {
+		// onSuspend=Clear and every referenced secret is suspended: there is nothing to
+		// write. Empty the keys in a Secret we own, but never create an empty one.
+		if err := r.emptyManagedSecret(ctx, &ks, secretName); err != nil {
+			logger.Error(err, "failed to clear the target Secret")
+			return r.fail(ctx, &ks, err)
+		}
+	} else if err := r.applySecret(ctx, &ks, secretName, desired); err != nil {
 		logger.Error(err, "failed to apply target Secret")
 		return r.fail(ctx, &ks, err)
 	}
@@ -401,11 +423,11 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 // a fetch error, once obtained) so the caller can reuse it for the mass-revocation
 // circuit breaker's live peer probe (see massRevocationSuspected) without a second
 // token Secret read.
-func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret) (desired map[string][]byte, token string, err error) {
+func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret) (desired map[string][]byte, token string, rep *sourceReport, err error) {
 	// Validate the destination BEFORE reading the token Secret, so a CR pointing at an
 	// untrusted server can't even cause the operator to read (let alone transmit) a Secret.
 	if err := r.validateServer(ks.Spec.Server); err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	tokenKey := ks.Spec.TokenSecretRef.Key
 	if tokenKey == "" {
@@ -432,7 +454,7 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 		// actually revoked. Wiping the target Secret on a merely-ambiguous "we don't know"
 		// failure would cause an unnecessary outage for every workload depending on it,
 		// the same reasoning that already keeps network errors/5xx out of the wipe path.
-		return nil, "", fmt.Errorf("read token secret %s: %w", ref, err)
+		return nil, "", nil, fmt.Errorf("read token secret %s: %w", ref, err)
 	}
 	// A CRD-write-only principal (the CRD's own documented least-privilege deployment
 	// model has no direct core-Secret read/write RBAC) can name ANY pre-existing Secret
@@ -447,24 +469,90 @@ func (r *KeyorixSecretReconciler) buildDesired(ctx context.Context, ks *secretsv
 	// attacker cannot), so an unlabeled pre-existing Secret can never be used as a token
 	// source, however it got created.
 	if tokenSecret.Labels[tokenSecretLabel] != tokenSecretValue {
-		return nil, "", fmt.Errorf("token secret %s is missing the required label %s=%s (only a Secret explicitly marked as a Keyorix token source may be used as tokenSecretRef)",
+		return nil, "", nil, fmt.Errorf("token secret %s is missing the required label %s=%s (only a Secret explicitly marked as a Keyorix token source may be used as tokenSecretRef)",
 			ref, tokenSecretLabel, tokenSecretValue)
 	}
 	token = string(tokenSecret.Data[tokenKey])
 	if token == "" {
-		return nil, "", fmt.Errorf("token secret %s has no key %q", ref, tokenKey)
+		return nil, "", nil, fmt.Errorf("token secret %s has no key %q", ref, tokenKey)
 	}
 
 	fetcher := r.fetcher(ks.Spec.Server, token)
+	info, hasInfo := fetcher.(valueInfoFetcher)
+	rep = &sourceReport{}
 	desired = make(map[string][]byte, len(ks.Spec.Data))
 	for _, d := range ks.Spec.Data {
-		val, ferr := fetcher.FetchValue(ctx, d.Ref)
-		if ferr != nil {
-			return nil, token, fmt.Errorf("fetch %q: %w", d.Ref, ferr)
+		var val []byte
+		var exp *time.Time
+		var ferr error
+		if hasInfo {
+			var v keyorix.Value
+			v, ferr = info.FetchValueInfo(ctx, d.Ref)
+			val, exp = v.Data, v.Expiration
+		} else {
+			val, ferr = fetcher.FetchValue(ctx, d.Ref)
 		}
+		switch {
+		case errors.Is(ferr, keyorix.ErrSecretSuspended):
+			// Reads are switched off, not gone: never a reason to remove anything.
+			// What the target holds meanwhile is decided below by spec.onSuspend.
+			rep.suspended = append(rep.suspended, d.Ref)
+			continue
+		case errors.Is(ferr, keyorix.ErrSecretExpired):
+			rep.expired = append(rep.expired, d.Ref)
+			continue
+		case ferr != nil:
+			return nil, token, nil, fmt.Errorf("fetch %q: %w", d.Ref, ferr)
+		}
+		rep.noteExpiry(d.Ref, exp, r.clockNow())
 		desired[d.SecretKey] = val
 	}
-	return desired, token, nil
+	if len(rep.expired) > 0 {
+		// Expired is always Retain: the target keeps its last value, nothing is written.
+		_, _, msg, _ := rep.summary()
+		return nil, token, rep, &sourceHeldError{reason: reasonSourceExpired, msg: msg}
+	}
+	if len(rep.suspended) > 0 && ks.Spec.OnSuspend != secretsv1alpha1.OnSuspendClear {
+		_, _, msg, _ := rep.summary()
+		return nil, token, rep, &sourceHeldError{reason: reasonSourceSuspended, msg: msg}
+	}
+	// onSuspend=Clear: the suspended refs' keys are simply absent from desired, so the
+	// applied Secret no longer carries them; keys of readable refs stay current.
+	return desired, token, rep, nil
+}
+
+// holdSource handles a reconcile that must leave the target Secret exactly as it is
+// because a referenced secret is expired, or suspended with onSuspend=Retain: it records
+// the SourceSecretHealthy condition, Event and gauge, marks Ready=False with the same
+// reason, and requeues at the refresh interval. It deliberately returns no error: this is
+// an expected, operator-driven state, not a fault to back off from, and a resume must be
+// picked up within one interval rather than after exponential error backoff.
+func (r *KeyorixSecretReconciler) holdSource(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, rep *sourceReport, held *sourceHeldError, interval time.Duration) (ctrl.Result, error) {
+	r.recordSourceState(ks, rep)
+	r.setReady(ks, metav1.ConditionFalse, held.reason, held.msg+" — the target Secret was left unchanged")
+	if err := r.Status().Update(ctx, ks); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{RequeueAfter: interval}, nil
+}
+
+// emptyManagedSecret removes every data key from the target Secret when onSuspend=Clear
+// leaves nothing to write. The Secret object stays (workloads that mount it keep a
+// valid, empty reference). It touches only a Secret this operator manages AND this CR
+// controls, exactly like wipeTargetSecret, and does nothing when there is none.
+func (r *KeyorixSecretReconciler) emptyManagedSecret(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, name string) error {
+	var secret corev1.Secret
+	if err := r.Get(ctx, types.NamespacedName{Namespace: ks.Namespace, Name: name}, &secret); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+	if secret.Labels[ManagedByLabel] != ManagedByValue || !metav1.IsControlledBy(&secret, ks) {
+		return nil
+	}
+	if len(secret.Data) == 0 {
+		return nil
+	}
+	secret.Data = map[string][]byte{}
+	return r.Update(ctx, &secret)
 }
 
 func (r *KeyorixSecretReconciler) fetcher(server, token string) valueFetcher {

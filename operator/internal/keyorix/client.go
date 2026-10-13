@@ -58,15 +58,23 @@ var ErrUnauthorized = errors.New("bearer token rejected (unauthorized)")
 // secret's own state refuses the read right now: outside its access schedule (403
 // SecretAccessOutsideSchedule) or its max-reads budget is spent (409
 // SecretMaxReadsExhausted). Neither says access was cut, so it is NOT ErrSecretGone
-// and a previously synced target Secret is left in place: wiping on a schedule
-// window that closes every night would turn the window into a nightly outage, and a
-// max-reads budget limits disclosures (the operator's own refreshes spend it), it
-// does not withdraw the value already materialized.
-//
-// The other two secret-state refusals ARE wrapped as ErrSecretGone: a suspended
-// secret (409 SecretSuspended, the operator's "block value reads" switch) and an
-// expired one (409 SecretExpired).
+// and a previously synced target Secret is left in place: a schedule window that closes
+// every night must not become a nightly outage, and a max-reads budget limits
+// disclosures (the operator's own refreshes spend it), it does not withdraw the value
+// already materialized.
 var ErrSecretUnavailable = errors.New("secret is temporarily unavailable for reading")
+
+// ErrSecretSuspended is wrapped into the error FetchValue returns on 409
+// SecretSuspended: an operator has switched value reads off for the secret. It is NOT
+// ErrSecretGone (the secret exists and the grant stands, and resuming restores it), so
+// nothing here removes a target Secret. The controller decides what the target holds
+// meanwhile from spec.onSuspend (Retain by default, or Clear) and reports it.
+var ErrSecretSuspended = errors.New("secret is suspended")
+
+// ErrSecretExpired is wrapped into the error FetchValue returns on 409 SecretExpired.
+// The target Secret keeps its last value (Retain); the controller flags the state with
+// a condition, a Warning Event and a metric, as it does ahead of the expiry.
+var ErrSecretExpired = errors.New("secret has expired")
 
 // Error codes the server puts in the error envelope's "error" field when a
 // secret's own state refuses a value read (server/http/handlers/openapi.yaml,
@@ -167,9 +175,28 @@ func isLoopbackHost(host string) bool {
 	return false
 }
 
+// Value is a fetched secret value with the source secret's metadata the controller
+// reports on.
+type Value struct {
+	Data []byte
+	// Expiration is the source secret's expiration, nil when it has none or the server
+	// did not send it.
+	Expiration *time.Time
+}
+
 // FetchValue returns the current value of the secret referenced by
 // "project/environment/name".
 func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
+	v, err := c.FetchValueInfo(ctx, ref)
+	if err != nil {
+		return nil, err
+	}
+	return v.Data, nil
+}
+
+// FetchValueInfo is FetchValue plus the source secret's expiration, which the
+// controller uses to warn ahead of it.
+func (c *Client) FetchValueInfo(ctx context.Context, ref string) (Value, error) {
 	// c.hc (built in New above) already sets CheckRedirect to refuseRedirect, and the
 	// caller (KeyorixSecretReconciler.buildDesired) already validates ks.Spec.Server
 	// against an operator-configured --allowed-servers allowlist via validateServer
@@ -178,20 +205,20 @@ func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
 	// three call frames away, so this direct read of c.baseURL itself is what lets a
 	// static analyzer connect a validation call to this exact destination.
 	if err := validateClientBaseURL(c.baseURL); err != nil {
-		return nil, err
+		return Value{}, err
 	}
 	q := url.Values{}
 	q.Set("ref", ref)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/v1/secrets/value?"+q.Encode(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("build request: %w", err)
+		return Value{}, fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.token)
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return Value{}, fmt.Errorf("request failed: %w", err)
 	}
 	defer drainAndClose(resp)
 
@@ -201,32 +228,33 @@ func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
 	}
 	switch {
 	case code == codeOutsideSchedule || code == codeMaxReadsExhausted:
-		return nil, fmt.Errorf("secret reference %q: %s (HTTP %d): %w", ref, code, resp.StatusCode, ErrSecretUnavailable)
-	case code == codeSuspended || code == codeExpired:
-		// The value may no longer be served: same treatment as a revoked grant.
-		return nil, fmt.Errorf("secret reference %q: %s (HTTP %d): %w", ref, code, resp.StatusCode, ErrSecretGone)
+		return Value{}, fmt.Errorf("secret reference %q: %s (HTTP %d): %w", ref, code, resp.StatusCode, ErrSecretUnavailable)
+	case code == codeSuspended:
+		return Value{}, fmt.Errorf("secret reference %q: %s (HTTP %d): %w", ref, code, resp.StatusCode, ErrSecretSuspended)
+	case code == codeExpired:
+		return Value{}, fmt.Errorf("secret reference %q: %s (HTTP %d): %w", ref, code, resp.StatusCode, ErrSecretExpired)
 	case resp.StatusCode == http.StatusNotFound:
 		// The server's ref-resolution collapses "never existed" and "soft-deleted"
 		// into an identical 404 (closing an existence oracle) — either way the
 		// secret this reference names is gone.
-		return nil, fmt.Errorf("secret reference %q not found: %w", ref, ErrSecretGone)
+		return Value{}, fmt.Errorf("secret reference %q not found: %w", ref, ErrSecretGone)
 	case resp.StatusCode == http.StatusForbidden:
 		// Distinct from 401: this means the request was authenticated but the
 		// caller's own scope/grant for THIS reference was denied — e.g. a revoked
 		// machine-identity role. Treated the same as "gone". (A schedule refusal is
 		// also a 403 but carries its own code, handled above.)
-		return nil, fmt.Errorf("secret reference %q forbidden (HTTP 403) — access revoked: %w", ref, ErrSecretGone)
+		return Value{}, fmt.Errorf("secret reference %q forbidden (HTTP 403) — access revoked: %w", ref, ErrSecretGone)
 	case resp.StatusCode == http.StatusUnauthorized:
 		// Unlike 403, a 401 says the token itself is invalid/expired — it says
 		// nothing about whether the referenced secret still exists or is still
 		// permitted, so this must NOT be treated as ErrSecretGone. It IS wrapped as
 		// ErrUnauthorized (see its doc comment) so the controller can still treat a
 		// revoked/rotated credential as an access-cut signal worth wiping for.
-		return nil, fmt.Errorf("not authorized (HTTP 401) — check the token is valid: %w", ErrUnauthorized)
+		return Value{}, fmt.Errorf("not authorized (HTTP 401) — check the token is valid: %w", ErrUnauthorized)
 	case resp.StatusCode == http.StatusBadRequest:
-		return nil, fmt.Errorf("invalid reference %q (want project/environment/name)", ref)
+		return Value{}, fmt.Errorf("invalid reference %q (want project/environment/name)", ref)
 	case resp.StatusCode >= 400:
-		return nil, fmt.Errorf("server returned HTTP %d", resp.StatusCode)
+		return Value{}, fmt.Errorf("server returned HTTP %d", resp.StatusCode)
 	}
 
 	// Value is a *string (not string) so decoding can tell "data.value absent from the
@@ -244,14 +272,17 @@ func (c *Client) FetchValue(ctx context.Context, ref string) ([]byte, error) {
 	// requires a non-empty value and update ignores an empty one).
 	var body struct {
 		Data struct {
-			Value *string `json:"value"`
+			Value  *string `json:"value"`
+			Secret struct {
+				Expiration *time.Time `json:"expiration"`
+			} `json:"secret"`
 		} `json:"data"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&body); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
+		return Value{}, fmt.Errorf("decode response: %w", err)
 	}
 	if body.Data.Value == nil {
-		return nil, fmt.Errorf("decode response: success (HTTP 200) but response is missing data.value")
+		return Value{}, fmt.Errorf("decode response: success (HTTP 200) but response is missing data.value")
 	}
-	return []byte(*body.Data.Value), nil
+	return Value{Data: []byte(*body.Data.Value), Expiration: body.Data.Secret.Expiration}, nil
 }

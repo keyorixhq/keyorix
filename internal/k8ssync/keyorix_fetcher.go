@@ -24,14 +24,22 @@ import (
 // indefinitely (which a plain, unclassified fetch error did).
 var ErrUpstreamGone = errors.New("k8ssync: secret not found or access revoked upstream")
 
+// ErrSourceSuspended and ErrSourceExpired are what a Fetch error wraps when the server
+// answers 409 SecretSuspended / SecretExpired. Neither says the secret is gone or access
+// was cut (resuming or extending restores the read), so neither is ErrUpstreamGone and
+// neither removes anything: the engine retains the target Secret (or, for a suspended
+// source with on_suspend: clear, empties its keys) and reports the state.
+var (
+	ErrSourceSuspended = errors.New("k8ssync: source secret is suspended")
+	ErrSourceExpired   = errors.New("k8ssync: source secret has expired")
+)
+
 // secretStateRefusal classifies a 403/409 whose envelope names a secret-state
 // refusal of a value read (server/http/handlers/openapi.yaml, SecretReadRefused;
-// ERRMAP-1), or returns nil for any other body. A suspended or expired secret may
-// no longer be served: ErrUpstreamGone, so its materialized value is removed. A read
-// outside the secret's access schedule, or with its max-reads budget spent, is
-// transient for this agent: a plain error, so the synced value stays (removing it
-// whenever a schedule window closes would be a recurring outage). It reads at most
-// maxResponseBodyBytes of the body.
+// ERRMAP-1), or returns nil for any other body. Suspended and expired wrap their own
+// sentinels (never ErrUpstreamGone); a read outside the secret's access schedule, or
+// with its max-reads budget spent, is a plain transient error. In every case the synced
+// value stays. It reads at most maxResponseBodyBytes of the body.
 func secretStateRefusal(resp *http.Response) error {
 	var env struct {
 		Error string `json:"error"`
@@ -40,8 +48,10 @@ func secretStateRefusal(resp *http.Response) error {
 		return nil
 	}
 	switch env.Error {
-	case "SecretSuspended", "SecretExpired":
-		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrUpstreamGone)
+	case "SecretSuspended":
+		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrSourceSuspended)
+	case "SecretExpired":
+		return fmt.Errorf("%s (HTTP %d): %w", env.Error, resp.StatusCode, ErrSourceExpired)
 	case "SecretAccessOutsideSchedule", "SecretMaxReadsExhausted":
 		return fmt.Errorf("value read refused: %s (HTTP %d)", env.Error, resp.StatusCode)
 	}
@@ -149,13 +159,20 @@ func isLoopbackHostname(host string) bool {
 // Fetch resolves ref ("<environment>/<name>") to the secret's id and returns its
 // current value.
 func (f *KeyorixFetcher) Fetch(ctx context.Context, ref string) ([]byte, error) {
+	v, _, err := f.FetchWithExpiry(ctx, ref)
+	return v, err
+}
+
+// FetchWithExpiry is Fetch plus the secret's expiration (nil when it has none), which
+// the engine uses to warn ahead of it. It satisfies ExpiryFetcher.
+func (f *KeyorixFetcher) FetchWithExpiry(ctx context.Context, ref string) ([]byte, *time.Time, error) {
 	env, name, err := parseRef(ref)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	id, err := f.resolveID(ctx, env, name)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	return f.fetchValue(ctx, id)
 }
@@ -263,15 +280,19 @@ func (f *KeyorixFetcher) loadEnvironmentsLocked(ctx context.Context) error {
 	return nil
 }
 
-// fetchValue returns the decrypted value of the secret with the given id.
-func (f *KeyorixFetcher) fetchValue(ctx context.Context, id uint) ([]byte, error) {
+// fetchValue returns the decrypted value of the secret with the given id and the
+// secret's expiration (nil when it has none).
+func (f *KeyorixFetcher) fetchValue(ctx context.Context, id uint) ([]byte, *time.Time, error) {
 	var body struct {
-		Value string `json:"value"`
+		Value  string `json:"value"`
+		Secret struct {
+			Expiration *time.Time `json:"expiration"`
+		} `json:"secret"`
 	}
 	if err := f.getJSON(ctx, fmt.Sprintf("/api/v1/secrets/%d?include_value=true", id), &body); err != nil {
-		return nil, fmt.Errorf("read secret %d value: %w", id, err)
+		return nil, nil, fmt.Errorf("read secret %d value: %w", id, err)
 	}
-	return []byte(body.Value), nil
+	return []byte(body.Value), body.Secret.Expiration, nil
 }
 
 // getJSON performs an authenticated GET and decodes the {"data": …} envelope into out.

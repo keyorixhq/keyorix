@@ -140,7 +140,37 @@ type KeyorixSecretSpec struct {
 	// +kubebuilder:default=Delete
 	// +optional
 	PrunePolicy PrunePolicy `json:"prunePolicy,omitempty"`
+	// OnSuspend controls what happens to the target Secret while a referenced Keyorix
+	// secret is SUSPENDED (an operator's "block value reads" switch; the server answers
+	// 409 SecretSuspended). Retain (the default, and what v0.95 did when the server
+	// answered 500 and the operator treated it as a transient error) leaves the target
+	// Secret exactly as it is: nothing is written or removed, and the suspension is
+	// surfaced as the SourceSecretHealthy condition, a Warning Event and a metric.
+	// Clear empties the keys this operator manages in the target Secret (the Secret
+	// object itself, and anything it does not own, are never deleted), so workloads
+	// stop receiving the value; new pods that require one of those keys then fail with
+	// CreateContainerConfigError until the secret is resumed. On resume the next
+	// reconcile (within spec.refreshInterval) restores the data in both modes.
+	// An EXPIRED referenced secret is always retained and flagged the same way (with
+	// Warning Events 30, 7 and 1 days ahead); there is no setting for it.
+	// Transient failures (server unreachable, timeouts, 5xx, a missing token Secret) never
+	// modify the target Secret in either mode.
+	// +kubebuilder:validation:Enum=Retain;Clear
+	// +kubebuilder:default=Retain
+	// +optional
+	OnSuspend OnSuspend `json:"onSuspend,omitempty"`
 }
+
+// OnSuspend selects what the operator does to the target Secret while a referenced
+// Keyorix secret is suspended. See KeyorixSecretSpec.OnSuspend.
+type OnSuspend string
+
+const (
+	// OnSuspendRetain (the default) leaves the target Secret untouched.
+	OnSuspendRetain OnSuspend = "Retain"
+	// OnSuspendClear empties the keys the operator manages in the target Secret.
+	OnSuspendClear OnSuspend = "Clear"
+)
 
 // KeyorixSecretStatus reports the last reconcile outcome.
 type KeyorixSecretStatus struct {

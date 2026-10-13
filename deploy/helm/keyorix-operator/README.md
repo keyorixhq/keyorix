@@ -45,6 +45,16 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
   per-CR to opt OUT and leave the target Secret's last-known value untouched
   instead, for deployments that prefer availability over immediate reap —
   see the field's own CRD description.
+- **A referenced secret is suspended or expired:** never a reason to delete.
+  The target Secret is retained by default (`spec.onSuspend: Retain`); with
+  `spec.onSuspend: Clear` the keys the operator manages are emptied while the
+  Secret itself stays. An expired source is always retained. Either way the
+  `SourceSecretHealthy` condition goes `False` (reason `SourceSecretSuspended` /
+  `SourceSecretExpired`), a Warning Event is emitted, and the
+  `keyorix_operator_source_secrets{state}` gauge counts it; resuming restores
+  the data on the next reconcile and clears all three. Warnings also fire 30, 7
+  and 1 days ahead of an expiry (`SourceSecretExpiring`). See
+  [docs/k8s-operator.md](../../../docs/k8s-operator.md#suspended-and-expired-secrets).
 - **Mass-revocation circuit breaker:** `tokenSecretRef` is commonly *shared*
   across several `KeyorixSecret`s, so a single credential rotation or
   revocation event reads as the identical 401 (or a simultaneous 404/403) on
