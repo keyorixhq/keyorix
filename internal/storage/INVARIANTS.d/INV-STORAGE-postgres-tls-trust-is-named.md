@@ -27,7 +27,12 @@
   field (a password, user or database name) can append a later `sslmode`/`sslrootcert`/`host`
   that overrides the validated one: `TestResolvePostgresDSN_FieldValuesCannotInjectKeywords`
   (parsed by pgx). A FIFO named as the CA is refused without blocking boot:
-  `TestLoadDatabaseCAPool_FIFORefusedWithoutBlocking`. **Not covered**: `service=`/`PGSERVICEFILE` settings (pgx can read
-  sslmode from a service file; the check does not), and the file is re-read by pgx at connect
-  time, so a CA replaced between the check and the connection is what pgx uses (only the
+  `TestLoadDatabaseCAPool_FIFORefusedWithoutBlocking`. A connection service is refused, not
+  resolved: `service=`/`servicefile=` in the dsn (either form) or `PGSERVICE` in the environment
+  make pgx merge a service file's sslmode/sslrootcert/host in behind the check, so
+  `ValidateDatabaseTLS` refuses them (`TestValidateDatabaseTLS_ConnectionServiceIsRefused`;
+  `TestConnectionService_PgxVerifiesWhatTheConfigNeverNamed` shows the bypass; the fuzz target
+  above carries a verify-full service file). `PGSERVICEFILE` alone is inert (pgx reads it only when
+  a service is selected) and is not refused. **Not covered**: the CA file is re-read by pgx at
+  connect time, so a CA replaced between the check and the connection is what pgx uses (only the
   owner/root can replace it, since a group/world-writable file is refused).

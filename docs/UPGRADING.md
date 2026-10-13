@@ -79,8 +79,10 @@ the dsn instead. Helm: `externalDatabase.sslRootCert`. Check with
 `keyorix-server admin validate --posture` (server stopped) after updating the
 binary: a remaining problem is listed as a `database-tls` deviation. See
 [CONFIGURATION.md](CONFIGURATION.md#postgresql-tls). `require` (the default)
-is unchanged. UNVERIFIED as an upgrade drill; the refusal itself is covered by
-tests.
+is unchanged. A PostgreSQL connection-service file (`service=` in the dsn, or the
+`PGSERVICE` environment variable) is refused too, because the file could set the
+TLS mode and CA behind this check: move its settings into `storage.database`.
+UNVERIFIED as an upgrade drill; the refusal itself is covered by tests.
 
 **Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
 CMD). `docker run <image> <command>` and `docker compose run backend <command>`

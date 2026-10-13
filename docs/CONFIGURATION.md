@@ -306,6 +306,15 @@ because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
 encrypted nor verified.
 
+**Connection-service files are refused.** `service=` or `servicefile=` in the
+`dsn`, or the `PGSERVICE` environment variable, make the PostgreSQL driver read
+`sslmode`, `sslrootcert` and `host` from a `pg_service.conf` that Keyorix does
+not inspect, which would sidestep the CA requirement above. The server and the
+`admin` commands refuse to start with such a setting; put the same settings in
+`storage.database` (or the `dsn`) instead. `PGSERVICEFILE` on its own does
+nothing (the driver reads a service file only when a service is selected) and
+is not refused.
+
 The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
 `system`). `admin validate --posture` prints one informational line saying

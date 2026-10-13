@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,7 +24,20 @@ func FuzzDSNTLSSettings_NeverMissesPgxVerification(f *testing.F) {
 	f.Setenv("HOME", f.TempDir())
 	f.Setenv("PGSSLMODE", "")
 	f.Setenv("PGSSLROOTCERT", "")
+	// A service file that turns verification on with no CA: any string that
+	// selects it (service=svc, in any spelling pgx accepts) must be refused by
+	// dsnSelectsService, or the oracle below sees pgx verify and the check not.
+	svcFile := filepath.Join(f.TempDir(), "pg_service.conf")
+	if err := os.WriteFile(svcFile, []byte("[svc]\nhost=db\nsslmode=verify-full\n"), 0o600); err != nil {
+		f.Fatal(err)
+	}
+	f.Setenv("PGSERVICEFILE", svcFile)
+	f.Setenv("PGSERVICE", "")
 	for _, s := range []string{
+		"service=svc",
+		"host=db service='svc'",
+		"postgres://u@db/k?service=svc",
+		"postgres://u@db/k?servic%65=svc",
 		"host=db sslmode=verify-full",
 		"host=db sslmode=require sslmode=verify-ca",
 		"host=db password='x sslmode=disable' sslmode=verify-full",
@@ -44,6 +59,9 @@ func FuzzDSNTLSSettings_NeverMissesPgxVerification(f *testing.F) {
 		tlsCfg := pc.TLSConfig
 		if tlsCfg == nil || (tlsCfg.InsecureSkipVerify && tlsCfg.VerifyPeerCertificate == nil) {
 			return // pgx does not verify the server: nothing to miss.
+		}
+		if sel, serr := dsnSelectsService(dsn); serr != nil || sel {
+			return // a connection service is refused: fails closed.
 		}
 		mode, root, err := dsnTLSSettings(dsn)
 		if err != nil {
