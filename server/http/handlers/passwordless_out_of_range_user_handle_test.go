@@ -59,6 +59,13 @@ func (s *pgEncodeUserIDStore) GetUser(ctx context.Context, id uint) (*models.Use
 	return s.Storage.GetUser(ctx, id)
 }
 
+// GetSessionAuthLiveness forwards the combined session cache-hit read to
+// ComposeSessionAuthLiveness over this store, so the GetUser override above is
+// what that read meets too (TestSessionAuthReadWrappersForwardTheCombinedRead).
+func (s *pgEncodeUserIDStore) GetSessionAuthLiveness(ctx context.Context, userID, sessionID uint) (*corestorage.SessionAuthLiveness, error) {
+	return corestorage.ComposeSessionAuthLiveness(ctx, s, userID, sessionID), nil
+}
+
 // passwordlessCredentialWithHandle is wcAssertionJSONWithUserHandle with the
 // user handle replaced by handle.
 func passwordlessCredentialWithHandle(t *testing.T, handle []byte) (json.RawMessage, string) {
