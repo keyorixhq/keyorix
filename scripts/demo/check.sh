@@ -137,6 +137,11 @@ run_step() { # run_step "name" fn_name
     PROBLEMS=$((PROBLEMS + 1))
     FAILED_STEPS+=("$name")
     printf "${RED}❌${NC} %s: %s\n" "$name" "$(tail -1 "$out")"
+    # The one-line summary hides the cause (#3164: s7 failed in CI with only
+    # "exit 1"); show the step's whole output, indented, under the failure.
+    if [ "$(wc -l < "$out")" -gt 1 ]; then
+      sed 's/^/      | /' "$out"
+    fi
   fi
 }
 
@@ -163,9 +168,9 @@ bring_up_postgres() {
   command -v docker >/dev/null 2>&1 || { echo "docker is required"; return 1; }
 
   # docker-compose.yml's default `backend.image:` is a PINNED released tag
-  # (ghcr.io/.../keyorix-server:0.95.3), not this checkout -- using it as-is
+  # (ghcr.io/.../keyorix-server:<pinned release>), not this checkout -- using it as-is
   # would silently check an old release instead of the code actually being
-  # demoed (confirmed live: 0.95.3 predates #2780/#2781's project-visibility
+  # demoed (confirmed live: v0.95.3 predated #2780/#2781's project-visibility
   # fix and reintroduces the exact bug this script exists to catch). Build
   # the SAME locally-built, web-UI-embedded image up.sh uses for SQLite and
   # override backend to use it via an extra compose file -- the stock
@@ -224,11 +229,11 @@ services:
     build:
       context: $REPO_ROOT/web
 EOF
-  # docker-compose.secure.yml: the secure baseline (TLS backend behind a
-  # verifying nginx, rate limiting, /metrics token, private config copy). It
-  # needs a backend newer than the pinned release, which the image built
-  # above is (SECURE-DEFAULT-1).
-  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.secure.yml" -f "$override_file" --env-file "$PG_ENV_FILE" up -d --build >"$SCRATCH/compose-up.log" 2>&1
+  # docker-compose.yml is the secure baseline (TLS backend behind a verifying
+  # nginx, rate limiting, /metrics token, private config copy; SECURE-DEFAULT-1).
+  # Before the v0.96.0 tag exists the pinned images are not pullable, so the
+  # override above replaces both with images built from this checkout.
+  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$override_file" --env-file "$PG_ENV_FILE" up -d --build >"$SCRATCH/compose-up.log" 2>&1
   local rc=$?
   cat "$SCRATCH/compose-up.log"
   [ "$rc" -eq 0 ] || return 1
@@ -318,7 +323,7 @@ seed_demo_org() {
 
 teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe >/dev/null 2>&1 || true; }
 teardown_postgres() {
-  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.secure.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
+  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
   rm -f "$REPO_ROOT/.demo-2-pg-state"
 }
 
@@ -773,6 +778,17 @@ step_ui() {
   )
 }
 
+# GOLDEN-PATH.md section 7 (backup/restore), run as written (#3145). Stops and
+# restarts the demo container, so it goes last. Only meaningful against the
+# up.sh demo (the container/volume/image names the doc uses).
+step_backup_restore() {
+  if [ "$BACKEND" != "sqlite" ] || ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${KEYORIX_DEMO_CONTAINER:-keyorix-demo}"; then
+    echo "SKIP: no up.sh demo container (keyorix-demo) to back up"
+    return 0
+  fi
+  "$SCRIPT_DIR/golden-path-s7.sh"
+}
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
@@ -808,6 +824,7 @@ fi
 if [ "$UI_MODE" != "skip" ]; then
   run_step "UI walk (Playwright, e2e/real)" step_ui
 fi
+run_step "GOLDEN-PATH s7: backup, move aside, restore (verify-audit VALID)" step_backup_restore
 
 if [ "$BROUGHT_UP" = true ] && [ "$KEEP" != true ]; then
   echo ""
