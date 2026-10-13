@@ -299,8 +299,8 @@ storage.database.ssl_mode "verify_full" is not a valid sslmode; use one of: disa
 | `ssl_mode` | Encrypted | Server certificate checked |
 |---|---|---|
 | `disable` | no | no (reported by `admin validate --posture` as `storage.database.insecure_disable_database_tls`) |
-| `allow` | only if the server insists | no. Tries plaintext first |
-| `prefer` | only if the TLS attempt succeeds | no. Falls back to plaintext whenever TLS fails, including when anything on the network path answers "no TLS" |
+| `allow` | only if the server insists | no. Tries plaintext first. Reported by `admin validate --posture` as `storage.database.insecure_allow_plaintext_database_fallback` |
+| `prefer` | only if the TLS attempt succeeds | no. Falls back to plaintext whenever TLS fails, including when anything on the network path answers "no TLS". Reported by `admin validate --posture` as `storage.database.insecure_allow_plaintext_database_fallback` (a `dsn` with no `sslmode` is `prefer` too) |
 | `require` (default) | yes | no. With `ssl_root_cert` set, the chain is checked against it (libpq/pgx behaviour), but the host name is not |
 | `verify-ca` | yes | chain against `ssl_root_cert`, not the host name |
 | `verify-full` | yes | chain against `ssl_root_cert` **and** the host name in `host` |
