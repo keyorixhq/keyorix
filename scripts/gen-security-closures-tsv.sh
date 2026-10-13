@@ -19,7 +19,9 @@
 #
 # Validation (all three modes, nothing is written if it fails): HEADER.txt
 # exists; at least one fragment; every non-comment row in every fragment has at
-# least 6 tab-separated columns; no claim_id appears twice across all fragments;
+# least 6 tab-separated columns; a default-ci/pg-gated row's package starts with
+# ./ (a bare path makes check-closures.sh's go test fail with [setup failed]);
+# no claim_id appears twice across all fragments;
 # each file ends in a newline (so concatenation cannot glue two rows together).
 # (A few historical fragments hold several rows, so one-row-per-file is not
 # enforced here; check-closures.sh --self-test covers the semantic checks.)
@@ -59,6 +61,17 @@ for f in "${frags[@]}"; do
         cols="$(awk -F'\t' '{print NF}' <<<"$row")"
         claim="$(cut -f1 <<<"$row")"
         [ "$cols" -ge 6 ] || bad "$f: claim '$claim' has $cols tab-separated columns, want at least 6 (claim_id package proving_test verification landed_commit issue [note])"
+        # check-closures.sh runs `go test <package>` for automated rows; a bare
+        # `internal/config` resolves into GOROOT ("is not in std", [setup failed]).
+        pkg="$(cut -f2 <<<"$row")"
+        case "$(cut -f4 <<<"$row")" in
+            default-ci|pg-gated)
+                case "$pkg" in
+                    ./*) ;;
+                    *) bad "$f: claim '$claim' package '$pkg' must be a ./-relative path (e.g. ./$pkg) -- go test resolves a bare path as a std-library import path" ;;
+                esac
+                ;;
+        esac
         case "$seen" in
             *$'\n'"$claim"$'\n'*) bad "duplicate claim_id '$claim' (second occurrence in $f)" ;;
         esac
