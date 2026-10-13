@@ -90,5 +90,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-# TEMP (CI-FLAKE-SONAR-1): touch a Sonar-indexed .py source so the Python sensor runs on this PR; reverted next.
