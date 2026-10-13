@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -401,12 +402,38 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 		// evicted from the auth cache alongside the session hashes after commit.
 		if AccountLoginBlocked(userID, state) {
 			_ = tx.DeleteSessionsForUserExcept(ctx, userID, 0)
+			purgeStepUpGrants(ctx, tx, userID)
 			if hashes, herr := tx.RevokeAllPersonalAccessTokensForUser(ctx, userID); herr == nil {
 				sessionHashes = append(sessionHashes, hashes...)
 			}
 		}
 	}
 	return sessionHashes, nil
+}
+
+// purgeStepUpGrants deletes every MFA step-up grant (re-auth and
+// restricted-secret-read purposes) the user holds, in the caller's transaction,
+// alongside the session/PAT revocation of an account-disabling path. Best-effort
+// like those: a grant a failed delete leaves behind is still refused at use,
+// because requireReauth re-reads the account and refuses a non-active one
+// (userStillActiveForGrant).
+func purgeStepUpGrants(ctx context.Context, tx storage.Storage, userID uint) {
+	besteffort.Run(ctx, "account.purgeStepUpGrants", func() error {
+		return tx.DeleteMFAStepUpGrantsFor(ctx, userID)
+	})
+}
+
+// userStillActiveForGrant re-reads the account and reports whether it may still
+// spend a step-up grant: active and not login-blocked. It reads fresh state, not
+// the caller's struct, because the race it closes (a suspension landing between a
+// grant's creation and its use) is invisible to a struct loaded before the
+// suspension. Any read error fails closed.
+func (c *KeyorixCore) userStillActiveForGrant(ctx context.Context, userID uint) bool {
+	fresh, err := c.storage.GetUser(ctx, userID)
+	if err != nil || fresh == nil {
+		return false
+	}
+	return fresh.IsActive && !AccountLoginBlocked(fresh.ID, fresh.AccountState)
 }
 
 // activePATHashes returns the token hashes of all non-revoked PATs that have a hash,

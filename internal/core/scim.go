@@ -289,6 +289,9 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
 			var err error
 			updated, deactivated, err = c.scimUpdateUserTx(ctx, tx, id, displayName, email, active)
+			if err == nil && deactivated {
+				purgeStepUpGrants(ctx, tx, id)
+			}
 			return err
 		})
 	})
@@ -646,6 +649,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 				return err
 			}
 			sessionHashes = append(sessionHashes, patHashes...)
+			purgeStepUpGrants(ctx, tx, id)
 			return tx.DeleteUser(ctx, id)
 		})
 	})

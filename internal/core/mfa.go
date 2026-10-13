@@ -839,6 +839,12 @@ func (c *KeyorixCore) requireReauth(ctx context.Context, user *models.User, code
 	if !ok && codeOrPassword != "" && bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(codeOrPassword)) == nil {
 		if !secondFactorEnrolled {
 			ok = true
+		} else if !c.userStillActiveForGrant(ctx, user.ID) {
+			// A suspended/deactivated account's grant is refused exactly like an
+			// absent one (no ok, no postVerdictErr: the generic "invalid code or
+			// password" and the same failed-attempt bookkeeping). Defence in depth
+			// for a grant created between a suspension's check and its insert,
+			// which the suspension's own purge never saw.
 		} else if consumed, gerr := c.storage.ConsumeMFAStepUpGrant(ctx, user.ID, models.MFAStepUpPurposeReauth, c.authEffectiveNow()); gerr != nil {
 			postVerdictErr = gerr
 		} else if consumed {

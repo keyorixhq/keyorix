@@ -598,6 +598,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 					patHashes = hashes
 				}
 				sessionErr = tx.DeleteSessionsForUserExcept(ctx, req.ID, 0)
+				purgeStepUpGrants(ctx, tx, req.ID)
 				// Best-effort, not fatal: the conditional write this switch case
 				// exists for (UpdateUserIfActiveStateMatches) has ALREADY matched
 				// and applied by this point -- the deactivation itself durably
@@ -748,6 +749,7 @@ func (c *KeyorixCore) RevokeUserCredentialsForDeactivation(ctx context.Context, 
 	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
 	patHashes, patErr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, userID)
 	sessionErr := c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
+	purgeStepUpGrants(ctx, c.storage, userID)
 	c.invalidateTokenCache(sessionHashes...)
 	if patErr == nil {
 		c.invalidateTokenCache(patHashes...)
@@ -819,6 +821,7 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 				return err
 			}
 			patHashes = hashes
+			purgeStepUpGrants(ctx, tx, id)
 			return tx.DeleteUser(ctx, id)
 		}); err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
