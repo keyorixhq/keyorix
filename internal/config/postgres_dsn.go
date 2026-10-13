@@ -1,7 +1,6 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -28,21 +27,20 @@ func ResolvePostgresDSN(d *DatabaseConfig) (string, error) {
 	if d.DSN == "" {
 		return buildPostgresDSNFromFields(d, pw), nil
 	}
+	if pw == "" {
+		// Nothing to apply or conflict with: hand the DSN to the driver
+		// untouched, without inspecting (or rejecting) it here.
+		return d.DSN, nil
+	}
 	has, err := dsnHasPassword(d.DSN)
 	if err != nil {
 		return "", err
 	}
 	if has {
-		if pw != "" {
-			src := d.passwordSourceName()
-			return "", fmt.Errorf("storage.database.dsn already contains a password and %s is also set; "+
-				"refusing to guess which one to use. Fix: remove the password from storage.database.dsn "+
-				"(and keep %s), or unset %s", src, src, src)
-		}
-		return d.DSN, nil
-	}
-	if pw == "" {
-		return d.DSN, nil
+		src := d.passwordSourceName()
+		return "", fmt.Errorf("storage.database.dsn already contains a password and %s is also set; "+
+			"refusing to guess which one to use. Fix: remove the password from storage.database.dsn "+
+			"(and keep %s), or unset %s", src, src, src)
 	}
 	return appendDSNPassword(d.DSN, pw)
 }
@@ -99,22 +97,47 @@ func isURLDSN(dsn string) bool {
 	return strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://")
 }
 
-var errDSNURLInvalid = errors.New("storage.database.dsn is not a valid postgres:// URL (value not shown: it may contain a password)")
+// urlDSNParts locates the authority of a postgres:// URL DSN without going
+// through net/url, which rejects valid pgx forms (multi-host lists such as
+// postgres://u@[::1]:5432,[::2]:5433/db) and would re-serialise the string.
+// authStart/authEnd delimit the authority; userEnd is the index of the '@'
+// that ends the userinfo, or -1 when there is none; query is the raw query
+// string (without '?' and any fragment).
+func urlDSNParts(dsn string) (authStart, authEnd, userEnd int, query string) {
+	authStart = strings.Index(dsn, "://") + len("://")
+	rest := dsn[authStart:]
+	end := strings.IndexAny(rest, "/?#")
+	if end < 0 {
+		end = len(rest)
+	}
+	authEnd = authStart + end
+	userEnd = -1
+	if at := strings.LastIndex(dsn[authStart:authEnd], "@"); at >= 0 {
+		userEnd = authStart + at
+	}
+	tail, _, _ := strings.Cut(dsn[authEnd:], "#")
+	if _, q, ok := strings.Cut(tail, "?"); ok {
+		query = q
+	}
+	return authStart, authEnd, userEnd, query
+}
 
 // dsnHasPassword reports whether dsn (URL or key=value form) carries a
-// non-empty password.
+// non-empty password. It never fails; the error result is kept for API
+// stability.
 func dsnHasPassword(dsn string) (bool, error) {
 	if isURLDSN(dsn) {
-		u, err := url.Parse(dsn)
-		if err != nil {
-			return false, errDSNURLInvalid
-		}
-		if u.User != nil {
-			if p, ok := u.User.Password(); ok && p != "" {
+		authStart, _, userEnd, query := urlDSNParts(dsn)
+		if userEnd >= 0 {
+			userinfo := dsn[authStart:userEnd]
+			if i := strings.Index(userinfo, ":"); i >= 0 && userinfo[i+1:] != "" {
 				return true, nil
 			}
 		}
-		return u.Query().Get("password") != "", nil
+		// Pairs net/url cannot parse (e.g. containing ';') are dropped by
+		// ParseQuery, exactly as pgx drops them.
+		vals, _ := url.ParseQuery(query)
+		return vals.Get("password") != "", nil
 	}
 	for _, kv := range parseKeywordDSN(dsn) {
 		if kv[0] == "password" && kv[1] != "" {
@@ -124,17 +147,23 @@ func dsnHasPassword(dsn string) (bool, error) {
 	return false, nil
 }
 
-// appendDSNPassword adds pw to a DSN that has none.
+// appendDSNPassword adds pw to a DSN that has none. A URL DSN is spliced, not
+// re-encoded: every byte except the inserted password is preserved, including
+// the order and escaping of the query parameters. The password goes into the
+// userinfo, escaped as net/url does for a password (space, @, :, /, ?, #, %
+// all percent-encoded).
 func appendDSNPassword(dsn, pw string) (string, error) {
 	if isURLDSN(dsn) {
-		u, err := url.Parse(dsn)
-		if err != nil {
-			return "", errDSNURLInvalid
+		authStart, _, userEnd, _ := urlDSNParts(dsn)
+		escaped := url.UserPassword("x", pw).String()[len("x:"):]
+		if userEnd < 0 {
+			return dsn[:authStart] + ":" + escaped + "@" + dsn[authStart:], nil
 		}
-		q := u.Query()
-		q.Set("password", pw)
-		u.RawQuery = q.Encode()
-		return u.String(), nil
+		sep := ":"
+		if strings.Contains(dsn[authStart:userEnd], ":") {
+			sep = "" // "user:" with an empty password
+		}
+		return dsn[:userEnd] + sep + escaped + dsn[userEnd:], nil
 	}
 	return strings.TrimRight(dsn, " \t\r\n") + " password=" + quoteDSNValue(pw), nil
 }
