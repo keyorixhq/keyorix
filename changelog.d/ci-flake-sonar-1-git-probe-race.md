@@ -1,0 +1,2 @@
+### Fixed
+- **The SonarCloud analysis no longer fails intermittently with `NoSuchFileException: .git/.probe-<uuid>`.** The scanner's JGit timestamp probe and SonarPython's unfiltered walk of the project directory raced inside `.git`; the workflow now relocates the git directory out of the scanned tree (`git init --separate-git-dir`) before the scan. Analysis scope, coverage and blame are unchanged.
