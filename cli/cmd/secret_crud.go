@@ -41,7 +41,7 @@ func init() {
 	secretCreateCmd.Flags().StringVar(&secretCreateName, "name", "", "Secret name (required)")
 	secretCreateCmd.Flags().StringVar(&secretCreateType, "type", "generic", "Secret type")
 	secretCreateCmd.Flags().IntVar(&secretCreateProjectID, "project", 1, "Project ID")
-	secretCreateCmd.Flags().IntVar(&secretCreateEnvironmentID, "environment", 1, "Environment ID")
+	secretCreateCmd.Flags().IntVar(&secretCreateEnvironmentID, "environment", 1, "Environment ID (default: the project's development environment; see `keyorix project environments <project-id>`)")
 	secretCreateCmd.Flags().IntVar(&secretCreateMaxReads, "max-reads", 0, "Maximum number of reads (0 = unlimited)")
 	secretCreateCmd.Flags().StringVar(&secretCreateExpiration, "expires", "", "Expiration time (RFC3339 format)")
 	secretCreateCmd.Flags().StringVar(&secretCreateValue, "value", "", "Secret value")
@@ -59,7 +59,7 @@ func init() {
 func readSecretValueFromFile(path string) ([]byte, error) {
 	cleanPath := filepath.Clean(path)
 	if filepath.IsAbs(cleanPath) {
-		return nil, fmt.Errorf("absolute paths are not allowed: %s", cleanPath)
+		return nil, fmt.Errorf("absolute paths are not allowed: %s (use a path relative to the current directory, e.g. --from-file ./%s)", cleanPath, filepath.Base(cleanPath))
 	}
 	fileInfo, err := os.Lstat(cleanPath)
 	if err != nil {
@@ -118,6 +118,13 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// --environment defaults to 1, which is only right for project 1: when the flag was
+	// not given, use the chosen project's own development environment (#3155).
+	if !cmd.Flags().Changed("environment") && secretCreateProjectID > 0 {
+		if envID, ok := defaultEnvironmentForProject(context.Background(), client, secretCreateProjectID); ok {
+			secretCreateEnvironmentID = envID
+		}
+	}
 	body := apiclient.CreateSecretJSONRequestBody{
 		Name:          secretCreateName,
 		Value:         string(value),
@@ -146,10 +153,46 @@ func runSecretCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create secret: %w", err)
 	}
 	if resp.JSON201 == nil || resp.JSON201.Data == nil {
-		return httpStatusError("failed to create secret", resp.StatusCode(), resp.Body)
+		err := httpStatusError("failed to create secret", resp.StatusCode(), resp.Body)
+		if secretCreateProjectID > 0 && strings.Contains(string(resp.Body), "does not belong to project") {
+			if hint := validEnvironmentsHint(context.Background(), client, secretCreateProjectID); hint != "" {
+				return fmt.Errorf("%w\n%s", err, hint)
+			}
+		}
+		return err
 	}
 	printCreatedSecret(resp.JSON201.Data)
 	return nil
+}
+
+// defaultEnvironmentForProject returns the ID of the project's "development" environment, or
+// its first one when it has none by that name. ok is false when the list cannot be read (a
+// caller without access to it keeps the flag's literal default and the server's verdict).
+func defaultEnvironmentForProject(ctx context.Context, client *apiclient.ClientWithResponses, projectID int) (int, bool) {
+	envs, err := listEnvironments(ctx, client, uint(projectID)) // #nosec G115 -- guarded > 0 by the caller
+	if err != nil || len(envs) == 0 {
+		return 0, false
+	}
+	for _, e := range envs {
+		if strings.EqualFold(e.Name, "development") {
+			return int(e.ID), true // #nosec G115 -- DB auto-increment ID
+		}
+	}
+	return int(envs[0].ID), true // #nosec G115 -- DB auto-increment ID
+}
+
+// validEnvironmentsHint names the environments a project does have, for the "environment N
+// does not belong to project M" refusal; "" when they cannot be listed.
+func validEnvironmentsHint(ctx context.Context, client *apiclient.ClientWithResponses, projectID int) string {
+	envs, err := listEnvironments(ctx, client, uint(projectID)) // #nosec G115 -- guarded > 0 by the caller
+	if err != nil || len(envs) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(envs))
+	for _, e := range envs {
+		parts = append(parts, fmt.Sprintf("%d (%s)", e.ID, e.Name))
+	}
+	return fmt.Sprintf("project %d has environments: %s -- pass one with --environment", projectID, strings.Join(parts, ", "))
 }
 
 func printCreatedSecret(s *apiclient.Secret) {

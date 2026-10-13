@@ -62,6 +62,11 @@ func TestAuditActorName_MatchesKind(t *testing.T) {
 		// #3150: a machine read is attributed to the machine, not "unknown".
 		{models.AuditEvent{EventType: "secret.read", ActorType: "machine_identity", MachineIdentityID: &mid}, "ci-app"},
 		{models.AuditEvent{EventType: "secret.read", ActorType: "machine_identity", MachineIdentityID: &goneMid}, "unknown"},
+		// #3155: host admin commands (migrate, encryption init) are the platform itself.
+		{models.AuditEvent{EventType: "admin.migrate", ActorType: "admin_cli"}, "system"},
+		{models.AuditEvent{EventType: "admin.encryption.init", ActorType: "admin_cli"}, "system"},
+		// ...but an admin_cli row that does name a user keeps that user.
+		{models.AuditEvent{EventType: "admin.recover_admin", ActorType: "admin_cli", UserID: &uid}, "alice"},
 	}
 	for _, c := range cases {
 		e := c.e

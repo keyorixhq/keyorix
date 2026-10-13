@@ -31,6 +31,10 @@ const (
 // evidence stays under actor_type=user and is not mixed into scheduler events.
 var auditPrincipalEventPrefixes = []string{"auth.", "mfa.", "webauthn."}
 
+// AuditAdminCLIType is the stored actor_type of events written by the
+// keyorix-server admin commands (server/admin uses this constant).
+const AuditAdminCLIType = "admin_cli"
+
 // AuditActorKind returns the kind shown for an audit row. A row is "system" when
 // it stores "system", or when it stores the default "user" (or the legacy "")
 // and NOTHING on it identifies a principal:
@@ -128,6 +132,13 @@ func AuditActorName(e *models.AuditEvent, names, machineNames map[uint]string) s
 		return "unknown"
 	}
 	if AuditActorKind(e) == auditKindSystem {
+		return auditKindSystem
+	}
+	// A `keyorix-server admin ...` command run on the host (migrate, encryption
+	// init, ...) records no principal and no client address by design; it is part
+	// of the platform's own start-up and maintenance, so it reads as "system", not
+	// "unknown" (#3155). The stored actor_type stays "admin_cli" (hash-chained).
+	if e.ActorType == AuditAdminCLIType {
 		return auditKindSystem
 	}
 	return "unknown"
