@@ -154,7 +154,7 @@ describe('DashboardPage — stat cards', () => {
         render(<DashboardPage />);
         expect(screen.getByText('Security')).toBeInTheDocument();
         expect(screen.getByText('✓')).toBeInTheDocument();
-        expect(screen.getByText('No active alerts')).toBeInTheDocument();
+        expect(screen.getByText('No anomaly or expiry alerts')).toBeInTheDocument();
     });
 
     it('shows an alert count security card when there are anomalies or expiring secrets', () => {
@@ -269,6 +269,13 @@ describe('DashboardPage — recent activity', () => {
 });
 
 describe('DashboardPage — system health', () => {
+    it('shows n/a, not "0 active", when the server reports no connection stats', () => {
+        useSystemMetrics.mockReturnValue({ data: { uptime: '2h34m12.456s', database: { connections_active: 0 } } });
+        render(<DashboardPage />);
+        expect(screen.getByText('n/a')).toBeInTheDocument();
+        expect(screen.queryByText('0 active')).not.toBeInTheDocument();
+    });
+
     it('parses uptime and shows DB connections, encryption, and feature pills', () => {
         render(<DashboardPage />);
         expect(screen.getByText('2h 34m')).toBeInTheDocument();
@@ -594,14 +601,21 @@ describe('DashboardPage — tiles the user cannot see (DEMO-UI-1)', () => {
             expect(within(card).getByText('Not visible to you'), label).toBeInTheDocument();
             expect(within(card).getByText('—'), label).toBeInTheDocument();
         }
+        // The Audit (30d) side panel does not list zeros for numbers the user cannot see (#3155).
+        expect(screen.getByTestId('audit-panel-not-visible')).toHaveTextContent('Not visible to you');
+        expect(screen.queryByText('Total events')).not.toBeInTheDocument();
+        expect(screen.queryByText('Secret reads')).not.toBeInTheDocument();
         // A tile the user can see still shows its number.
         expect(screen.getByText('120')).toBeInTheDocument();
-        // Nothing claims "No active alerts" about data the user cannot see.
-        expect(screen.queryByText('No active alerts')).not.toBeInTheDocument();
+        // Nothing claims "No anomaly or expiry alerts" about data the user cannot see.
+        expect(screen.queryByText('No anomaly or expiry alerts')).not.toBeInTheDocument();
     });
 
     it('shows real numbers to a user who can read audit and the user directory', () => {
         render(<DashboardPage />);
         expect(screen.queryByText('Not visible to you')).not.toBeInTheDocument();
+        // ...and the Audit (30d) panel lists its real counts.
+        expect(screen.getByText('Total events')).toBeInTheDocument();
+        expect(screen.queryByTestId('audit-panel-not-visible')).not.toBeInTheDocument();
     });
 });
