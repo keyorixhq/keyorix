@@ -623,14 +623,17 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 
 // createPostgresStorage creates a PostgreSQL-backed local storage instance
 func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (storage.Storage, error) {
-	dsn := config.BuildPostgresDSN(&cfg.Storage.Database)
+	dsn, err := config.ResolvePostgresDSN(&cfg.Storage.Database)
+	if err != nil {
+		return nil, err
+	}
 	if dsn == "" {
 		return nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
 	}
 
 	db, err := gorm.Open(postgres.Open(dsn), gormConfig())
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to postgres: %w", err)
+		return nil, postgresConnectError(err, dsn)
 	}
 
 	if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {

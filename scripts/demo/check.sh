@@ -137,6 +137,11 @@ run_step() { # run_step "name" fn_name
     PROBLEMS=$((PROBLEMS + 1))
     FAILED_STEPS+=("$name")
     printf "${RED}❌${NC} %s: %s\n" "$name" "$(tail -1 "$out")"
+    # The one-line summary hides the cause (#3164: s7 failed in CI with only
+    # "exit 1"); show the step's whole output, indented, under the failure.
+    if [ "$(wc -l < "$out")" -gt 1 ]; then
+      sed 's/^/      | /' "$out"
+    fi
   fi
 }
 
@@ -163,9 +168,9 @@ bring_up_postgres() {
   command -v docker >/dev/null 2>&1 || { echo "docker is required"; return 1; }
 
   # docker-compose.yml's default `backend.image:` is a PINNED released tag
-  # (ghcr.io/.../keyorix-server:0.95.3), not this checkout -- using it as-is
+  # (ghcr.io/.../keyorix-server:<pinned release>), not this checkout -- using it as-is
   # would silently check an old release instead of the code actually being
-  # demoed (confirmed live: 0.95.3 predates #2780/#2781's project-visibility
+  # demoed (confirmed live: v0.95.3 predated #2780/#2781's project-visibility
   # fix and reintroduces the exact bug this script exists to catch). Build
   # the SAME locally-built, web-UI-embedded image up.sh uses for SQLite and
   # override backend to use it via an extra compose file -- the stock
@@ -225,11 +230,11 @@ services:
     build:
       context: $REPO_ROOT/web
 EOF
-  # docker-compose.secure.yml: the secure baseline (TLS backend behind a
-  # verifying nginx, rate limiting, /metrics token, private config copy). It
-  # needs a backend newer than the pinned release, which the image built
-  # above is (SECURE-DEFAULT-1).
-  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.secure.yml" -f "$override_file" --env-file "$PG_ENV_FILE" up -d --build >"$SCRATCH/compose-up.log" 2>&1
+  # docker-compose.yml is the secure baseline (TLS backend behind a verifying
+  # nginx, rate limiting, /metrics token, private config copy; SECURE-DEFAULT-1).
+  # Before the v0.96.0 tag exists the pinned images are not pullable, so the
+  # override above replaces both with images built from this checkout.
+  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$override_file" --env-file "$PG_ENV_FILE" up -d --build >"$SCRATCH/compose-up.log" 2>&1
   local rc=$?
   cat "$SCRATCH/compose-up.log"
   [ "$rc" -eq 0 ] || return 1
@@ -317,9 +322,11 @@ seed_demo_org() {
   return 0
 }
 
-teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe >/dev/null 2>&1 || true; }
+# check.sh brought this demo up itself (with whatever KEYORIX_DEMO_* names are set), so it
+# owns the default names too: --force-default is the explicit opt-in down.sh asks for (#3149).
+teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe --force-default >/dev/null 2>&1 || true; }
 teardown_postgres() {
-  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.secure.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
+  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
   rm -f "$REPO_ROOT/.demo-2-pg-state"
 }
 
@@ -581,6 +588,34 @@ step_machine_read_by_ref() {
   return 0
 }
 
+# GOLDEN-PATH section 5 (#3150): the machine value read the doc shows
+# (GET /secrets/{id}?include_value=true) is audited as secret.read with the
+# machine identity as actor, and `audit logs --actor-type machine_identity` finds it.
+# A plain GET /secrets/{id} is metadata only (no value) and is deliberately not a
+# secret.read, so the doc must not use it for this step.
+step_machine_read_audited() {
+  [ -n "$MACHINE_TOKEN" ] || { echo "no machine token found (.demo-2-state / .demo-2-pg-state missing)"; return 1; }
+  get_secret_by_ref "$MACHINE_TOKEN" "default/development/stripe-api-key"
+  [ "$HTTP_CODE" = "200" ] || { echo "ci-app could not resolve default/development/stripe-api-key: $HTTP_CODE $RESP_BODY"; return 1; }
+  local sid; sid="$(jget 'd["data"]["secret"]["id"]')"
+  [ -n "$sid" ] || { echo "no secret id in by-ref response: $RESP_BODY"; return 1; }
+
+  req GET "/api/v1/secrets/$sid" "$MACHINE_TOKEN"
+  [ "$HTTP_CODE" = "200" ] || { echo "plain GET /api/v1/secrets/$sid as ci-app returned $HTTP_CODE: $RESP_BODY"; return 1; }
+  case "$RESP_BODY" in *'"value"'*) echo "plain GET /api/v1/secrets/$sid disclosed a value: it must be metadata only -- server/http/handlers/secrets_crud.go GetSecret"; return 1;; esac
+
+  req GET "/api/v1/secrets/$sid?include_value=true" "$MACHINE_TOKEN"
+  [ "$HTTP_CODE" = "200" ] || { echo "GET /api/v1/secrets/$sid?include_value=true as ci-app returned $HTTP_CODE: $RESP_BODY"; return 1; }
+  local v; v="$(jget 'd["data"]["value"]')"
+  [ -n "$v" ] || { echo "machine value read returned no value: $RESP_BODY"; return 1; }
+
+  req GET "/api/v1/audit/logs?actor_type=machine_identity&action=secret.read&page_size=5" "$ADMIN_TOKEN"
+  [ "$HTTP_CODE" = "200" ] || { echo "GET /api/v1/audit/logs?actor_type=machine_identity returned $HTTP_CODE: $RESP_BODY"; return 1; }
+  local hit; hit="$(jget 'sum(1 for e in d["data"]["logs"] if e["actor"]=="ci-app" and e["actor_type"]=="machine_identity" and e["event_type"]=="secret.read" and e["description"].startswith("Machine identity ci-app read secret"))')"
+  [ -n "$hit" ] && [ "$hit" -ge 1 ] 2>/dev/null || { echo "no secret.read row with actor ci-app / actor_type machine_identity after the machine value read: $RESP_BODY -- internal/core/audit.go LogSecretReadWithProject, internal/core/storage/audit_actor_kind.go AuditActorName"; return 1; }
+  return 0
+}
+
 step_mfa() {
   local username="mfa-demo" email="mfa-demo@keyorix.demo" password="Obsidian-Lumen-Thicket-77"
   local state_file="$CHECK_STATE_DIR/mfa-secret"
@@ -746,6 +781,17 @@ step_ui() {
   )
 }
 
+# GOLDEN-PATH.md section 7 (backup/restore), run as written (#3145). Stops and
+# restarts the demo container, so it goes last. Only meaningful against the
+# up.sh demo (the container/volume/image names the doc uses).
+step_backup_restore() {
+  if [ "$BACKEND" != "sqlite" ] || ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${KEYORIX_DEMO_CONTAINER:-keyorix-demo}"; then
+    echo "SKIP: no up.sh demo container (keyorix-demo) to back up"
+    return 0
+  fi
+  "$SCRIPT_DIR/golden-path-s7.sh"
+}
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
@@ -770,6 +816,7 @@ run_step "acl: alice can read backend-api secret"   step_acl_can_read
 run_step "acl: alice cannot read default secret"    step_acl_cannot_read
 run_step "machine identity: read secret by ref"     step_machine_read_by_ref
 run_step "audit: log shows actions"   step_audit_logs
+run_step "audit: machine value read is attributed to ci-app" step_machine_read_audited
 run_step "audit: chain verify"        step_audit_verify
 run_step "posture report"             step_posture
 run_step "latency: p50 secret read"   step_latency
@@ -780,6 +827,7 @@ fi
 if [ "$UI_MODE" != "skip" ]; then
   run_step "UI walk (Playwright, e2e/real)" step_ui
 fi
+run_step "GOLDEN-PATH s7: backup, move aside, restore (verify-audit VALID)" step_backup_restore
 
 if [ "$BROUGHT_UP" = true ] && [ "$KEEP" != true ]; then
   echo ""

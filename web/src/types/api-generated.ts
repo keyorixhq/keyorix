@@ -9576,6 +9576,8 @@ export interface operations {
                 "application/json": {
                     value?: string;
                     max_reads?: number | null;
+                    /** @description Remove the read limit (the secret becomes unlimited). The read counter is kept. */
+                    clear_max_reads?: boolean;
                     /** Format: date-time */
                     expiration?: string;
                     clear_expiration?: boolean;
@@ -10374,8 +10376,8 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Schedule removed. */
-            204: {
+            /** @description Schedule removed (or none was set). Envelope `{data: {deleted: true}, message: "schedule removed"}`; the handler has always answered 200, not 204 (#3173). */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -11620,6 +11622,15 @@ export interface operations {
                                 createdAt: string;
                                 /** @description Username of the share's creator (always the caller here). */
                                 createdBy: string;
+                                /** @description The secret's name. Absent when the caller may not read the secret (#3153). */
+                                secretName?: string;
+                                /**
+                                 * Format: uint32
+                                 * @description The secret's project. Absent with secretName.
+                                 */
+                                projectId?: number;
+                                /** @description The secret's project name. Absent with secretName. */
+                                projectName?: string;
                             }[];
                             total: number;
                             page: number;

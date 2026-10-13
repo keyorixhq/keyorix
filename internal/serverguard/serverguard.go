@@ -287,12 +287,18 @@ func acquireSQLiteExclusive(cfg *config.Config) (*Exclusive, error) {
 // guard (or, for AcquireExclusive, held open for the caller's entire
 // operation).
 func pgConn(cfg *config.Config) (*sql.DB, *sql.Conn, error) {
-	dsn := config.BuildPostgresDSN(&cfg.Storage.Database)
+	dsn, err := config.ResolvePostgresDSN(&cfg.Storage.Database)
+	if err != nil {
+		return nil, nil, err
+	}
 	if dsn == "" {
 		return nil, nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
 	}
 	db, err := gorm.Open(postgres.Open(dsn), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
+		if classified := config.ClassifyPostgresConnectError(err, dsn); classified != err {
+			return nil, nil, classified
+		}
 		return nil, nil, fmt.Errorf("connect to postgres for server-presence check: %w", err)
 	}
 	sqlDB, err := db.DB()
@@ -304,6 +310,9 @@ func pgConn(cfg *config.Config) (*sql.DB, *sql.Conn, error) {
 	conn, err := sqlDB.Conn(ctx)
 	if err != nil {
 		_ = sqlDB.Close()
+		if classified := config.ClassifyPostgresConnectError(err, dsn); classified != err {
+			return nil, nil, classified
+		}
 		return nil, nil, fmt.Errorf("acquire dedicated connection for server-presence check: %w", err)
 	}
 	return sqlDB, conn, nil

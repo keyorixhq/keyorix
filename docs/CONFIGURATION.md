@@ -158,6 +158,8 @@ server:
       cert_cache_dir: "certs"     # ACME only: where autocert persists certs between restarts
       allowed_ciphers: []         # optional allowlist of TLS 1.2 cipher suite names; leave empty for the built-in secure default
     tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
+    trusted_proxies: []           # IPs/CIDRs of your TLS-terminating proxy/LB; their X-Forwarded-For/-Proto are honored
+    hsts_preload: false           # add "preload" to Strict-Transport-Security (see below)
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -209,6 +211,33 @@ every client can be required to speak 1.3. `tls.allowed_ciphers` has no
 effect under strict mode (TLS 1.3 negotiates its own, always-AEAD suite set)
 and logs a warning if both are set.
 
+**Strict-Transport-Security (HSTS).** The backend sends
+`Strict-Transport-Security: max-age=31536000; includeSubDomains` only on a request
+that reached the client over TLS:
+
+- the listener serves TLS itself (`server.http.tls.enabled`), or
+- the TCP peer is listed in `server.http.trusted_proxies` and its
+  `X-Forwarded-Proto` is `https` (TLS terminated at your load balancer).
+
+It is never sent for plain http, and `X-Forwarded-Proto` from any peer not in
+`trusted_proxies` is ignored, so a client cannot turn HSTS on by forging the
+header. If the header has several values, the last one counts (the one your proxy
+added); your proxy must set or overwrite `X-Forwarded-Proto`, not pass a
+client's value through. `trusted_proxies` is the same list that governs
+`X-Forwarded-For` for client IPs, rate limits and audit.
+
+- `max-age` is one year, the web nginx's default too.
+- `includeSubDomains` is always sent. A secrets manager's session cookies should
+  not share a domain with a sibling host left on plain http. If some subdomains
+  of yours cannot do https, have your proxy replace the header.
+- `preload` is off unless you set `hsts_preload: true`. Preload-list submission
+  covers the whole registrable domain and is slow to undo, so only the domain's
+  owner should opt in.
+
+The web container's nginx makes its own HSTS decision and strips the backend's
+header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
+behind a TLS-terminating load balancer").
+
 ## storage
 
 ```yaml
@@ -223,7 +252,8 @@ storage:
     #   "Refusing to vivify a missing database" below.
     # PostgreSQL (recommended for production) — set type: postgres above:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
-    # password: ""                # prefer KEYORIX_DB_PASSWORD
+    # password: ""                # prefer KEYORIX_DB_PASSWORD (or KEYORIX_DB_PASSWORD_FILE);
+    #   see "PostgreSQL password precedence" below
     # max_open_conns: 8          # default: 8 for SQLite, 25 for Postgres (see below)
     # max_idle_conns: 8          # default: the effective max_open_conns
     conn_max_lifetime_minutes: 30
@@ -247,6 +277,50 @@ storage:
     #   the most recent audit entries on an OS or database-server crash.
     #   Config file only -- no API, CLI flag or env var can set it.
 ```
+
+### PostgreSQL password precedence
+
+The database password comes from `KEYORIX_DB_PASSWORD`, or the file named by
+`KEYORIX_DB_PASSWORD_FILE` (setting both is refused, as for every `<NAME>_FILE`
+secret), or `storage.database.password` -- see
+[Secrets from files](#secrets-from-files-name_file). How it combines with the
+connection settings:
+
+| `storage.database.dsn` | A password source is set | Result |
+|---|---|---|
+| empty (host/port/name/user fields) | yes | password added to the connection string |
+| set, **no** password in it | yes | the password is added to the DSN |
+| set, no password in it | no | DSN used as written (e.g. trust auth, `.pgpass`) |
+| set, **with** a password (`password=...` or `postgres://user:pw@...`) | no | DSN used as written |
+| set, **with** a password | **yes** | **refused at startup** |
+
+The last row is an error, not a silent choice: the server and every command that
+opens the database (`admin migrate`, `admin validate`, `admin restore`, ...) stop
+with `storage.database.dsn already contains a password and KEYORIX_DB_PASSWORD is
+also set; ... remove the password from storage.database.dsn ... or unset
+KEYORIX_DB_PASSWORD`. Fix it by keeping the password in one place only. The
+message names the setting and never prints either password or the DSN.
+
+If Postgres rejects the credentials (SQLSTATE `28P01` or `28000`), or the server
+(or a proxy/pooler in front of it) drops the connection while authenticating, the
+server and the admin commands stop with one message: `postgres authentication failed
+for user "..." at host:port ... Check the database user ... and the password source:
+KEYORIX_DB_PASSWORD, KEYORIX_DB_PASSWORD_FILE, storage.database.password, or the
+password in storage.database.dsn`. It never contains the password or the DSN; the
+server also prints the driver's own text on a second line with the password and DSN
+redacted. A connection reset during the login exchange is treated as an
+authentication failure only when it happens after the TCP connection was
+established; a refused or timed-out connection is reported as before.
+
+### Starting with PostgreSQL: `admin init --storage-type postgres`
+
+`keyorix-server admin init` writes a SQLite config by default and creates the
+SQLite file. For a PostgreSQL deployment run `admin init --storage-type postgres`
+in a fresh directory: the config is written with `storage.type: postgres` and no
+SQLite path, and nothing SQLite is created. Set `storage.database.dsn` (or the
+host/name/user fields plus `KEYORIX_DB_PASSWORD`) and run `admin init` again to
+finish. `--storage-type` only applies to a config init writes; with an existing
+config of a different type init refuses and changes nothing.
 
 ### Refusing to vivify a missing database
 
@@ -633,8 +707,9 @@ Rate limiting is on (`50`/`100` HTTP, `25`/`50` gRPC, as in
   report then lists `security.insecure_allow_cleartext_transport` if you also set
   `require_transport_tls: false` (it must be false for a cleartext listener to start).
 
-Docker Compose and Helm reach the same baseline with `docker-compose.secure.yml`
-and the chart's `secureBaseline.enabled` (docs/SELF_HOSTING.md §7);
+Docker Compose and Helm reach the same baseline by default since v0.96.0
+(`docker-compose.yml` with `keyorix.docker.yaml`, and the chart's
+`secureBaseline.enabled`; docs/SELF_HOSTING.md §7);
 `keyorix-server admin init --secure-files` is the generation step on its own,
 for a config an orchestrator supplies.
 
@@ -646,8 +721,8 @@ demo and e2e scripts in `scripts/` that talk plain HTTP use it explicitly.
 
 ### Hardening an older config (clearing the posture report)
 
-A config written by an earlier `admin init` (and `keyorix.docker.yaml`) is a dev
-baseline: on it the report lists the three `insecure_*` settings below
+A config written by an earlier `admin init` (or a `keyorix.docker.yaml` from before
+v0.96.0) is a dev baseline: on it the report lists the three `insecure_*` settings below
 (cleartext transport, unauthenticated `/metrics`, no API rate limit), and exits
 1. Upgrading does not change it. Verified on a fresh SQLite install: setting
 exactly these keys makes `admin validate --posture` print `No deviations found.`
@@ -660,11 +735,13 @@ YAML key, so the mapping is:)
 | `server.insecure_allow_unauthenticated_metrics` | `metrics_token: "<long random string>"` or `metrics_token_file: <path to a 0600 file>` on **both** `server.http` and `server.grpc` (the entry checks both listeners); `/metrics` then answers 401 without `Authorization: Bearer <token>` and 200 with it |
 | `server.insecure_disable_api_ratelimit` | `server.http.ratelimit.enabled: true` and `server.grpc.ratelimit.enabled: true` (the entry checks both listeners, even with gRPC off) |
 
-Also keep the key and config files `0600` and owned by the server's user. In
-Docker Compose the bind-mounted `keyorix.docker.yaml` arrives as the host's
-owner/mode (typically `0664`, uid 1000, while the container runs as uid 1001),
-which the report counts as a file-permission deviation until you
-`chmod 600 keyorix.docker.yaml && sudo chown 1001 keyorix.docker.yaml` (tracked in #2922).
+Also keep the key and config files `0600` and owned by the server's user. The
+Docker Compose stack since v0.96.0 does this for you: its entrypoint copies the
+bind-mounted `keyorix.docker.yaml` (which arrives as the host's owner/mode,
+typically `0664`, uid 1000, while the container runs as uid 1001) to a private
+0600 file owned by uid 1001 (#2922). A hand-rolled container setup that mounts the
+config directly needs `chmod 600 keyorix.docker.yaml && sudo chown 1001 keyorix.docker.yaml`,
+or the report counts a file-permission deviation.
 
 The renamed settings, with the deprecated name each still accepts (same
 meaning, a start-up warning when the old name is used; when both are set the
