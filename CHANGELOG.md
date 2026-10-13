@@ -8,6 +8,67 @@ All notable changes to Keyorix are documented here. This project follows
 `scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
 that section is the text written before the switch.
 
+## v0.96.1 — 2026-10-13
+
+### Security
+- **Operator and web images rebuilt without the two HIGH CVEs that blocked v0.96.0's image scan.** The `keyorix-operator` binary now links `golang.org/x/net` v0.60.0 (CVE-2026-78669, HTTP/2 SETTINGS DoS; the `migrate` and `devtools/vacuum` modules are bumped too), and the `keyorix-web` image upgrades `pcre2` to 10.49-r0 (CVE-2026-103111) and `tiff` to 4.7.2-r0 (CVE-2026-4775) on top of the pinned nginx base. Guarded by the docker-publish trivy gate (`--severity HIGH,CRITICAL --ignore-unfixed --exit-code 1`). Fixes #3200. Upgrade note: the `0.96.0` operator and web images were published before their scan failed and carry no attestation; use `0.96.1`.
+- **`docker-publish` scans, attests and signs every image by digest before any tag is pushed.** The server, airgap, k8s-sync, operator, mcp and web builds now push by digest only; the Trivy gate, provenance attestation and cosign signature run on that digest, and the release tags (`0.96.1`, `0.96`, `latest`, ...) are created last with `docker buildx imagetools create`. A failed scan therefore leaves no tag behind, instead of an unattested, unsigned `:0.96.0` as happened for the operator and web images (#3200).
+- **The entrypoint refuses to publish anything but a certificate as `KEYORIX_PUBLIC_CA_FILE`.** `KEYORIX_LOCAL_CA_FILE` is copied to a world-readable (0644) file on the volume shared with the web container; the entrypoint now exits non-zero, creating no public file, when the source is not a regular file, contains any `PRIVATE KEY` PEM block, or is not a PEM `CERTIFICATE` bundle (nothing else allowed, at most 256 KiB). The copy is made privately (0600) and the copy is what is checked. Guarded by `server/entrypoint_public_cert_test.go`.
+- **A FIFO at a key-file path is refused instead of hanging startup.** The file KEK provider, Shamir share files, `--passphrase-file`, the wrapped-DEK/salt/TPM-blob reader (`securefiles.SafeReadFile`), the key-file permission fixer, the backup key-file reader and `--checkpoint-key-file` now open non-blocking and refuse a non-regular file on the opened descriptor (`secretenv.OpenRegular`); the KEK and `--passphrase-file` mode checks run on that same descriptor. A new AST guard (`TestSecretFileReadsGoThroughOpenRegular`) fails when a read in the secret-handling packages bypasses the helper.
+- **`KEYORIX_DB_PASSWORD` can no longer change where or how Keyorix connects to PostgreSQL.**
+  Since v0.96.0 (#3159) the password from `KEYORIX_DB_PASSWORD`, `KEYORIX_DB_PASSWORD_FILE` or
+  `storage.database.password` was spliced into `storage.database.dsn`. With a keyword DSN ending
+  in a backslash, a password such as `a sslmode=disable host=evil x=\` became connection
+  keywords (another host, TLS off); with a URL DSN holding `?` in the user name, the result
+  connected to a different host with `sslmode=prefer`. The DSN is now parsed by the driver's own
+  parser and the password is set on the parsed connection settings; it is never written into a
+  connection string. A DSN the driver cannot parse is now reported at startup (`admin validate`)
+  rather than at the first connection, and a keyword DSN with an unterminated quote no longer
+  crashes the config check. Password precedence is unchanged (a DSN that has its own password
+  plus a configured one is still refused).
+- **The metrics token no longer appears in k8s-sync / operator usage output.** Both registered `-metrics-bearer-token` with `KEYORIX_METRICS_TOKEN` as its default, and Go's flag usage (printed on `-h` and on any unknown flag) shows defaults, so a typo in the container args wrote the token to the pod log. The variable is now read after flag parsing; behaviour is otherwise unchanged. A Semgrep rule (`keyorix-secret-env-as-flag-default`) blocks the pattern.
+- **A `*_FILE` secret that names a FIFO is refused instead of hanging startup.** Applies to the server (`internal/secretenv`), `keyorix system init` and k8s-sync's `KEYORIX_TOKEN_FILE`, which now also enforces the 1 MiB limit and regular-file rule the other secret files follow.
+
+### Changed
+- **Published images carry a build date.** `docker-publish` now passes `BUILD_DATE` (the commit date in UTC, never the wall clock, so rebuilding a commit reproduces the stamp) to the server, server airgap and web image builds, so `keyorix --version` / `system info` on a published server image no longer reports `unknown`.
+
+### Fixed
+- **A machine identity's secret read is attributed to the machine in the audit log.** A value
+  read by a machine (`GET /api/v1/secrets/{id}?include_value=true`, by-ref, by-name lookups)
+  showed actor `unknown` in `keyorix audit logs`, the HTTP audit API and gRPC, and read
+  "User ci-app read secret ...". It now shows the machine's name as the actor (`ci-app`) and
+  says "Machine identity ci-app read secret ...". Rows written earlier keep their stored
+  wording; the actor of old machine rows is resolved from `machine_identity_id`, so they show
+  the name too. Audit semantics are unchanged: `secret.read` is still written, before the
+  value is returned, for value reads only; a plain `GET /api/v1/secrets/{id}` is metadata only
+  and is not a `secret.read`.
+- **GOLDEN-PATH section 5 and `up.sh` use the value-read call.** The documented machine
+  `curl` was a metadata-only GET, which writes no audit row, so `audit logs` showed nothing.
+  The doc now uses `?include_value=true` and `--actor-type machine_identity`;
+  `scripts/demo/check.sh` asserts the machine read appears with actor `ci-app`.
+- **The image's `ENTRYPOINT` is now absolute (`/app/entrypoint.sh`)**, so `docker run -w /app/data <image> <cmd>` works: the demo's `docs/demo/GOLDEN-PATH.md` section 7 backup/restore commands failed before starting with `exec: "./entrypoint.sh": no such file` because a relative ENTRYPOINT resolves against the working directory (#3145). `entrypoint.sh` also calls `/app/keyorix-server` by absolute path. New guard `scripts/demo/golden-path-s7.sh` (run by `scripts/demo/check.sh`, so by the `demo-up-smoke` CI job) extracts and executes section 7 from the document against the built demo image and requires `verify-audit on the restored database: VALID`.
+- **`admin backup` now includes soft-deleted rows.** The backup walk used the default soft-delete scope (`deleted_at IS NULL`), so a deleted project/environment/secret was silently left out of the archive while append-only `audit_events` still referenced it, and `admin restore` then refused the archive with `dangling reference(s) ... references missing projects.id=N`. Any server that had ever deleted a project produced an unrestorable backup (found by the new GOLDEN-PATH s7 guard in `demo-up-smoke`, #3164). `scripts/demo/check.sh` also prints a failing step's whole output instead of its last line.
+- **The audit CSV export names the machine identity on machine rows.** `GET /api/v1/audit/export.csv`
+  left the `actor` column blank for a row written by a machine identity, and the JSON feed
+  `GET /api/v1/audit/export` (rendered by `keyorix audit export --csv`) left `actor` empty too.
+  Both now carry the identity's name (e.g. `ci-app`), with `actor_type` `machine_identity`, as the
+  audit list and search already do. Names only; no token or secret material is added. The stored,
+  hash-covered fields of the export are unchanged, so off-box chain verification is unaffected.
+- **`helm upgrade --reuse-values` from chart 0.95.x to 0.96.x no longer fails with `nil pointer evaluating interface {}.enabled`.** (#3199) `--reuse-values` drops the new chart's defaults, so `secureBaseline.*`, `web.hsts.*`, `web.trustedProxies`, `postgresql.runAsUser`/`migrateOwnership` and `auth.existingSecretKeys.*` were missing. The chart now fills in a missing value with its `values.yaml` default (an explicit value, `secureBaseline.enabled=false` included, is kept); `secureBaseline` stays on by default. Guarded by `TestHelmReuseValues_*`, which renders the chart with only the 0.95.3 values file. `--reset-then-reuse-values` (Helm 3.14+) is still the recommended flag.
+- **Read-only roles no longer see the secret dependency Add form or Remove buttons.** The secret detail's Dependencies section offered "Add a dependency" and per-edge "Remove" to a `project_viewer`, whose POST/DELETE `/secrets/{id}/dependencies` then returned 403. Both are now shown only with `secrets.write` (`useCan().writeSecrets`); the dependency graph and blast radius stay readable. Check Drift / Rotation Plan stay offered because the server allows them for `secrets.read` (#3142; server enforcement unchanged).
+- **`storage.database.dsn` no longer silently ignores the database password (#3151).** With `storage.type: postgres` and a `dsn` that carries no password, the password from `KEYORIX_DB_PASSWORD` / `KEYORIX_DB_PASSWORD_FILE` (or `storage.database.password`) is now used (set on the parsed connection settings, never written into the DSN; see Security above); before, it was dropped and the failure surfaced as `connection reset by peer`. If the `dsn` already contains a password and one of those sources is also set, startup (and every command that opens the database) now refuses with an error naming the setting and the fix (remove the password from the `dsn`, or unset the other source) rather than choosing one; the error never prints either password. Passwords containing spaces, quotes or backslashes work in both the `dsn` and the field-by-field form. Documented in `docs/CONFIGURATION.md`.
+- **Sharing page names the secret.** The Secret column showed "Secret #2"; `GET /api/v1/shares` and `GET /api/v1/shares/owned` now return `secretName`, `projectId` and `projectName` for each share, and the page shows them (#3153). The name is returned only for a secret the caller may read (`AuthorizeSecret`, `secrets.read`: ACL, role, share, PAT restriction); otherwise the fields are omitted and the page keeps "Secret #id".
+- **Revoke dialog title readable in both themes.** The confirm dialog's title and message used fixed grey text colours that vanished on the dark dialog background; they now use the theme tokens (#3153).
+
+### Documentation
+- `docs/UPGRADING.md`: the 0.96.0 Helm upgrade command uses `--reset-then-reuse-values` and says which flag works with which chart; stale "latest is v0.95.3" text removed. `QUICK_START.md`, `docs/SELF_HOSTING.md` and `INSTALL-WITH-AI.md` no longer present v0.95.3 as the newest release (v0.96.0 has `admin generate-secrets` and `mfa enroll`).
+- **ADR-115 (local audit journal) parked.** The prototype was measured; the journal only improved median latency over the existing audit group commit while adding complexity and an undetectable-loss tail, so the ADR is marked Parked with an Outcome section. Revisit only if group commit becomes the bottleneck.
+
+### Testing
+- The Helm chart hardening tests (`deploy/hardening`) now run with `secureBaseline.enabled` both `true` and `false`, so the opt-out is covered by the existing CI job.
+- **Real-backend web smoke now runs in the merge queue.** `web-e2e-real-smoke` and its two shards ran on `pull_request` only, so a web spec broken by a PR-vs-main interaction (#3080) reached main unnoticed. They now also run on `merge_group` (docs-only and operator-only groups still skip). Neither job is a required check, so the queue is not stalled by them.
+- **Fixed a ~1/3 flake in the real-backend `mfa-login.spec.ts` MFA-login test (#2442).** The test waits up to one full 30s TOTP step for a code the anti-replay counter will accept, which does not fit Playwright's 30s default test timeout; it now has an explicit 90s budget. The anti-replay wait and assertions are unchanged.
+
 ## v0.96.0 — 2026-10-13
 
 ### Security
