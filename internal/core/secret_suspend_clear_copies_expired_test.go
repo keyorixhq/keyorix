@@ -20,8 +20,13 @@ import (
 
 func expireSecretNow(t *testing.T, db *gorm.DB, id uint) {
 	t.Helper()
+	// Save, not Update: the write must run the model's BeforeSave hook (the
+	// BeforeSave-bypass guard in internal/storage/models forbids raw Expiration writes).
+	var node models.SecretNode
+	require.NoError(t, db.First(&node, id).Error)
 	past := time.Now().Add(-time.Hour)
-	require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", id).Update("expiration", past).Error)
+	node.Expiration = &past
+	require.NoError(t, db.Save(&node).Error)
 }
 
 func readRefusal(t *testing.T, c *KeyorixCore, id uint, wantCode string) SecretReadRefusal {
