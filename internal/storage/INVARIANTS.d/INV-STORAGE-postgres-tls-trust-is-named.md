@@ -17,7 +17,11 @@
   `factory_postgres_tls_test.go:TestCreateStorage_Postgres_VerifyFull_TrustedVsUntrustedCA`
   (real pgx + crypto/tls handshake: trusted CA completes, untrusted CA and wrong host name are
   refused, no CA opens no connection); drift between the check's DSN reader and pgx:
-  `internal/config/database_tls_pgx_test.go:TestDSNTLSSettings_AgreesWithPgx`. The
+  `internal/config/database_tls_pgx_test.go:TestDSNTLSSettings_AgreesWithPgx`, and open-ended in
+  the fail-open direction by
+  `internal/config/database_tls_pgx_fuzz_test.go:FuzzDSNTLSSettings_NeverMissesPgxVerification`
+  (the URL query starts where pgx finds it: after the userinfo and any bracketed IPv6 host, with
+  no `#` fragment). The
   `(string, error)` signature of `BuildPostgresDSN` is the structural guard: a new caller cannot
   get a DSN without the check. `BuildPostgresDSN` quotes every field value it splices in, so no
   field (a password, user or database name) can append a later `sslmode`/`sslrootcert`/`host`

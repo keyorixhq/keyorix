@@ -241,13 +241,12 @@ func dsnTLSSettings(dsn string) (sslmode, sslrootcert string, err error) {
 // URI-only alias for sslmode=require) only weakens the mode, so reading it as
 // the explicit sslmode is stricter, never looser.
 func urlTLSSettings(dsn string) (sslmode, sslrootcert string, err error) {
-	params := ""
-	if i := strings.IndexByte(dsn, '?'); i >= 0 {
-		params = dsn[i+1:]
+	params, err := urlQuery(dsn)
+	if err != nil {
+		return "", "", err
 	}
-	if i := strings.IndexByte(params, '#'); i >= 0 {
-		params = params[:i]
-	}
+	// No '#' fragment is cut off: pgx has none, so "?#=&sslmode=verify-full"
+	// is a verify-full connection to pgx and must be one here.
 	for _, pair := range strings.Split(params, "&") {
 		if pair == "" {
 			continue
@@ -269,6 +268,61 @@ func urlTLSSettings(dsn string) (sslmode, sslrootcert string, err error) {
 		}
 	}
 	return sslmode, sslrootcert, nil
+}
+
+// urlQuery returns the query string of a postgres:// URL the way pgx's
+// parseURLSettings (pgconn/parse_url.go) finds it, not at the first '?' in the
+// string: a '?' in the userinfo (pgx looks ahead for '@' before any '/') or
+// inside a bracketed IPv6 host (pgx does not validate bracket contents) is not
+// the start of the query. Taking the first '?' there would read no sslmode
+// while pgx reads verify-full from the real query and verifies against its
+// implicit trust store.
+func urlQuery(dsn string) (string, error) {
+	p, ok := strings.CutPrefix(dsn, "postgresql://")
+	if !ok {
+		p, _ = strings.CutPrefix(dsn, "postgres://")
+	}
+	if i := strings.IndexAny(p, "@/"); i >= 0 && p[i] == '@' {
+		p = p[i+1:]
+	}
+	for {
+		if strings.HasPrefix(p, "[") {
+			end := strings.IndexByte(p, ']')
+			if end < 0 {
+				return "", errors.New("unterminated IPv6 host in the connection URL")
+			}
+			p = p[end+1:]
+			if p != "" && !strings.ContainsAny(p[:1], ":/?,") {
+				return "", errors.New("unexpected character after the IPv6 host in the connection URL")
+			}
+		} else if i := strings.IndexAny(p, ":/?,"); i >= 0 {
+			p = p[i:]
+		} else {
+			p = ""
+		}
+		if strings.HasPrefix(p, ":") {
+			if i := strings.IndexAny(p, "/?,"); i >= 0 {
+				p = p[i:]
+			} else {
+				p = ""
+			}
+		}
+		if !strings.HasPrefix(p, ",") {
+			break
+		}
+		p = p[1:]
+	}
+	if strings.HasPrefix(p, "/") {
+		i := strings.IndexByte(p, '?')
+		if i < 0 {
+			return "", nil
+		}
+		p = p[i:]
+	}
+	if q, ok := strings.CutPrefix(p, "?"); ok {
+		return q, nil
+	}
+	return "", nil
 }
 
 const dsnSpace = " \t\n\r\v\f"

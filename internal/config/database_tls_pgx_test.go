@@ -62,6 +62,21 @@ func TestDSNTLSSettings_AgreesWithPgx(t *testing.T) {
 		"postgres://u@db/k?sslmode=require&sslrootcert=" + urlCA,
 		"postgres://u@db/k?sslrootcert=system",
 		"postgres://u@db/k",
+		// The query starts where pgx finds it, not at the first '?': a '?' (or
+		// '#', '&') in the userinfo or inside a bracketed IPv6 host is not one.
+		"postgres://u:pa?ss@db/k?sslmode=verify-full",
+		"postgres://u:pa?ss@db/k?sslmode=verify-full&sslrootcert=" + urlCA,
+		"postgres://u:pa#ss@db/k?sslmode=verify-full",
+		"postgres://u:pa&sslmode=disable@db/k?sslmode=verify-full",
+		"postgres://u:p?sslmode=disable@db/k?sslmode=verify-full",
+		"postgres://u?x@db?sslmode=verify-full",
+		"postgres://u@[::1?x]/k?sslmode=verify-full",
+		"postgres://u@[::1?sslmode=disable]:5432/k?sslmode=verify-full",
+		"postgres://u@[::1?sslmode=verify-full]/k",
+		"postgres://u@db/k?x=1@y&sslmode=verify-full",
+		// pgx has no URL fragment: '#' is query text like any other byte.
+		"postgres://u@db/k?#=&sslmode=verify-full",
+		"postgres://0?#0=&sslrootcert=system",
 	}
 	for _, dsn := range dsns {
 		t.Run(dsn, func(t *testing.T) {
@@ -96,6 +111,8 @@ func TestDSNTLSSettings_RejectsWhatPgxRejects(t *testing.T) {
 		"postgres://u@db/k?sslmode",
 		"postgres://u@db/k?sslmode=a=b",
 		"postgres://u@db/k?sslmode=%zz",
+		"postgres://u@[::1/k?sslmode=verify-full",
+		"postgres://u@[::1]x/k?sslmode=verify-full",
 	} {
 		_, perr := pgconn.ParseConfig(dsn)
 		require.Error(t, perr, "premise: pgx rejects %q", dsn)
