@@ -103,3 +103,44 @@ func TestDSNTLSSettings_RejectsWhatPgxRejects(t *testing.T) {
 		assert.Error(t, err, "%q", strings.ReplaceAll(dsn, "\x00", `\0`))
 	}
 }
+
+// BuildPostgresDSN quotes every value it splices into the keyword/value DSN,
+// so a field carrying ` sslmode=disable` (a password from KEYORIX_DB_PASSWORD,
+// a user or database name) stays that field's literal value. Unquoted, pgx
+// reads it as a second sslmode, which wins over the first: the connection
+// would skip the verification ValidateDatabaseTLS approved. Checked against
+// what pgx actually builds, not against the DSN text.
+func TestBuildPostgresDSN_FieldValuesCannotInjectKeywords(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PGSSLMODE", "")
+	t.Setenv("PGSSLROOTCERT", "")
+	t.Setenv("KEYORIX_DB_PASSWORD", "")
+	ca := writeTestCA(t, t.TempDir(), "ca.pem")
+	const inject = ` sslmode=disable sslrootcert=system host=evil`
+
+	for _, field := range []string{"password", "user", "dbname"} {
+		t.Run(field, func(t *testing.T) {
+			d := pgFields("verify-full", ca)
+			value := `x'\` + inject
+			switch field {
+			case "password":
+				d.Password = value
+			case "user":
+				d.User = value
+			case "dbname":
+				d.Name = value
+			}
+			dsn, err := BuildPostgresDSN(d)
+			require.NoError(t, err)
+			pc, err := pgconn.ParseConfig(dsn)
+			require.NoError(t, err)
+
+			require.NotNil(t, pc.TLSConfig, "sslmode=verify-full must stay a TLS connection")
+			assert.False(t, pc.TLSConfig.InsecureSkipVerify, "verify-full must keep verifying")
+			assert.Equal(t, "db.internal", pc.TLSConfig.ServerName, "host name checked must be the configured host")
+			assert.Equal(t, "db.internal", pc.Host)
+			got := map[string]string{"password": pc.Password, "user": pc.User, "dbname": pc.Database}[field]
+			assert.Equal(t, value, got, "the field must read back as its exact literal value")
+		})
+	}
+}

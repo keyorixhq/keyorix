@@ -19,7 +19,11 @@
   refused, no CA opens no connection); drift between the check's DSN reader and pgx:
   `internal/config/database_tls_pgx_test.go:TestDSNTLSSettings_AgreesWithPgx`. The
   `(string, error)` signature of `BuildPostgresDSN` is the structural guard: a new caller cannot
-  get a DSN without the check. **Not covered**: `service=`/`PGSERVICEFILE` settings (pgx can read
+  get a DSN without the check. `BuildPostgresDSN` quotes every field value it splices in, so no
+  field (a password, user or database name) can append a later `sslmode`/`sslrootcert`/`host`
+  that overrides the validated one: `TestBuildPostgresDSN_FieldValuesCannotInjectKeywords`
+  (parsed by pgx). A FIFO named as the CA is refused without blocking boot:
+  `TestLoadDatabaseCAPool_FIFORefusedWithoutBlocking`. **Not covered**: `service=`/`PGSERVICEFILE` settings (pgx can read
   sslmode from a service file; the check does not), and the file is re-read by pgx at connect
   time, so a CA replaced between the check and the connection is what pgx uses (only the
   owner/root can replace it, since a group/world-writable file is refused).

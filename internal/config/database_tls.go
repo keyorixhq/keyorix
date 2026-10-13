@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 )
 
 // SSLRootCertSystem is the ssl_root_cert value that trusts the operating
@@ -69,7 +70,10 @@ func sslModeVerifies(mode string) bool {
 // writable by group or others (anyone who can write it can make the server
 // trust their database). Errors name the path, never file contents.
 func LoadDatabaseCAPool(path string) (*x509.CertPool, int, error) {
-	f, err := os.Open(path) // #nosec G304 -- the operator names their own CA file in the config
+	// O_NONBLOCK so a FIFO opens at once and is refused by the IsRegular check
+	// below; a blocking open on a FIFO with no writer would hang boot instead.
+	// It has no effect on reads from the regular file that passes that check.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) // #nosec G304 -- the operator names their own CA file in the config
 	if err != nil {
 		return nil, 0, fmt.Errorf("read CA file: %w", err)
 	}

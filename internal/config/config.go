@@ -835,13 +835,16 @@ func BuildPostgresDSN(d *DatabaseConfig) (string, error) {
 	if sslMode == "" {
 		sslMode = "require"
 	}
+	// Every value is quoted: unquoted, a space in any field (a password from
+	// KEYORIX_DB_PASSWORD, say) would start a new keyword, and a later
+	// sslmode/sslrootcert/host overrides the one validated above.
 	dsn := fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s",
-		host, port, d.Name, d.User, sslMode)
+		quoteDSNValue(host), quoteDSNValue(port), quoteDSNValue(d.Name), quoteDSNValue(d.User), quoteDSNValue(sslMode))
 	if d.SSLRootCert != "" {
 		dsn += " sslrootcert=" + quoteDSNValue(d.SSLRootCert)
 	}
 	if pw := d.GetPassword(); pw != "" {
-		dsn += " password=" + pw
+		dsn += " password=" + quoteDSNValue(pw)
 	}
 	return dsn, nil
 }
