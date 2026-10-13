@@ -1,0 +1,2 @@
+### Fixed
+- **No `/system/info` request from the MFA-enrolment shell.** A session confined to MFA enrolment (`security.require_mfa`) renders a bare shell, but the footer's version label still read `GET /api/v1/system/info`, which the confinement refuses, so the enrolment login fired a refused request (the #3155 real-backend spec caught it once the footer started reading the server version). The bare shell now has no footer.

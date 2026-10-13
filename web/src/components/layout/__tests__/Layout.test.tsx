@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '../../../test/test-utils';
 import { Layout, Page } from '../Layout';
+import { useAuthStore } from '../../../store/authStore';
 
 // Layout composes Header/Sidebar/Footer/Breadcrumb/ImpersonationBanner/CmdKSearch.
 // Sibling agents are covering those components' own internals in parallel, so
@@ -124,6 +125,39 @@ describe('Layout', () => {
         );
 
         expect(screen.getByTestId('footer-stub')).toBeInTheDocument();
+    });
+
+    it('renders a bare shell (no sidebar, no footer) for a session confined to MFA enrolment', () => {
+        // The footer's version label reads GET /system/info, which the confinement refuses.
+        useAuthStore.setState({ user: { id: 1, pendingSteps: ['enroll_mfa'] } as never });
+        try {
+            render(
+                <Layout>
+                    <div data-testid="page-content">content</div>
+                </Layout>
+            );
+
+            expect(screen.getByTestId('page-content')).toBeInTheDocument();
+            expect(screen.queryByTestId('footer-stub')).not.toBeInTheDocument();
+            expect(screen.queryByTestId('sidebar-stub')).not.toBeInTheDocument();
+        } finally {
+            useAuthStore.setState({ user: null });
+        }
+    });
+
+    it('keeps the footer when the only pending step is not MFA enrolment', () => {
+        useAuthStore.setState({ user: { id: 1, pendingSteps: ['change_password'] } as never });
+        try {
+            render(
+                <Layout>
+                    <div>content</div>
+                </Layout>
+            );
+
+            expect(screen.getByTestId('footer-stub')).toBeInTheDocument();
+        } finally {
+            useAuthStore.setState({ user: null });
+        }
     });
 
     it('hides the footer when showFooter is false', () => {

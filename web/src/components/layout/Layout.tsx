@@ -76,8 +76,9 @@ const Layout: React.FC<LayoutProps> = ({ children, breadcrumbs, showFooter = tru
                     <div className={clsx('flex-1', className)}>{children}</div>
                 </main>
 
-                {/* Footer */}
-                {showFooter && <Footer />}
+                {/* Footer: its version label reads GET /system/info, which the enrolment
+                    confinement refuses, so the bare shell has none (#3155). */}
+                {showFooter && !enrolmentOnly && <Footer />}
             </div>
 
             {/* Cmd-K global search overlay */}
