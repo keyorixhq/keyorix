@@ -201,12 +201,19 @@ bring_up_postgres() {
     printf '%s\n' "demo-check-bootstrap-token" > "$secrets_dir/bootstrap_token"
   )
   chmod 750 "$secrets_dir"
+  # The Postgres TLS certificate and key (docker-compose.yml: the bundled postgres
+  # serves TLS and the server connects with verify-full against that certificate)
+  # come from the REAL generator, init-secrets.sh, which keeps the four files above
+  # (it never overwrites). INIT_SECRETS_SERVER_UID is set to a uid nobody has here:
+  # that script's "files owned by the server uid" refusal is handled by the chown below.
+  INIT_SECRETS_SERVER_UID=65534 "$REPO_ROOT/scripts/selfhost/init-secrets.sh" --dir "$secrets_dir" --env-file "$SCRATCH/.env.init-secrets" >"$SCRATCH/init-secrets.log" 2>&1 \
+    || { cat "$SCRATCH/init-secrets.log"; echo "scripts/selfhost/init-secrets.sh failed"; return 1; }
   # The server container runs as uid 1001 and refuses a group-readable secret file
   # it owns. A host user that is also uid 1001 (the GitHub-hosted runner) hands the
   # files to root, keeping the group bit the container joins; deleting them later
   # needs only write access to the directory, which we keep.
   if [ "$(id -u)" = "1001" ]; then
-    sudo -n chown root:"$(id -g)" "$secrets_dir"/db_password "$secrets_dir"/master_password "$secrets_dir"/admin_password "$secrets_dir"/bootstrap_token \
+    sudo -n chown root:"$(id -g)" "$secrets_dir"/db_password "$secrets_dir"/master_password "$secrets_dir"/admin_password "$secrets_dir"/bootstrap_token "$secrets_dir"/postgres_tls.crt "$secrets_dir"/postgres_tls.key \
       || { echo "uid 1001 needs passwordless sudo to hand the demo secrets files to root (the server refuses group-readable files it owns)"; return 1; }
   fi
   cat > "$PG_ENV_FILE" <<EOF
