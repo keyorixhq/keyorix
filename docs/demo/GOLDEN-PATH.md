@@ -331,8 +331,9 @@ keyorix break-glass revoke --project-id 2 --activation-id <id>
 extracts them from this section, so the doc cannot drift from what works): the
 activation shows as `active` in the list, the revoke ends it, and the audit log
 records `break_glass.activated`, `break_glass.revoked`, `role.assigned` and `role.removed`.
-Alice listing her own activations is not shown here: today the list is
-administrator-only (#3147, fix in #3184).
+Alice can also list her own activations (#3184): `keyorix break-glass list --project-id 2`
+run as alice shows only hers; run by an administrator (`roles.read` at the project) it
+shows everyone's.
 
 If it is not enabled the command now says so (`break-glass is not enabled on this
 server; set break_glass.enabled`) instead of a bare `permission denied`.
