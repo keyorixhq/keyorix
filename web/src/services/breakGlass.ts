@@ -56,11 +56,9 @@ const normalize = (a: WireActivation): BreakGlassActivation => ({
     reviewNote: a.review_note,
 });
 
-const base = (projectId: number) => `/api/v1/projects/${projectId}/break-glass`;
-
 export const breakGlassApi = {
     async list(projectId: number): Promise<BreakGlassList> {
-        const response = await apiClient.get(base(projectId));
+        const response = await apiClient.get(`/api/v1/projects/${projectId}/break-glass`);
         const data = response.data?.data ?? response.data ?? {};
         return {
             activations: ((data.activations ?? []) as WireActivation[]).map(normalize),
@@ -72,13 +70,16 @@ export const breakGlassApi = {
     // ttl is a Go duration ("2h"); omitted means the server's default. The server caps it at
     // its configured maximum and the returned activation carries the expiry actually granted.
     async activate(projectId: number, justification: string, ttl?: string): Promise<BreakGlassActivation> {
-        const response = await apiClient.post(base(projectId), { justification, ...(ttl ? { ttl } : {}) });
+        const response = await apiClient.post(`/api/v1/projects/${projectId}/break-glass`, {
+            justification,
+            ...(ttl ? { ttl } : {}),
+        });
         const data = response.data?.data ?? response.data ?? {};
         return normalize(data.activation as WireActivation);
     },
 
     async revoke(projectId: number, activationId: number): Promise<void> {
-        await apiClient.post(`${base(projectId)}/${activationId}/revoke`);
+        await apiClient.post(`/api/v1/projects/${projectId}/break-glass/${activationId}/revoke`);
     },
 };
 
