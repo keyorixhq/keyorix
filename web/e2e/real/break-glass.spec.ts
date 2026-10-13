@@ -180,7 +180,7 @@ test('the admin revokes it through the confirm dialog', async () => {
     await row.getByRole('button', { name: 'Revoke' }).click();
 
     const dialog = adminPage.getByRole('dialog');
-    await expect(dialog.getByRole('heading', { name: 'Revoke emergency access?' })).toBeVisible();
+    await expect(dialog.getByRole('heading', { name: 'Revoke emergency access?', level: 3 })).toBeVisible();
     await expect(dialog).toContainText(alice.displayName);
     const revoked = adminPage.waitForResponse(
         (r) => /\/break-glass\/\d+\/revoke$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST'
