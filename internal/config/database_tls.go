@@ -47,7 +47,7 @@ func resolveConfigRelativeFile(baseDir, p string) (string, error) {
 	return filepath.Abs(filepath.Join(baseDir, p))
 }
 
-// effectiveSSLMode is the sslmode BuildPostgresDSN writes for a field-built
+// effectiveSSLMode is the sslmode ResolvePostgresDSN writes for a field-built
 // DSN: SSLMode, or "require" when unset.
 func (d *DatabaseConfig) effectiveSSLMode() string {
 	if d.SSLMode == "" {
@@ -163,7 +163,7 @@ func missingRootCertError(modeField, mode, fix string) error {
 //     verify-full/verify-ca: its sslrootcert must be set and pass the same
 //     file checks.
 //
-// Run by Config.Validate at startup and by BuildPostgresDSN on every
+// Run by Config.Validate at startup and by ResolvePostgresDSN on every
 // connection a process opens, so an entry point that never calls Validate
 // (the admin subcommands) cannot connect around it.
 func ValidateDatabaseTLS(d *DatabaseConfig) error {

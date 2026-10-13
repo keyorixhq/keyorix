@@ -205,27 +205,27 @@ func TestValidate_DSN_Unparseable_RefusesWithoutEchoingIt(t *testing.T) {
 	assert.NotContains(t, err.Error(), "hunter2")
 }
 
-// BuildPostgresDSN is the guard every connection goes through (the factory,
+// ResolvePostgresDSN is the guard every connection goes through (the factory,
 // OpenGormDB, serverguard, admin restore/verify-audit): it returns the same
 // refusal instead of a DSN, so an entry point that never ran Validate still
 // cannot connect.
-func TestBuildPostgresDSN_RefusesWhatValidateRefuses(t *testing.T) {
-	dsn, err := BuildPostgresDSN(pgFields("verify-full", ""))
+func TestResolvePostgresDSN_RefusesWhatValidateRefuses(t *testing.T) {
+	dsn, err := ResolvePostgresDSN(pgFields("verify-full", ""))
 	require.Error(t, err)
 	assert.Empty(t, dsn)
 	assert.Contains(t, err.Error(), "storage.database.ssl_root_cert")
 
-	dsn, err = BuildPostgresDSN(&DatabaseConfig{DSN: "host=db sslmode=verify-full"})
+	dsn, err = ResolvePostgresDSN(&DatabaseConfig{DSN: "host=db sslmode=verify-full"})
 	require.Error(t, err)
 	assert.Empty(t, dsn)
 }
 
-func TestBuildPostgresDSN_PassesSSLRootCert(t *testing.T) {
+func TestResolvePostgresDSN_PassesSSLRootCert(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), `ca dir with 'quote`)
 	require.NoError(t, os.MkdirAll(dir, 0o755))
 	ca := writeTestCA(t, dir, "pg ca.pem")
 
-	dsn, err := BuildPostgresDSN(pgFields("verify-full", ca))
+	dsn, err := ResolvePostgresDSN(pgFields("verify-full", ca))
 	require.NoError(t, err)
 	assert.Contains(t, dsn, "sslmode='verify-full'")
 	assert.Contains(t, dsn, `sslrootcert='`+strings.ReplaceAll(ca, `'`, `\'`)+`'`)
@@ -237,7 +237,7 @@ func TestBuildPostgresDSN_PassesSSLRootCert(t *testing.T) {
 	assert.Equal(t, "verify-full", mode)
 	assert.Equal(t, ca, root)
 
-	dsn, err = BuildPostgresDSN(pgFields("require", ""))
+	dsn, err = ResolvePostgresDSN(pgFields("require", ""))
 	require.NoError(t, err)
 	assert.NotContains(t, dsn, "sslrootcert", "no CA configured: none passed")
 }

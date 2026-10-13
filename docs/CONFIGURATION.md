@@ -228,7 +228,8 @@ storage:
     # ssl_root_cert: pg-ca.pem    # CA that signed the database's certificate; REQUIRED
     #   with verify-full/verify-ca, or "system" for the OS CA store. See
     #   "PostgreSQL TLS" below.
-    # password: ""                # prefer KEYORIX_DB_PASSWORD
+    # password: ""                # prefer KEYORIX_DB_PASSWORD (or KEYORIX_DB_PASSWORD_FILE);
+    #   see "PostgreSQL password precedence" below
     # max_open_conns: 8          # default: 8 for SQLite, 25 for Postgres (see below)
     # max_idle_conns: 8          # default: the effective max_open_conns
     conn_max_lifetime_minutes: 30
@@ -309,6 +310,33 @@ The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
 `system`). `admin validate --posture` prints one informational line saying
 what is encrypted and what is verified against which CA.
+
+### PostgreSQL password precedence
+
+The database password comes from `KEYORIX_DB_PASSWORD`, or the file named by
+`KEYORIX_DB_PASSWORD_FILE` (setting both is refused, as for every `<NAME>_FILE`
+secret), or `storage.database.password` -- see
+[Secrets from files](#secrets-from-files-name_file). How it combines with the
+connection settings:
+
+| `storage.database.dsn` | A password source is set | Result |
+|---|---|---|
+| empty (host/port/name/user fields) | yes | password added to the connection string |
+| set, **no** password in it | yes | the password is added to the DSN |
+| set, no password in it | no | DSN used as written (e.g. trust auth, `.pgpass`) |
+| set, **with** a password (`password=...` or `postgres://user:pw@...`) | no | DSN used as written |
+| set, **with** a password | **yes** | **refused at startup** |
+
+The last row is an error, not a silent choice: the server and every command that
+opens the database (`admin migrate`, `admin validate`, `admin restore`, ...) stop
+with `storage.database.dsn already contains a password and KEYORIX_DB_PASSWORD is
+also set; ... remove the password from storage.database.dsn ... or unset
+KEYORIX_DB_PASSWORD`. Fix it by keeping the password in one place only. The
+message names the setting and never prints either password or the DSN.
+
+The password is always quoted (or percent-encoded in a URL DSN) when it is added,
+so a password containing spaces, quotes or `host=...` stays one password value and
+can never add or override a connection setting such as `sslmode` or `sslrootcert`.
 
 ### Refusing to vivify a missing database
 

@@ -7,13 +7,13 @@
   driver's implicit `PGSSLROOTCERT`, `~/.postgresql/root.crt` or OS store. `ssl_root_cert` with
   `dsn`, or with `ssl_mode: disable`, is refused rather than ignored. Enforced in
   `config.ValidateDatabaseTLS`, run by `Config.Validate` (server boot) AND by
-  `config.BuildPostgresDSN`, which returns an error instead of a DSN — so every connection
+  `config.ResolvePostgresDSN`, which returns an error instead of a DSN — so every connection
   (`createPostgresStorage`, `OpenGormDB`, `serverguard`, admin restore/verify-audit) is checked
   even where `Validate` never ran. Why: PG-VERIFYFULL-1 (triage #3). Guard:
   `server/database_tls_startup_test.go:TestInitializeCoreService_PostgresVerifyFullWithoutCA_RefusesToStart`;
   `internal/config/database_tls_test.go` (`TestValidate_VerifyingSSLModeWithoutRootCert_RefusesToStart`,
   `_VerifyFull_ImplicitDriverCAIsNotEnough`, `_UnusableRootCert_RefusesToStart`,
-  `_DSN_VerifyingModeNeedsSSLRootCert`, `TestBuildPostgresDSN_RefusesWhatValidateRefuses`);
+  `_DSN_VerifyingModeNeedsSSLRootCert`, `TestResolvePostgresDSN_RefusesWhatValidateRefuses`);
   `factory_postgres_tls_test.go:TestCreateStorage_Postgres_VerifyFull_TrustedVsUntrustedCA`
   (real pgx + crypto/tls handshake: trusted CA completes, untrusted CA and wrong host name are
   refused, no CA opens no connection); drift between the check's DSN reader and pgx:
@@ -22,10 +22,10 @@
   `internal/config/database_tls_pgx_fuzz_test.go:FuzzDSNTLSSettings_NeverMissesPgxVerification`
   (the URL query starts where pgx finds it: after the userinfo and any bracketed IPv6 host, with
   no `#` fragment). The
-  `(string, error)` signature of `BuildPostgresDSN` is the structural guard: a new caller cannot
-  get a DSN without the check. `BuildPostgresDSN` quotes every field value it splices in, so no
+  `(string, error)` signature of `ResolvePostgresDSN` is the structural guard: a new caller cannot
+  get a DSN without the check. `ResolvePostgresDSN` quotes every field value it splices in, so no
   field (a password, user or database name) can append a later `sslmode`/`sslrootcert`/`host`
-  that overrides the validated one: `TestBuildPostgresDSN_FieldValuesCannotInjectKeywords`
+  that overrides the validated one: `TestResolvePostgresDSN_FieldValuesCannotInjectKeywords`
   (parsed by pgx). A FIFO named as the CA is refused without blocking boot:
   `TestLoadDatabaseCAPool_FIFORefusedWithoutBlocking`. **Not covered**: `service=`/`PGSERVICEFILE` settings (pgx can read
   sslmode from a service file; the check does not), and the file is re-read by pgx at connect

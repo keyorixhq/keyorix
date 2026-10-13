@@ -809,46 +809,6 @@ func (d *DatabaseConfig) AuditDurableSyncStatus(storageType string) AuditDurable
 	}
 }
 
-// BuildPostgresDSN returns a ready-to-use PostgreSQL DSN.
-// If DSN is set directly it is returned as-is; otherwise it is built from individual fields.
-//
-// It runs ValidateDatabaseTLS first and returns its error instead of a DSN, so
-// no caller can open a connection whose TLS trust the config does not name
-// (verify-full with no CA, an unusable CA file): the error return is the guard,
-// not a convention each caller has to remember.
-func BuildPostgresDSN(d *DatabaseConfig) (string, error) {
-	if err := ValidateDatabaseTLS(d); err != nil {
-		return "", err
-	}
-	if d.DSN != "" {
-		return d.DSN, nil
-	}
-	host := d.Host
-	if host == "" {
-		host = "localhost"
-	}
-	port := d.Port
-	if port == "" {
-		port = "5432"
-	}
-	sslMode := d.SSLMode
-	if sslMode == "" {
-		sslMode = "require"
-	}
-	// Every value is quoted: unquoted, a space in any field (a password from
-	// KEYORIX_DB_PASSWORD, say) would start a new keyword, and a later
-	// sslmode/sslrootcert/host overrides the one validated above.
-	dsn := fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s",
-		quoteDSNValue(host), quoteDSNValue(port), quoteDSNValue(d.Name), quoteDSNValue(d.User), quoteDSNValue(sslMode))
-	if d.SSLRootCert != "" {
-		dsn += " sslrootcert=" + quoteDSNValue(d.SSLRootCert)
-	}
-	if pw := d.GetPassword(); pw != "" {
-		dsn += " password=" + quoteDSNValue(pw)
-	}
-	return dsn, nil
-}
-
 // BoolPtr returns a pointer to b — for setting optional *bool config fields.
 func BoolPtr(b bool) *bool { return &b }
 
@@ -2695,6 +2655,11 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 	// confusing connection failure (or, worse, an unauthenticated feature).
 	if err := c.ValidateSecretSources(); err != nil {
 		return err
+	}
+	if st := c.Storage.Type; st == "postgres" || st == "postgresql" {
+		if _, err := ResolvePostgresDSN(&c.Storage.Database); err != nil {
+			return err
+		}
 	}
 	if err := validateTLSMode("server.http.tls_mode", c.Server.HTTP.TLSMode); err != nil {
 		return err
