@@ -91,6 +91,13 @@ same database in place and passed a full API smoke sweep with
 
 ### Upgrading Docker Compose or Helm from v0.95.x to v0.96.0
 
+> **Use v0.96.1, not v0.96.0.** The `keyorix-web` and `keyorix-operator` images
+> published as `0.96.0` were pushed before their vulnerability scan failed, so they
+> carry no provenance attestation or signature (`gh attestation verify` fails for
+> them), and chart 0.96.0 does not accept `helm upgrade --reuse-values` from a
+> 0.95.x release (see below). v0.96.1 (images, chart and `docker-compose.yml` pins
+> `0.96.1`) fixes all three. The server and airgap `0.96.0` images are attested.
+
 Not yet run end to end against a published v0.95.3 stack; the fresh-install path
 was booted on the e2e VM (see the v0.96.0 release PR).
 
