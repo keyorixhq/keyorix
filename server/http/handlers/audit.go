@@ -135,12 +135,13 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) { //
 // merely by holding audit.read (see ExportAuditLogs's own gate).
 func (h *AuditHandler) toAuditLogEntries(ctx context.Context, events []*models.AuditEvent) []AuditLogEntry {
 	actorNames := h.coreService.ResolveUsernames(ctx, events)
+	machineNames := h.coreService.ResolveMachineNames(ctx, events)
 	entries := make([]AuditLogEntry, 0, len(events))
 	for _, e := range events {
 		entry := AuditLogEntry{
 			ID:          e.ID,
 			EventType:   e.EventType,
-			Actor:       storage.AuditActorName(e, actorNames),
+			Actor:       storage.AuditActorName(e, actorNames, machineNames),
 			ActorType:   storage.AuditActorKind(e),
 			Description: e.Description,
 			Timestamp:   e.EventTime,
@@ -231,6 +232,7 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	actorNames := h.coreService.ResolveUsernames(r.Context(), events)
+	machineNames := h.coreService.ResolveMachineNames(r.Context(), events)
 	name := func(id *uint) string {
 		if id == nil {
 			return ""
@@ -249,7 +251,7 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 			ID:          e.ID,
 			EventType:   e.EventType,
 			Timestamp:   e.EventTime,
-			Actor:       name(e.UserID),
+			Actor:       exportActorName(e, actorNames, machineNames),
 			UserID:      e.UserID,
 			ProjectID:   e.ProjectID,
 			SecretID:    e.SecretNodeID,
@@ -282,6 +284,19 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 		"count":       len(entries),
 		"next_cursor": nextCursor,
 	}, "")
+}
+
+// exportActorName is the export feed's actor: the acting user's name (blank when
+// there is none, as before), or for a machine row the identity's name (#3150), so
+// the CLI's --csv, which renders this feed, fills the actor column too.
+func exportActorName(e *models.AuditEvent, actorNames, machineNames map[uint]string) string {
+	if e.UserID == nil && e.MachineIdentityID != nil {
+		return storage.AuditActorName(e, actorNames, machineNames)
+	}
+	if e.UserID == nil {
+		return ""
+	}
+	return actorNames[*e.UserID]
 }
 
 // validActorType reports whether s is an audit actor-type filter value.
