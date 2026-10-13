@@ -137,6 +137,11 @@ run_step() { # run_step "name" fn_name
     PROBLEMS=$((PROBLEMS + 1))
     FAILED_STEPS+=("$name")
     printf "${RED}❌${NC} %s: %s\n" "$name" "$(tail -1 "$out")"
+    # The one-line summary hides the cause (#3164: s7 failed in CI with only
+    # "exit 1"); show the step's whole output, indented, under the failure.
+    if [ "$(wc -l < "$out")" -gt 1 ]; then
+      sed 's/^/      | /' "$out"
+    fi
   fi
 }
 

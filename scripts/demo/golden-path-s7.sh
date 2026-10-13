@@ -55,9 +55,20 @@ for want in "admin backup" "admin restore" "mv keyorix.db"; do
 done
 
 # Host-CLI lines (and their continuations, none today) are API-level: skipped.
-grep -v '^\./bin/keyorix' "$WORK/s7.raw" \
+# The ERR trap names the failing command (BASH_COMMAND is the unexpanded text,
+# so the demo passphrase variable is never printed; no `set -x`).
+{
+  echo "trap 'echo \"golden-path-s7: FAILED (line \$LINENO): \$BASH_COMMAND\" >&2' ERR"
+  grep -v '^\./bin/keyorix' "$WORK/s7.raw"
+} \
   | sed -e "s#$DOC_IMAGE#$IMAGE#g" -e "s#$DOC_VOLUME#$VOLUME#g" \
         -e "s#docker \(stop\|start\) $DOC_CONTAINER#docker \1 $CONTAINER#" > "$WORK/s7.sh"
+
+# A previous run of this guard leaves backup.tar.gz in the volume, and
+# `admin backup --output` refuses an existing path. Remove only that artifact so
+# the guard can be re-run on the same demo; the doc's commands stay untouched.
+docker run --rm --entrypoint /bin/sh -v "$VOLUME:/app/data" "$IMAGE" \
+  -c 'rm -f /app/data/backup.tar.gz' > /dev/null
 
 echo "==> running $DOC section 7 verbatim ($(grep -c . "$WORK/s7.sh") lines)"
 rc=0
