@@ -32,6 +32,47 @@ var ErrUpstreamGone = errors.New("k8ssync: secret not found or access revoked up
 // reported, and the pass backs off like any failure until the token is fixed.
 var ErrUnauthorized = errors.New("k8ssync: Keyorix rejected the agent's credential (HTTP 401)")
 
+// ErrUnreachable, ErrTimeout and ErrServerError are what a Fetch error wraps when Keyorix
+// could not answer: no response arrived (connection refused, DNS, TLS), the request timed
+// out, or the server answered 5xx. They are classified from the transport error and the
+// status alone and mirror the operator's keyorix.ErrUnreachable / ErrTimeout /
+// ErrServerError. The target Secret is kept, the target is counted failed AND
+// keyorix_unreachable, and the pass log says KeyorixUnreachable with the reason.
+var (
+	ErrUnreachable = errors.New("k8ssync: Keyorix server unreachable")
+	ErrTimeout     = errors.New("k8ssync: Keyorix request timed out")
+	ErrServerError = errors.New("k8ssync: Keyorix server error (5xx)")
+)
+
+// fetchUnavailableReason returns "unreachable", "timeout" or "server_error" (the same
+// reason values as the operator's keyorix_operator_fetch_errors_total label) for an error
+// wrapping one of the could-not-answer sentinels, "" otherwise.
+func fetchUnavailableReason(err error) string {
+	switch {
+	case errors.Is(err, ErrTimeout):
+		return "timeout"
+	case errors.Is(err, ErrServerError):
+		return "server_error"
+	case errors.Is(err, ErrUnreachable):
+		return "unreachable"
+	}
+	return ""
+}
+
+// classifyTransportError wraps a failed http.Client.Do error with ErrTimeout or
+// ErrUnreachable. A cancelled context (the pass was abandoned) is left unclassified.
+func classifyTransportError(err error) error {
+	var ne net.Error
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("request failed: %w", err)
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
+		return fmt.Errorf("request failed: %w: %w", err, ErrTimeout)
+	default:
+		return fmt.Errorf("request failed: %w: %w", err, ErrUnreachable)
+	}
+}
+
 // ErrSourceSuspended and ErrSourceExpired are what a Fetch error wraps when the server
 // answers 409 SecretSuspended / SecretExpired. Neither says the secret is gone or access
 // was cut (resuming or extending restores the read), so neither is ErrUpstreamGone and
@@ -326,7 +367,7 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface
 
 	resp, err := f.hc.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return classifyTransportError(err)
 	}
 	defer drainAndClose(resp)
 
@@ -343,6 +384,9 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("not found (HTTP 404): %w", ErrUpstreamGone)
+	}
+	if resp.StatusCode >= 500 {
+		return fmt.Errorf("server returned HTTP %d: %w", resp.StatusCode, ErrServerError)
 	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)

@@ -84,7 +84,10 @@ owns the `data` it writes and prunes keys it no longer maps.
 A **transient** failure (network error, timeout, 5xx from Keyorix) leaves the target
 Secret completely untouched — every key it currently holds, not just the one that
 failed to fetch — and retries next pass. This is always true, regardless of
-`pruneOnRevoke` below.
+`pruneOnRevoke` below. The target is counted `failed` and `keyorix_unreachable` (the log
+line says `KeyorixUnreachable` with the reason `unreachable`, `timeout` or `server_error`;
+the operator's counterpart is `KeyorixUnreachable` plus
+`keyorix_operator_fetch_errors_total{reason}`).
 
 A **401** (Keyorix rejected the agent's *own* token: invalid, expired or rotated) never
 prunes either, whatever `pruneOnRevoke` says: every synced Secret is kept, the target is
@@ -129,7 +132,7 @@ agent's config file. By cause:
 
 | Cause | Target Secret | Logged / counted |
 | --- | --- | --- |
-| Server unreachable, timeout, 5xx | **Never modified or deleted**; counted `failed`, retried with backoff | — |
+| Server **unreachable, timeout, 5xx** | **Never modified or deleted**; counted `failed`, retried with backoff; syncs normally once Keyorix answers | `KeyorixUnreachable (unreachable\|timeout\|server_error)` in the pass log, outcome `keyorix_unreachable` |
 | **401** — the agent's own token rejected | **Kept** (never pruned, whatever `pruneOnRevoke` is); counted `failed`, retried with backoff; syncs normally once the token is fixed | `KeyorixAuthFailed` in the pass log, outcome `auth_failed` |
 | **403 / 404** — grant revoked / secret deleted | **Pruned** when `pruneOnRevoke` is true (default), behind the mass-revocation circuit breaker; kept when false | outcome `revoked` (or `mass_revocation_suspected`) |
 | Source **expired** | **Retained** (the target is not written at all) | `WARNING SourceSecretExpired`, outcome `source_expired` |

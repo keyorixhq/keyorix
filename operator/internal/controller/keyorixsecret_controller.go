@@ -106,6 +106,12 @@ const (
 	// reasonKeyorixAuthFailed is the Ready condition reason (and Warning Event reason) set
 	// when Keyorix answers 401 to the operator's own credential. The target Secret is kept.
 	reasonKeyorixAuthFailed = "KeyorixAuthFailed"
+	// reasonKeyorixUnreachable is the Ready condition reason (and Warning Event reason) set
+	// when Keyorix could not answer a value read: unreachable, timed out or 5xx. The target
+	// Secret is kept. reasonKeyorixRecovered is the Normal Event raised when the next
+	// reconcile reads successfully again.
+	reasonKeyorixUnreachable = "KeyorixUnreachable"
+	reasonKeyorixRecovered   = "KeyorixRecovered"
 )
 
 // authFailuresTotal counts reconciles where Keyorix rejected the operator's own
@@ -114,6 +120,15 @@ var authFailuresTotal = prometheus.NewCounter(prometheus.CounterOpts{
 	Name: "keyorix_operator_auth_failures_total",
 	Help: "KeyorixSecret reconciles where Keyorix rejected the operator's own credential (HTTP 401); the target Secret was kept untouched.",
 })
+
+// fetchErrorsTotal counts reconciles where Keyorix could not answer a value read and the
+// target Secret was therefore kept as-is. reason is unreachable (no response: connection
+// refused, DNS, TLS), timeout, or server_error (HTTP 5xx). It counts every failed
+// reconcile; the Warning Event is raised only on entry into the state.
+var fetchErrorsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+	Name: "keyorix_operator_fetch_errors_total",
+	Help: "KeyorixSecret reconciles where Keyorix could not answer a value read (reason=unreachable|timeout|server_error); the target Secret was kept untouched.",
+}, []string{"reason"})
 
 // massRevocationSuspectedTotal counts reconciles where the mass-revocation circuit
 // breaker withheld a confirmed-gone/revoked wipe pending an explicit
@@ -129,6 +144,32 @@ var massRevocationSuspectedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 func init() {
 	ctrlmetrics.Registry.MustRegister(massRevocationSuspectedTotal)
 	ctrlmetrics.Registry.MustRegister(authFailuresTotal)
+	ctrlmetrics.Registry.MustRegister(fetchErrorsTotal)
+	for _, reason := range []string{fetchReasonUnreachable, fetchReasonTimeout, fetchReasonServerError} {
+		fetchErrorsTotal.WithLabelValues(reason)
+	}
+}
+
+// Label values of keyorix_operator_fetch_errors_total{reason}.
+const (
+	fetchReasonUnreachable = "unreachable"
+	fetchReasonTimeout     = "timeout"
+	fetchReasonServerError = "server_error"
+)
+
+// fetchFailureReason maps a buildDesired error to the fetch_errors reason label, "" when
+// the error is not a Keyorix-could-not-answer failure (token Secret missing, apply
+// error, 4xx other than the classified ones...), which stays a plain SyncError.
+func fetchFailureReason(err error) string {
+	switch {
+	case errors.Is(err, keyorix.ErrTimeout):
+		return fetchReasonTimeout
+	case errors.Is(err, keyorix.ErrServerError):
+		return fetchReasonServerError
+	case errors.Is(err, keyorix.ErrUnreachable):
+		return fetchReasonUnreachable
+	}
+	return ""
 }
 
 // massRevocationTripped implements the mass-revocation circuit breaker's pure
@@ -341,6 +382,7 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	desired, token, rep, err := r.buildDesired(ctx, &ks)
 	if err != nil {
 		if held, ok := asSourceHeld(err); ok {
+			r.noteFetchRecovered(&ks)
 			return r.holdSource(ctx, &ks, rep, held, interval)
 		}
 		logger.Error(err, "failed to assemble secret data")
@@ -362,10 +404,16 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Secret stays as it is; the failure is surfaced and retried with backoff
 			// until the credential is fixed.
 			return r.failAuth(ctx, &ks, err)
+		case fetchFailureReason(err) != "":
+			// Keyorix could not answer (unreachable, timeout, 5xx): says nothing about the
+			// secret or the grant, so the target Secret stays as it is; surfaced and retried
+			// with backoff.
+			return r.failFetch(ctx, &ks, err)
 		default:
 			return r.fail(ctx, &ks, err)
 		}
 	}
+	r.noteFetchRecovered(&ks)
 
 	hash := hashData(r.hashKey, desired)
 
@@ -671,6 +719,50 @@ func (r *KeyorixSecretReconciler) failAuth(ctx context.Context, ks *secretsv1alp
 		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, cause
+}
+
+// readyReason returns the current reason of the Ready condition, "" when absent.
+func readyReason(ks *secretsv1alpha1.KeyorixSecret) string {
+	for _, c := range ks.Status.Conditions {
+		if c.Type == conditionReady {
+			return c.Reason
+		}
+	}
+	return ""
+}
+
+// failFetch records that Keyorix could not answer a value read (unreachable, timeout or
+// 5xx) and leaves the target Secret completely untouched: Ready=False with reason
+// KeyorixUnreachable, a Warning Event (once per entry into the state, not on every backoff
+// retry) and keyorix_operator_fetch_errors_total{reason}. It returns the cause so the
+// rate-limited workqueue retries with backoff; the first successful read raises the
+// Normal KeyorixRecovered Event (noteFetchRecovered) and Ready goes back to True.
+func (r *KeyorixSecretReconciler) failFetch(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
+	reason := fetchFailureReason(cause)
+	alreadyReported := readyReason(ks) == reasonKeyorixUnreachable
+	msg := fmt.Sprintf("%s — Keyorix could not answer the read (%s); the target Secret was left unchanged. Syncing resumes on the next successful retry.",
+		cause.Error(), reason)
+	r.setReady(ks, metav1.ConditionFalse, reasonKeyorixUnreachable, msg)
+	if r.Recorder != nil && !alreadyReported {
+		r.Recorder.Eventf(ks, nil, corev1.EventTypeWarning, reasonKeyorixUnreachable, "FetchFailed",
+			"Keyorix could not answer the read (%s) for server %q; the target Secret was left unchanged", reason, ks.Spec.Server)
+	}
+	fetchErrorsTotal.WithLabelValues(reason).Inc()
+	if err := r.Status().Update(ctx, ks); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, cause
+}
+
+// noteFetchRecovered raises the Normal KeyorixRecovered Event when the previous reconcile
+// left Ready=False/KeyorixUnreachable and every value read has now succeeded. It runs
+// before anything rewrites the Ready condition; the caller's own success/hold/fail path
+// then replaces the reason, so the Event is raised once per recovery.
+func (r *KeyorixSecretReconciler) noteFetchRecovered(ks *secretsv1alpha1.KeyorixSecret) {
+	if r.Recorder != nil && readyReason(ks) == reasonKeyorixUnreachable {
+		r.Recorder.Eventf(ks, nil, corev1.EventTypeNormal, reasonKeyorixRecovered, "FetchRecovered",
+			"Keyorix answered the read again; syncing resumed")
+	}
 }
 
 // wipeAndFailGone wipes the target Secret — ONLY when effectivePrunePolicy is

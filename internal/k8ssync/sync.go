@@ -92,6 +92,10 @@ type Result struct {
 	// credential (ErrUnauthorized). The target Secret is left untouched; such a target is
 	// ALSO counted in Failed, so the loop backs off.
 	AuthFailed int
+	// KeyorixUnreachable counts targets skipped because Keyorix could not answer
+	// (ErrUnreachable, ErrTimeout, ErrServerError: no response, timeout or 5xx). The
+	// target Secret is left untouched; such a target is ALSO counted in Failed.
+	KeyorixUnreachable int
 	// Notes are informational log lines (state changes of sources), distinct from Errors.
 	Notes  []string
 	Errors []string
@@ -174,6 +178,11 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 			if errors.Is(st.ferr, ErrUnauthorized) {
 				res.AuthFailed++
 				res.Errors = append(res.Errors, fmt.Sprintf("%s: KeyorixAuthFailed: %v — target Secret left unchanged (a 401 never prunes)", t, st.ferr))
+				continue
+			}
+			if reason := fetchUnavailableReason(st.ferr); reason != "" {
+				res.KeyorixUnreachable++
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: KeyorixUnreachable (%s): %v — target Secret left unchanged", t, reason, st.ferr))
 				continue
 			}
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t, st.ferr))

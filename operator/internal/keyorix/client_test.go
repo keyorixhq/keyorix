@@ -171,6 +171,85 @@ func TestClient_StatusDecidesClassification(t *testing.T) {
 	}
 }
 
+// TestClient_CouldNotAnswerClassification: connection refused, a timed-out request and a
+// 5xx are classified ErrUnreachable / ErrTimeout / ErrServerError from the transport error
+// and the status alone, each exclusive of the others and never gone/unauthorized. A
+// cancelled context and a plain 4xx are none of them.
+func TestClient_CouldNotAnswerClassification(t *testing.T) {
+	sentinels := []error{ErrUnreachable, ErrTimeout, ErrServerError}
+	check := func(t *testing.T, err error, want error) {
+		t.Helper()
+		require.Error(t, err)
+		for _, s := range sentinels {
+			assert.Equal(t, s == want, errors.Is(err, s), "%v vs %v", err, s)
+		}
+		assert.False(t, errors.Is(err, ErrSecretGone))
+		assert.False(t, errors.Is(err, ErrUnauthorized))
+	}
+
+	t.Run("unreachable", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+		url := srv.URL
+		srv.Close()
+		_, err := New(url, "tok").FetchValue(context.Background(), "a/b/c")
+		check(t, err, ErrUnreachable)
+	})
+
+	t.Run("client timeout", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+		defer srv.Close()
+		defer close(release)
+		c := New(srv.URL, "tok")
+		c.hc.Timeout = 50 * time.Millisecond
+		_, err := c.FetchValue(context.Background(), "a/b/c")
+		check(t, err, ErrTimeout)
+	})
+
+	t.Run("context deadline", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+		defer srv.Close()
+		defer close(release)
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
+		_, err := New(srv.URL, "tok").FetchValue(ctx, "a/b/c")
+		check(t, err, ErrTimeout)
+	})
+
+	for _, status := range []int{500, 502, 503, 504} {
+		t.Run(fmt.Sprintf("http %d", status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"not found","message":"unauthorized"}`))
+			}))
+			defer srv.Close()
+			_, err := New(srv.URL, "tok").FetchValue(context.Background(), "a/b/c")
+			check(t, err, ErrServerError)
+		})
+	}
+
+	t.Run("plain 4xx is none of them", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusTooManyRequests)
+		}))
+		defer srv.Close()
+		_, err := New(srv.URL, "tok").FetchValue(context.Background(), "a/b/c")
+		check(t, err, nil)
+	})
+
+	t.Run("cancelled context is none of them", func(t *testing.T) {
+		release := make(chan struct{})
+		srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { <-release }))
+		defer srv.Close()
+		defer close(release)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		_, err := New(srv.URL, "tok").FetchValue(ctx, "a/b/c")
+		check(t, err, nil)
+	})
+}
+
 // TestClient_RefusesRedirect pins the fix for a bearer-token-leak-on-downgrade bug: Go's
 // default http.Client only strips the Authorization header when a redirect's Host
 // differs from the original — never when only the scheme changes, so a same-host

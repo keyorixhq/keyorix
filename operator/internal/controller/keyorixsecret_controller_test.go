@@ -42,9 +42,14 @@ type fakeFetcher struct {
 	failRefs         map[string]bool
 	goneRefs         map[string]bool
 	unauthorizedRefs map[string]bool
+	// errRefs returns the given error for a ref (e.g. one wrapping keyorix.ErrTimeout).
+	errRefs map[string]error
 }
 
 func (f *fakeFetcher) FetchValue(_ context.Context, ref string) ([]byte, error) {
+	if err := f.errRefs[ref]; err != nil {
+		return nil, err
+	}
 	if f.goneRefs[ref] {
 		return nil, fmt.Errorf("ref %q gone: %w", ref, keyorix.ErrSecretGone)
 	}
@@ -395,6 +400,127 @@ func TestReconcile_Unauthorized_KeepsTargetSecretThenRecovers(t *testing.T) {
 			assert.Equal(t, metav1.ConditionTrue, got.Status.Conditions[0].Status)
 			assert.Equal(t, "Synced", got.Status.Conditions[0].Reason)
 		})
+	}
+}
+
+func fetchErrorCounter(reason string) float64 {
+	return counterValue(fetchErrorsTotal.WithLabelValues(reason))
+}
+
+// TestReconcile_FetchUnavailable_KeepsTargetSecretThenRecovers pins Andrei's 2026-10-13
+// decision for "Keyorix could not answer" (unreachable, timeout, 5xx): the target Secret
+// is kept byte-for-byte, Ready reads KeyorixUnreachable, ONE Warning Event is raised on
+// entry (not per retry), keyorix_operator_fetch_errors_total{reason} counts every failed
+// reconcile, the error is still returned for backoff, and the first successful read
+// clears the state with a Normal KeyorixRecovered Event.
+func TestReconcile_FetchUnavailable_KeepsTargetSecretThenRecovers(t *testing.T) {
+	cases := []struct {
+		reason string
+		err    error
+	}{
+		{"unreachable", fmt.Errorf("request failed: dial tcp: connection refused: %w", keyorix.ErrUnreachable)},
+		{"timeout", fmt.Errorf("request failed: context deadline exceeded: %w", keyorix.ErrTimeout)},
+		{"server_error", fmt.Errorf("server returned HTTP 503: %w", keyorix.ErrServerError)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.reason, func(t *testing.T) {
+			fetcher := &fakeFetcher{values: map[string][]byte{
+				"app/production/db-password": []byte("p4ss"),
+				"app/production/api-key":     []byte("k3y"),
+			}}
+			r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret())
+			rec := events.NewFakeRecorder(32)
+			r.Recorder = rec
+			_, err := reconcile(t, r)
+			require.NoError(t, err)
+			require.Empty(t, drainEvents(rec), "a healthy first sync raises no Event")
+
+			var before corev1.Secret
+			require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &before))
+
+			fetcher.errRefs = map[string]error{"app/production/db-password": tc.err}
+			metricBefore := fetchErrorCounter(tc.reason)
+			othersBefore := map[string]float64{}
+			for _, o := range []string{"unreachable", "timeout", "server_error"} {
+				if o != tc.reason {
+					othersBefore[o] = fetchErrorCounter(o)
+				}
+			}
+
+			for i := 0; i < 2; i++ {
+				_, err = reconcile(t, r)
+				require.Error(t, err, "still requeues with error for backoff")
+				assert.False(t, errors.Is(err, keyorix.ErrSecretGone), "never classified as gone")
+			}
+
+			var after corev1.Secret
+			require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after))
+			assert.Equal(t, before.Data, after.Data)
+			assert.Equal(t, before.ResourceVersion, after.ResourceVersion, "the Secret must not even be rewritten")
+
+			var got secretsv1alpha1.KeyorixSecret
+			require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+			require.Len(t, got.Status.Conditions, 1)
+			assert.Equal(t, metav1.ConditionFalse, got.Status.Conditions[0].Status)
+			assert.Equal(t, "KeyorixUnreachable", got.Status.Conditions[0].Reason)
+			assert.Contains(t, got.Status.Conditions[0].Message, "left unchanged")
+			assert.Contains(t, got.Status.Conditions[0].Message, tc.reason)
+			assert.Equal(t, metricBefore+2, fetchErrorCounter(tc.reason), "one count per failed reconcile")
+			for o, v := range othersBefore {
+				assert.Equal(t, v, fetchErrorCounter(o), "only reason=%s moves", tc.reason)
+			}
+			evs := drainEvents(rec)
+			require.Len(t, evs, 1, "one Warning Event per entry into the state, not per retry")
+			assert.Contains(t, evs[0], corev1.EventTypeWarning)
+			assert.Contains(t, evs[0], "KeyorixUnreachable")
+
+			// Keyorix answers again: syncs, Ready=True, exactly one Normal recovery Event.
+			fetcher.errRefs = nil
+			fetcher.values["app/production/db-password"] = []byte("n3w")
+			_, err = reconcile(t, r)
+			require.NoError(t, err)
+			require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db-creds", Namespace: "app"}, &after))
+			assert.Equal(t, []byte("n3w"), after.Data["DB_PASSWORD"])
+			require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+			assert.Equal(t, metav1.ConditionTrue, got.Status.Conditions[0].Status)
+			assert.Equal(t, "Synced", got.Status.Conditions[0].Reason)
+			evs = drainEvents(rec)
+			require.Len(t, evs, 1)
+			assert.Contains(t, evs[0], corev1.EventTypeNormal)
+			assert.Contains(t, evs[0], "KeyorixRecovered")
+
+			// A later outage is a new entry: a new Warning Event; a further healthy pass is quiet.
+			fetcher.errRefs = map[string]error{"app/production/db-password": tc.err}
+			_, err = reconcile(t, r)
+			require.Error(t, err)
+			require.Len(t, drainEvents(rec), 1, "re-entry raises a fresh Warning Event")
+		})
+	}
+}
+
+// TestReconcile_FetchUnavailable_PlainErrorsStaySyncError: only classified Keyorix
+// could-not-answer errors get KeyorixUnreachable; anything else (here an unclassified
+// error, and a 4xx) stays the generic SyncError with no Event and no fetch_errors count.
+func TestReconcile_FetchUnavailable_PlainErrorsStaySyncError(t *testing.T) {
+	fetcher := &fakeFetcher{
+		values:   map[string][]byte{"app/production/db-password": []byte("p4ss"), "app/production/api-key": []byte("k3y")},
+		failRefs: map[string]bool{"app/production/db-password": true},
+	}
+	r, c := newReconciler(t, fetcher, ksFixture(), tokenSecret())
+	rec := events.NewFakeRecorder(32)
+	r.Recorder = rec
+	before := map[string]float64{}
+	for _, o := range []string{"unreachable", "timeout", "server_error"} {
+		before[o] = fetchErrorCounter(o)
+	}
+	_, err := reconcile(t, r)
+	require.Error(t, err)
+	var got secretsv1alpha1.KeyorixSecret
+	require.NoError(t, c.Get(context.Background(), types.NamespacedName{Name: "db", Namespace: "app"}, &got))
+	assert.Equal(t, "SyncError", got.Status.Conditions[0].Reason)
+	assert.Empty(t, drainEvents(rec))
+	for o, v := range before {
+		assert.Equal(t, v, fetchErrorCounter(o))
 	}
 }
 

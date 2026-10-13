@@ -26,9 +26,16 @@ sets a `Ready` condition and requeues after `refreshInterval`.
 
 A fetch failure is handled differently depending on what it means:
 
-- **Transient failure** (network error, timeout, 5xx from Keyorix): the target Secret is
-  left completely untouched — no partial write, no wipe. `Ready` goes `False` with
-  reason `SyncError` and the cause in the message; the controller backs off and retries.
+- **Keyorix cannot answer** (server unreachable, timeout, 5xx): the target Secret is left
+  completely untouched — no partial write, no wipe. `Ready` goes `False` with reason
+  `KeyorixUnreachable` and the cause in the message; one Warning Event `KeyorixUnreachable`
+  is raised when the state is entered (not on every retry),
+  `keyorix_operator_fetch_errors_total{reason="unreachable|timeout|server_error"}` counts
+  each failed reconcile, and the controller backs off and retries. The first successful
+  read raises a Normal Event `KeyorixRecovered` and `Ready` returns to `True`. Other
+  failures (token Secret missing or unlabelled, server not in `allowedServers`, a
+  Kubernetes API error while applying) are the generic `SyncError`: `Ready=False`, no
+  Event, no dedicated counter.
 - **The operator's own credential is rejected** (Keyorix returns **401**: the token in
   `tokenSecretRef` is invalid, expired or rotated): every synced Secret is **kept
   untouched**, whatever `spec.prunePolicy` says. A 401 is about the operator's credential,
@@ -53,7 +60,8 @@ revoked grant, so neither deletes the target Secret. What happens, by cause:
 
 | Cause | Target Secret | `Ready` | Also raised |
 | --- | --- | --- | --- |
-| Server unreachable, timeout, 5xx, token Secret missing | **Never modified or deleted.** Retried with backoff | `False`, reason `SyncError` | — |
+| Server **unreachable, timeout, 5xx** | **Never modified or deleted.** Retried with backoff; syncs normally once Keyorix answers | `False`, reason `KeyorixUnreachable` | Warning Event `KeyorixUnreachable` (once on entry), counter `keyorix_operator_fetch_errors_total{reason="unreachable\|timeout\|server_error"}`, Normal Event `KeyorixRecovered` on recovery |
+| Token Secret missing / unlabelled, apply error | **Never modified or deleted.** Retried with backoff | `False`, reason `SyncError` | — |
 | **401** — the operator's own credential rejected | **Kept** (never wiped, whatever `prunePolicy` is). Retried with backoff; syncs normally once the token is fixed | `False`, reason `KeyorixAuthFailed` | Warning Event `KeyorixAuthFailed`, counter `keyorix_operator_auth_failures_total` |
 | **403 / 404** — grant revoked / secret deleted | **Pruned per `spec.prunePolicy`** (Delete by default; Keep leaves it), behind the mass-revocation circuit breaker | `False`, reason `UpstreamSecretGone` | — |
 | Referenced secret **expired** | **Retained** (last value kept; nothing is written, not even other keys) | `False`, reason `SourceSecretExpired` | `SourceSecretHealthy=False`, Warning Event `SourceSecretExpired`, gauge `expired` |
@@ -235,7 +243,8 @@ Deleting the `KeyorixSecret` removes the `db-creds` Secret it created (owner ref
 
 - `status.conditions[Ready]` — `True` when the target Secret is up to date; `False` on
   failure, with the cause in the message and one of these reasons: `SyncError`
-  (transient — target Secret untouched), `KeyorixAuthFailed` (401 — target Secret kept),
+  (other failure — target Secret untouched), `KeyorixUnreachable` (unreachable, timeout
+  or 5xx — target Secret kept), `KeyorixAuthFailed` (401 — target Secret kept),
   or `UpstreamSecretGone` (404/403 — wipes the target Secret per `prunePolicy`, see "How
   it works" above).
 - `status.lastSyncTime`, `status.syncedHash`, `status.observedGeneration`.

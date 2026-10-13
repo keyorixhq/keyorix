@@ -72,6 +72,19 @@ var ErrSecretSuspended = errors.New("secret is suspended")
 // a condition, a Warning Event and a metric, as it does ahead of the expiry.
 var ErrSecretExpired = errors.New("secret has expired")
 
+// ErrUnreachable, ErrTimeout and ErrServerError are wrapped into the error FetchValue
+// returns when Keyorix could not answer the read at all: the request failed before a
+// response arrived (connection refused, DNS, TLS, reset), it timed out, or the server
+// answered 5xx. They are classified from the transport error and the status code alone
+// (never from message text). None of them says anything about the secret or the grant,
+// so the controller keeps the target Secret, reports KeyorixUnreachable (one Warning
+// Event on entry, keyorix_operator_fetch_errors_total) and retries with backoff.
+var (
+	ErrUnreachable = errors.New("keyorix server unreachable")
+	ErrTimeout     = errors.New("keyorix request timed out")
+	ErrServerError = errors.New("keyorix server error (5xx)")
+)
+
 // Error codes the server puts in the error envelope's "error" field when a
 // secret's own state refuses a value read (server/http/handlers/openapi.yaml,
 // SecretReadRefused; ERRMAP-1).
@@ -160,6 +173,22 @@ func validateClientBaseURL(raw string) error {
 	return nil
 }
 
+// classifyTransportError wraps a failed http.Client.Do error with ErrTimeout (deadline
+// exceeded, client or request timeout) or ErrUnreachable (anything else that stopped a
+// response arriving). A cancelled context is neither: the reconcile was abandoned, not
+// the server at fault, so the error is returned unclassified.
+func classifyTransportError(err error) error {
+	var ne net.Error
+	switch {
+	case errors.Is(err, context.Canceled):
+		return fmt.Errorf("request failed: %w", err)
+	case errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &ne) && ne.Timeout()):
+		return fmt.Errorf("request failed: %w: %w", err, ErrTimeout)
+	default:
+		return fmt.Errorf("request failed: %w: %w", err, ErrUnreachable)
+	}
+}
+
 // isLoopbackHost reports whether host is localhost or a loopback IP.
 func isLoopbackHost(host string) bool {
 	if host == "localhost" {
@@ -214,7 +243,7 @@ func (c *Client) FetchValueInfo(ctx context.Context, ref string) (Value, error) 
 
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		return Value{}, fmt.Errorf("request failed: %w", err)
+		return Value{}, classifyTransportError(err)
 	}
 	defer drainAndClose(resp)
 
@@ -248,6 +277,8 @@ func (c *Client) FetchValueInfo(ctx context.Context, ref string) (Value, error) 
 		return Value{}, fmt.Errorf("not authorized (HTTP 401) — check the token is valid: %w", ErrUnauthorized)
 	case resp.StatusCode == http.StatusBadRequest:
 		return Value{}, fmt.Errorf("invalid reference %q (want project/environment/name)", ref)
+	case resp.StatusCode >= 500:
+		return Value{}, fmt.Errorf("server returned HTTP %d: %w", resp.StatusCode, ErrServerError)
 	case resp.StatusCode >= 400:
 		return Value{}, fmt.Errorf("server returned HTTP %d", resp.StatusCode)
 	}

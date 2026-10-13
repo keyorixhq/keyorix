@@ -29,8 +29,12 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 
 ## Failure modes
 
-- **Keyorix unreachable, or returns a 5xx:** treated as transient
-  (`r.fail`/`SyncError` on the `Ready` condition). The target Secret is left
+- **Keyorix unreachable, times out, or returns a 5xx:** treated as transient.
+  `Ready` goes `False` with reason `KeyorixUnreachable`, one Warning Event is
+  emitted when the state is entered,
+  `keyorix_operator_fetch_errors_total{reason}` counts each failed reconcile,
+  and a Normal `KeyorixRecovered` Event follows the first successful read. The
+  target Secret is left
   completely untouched and retried on the next reconcile, which
   controller-runtime backs off exponentially (bounded, per-`KeyorixSecret`)
   after a non-nil `Reconcile` error — see [Upgrading: egress
