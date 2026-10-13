@@ -24,7 +24,9 @@ storage:
     # prefer: uses TLS when the postgres server supports it (default for docker-compose
     # where the server runs on an internal Docker network without server certs). For
     # production deployments with a managed or externally-reachable postgres, set this
-    # to verify-full and supply sslrootcert/sslcert/sslkey. Never use disable in prod.
+    # to verify-full and set ssl_root_cert to the PEM file of the CA that signed the
+    # database's certificate (the server refuses to start on verify-full without it).
+    # Never use disable in prod.
     ssl_mode: prefer
     # Password comes from KEYORIX_DB_PASSWORD (set in .env), never committed here.
   encryption:

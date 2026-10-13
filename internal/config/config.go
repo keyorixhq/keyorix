@@ -604,7 +604,14 @@ type DatabaseConfig struct {
 	Name     string `yaml:"name"`
 	User     string `yaml:"user"`
 	Password string `yaml:"password"` // use KEYORIX_DB_PASSWORD env var instead
-	SSLMode  string `yaml:"ssl_mode"` // disable, require, verify-full
+	SSLMode  string `yaml:"ssl_mode"` // disable, require, verify-ca, verify-full
+	// SSLRootCert is the PEM file of the CA that signed the PostgreSQL
+	// server's certificate, passed to the driver as sslrootcert (or "system"
+	// for the OS CA store). REQUIRED when ssl_mode is verify-full/verify-ca:
+	// without it the server refuses to start rather than verify against a
+	// trust store the config does not name. A relative path is anchored to
+	// the config file's directory, like database.path. See database_tls.go.
+	SSLRootCert string `yaml:"ssl_root_cert"`
 
 	// Shared pool settings
 	MaxOpenConns           int `yaml:"max_open_conns"`
@@ -804,9 +811,17 @@ func (d *DatabaseConfig) AuditDurableSyncStatus(storageType string) AuditDurable
 
 // BuildPostgresDSN returns a ready-to-use PostgreSQL DSN.
 // If DSN is set directly it is returned as-is; otherwise it is built from individual fields.
-func BuildPostgresDSN(d *DatabaseConfig) string {
+//
+// It runs ValidateDatabaseTLS first and returns its error instead of a DSN, so
+// no caller can open a connection whose TLS trust the config does not name
+// (verify-full with no CA, an unusable CA file): the error return is the guard,
+// not a convention each caller has to remember.
+func BuildPostgresDSN(d *DatabaseConfig) (string, error) {
+	if err := ValidateDatabaseTLS(d); err != nil {
+		return "", err
+	}
 	if d.DSN != "" {
-		return d.DSN
+		return d.DSN, nil
 	}
 	host := d.Host
 	if host == "" {
@@ -822,10 +837,13 @@ func BuildPostgresDSN(d *DatabaseConfig) string {
 	}
 	dsn := fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s",
 		host, port, d.Name, d.User, sslMode)
+	if d.SSLRootCert != "" {
+		dsn += " sslrootcert=" + quoteDSNValue(d.SSLRootCert)
+	}
 	if pw := d.GetPassword(); pw != "" {
 		dsn += " password=" + pw
 	}
-	return dsn
+	return dsn, nil
 }
 
 // BoolPtr returns a pointer to b — for setting optional *bool config fields.
@@ -2512,6 +2530,18 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.Storage.Database.Path = resolvedDBPath
 
+	// PG-VERIFYFULL-1: storage.database.ssl_root_cert is a file path in the
+	// same config, so it gets database.path's anchoring for the same reason
+	// (#1636): two processes reading one config must trust the same CA file
+	// whatever their cwd. "system" names the OS store, not a file.
+	if rc := cfg.Storage.Database.SSLRootCert; rc != "" && rc != SSLRootCertSystem {
+		resolvedRootCert, rerr := resolveConfigRelativeFile(baseDir, rc)
+		if rerr != nil {
+			return nil, fmt.Errorf("invalid storage.database.ssl_root_cert: %w", rerr)
+		}
+		cfg.Storage.Database.SSLRootCert = resolvedRootCert
+	}
+
 	cfg.DeprecatedSettingWarnings = deprecatedWarnings
 
 	return &cfg, nil
@@ -2722,6 +2752,11 @@ func (c *Config) Validate() error { // NOSONAR -- cognitive complexity 32, suppr
 		db := c.Storage.Database
 		if db.DSN == "" && (db.Host == "" || db.Name == "" || db.User == "") {
 			return fmt.Errorf("postgres storage requires either database.dsn or all of host, name, and user to be set")
+		}
+		// PG-VERIFYFULL-1: verify-full with no CA, or an unusable CA file,
+		// refuses to start here rather than at the first connection.
+		if err := ValidateDatabaseTLS(&db); err != nil {
+			return err
 		}
 	// #1640: "sqlite" is an accepted alias for "local" -- see the matching
 	// comment in internal/storage/factory.go's CreateStorage switch.

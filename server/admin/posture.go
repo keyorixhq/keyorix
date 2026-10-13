@@ -84,6 +84,7 @@ func runAdminValidatePosture(cfg *config.Config, configPath string) error {
 	collectFilePermissionPosture(cfg, configPath, report)
 	collectKeyFileSetPosture(cfg, report)
 	collectTLSPosture(cfg, report)
+	collectDatabaseTLSPosture(cfg, report)
 	collectKEKAgePosture(cfg, report)
 
 	// A database that cannot be queried is reported as a deviation of its own
@@ -382,6 +383,31 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 	}
 	check("HTTP", cfg.Server.HTTP)
 	check("gRPC", cfg.Server.GRPC)
+}
+
+// collectDatabaseTLSPosture reports how the PostgreSQL connection is
+// protected (PG-VERIFYFULL-1). A TLS trust setting the server would refuse to
+// boot on (verify-full with no ssl_root_cert, an unusable CA file) is a
+// deviation carrying the same message as the boot refusal; this command loads
+// the config without Validate, so it is the place an operator sees it before
+// a restart does. Otherwise one informational line says what is encrypted and
+// what is verified against which CA. ssl_mode: disable itself is already
+// counted by the insecure-settings registry
+// (storage.database.insecure_disable_database_tls), and require without a CA
+// is the Helm secure baseline's bundled-database shape, so neither is a
+// second deviation here.
+func collectDatabaseTLSPosture(cfg *config.Config, report *postureReport) {
+	switch cfg.Storage.Type {
+	case "postgres", "postgresql":
+	default:
+		return
+	}
+	line, err := config.DatabaseTLSPosture(&cfg.Storage.Database)
+	if err != nil {
+		report.deviate("database-tls", err.Error())
+		return
+	}
+	report.info(line)
 }
 
 // collectKEKAgePosture reports the KEK salt file's age, informationally only

@@ -340,7 +340,11 @@ func openVerifyAuditTarget(cfg *config.Config, cfgErr error) (*auditverify.DB, *
 
 	switch cfg.Storage.Type {
 	case "postgres", "postgresql":
-		dsn := config.BuildPostgresDSN(&cfg.Storage.Database)
+		dsn, err := config.BuildPostgresDSN(&cfg.Storage.Database)
+		if err != nil {
+			_ = lock.Release()
+			return nil, nil, err
+		}
 		if dsn == "" {
 			_ = lock.Release()
 			return nil, nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")

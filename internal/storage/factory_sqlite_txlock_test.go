@@ -44,7 +44,8 @@ func TestSqliteDSN_PostgresPathUntouched(t *testing.T) {
 		Name: "keyorix",
 		User: "keyorix",
 	}
-	dsn := config.BuildPostgresDSN(d)
+	dsn, err := config.BuildPostgresDSN(d)
+	require.NoError(t, err)
 	require.NotContains(t, dsn, "_txlock", "Postgres DSN must never carry the SQLite-only _txlock pragma")
 	require.NotContains(t, dsn, "_busy_timeout", "Postgres DSN must never carry the SQLite-only _busy_timeout pragma")
 	require.NotContains(t, dsn, "_journal_mode", "Postgres DSN must never carry the SQLite-only _journal_mode pragma")

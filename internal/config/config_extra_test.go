@@ -97,14 +97,17 @@ func TestPasswordPolicyConfig_Resolve_ExplicitFalseIsHonored(t *testing.T) {
 // returned as-is without modification.
 func TestBuildPostgresDSN_DSNPassthrough(t *testing.T) {
 	d := &DatabaseConfig{DSN: "host=pg user=kx dbname=keyorix sslmode=require"}
-	assert.Equal(t, d.DSN, BuildPostgresDSN(d))
+	dsn, err := BuildPostgresDSN(d)
+	require.NoError(t, err)
+	assert.Equal(t, d.DSN, dsn)
 }
 
 // TestBuildPostgresDSN_FieldsDefaults validates that missing host/port/sslmode
 // are filled with their documented defaults.
 func TestBuildPostgresDSN_FieldsDefaults(t *testing.T) {
 	d := &DatabaseConfig{Name: "keyorix", User: "kx"}
-	dsn := BuildPostgresDSN(d)
+	dsn, err := BuildPostgresDSN(d)
+	require.NoError(t, err)
 	assert.Contains(t, dsn, "host=localhost")
 	assert.Contains(t, dsn, "port=5432")
 	assert.Contains(t, dsn, "sslmode=require")
@@ -121,17 +124,22 @@ func TestBuildPostgresDSN_ExplicitFields(t *testing.T) {
 		Name:    "mydb",
 		User:    "admin",
 		SSLMode: "verify-full",
+		// verify-full needs a named CA since PG-VERIFYFULL-1 (database_tls_test.go).
+		SSLRootCert: SSLRootCertSystem,
 	}
-	dsn := BuildPostgresDSN(d)
+	dsn, err := BuildPostgresDSN(d)
+	require.NoError(t, err)
 	assert.Contains(t, dsn, "host=pg.prod")
 	assert.Contains(t, dsn, "port=5433")
 	assert.Contains(t, dsn, "sslmode=verify-full")
+	assert.Contains(t, dsn, "sslrootcert='system'")
 }
 
 // TestBuildPostgresDSN_Password validates that a password is appended to the DSN.
 func TestBuildPostgresDSN_Password(t *testing.T) {
 	d := &DatabaseConfig{Name: "db", User: "u", Password: "s3cr3t"}
-	dsn := BuildPostgresDSN(d)
+	dsn, err := BuildPostgresDSN(d)
+	require.NoError(t, err)
 	assert.Contains(t, dsn, "password=s3cr3t")
 }
 
