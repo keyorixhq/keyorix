@@ -46,7 +46,7 @@ type PrunePolicy string
 const (
 	// PrunePolicyKeep leaves the target Secret's last-known value untouched. The
 	// confirmed-gone/revoked state is still surfaced distinctly on the Ready
-	// condition (reason UpstreamSecretGone or UpstreamAccessRevoked) — it just
+	// condition (reason UpstreamSecretGone) — it just
 	// isn't acted on. Not the default (see PrunePolicyDelete) — an explicit
 	// opt-in for deployments that prefer availability over immediate reap.
 	PrunePolicyKeep PrunePolicy = "Keep"
@@ -118,19 +118,21 @@ type KeyorixSecretSpec struct {
 	// +kubebuilder:validation:MaxItems=50
 	Data []KeyorixSecretData `json:"data"`
 	// PrunePolicy controls what happens to the target Secret when the upstream
-	// Keyorix reference is confirmed gone (404/403) or this CR's access is confirmed
-	// revoked (401). Delete (the default, restored 2026-09-25 — coordinator inbox
-	// item 1, reversing a brief default-Keep regression) actively removes the
-	// target Secret the moment either is confirmed: a secret confirmed gone or
-	// access confirmed revoked must not stay readable in the cluster indefinitely.
+	// Keyorix reference is confirmed gone or this CR's access to it confirmed revoked
+	// (404/403). A 401 (the operator's own token rejected) never wipes whatever this
+	// says: the Secret is kept and the Ready condition reads KeyorixAuthFailed. Delete
+	// (the default, restored 2026-09-25 — coordinator inbox item 1, reversing a brief
+	// default-Keep regression) actively removes the target Secret the moment a 404/403
+	// is confirmed: a secret confirmed gone or access confirmed revoked must not stay
+	// readable in the cluster indefinitely.
 	// Keep leaves the Secret's last-known value untouched instead — the
 	// confirmed-gone/revoked state is still surfaced distinctly on the Ready
 	// condition, just not acted on — for deployments that prefer availability over
 	// immediate reap.
 	//
 	// TokenSecretRef is commonly SHARED across several KeyorixSecrets, so a single
-	// credential rotation or revocation event reads as the exact same 401 (or a
-	// simultaneous 404/403 on every one of them) at once — the mass-revocation
+	// grant revocation can read as a simultaneous 404/403 on every one of them at
+	// once (a rotated credential reads as 401, which never wipes) — the mass-revocation
 	// circuit breaker (controller package: massRevocationSuspected) is what bounds
 	// that blast radius now, not the PrunePolicy default: when enough KeyorixSecrets
 	// sharing a token are confirmed gone/revoked at once, NONE of them are wiped

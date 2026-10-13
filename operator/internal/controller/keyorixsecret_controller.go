@@ -103,7 +103,17 @@ const (
 	// reader of .status can tell "wipe withheld, suspected mass event" apart from
 	// "wipe applied" or "wipe deliberately skipped by PrunePolicy Keep".
 	reasonMassRevocationSuspected = "MassRevocationSuspected"
+	// reasonKeyorixAuthFailed is the Ready condition reason (and Warning Event reason) set
+	// when Keyorix answers 401 to the operator's own credential. The target Secret is kept.
+	reasonKeyorixAuthFailed = "KeyorixAuthFailed"
 )
+
+// authFailuresTotal counts reconciles where Keyorix rejected the operator's own
+// credential (HTTP 401) and the target Secret was therefore kept as-is.
+var authFailuresTotal = prometheus.NewCounter(prometheus.CounterOpts{
+	Name: "keyorix_operator_auth_failures_total",
+	Help: "KeyorixSecret reconciles where Keyorix rejected the operator's own credential (HTTP 401); the target Secret was kept untouched.",
+})
 
 // massRevocationSuspectedTotal counts reconciles where the mass-revocation circuit
 // breaker withheld a confirmed-gone/revoked wipe pending an explicit
@@ -118,6 +128,7 @@ var massRevocationSuspectedTotal = prometheus.NewCounter(prometheus.CounterOpts{
 
 func init() {
 	ctrlmetrics.Registry.MustRegister(massRevocationSuspectedTotal)
+	ctrlmetrics.Registry.MustRegister(authFailuresTotal)
 }
 
 // massRevocationTripped implements the mass-revocation circuit breaker's pure
@@ -344,13 +355,13 @@ func (r *KeyorixSecretReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// it, with no indication anything is wrong (#428).
 			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamSecretGone", err, token)
 		case errors.Is(err, keyorix.ErrUnauthorized):
-			// A 401 doesn't confirm the referenced secret itself is gone, but in
-			// practice it overwhelmingly means the machine-identity credential was
-			// revoked or rotated — an admin deliberately cut this workload's access.
-			// That's the same "stop serving the stale value" signal as a confirmed
-			// 404/403, so it gets the same wipe treatment, just with a distinct
-			// status reason so it's clear from .status which of the two happened.
-			return r.wipeAndFailGone(ctx, &ks, secretName, "UpstreamAccessRevoked", err, token)
+			// A 401 means the operator's OWN credential (the token in tokenSecretRef) was
+			// rejected: invalid, expired or rotated. It says nothing about whether this
+			// workload's grant on the referenced secret was cut (that is a 403/404), so
+			// it never wipes, whatever prunePolicy says (Andrei, 2026-10-13). The target
+			// Secret stays as it is; the failure is surfaced and retried with backoff
+			// until the credential is fixed.
+			return r.failAuth(ctx, &ks, err)
 		default:
 			return r.fail(ctx, &ks, err)
 		}
@@ -635,6 +646,33 @@ func (r *KeyorixSecretReconciler) fail(ctx context.Context, ks *secretsv1alpha1.
 	return ctrl.Result{}, cause
 }
 
+// failAuth records that Keyorix rejected the operator's own bearer token (HTTP 401) and
+// leaves the target Secret completely untouched: Ready=False with reason
+// KeyorixAuthFailed, a Warning Event (once per entry into the state, not on every
+// backoff retry) and keyorix_operator_auth_failures_total. It returns the cause so the
+// rate-limited workqueue retries with backoff; once the credential is fixed the next
+// successful reconcile syncs normally and Ready goes back to True.
+func (r *KeyorixSecretReconciler) failAuth(ctx context.Context, ks *secretsv1alpha1.KeyorixSecret, cause error) (ctrl.Result, error) {
+	alreadyReported := false
+	for _, c := range ks.Status.Conditions {
+		if c.Type == conditionReady && c.Reason == reasonKeyorixAuthFailed {
+			alreadyReported = true
+		}
+	}
+	msg := fmt.Sprintf("%s — the operator's own credential (tokenSecretRef %q) was rejected; the target Secret was left unchanged. Fix or rotate the token Secret; syncing resumes on the next retry.",
+		cause.Error(), ks.Spec.TokenSecretRef.Name)
+	r.setReady(ks, metav1.ConditionFalse, reasonKeyorixAuthFailed, msg)
+	if r.Recorder != nil && !alreadyReported {
+		r.Recorder.Eventf(ks, nil, corev1.EventTypeWarning, reasonKeyorixAuthFailed, "AuthFailed",
+			"Keyorix rejected the credential in tokenSecretRef %q (HTTP 401); the target Secret was left unchanged", ks.Spec.TokenSecretRef.Name)
+	}
+	authFailuresTotal.Inc()
+	if err := r.Status().Update(ctx, ks); err != nil {
+		return ctrl.Result{}, err
+	}
+	return ctrl.Result{}, cause
+}
+
 // wipeAndFailGone wipes the target Secret — ONLY when effectivePrunePolicy is
 // PrunePolicyDelete — and records the failure on the Ready condition via failGone,
 // distinguishing a successful wipe, a failed wipe, and a deliberately-skipped one
@@ -783,9 +821,8 @@ func (r *KeyorixSecretReconciler) failSuspected(ctx context.Context, ks *secrets
 }
 
 // failGone is fail's counterpart for a confirmed access-cut upstream failure (#428): it
-// records a distinct reason ("UpstreamSecretGone" for a confirmed-gone 404/403,
-// "UpstreamAccessRevoked" for a 401 — see the ErrSecretGone/ErrUnauthorized handling in
-// Reconcile) so the CR's status makes the outcome visible and explicable, rather than
+// records a distinct reason ("UpstreamSecretGone" for a confirmed-gone 404/403 — see the
+// ErrSecretGone handling in Reconcile) so the CR's status makes the outcome visible and explicable, rather than
 // looking like an ordinary transient sync failure.
 //
 // pruned reflects effectivePrunePolicy(ks.Spec.PrunePolicy) at the time
@@ -814,8 +851,8 @@ func (r *KeyorixSecretReconciler) failGone(ctx context.Context, ks *secretsv1alp
 }
 
 // wipeTargetSecret deletes the target Secret when the upstream Keyorix reference has
-// been confirmed gone (404/403, or the credential itself was rejected with a 401 — see
-// the ErrSecretGone/ErrUnauthorized handling in Reconcile) or when a retarget
+// been confirmed gone (404/403 — see the ErrSecretGone handling in Reconcile; a 401 never
+// wipes, see failAuth) or when a retarget
 // (spec.target.name change) has orphaned the Secret previously materialised under an
 // old name. Only a Secret this operator actually manages AND that THIS CR controls is
 // ever touched. Two

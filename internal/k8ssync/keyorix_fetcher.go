@@ -17,12 +17,20 @@ import (
 
 // ErrUpstreamGone is a sentinel a Fetch error wraps when the failure is DEFINITIVE —
 // the secret no longer exists upstream (404, or absent from the environment listing)
-// or access to it has been revoked (401/403) — as opposed to a transient failure
+// or access to it has been revoked (403) — as opposed to a transient failure
 // (network error, timeout, 5xx) that might clear on the next reconcile pass. #140:
 // the sync loop uses this distinction to actively remove a de-authorized/deleted
 // secret's stale materialized value from the cluster, rather than leaving it as-is
 // indefinitely (which a plain, unclassified fetch error did).
 var ErrUpstreamGone = errors.New("k8ssync: secret not found or access revoked upstream")
+
+// ErrUnauthorized is what a Fetch error wraps on HTTP 401, classified from the response
+// status alone: the agent's OWN bearer token was rejected (invalid, expired or rotated).
+// That says nothing about the referenced secret or the agent's grant on it, so it is NOT
+// ErrUpstreamGone: the engine never wipes on it, whatever prune_on_revoke says (Andrei,
+// 2026-10-13). The target Secret is kept, the failure is counted as auth_failed and
+// reported, and the pass backs off like any failure until the token is fixed.
+var ErrUnauthorized = errors.New("k8ssync: Keyorix rejected the agent's credential (HTTP 401)")
 
 // ErrSourceSuspended and ErrSourceExpired are what a Fetch error wraps when the server
 // answers 409 SecretSuspended / SecretExpired. Neither says the secret is gone or access
@@ -327,8 +335,11 @@ func (f *KeyorixFetcher) getJSON(ctx context.Context, path string, out interface
 			return err
 		}
 	}
-	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return fmt.Errorf("not authorized (HTTP %d) — check the agent's token and its permissions: %w", resp.StatusCode, ErrUpstreamGone)
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("not authorized (HTTP 401) — check the agent's token is valid and not expired or rotated: %w", ErrUnauthorized)
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("not authorized (HTTP 403) — check the agent's permissions: %w", ErrUpstreamGone)
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("not found (HTTP 404): %w", ErrUpstreamGone)

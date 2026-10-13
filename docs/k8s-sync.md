@@ -86,9 +86,13 @@ Secret completely untouched — every key it currently holds, not just the one t
 failed to fetch — and retries next pass. This is always true, regardless of
 `pruneOnRevoke` below.
 
+A **401** (Keyorix rejected the agent's *own* token: invalid, expired or rotated) never
+prunes either, whatever `pruneOnRevoke` says: every synced Secret is kept, the target is
+counted `failed` and `auth_failed` (the log line says `KeyorixAuthFailed`), and the loop
+backs off until the token is fixed, after which the next pass syncs normally.
+
 A **confirmed** gone-or-revoked result (Keyorix returns 404/403 — the secret was
-deleted or this agent's access to it was removed — or 401, which in practice means the
-machine-identity token was revoked or rotated) is a different signal: the upstream has
+deleted or this agent's access to it was removed) is a different signal: the upstream has
 *affirmatively* said this value is no longer available, not just "ask again later."
 `pruneOnRevoke` (default **`true`** — the secure default, since a confirmed-gone or
 confirmed-revoked value must not stay readable in the cluster indefinitely) acts on it:
@@ -99,9 +103,8 @@ confirmed-revoked value must not stay readable in the cluster indefinitely) acts
   removed.
 - **Mass-revocation circuit breaker**: if more than one target AND more than 20% of
   every target this agent manages are confirmed gone/revoked in the *same* pass, none
-  of them are pruned — this looks like one shared event (e.g. the agent's own token was
-  rotated, which reads as 401 on every fetch at once), not N independent per-secret
-  revocations. The pass instead reports `MASS REVOCATION SUSPECTED` (see `/status` and
+  of them are pruned — this looks like one shared event (e.g. a shared grant removed),
+  not N independent per-secret revocations. The pass instead reports `MASS REVOCATION SUSPECTED` (see `/status` and
   the `keyorix_k8s_sync_secrets_total{outcome="mass_revocation_suspected"}` metric).
   Acknowledge an expected event (a planned credential rotation) by setting
   `massPruneAck` to an RFC3339 timestamp (valid for 1 hour) to let the next pass
@@ -127,6 +130,8 @@ agent's config file. By cause:
 | Cause | Target Secret | Logged / counted |
 | --- | --- | --- |
 | Server unreachable, timeout, 5xx | **Never modified or deleted**; counted `failed`, retried with backoff | — |
+| **401** — the agent's own token rejected | **Kept** (never pruned, whatever `pruneOnRevoke` is); counted `failed`, retried with backoff; syncs normally once the token is fixed | `KeyorixAuthFailed` in the pass log, outcome `auth_failed` |
+| **403 / 404** — grant revoked / secret deleted | **Pruned** when `pruneOnRevoke` is true (default), behind the mass-revocation circuit breaker; kept when false | outcome `revoked` (or `mass_revocation_suspected`) |
 | Source **expired** | **Retained** (the target is not written at all) | `WARNING SourceSecretExpired`, outcome `source_expired` |
 | Source **suspended**, `onSuspend: retain` (default) | **Retained** | `WARNING SourceSecretSuspended`, outcome `source_suspended` |
 | Source **suspended**, `onSuspend: clear` | The suspended mapping's key is **emptied**; other keys stay current. The Secret is never deleted, and a Secret the agent does not own is never touched | as above |

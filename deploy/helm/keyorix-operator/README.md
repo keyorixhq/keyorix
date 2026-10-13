@@ -36,10 +36,14 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
   after a non-nil `Reconcile` error — see [Upgrading: egress
   NetworkPolicy](#upgrading-egress-networkpolicy) above for what "retried"
   actually needs egress for.
-- **A referenced secret is deleted upstream, or access/the token is
-  revoked/expired:** detected (Keyorix returns 401/403/404) and always
-  surfaced distinctly on the `Ready` condition (`reason` `UpstreamSecretGone`
-  or `UpstreamAccessRevoked`). By default (`spec.prunePolicy: Delete` — the
+- **The operator's own token is rejected (401):** every synced Secret is kept
+  untouched, whatever `spec.prunePolicy` says. `Ready` goes `False` with
+  reason `KeyorixAuthFailed`, a Warning Event is emitted,
+  `keyorix_operator_auth_failures_total` counts it, and the controller retries
+  with backoff; fixing the token Secret resumes normal syncing.
+- **A referenced secret is deleted upstream, or access to it is revoked:**
+  detected (Keyorix returns 404/403) and always
+  surfaced distinctly on the `Ready` condition (`reason` `UpstreamSecretGone`). By default (`spec.prunePolicy: Delete` — the
   secure default) the operator actively reaps the target Secret the moment
   its reference is confirmed gone/revoked. Set `spec.prunePolicy: Keep`
   per-CR to opt OUT and leave the target Secret's last-known value untouched
@@ -57,8 +61,9 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
   [docs/k8s-operator.md](../../../docs/k8s-operator.md#suspended-and-expired-secrets).
 - **Mass-revocation circuit breaker:** `tokenSecretRef` is commonly *shared*
   across several `KeyorixSecret`s, so a single credential rotation or
-  revocation event reads as the identical 401 (or a simultaneous 404/403) on
-  every `KeyorixSecret` that references it, not just one — with
+  revocation event reads as a simultaneous 404/403 on
+  every `KeyorixSecret` that references it, not just one (a rotated credential
+  reads as 401, which never wipes) — with
   `prunePolicy: Delete` on by default, an unconditional wipe would otherwise
   delete every target Secret backed by that token, triggered by nothing more
   than a routine credential rotation. Before wiping, the operator checks

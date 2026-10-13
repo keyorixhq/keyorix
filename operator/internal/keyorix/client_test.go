@@ -130,10 +130,8 @@ func TestClient_FetchValueNetworkErrorIsNotGone(t *testing.T) {
 
 // TestClient_FetchValueUnauthorizedWrapsErrUnauthorized pins the 401 classification the
 // operator controller relies on: a 401 must wrap ErrUnauthorized (distinct from
-// ErrSecretGone, which stays reserved for a confirmed 404/403) so the controller can
-// treat a revoked/rotated bearer token as an access-cut signal worth wiping the target
-// Secret for, while still recording a status reason distinct from a confirmed-gone
-// secret.
+// ErrSecretGone, which stays reserved for a confirmed 404/403) so the controller keeps
+// the target Secret and reports KeyorixAuthFailed instead of wiping it.
 func TestClient_FetchValueUnauthorizedWrapsErrUnauthorized(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
@@ -144,6 +142,33 @@ func TestClient_FetchValueUnauthorizedWrapsErrUnauthorized(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnauthorized), "a 401 must wrap ErrUnauthorized")
 	assert.False(t, errors.Is(err, ErrSecretGone), "a 401 must NOT wrap ErrSecretGone — it says nothing about the referenced secret's own fate")
+}
+
+// TestClient_StatusDecidesClassification: the 401 / 403 / 404 split comes from the HTTP
+// status alone, never from message text. A 401 whose body says "not found" is still
+// ErrUnauthorized; a 404 or 403 whose body says "unauthorized" is still ErrSecretGone.
+func TestClient_StatusDecidesClassification(t *testing.T) {
+	cases := []struct {
+		status   int
+		body     string
+		wantAuth bool
+		wantGone bool
+	}{
+		{http.StatusUnauthorized, `{"error":"not found","message":"secret revoked, access forbidden"}`, true, false},
+		{http.StatusNotFound, `{"error":"unauthorized","message":"bearer token rejected"}`, false, true},
+		{http.StatusForbidden, `{"error":"unauthorized","message":"401 invalid token"}`, false, true},
+	}
+	for _, tc := range cases {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(tc.body))
+		}))
+		_, err := New(srv.URL, "tok").FetchValue(context.Background(), "a/b/c")
+		srv.Close()
+		require.Error(t, err)
+		assert.Equal(t, tc.wantAuth, errors.Is(err, ErrUnauthorized), "status %d", tc.status)
+		assert.Equal(t, tc.wantGone, errors.Is(err, ErrSecretGone), "status %d", tc.status)
+	}
 }
 
 // TestClient_RefusesRedirect pins the fix for a bearer-token-leak-on-downgrade bug: Go's

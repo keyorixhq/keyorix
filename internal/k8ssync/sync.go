@@ -88,6 +88,10 @@ type Result struct {
 	SourceSuspended int
 	SourceExpired   int
 	SourceExpiring  int
+	// AuthFailed counts targets skipped because Keyorix answered 401 to the agent's own
+	// credential (ErrUnauthorized). The target Secret is left untouched; such a target is
+	// ALSO counted in Failed, so the loop backs off.
+	AuthFailed int
 	// Notes are informational log lines (state changes of sources), distinct from Errors.
 	Notes  []string
 	Errors []string
@@ -167,6 +171,11 @@ func (e *Engine) Reconcile(ctx context.Context, mappings []SecretMapping) (Resul
 			// may still be valid, so the existing Secret is left completely
 			// untouched rather than written with a key missing or removed outright.
 			res.Failed++
+			if errors.Is(st.ferr, ErrUnauthorized) {
+				res.AuthFailed++
+				res.Errors = append(res.Errors, fmt.Sprintf("%s: KeyorixAuthFailed: %v — target Secret left unchanged (a 401 never prunes)", t, st.ferr))
+				continue
+			}
 			res.Errors = append(res.Errors, fmt.Sprintf("%s: %v", t, st.ferr))
 			continue
 		}

@@ -41,16 +41,12 @@ const maxResponseBodyBytes = 10 << 20 // 10 MiB
 // grant was checked and denied. It gets its own sentinel, ErrUnauthorized, below.
 var ErrSecretGone = errors.New("secret reference no longer exists or is not accessible")
 
-// ErrUnauthorized is wrapped into the error FetchValue returns on HTTP 401. A 401 is
-// distinct from 403/404 (see ErrSecretGone) in what it tells us about the referenced
-// secret, but it is NOT merely "transient and ignorable" either: the overwhelmingly
-// common real-world cause of a previously-working bearer token suddenly turning invalid
-// is that an admin revoked or rotated the machine-identity credential — i.e. access was
-// deliberately cut. That is exactly the same "stop serving the stale value" signal as a
-// confirmed-gone 404/403, so callers (the controller's Reconcile) treat
-// errors.Is(err, ErrUnauthorized) the same as ErrSecretGone for the purpose of wiping a
-// previously-materialized target Secret, while still recording a distinct status reason
-// so it's clear from the CR's condition which of the two actually happened.
+// ErrUnauthorized is wrapped into the error FetchValue returns on HTTP 401, classified
+// from the response status alone (never from message text). A 401 says the operator's OWN
+// bearer token is invalid, expired or rotated; it says nothing about the referenced
+// secret or this workload's grant on it (that is a 403/404, see ErrSecretGone). The
+// controller therefore never wipes a target Secret on a 401: it keeps it, reports
+// KeyorixAuthFailed and retries with backoff until the credential is fixed.
 var ErrUnauthorized = errors.New("bearer token rejected (unauthorized)")
 
 // ErrSecretUnavailable is wrapped into the error FetchValue returns when the server
@@ -247,9 +243,8 @@ func (c *Client) FetchValueInfo(ctx context.Context, ref string) (Value, error) 
 	case resp.StatusCode == http.StatusUnauthorized:
 		// Unlike 403, a 401 says the token itself is invalid/expired — it says
 		// nothing about whether the referenced secret still exists or is still
-		// permitted, so this must NOT be treated as ErrSecretGone. It IS wrapped as
-		// ErrUnauthorized (see its doc comment) so the controller can still treat a
-		// revoked/rotated credential as an access-cut signal worth wiping for.
+		// permitted, so this must NOT be treated as ErrSecretGone. It is wrapped as
+		// ErrUnauthorized (see its doc comment); the controller keeps the target Secret.
 		return Value{}, fmt.Errorf("not authorized (HTTP 401) — check the token is valid: %w", ErrUnauthorized)
 	case resp.StatusCode == http.StatusBadRequest:
 		return Value{}, fmt.Errorf("invalid reference %q (want project/environment/name)", ref)
