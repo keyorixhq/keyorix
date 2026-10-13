@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/stretchr/testify/require"
@@ -77,11 +78,9 @@ func TestPostgresDSN_InjectionPasswordReachesRealServer(t *testing.T) {
 	}
 	admin, err := sql.Open("pgx", raw)
 	require.NoError(t, err)
-	defer admin.Close() //nolint:errcheck
-	u, err := url.Parse(raw)
-	if err != nil {
-		t.Skip("KEYORIX_TEST_PG_DSN is not a postgres:// URL")
-	}
+	defer admin.Close()                 //nolint:errcheck
+	target, err := pgx.ParseConfig(raw) // URL or keyword/value form
+	require.NoError(t, err)
 	const role = "keyorix_inj_3162"
 	const pw = `a sslmode=disable host=evil.invalid x=\`
 	if _, err := admin.Exec(`DROP ROLE IF EXISTS ` + role); err != nil {
@@ -92,13 +91,16 @@ func TestPostgresDSN_InjectionPasswordReachesRealServer(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = admin.Exec(`DROP ROLE IF EXISTS ` + role) })
 
-	q := u.Query()
-	base := fmt.Sprintf("host=%s port=%s dbname=%s user=%s sslmode=%s application_name=x\\",
-		u.Hostname(), u.Port(), strings.TrimPrefix(u.Path, "/"), role, q.Get("sslmode"))
+	sslmode := "prefer"
+	if target.TLSConfig == nil {
+		sslmode = "disable"
+	}
+	base := fmt.Sprintf("host=%s port=%d dbname=%s user=%s sslmode=%s application_name=x\\",
+		target.Host, target.Port, target.Database, role, sslmode)
 	t.Setenv("KEYORIX_DB_PASSWORD", pw)
 	cc, err := config.ResolvePostgresConnConfig(&config.DatabaseConfig{DSN: base})
 	require.NoError(t, err)
-	require.Equal(t, u.Hostname(), cc.Host)
+	require.Equal(t, target.Host, cc.Host)
 	db := stdlib.OpenDB(*cc)
 	defer db.Close() //nolint:errcheck
 	var who, app string
