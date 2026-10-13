@@ -84,7 +84,7 @@ cleanup() {
     for pid in "${PORT_FORWARD_PIDS[@]:-}"; do
         [ -n "$pid" ] && kill "$pid" >/dev/null 2>&1 || true
     done
-    for ns in "${NS_PREFIX}-j6" "${NS_PREFIX}-j1""${NS_PREFIX}-j2" "${NS_PREFIX}-j3" "${NS_PREFIX}-j3-target" "${NS_PREFIX}-j4" "${NS_PREFIX}-j5" "${NS_PREFIX}-j5-target" "${NS_PREFIX}-eso"; do
+    for ns in "${NS_PREFIX}-j6" "${NS_PREFIX}-j1" "${NS_PREFIX}-j2" "${NS_PREFIX}-j3" "${NS_PREFIX}-j3-target" "${NS_PREFIX}-j4" "${NS_PREFIX}-j5" "${NS_PREFIX}-j5-target" "${NS_PREFIX}-eso"; do
         kubectl delete namespace "$ns" --wait=false --ignore-not-found >/dev/null 2>&1 || true
     done
     rm -rf "$WORK_DIR"
