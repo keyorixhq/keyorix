@@ -124,14 +124,8 @@ stored this way; use `key_provider.type: file` for raw keys.
 ## environment
 
 ```yaml
-environment: production   # production | staging | local | ...
+environment: production   # development | staging | production
 ```
-
-A deployment label shown in system info. `keyorix-server admin init` writes
-`production`; `admin init --dev` writes `local`. The exact value `development`
-is not a pure label: it replaces `server.http.allowed_origins` with the
-localhost dev origins (`http://localhost:3000`, `:5173`, and the `127.0.0.1`
-equivalents), so no generated config uses it.
 
 ## locale
 
@@ -172,6 +166,8 @@ server:
       burst: 100
     metrics_token: ""             # GET /metrics then requires "Authorization: Bearer <token>"
     metrics_token_file: ""        # or read the token from this file (secret-file rules, see below); set one, not both
+  access_log:
+    on_sink_stall: block          # block (default) | drop — what a request does when the access-log sink stalls (see below)
   grpc:
     # Partial surface, off by default. HTTP is the complete interface; enable this
     # only if you need it, and read docs/adr-105-grpc-scope-and-parity.md first —
@@ -322,8 +318,8 @@ storage.database.ssl_mode "verify_full" is not a valid sslmode; use one of: disa
 | `ssl_mode` | Encrypted | Server certificate checked |
 |---|---|---|
 | `disable` | no | no (reported by `admin validate --posture` as `storage.database.insecure_disable_database_tls`) |
-| `allow` | only if the server insists | no. Tries plaintext first |
-| `prefer` | only if the TLS attempt succeeds | no. Falls back to plaintext whenever TLS fails, including when anything on the network path answers "no TLS" |
+| `allow` | only if the server insists | no. Tries plaintext first. Reported by `admin validate --posture` as `storage.database.insecure_allow_plaintext_database_fallback` |
+| `prefer` | only if the TLS attempt succeeds | no. Falls back to plaintext whenever TLS fails, including when anything on the network path answers "no TLS". Reported by `admin validate --posture` as `storage.database.insecure_allow_plaintext_database_fallback` (a `dsn` with no `sslmode` is `prefer` too) |
 | `require` (default) | yes | no. With `ssl_root_cert` set, the chain is checked against it (libpq/pgx behaviour), but the host name is not |
 | `verify-ca` | yes | chain against `ssl_root_cert`, not the host name |
 | `verify-full` | yes | chain against `ssl_root_cert` **and** the host name in `host` |
@@ -391,11 +387,9 @@ not inspect, which would sidestep the CA requirement above. The server and the
 nothing (the driver reads a service file only when a service is selected) and
 is not refused.
 
-Helm: put the CA's PEM in a Secret and set `externalDatabase.caSecret.name`
-(and `.key`, default `ca.crt`); the chart mounts it read-only at
-`/app/db-ca/ca.crt` and renders that as `ssl_root_cert`. Or set
-`externalDatabase.sslRootCert` (`system`, or a path you mount yourself). With
-`sslMode: verify-full`/`verify-ca` and neither, the chart refuses to render. `admin validate --posture` prints one informational line saying
+The Helm chart passes `externalDatabase.sslRootCert` through as
+`ssl_root_cert` (it does not mount the file; mount it yourself, or use
+`system`). `admin validate --posture` prints one informational line saying
 what is encrypted and what is verified against which CA.
 
 ### PostgreSQL password precedence
@@ -501,6 +495,28 @@ healthy battery-backed RAID write cache, or replicated cloud block storage.
 what you give up, the measured before/after, and the four places the setting is
 surfaced once it is on (startup warning, an audit event in the hash chain at
 every boot, `admin validate`, and `GET /api/v1/system/info`).
+### Access log when the sink stalls (`server.access_log.on_sink_stall`)
+
+The HTTP access log is written through a 1 MiB in-memory queue to the process
+log (stdout, a pipe to a log collector). If that sink stalls and the queue fills:
+
+| `on_sink_stall` | Behaviour |
+|---|---|
+| `block` (default) | Requests wait for the sink. No access-log line is ever lost; every request stalls while the sink does. |
+| `drop` | Keeps serving secrets when the log sink stalls; access-log lines past the 1 MiB queue are dropped and reported; the audit trail is unaffected. |
+
+`drop` is opt-in, config-file only, and never silent:
+
+- a counter, `access_log_dropped`, plus the effective mode `access_log_on_sink_stall`,
+  in `GET /api/v1/system/info` (`security`);
+- a warning line at most once per 10 s while drops happen (with the count since the
+  previous warning), and one `access log sink recovered, N lines dropped in total`
+  line when the sink catches up;
+- the mode at startup and, when `drop`, in `keyorix-server admin validate` (posture).
+
+Any other value is rejected at startup. The Helm chart sets it with
+`server.accessLog.onSinkStall`.
+
 ## Encryption & KEK providers
 
 Envelope encryption (ADR-004): a per-process **DEK** encrypts secrets/tokens and
