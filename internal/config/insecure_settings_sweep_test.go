@@ -80,7 +80,6 @@ func configSurfaceLeaves() []configLeaf {
 		defer delete(onPath, t)
 
 		for f := range t.Fields() {
-			f := f
 			if f.PkgPath != "" { // unexported: not YAML-settable
 				continue
 			}
@@ -414,7 +413,6 @@ func configDerivedFields() []string {
 		onPath[t] = true
 		defer delete(onPath, t)
 		for f := range t.Fields() {
-			f := f
 			if f.PkgPath != "" {
 				continue
 			}

@@ -31,7 +31,6 @@ func TestSecretUpdateAllowlist_CoversEveryPersistedField(t *testing.T) {
 	typ := reflect.TypeFor[models.SecretNode]()
 	var unclassified []string
 	for f := range typ.Fields() {
-		f := f
 		if gormTag, ok := f.Tag.Lookup("gorm"); ok && gormTag == "-" {
 			continue // ValueStored: transient, never persisted, not part of this contract
 		}

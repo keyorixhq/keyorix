@@ -43,7 +43,6 @@ func TestFirstBootKeyBootstrap_LockBeforeInitialize_ExactlyOneWinner(t *testing.
 	}
 
 	for i := range racers {
-		i := i
 		go func() {
 			defer wg.Done()
 			// The fix under test: acquire the exclusive lock BEFORE Initialize,

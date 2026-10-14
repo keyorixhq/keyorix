@@ -142,7 +142,6 @@ func livenessParents() map[string]bool {
 	for _, m := range models.AllTestModels() {
 		t, name := childLiveModelName(m)
 		for f := range t.Fields() {
-			f := f
 			if f.Type == deletedAt || (f.Name == "Disabled" && f.Type.Kind() == reflect.Bool) {
 				out[name] = true
 				break
@@ -163,7 +162,6 @@ func childFKTarget(model, field string) (string, bool) {
 func childIDFields(t reflect.Type) []string {
 	var out []string
 	for f := range t.Fields() {
-		f := f
 		if f.Anonymous || f.Name == "ID" || !strings.HasSuffix(f.Name, "ID") {
 			continue
 		}

@@ -146,7 +146,6 @@ func deriveOrphanReferenceCandidates(t *testing.T) []orphanRefCandidate {
 	var out []orphanRefCandidate
 	for sourceName, sourceType := range typeByName {
 		for f := range sourceType.Fields() {
-			f := f
 			if f.Name == "ID" || !strings.HasSuffix(f.Name, "ID") {
 				continue
 			}

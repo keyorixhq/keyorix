@@ -86,7 +86,6 @@ func securityStateModels() map[string]bool {
 			t = t.Elem()
 		}
 		for f := range t.Fields() {
-			f := f
 			if securityStateColumns[f.Name] || f.Type == deletedAt {
 				out[t.Name()] = true
 				break

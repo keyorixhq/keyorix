@@ -65,7 +65,6 @@ func TestCacheEpochTrigger_FiresForEveryPersistedColumn(t *testing.T) {
 	var skipped, checked []string
 
 	for f := range modelType.Fields() {
-		f := f
 		if reason, ok := nonUpdatableSecretNodeFields[f.Name]; ok {
 			require.NotEmpty(t, reason, "exclusion for %s needs a reason", f.Name)
 			skipped = append(skipped, f.Name)
@@ -228,7 +227,6 @@ func TestScheduleGeneration_CoversEveryPersistedScheduleField(t *testing.T) {
 	var uncovered []string
 	seen := map[string]bool{}
 	for f := range modelType.Fields() {
-		f := f
 		seen[f.Name] = true
 		if reason, ok := scheduleGenerationExcludedFields[f.Name]; ok {
 			require.NotEmpty(t, reason, "exclusion for %s needs a reason", f.Name)
