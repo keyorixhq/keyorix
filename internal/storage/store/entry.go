@@ -191,6 +191,10 @@ type LocalStorage struct {
 	// LocalStorage, which then use ls.db as before: a statement inside a
 	// transaction must read that transaction's snapshot.
 	nativeReads *pgxpool.Pool
+	// nativeRowChain is ls.db's Row callback chain when nativeReads was set
+	// (rowCallbackChain); nativeRowChainKnown is false if it could not be read.
+	nativeRowChain      uintptr
+	nativeRowChainKnown bool
 	// auditSkipDurableSync, when true, makes the audit-commit transaction skip
 	// the WAIT for a disk sync — nothing else (ADR-112 Amendment 1,
 	// FASTAUDIT-1, docs/specs/fast-audit-mode.md). Set once at construction

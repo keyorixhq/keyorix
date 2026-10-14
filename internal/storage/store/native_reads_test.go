@@ -350,3 +350,29 @@ func TestNativeReads_NeverInsideATransaction(t *testing.T) {
 		return nil
 	}))
 }
+
+// The dry run is skipped only while ls.db's Row callback chain is the one it
+// had when the pool was attached; registering, replacing or removing a Row
+// callback afterwards turns it back on. Pins that the chain is readable on
+// this gorm version (if it were not, every statement would be observed, which
+// is safe but costs the CPU this file saves).
+func TestNativeReads_DryRunOnlyWhenACallbackWasRegistered(t *testing.T) {
+	ls, _ := newPrincipalPermStorage(t, "sqlite")
+	ls.SetNativeReadPool(nil)
+	require.True(t, ls.nativeRowChainKnown, "gorm's Row callback chain must be readable")
+	require.False(t, ls.observedByCallbacks(), "nothing registered since the pool was attached")
+
+	cb := ls.db.Callback().Row()
+	require.NoError(t, cb.After("gorm:row").Register("native-test:count", func(*gorm.DB) {}))
+	require.True(t, ls.observedByCallbacks(), "registered")
+	ls.SetNativeReadPool(nil)
+	require.NoError(t, cb.Replace("native-test:count", func(*gorm.DB) {}))
+	require.True(t, ls.observedByCallbacks(), "replaced")
+	ls.SetNativeReadPool(nil)
+	require.NoError(t, cb.Remove("native-test:count"))
+	require.True(t, ls.observedByCallbacks(), "removed")
+
+	// Unreadable chain: always observed.
+	ls.nativeRowChainKnown = false
+	require.True(t, ls.observedByCallbacks())
+}

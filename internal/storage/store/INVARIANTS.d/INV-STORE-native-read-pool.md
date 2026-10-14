@@ -6,7 +6,9 @@
   request pool, and a no-row lookup still wraps `sql.ErrNoRows` (never `pgx.ErrNoRows`). The gorm
   Row callbacks on `ls.db` still see the folded and node-stamp statements (fired in dry-run mode
   before the native query, same SQL and binds), so statement counters and fault-injecting
-  callbacks behave as before; an error a callback sets fails the statement. Only the root
+  callbacks behave as before; an error a callback sets fails the statement. The dry run is
+  skipped only while the Row callback chain is the one `SetNativeReadPool` recorded (nothing
+  registered, replaced or removed since); an unreadable chain means always observed. Only the root
   LocalStorage the factory built has the pool: a transaction-scoped or derived store reads
   through its transaction, and SQLite has none. The pool is opened from the same
   `config.ResolvePostgresConnConfig` result as every other pool (password on the parsed config,
@@ -18,6 +20,7 @@
   `_FoldedCredentialMatchesGorm`: native vs database/sql/gorm, reflect.DeepEqual over every row
   shape, NULLs and missing rows, distinct ids per table so a misplaced bind reads another row;
   `_GormCallbacksSeeTheStatement`; `_NeverInsideATransaction`; all pg-gated;
+  `_DryRunOnlyWhenACallbackWasRegistered` (default CI);
   `TestNativeSQL_NumbersEveryPlaceholder`, default CI); `internal/storage`
   `TestNativeReadPool_UsesTheResolvedConnConfig`, `TestPostgresPoolHeadroomWarning`,
   `TestPostgresStorage_Close_ReleasesEveryPool` (pg-gated). The Postgres legs of this package's

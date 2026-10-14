@@ -23,7 +23,13 @@
 //     still fire them first, in dry-run mode (observeNativeStatement), with the
 //     same SQL and binds, so statement counters and fault-injecting callbacks
 //     see them as before. An error a callback sets fails the statement exactly
-//     as it did through gorm. The plain credential lookup never went through
+//     as it did through gorm. The dry run is skipped only while ls.db's Row
+//     callback chain is the one it had when the pool was attached (gorm's own
+//     row callback, nothing registered since): then there is nobody to see the
+//     statement, and the dry run would cost about as much CPU as the native
+//     path saves. Any Register/Replace/Remove rebuilds the chain, so from then
+//     on every statement is observed; if the chain cannot be read, every
+//     statement is observed. The plain credential lookup never went through
 //     gorm (a database/sql prepared statement), so it fires none, as before.
 //   - Where the statements may run: only on the root LocalStorage the factory
 //     built for Postgres (SetNativeReadPool). A transaction-scoped or derived
@@ -40,6 +46,7 @@ package store
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +63,33 @@ import (
 // traffic.
 func (ls *LocalStorage) SetNativeReadPool(pool *pgxpool.Pool) {
 	ls.nativeReads = pool
+	ls.nativeRowChain, ls.nativeRowChainKnown = rowCallbackChain(ls.db)
+}
+
+// rowCallbackChain identifies ls.db's compiled Row callback chain: gorm
+// rebuilds the slice on every Register, Replace and Remove, so its address
+// changes whenever the chain does. ok is false if it cannot be read (a gorm
+// version without the field), and then every native statement is observed.
+func rowCallbackChain(db *gorm.DB) (chain uintptr, ok bool) {
+	p := reflect.ValueOf(db.Callback().Row())
+	if p.Kind() != reflect.Pointer || p.IsNil() {
+		return 0, false
+	}
+	fns := p.Elem().FieldByName("fns")
+	if !fns.IsValid() || fns.Kind() != reflect.Slice {
+		return 0, false
+	}
+	return fns.Pointer(), true
+}
+
+// observedByCallbacks reports whether a callback was registered on ls.db
+// since the pool was attached (see the file header).
+func (ls *LocalStorage) observedByCallbacks() bool {
+	if !ls.nativeRowChainKnown {
+		return true
+	}
+	chain, ok := rowCallbackChain(ls.db)
+	return !ok || chain != ls.nativeRowChain
 }
 
 // rowScanner is what the read-path scan functions need from a result set; both
@@ -109,8 +143,10 @@ func (ls *LocalStorage) observeNativeStatement(ctx context.Context, q string, ar
 // queryNative runs the read-path statement q (gorm placeholder form) on the
 // native pool, after the gorm callbacks have seen it. The caller closes the rows.
 func (ls *LocalStorage) queryNative(ctx context.Context, q string, args []any) (pgx.Rows, error) {
-	if err := ls.observeNativeStatement(ctx, q, args); err != nil {
-		return nil, err
+	if ls.observedByCallbacks() {
+		if err := ls.observeNativeStatement(ctx, q, args); err != nil {
+			return nil, err
+		}
 	}
 	return ls.nativeReads.Query(ctx, nativeSQL(q), args...)
 }
