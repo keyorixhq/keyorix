@@ -280,9 +280,9 @@ externalDatabase:
   # ONE of:
   #   caSecret.name: a Secret in the release namespace holding the CA's PEM
   #     under caSecret.key. The chart mounts it read-only (0440, group = the
-  #     pod's fsGroup) at /app/db-ca/ca.crt and points ssl_root_cert there. A
-  #     rotated Secret is picked up without a restart (the driver re-reads the
-  #     CA on each new connection).
+  #     pod's fsGroup) at /app/db-ca/ca.crt and points ssl_root_cert there. The
+  #     server reads the CA once, when it opens its database pool: after
+  #     rotating the Secret, restart it (kubectl rollout restart).
   #   sslRootCert: "system" trusts the image's OS CA store (a publicly issued
   #     certificate); a path names a PEM file you mount into the server pod
   #     yourself.

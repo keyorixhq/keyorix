@@ -178,8 +178,8 @@ spec:
             {{- end }}
             {{- if and (not .Values.postgresql.enabled) .Values.externalDatabase.caSecret.name }}
             # externalDatabase.caSecret: the CA storage.database.ssl_root_cert
-            # names. A directory mount, not subPath, so a rotated Secret reaches
-            # the pod.
+            # names. A directory mount, not subPath, so a rotated Secret reaches the pod
+            # (the server reads it at pool open: restart after rotating).
             - name: db-ca
               mountPath: {{ include "keyorix.externalDatabase.caDir" . }}
               readOnly: true

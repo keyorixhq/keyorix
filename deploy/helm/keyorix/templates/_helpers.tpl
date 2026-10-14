@@ -2,7 +2,8 @@
 Fill in chart values that older releases did not have. `helm upgrade
 --reuse-values` replaces this chart's values.yaml defaults with the OLD
 release's values, so a key added after that release (secureBaseline.*,
-web.hsts.*, web.trustedProxies, postgresql.runAsUser, auth.existingSecretKeys.*)
+web.hsts.*, web.trustedProxies, postgresql.runAsUser, auth.existingSecretKeys.*,
+externalDatabase.caSecret.*)
 is absent and `.Values.secureBaseline.enabled` is a nil-pointer error. Every
 template that reads such a key includes this first (`{{- include
 "keyorix.valuesDefaults" . -}}`; it renders nothing). Only a MISSING (or null)
@@ -16,6 +17,7 @@ SYNC with values.yaml: deploy/helm_reuse_values_test.go fails if they drift.
   "secureBaseline" (dict "enabled" true "certValidityDays" 3650 "existingSecret" "" "existingSecretRevision" "")
   "web" (dict "trustedProxies" (list) "hsts" (dict "mode" "auto" "maxAge" 31536000 "includeSubDomains" true))
   "postgresql" (dict "runAsUser" 70 "migrateOwnership" false)
+  "externalDatabase" (dict "caSecret" (dict "name" "" "key" "ca.crt"))
 -}}
 {{- range $top, $sub := $defaults -}}
 {{- if not (kindIs "map" (get $v $top)) -}}{{- $_ := set $v $top (dict) -}}{{- end -}}
