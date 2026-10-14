@@ -69,6 +69,31 @@ func TestSuspendSecret_ClearSyncedCopies(t *testing.T) {
 		assert.Contains(t, descs[0], "leaked in CI logs")
 	})
 
+	t.Run("audit write fails: suspend refused, no marker, status untouched", func(t *testing.T) {
+		c, id, db := newSuspendFixture(t)
+		require.NoError(t, db.Migrator().DropTable(&models.AuditEvent{}), "make every audit write fail")
+
+		s, err := c.SuspendSecretWithOptions(ctx, id, 1, "leaked", SuspendOptions{ClearSyncedCopies: true})
+		require.ErrorIs(t, err, ErrSuspendAuditUnavailable)
+		assert.Nil(t, s)
+
+		stored, err := c.storage.GetSecret(ctx, id)
+		require.NoError(t, err)
+		assert.Equal(t, SecretStatusActive, stored.Status, "no effect without the audit trail")
+		assert.False(t, stored.SuspendClearSyncedCopies, "no marker written")
+
+		// An upgrade of an existing plain suspension is refused the same way.
+		c2, id2, db2 := newSuspendFixture(t)
+		_, err = c2.SuspendSecret(ctx, id2, 1, "")
+		require.NoError(t, err)
+		require.NoError(t, db2.Migrator().DropTable(&models.AuditEvent{}))
+		_, err = c2.SuspendSecretWithOptions(ctx, id2, 1, "", SuspendOptions{ClearSyncedCopies: true})
+		require.ErrorIs(t, err, ErrSuspendAuditUnavailable)
+		stored, err = c2.storage.GetSecret(ctx, id2)
+		require.NoError(t, err)
+		assert.False(t, stored.SuspendClearSyncedCopies, "upgrade refused, still no marker")
+	})
+
 	t.Run("resume removes the marker and reads work again", func(t *testing.T) {
 		c, id, _ := newSuspendFixture(t)
 		_, err := c.SuspendSecretWithOptions(ctx, id, 1, "", SuspendOptions{ClearSyncedCopies: true})

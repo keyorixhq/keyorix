@@ -30,7 +30,8 @@ helm install keyorix-operator deploy/helm/keyorix-operator -n keyorix-system --c
 ## Failure modes
 
 - **Keyorix unreachable, times out, or returns a 5xx:** treated as transient.
-  `Ready` goes `False` with reason `KeyorixUnreachable`, one Warning Event is
+  `Ready` goes `False` with its unchanged reason `SyncError` and a message
+  starting `KeyorixUnreachable:`, one Warning Event `KeyorixUnreachable` is
   emitted when the state is entered,
   `keyorix_operator_fetch_errors_total{reason}` counts each failed reconcile,
   and a Normal `KeyorixRecovered` Event follows the first successful read. The

@@ -45,9 +45,15 @@ function buildSecurityCardData(
         sub:
             alertCount > 0
                 ? `${anomalyCount} anomal${plural} · ${expiredCount} expired · ${expiringCount} expiring`
-                : 'No active alerts',
+                : 'No anomaly or expiry alerts',
         accent: alertCount > 0 ? 'bg-red-500' : 'bg-emerald-500',
     };
+}
+
+// A pool of 0 means the server does not report connection stats (the counters are not
+// instrumented), not that nothing is connected: say n/a rather than "0 active".
+function formatDbConnections(active: number | null | undefined): string {
+    return active != null && active > 0 ? `${active} active` : 'n/a';
 }
 
 function buildAuditSub(logins: number | null | undefined, reads: number | null | undefined): string {
@@ -495,7 +501,7 @@ const SystemHealthPanel: React.FC<SystemHealthPanelProps> = ({ metrics, sysInfo,
                 <div className="flex items-center justify-between">
                     <span className="text-sm text-base-muted">DB connections</span>
                     <span className="text-sm font-medium text-base-primary">
-                        {dbMetrics.connections_active != null ? `${dbMetrics.connections_active} active` : '—'}
+                        {formatDbConnections(dbMetrics.connections_active)}
                     </span>
                 </div>
                 <div className="flex items-center justify-between">
@@ -615,7 +621,28 @@ interface AuditHealthPanelProps {
     stats: Stats;
 }
 
-const AuditHealthPanel: React.FC<AuditHealthPanelProps> = ({ navigate, stats }) => (
+// The four numbers are deployment-wide audit aggregates: the server sends zeros to a caller
+// without audit.read. A "0" there reads as "nothing happened", so say they are not visible (#3155).
+const AuditHealthPanel: React.FC<AuditHealthPanelProps> = ({ navigate, stats }) => {
+    const can = useCan();
+    if (!can.readAudit) {
+        return (
+            <div className="bg-surface border border-base rounded-xl shadow-xs">
+                <div className="px-5 py-4 border-b border-base">
+                    <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Audit (30d)</h2>
+                </div>
+                <div className="px-5 py-4">
+                    <p className="text-sm text-base-muted" data-testid="audit-panel-not-visible">
+                        {NOT_VISIBLE}
+                    </p>
+                </div>
+            </div>
+        );
+    }
+    return <AuditHealthCounts navigate={navigate} stats={stats} />;
+};
+
+const AuditHealthCounts: React.FC<AuditHealthPanelProps> = ({ navigate, stats }) => (
     <div className="bg-surface border border-base rounded-xl shadow-xs">
         <div className="px-5 py-4 border-b border-base flex items-center justify-between">
             <h2 className="text-sm font-semibold text-base-primary uppercase tracking-widest">Audit (30d)</h2>

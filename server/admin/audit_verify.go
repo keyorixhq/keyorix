@@ -24,6 +24,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/spf13/cobra"
 )
@@ -220,7 +221,7 @@ func buildVerifyAuditOptions(cs configLoadState) (auditverify.Options, string, e
 		return opts, "", err
 	}
 	if anchorPath != "" {
-		data, err := os.ReadFile(anchorPath) // #nosec G304 -- operator-supplied path (flag or config), the whole point of this setting
+		data, err := secretenv.ReadRegularFile("audit anchor", anchorPath) // operator-supplied path (flag or config); a FIFO is refused, not waited on
 		if err != nil {
 			return opts, anchorSource, fmt.Errorf("--anchor: read %q: %w", anchorPath, err)
 		}
@@ -295,7 +296,7 @@ func readCheckpointKeyFile(path string) ([]byte, error) {
 // out as needing no shared secret at all (a public-key proof-of-existence),
 // so it is deliberately independent of --checkpoint-key-file.
 func readTSARootsFile(path string) (*x509.CertPool, error) {
-	raw, err := os.ReadFile(path) // #nosec G304 -- operator-supplied path, the whole point of this flag
+	raw, err := secretenv.ReadRegularFile("TSA roots file", path) // operator-supplied path; a FIFO is refused, not waited on
 	if err != nil {
 		return nil, fmt.Errorf("read %q: %w", path, err)
 	}
@@ -340,16 +341,12 @@ func openVerifyAuditTarget(cfg *config.Config, cfgErr error) (*auditverify.DB, *
 
 	switch cfg.Storage.Type {
 	case "postgres", "postgresql":
-		dsn, dsnErr := config.ResolvePostgresDSN(&cfg.Storage.Database)
-		if dsnErr != nil {
+		cc, ccErr := config.ResolvePostgresConnConfig(&cfg.Storage.Database)
+		if ccErr != nil {
 			_ = lock.Release()
-			return nil, nil, dsnErr
+			return nil, nil, ccErr
 		}
-		if dsn == "" {
-			_ = lock.Release()
-			return nil, nil, fmt.Errorf("postgres storage requires a DSN or host/name/user fields")
-		}
-		db, err := auditverify.OpenPostgres(dsn)
+		db, err := auditverify.OpenPostgresConfig(cc)
 		if err != nil {
 			_ = lock.Release()
 			return nil, nil, fmt.Errorf("open configured postgres database: %w", err)

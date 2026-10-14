@@ -61,6 +61,12 @@ const (
 	DynamicSecretLeaseStatusRevoked      DynamicSecretLeaseStatus = "revoked"
 )
 
+// Defines values for LoginSuccessDataPendingSteps.
+const (
+	ChangePassword LoginSuccessDataPendingSteps = "change_password"
+	EnrollMfa      LoginSuccessDataPendingSteps = "enroll_mfa"
+)
+
 // Defines values for MFAChallengeDataMfaRequired.
 const (
 	MFAChallengeDataMfaRequiredTrue MFAChallengeDataMfaRequired = true
@@ -368,6 +374,21 @@ type BreakGlassActivation struct {
 // BreakGlassActivationState defines model for BreakGlassActivation.State.
 type BreakGlassActivationState string
 
+// BreakGlassSettings The server's effective break-glass limits, returned with the activations list to a caller it allowed. Deployment limits only: no secret, no admin-only data.
+type BreakGlassSettings struct {
+	// DefaultTtlSeconds Lifetime granted when none is requested (already capped at max_ttl_seconds)
+	DefaultTtlSeconds *int64 `json:"default_ttl_seconds,omitempty"`
+
+	// EmergencyRole Name of the role an activation grants
+	EmergencyRole *string `json:"emergency_role,omitempty"`
+
+	// Enabled break_glass.enabled; false means activation is refused with BreakGlassDisabled
+	Enabled *bool `json:"enabled,omitempty"`
+
+	// MaxTtlSeconds Ceiling a requested lifetime is capped at
+	MaxTtlSeconds *int64 `json:"max_ttl_seconds,omitempty"`
+}
+
 // BulkDeleteResult defines model for BulkDeleteResult.
 type BulkDeleteResult struct {
 	Deleted *[]int         `json:"deleted,omitempty"`
@@ -558,15 +579,21 @@ type LoginSuccessData struct {
 	Email                  *string    `json:"email,omitempty"`
 	ExpiresAt              *time.Time `json:"expires_at,omitempty"`
 	PasswordChangeRequired *bool      `json:"password_change_required,omitempty"`
-	Permissions            *[]string  `json:"permissions,omitempty"`
-	Role                   *string    `json:"role,omitempty"`
-	Roles                  *[]string  `json:"roles,omitempty"`
+
+	// PendingSteps Account-setup steps this session still owes (omitted when none). While present the session is confined to those steps' endpoints (account-setup gate, #3024), so a client should route straight to the setup page rather than render protected pages. Informational: it changes nothing about what the session may access.
+	PendingSteps *[]LoginSuccessDataPendingSteps `json:"pending_steps,omitempty"`
+	Permissions  *[]string                       `json:"permissions,omitempty"`
+	Role         *string                         `json:"role,omitempty"`
+	Roles        *[]string                       `json:"roles,omitempty"`
 
 	// Token Session bearer token
 	Token    string  `json:"token"`
 	UserId   *int    `json:"user_id,omitempty"`
 	Username *string `json:"username,omitempty"`
 }
+
+// LoginSuccessDataPendingSteps defines model for LoginSuccessData.PendingSteps.
+type LoginSuccessDataPendingSteps string
 
 // MFAChallengeData The password (or setup token) was correct, but a second factor is required -- core.ErrMFARequired. The client must complete POST /auth/mfa/verify (TOTP/recovery code) with this challenge, or the WebAuthn login ceremony, to get a real session.
 type MFAChallengeData struct {

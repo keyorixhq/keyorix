@@ -19,6 +19,8 @@
 package store
 
 import (
+	"database/sql"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -167,6 +169,14 @@ type LocalStorage struct {
 	// construction and meaningless on a clone anyway (auditFlusher is nil
 	// there, so runAuditFlusher never runs for it).
 	auditFlusherLingerWindow time.Duration
+	// schedulerLockDB is the dedicated pool WithSchedulerLock takes its advisory-
+	// lock sessions from (SetSchedulerLockDB). nil means the request pool (ls.db).
+	// Set once at construction, read-only afterwards.
+	schedulerLockDB *sql.DB
+	// namedLockDB is the dedicated pool WithNamedLock takes its advisory-lock
+	// sessions from (SetNamedLockDB). nil means the request pool (ls.db). Set once
+	// at construction, read-only afterwards.
+	namedLockDB *sql.DB
 	// rawStmts backs the H3 hand-written prepared-statement fast path
 	// (PERF-3, docs/specs/read-path-caching.md; credential_lookup_raw.go) —
 	// nil on a transaction-scoped LocalStorage (see WithTransaction, which
@@ -346,11 +356,44 @@ func (ls *LocalStorage) SetAuditSkipDurableSync(skip bool) {
 	ls.auditSkipDurableSync = skip
 }
 
+// PoolStats returns the live connection-pool statistics of the underlying
+// *sql.DB (database/sql's DBStats: MaxOpenConnections as applied by the storage
+// factory, InUse, Idle). ok is false if the pool cannot be reached. Read-only and
+// issues no query, so it never touches the database itself.
+func (ls *LocalStorage) PoolStats() (stats sql.DBStats, ok bool) {
+	if ls == nil || ls.db == nil {
+		return sql.DBStats{}, false
+	}
+	sqlDB, err := ls.db.DB()
+	if err != nil || sqlDB == nil {
+		return sql.DBStats{}, false
+	}
+	return sqlDB.Stats(), true
+}
+
 // DB returns the underlying *gorm.DB. Exposed for test helpers that need direct
 // SQL access (e.g. seeding rows with custom timestamps). Do not use in production
 // code — all writes must go through the Storage interface methods.
 func (ls *LocalStorage) DB() *gorm.DB {
 	return ls.db
+}
+
+// Close closes the lock pools (SetSchedulerLockDB, SetNamedLockDB) and the
+// request pool, releasing every Postgres connection this storage opened. Call it
+// once, after everything using the storage (requests, schedulers) has stopped.
+func (ls *LocalStorage) Close() error {
+	var errs []error
+	for _, lockDB := range []*sql.DB{ls.schedulerLockDB, ls.namedLockDB} {
+		if lockDB != nil {
+			errs = append(errs, lockDB.Close())
+		}
+	}
+	if sqlDB, err := ls.db.DB(); err != nil {
+		errs = append(errs, err)
+	} else {
+		errs = append(errs, sqlDB.Close())
+	}
+	return errors.Join(errs...)
 }
 
 // consumeClockRegressionTolerance bounds how far now may read EARLIER than

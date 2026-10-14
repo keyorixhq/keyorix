@@ -43,7 +43,15 @@ type SuspendOptions struct {
 	ClearSyncedCopies bool
 }
 
+// ErrSuspendAuditUnavailable is returned, with the secret untouched, when a suspend that
+// asks to clear synced copies could not record that decision first.
+var ErrSuspendAuditUnavailable = errors.New("suspend audit event could not be recorded; the secret was not suspended")
+
 // SuspendSecretWithOptions is SuspendSecret with per-suspension options.
+//
+// With opts.ClearSyncedCopies the secret.suspended audit row is written BEFORE the marker
+// and the status change, and a failure to record it refuses the suspend (no marker, no
+// status change). A plain suspend keeps its historical best-effort audit after the write.
 //
 // Already suspended: without opts.ClearSyncedCopies it is a no-op (no duplicate audit,
 // and an existing marker is never downgraded; only resume removes it). With it, a
@@ -58,6 +66,21 @@ func (c *KeyorixCore) SuspendSecretWithOptions(ctx context.Context, secretID, ac
 	alreadySuspended := secret.Status == SecretStatusSuspended
 	if alreadySuspended && (!opts.ClearSyncedCopies || secret.SuspendClearSyncedCopies) {
 		return secret, nil // already suspended (and nothing to add) — no-op, no duplicate audit
+	}
+	uid, sid := actorID, secretID
+	desc := fmt.Sprintf("suspended secret %q", secret.Name)
+	if reason != "" {
+		desc += ": " + reason
+	}
+	if opts.ClearSyncedCopies {
+		desc += " (clear_synced_copies=true)"
+		// Audit-before-effect: the decision to empty copies in other clusters is on record
+		// before the marker is written, and an unrecorded decision is refused, not
+		// best-effort. A write that then loses the race below leaves this row behind, the
+		// same "attempted" shape as the bulk event.
+		if !c.writeAuditEventFull(ctx, EventSecretSuspended, &uid, &sid, nil, "", desc) {
+			return nil, ErrSuspendAuditUnavailable
+		}
 	}
 	fromStatus := secret.Status
 	secret.Status = SecretStatusSuspended
@@ -74,15 +97,9 @@ func (c *KeyorixCore) SuspendSecretWithOptions(ctx context.Context, secretID, ac
 		// as a failed write rather than silently overwriting the winner.
 		return nil, fmt.Errorf("secret %d's status changed concurrently; retry", secretID)
 	}
-	uid, sid := actorID, secretID
-	desc := fmt.Sprintf("suspended secret %q", secret.Name)
-	if reason != "" {
-		desc += ": " + reason
+	if !opts.ClearSyncedCopies {
+		c.writeAuditEvent(ctx, EventSecretSuspended, &uid, &sid, desc) // plain suspend: historical best-effort audit
 	}
-	if opts.ClearSyncedCopies {
-		desc += " (clear_synced_copies=true)"
-	}
-	c.writeAuditEvent(ctx, EventSecretSuspended, &uid, &sid, desc)
 	return secret, nil
 }
 

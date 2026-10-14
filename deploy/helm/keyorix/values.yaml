@@ -15,12 +15,12 @@ auth:
   # substring (internal/core/rules/password_policy.go +
   # internal/core/auth_bootstrap.go's CreateUser call -- the substring check
   # is enforced separately/later than the rest of the policy). The chart
-  # fails the render if it's under 16 characters; the other rules can't be
-  # chart-checked -- get those wrong and first-boot bootstrap fails silently
-  # instead (pod comes up fine, no admin user is ever created), and per a
-  # confirmed bug (FINDINGS-inbox, Session J, 2026-09-28) a rejected password
-  # can leave the install unable to retry bootstrap at all without wiping the
-  # database.
+  # fails the render if it's under 16 characters or contains the username,
+  # the email's local part or "Administrator" (case-insensitively); the
+  # other rules can't be chart-checked -- get those wrong and the server pod
+  # exits non-zero at first boot (crash-loop, #3025) after printing the
+  # policy's reason in its log. A rejected password writes nothing, so
+  # `helm upgrade` with a compliant one completes the install.
   adminUsername: "admin"
   adminEmail: "admin@keyorix.local"
   adminPassword: ""
@@ -105,6 +105,15 @@ server:
   replicas: 1
   service:
     port: 8080
+  # trustedProxies is the server's own server.http.trusted_proxies: IPs/CIDRs of the
+  # proxies whose X-Forwarded-For and X-Forwarded-Proto the SERVER honors, as the
+  # server sees them (the TCP peer). From a listed peer carrying
+  # X-Forwarded-Proto=https the server sends HSTS and marks the session and CSRF
+  # cookies Secure; it never trusts those headers from any other peer. Empty
+  # (default): nothing is trusted. Needed only if something OTHER than the web pod
+  # reaches the server through a TLS-terminating load balancer (the chart's Ingress
+  # routes to web, whose nginx makes its own decision; see web.trustedProxies).
+  trustedProxies: []
   # Persistent volume for the wrapped DEK + KEK salt (/app/keys). MUST persist —
   # losing it makes every stored secret undecryptable. Back it up.
   keysPersistence:
@@ -265,6 +274,12 @@ externalDatabase:
   database: keyorix
   user: keyorix
   sslMode: require
+  # CA that signed the database server's certificate, rendered as
+  # storage.database.ssl_root_cert. REQUIRED with sslMode verify-full/verify-ca
+  # (the server refuses to start without it): "system" trusts the image's OS CA
+  # store (a publicly issued certificate); a path names a PEM file you mount
+  # into the server pod yourself (this chart does not mount it).
+  sslRootCert: ""
 
 # ── Network policy ────────────────────────────────────────────────────────────
 # Scopes the server API and the bundled Postgres to same-namespace traffic —

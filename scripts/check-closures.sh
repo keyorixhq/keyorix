@@ -49,6 +49,8 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/closure-pkg.sh
+. "$REPO_ROOT/scripts/closure-pkg.sh"
 # docs/security-closures.tsv is no longer committed: unless the caller supplies
 # CLOSURE_LEDGER (--self-test and check-adr-conformance.sh do), build the flat
 # ledger from docs/security-closures.d/ right now. The generator validates the
@@ -92,6 +94,10 @@ LEDGER_D="${CLOSURE_LEDGER_D:-}"
 if [ -n "$LEDGER_D" ] && [ -d "$LEDGER_D" ]; then
     for frag in "$LEDGER_D"/*.tsv; do
         [ -e "$frag" ] || continue
+        if grep -q $'\r' "$frag"; then
+            die "fragment $frag contains a carriage return (CRLF or CR inside a field) — a ledger fragment is one LF-terminated line"
+            continue
+        fi
         frag_rows=$(grep -vE '^[[:space:]]*(#|$)' "$frag" || true)
         n=$(grep -c . <<<"$frag_rows" || true)
         if [ "$n" -ne 1 ]; then
@@ -120,6 +126,8 @@ while IFS=$'\t' read -r claim pkg test verification commit issue rest; do
         default-ci|pg-gated)
             if [ -z "${pkg:-}" ] || [ -z "${test:-}" ]; then
                 die "$claim: missing package or proving_test — a closure without a citation is not a closure"
+            elif ! closure_pkg_resolve "$REPO_ROOT" "$pkg"; then
+                die "$claim: $CLOSURE_PKG_ERR"
             fi
             ;;
         manual)
@@ -155,8 +163,21 @@ for pkg in $(awk -F'\t' '$4=="default-ci" || $4=="pg-gated" {print $2}' <<<"$row
     tests=$(awk -F'\t' -v p="$pkg" '($4=="default-ci" || $4=="pg-gated") && $2==p {print $3}' <<<"$rows")
     pattern=$(paste -sd'|' - <<<"$tests")
     echo "==> $pkg"
+    # Validated above, so this cannot fail; if it somehow does, fail closed.
+    if ! closure_pkg_resolve "$REPO_ROOT" "$pkg"; then
+        die "$pkg: $CLOSURE_PKG_ERR"
+        continue
+    fi
+    # A package in the cli module runs `go test` inside cli/ (its own go.mod);
+    # a root-module package runs from the repo root exactly as before. The cli
+    # module is not in go.work (the root go.work is `use .`), so it runs with
+    # GOWORK=off like every other cli-module job in ci.yml and the Makefile.
     set +e
-    out=$(cd "$REPO_ROOT" && go test -count=1 -v -run "^(${pattern})\$" "$pkg" 2>&1); rc=$?
+    if [ "$CLOSURE_MOD_DIR" = "." ]; then
+        out=$(cd "$REPO_ROOT" && go test -count=1 -v -run "^(${pattern})\$" "$CLOSURE_MOD_PKG" 2>&1); rc=$?
+    else
+        out=$(cd "$REPO_ROOT/$CLOSURE_MOD_DIR" && GOWORK=off go test -count=1 -v -run "^(${pattern})\$" "$CLOSURE_MOD_PKG" 2>&1); rc=$?
+    fi
     set -e
     if [ "$rc" -ne 0 ]; then
         die "$pkg: go test exited $rc"
@@ -296,6 +317,16 @@ if [ "${1:-}" = "--self-test" ]; then
         "-" \
         $'SELF-TEST-12.tsv=SELF-TEST-12\t-\t-\tmanual\tdeadbeef\t-\tone\nSELF-TEST-13\t-\t-\tmanual\tdeadbeef\t-\ttwo'
 
+    run_case "fragment row split across two lines (embedded newline in a field)" "reject" \
+        'SELF-TEST-27	-	-	manual	deadbeef	-	calibration row (legacy)' \
+        "-" \
+        $'SELF-TEST-28.tsv=SELF-TEST-28\t-\t-\tmanual\tdeadbeef\t-\tnote with an\nembedded newline'
+
+    run_case "fragment with CRLF line ending" "reject" \
+        'SELF-TEST-29	-	-	manual	deadbeef	-	calibration row (legacy)' \
+        "-" \
+        $'SELF-TEST-30.tsv=SELF-TEST-30\t-\t-\tmanual\tdeadbeef\t-\tcalibration row\r'
+
     run_case "malformed fragment row (bad verification) is checked like a legacy row" "reject" \
         'SELF-TEST-14	-	-	manual	deadbeef	-	calibration row (legacy)' \
         "-" \
@@ -310,6 +341,42 @@ if [ "${1:-}" = "--self-test" ]; then
         'SELF-TEST-17	-	-	manual	deadbeef	-	calibration row citing a fake artefact' \
         "-" \
         $'SELF-TEST-18.tsv=# a comment line is allowed\nSELF-TEST-18\t-\t-\tmanual\tdeadbeef\t-\tcalibration row citing a fake artefact'
+
+    # cli-module cases: a ./cli/... row runs `go test` inside cli/ (own go.mod).
+    run_case "cli-module row whose test passes" "accept" \
+        'SELF-TEST-19	./cli/internal/securefiles	TestCheckClosuresSelfTestFixture_CLIModulePasses	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "cli-module row, package directory does not exist" "reject" \
+        'SELF-TEST-20	./cli/internal/thispackagedoesnotexist	TestX	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "cli-module row, test does not exist" "reject" \
+        'SELF-TEST-21	./cli/internal/securefiles	TestThisNameDoesNotExistAnywhere	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "cli-module row, bare path (no ./)" "reject" \
+        'SELF-TEST-22	cli/internal/securefiles	TestCheckClosuresSelfTestFixture_CLIModulePasses	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "cli-module row, path relative to cli/ (no ./cli prefix) is a root-module path" "reject" \
+        'SELF-TEST-23	./internal/securefiles	TestCheckClosuresSelfTestFixture_CLIModulePasses	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "cli-module row with a wildcard" "reject" \
+        'SELF-TEST-24	./cli/...	TestCheckClosuresSelfTestFixture_CLIModulePasses	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "row with a parent-directory segment" "reject" \
+        'SELF-TEST-25	./cli/../internal/core	TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN	pg-gated	deadbeef	-	calibration row' \
+        ""
+
+    run_case "row in a module the checker cannot run (operator/)" "reject" \
+        'SELF-TEST-26	./operator/api	TestX	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    # The fragment-shape validator lives in the generator; run its own self-test.
+    echo; "$REPO_ROOT/scripts/gen-security-closures-tsv.sh" --self-test || selffail=1
 
     if [ "$selffail" -ne 0 ]; then
         exit 1
