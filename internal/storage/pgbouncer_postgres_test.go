@@ -116,8 +116,7 @@ func TestPgBouncer_StorageSlice(t *testing.T) {
 	var replicas [2]corestorage.Storage
 	var wg sync.WaitGroup
 	for i := range replicas {
-		wg.Add(1)
-		go func() { defer wg.Done(); replicas[i] = tg.open(t, false) }()
+		wg.Go(func() { ; replicas[i] = tg.open(t, false) })
 	}
 	wg.Wait()
 	if t.Failed() {
@@ -142,7 +141,7 @@ func TestPgBouncer_StorageSlice(t *testing.T) {
 		require.NoError(t, err)
 		// Many times, from both replicas, so statements meet server
 		// connections other than the one they were first sent on.
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			for _, st := range replicas {
 				got, err := st.GetSecret(ctx, s.ID)
 				require.NoError(t, err)
@@ -160,14 +159,12 @@ func TestPgBouncer_StorageSlice(t *testing.T) {
 		for i, st := range []corestorage.Storage{a, fast, b} {
 			var wg sync.WaitGroup
 			errs := make(chan error, 20)
-			for j := 0; j < 20; j++ {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
+			for j := range 20 {
+				wg.Go(func() {
 					errs <- st.LogAuditEventWithAccessLog(ctx,
 						&models.AuditEvent{EventType: "secret.read", Description: fmt.Sprintf("pgb %d/%d", i, j), EventTime: time.Now()},
 						&models.SecretAccessLog{SecretNodeID: 1, Action: "read", AccessTime: time.Now()})
-				}()
+				})
 			}
 			wg.Wait()
 			close(errs)
@@ -185,7 +182,7 @@ func TestPgBouncer_StorageSlice(t *testing.T) {
 		sqlDB, err := db.DB()
 		require.NoError(t, err)
 		conns := make([]interface{ Close() error }, 0, 5)
-		for i := 0; i < 5; i++ {
+		for range 5 {
 			c, err := sqlDB.Conn(ctx)
 			require.NoError(t, err)
 			conns = append(conns, c)
@@ -199,7 +196,7 @@ func TestPgBouncer_StorageSlice(t *testing.T) {
 	})
 
 	t.Run("NamedLockExcludesAcrossReplicas", func(t *testing.T) {
-		for round := 0; round < 3; round++ {
+		for round := range 3 {
 			var inA, overlap atomic.Bool
 			entered := make(chan struct{})
 			done := make(chan error, 1)
@@ -225,7 +222,7 @@ func TestPgBouncer_StorageSlice(t *testing.T) {
 	})
 
 	t.Run("SchedulerLockExcludesAcrossReplicas", func(t *testing.T) {
-		for round := 0; round < 3; round++ {
+		for round := range 3 {
 			entered := make(chan struct{})
 			release := make(chan struct{})
 			done := make(chan error, 1)

@@ -6,6 +6,8 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"log"
+
+	"github.com/keyorixhq/keyorix/internal/config"
 )
 
 // advisoryLockSession is the connection a Postgres advisory lock is held on
@@ -29,12 +31,14 @@ import (
 //     mid-transaction.
 //
 // The lock transaction runs no writes; it exists only to pin the server
-// connection and scope the lock. idle_in_transaction_session_timeout is set to
-// 0 for it alone (SET LOCAL), because the critical section's own queries run
+// connection and scope the lock. idle_in_transaction_session_timeout and, on
+// PostgreSQL 17+, transaction_timeout are set to 0 for it alone (SET LOCAL,
+// config.PinnedLockTxSetupSQL), because the critical section's own queries run
 // on other connections and this one is idle in transaction meanwhile; a
 // server-side timeout ending it would release the lock while the holder is
 // still inside its critical section. The pooler's own idle_transaction_timeout
-// must be 0 or longer than any critical section (docs/postgresql-poolers.md).
+// and transaction timeouts must be 0 or longer than any critical section
+// (docs/postgresql-poolers.md).
 type advisoryLockSession struct {
 	conn *sql.Conn
 	xact bool
@@ -47,11 +51,9 @@ func openAdvisoryLockSession(ctx context.Context, conn *sql.Conn, xact bool) (*a
 	if !xact {
 		return s, nil
 	}
-	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
-		s.discard()
-		return nil, fmt.Errorf("begin advisory lock transaction: %w", err)
-	}
-	if _, err := conn.ExecContext(ctx, "SET LOCAL idle_in_transaction_session_timeout = 0"); err != nil {
+	if err := config.BeginPinnedLockTx(ctx, conn); err != nil {
+		// May or may not be inside the transaction: ROLLBACK is harmless
+		// outside one (a warning), and a failed ROLLBACK discards the conn.
 		s.close(ctx)
 		return nil, fmt.Errorf("begin advisory lock transaction: %w", err)
 	}

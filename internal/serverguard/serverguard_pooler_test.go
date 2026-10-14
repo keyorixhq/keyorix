@@ -33,7 +33,7 @@ func poolerGuardCfg(t *testing.T) (*config.Config, string) {
 // pooler with session locks, both "hold" at once.
 func TestPgBouncer_ServerGuard_PresenceExcludesAdmin(t *testing.T) {
 	cfg, _ := poolerGuardCfg(t)
-	for round := 0; round < 3; round++ {
+	for round := range 3 {
 		p, err := AcquirePresence(cfg)
 		if err != nil {
 			t.Fatalf("round %d: AcquirePresence: %v", round, err)

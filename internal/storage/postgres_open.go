@@ -138,6 +138,11 @@ const errUndeclaredTransactionPooler = "storage.database: two open connections w
 // default LIFO server reuse makes an idle pool hand B the server connection A
 // just released, which is the case at start-up. Both queries use the simple
 // protocol so no prepared statement is involved.
+//
+// The server runs it (RefuseUndeclaredTransactionPooler) before it takes its
+// presence lock, so a refused start-up leaves no session lock behind on a
+// pooled server connection; CreateStorage runs it again for every other entry
+// point.
 func refuseUndeclaredTransactionPooler(d *config.DatabaseConfig) error {
 	if d.TransactionPooling() {
 		return nil
@@ -174,6 +179,17 @@ func refuseUndeclaredTransactionPooler(d *config.DatabaseConfig) error {
 	}
 	if pa == pb {
 		return fmt.Errorf(errUndeclaredTransactionPooler, pa)
+	}
+	return nil
+}
+
+// RefuseUndeclaredTransactionPooler runs the start-up tripwire for cfg when it
+// uses PostgreSQL, and is a no-op for every other storage type. See
+// refuseUndeclaredTransactionPooler.
+func RefuseUndeclaredTransactionPooler(cfg *config.Config) error {
+	switch cfg.Storage.Type {
+	case "postgres", "postgresql":
+		return refuseUndeclaredTransactionPooler(&cfg.Storage.Database)
 	}
 	return nil
 }

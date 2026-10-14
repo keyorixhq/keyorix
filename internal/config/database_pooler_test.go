@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -64,6 +65,29 @@ func TestResolvePostgresConnConfig_PoolerExecMode(t *testing.T) {
 			require.Zero(t, cc.DescriptionCacheCapacity, pooler)
 		} else {
 			require.NotZero(t, cc.StatementCacheCapacity, pooler)
+		}
+	}
+}
+
+// TestPinnedLockTxSetupSQL: transaction_timeout is only set from PostgreSQL 17
+// (earlier servers reject the unknown parameter); idle_in_transaction_session_timeout
+// always.
+func TestPinnedLockTxSetupSQL(t *testing.T) {
+	const idle = "SET LOCAL idle_in_transaction_session_timeout = 0"
+	const txTimeout = "SET LOCAL transaction_timeout = 0"
+	for _, tc := range []struct {
+		v    int
+		want []string
+	}{
+		{90600, []string{idle}},
+		{160013, []string{idle}},
+		{169999, []string{idle}},
+		{170000, []string{idle, txTimeout}},
+		{170005, []string{idle, txTimeout}},
+		{180001, []string{idle, txTimeout}},
+	} {
+		if got := PinnedLockTxSetupSQL(tc.v); !slices.Equal(got, tc.want) {
+			t.Errorf("PinnedLockTxSetupSQL(%d) = %q, want %q", tc.v, got, tc.want)
 		}
 	}
 }

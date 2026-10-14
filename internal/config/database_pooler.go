@@ -1,7 +1,10 @@
 package config
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -76,4 +79,58 @@ func applyPoolerConnConfig(d *DatabaseConfig, cc *pgx.ConnConfig) {
 	cc.DefaultQueryExecMode = pgx.QueryExecModeExec
 	cc.StatementCacheCapacity = 0
 	cc.DescriptionCacheCapacity = 0
+}
+
+// pgVersionTransactionTimeout is the first server_version_num that has
+// transaction_timeout (PostgreSQL 17). Setting it on an older server is an
+// "unrecognized configuration parameter" error.
+const pgVersionTransactionTimeout = 170000
+
+// PinnedLockTxSetupSQL is what a transaction that pins a transaction-scoped
+// advisory lock (pooler: pgbouncer-transaction) must run right after BEGIN, for
+// a server of serverVersionNum.
+//
+// The lock lives exactly as long as that transaction, and the transaction is
+// idle for the holder's whole critical section (the presence lock: the server's
+// lifetime). Any server-side timeout that ends it silently drops the lock while
+// the holder still relies on it, so each one that could fire is set to 0 for
+// this transaction alone (SET LOCAL reverts at ROLLBACK):
+//
+//   - idle_in_transaction_session_timeout (every supported version);
+//   - transaction_timeout (PostgreSQL 17+, whatever level it was set at:
+//     cluster, database or role). Not set before 17, where it does not exist.
+//
+// idle_session_timeout is not in the list: it only applies outside a
+// transaction. The pooler's own timeouts cannot be set from SQL; see
+// docs/postgresql-poolers.md.
+func PinnedLockTxSetupSQL(serverVersionNum int) []string {
+	stmts := []string{"SET LOCAL idle_in_transaction_session_timeout = 0"}
+	if serverVersionNum >= pgVersionTransactionTimeout {
+		stmts = append(stmts, "SET LOCAL transaction_timeout = 0")
+	}
+	return stmts
+}
+
+// BeginPinnedLockTx opens the transaction a transaction-scoped advisory lock
+// lives in on conn and removes the server-side timeouts that would end it (see
+// PinnedLockTxSetupSQL). On error the transaction may be open; the caller ends
+// it (ROLLBACK) or discards the connection.
+func BeginPinnedLockTx(ctx context.Context, conn *sql.Conn) error {
+	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
+		return err
+	}
+	var v string
+	if err := conn.QueryRowContext(ctx, "SHOW server_version_num").Scan(&v); err != nil {
+		return fmt.Errorf("read server_version_num: %w", err)
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return fmt.Errorf("parse server_version_num %q: %w", v, err)
+	}
+	for _, q := range PinnedLockTxSetupSQL(n) {
+		if _, err := conn.ExecContext(ctx, q); err != nil {
+			return err
+		}
+	}
+	return nil
 }

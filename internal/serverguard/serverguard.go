@@ -435,14 +435,11 @@ func pgLockSQL(fn string, xact bool) string {
 }
 
 // beginPinnedLockTx opens the transaction a transaction-scoped presence lock
-// lives in. idle_in_transaction_session_timeout is 0 for it alone: it is idle
-// for the whole hold, and a server-side timeout ending it would drop the lock.
+// lives in. It is idle for the whole hold, so idle_in_transaction_session_timeout
+// and (PostgreSQL 17+) transaction_timeout are 0 for it alone: a server-side
+// timeout ending it would silently drop the lock (config.PinnedLockTxSetupSQL).
 func beginPinnedLockTx(ctx context.Context, conn *sql.Conn) error {
-	if _, err := conn.ExecContext(ctx, "BEGIN"); err != nil {
-		return err
-	}
-	_, err := conn.ExecContext(ctx, "SET LOCAL idle_in_transaction_session_timeout = 0")
-	return err
+	return config.BeginPinnedLockTx(ctx, conn)
 }
 
 // endPinnedLockTx ends the lock transaction, releasing the lock. If that fails
