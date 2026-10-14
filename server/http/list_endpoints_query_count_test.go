@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -33,7 +34,9 @@ type leQueryRecorder struct {
 	sqls []string
 }
 
-var leRecorderSeq int
+// leRecorderSeq numbers the gorm callbacks each recorder registers; atomic because
+// tests (and their subtests) may build fixtures concurrently.
+var leRecorderSeq atomic.Int64
 
 func newLEQueryRecorder(t *testing.T, db *gorm.DB) *leQueryRecorder {
 	t.Helper()
@@ -45,8 +48,7 @@ func newLEQueryRecorder(t *testing.T, db *gorm.DB) *leQueryRecorder {
 			rec.sqls = append(rec.sqls, d.Statement.SQL.String())
 		}
 	}
-	leRecorderSeq++
-	name := fmt.Sprintf("listendpoints1:%d", leRecorderSeq)
+	name := fmt.Sprintf("listendpoints1:%d", leRecorderSeq.Add(1))
 	cb := db.Callback()
 	require.NoError(t, cb.Query().After("gorm:query").Register(name+":q", record))
 	require.NoError(t, cb.Row().After("gorm:row").Register(name+":row", record))
@@ -89,7 +91,7 @@ func newLEFixture(t *testing.T, backend string, nUsers int) *leFixture {
 	w := newRRWorld(t, backend, false)
 	f := &leFixture{w: w, rec: newLEQueryRecorder(t, w.a.db), now: time.Now().UTC()}
 	f.users = make([]models.User, 0, nUsers)
-	for i := 0; i < nUsers; i++ {
+	for i := range nUsers {
 		name := fmt.Sprintf("leuser%04d", i)
 		f.users = append(f.users, models.User{Username: name, UsernameFolded: name, Email: name + "@example.com", EmailFolded: name + "@example.com", IsActive: true})
 	}
@@ -111,7 +113,7 @@ func (f *leFixture) project(t *testing.T, name string, n int) uint {
 	require.NoError(t, err)
 	db := f.w.a.db
 	secs := make([]models.SecretNode, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		secs = append(secs, models.SecretNode{
 			Name: fmt.Sprintf("%s-secret-%03d", name, i), ProjectID: p.ID, EnvironmentID: env.ID,
 			IsSecret: true, Type: "generic", Status: "active", OwnerID: f.w.adminID, CreatedBy: "x",
@@ -164,6 +166,109 @@ func TestListSecrets_QueryCountDoesNotGrowWithRows(t *testing.T) {
 				require.LessOrEqual(t, len(sqlL), len(sqlS)+3,
 					"%q: %d statements for %d secrets vs %d for %d: the list issues statements per row", q, len(sqlL), large, len(sqlS), small)
 			}
+		})
+	}
+}
+
+// aclProject creates a project with one environment holding n secrets owned by another
+// user, each carrying a per-secret ACL grant for the admin: the listing's ACL path.
+func (f *leFixture) aclProject(t *testing.T, name string, n int) uint {
+	t.Helper()
+	ctx := context.Background()
+	p, err := f.w.a.c.CreateProject(ctx, name, "list endpoints acl")
+	require.NoError(t, err)
+	env, err := f.w.a.c.CreateEnvironment(ctx, p.ID, name+"-env")
+	require.NoError(t, err)
+	db := f.w.a.db
+	secs := make([]models.SecretNode, 0, n)
+	for i := range n {
+		secs = append(secs, models.SecretNode{
+			Name: fmt.Sprintf("%s-secret-%03d", name, i), ProjectID: p.ID, EnvironmentID: env.ID,
+			IsSecret: true, Type: "generic", Status: "active", OwnerID: f.users[0].ID, CreatedBy: "x",
+			CreatedAt: f.now, UpdatedAt: f.now,
+		})
+	}
+	require.NoError(t, db.CreateInBatches(&secs, 100).Error)
+	acls := make([]models.SecretACL, 0, n)
+	for i := range secs {
+		acls = append(acls, models.SecretACL{
+			SecretID: secs[i].ID, UserID: f.w.adminID, Permissions: `["secrets.read"]`,
+			GrantedBy: f.users[0].ID, CreatedAt: f.now, UpdatedAt: f.now,
+		})
+	}
+	require.NoError(t, db.CreateInBatches(&acls, 100).Error)
+	return p.ID
+}
+
+// TestListSecrets_ACLPathQueryCountDoesNotGrowWithGrants: the ACL-granted nodes were
+// fetched with one GetSecret per grant.
+func TestListSecrets_ACLPathQueryCountDoesNotGrowWithGrants(t *testing.T) {
+	for _, backend := range leBackends(t) {
+		t.Run(backend, func(t *testing.T) {
+			const small, large = 6, 60
+			f := newLEFixture(t, backend, 2)
+			smallID := f.aclProject(t, "leaclsmall", small)
+			largeID := f.aclProject(t, "leacllarge", large)
+
+			path := func(id uint) string {
+				return fmt.Sprintf("/api/v1/secrets?project_id=%d&page_size=100", id)
+			}
+			stS, bodyS, sqlS := f.rec.get(t, f.w, f.token, path(smallID))
+			stL, bodyL, sqlL := f.rec.get(t, f.w, f.token, path(largeID))
+			require.Equal(t, http.StatusOK, stS, bodyS)
+			require.Equal(t, http.StatusOK, stL, bodyL)
+			require.Contains(t, bodyL, fmt.Sprintf(`"total":%d`, large), "the large project must list every ACL-granted secret")
+			require.LessOrEqual(t, len(sqlL), len(sqlS)+3,
+				"%d statements for %d ACL grants vs %d for %d: the ACL path issues statements per grant", len(sqlL), large, len(sqlS), small)
+		})
+	}
+}
+
+// leWithoutPerSecretAuthz drops the statements of the per-distinct-secret
+// AuthorizeSecret(secrets.read) call that annotates share views with secret names
+// (#3153): ACL rows and their folder ancestor walk, the single-row secret fetch, the
+// role resolution and the cache-epoch probe. That authorization is deliberately one
+// decision per secret, the same one GET /secrets/{id} makes, and batching it is a
+// separate change; what this guard pins is that the LOOKUPS (usernames, group names,
+// secrets, projects) stay batched. A new statement that is not one of these still counts.
+func leWithoutPerSecretAuthz(sqls []string) []string {
+	unquote := strings.NewReplacer("`", "", `"`, "")
+	out := make([]string, 0, len(sqls))
+	for _, s := range sqls {
+		q := unquote.Replace(s)
+		switch {
+		case strings.Contains(q, "FROM secret_acls"),
+			strings.Contains(q, "user_roles"),
+			strings.Contains(q, "cache_epoch"),
+			strings.Contains(q, "SELECT id,parent_id FROM secret_nodes"),
+			strings.Contains(q, "FROM secret_nodes WHERE secret_nodes.id = ") && strings.Contains(q, "LIMIT"): // Postgres parameterizes it ("LIMIT $2")
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
+// TestListShares_QueryCountDoesNotGrowWithShares: the shares list resolved each share's
+// secret, recipient and creator with its own statement. The admin's shares accumulate
+// across the two projects, so the second request lists many more rows than the first.
+func TestListShares_QueryCountDoesNotGrowWithShares(t *testing.T) {
+	for _, backend := range leBackends(t) {
+		t.Run(backend, func(t *testing.T) {
+			const small, large = 6, 60
+			f := newLEFixture(t, backend, large)
+			const route = "/api/v1/shares?pageSize=100"
+
+			f.project(t, "leshsmall", small)
+			stS, bodyS, sqlS := f.rec.get(t, f.w, f.token, route)
+			f.project(t, "leshlarge", large)
+			stL, bodyL, sqlL := f.rec.get(t, f.w, f.token, route)
+			require.Equal(t, http.StatusOK, stS, bodyS)
+			require.Equal(t, http.StatusOK, stL, bodyL)
+			require.Contains(t, bodyL, "leshlarge-secret-", "the large set of shares must be listed")
+			lookupsS, lookupsL := leWithoutPerSecretAuthz(sqlS), leWithoutPerSecretAuthz(sqlL)
+			require.LessOrEqual(t, len(lookupsL), len(lookupsS)+3,
+				"%d lookup statements for %d shares vs %d for %d: the shares list issues statements per row", len(lookupsL), small+large, len(lookupsS), small)
 		})
 	}
 }

@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -428,11 +429,8 @@ func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID
 	sharesBySecret := make(map[uint][]*models.ShareRecord, len(secrets))
 	now := c.shareEffectiveNow()
 	for start := 0; start < len(ids); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
-		batch, berr := c.storage.ListSharesBySecretIDs(ctx, ids[start:end], now)
+		end := min(start+listBatchSize, len(ids))
+		batch, berr :=c.storage.ListSharesBySecretIDs(ctx, ids[start:end], now)
 		if berr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), berr)
 		}
@@ -531,10 +529,7 @@ func (c *KeyorixCore) secretsByIDs(ctx context.Context, ids []uint) (map[uint]*m
 	out := make(map[uint]*models.SecretNode, len(ids))
 	ids = dedupeUints(ids)
 	for start := 0; start < len(ids); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(start+listBatchSize, len(ids))
 		batch, err := c.storage.GetSecretsByIDs(ctx, ids[start:end])
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -592,17 +587,12 @@ func (c *KeyorixCore) listingTags(ctx context.Context, secrets []*models.SecretW
 		ids = append(ids, s.ID)
 	}
 	for start := 0; start < len(ids); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(start+listBatchSize, len(ids))
 		batch, err := c.storage.GetSecretTagsBySecretIDs(ctx, ids[start:end])
 		if err != nil {
 			return listingTagLookup{byID: map[uint][]string{}, failed: true}
 		}
-		for id, names := range batch {
-			lookup.byID[id] = names
-		}
+		maps.Copy(lookup.byID, batch)
 	}
 	return lookup
 }
@@ -815,14 +805,15 @@ func (c *KeyorixCore) getACLGrantedSecretsWithSharingInfo(ctx context.Context, u
 	var result []*models.SecretWithSharingInfo
 
 	// The granted nodes in batches (LIST-ENDPOINTS-1), not one GetSecret per grant. A
-	// failed lookup grants nothing, as a failed per-grant GetSecret skipped the grant.
+	// failed lookup fails the listing (like the owned and shared paths) rather than
+	// silently hiding every ACL-granted secret behind a 200.
 	aclSecretIDs := make([]uint, 0, len(acls))
 	for _, acl := range acls {
 		aclSecretIDs = append(aclSecretIDs, acl.SecretID)
 	}
 	nodes, nerr := c.secretsByIDs(ctx, aclSecretIDs)
 	if nerr != nil {
-		return nil, nil
+		return nil, nerr
 	}
 	for _, acl := range acls {
 		c.applyACLGrant(ctx, acl, nodes[acl.SecretID], filter, seen, &result)
