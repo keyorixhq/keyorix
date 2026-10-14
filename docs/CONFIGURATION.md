@@ -124,8 +124,14 @@ stored this way; use `key_provider.type: file` for raw keys.
 ## environment
 
 ```yaml
-environment: production   # development | staging | production
+environment: production   # production | staging | local | ...
 ```
+
+A deployment label shown in system info. `keyorix-server admin init` writes
+`production`; `admin init --dev` writes `local`. The exact value `development`
+is not a pure label: it replaces `server.http.allowed_origins` with the
+localhost dev origins (`http://localhost:3000`, `:5173`, and the `127.0.0.1`
+equivalents), so no generated config uses it.
 
 ## locale
 
@@ -272,7 +278,8 @@ storage:
     # PostgreSQL (recommended for production) — set type: postgres above:
     # dsn: "host=db user=keyorix dbname=keyorix port=5432 sslmode=require"
     # ...or field by field: host, port, name, user, and
-    # ssl_mode: require           # disable | require | verify-ca | verify-full (default require)
+    # ssl_mode: require           # disable | allow | prefer | require | verify-ca | verify-full
+    #   (default require; any other value is refused at start-up)
     # ssl_root_cert: pg-ca.pem    # CA that signed the database's certificate; REQUIRED
     #   with verify-full/verify-ca, or "system" for the OS CA store. See
     #   "PostgreSQL TLS" below.
@@ -306,10 +313,19 @@ storage:
 
 `ssl_mode` sets how the server's connection to PostgreSQL is protected, and
 `ssl_root_cert` names the CA that signed the database server's certificate.
+`ssl_mode` takes only the six values below (the PostgreSQL driver's own set,
+case-sensitive). Any other value is refused at start-up with the list of valid
+ones, instead of failing later at the first connection:
+
+```
+storage.database.ssl_mode "verify_full" is not a valid sslmode; use one of: disable, allow, prefer, require, verify-ca, verify-full
+```
 
 | `ssl_mode` | Encrypted | Server certificate checked |
 |---|---|---|
 | `disable` | no | no (reported by `admin validate --posture` as `storage.database.insecure_disable_database_tls`) |
+| `allow` | only if the server insists | no. Tries plaintext first |
+| `prefer` | only if the TLS attempt succeeds | no. Falls back to plaintext whenever TLS fails, including when anything on the network path answers "no TLS" |
 | `require` (default) | yes | no. With `ssl_root_cert` set, the chain is checked against it (libpq/pgx behaviour), but the host name is not |
 | `verify-ca` | yes | chain against `ssl_root_cert`, not the host name |
 | `verify-full` | yes | chain against `ssl_root_cert` **and** the host name in `host` |
@@ -354,6 +370,20 @@ because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
 encrypted nor verified.
 
+**`ssl_mode` together with `dsn`.** The dsn is used as-is, so `ssl_mode` used
+to be silently ignored next to it: `ssl_mode: verify-full` with a dsn saying
+`sslmode=disable` connected in plaintext. Now, when both are set, the dsn must
+state `sslmode` itself and it must equal `ssl_mode`, or the server refuses to
+start (`ssl=true` in a URL dsn is the driver's alias for `sslmode=require`).
+Leaving `ssl_mode` out next to a `dsn` is fine.
+
+**The effective sslmode.** With a `dsn`, the sslmode is the dsn's own; when
+the dsn has none, `PGSSLMODE`; otherwise the driver's default, `prefer`. With
+`sslrootcert=system` the driver always runs `verify-full`. Start-up
+validation, the insecure-settings warnings and `admin validate --posture` all
+read this effective value, so a dsn with `sslmode=disable` is reported as
+`storage.database.insecure_disable_database_tls` whatever `ssl_mode` says.
+
 **Connection-service files are refused.** `service=` or `servicefile=` in the
 `dsn`, or the `PGSERVICE` environment variable, make the PostgreSQL driver read
 `sslmode`, `sslrootcert` and `host` from a `pg_service.conf` that Keyorix does
@@ -363,9 +393,11 @@ not inspect, which would sidestep the CA requirement above. The server and the
 nothing (the driver reads a service file only when a service is selected) and
 is not refused.
 
-The Helm chart passes `externalDatabase.sslRootCert` through as
-`ssl_root_cert` (it does not mount the file; mount it yourself, or use
-`system`). `admin validate --posture` prints one informational line saying
+Helm: put the CA's PEM in a Secret and set `externalDatabase.caSecret.name`
+(and `.key`, default `ca.crt`); the chart mounts it read-only at
+`/app/db-ca/ca.crt` and renders that as `ssl_root_cert`. Or set
+`externalDatabase.sslRootCert` (`system`, or a path you mount yourself). With
+`sslMode: verify-full`/`verify-ca` and neither, the chart refuses to render. `admin validate --posture` prints one informational line saying
 what is encrypted and what is verified against which CA.
 
 ### PostgreSQL password precedence
