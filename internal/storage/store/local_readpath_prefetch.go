@@ -37,8 +37,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-const readPathNodeSelect = "SELECT n.cache_epoch AS cache_epoch, "
-
 // readPathPrefetchRow is one row of the combined statement: one per machine
 // role (a single row, role_id NULL, when the machine holds none at the scope).
 type readPathPrefetchRow struct {
@@ -70,20 +68,27 @@ func (r readPathPrefetchRow) scheduleAndVersions() scheduleAndVersionsRow {
 	}
 }
 
-// readNodeStampPrefetching is readLiveNodeStamp widened per the file header. It
-// returns the stamp and the rows to park (nil when nothing may be parked).
-func (ls *LocalStorage) readNodeStampPrefetching(ctx context.Context, pf *storage.ReadPathPrefetch, id uint, node *models.SecretNode) (nodeStampRead, *storage.PrefetchedPermission, *storage.PrefetchedScheduleVersion, bool) {
-	q := readPathNodeSelect + nodeTriggerExistsExpr(ls.db) + " AS trigger_present,\n" +
+// readPathPrefetchSQL is the node read's select list and joins. The node-stamp
+// statement puts them on FROM secret_nodes n; the credential statement
+// (local_folded_credential.go) on a LEFT JOIN of secret_nodes n, so both read
+// exactly the same clauses.
+type readPathPrefetchSQL struct {
+	cols     string
+	colArgs  []any
+	joins    string
+	joinArgs []any
+}
+
+func (ls *LocalStorage) readPathPrefetchParts(pf *storage.ReadPathPrefetch, id uint, node *models.SecretNode) readPathPrefetchSQL {
+	cols := "n.cache_epoch AS cache_epoch, " + nodeTriggerExistsExpr(ls.db) + " AS trigger_present,\n" +
 		" ids.role_id AS role_id, gen.value AS generation"
-	args := []any{SecretNodeCacheEpochTrigger}
 	if pf.WantScheduleVersion {
-		q += ",\n v.cnt AS cnt, v.max_ver AS max_ver, v.sum_rc AS sum_rc," +
+		cols += ",\n v.cnt AS cnt, v.max_ver AS max_ver, v.sum_rc AS sum_rc," +
 			" s.id AS sched_id, s.secret_node_id AS sched_secret_node_id, s.allowed_days AS sched_allowed_days," +
 			" s.start_hour AS sched_start_hour, s.end_hour AS sched_end_hour, s.timezone AS sched_timezone," +
 			" s.created_at AS sched_created_at, s.updated_at AS sched_updated_at"
 	}
-	q += "\nFROM secret_nodes n\n" +
-		"LEFT JOIN (\n" +
+	joins := "LEFT JOIN (\n" +
 		" SELECT DISTINCT machine_identity_roles.role_id AS role_id FROM machine_identity_roles\n" +
 		"  LEFT JOIN projects ON projects.id = machine_identity_roles.project_id\n" +
 		"  LEFT JOIN environments ON environments.id = machine_identity_roles.environment_id\n" +
@@ -92,15 +97,22 @@ func (ls *LocalStorage) readNodeStampPrefetching(ctx context.Context, pf *storag
 		"   AND (machine_identity_roles.environment_id = 0 OR (machine_identity_roles.environment_id = ? AND environments.deleted_at IS NULL))\n" +
 		") ids ON 1 = 1\n" +
 		"LEFT JOIN system_metadata gen ON gen.key = ?"
-	args = append(args, pf.MachineID, node.ProjectID, node.EnvironmentID, rolePermissionsGenerationKey)
+	joinArgs := []any{pf.MachineID, node.ProjectID, node.EnvironmentID, rolePermissionsGenerationKey}
 	if pf.WantScheduleVersion {
-		q += "\nLEFT JOIN (SELECT COUNT(*) AS cnt, COALESCE(MAX(version_number), 0) AS max_ver, COALESCE(SUM(read_count), 0) AS sum_rc" +
+		joins += "\nLEFT JOIN (SELECT COUNT(*) AS cnt, COALESCE(MAX(version_number), 0) AS max_ver, COALESCE(SUM(read_count), 0) AS sum_rc" +
 			" FROM secret_versions WHERE secret_node_id = ?) v ON 1 = 1\n" +
 			"LEFT JOIN secret_access_schedules s ON s.secret_node_id = n.id"
-		args = append(args, id)
+		joinArgs = append(joinArgs, id)
 	}
-	q += "\nWHERE n.id = ? AND n.deleted_at IS NULL"
-	args = append(args, id)
+	return readPathPrefetchSQL{cols: cols, colArgs: []any{SecretNodeCacheEpochTrigger}, joins: joins, joinArgs: joinArgs}
+}
+
+// readNodeStampPrefetching is readLiveNodeStamp widened per the file header. It
+// returns the stamp and the rows to park (nil when nothing may be parked).
+func (ls *LocalStorage) readNodeStampPrefetching(ctx context.Context, pf *storage.ReadPathPrefetch, id uint, node *models.SecretNode) (nodeStampRead, *storage.PrefetchedPermission, *storage.PrefetchedScheduleVersion, bool) {
+	parts := ls.readPathPrefetchParts(pf, id, node)
+	q := "SELECT " + parts.cols + "\nFROM secret_nodes n\n" + parts.joins + "\nWHERE n.id = ? AND n.deleted_at IS NULL"
+	args := append(append(append([]any{}, parts.colArgs...), parts.joinArgs...), id)
 
 	var rows []readPathPrefetchRow
 	if err := ls.db.WithContext(ctx).Raw(q, args...).Scan(&rows).Error; err != nil {
@@ -110,6 +122,13 @@ func (ls *LocalStorage) readNodeStampPrefetching(ctx context.Context, pf *storag
 		// No row (or soft-deleted): a miss for every caller, as readLiveNodeStamp.
 		return nodeStampRead{}, nil, nil, true
 	}
+	stamp, perm, sched := readPathPrefetchFromRows(pf, id, node, rows)
+	return stamp, perm, sched, true
+}
+
+// readPathPrefetchFromRows turns the node read's rows (at least one, node
+// found) into the stamp and the answers to park.
+func readPathPrefetchFromRows(pf *storage.ReadPathPrefetch, id uint, node *models.SecretNode, rows []readPathPrefetchRow) (nodeStampRead, *storage.PrefetchedPermission, *storage.PrefetchedScheduleVersion) {
 	first := rows[0]
 	stamp := nodeStampRead{
 		generation: nodeGeneration{cacheEpoch: first.CacheEpoch},
@@ -138,5 +157,5 @@ func (ls *LocalStorage) readNodeStampPrefetching(ctx context.Context, pf *storag
 			State:    &prefetchedScheduleState{schedule: s, gen: gen},
 		}
 	}
-	return stamp, perm, sched, true
+	return stamp, perm, sched
 }
