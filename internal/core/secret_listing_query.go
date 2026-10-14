@@ -574,7 +574,7 @@ type listingTagLookup struct {
 // need them for: every secret when a tag filter is present; otherwise only those a
 // search term does not already match by name or description (a name hit costs
 // nothing extra).
-func (c *KeyorixCore) listingTags(ctx context.Context, secrets []*models.SecretWithSharingInfo, want []string, query string) listingTagLookup {
+func (c *KeyorixCore) listingTags(ctx context.Context, secrets []*models.SecretWithSharingInfo, want []string, query string) listingTagLookup { // nosemgrep: keyorix-unbounded-bulk-slice-param -- secrets is the storage listing result (bounded by the listing scan cap), not a client-supplied array; the per-item work is in-memory, tag lookups are batched by listBatchSize
 	lookup := listingTagLookup{byID: map[uint][]string{}}
 	if len(want) == 0 && query == "" {
 		return lookup
@@ -805,14 +805,15 @@ func (c *KeyorixCore) getACLGrantedSecretsWithSharingInfo(ctx context.Context, u
 	var result []*models.SecretWithSharingInfo
 
 	// The granted nodes in batches (LIST-ENDPOINTS-1), not one GetSecret per grant. A
-	// failed lookup grants nothing, as a failed per-grant GetSecret skipped the grant.
+	// failed lookup fails the listing (like the owned and shared paths) rather than
+	// silently hiding every ACL-granted secret behind a 200.
 	aclSecretIDs := make([]uint, 0, len(acls))
 	for _, acl := range acls {
 		aclSecretIDs = append(aclSecretIDs, acl.SecretID)
 	}
 	nodes, nerr := c.secretsByIDs(ctx, aclSecretIDs)
 	if nerr != nil {
-		return nil, nil
+		return nil, nerr
 	}
 	for _, acl := range acls {
 		c.applyACLGrant(ctx, acl, nodes[acl.SecretID], filter, seen, &result)
