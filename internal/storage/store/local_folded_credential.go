@@ -33,6 +33,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -48,9 +49,29 @@ type foldedNodeState struct {
 	sched           *storage.PrefetchedScheduleVersion
 }
 
-const foldedCredentialCols = `SELECT c.id, c.machine_identity_id, c.name, c.token_hash, c.token_prefix,
+// foldedCredentialSQL returns the folded statement: credentialLookupRawQuery's
+// select list, then readPathPrefetchParts' cols on a LEFT JOIN of the target
+// node, then its joins. Built once per shape (readPathPrefetchSQLs). Its bind
+// order is: the trigger name, the secret id (the LEFT JOIN), the machine id,
+// the node's project and environment, the generation key, the secret id
+// (schedule/version only) and the token hash.
+func foldedCredentialSQL(triggerExpr string, wantScheduleVersion bool) string {
+	key := readPathPrefetchSQLKey{folded: true, triggerExpr: triggerExpr, wantScheduleVersion: wantScheduleVersion}
+	return cachedReadPathSQL(key, func(p readPathPrefetchParts) string {
+		return `SELECT c.id, c.machine_identity_id, c.name, c.token_hash, c.token_prefix,
        c.allowed_c_id_rs, c.last_used_at, c.expires_at, c.revoked, c.created_at,
-       c.classification, m.state AS identity_state, `
+       c.classification, m.state AS identity_state, ` + p.cols +
+			"\nFROM machine_identity_credentials c\nJOIN machine_identities m ON m.id = c.machine_identity_id" +
+			"\nLEFT JOIN secret_nodes n ON n.id = ? AND n.deleted_at IS NULL\n" + p.joins +
+			"\nWHERE c.token_hash = ?"
+	})
+}
+
+// foldedCredentialArgs is foldedCredentialSQL's binds, in its bind order.
+func foldedCredentialArgs(pf *storage.ReadPathPrefetch, secretID uint, node *models.SecretNode, hash string) []any {
+	args := make([]any, 0, 8)
+	return append(readPathPrefetchJoinArgs(append(args, SecretNodeCacheEpochTrigger, secretID), pf, secretID, node), hash)
+}
 
 // getMachineCredentialFolded runs the folded statement. ok is false when it
 // cannot or did not answer (the caller then runs the plain statement); the
@@ -63,15 +84,8 @@ func (ls *LocalStorage) getMachineCredentialFolded(ctx context.Context, hash str
 	if !ok || cached.node == nil {
 		return nil, "", nil, false
 	}
-	parts := ls.readPathPrefetchParts(pf, secretID, cached.node)
-	q := foldedCredentialCols + parts.cols +
-		"\nFROM machine_identity_credentials c\nJOIN machine_identities m ON m.id = c.machine_identity_id" +
-		"\nLEFT JOIN secret_nodes n ON n.id = ? AND n.deleted_at IS NULL\n" + parts.joins +
-		"\nWHERE c.token_hash = ?"
-	args := make([]any, 0, len(parts.colArgs)+len(parts.joinArgs)+2)
-	args = append(append(append(append(args, parts.colArgs...), secretID), parts.joinArgs...), hash)
-
-	rows, err := ls.db.WithContext(ctx).Raw(q, args...).Rows()
+	q := foldedCredentialSQL(nodeTriggerExistsExpr(ls.db), pf.WantScheduleVersion)
+	rows, err := ls.db.WithContext(ctx).Raw(q, foldedCredentialArgs(pf, secretID, cached.node, hash)...).Rows()
 	if err != nil {
 		return nil, "", nil, false
 	}
@@ -85,28 +99,31 @@ func (ls *LocalStorage) getMachineCredentialFolded(ctx context.Context, hash str
 	)
 	for rows.Next() {
 		var r readPathPrefetchRow
-		var cacheEpoch *int64
-		var trigger *bool
-		dest := []any{
+		var tail readPathPrefetchTail
+		// Times through sql.NullTime, as the plain statement scans them
+		// (assignCredentialTimes); the node columns are NULL when the
+		// LEFT JOIN found no node.
+		var lastUsedAt, expiresAt, createdAt sql.NullTime
+		var cacheEpoch sql.NullInt64
+		var trigger sql.NullBool
+		dest := tail.dest([]any{
 			&c.ID, &c.MachineIdentityID, &c.Name, &c.TokenHash, &c.TokenPrefix,
-			&c.AllowedCIDRs, &c.LastUsedAt, &c.ExpiresAt, &c.Revoked, &c.CreatedAt,
+			&c.AllowedCIDRs, &lastUsedAt, &expiresAt, &c.Revoked, &createdAt,
 			&c.Classification, &identityState,
-			&cacheEpoch, &trigger, &r.RoleID, &r.Generation,
-		}
-		if pf.WantScheduleVersion {
-			dest = append(dest, &r.Cnt, &r.MaxVer, &r.SumRc,
-				&r.SchedID, &r.SchedSecretNodeID, &r.SchedAllowedDays,
-				&r.SchedStartHour, &r.SchedEndHour, &r.SchedTimezone,
-				&r.SchedCreatedAt, &r.SchedUpdatedAt)
-		}
+			&cacheEpoch, &trigger,
+		}, &r, pf.WantScheduleVersion)
 		if err := rows.Scan(dest...); err != nil {
 			return nil, "", nil, false
 		}
+		if err := assignCredentialTimes(&c, lastUsedAt, expiresAt, createdAt); err != nil {
+			return nil, "", nil, false
+		}
+		tail.finish(&r)
 		n++
-		if cacheEpoch != nil {
+		if cacheEpoch.Valid {
 			nodeFound = true
-			r.CacheEpoch = *cacheEpoch
-			r.TriggerPresent = trigger != nil && *trigger
+			r.CacheEpoch = cacheEpoch.Int64
+			r.TriggerPresent = trigger.Valid && trigger.Bool
 			nodeRows = append(nodeRows, r)
 		}
 	}
