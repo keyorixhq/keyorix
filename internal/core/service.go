@@ -1222,9 +1222,12 @@ func (c *KeyorixCore) ResolveUsernames(ctx context.Context, events []*models.Aud
 	// One batched lookup for the page (LIST-ENDPOINTS-1), not one GetUser per
 	// distinct actor. A failed lookup degrades every name to "unknown", as a
 	// failed per-id GetUser did.
-	names, err := c.storage.GetUsernamesByIDs(ctx, ids)
-	if err != nil {
-		names = nil
+	var names map[uint]string
+	if len(ids) > 0 {
+		var err error
+		if names, err = c.storage.GetUsernamesByIDs(ctx, ids); err != nil {
+			names = nil
+		}
 	}
 	for _, uid := range ids {
 		if name, ok := names[uid]; ok {
