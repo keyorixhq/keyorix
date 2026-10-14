@@ -123,8 +123,10 @@ func fcCredentialCases() []fcCase {
 			require.NoError(t, err)
 		}},
 		{"token-expired", func(t *testing.T, w *svWorld, _ *models.SecretNode, cred models.MachineIdentityCredential) {
-			require.NoError(t, w.a.db.Model(&models.MachineIdentityCredential{}).Where("id = ?", cred.ID).
-				Update("expires_at", time.Now().Add(-time.Minute)).Error)
+			// Through Save so the model's BeforeSave hook canonicalizes the time.
+			past := time.Now().Add(-time.Minute)
+			cred.ExpiresAt = &past
+			require.NoError(t, w.a.db.Save(&cred).Error)
 		}},
 		{"identity-suspended", func(t *testing.T, w *svWorld, _ *models.SecretNode, cred models.MachineIdentityCredential) {
 			_, err := w.a.c.TransitionMachineIdentity(context.Background(), w.projID, cred.MachineIdentityID, "suspended", w.adminID)
