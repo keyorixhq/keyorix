@@ -41,7 +41,6 @@ func TestConcurrency_RevokeInvitation_RacesAccept(t *testing.T) {
 
 	const iterations = 25
 	for i := range iterations {
-		i := i
 		// Named explicitly (not the anonymous t.Run("", ...) form): Go names an
 		// anonymous subtest "#00", "#01", ... and that literal "#" then lands in
 		// t.TempDir()'s path. Embedded into a "file:" URI DSN, SQLite (per its

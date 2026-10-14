@@ -490,7 +490,7 @@ func FuzzAuthCacheDifferential(f *testing.F) {
 		}
 		st := w.resetIteration(t)
 		maxOps := min(len(program), 48)
-		for i := 0; i < maxOps; i++ {
+		for i := range maxOps {
 			acRunOp(t, w, st, program[i])
 		}
 	})

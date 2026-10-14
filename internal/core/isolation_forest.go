@@ -64,10 +64,7 @@ func newIsolationForest(data [][]float64, numTrees, sampleSize int, rng *rand.Ra
 	if len(data) < 2 || numTrees < 1 {
 		return nil
 	}
-	psi := min(sampleSize, len(data))
-	if psi < 2 {
-		psi = 2
-	}
+	psi := max(min(sampleSize, len(data)), 2)
 	// Height limit per the paper: anomalies are isolated well above this, so growing
 	// deeper only refines the (already long) paths of normal points.
 	heightLimit := int(math.Ceil(math.Log2(float64(psi))))
