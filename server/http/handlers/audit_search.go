@@ -97,6 +97,8 @@ func parseAuditSearchRequest(r *http.Request) core.AuditSearchRequest {
 	if o, ok := parseQueryInt(q, "offset"); ok && o >= 0 {
 		req.Offset = o
 	}
+	req.Cursor = q.Get("cursor")
+	req.IncludeTotal = q.Get("include_total") == "true"
 	return req
 }
 
@@ -115,7 +117,9 @@ func parseAuditSearchRequest(r *http.Request) core.AuditSearchRequest {
 //	since        — RFC3339 start of time range (inclusive)
 //	until        — RFC3339 end of time range (inclusive)
 //	limit        — max results (1–1000, default 100)
-//	offset       — pagination offset (default 0)
+//	offset       — pagination offset (default 0; offset+limit ≤ core.AuditOffsetCap)
+//	cursor       — continue after a previous page's next_cursor (offset ignored)
+//	include_total — "true" for the exact total (a full count)
 func (h *AuditHandler) SearchAuditLogs(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
 		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
@@ -126,6 +130,9 @@ func (h *AuditHandler) SearchAuditLogs(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.coreService.SearchAuditLogs(r.Context(), req)
 	if err != nil {
+		if sendAuditPageError(w, err) {
+			return
+		}
 		sendError(w, "InternalServerError", "Failed to search audit logs", http.StatusInternalServerError, nil)
 		return
 	}
@@ -136,8 +143,13 @@ func (h *AuditHandler) SearchAuditLogs(w http.ResponseWriter, r *http.Request) {
 	// docs/findings/2026-09-25-FINDING-api-raw-model-exposure.md.
 	entries := h.toAuditLogEntries(r.Context(), result.Events)
 
-	sendSuccess(w, map[string]any{
-		"events": entries,
-		"total":  result.Total,
-	}, "")
+	resp := map[string]any{
+		"events":      entries,
+		"next_cursor": nullableCursor(result.NextCursor),
+	}
+	if result.HasTotal {
+		resp["total"] = result.Total
+		resp["total_exact"] = result.TotalExact
+	}
+	sendSuccess(w, resp, "")
 }

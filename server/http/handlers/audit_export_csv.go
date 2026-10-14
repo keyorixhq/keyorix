@@ -5,6 +5,7 @@ package handlers
 
 import (
 	"encoding/csv"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -29,24 +30,54 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	events, _, err := h.coreService.Storage().GetAuditLogs(r.Context(), parseAuditCSVFilter(r))
-	if err != nil {
-		sendError(w, "InternalServerError", "Failed to export audit logs", http.StatusInternalServerError, nil)
-		return
+	filter := parseAuditCSVFilter(r)
+	limit := filter.PageSize
+	filter.Count = storage.AuditCountNone
+
+	// Streamed in keyset batches over the time indexes (docs/specs/
+	// audit-list-keyset.md §3): each batch is written and flushed before the
+	// next is read, so neither the server nor the database holds the whole
+	// export. Only the first batch can still turn into an error response.
+	var cw *csv.Writer
+	for written := 0; written < limit; {
+		filter.PageSize = min(csvExportBatchRows, limit-written)
+		events, _, err := h.coreService.Storage().GetAuditLogs(r.Context(), filter)
+		if err != nil {
+			if cw == nil {
+				sendError(w, "InternalServerError", "Failed to export audit logs", http.StatusInternalServerError, nil)
+			} else {
+				log.Printf("audit export.csv: stopped after %d rows: %v", written, err)
+			}
+			return
+		}
+		if cw == nil {
+			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+			w.Header().Set("X-Content-Type-Options", "nosniff")
+			w.Header().Set("Content-Disposition", `attachment; filename="audit-export.csv"`)
+			cw = csv.NewWriter(w)
+			_ = cw.Write([]string{
+				"id", "event_time", "event_type", "actor", "actor_type",
+				"user_id", "project_id", "secret_id", "ip_address", "success", "description",
+			})
+		}
+		writeAuditCSVRows(cw, events, h.coreService.ResolveUsernames(r.Context(), events), h.coreService.ResolveMachineNames(r.Context(), events))
+		cw.Flush()
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		written += len(events)
+		if len(events) < filter.PageSize {
+			break
+		}
+		last := events[len(events)-1]
+		filter.Before = &storage.AuditCursor{EventTime: last.EventTime, ID: last.ID}
 	}
-	actorNames := h.coreService.ResolveUsernames(r.Context(), events)
-	machineNames := h.coreService.ResolveMachineNames(r.Context(), events)
+}
 
-	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.Header().Set("Content-Disposition", `attachment; filename="audit-export.csv"`)
+// csvExportBatchRows is the keyset batch of the streamed CSV export.
+const csvExportBatchRows = 500
 
-	cw := csv.NewWriter(w)
-	defer cw.Flush()
-	_ = cw.Write([]string{
-		"id", "event_time", "event_type", "actor", "actor_type",
-		"user_id", "project_id", "secret_id", "ip_address", "success", "description",
-	})
+func writeAuditCSVRows(cw *csv.Writer, events []*models.AuditEvent, actorNames, machineNames map[uint]string) {
 	for _, e := range events {
 		success := "true"
 		if e.Success != nil && !*e.Success {

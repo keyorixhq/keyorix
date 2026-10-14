@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -605,7 +606,7 @@ func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.
 		return nil, err
 	}
 
-	if err := withMigrationLock(db, false, dbPath, f.migrateDatabase); err != nil {
+	if err := withMigrationLock(db, false, dbPath, f.migrateSQLite); err != nil {
 		return nil, fmt.Errorf("failed to migrate database: %w", err)
 	}
 
@@ -679,7 +680,69 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (_ sto
 	// here and the surfaces that report it (start-up log, posture, API). This
 	// is the one backend where InEffect can be true.
 	ls.SetAuditSkipDurableSync(cfg.Storage.Database.AuditDurableSyncStatus(cfg.Storage.Type).InEffect)
+	ensureAuditListIndexesPostgres(ls, db, func() (*sql.DB, error) {
+		bdb, _, err := openPostgresSQLDB(&cfg.Storage.Database)
+		return bdb, err
+	})
 	return ls, nil
+}
+
+// migrateSQLite is migrateDatabase plus the audit list indexes, inside the
+// same SQLite migration lock and transaction (docs/specs/audit-list-keyset.md
+// §4). They are created after migrateDatabase because a fresh install creates
+// audit_events only in its final AutoMigrate step.
+func (f *DefaultStorageFactory) migrateSQLite(db *gorm.DB) error {
+	if err := f.migrateDatabase(db); err != nil {
+		return err
+	}
+	return store.EnsureAuditListIndexesSQLite(db, log.Printf)
+}
+
+// auditIndexSyncBuildMaxRows is the audit_events size (row estimate) below
+// which the Postgres audit index build runs before the server serves: a fresh
+// install or a small table builds in about a second. A larger table builds in
+// the background (store.LocalStorage.StartAuditListIndexBuild).
+const auditIndexSyncBuildMaxRows = 200_000
+
+// ensureAuditListIndexesPostgres brings the audit list indexes up to date after
+// the migration transaction has committed: CREATE INDEX CONCURRENTLY never runs
+// inside a transaction, and never blocks audit writes. Nothing here is fatal:
+// a missing index costs speed, not correctness, and the next start retries.
+// openBuildDB opens the dedicated pool a background build runs on.
+func ensureAuditListIndexesPostgres(ls *store.LocalStorage, db *gorm.DB, openBuildDB func() (*sql.DB, error)) {
+	ctx := context.Background()
+	sqlDB, err := db.DB()
+	if err != nil {
+		log.Printf("audit index build: skipped: %v", err)
+		return
+	}
+	pending, err := store.AuditListIndexesPendingPostgres(ctx, sqlDB)
+	if err != nil {
+		log.Printf("audit index build: skipped, catalog check failed: %v", err)
+		return
+	}
+	if !pending {
+		return
+	}
+	rows, err := store.AuditEventsRowEstimate(ctx, db)
+	if err != nil {
+		log.Printf("audit index build: skipped, row estimate failed: %v", err)
+		return
+	}
+	if rows < auditIndexSyncBuildMaxRows {
+		if err := store.BuildAuditListIndexesPostgres(ctx, sqlDB, log.Printf); err != nil {
+			log.Printf("audit index build: failed, retried at the next start: %v", err)
+		}
+		return
+	}
+	bdb, err := openBuildDB()
+	if err != nil {
+		log.Printf("audit index build: skipped, cannot open a build connection: %v", err)
+		return
+	}
+	bdb.SetMaxOpenConns(1)
+	log.Printf("audit index build: audit_events has ~%d rows; building in the background while the server serves", rows)
+	ls.StartAuditListIndexBuild(bdb, log.Printf)
 }
 
 // applyPoolSettings configures the connection pool on the underlying *sql.DB

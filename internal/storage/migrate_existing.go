@@ -1,6 +1,13 @@
 package storage
 
-import "gorm.io/gorm"
+import (
+	"context"
+	"log"
+
+	"gorm.io/gorm"
+
+	"github.com/keyorixhq/keyorix/internal/storage/store"
+)
 
 // MigrateExisting runs the production schema bootstrap -- exactly the
 // migrateDatabase step CreateStorage runs, under the same in-process
@@ -17,6 +24,21 @@ import "gorm.io/gorm"
 // sidecar flock (it has no path to key one on); on SQLite it still runs the
 // migration inside the in-database BEGIN EXCLUSIVE lock
 // (withSQLiteInDBMigrationLock, INV-STORAGE-23), which needs no path.
+//
+// The audit list indexes are built too, synchronously on both dialects (on
+// Postgres CONCURRENTLY, after the migration transaction; a fixture's table is
+// small), and a build error is returned rather than logged.
 func MigrateExisting(db *gorm.DB) error {
-	return withMigrationLock(db, db.Dialector.Name() == "postgres", "", (&DefaultStorageFactory{}).migrateDatabase)
+	f := &DefaultStorageFactory{}
+	if db.Dialector.Name() != "postgres" {
+		return withMigrationLock(db, false, "", f.migrateSQLite)
+	}
+	if err := withMigrationLock(db, true, "", f.migrateDatabase); err != nil {
+		return err
+	}
+	sqlDB, err := db.DB()
+	if err != nil {
+		return err
+	}
+	return store.BuildAuditListIndexesPostgres(context.Background(), sqlDB, log.Printf)
 }
