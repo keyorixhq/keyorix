@@ -165,13 +165,13 @@ func TestDSNTLSSettings_RejectsWhatPgxRejects(t *testing.T) {
 	}
 }
 
-// BuildPostgresDSN quotes every value it splices into the keyword/value DSN,
+// buildPostgresDSNFromFields quotes every value it writes into the keyword/value DSN,
 // so a field carrying ` sslmode=disable` (a password from KEYORIX_DB_PASSWORD,
 // a user or database name) stays that field's literal value. Unquoted, pgx
 // reads it as a second sslmode, which wins over the first: the connection
 // would skip the verification ValidateDatabaseTLS approved. Checked against
 // what pgx actually builds, not against the DSN text.
-func TestBuildPostgresDSN_FieldValuesCannotInjectKeywords(t *testing.T) {
+func TestResolvePostgresConnConfig_FieldValuesCannotInjectKeywords(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("PGSSLMODE", "")
 	t.Setenv("PGSSLROOTCERT", "")
@@ -191,9 +191,7 @@ func TestBuildPostgresDSN_FieldValuesCannotInjectKeywords(t *testing.T) {
 			case "dbname":
 				d.Name = value
 			}
-			dsn, err := BuildPostgresDSN(d)
-			require.NoError(t, err)
-			pc, err := pgconn.ParseConfig(dsn)
+			pc, err := ResolvePostgresConnConfig(d)
 			require.NoError(t, err)
 
 			require.NotNil(t, pc.TLSConfig, "sslmode=verify-full must stay a TLS connection")
@@ -202,6 +200,42 @@ func TestBuildPostgresDSN_FieldValuesCannotInjectKeywords(t *testing.T) {
 			assert.Equal(t, "db.internal", pc.Host)
 			got := map[string]string{"password": pc.Password, "user": pc.User, "dbname": pc.Database}[field]
 			assert.Equal(t, value, got, "the field must read back as its exact literal value")
+		})
+	}
+}
+
+// The password from KEYORIX_DB_PASSWORD (#3159) is set on the parsed config
+// by ResolvePostgresConnConfig, in all three DSN shapes. Whatever it contains
+// -- here a quote followed by a second host and sslmode -- it must stay the
+// password: the final config has the configured host, the verifying TLS
+// settings and the exact password.
+func TestResolvePostgresConnConfig_EnvPasswordCannotInjectKeywords(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("PGSSLMODE", "")
+	t.Setenv("PGSSLROOTCERT", "")
+	ca := writeTestCA(t, t.TempDir(), "ca.pem")
+	for _, pw := range []string{
+		`' host=evil`,
+		`x' host=evil sslmode=disable sslrootcert=system`,
+		`a@evil/db?sslmode=disable&host=evil#`,
+		`\' host=evil`,
+	} {
+		t.Run(pw, func(t *testing.T) {
+			t.Setenv("KEYORIX_DB_PASSWORD", pw)
+			cases := map[string]*DatabaseConfig{
+				"fields":  pgFields("verify-full", ca),
+				"keyword": {DSN: "host=db.internal user=u dbname=k sslmode=verify-full sslrootcert=" + quoteDSNValue(ca)},
+				"url":     {DSN: "postgres://u@db.internal/k?sslmode=verify-full&sslrootcert=" + url.QueryEscape(ca)},
+			}
+			for name, d := range cases {
+				pc, err := ResolvePostgresConnConfig(d)
+				require.NoError(t, err, name)
+				assert.Equal(t, pw, pc.Password, name)
+				assert.Equal(t, "db.internal", pc.Host, name)
+				require.NotNil(t, pc.TLSConfig, name)
+				assert.False(t, pc.TLSConfig.InsecureSkipVerify, name)
+				assert.Equal(t, "db.internal", pc.TLSConfig.ServerName, name)
+			}
 		})
 	}
 }

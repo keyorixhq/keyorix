@@ -24,8 +24,8 @@ func TestValidate_SSLModeAllowlist_RefusesUnknownValues(t *testing.T) {
 		assert.Contains(t, err.Error(), "disable, allow, prefer, require, verify-ca, verify-full",
 			"the refusal must list the valid values")
 
-		_, err = BuildPostgresDSN(pgFields(mode, ""))
-		require.Error(t, err, "BuildPostgresDSN must refuse ssl_mode=%q too (admin subcommands never run Validate)", mode)
+		_, err = ResolvePostgresConnConfig(pgFields(mode, ""))
+		require.Error(t, err, "ResolvePostgresConnConfig must refuse ssl_mode=%q too (admin subcommands never run Validate)", mode)
 	}
 
 	ca := writeTestCA(t, t.TempDir(), "pg-ca.pem")
@@ -91,8 +91,8 @@ func TestValidate_SSLModeWithDSN_MustAgree(t *testing.T) {
 		assert.Contains(t, err.Error(), "sslmode="+tc.sslMode, "the fix names the sslmode to put in the dsn")
 		assert.NotContains(t, err.Error(), "hunter2", "the DSN must never be echoed")
 
-		_, err = BuildPostgresDSN(&DatabaseConfig{SSLMode: tc.sslMode, DSN: tc.dsn})
-		require.Error(t, err, "BuildPostgresDSN must refuse it too")
+		_, err = ResolvePostgresConnConfig(&DatabaseConfig{SSLMode: tc.sslMode, DSN: tc.dsn})
+		require.Error(t, err, "ResolvePostgresConnConfig must refuse it too")
 	}
 
 	// PGSSLMODE does not make a dsn without sslmode agree: the dsn must say it.
@@ -114,46 +114,6 @@ func TestValidate_SSLModeWithDSN_MustAgree(t *testing.T) {
 	} {
 		require.NoError(t, postgresConfig(d).Validate(), "ssl_mode=%q dsn=%q", d.SSLMode, d.DSN)
 	}
-}
-
-// PG-TLS-2 item 2, service files: pgx merges a connection service's settings
-// (service= in the dsn, or PGSERVICE) under the dsn's own, so a dsn with no
-// sslmode takes it from a file Keyorix never reads -- validation, the
-// insecure-settings registry and the posture report would all describe a
-// mode the connection does not use. Such a dsn is refused; one that states
-// sslmode itself is not affected by the service file's sslmode (the dsn's
-// own setting wins in pgx).
-func TestValidate_DSN_ServiceWithoutSSLMode_Refused(t *testing.T) {
-	t.Setenv("PGSSLMODE", "")
-	t.Setenv("PGSERVICE", "")
-	ca := writeTestCA(t, t.TempDir(), "pg-ca.pem")
-
-	for _, dsn := range []string{
-		"service=keyorix",
-		"service=keyorix dbname=k",
-		"servicefile=/etc/pg_service.conf service=keyorix",
-		"postgres://k@db/k?service=keyorix",
-	} {
-		err := postgresConfig(&DatabaseConfig{DSN: dsn}).Validate()
-		require.Error(t, err, dsn)
-		assert.Contains(t, err.Error(), "service file")
-		assert.Contains(t, err.Error(), "Add sslmode=")
-	}
-	t.Setenv("PGSERVICE", "keyorix")
-	err := postgresConfig(&DatabaseConfig{DSN: "host=db"}).Validate()
-	require.Error(t, err, "PGSERVICE names a service just like service= does")
-	assert.Contains(t, err.Error(), "PGSERVICE")
-
-	for _, dsn := range []string{
-		"service=keyorix sslmode=require",
-		"service=keyorix sslmode=verify-full sslrootcert=" + ca,
-		"postgres://k@db/k?service=keyorix&sslmode=require",
-	} {
-		require.NoError(t, postgresConfig(&DatabaseConfig{DSN: dsn}).Validate(), dsn)
-	}
-	// A field-built connection always states sslmode, so PGSERVICE cannot
-	// change it.
-	require.NoError(t, postgresConfig(pgFields("require", "")).Validate())
 }
 
 // The insecure-settings registry reads the sslmode the connection really

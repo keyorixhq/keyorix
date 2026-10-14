@@ -265,6 +265,20 @@ func secretish(name string) bool {
 	return false
 }
 
+// publicCertFileEnv reports whether an environment variable is one of the two
+// *_FILE variables of the secure baseline that name a PUBLIC certificate (the
+// server's own certificate, used as the CA the in-container client trusts, and
+// the copy handed to the web container). They hold no credential, so they are
+// exempt from the secrets-mount rule, but only while the value is a .crt path:
+// pointing one at a key would be a secret outside a secret mount.
+func publicCertFileEnv(name, val string) bool {
+	switch name {
+	case "KEYORIX_LOCAL_CA_FILE", "KEYORIX_PUBLIC_CA_FILE":
+		return strings.HasSuffix(val, ".crt")
+	}
+	return false
+}
+
 // DEPLOY-2 decision 1: no secret value in any container's environment. Each
 // credential reaches its container as a Docker secrets file named by a *_FILE
 // variable (server: internal/secretenv; postgres: POSTGRES_PASSWORD_FILE;
@@ -301,6 +315,9 @@ func TestCompose_SecretsAreFilesNotEnv(t *testing.T) {
 			if secretish(k) {
 				t.Errorf("%s: environment variable %s carries a credential; use %s_FILE with a Docker secret", svcName, k, k)
 			}
+			if pv, _ := val.(string); publicCertFileEnv(k, pv) {
+				continue
+			}
 			if strings.HasSuffix(k, "_FILE") {
 				usesFile = true
 				usedAny = true
@@ -332,8 +349,34 @@ func TestCompose_SecretsAreFilesNotEnv(t *testing.T) {
 
 func renderChart(t *testing.T) []m { return renderChartWith(t) }
 
+// baselineArgs is the secureBaseline setting the current forEachBaseline
+// subtest renders with; empty means the chart default (enabled). Tests run
+// serially, so a package variable is enough.
+var baselineArgs []string
+
+// forEachBaseline runs a chart hardening test with the secure baseline on (the
+// default) and explicitly off: the opt-out must stay as hardened as the
+// default, and CI runs only the plain `go test`, so both are covered here.
+func forEachBaseline(t *testing.T, fn func(t *testing.T)) {
+	t.Helper()
+	for _, mode := range []struct {
+		name string
+		args []string
+	}{
+		{"secureBaseline=true", []string{"--set", "secureBaseline.enabled=true"}},
+		{"secureBaseline=false", []string{"--set", "secureBaseline.enabled=false"}},
+	} {
+		t.Run(mode.name, func(t *testing.T) {
+			baselineArgs = mode.args
+			defer func() { baselineArgs = nil }()
+			fn(t)
+		})
+	}
+}
+
 func renderChartWith(t *testing.T, extra ...string) []m {
 	t.Helper()
+	extra = append(append([]string{}, baselineArgs...), extra...)
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm not installed -- skipping chart hardening check")
 	}
@@ -363,6 +406,10 @@ func renderChartWith(t *testing.T, extra ...string) []m {
 }
 
 func TestHelmChart_WorkloadsAreHardened(t *testing.T) {
+	forEachBaseline(t, bodyTestHelmChart_WorkloadsAreHardened)
+}
+
+func bodyTestHelmChart_WorkloadsAreHardened(t *testing.T) {
 	docs := renderChart(t)
 	seen := map[string]bool{}
 	for _, d := range docs {
@@ -477,6 +524,10 @@ func TestCompose_EveryTmpfsHasASizeLimit(t *testing.T) {
 // ephemeral storage. (A data emptyDir used when persistence is off is bounded by
 // the persistence size.)
 func TestHelmChart_EveryEmptyDirHasASizeLimit(t *testing.T) {
+	forEachBaseline(t, bodyTestHelmChart_EveryEmptyDirHasASizeLimit)
+}
+
+func bodyTestHelmChart_EveryEmptyDirHasASizeLimit(t *testing.T) {
 	docs := renderChart(t)
 	total := 0
 	for _, d := range docs {
@@ -519,6 +570,10 @@ func postgresUIDForImage(image string) int {
 }
 
 func TestPostgresUID_ConsistentBetweenComposeAndHelmAndMatchesImage(t *testing.T) {
+	forEachBaseline(t, bodyTestPostgresUID_ConsistentBetweenComposeAndHelmAndMatchesImage)
+}
+
+func bodyTestPostgresUID_ConsistentBetweenComposeAndHelmAndMatchesImage(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join(repoRoot(), "docker-compose.yml"))
 	if err != nil {
 		t.Fatal(err)
@@ -583,6 +638,10 @@ func postgresPodSpec(t *testing.T, docs []m) m {
 // that narrow: off by default, CHOWN + DAC_READ_SEARCH only, read-only root FS,
 // confined to the data volume, owner-filtered and symlink-safe.
 func TestHelmChart_PostgresOwnershipMigrationIsOptInAndNarrow(t *testing.T) {
+	forEachBaseline(t, bodyTestHelmChart_PostgresOwnershipMigrationIsOptInAndNarrow)
+}
+
+func bodyTestHelmChart_PostgresOwnershipMigrationIsOptInAndNarrow(t *testing.T) {
 	if got := asList(postgresPodSpec(t, renderChart(t))["initContainers"]); len(got) != 0 {
 		t.Fatalf("default render must not contain an init container (the chart has no root container by default), got %v", got)
 	}
@@ -645,6 +704,10 @@ func TestHelmChart_PostgresOwnershipMigrationIsOptInAndNarrow(t *testing.T) {
 // (neither as a literal nor via secretKeyRef). Each reaches the pod as a file from
 // a Secret volume (defaultMode <= 0440, read-only mount) named by a *_FILE variable.
 func TestHelmChart_SecretsAreMountedFilesNotEnv(t *testing.T) {
+	forEachBaseline(t, bodyTestHelmChart_SecretsAreMountedFilesNotEnv)
+}
+
+func bodyTestHelmChart_SecretsAreMountedFilesNotEnv(t *testing.T) {
 	docs := renderChart(t)
 	filesSeen := 0
 	for _, d := range docs {
@@ -680,8 +743,11 @@ func TestHelmChart_SecretsAreMountedFilesNotEnv(t *testing.T) {
 				if !strings.HasSuffix(en, "_FILE") {
 					continue
 				}
-				filesSeen++
 				val, _ := em["value"].(string)
+				if publicCertFileEnv(en, val) {
+					continue
+				}
+				filesSeen++
 				var mount m
 				var mountPath string
 				for p, mm := range mounts {

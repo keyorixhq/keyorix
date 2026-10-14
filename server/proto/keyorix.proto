@@ -177,7 +177,9 @@ service BreakGlassService {
   // may break the glass (it must work in an emergency); every activation is audited.
   rpc ActivateBreakGlass(ActivateBreakGlassRequest) returns (BreakGlassActivation);
 
-  // List a project's break-glass activations. Requires scoped roles.read.
+  // List a project's break-glass activations: all of them with scoped roles.read,
+  // otherwise, for a project member, only their own (scope says which). A machine identity
+  // without roles.read is refused.
   rpc ListBreakGlassActivations(ListBreakGlassActivationsRequest) returns (ListBreakGlassActivationsResponse);
 
   // Revoke an active break-glass activation early. Requires scoped roles.assign.
@@ -289,6 +291,13 @@ message UpdateSecretRequest {
   optional google.protobuf.Timestamp expiration = 4;
   map<string, string> metadata = 5;
   repeated string tags = 6;
+  // Remove an existing expiration (mirrors REST clear_expiration). Mutually
+  // exclusive with expiration. Absent/false keeps the current expiration.
+  bool clear_expiration = 7;
+  // Remove the read limit (mirrors REST clear_max_reads, #3172). max_reads keeps
+  // its minimum of 1, so 0 does not mean "clear". Mutually exclusive with
+  // max_reads. Absent/false keeps the current limit.
+  bool clear_max_reads = 8;
 }
 
 message DeleteSecretRequest {
@@ -767,7 +776,7 @@ message BreakGlassActivation {
   string state = 7; // active | expired | revoked
   optional google.protobuf.Timestamp expires_at = 8;
   google.protobuf.Timestamp created_at = 9;
-  optional uint32 revoked_by = 10; // set on early revoke
+  optional uint32 revoked_by = 10; // set on early revoke; unset when the response scope is "own"
   optional google.protobuf.Timestamp revoked_at = 11;
 }
 
@@ -783,6 +792,22 @@ message ListBreakGlassActivationsRequest {
 
 message ListBreakGlassActivationsResponse {
   repeated BreakGlassActivation activations = 1;
+  // "project": every activation of the project (the caller holds roles.read there).
+  // "own": only the caller's own activations (a user without roles.read).
+  string scope = 2;
+  // The server's break-glass limits, for whoever the list answer was allowed to (a project
+  // member, or a roles.read holder). Deployment limits only: no secrets.
+  BreakGlassSettings settings = 3;
+}
+
+// BreakGlassSettings is the effective break-glass policy a client may show: whether the
+// feature is on, the lifetime granted when none is requested, and the ceiling a requested
+// lifetime is capped at (default_ttl_seconds is already capped at max_ttl_seconds).
+message BreakGlassSettings {
+  bool enabled = 1;
+  string emergency_role = 2;
+  int64 default_ttl_seconds = 3;
+  int64 max_ttl_seconds = 4;
 }
 
 message RevokeBreakGlassRequest {

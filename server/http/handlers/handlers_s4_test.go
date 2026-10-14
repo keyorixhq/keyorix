@@ -23,6 +23,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -342,9 +343,17 @@ func TestDashboardHandler_GetActivity_HappyPath(t *testing.T) {
 // that never assert on specific row counts or pre-seeded DB state, so sharing
 // a single migrated core across the run is safe and eliminates the ~1400×
 // AutoMigrate calls that caused the 2-minute CI timeout under -race.
+//
+// The shared DB also carries the per-IP login budgets (login_attempts), which every
+// auth-endpoint test hitting httptest's default RemoteAddr fills. A budget that is
+// full at the START of a test is an artifact of how many tests (or -count repetitions)
+// ran before it, not behaviour under test, so newHandlerCoreS4 empties that table on
+// every call (test-only: the production limit and its window are untouched). Tests
+// that assert on the limiter itself (429 paths) own a private core and never touch it.
 var (
 	sharedS4CoreOnce sync.Once
 	sharedS4Core     *core.KeyorixCore
+	sharedS4DB       *gorm.DB
 )
 
 // newHandlerCoreS4 returns a shared *core.KeyorixCore backed by a single
@@ -401,9 +410,19 @@ func newHandlerCoreS4(t *testing.T) *core.KeyorixCore {
 		); err != nil {
 			panic("newHandlerCoreS4: AutoMigrate: " + err.Error())
 		}
+		sharedS4DB = db
 		sharedS4Core = core.NewKeyorixCore(store.NewLocalStorage(db))
 	})
+	resetSharedS4LoginBudgets(t)
 	return sharedS4Core
+}
+
+// resetSharedS4LoginBudgets empties the shared core's login_attempts table, so no test
+// starts against a budget that earlier tests or earlier -count repetitions filled.
+func resetSharedS4LoginBudgets(t *testing.T) {
+	t.Helper()
+	require.NoError(t, sharedS4DB.Session(&gorm.Session{Logger: logger.Discard}).
+		Where("1 = 1").Delete(&models.LoginAttempt{}).Error)
 }
 
 // newAuthHandlerWithWebAuthn creates an AuthHandler backed by a DB that also
@@ -3749,7 +3768,7 @@ func TestAuthHandler_setSessionCookies_Direct(t *testing.T) {
 	now := time.Now().Add(time.Hour)
 	session := &models.Session{SessionToken: "cookietoken", ExpiresAt: &now}
 	w := httptest.NewRecorder()
-	h.setSessionCookies(w, session)
+	h.setSessionCookies(w, httptest.NewRequest(http.MethodGet, "/", nil), session)
 	// Should set at least one cookie
 	assert.NotEmpty(t, w.Header().Get("Set-Cookie"))
 }
@@ -3930,8 +3949,12 @@ func TestCloseAccessReviewCampaign_BadCampaignID(t *testing.T) {
 
 func TestCloseAccessReviewCampaign_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
+	// A campaign id no other test creates. The shared s4 DB keeps rows between tests (and
+	// between -count repetitions), so id 1 can already exist, with pending items, by the
+	// time this runs again; closing it then answers 400 "pending items", which is not the
+	// not-found premise below.
 	req := withUserCtx(withChiParams(httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"force":false}`)), map[string]string{
-		"id": "1", "campaignId": "1",
+		"id": "1", "campaignId": "999999",
 	}))
 	w := httptest.NewRecorder()
 	h.CloseAccessReviewCampaign(w, req)
@@ -4025,8 +4048,11 @@ func TestListBreakGlassActivations_BadID(t *testing.T) {
 }
 
 func TestListBreakGlassActivations_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
+	// BREAKGLASS-OWN-1: authorized in the handler now, so the caller is an admin
+	// (user 1 of freshCoreS24WithAdmin), not the shared S4 core's role-less user.
+	cs, _ := freshCoreS24WithAdmin(t)
+	h := NewCatalogHandler(cs)
+	req := withUserCtxS7(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1"))
 	w := httptest.NewRecorder()
 	h.ListBreakGlassActivations(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)

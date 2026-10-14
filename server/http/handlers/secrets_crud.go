@@ -250,6 +250,11 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	// Human principals: the read-permission proof the value branch below reuses, so
 	// the same permission check is not evaluated twice in one request (PERF-FIX-3).
 	var permitted *core.ReadPermittedSecret
+	// authorized: read permission on the path secret is established before any
+	// error below can occur, so a secret-state refusal may be named (ERRMAP-1).
+	// False only on the machine fallback, whose GetSecret runs before its
+	// authorization check.
+	authorized := true
 	if isMachine {
 		// SESSION-PERF (#2403 follow-up): reuse the EXACT resolution
 		// RequireScopedSecretPermission already fetched to compute the
@@ -273,6 +278,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			// scope before serving anything. core.GetSecret itself performs no
 			// authorization; the previous fallback served the path secret
 			// unchecked.
+			authorized = false
 			secret, err = h.coreService.GetSecret(r.Context(), uint(id))
 			if err == nil {
 				allowed, aerr := h.coreService.AuthorizeSecretPrincipalForSecret(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), secret, permSecretsRead)
@@ -291,9 +297,10 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 	}
 	if err != nil {
 		log.Printf("Error getting secret: %v", err)
-		if errors.Is(err, core.ErrAccessOutsideSchedule) {
-			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
-		} else if strings.Contains(err.Error(), errNotFound) {
+		if authorized && h.sendSecretReadRefusal(w, err) {
+			return
+		}
+		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
@@ -317,6 +324,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		}
 		if err != nil {
 			log.Printf("Error getting secret value: %v", err)
+			if h.sendSecretReadRefusal(w, err) {
+				return
+			}
 			if strings.Contains(err.Error(), errPermissionDenied) {
 				h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 			} else {
@@ -498,6 +508,10 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 	}
 	if err != nil {
 		log.Printf("Error getting secret value by ref: %v", err)
+		// The route gate authorized the caller on this secret before this read.
+		if h.sendSecretReadRefusal(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), errPermissionDenied) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
@@ -579,6 +593,9 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		// one. They are mutually exclusive.
 		Expiration      string `json:"expiration,omitempty"`
 		ClearExpiration bool   `json:"clear_expiration,omitempty"`
+		// ClearMaxReads removes the read limit (#3172); max_reads keeps min=1, so 0 is not
+		// "unlimited". Mutually exclusive with max_reads.
+		ClearMaxReads bool `json:"clear_max_reads,omitempty"`
 		// Secret, when present, is the now-deleted RemoteStorage's full desired
 		// SecretNode state (G80 Phase 0) — it takes over the whole request and every
 		// other field above is ignored. See updateSecretViaDiff / secret_update_diff.go
@@ -613,11 +630,17 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if reqBody.MaxReads != nil && reqBody.ClearMaxReads {
+		h.sendError(w, "ValidationError", "max_reads and clear_max_reads are mutually exclusive", http.StatusBadRequest, nil)
+		return
+	}
+
 	req := &core.UpdateSecretRequest{
 		ID:              uint(id),
 		Type:            reqBody.Type,
 		MaxReads:        reqBody.MaxReads,
 		ClearExpiration: reqBody.ClearExpiration,
+		ClearMaxReads:   reqBody.ClearMaxReads,
 		UpdatedBy:       userCtx.Username,
 		UserID:          userCtx.UserID,
 	}

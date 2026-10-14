@@ -1,7 +1,8 @@
 // break_glass.go — self-service emergency-access endpoints. Activation is NOT
 // RBAC-gated (the point is access the caller does not have); the controls are
-// config-enablement, a mandatory justification, loud audit, and auto-expiry. List
-// and revoke ARE gated (roles.read / roles.assign) — they're review actions.
+// config-enablement, a mandatory justification, loud audit, and auto-expiry. Revoke
+// and review ARE gated (roles.assign) — they're review actions. List is authorized in
+// core: roles.read sees the project's activations, any other member only their own.
 package handlers
 
 import (
@@ -10,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -51,10 +53,16 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
+		// A typed code for "disabled" (same 403, same message, same position in the
+		// order of checks as before): clients switch on the code, not on the text.
+		if errors.Is(err, core.ErrBreakGlassDisabled) {
+			sendError(w, core.BreakGlassDisabledCode, msg, http.StatusForbidden, nil)
+			return
+		}
 		// #2905: mapped by sentinel (errors.Is), not by matching text that
 		// embeds i18n.T's locale-dependent output.
 		switch {
-		case errors.Is(err, core.ErrBreakGlassDisabled), errors.Is(err, core.ErrBreakGlassNotProjectMember):
+		case errors.Is(err, core.ErrBreakGlassNotProjectMember):
 			status = http.StatusForbidden
 		case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 			status = http.StatusBadRequest
@@ -75,20 +83,51 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 	sendCreated(w, map[string]interface{}{"activation": activation}, "Emergency access activated")
 }
 
-// ListBreakGlassActivations handles GET /api/v1/projects/{id}/break-glass.
+// ListBreakGlassActivations handles GET /api/v1/projects/{id}/break-glass. The route
+// carries no permission gate: core.ListBreakGlassActivationsForCaller is the
+// authorization (roles.read at the project lists every activation; any other project member
+// lists only their own; anyone else is refused with the 403 the old roles.read gate
+// gave). The per-project MFA policy applies to both views, as it did at the gate.
 func (h *CatalogHandler) ListBreakGlassActivations(w http.ResponseWriter, r *http.Request) {
 	id, err := strconv.ParseUint(chi.URLParam(r, "id"), 10, 32)
 	if err != nil {
 		sendError(w, "InvalidParameter", errInvalidProjectID, http.StatusBadRequest, nil)
 		return
 	}
-	activations, err := h.coreService.ListBreakGlassActivations(r.Context(), uint(id))
-	if err != nil {
-		log.Printf("Error listing break-glass activations for project %d: %v", id, err)
-		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+	actor := middleware.GetUserFromContext(r.Context())
+	if actor == nil {
+		sendError(w, "Unauthorized", "User context not found", http.StatusUnauthorized, nil)
 		return
 	}
-	sendSuccess(w, map[string]interface{}{"activations": activations, "count": len(activations)}, "")
+	activations, scope, err := h.coreService.ListBreakGlassActivationsForCaller(r.Context(), actor.ActorKind(), actor.PrincipalID(), actor.UserID, uint(id))
+	if err != nil {
+		switch {
+		case errors.Is(err, core.ErrBreakGlassListForbidden):
+			sendError(w, "Forbidden", "Insufficient permissions", http.StatusForbidden, nil)
+		case errors.Is(err, core.ErrBreakGlassInvalidRequest):
+			sendError(w, "ValidationError", errInvalidProjectID, http.StatusBadRequest, nil)
+		default:
+			log.Printf("Error listing break-glass activations for project %d: %v", id, err)
+			sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		}
+		return
+	}
+	if middleware.ProjectMFABlocked(r, h.coreService, uint(id)) {
+		middleware.WriteProjectMFARequired(w)
+		return
+	}
+	s := h.coreService.BreakGlassSettings()
+	sendSuccess(w, map[string]interface{}{
+		"activations": activations, "count": len(activations), "scope": scope,
+		// Only reached for a caller the list authorization allowed (a project member or a
+		// roles.read holder) and after the MFA policy: deployment limits, no secrets.
+		"settings": map[string]interface{}{
+			"enabled":             s.Enabled,
+			"emergency_role":      s.EmergencyRole,
+			"default_ttl_seconds": int64(s.DefaultTTL / time.Second),
+			"max_ttl_seconds":     int64(s.MaxTTL / time.Second),
+		},
+	}, "")
 }
 
 // RevokeBreakGlass handles POST /api/v1/projects/{id}/break-glass/{activationId}/revoke.

@@ -12,3 +12,9 @@
   `externalDatabase.sslRootCert`. **Upgrade note:** a config that already uses `verify-full`
   must add `ssl_root_cert` (or `sslrootcert=` in the dsn) before upgrading; see
   docs/UPGRADING.md and docs/CONFIGURATION.md "PostgreSQL TLS".
+- **The settings the driver connects with are re-checked against what the TLS check validated.**
+  After the connection config is built (the password set on the driver's own parse of the DSN, see
+  the `KEYORIX_DB_PASSWORD` entry), Keyorix refuses to start unless its host, port, database and
+  user are the configured ones and every connection attempt is encrypted and, for `verify-ca`/
+  `verify-full`, verifies against exactly the validated CA (and the host name for `verify-full`).
+  This catches any difference between how the check and the driver read a connection string.

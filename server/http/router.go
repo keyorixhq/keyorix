@@ -90,7 +90,7 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	// per-IP login/MFA brute-force rate limiter.
 	r.Use(customMiddleware.ClientIP(cfg.Server.HTTP.TrustedProxies))
 	r.Use(customMiddleware.Logger())
-	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled))
+	r.Use(customMiddleware.SecurityHeaders(cfg.Server.HTTP.TLS.Enabled, cfg.Server.HTTP.HSTSPreload))
 	// Global default: no-store on every response (#433). This is a secrets manager — a
 	// browser or intermediate proxy must never be allowed to cache anything by default,
 	// including routes registered outside the auth/SCIM/API groups (health/status/metrics,
@@ -578,12 +578,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permRolesAssign)).Delete("/rejection-reason-templates/{id}", catalogHandler.DeleteRejectionReasonTemplate)
 		// Break-glass emergency access: activation is self-service (un-gated — the
 		// point is access the caller lacks; controlled by config + justification +
-		// audit + auto-expiry). Listing/revoking are review actions (roles.read/assign).
+		// audit + auto-expiry). Revoke/review: roles.assign. List: authorized in core (roles.read → all, else own).
 		// #G07: blocked while impersonating, same as IssueMachineToken below — it
 		// mints a durable, time-bound role grant attributed to the impersonated
 		// TARGET that outlives the bounded, audited impersonation session.
 		r.With(customMiddleware.BlockWhenImpersonating).Post("/projects/{id}/break-glass", catalogHandler.ActivateBreakGlass)
-		r.With(customMiddleware.RequireScopedPermission(permRolesRead, projectScope)).Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
+		r.Get("/projects/{id}/break-glass", catalogHandler.ListBreakGlassActivations)
 		r.With(customMiddleware.RequireScopedPermission(permRolesAssign, projectScope)).Post("/projects/{id}/break-glass/{activationId}/revoke", catalogHandler.RevokeBreakGlass)
 		// #2461 watchdog review (2026-10-09): blocked while impersonating, same
 		// reasoning as ActivateBreakGlass above. ReviewBreakGlass's self-review
