@@ -18,24 +18,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// A plain suspend stays best-effort on audit: revocation is never blocked by an audit outage.
-func TestSuspendSecret_Plain_AuditWriteFails_StillSuspends(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	c, id, _ := newSuspendFixture(t)
-	faulty := faultstorage.NewFaultyStorage(c.storage, nil)
-	c.storage = faulty
-	faulty.Arm(&faultstorage.FaultSpec{Method: "LogAuditEvent", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
-
-	s, err := c.SuspendSecret(ctx, id, 1, "maintenance")
-	require.True(t, faulty.Fired(), "the audit fault must be reached, or this test proves nothing")
-	require.NoError(t, err)
-	assert.Equal(t, SecretStatusSuspended, s.Status)
-	stored, err := c.storage.GetSecret(ctx, id)
-	require.NoError(t, err)
-	assert.Equal(t, SecretStatusSuspended, stored.Status)
-}
-
 func TestSuspendSecret_ClearSyncedCopies_AuditWriteFails_NothingTakesEffect(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

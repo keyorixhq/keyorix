@@ -86,6 +86,16 @@ is unchanged. A PostgreSQL connection-service file (`service=` in the dsn, or th
 TLS mode and CA behind this check: move its settings into `storage.database`.
 UNVERIFIED as an upgrade drill; the refusal itself is covered by tests.
 
+**PostgreSQL: two more TLS settings now refuse to start** (the server, and
+every `admin` command that connects). (1) An `ssl_mode` outside `disable`,
+`allow`, `prefer`, `require`, `verify-ca`, `verify-full` (it used to pass
+validation and fail at the first connection); the same applies to the dsn's
+`sslmode` and to `PGSSLMODE`. (2) `ssl_mode` set next to a `dsn` whose
+`sslmode` differs or is missing (`ssl_mode` was silently ignored): put the
+same `sslmode=` in the dsn, or remove `ssl_mode`. Check with `keyorix-server admin validate
+--posture` after updating the binary. See
+[CONFIGURATION.md](CONFIGURATION.md#postgresql-tls).
+
 **Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
 CMD). `docker run <image> <command>` and `docker compose run backend <command>`
 still run `<command>`, after the optional config copy (`KEYORIX_CONFIG_SOURCE`);
@@ -369,6 +379,22 @@ The shipped `docker-compose.yml` / `keyorix.docker.yaml`, the Helm chart and
 `scripts/demo/up.sh` already set `0.0.0.0`; only configs you wrote or mounted
 yourself need the line. The startup log prints the bound address, with a note
 when it is reachable from the network.
+
+## 6b. `environment:` in generated configs
+
+`keyorix-server admin init` now writes `environment: production`, and
+`admin init --dev` writes `environment: local` (#3217). **An existing config is
+never rewritten** (`admin init` leaves it alone unless you pass
+`--overwrite-existing`), so an upgrade changes nothing by itself. A config made
+by an older `admin init` has no `environment:` line, and system info shows no
+environment for it; add `environment: production` if you want the label.
+
+Check one thing in configs you wrote yourself: the exact value
+`environment: development` is not only a label. It replaces
+`server.http.allowed_origins` with the localhost dev origins
+(`http://localhost:3000`, `:5173` and the `127.0.0.1` equivalents). If a real
+install says `development`, change it to `production` (or `staging`, `local`, …)
+and restart.
 
 ## 7. Rollback
 
