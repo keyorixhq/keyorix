@@ -131,4 +131,72 @@ func TestSuspendProjectSecrets_ClearSyncedCopies_OverTheRouter(t *testing.T) {
 		_, _, clear, raw := refusalDetails(t, w, w.tokens["machine"], "guardproj/prod/"+sec.Name)
 		assert.False(t, clear, raw)
 	})
+
+	// refuseAudit makes the audit store refuse rows of one event type (a trigger, so the
+	// real storage path fails exactly as an unavailable audit store would) until cleanup.
+	refuseAudit := func(t *testing.T, eventType string) {
+		t.Helper()
+		require.NoError(t, w.db.Exec(fmt.Sprintf(
+			`CREATE TRIGGER refuse_audit BEFORE INSERT ON audit_events WHEN NEW.event_type = '%s' BEGIN SELECT RAISE(ABORT, 'audit unavailable'); END`,
+			eventType)).Error)
+		t.Cleanup(func() { require.NoError(t, w.db.Exec(`DROP TRIGGER IF EXISTS refuse_audit`).Error) })
+	}
+	activeOnly := func(t *testing.T) {
+		t.Helper()
+		require.NoError(t, w.db.Model(&models.SecretNode{}).Where("project_id = ?", w.projID).
+			Updates(map[string]any{"status": core.SecretStatusActive, "suspend_clear_synced_copies": false}).Error)
+	}
+
+	t.Run("bulk audit event refused: 500, nothing suspended", func(t *testing.T) {
+		thaw(t)
+		a := newSecret(t, "freeze-bulkfail")
+		refuseAudit(t, "secret.bulk_suspend_attempted")
+
+		res := postJSON(w, suspendAll, w.tokens["session"], map[string]any{"clear_synced_copies": true})
+		assert.Equal(t, http.StatusInternalServerError, res.code, res.body)
+		cur := stored(t, a.ID)
+		assert.Equal(t, core.SecretStatusActive, cur.Status)
+		assert.False(t, cur.SuspendClearSyncedCopies)
+	})
+
+	t.Run("per-secret audit refused: 500 with counts, nothing reported as 200, unaudited secrets unchanged", func(t *testing.T) {
+		thaw(t)
+		activeOnly(t)
+		ids := []uint{newSecret(t, "freeze-ps-1").ID, newSecret(t, "freeze-ps-2").ID, newSecret(t, "freeze-ps-3").ID}
+		var total int64
+		require.NoError(t, w.db.Model(&models.SecretNode{}).Where("project_id = ? AND status = ?", w.projID, core.SecretStatusActive).Count(&total).Error)
+		beforeEach := count(t, core.EventSecretSuspended)
+		refuseAudit(t, core.EventSecretSuspended)
+
+		res := postJSON(w, suspendAll, w.tokens["session"], map[string]any{"clear_synced_copies": true})
+		require.Equal(t, http.StatusInternalServerError, res.code, res.body)
+		var env struct {
+			Message string `json:"message"`
+			Details struct {
+				Suspended int `json:"suspended"`
+				Failed    int `json:"failed"`
+			} `json:"details"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(res.body), &env), res.body)
+		assert.Contains(t, env.Message, "audit event could not be recorded")
+		assert.Equal(t, 0, env.Details.Suspended, "every secret's own audit row is refused, so none is suspended")
+		assert.Equal(t, int(total), env.Details.Failed, res.body)
+		for _, id := range ids {
+			cur := stored(t, id)
+			assert.Equal(t, core.SecretStatusActive, cur.Status, "secret %d changed without its audit row", id)
+			assert.False(t, cur.SuspendClearSyncedCopies)
+		}
+		assert.Equal(t, beforeEach, count(t, core.EventSecretSuspended), "no suspend event was recorded")
+	})
+
+	t.Run("a plain freeze is still 200 when per-secret audit rows are refused", func(t *testing.T) {
+		thaw(t)
+		activeOnly(t)
+		sec := newSecret(t, "freeze-plain-auditdown")
+		refuseAudit(t, core.EventSecretSuspended)
+
+		res := postJSON(w, suspendAll, w.tokens["session"], map[string]any{"reason": "breach"})
+		require.Equal(t, http.StatusOK, res.code, res.body)
+		assert.Equal(t, core.SecretStatusSuspended, stored(t, sec.ID).Status, "revocation is never blocked by audit on a plain suspend")
+	})
 }

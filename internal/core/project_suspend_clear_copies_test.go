@@ -224,11 +224,55 @@ func TestSuspendProjectSecrets_ClearSyncedCopies(t *testing.T) {
 
 		n, err := w.c.SuspendProjectSecretsWithOptions(ctx, w.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
 		require.True(t, faulty.Fired(), "the per-secret audit fault must be reached, or this test proves nothing")
-		require.NoError(t, err)
+		require.ErrorIs(t, err, ErrSuspendAuditUnavailable, "a refused per-secret audit row must surface, not be swallowed")
+		var partial *BulkSuspendPartialError
+		require.ErrorAs(t, err, &partial)
+		assert.Equal(t, 0, partial.Suspended)
+		assert.Equal(t, 1, partial.Failed)
 		assert.Zero(t, n, "a secret whose audit row failed is not counted as suspended")
 		s := w.stored(t, a)
 		assert.Equal(t, SecretStatusActive, s.Status, "no effect without the secret's own audit row")
 		assert.False(t, s.SuspendClearSyncedCopies)
 		assert.Empty(t, w.events(t, EventSecretSuspended))
+	})
+
+	t.Run("a plain project suspend stays best-effort when a secret's audit row is refused", func(t *testing.T) {
+		w := newProjectSuspendWorld(t)
+		w.secret(t, "a", 1, SecretStatusActive, false)
+		faulty := faultstorage.NewFaultyStorage(w.c.storage, nil)
+		w.c.storage = faulty
+		faulty.Arm(&faultstorage.FaultSpec{Method: "LogAuditEvent", NthCall: 2, Kind: faultstorage.KindError, Err: assert.AnError})
+
+		n, err := w.c.SuspendProjectSecrets(ctx, w.projectID, 1, "")
+		require.True(t, faulty.Fired())
+		require.NoError(t, err, "revocation is never blocked by audit on a plain suspend")
+		assert.Equal(t, 1, n)
+	})
+
+	t.Run("stops at the first refused per-secret audit row; earlier secrets stay suspended", func(t *testing.T) {
+		w := newProjectSuspendWorld(t)
+		a := w.secret(t, "a", 1, SecretStatusActive, false)
+		b := w.secret(t, "b", 1, SecretStatusActive, false)
+		c3 := w.secret(t, "c", 1, SecretStatusActive, false)
+		faulty := faultstorage.NewFaultyStorage(w.c.storage, nil)
+		w.c.storage = faulty
+		// Call 1 bulk event, call 2 first secret's row (ok), call 3 second secret's row (fails).
+		faulty.Arm(&faultstorage.FaultSpec{Method: "LogAuditEvent", NthCall: 3, Kind: faultstorage.KindError, Err: assert.AnError})
+
+		n, err := w.c.SuspendProjectSecretsWithOptions(ctx, w.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
+		require.True(t, faulty.Fired())
+		var partial *BulkSuspendPartialError
+		require.ErrorAs(t, err, &partial)
+		assert.Equal(t, 1, n)
+		assert.Equal(t, 1, partial.Suspended)
+		assert.Equal(t, 2, partial.Failed)
+		suspended := 0
+		for _, id := range []uint{a, b, c3} {
+			if w.stored(t, id).Status == SecretStatusSuspended {
+				suspended++
+			}
+		}
+		assert.Equal(t, 1, suspended, "exactly the secret committed before the refusal is suspended")
+		assert.Len(t, w.events(t, EventSecretSuspended), 1, "and it has its own audit row")
 	})
 }

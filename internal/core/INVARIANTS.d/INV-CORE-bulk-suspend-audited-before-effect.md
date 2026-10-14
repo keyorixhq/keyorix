@@ -8,3 +8,10 @@
   first. Guard: `internal/core/project_suspend_clear_copies_test.go`
   (`TestSuspendProjectSecrets_ClearSyncedCopies`: audit-before-effect ordering, fail-closed, marker per
   secret, resume clears it, a caller without write authority marks nothing).
+  A clear-synced-copies bulk suspend is also fail-closed per secret: when a secret's own
+  `secret.suspended` row is refused (`ErrSuspendAuditUnavailable`) the operation stops at the first such
+  secret and returns `*BulkSuspendPartialError{Suspended, Failed}` (secrets already suspended stay
+  suspended, each with its own audit row), and `POST /projects/{id}/secrets/suspend-all` answers 500 with
+  `details.suspended`/`details.failed`, never 200. A plain bulk suspend stays best-effort (revocation is
+  never blocked). Guard: `TestSuspendProjectSecrets_ClearSyncedCopies` (per-secret subtests) and
+  `TestSuspendProjectSecrets_ClearSyncedCopies_OverTheRouter` (bulk-audit and per-secret audit failure).

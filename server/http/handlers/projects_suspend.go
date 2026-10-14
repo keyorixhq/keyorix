@@ -42,6 +42,14 @@ func (h *SecretHandler) SuspendProjectSecrets(w http.ResponseWriter, r *http.Req
 			h.sendError(w, "InternalError", "The audit event for this request could not be recorded; no secret was suspended", http.StatusInternalServerError, nil)
 			return
 		}
+		var partial *core.BulkSuspendPartialError
+		if errors.As(err, &partial) {
+			// Already-suspended secrets stay suspended; the counts let the operator retry.
+			h.sendError(w, "InternalError", "An audit event could not be recorded; the suspension stopped early, retry",
+				http.StatusInternalServerError,
+				map[string]int{"suspended": partial.Suspended, "failed": partial.Failed})
+			return
+		}
 		h.sendError(w, "InternalError", "Failed to suspend project secrets", http.StatusInternalServerError, nil)
 		return
 	}
