@@ -80,7 +80,11 @@ suspension by choosing *Also clear copies synced to Kubernetes clusters* (web di
 `keyorix secret suspend --id N --clear-synced-copies`, or `clear_synced_copies: true` on
 `POST /api/v1/secrets/{id}/suspend`). The server then answers the operator's read with
 `409 SecretSuspended` plus `details: {"clear_synced_copies": true}`, and the operator
-empties that reference's keys on its next reconcile, whatever `spec.onSuspend` says. The
+empties that reference's keys on its next reconcile, whatever `spec.onSuspend` says. This
+also holds when the secret has expired as well: the server checks expiry first and answers
+`409 SecretExpired` carrying the same `details`, which the operator and `keyorix-k8s-sync`
+treat as suspended-with-clear (an expired secret that is *not* suspended with the choice
+still keeps its copies). The
 choice lives only as long as the suspension: resuming removes it and the next reconcile
 restores the data. It needs the same permission as suspending and is recorded in the
 `secret.suspended` audit event (`clear_synced_copies=true`). Suspending only blocks reads
@@ -99,7 +103,9 @@ marks every secret it suspends exactly as a single-secret suspend would, so the 
 sees the same `details.clear_synced_copies` per secret. One `secret.bulk_suspend_attempted`
 audit event records the choice and how many secrets were targeted before any secret is
 touched (if it cannot be recorded, nothing is suspended); each secret also gets its own
-`secret.suspended` event. `resume-all` removes the choice from every secret it resumes.
+`secret.suspended` event, committed in the same transaction as that secret's status change
+and marker (a secret whose event cannot be recorded stays active and is not counted).
+`resume-all` removes the choice from every secret it resumes.
 
 A confirmed 404/403 is a different signal and still follows `spec.prunePolicy` (see
 "How it works"); a 401 never wipes. The state-based reconcile above does not back off: it requeues at

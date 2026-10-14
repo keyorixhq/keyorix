@@ -277,6 +277,13 @@ func (c *Client) FetchValueInfo(ctx context.Context, ref string) (Value, error) 
 		return Value{}, fmt.Errorf("secret reference %q: %s (HTTP %d, clear_synced_copies): %w: %w", ref, code, resp.StatusCode, ErrSecretSuspended, ErrClearSyncedCopies)
 	case code == codeSuspended:
 		return Value{}, fmt.Errorf("secret reference %q: %s (HTTP %d): %w", ref, code, resp.StatusCode, ErrSecretSuspended)
+	case code == codeExpired && clearCopies:
+		// The server judges expiry before suspension, so a secret that is both expired and
+		// suspended with the clear marker answers SecretExpired carrying the marker (#3215).
+		// It is classified as suspended-with-clear (the suspended branch is tested first by the
+		// controller), so the copies are cleared, not retained; ErrSecretExpired stays in the
+		// chain so the state is still discoverable.
+		return Value{}, fmt.Errorf("secret reference %q: %s (HTTP %d, clear_synced_copies): %w: %w: %w", ref, code, resp.StatusCode, ErrSecretSuspended, ErrClearSyncedCopies, ErrSecretExpired)
 	case code == codeExpired:
 		return Value{}, fmt.Errorf("secret reference %q: %s (HTTP %d): %w", ref, code, resp.StatusCode, ErrSecretExpired)
 	case resp.StatusCode == http.StatusNotFound:

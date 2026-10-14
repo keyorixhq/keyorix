@@ -72,6 +72,67 @@ func TestSourceState_PlainSuspend_StillRetainedUnderRetain(t *testing.T) {
 	assert.Equal(t, original.Data, held.Data)
 }
 
+// #3215: a secret that is expired AND suspended with the request still has its copies
+// cleared (the server answers SecretExpired carrying the marker); expired alone is
+// retained with the usual warning.
+func TestSourceState_ClearRequested_AlsoWhenExpired(t *testing.T) {
+	t.Run("expired + suspended with the request: cleared, restored on resume", func(t *testing.T) {
+		f := newStateFetcher()
+		r, c, _ := stateReconciler(t, f, secretsv1alpha1.OnSuspendRetain)
+		_, err := reconcile(t, r)
+		require.NoError(t, err)
+		original, _ := getTarget(t, c)
+		require.NotEmpty(t, original.Data)
+
+		f.expired[refPW], f.expired[refKey] = true, true
+		f.clearRequested[refPW], f.clearRequested[refKey] = true, true
+		_, err = reconcile(t, r)
+		require.NoError(t, err)
+		cleared, ok := getTarget(t, c)
+		require.True(t, ok, "the Secret object is never deleted")
+		assert.Empty(t, cleared.Data)
+		assert.Equal(t, original.Labels, cleared.Labels)
+
+		f.expired = map[string]bool{}
+		f.clearRequested = map[string]bool{}
+		_, err = reconcile(t, r)
+		require.NoError(t, err)
+		restored, _ := getTarget(t, c)
+		assert.Equal(t, original.Data, restored.Data)
+	})
+	t.Run("expired only: retained (keep + warn unchanged)", func(t *testing.T) {
+		f := newStateFetcher()
+		r, c, _ := stateReconciler(t, f, secretsv1alpha1.OnSuspendRetain)
+		_, err := reconcile(t, r)
+		require.NoError(t, err)
+		original, _ := getTarget(t, c)
+
+		f.expired[refPW], f.expired[refKey] = true, true
+		_, err = reconcile(t, r)
+		require.NoError(t, err)
+		held, _ := getTarget(t, c)
+		assert.Equal(t, original.Data, held.Data)
+		hc := condition(getKS(t, c), conditionSourceHealthy)
+		require.NotNil(t, hc)
+		assert.Equal(t, "SourceSecretExpired", hc.Reason)
+	})
+	t.Run("expired + request never touches an unowned Secret or creates one", func(t *testing.T) {
+		foreign := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{Name: "db-creds", Namespace: "app"},
+			Data:       map[string][]byte{"THEIRS": []byte("keep-me")},
+		}
+		f := newStateFetcher()
+		f.expired[refPW], f.expired[refKey] = true, true
+		f.clearRequested[refPW], f.clearRequested[refKey] = true, true
+		r, c, _ := stateReconciler(t, f, secretsv1alpha1.OnSuspendRetain, foreign)
+		_, err := reconcile(t, r)
+		require.NoError(t, err)
+		got, ok := getTarget(t, c)
+		require.True(t, ok)
+		assert.Equal(t, map[string][]byte{"THEIRS": []byte("keep-me")}, got.Data)
+	})
+}
+
 // The request clears only the refs whose suspension made it; a sibling that is merely
 // suspended under Retain keeps its value and a readable sibling keeps syncing.
 func TestSourceState_ClearRequested_AppliesPerRef(t *testing.T) {

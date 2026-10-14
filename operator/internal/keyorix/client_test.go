@@ -407,7 +407,11 @@ func TestClient_FetchValue_ClearSyncedCopiesOnlyOnSuspendedRefusal(t *testing.T)
 		{"suspended without details", http.StatusConflict, `{"success":false,"code":409,"error":"SecretSuspended","message":"m"}`, true, false},
 		{"suspended, flag false", http.StatusConflict, `{"error":"SecretSuspended","details":{"clear_synced_copies":false}}`, true, false},
 		{"suspended, details of another shape", http.StatusConflict, `{"error":"SecretSuspended","details":"clear_synced_copies"}`, true, false},
-		{"flag on an expired refusal", http.StatusConflict, `{"error":"SecretExpired","details":{"clear_synced_copies":true}}`, false, false},
+		// #3215: expired AND suspended with the request: classified suspended + clear (so the
+		// copies are cleared); without the marker an expired refusal is plain expired.
+		{"expired with the request", http.StatusConflict, `{"error":"SecretExpired","details":{"clear_synced_copies":true}}`, true, true},
+		{"expired without details", http.StatusConflict, `{"error":"SecretExpired"}`, false, false},
+		{"expired, flag false", http.StatusConflict, `{"error":"SecretExpired","details":{"clear_synced_copies":false}}`, false, false},
 		{"flag on a 403", http.StatusForbidden, `{"error":"Forbidden","details":{"clear_synced_copies":true}}`, false, false},
 	}
 	for _, tc := range cases {

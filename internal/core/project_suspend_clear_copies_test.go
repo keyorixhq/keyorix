@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
@@ -210,5 +211,24 @@ func TestSuspendProjectSecrets_ClearSyncedCopies(t *testing.T) {
 		s := w.stored(t, a)
 		assert.Equal(t, SecretStatusActive, s.Status, "no effect without the audit trail")
 		assert.False(t, s.SuspendClearSyncedCopies)
+	})
+
+	t.Run("fails closed per secret: the bulk event is recorded but a secret's own audit row is not", func(t *testing.T) {
+		w := newProjectSuspendWorld(t)
+		a := w.secret(t, "a", 1, SecretStatusActive, false)
+		faulty := faultstorage.NewFaultyStorage(w.c.storage, nil)
+		w.c.storage = faulty
+		// Call 1 is secret.bulk_suspend_attempted; call 2 is the secret's own row, inside
+		// the transaction that carries its status change and marker.
+		faulty.Arm(&faultstorage.FaultSpec{Method: "LogAuditEvent", NthCall: 2, Kind: faultstorage.KindError, Err: assert.AnError})
+
+		n, err := w.c.SuspendProjectSecretsWithOptions(ctx, w.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
+		require.True(t, faulty.Fired(), "the per-secret audit fault must be reached, or this test proves nothing")
+		require.NoError(t, err)
+		assert.Zero(t, n, "a secret whose audit row failed is not counted as suspended")
+		s := w.stored(t, a)
+		assert.Equal(t, SecretStatusActive, s.Status, "no effect without the secret's own audit row")
+		assert.False(t, s.SuspendClearSyncedCopies)
+		assert.Empty(t, w.events(t, EventSecretSuspended))
 	})
 }

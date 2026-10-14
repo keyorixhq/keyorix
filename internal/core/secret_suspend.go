@@ -43,15 +43,12 @@ type SuspendOptions struct {
 	ClearSyncedCopies bool
 }
 
-// ErrSuspendAuditUnavailable is returned, with the secret untouched, when a suspend that
-// asks to clear synced copies could not record that decision first.
-var ErrSuspendAuditUnavailable = errors.New("suspend audit event could not be recorded; the secret was not suspended")
-
 // SuspendSecretWithOptions is SuspendSecret with per-suspension options.
 //
-// With opts.ClearSyncedCopies the secret.suspended audit row is written BEFORE the marker
-// and the status change, and a failure to record it refuses the suspend (no marker, no
-// status change). A plain suspend keeps its historical best-effort audit after the write.
+// With opts.ClearSyncedCopies the status change (and marker) and the secret.suspended audit
+// row commit in ONE transaction; a failure to record the audit rolls everything back and
+// returns ErrSuspendAuditUnavailable. A plain suspend keeps its historical best-effort
+// audit after the write.
 //
 // Already suspended: without opts.ClearSyncedCopies it is a no-op (no duplicate audit,
 // and an existing marker is never downgraded; only resume removes it). With it, a
@@ -67,40 +64,62 @@ func (c *KeyorixCore) SuspendSecretWithOptions(ctx context.Context, secretID, ac
 	if alreadySuspended && (!opts.ClearSyncedCopies || secret.SuspendClearSyncedCopies) {
 		return secret, nil // already suspended (and nothing to add) — no-op, no duplicate audit
 	}
+	fromStatus := secret.Status
+	secret.Status = SecretStatusSuspended
+	secret.SuspendClearSyncedCopies = opts.ClearSyncedCopies
+	secret.UpdatedAt = c.now()
 	uid, sid := actorID, secretID
 	desc := fmt.Sprintf("suspended secret %q", secret.Name)
 	if reason != "" {
 		desc += ": " + reason
 	}
-	if opts.ClearSyncedCopies {
-		desc += " (clear_synced_copies=true)"
-		// Audit-before-effect: the decision to empty copies in other clusters is on record
-		// before the marker is written, and an unrecorded decision is refused, not
-		// best-effort. A write that then loses the race below leaves this row behind, the
-		// same "attempted" shape as the bulk event.
-		if !c.writeAuditEventFull(ctx, EventSecretSuspended, &uid, &sid, nil, "", desc) {
-			return nil, ErrSuspendAuditUnavailable
+	if !opts.ClearSyncedCopies {
+		// A plain freeze keeps its long-standing best-effort audit: an audit outage
+		// must not stop a responder from blocking reads.
+		if err := transitionSuspend(ctx, c.storage, secret, fromStatus); err != nil {
+			return nil, err
 		}
+		c.writeAuditEvent(ctx, EventSecretSuspended, &uid, &sid, desc)
+		return secret, nil
 	}
-	fromStatus := secret.Status
-	secret.Status = SecretStatusSuspended
-	secret.SuspendClearSyncedCopies = opts.ClearSyncedCopies
-	secret.UpdatedAt = c.now()
-	matched, err := c.storage.TransitionSecretStatus(ctx, secret, fromStatus)
+	// Clearing the synced copies destroys data in clusters, so it never takes effect
+	// without its record: the marker and the secret.suspended row commit in ONE
+	// transaction, and a failed audit write rolls the marker back (fail closed, retry).
+	desc += " (clear_synced_copies=true)"
+	sink := &auditForwardSink{}
+	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		if err := transitionSuspend(ctx, tx, secret, fromStatus); err != nil {
+			return err
+		}
+		if !c.writeAuditEventFullOn(ctx, auditInto(tx, sink), EventSecretSuspended, &uid, &sid, nil, "", desc) {
+			return ErrSuspendAuditUnavailable
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+	sink.Flush(c)
+	return secret, nil
+}
+
+// ErrSuspendAuditUnavailable: a suspend asking to clear the synced copies could not
+// record its audit event, so nothing was changed. Retry once the audit store is back.
+var ErrSuspendAuditUnavailable = errors.New("could not record the suspension in the audit log; nothing was changed, retry")
+
+// transitionSuspend is the conditional status write shared by both suspend paths.
+func transitionSuspend(ctx context.Context, st storage.Storage, secret *models.SecretNode, fromStatus string) error {
+	matched, err := st.TransitionSecretStatus(ctx, secret, fromStatus)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if !matched {
 		// Lost the race: the row's persisted status moved away from fromStatus
 		// between the GetSecret read above and this write (a concurrent
 		// suspend/resume, or any other concurrent writer of this row) — treat
 		// as a failed write rather than silently overwriting the winner.
-		return nil, fmt.Errorf("secret %d's status changed concurrently; retry", secretID)
+		return fmt.Errorf("secret %d's status changed concurrently; retry", secret.ID)
 	}
-	if !opts.ClearSyncedCopies {
-		c.writeAuditEvent(ctx, EventSecretSuspended, &uid, &sid, desc) // plain suspend: historical best-effort audit
-	}
-	return secret, nil
+	return nil
 }
 
 const projectSuspendPageSize = 500

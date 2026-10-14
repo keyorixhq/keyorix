@@ -55,8 +55,10 @@ type secretStateError struct {
 func (e *secretStateError) Error() string { return e.msg }
 func (e *secretStateError) Unwrap() error { return e.sentinel }
 
-func errSecretExpired() error {
-	return &secretStateError{msg: i18n.T("ErrorSecretExpired", nil), sentinel: ErrSecretExpired}
+// errSecretExpired carries clearSyncedCopies only when the expired secret is also
+// suspended with the clear marker (#3215); every other expired refusal passes false.
+func errSecretExpired(clearSyncedCopies bool) error {
+	return &secretStateError{msg: i18n.T("ErrorSecretExpired", nil), sentinel: ErrSecretExpired, clearSyncedCopies: clearSyncedCopies}
 }
 
 func errSecretSuspended(clearSyncedCopies bool) error {
@@ -95,7 +97,9 @@ type SecretReadRefusal struct {
 	Code    string
 	Message string
 	// ClearSyncedCopies is true only on a SecretSuspended refusal whose suspension asked
-	// for the synced Kubernetes copies to be cleared. Authorization has already passed
+	// for the synced Kubernetes copies to be cleared, or on a SecretExpired refusal of a
+	// secret that is also suspended with that marker (expiry is judged first, #3215).
+	// An expired secret that is not suspended never carries it. Authorization has already passed
 	// when a refusal is built (see the file comment), so it reveals nothing new.
 	ClearSyncedCopies bool
 }
@@ -128,7 +132,7 @@ func ClassifySecretReadRefusal(err error) (SecretReadRefusal, bool) {
 		if errors.Is(err, r.sentinel) {
 			out := r.refusal
 			var se *secretStateError
-			if errors.As(err, &se) && se.sentinel == ErrSecretSuspended {
+			if errors.As(err, &se) && (se.sentinel == ErrSecretSuspended || se.sentinel == ErrSecretExpired) {
 				out.ClearSyncedCopies = se.clearSyncedCopies
 			}
 			return out, true
