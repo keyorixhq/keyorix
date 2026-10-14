@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -51,10 +52,39 @@ func TestHelmPostgresSettings(t *testing.T) {
 		"postgresql.settings.fsync=off",
 		"postgresql.settings.fsync=false",
 		"postgresql.settings.full_page_writes=OFF",
+		// PostgreSQL accepts boolean prefixes and surrounding blanks: an
+		// allow-list, not a deny-list, decides.
+		"postgresql.settings.fsync=of",
+		"postgresql.settings.synchronous_commit=f",
+		"postgresql.settings.full_page_writes=n",
+		"postgresql.settings.synchronous_commit= off",
 		"postgresql.settings.bad\\;key=1",
+		// Settings appended after the secure baseline must not override it or run commands.
+		"postgresql.settings.ssl=off",
+		"postgresql.settings.ssl_cert_file=/tmp/x.crt",
+		"postgresql.settings.ssl_min_protocol_version=TLSv1",
+		"postgresql.settings.hba_file=/tmp/pg_hba.conf",
+		"postgresql.settings.listen_addresses=0.0.0.0",
+		"postgresql.settings.password_encryption=md5",
+		"postgresql.settings.archive_command=sh",
 	} {
 		if out, err := render(bad); err == nil {
 			t.Errorf("--set-string %s must refuse to render, got:\n%s", bad, out)
 		}
+	}
+
+	// A whole number from a values file is a float to Helm; it must render as
+	// an integer, not 1e+07.
+	vf := filepath.Join(t.TempDir(), "values.yaml")
+	if err := os.WriteFile(vf, []byte("postgresql:\n  settings:\n    max_wal_size: 10000000\n    synchronous_commit: on\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := exec.Command("helm", "template", "kx", chart, "-s", "templates/postgresql.yaml", //nolint:gosec // fixed binary and chart path
+		"--set", "auth.masterPassword=x", "--set", "postgresql.auth.password=x", "-f", vf).CombinedOutput()
+	if err != nil {
+		t.Fatalf("helm template (values file): %v\n%s", err, raw)
+	}
+	if !strings.Contains(string(raw), `- "max_wal_size=10000000"`) || !strings.Contains(string(raw), `- "synchronous_commit=true"`) {
+		t.Errorf("values-file render must print whole numbers as integers and YAML on as true:\n%s", raw)
 	}
 }

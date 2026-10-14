@@ -116,7 +116,10 @@ concurrency on PostgreSQL 15:
 Durability is not part of the profile. The audit entry for a secret read is
 committed before the secret is returned. `synchronous_commit = off`,
 `fsync = off` or `full_page_writes = off` would let a committed audit entry be
-lost in a crash, and the Helm chart refuses to render them. ADR-112's fast
+lost in a crash. The Helm chart accepts only durable values for these three (an
+allow-list, so prefixes such as `of` are refused too), and refuses settings that
+would override its TLS baseline (`ssl`, `ssl_*`, `hba_file`, `listen_addresses`,
+`password_encryption`, and others) or run commands (`archive_command`). ADR-112's fast
 audit mode is a Keyorix server option
 (`storage.database.insecure_audit_skip_durable_sync`), scoped to the audit
 transaction alone. It is not a database setting.

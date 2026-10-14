@@ -276,9 +276,14 @@ postgresql:
   #     wal_compression: lz4
   #     checkpoint_timeout: 15min
   #     max_wal_size: 2GB            # keep well under persistence.size
-  # Durability is not tunable here: the chart refuses synchronous_commit, fsync
-  # or full_page_writes set to off (the audit entry is committed before a secret
-  # is returned; ADR-112's fast audit mode is a server option, not a database one).
+  # Durability is not tunable here: synchronous_commit, fsync and full_page_writes
+  # accept only durable values (on/true/yes/1; synchronous_commit also local,
+  # remote_write, remote_apply). The audit entry is committed before a secret is
+  # returned; ADR-112's fast audit mode is a server option, not a database one.
+  # Settings that would override the secure baseline or run commands are refused:
+  # ssl and ssl_*, hba_file, ident_file, listen_addresses, port,
+  # password_encryption, data_directory, config_file, archive_command,
+  # archive_library, restore_command.
   settings: {}
   resources:
     requests:
