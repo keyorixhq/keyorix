@@ -48,7 +48,7 @@ func resolveConfigRelativeFile(baseDir, p string) (string, error) {
 	return filepath.Abs(filepath.Join(baseDir, p))
 }
 
-// effectiveSSLMode is the sslmode BuildPostgresDSN writes for a field-built
+// effectiveSSLMode is the sslmode ResolvePostgresConnConfig uses for a field-built
 // DSN: SSLMode, or "require" when unset.
 func (d *DatabaseConfig) effectiveSSLMode() string {
 	if d.SSLMode == "" {
@@ -113,14 +113,16 @@ type databaseTLS struct {
 //   - an sslmode outside validSSLModes, from ssl_mode, the dsn or PGSSLMODE;
 //   - ssl_mode together with a dsn whose sslmode differs or is absent (the
 //     dsn is used as-is, so ssl_mode would be silently ignored);
-//   - a dsn with no sslmode that names a connection service (service= in the
-//     dsn, or PGSERVICE): pgx then takes sslmode from the service file, which
-//     Keyorix does not read. The dsn must state sslmode itself.
+//   - a connection service (refuseConnectionService): pgx would take settings
+//     from a service file Keyorix does not read.
 //
 // With a dsn and no sslmode in it, the mode is PGSSLMODE, else pgx's default
 // "prefer" -- the same order pgx applies.
 func resolveDatabaseTLS(d *DatabaseConfig) (databaseTLS, error) {
 	var t databaseTLS
+	if err := refuseConnectionService(d); err != nil {
+		return t, err
+	}
 	if d.DSN == "" {
 		t.written, t.rootCert = d.effectiveSSLMode(), d.SSLRootCert
 		if !sslModeValid(t.written) {
@@ -149,13 +151,6 @@ func resolveDatabaseTLS(d *DatabaseConfig) (databaseTLS, error) {
 			}
 		}
 		if t.written == "" {
-			if s.service || os.Getenv("PGSERVICE") != "" {
-				return t, errors.New("storage.database.dsn has no sslmode and names a connection service " +
-					"(service= in the dsn, or PGSERVICE): the driver would take sslmode from the service file, " +
-					"which Keyorix does not read, so neither validation nor the posture report could tell " +
-					"what the connection does -- refusing to start. Add sslmode=<mode> (and sslrootcert for " +
-					"verify-full/verify-ca) to the dsn itself")
-			}
 			t.written = os.Getenv("PGSSLMODE")
 			if t.written != "" && !sslModeValid(t.written) {
 				return t, invalidSSLModeError("PGSSLMODE (used because storage.database.dsn has no sslmode)")
@@ -194,9 +189,8 @@ func EffectiveDatabaseSSLMode(d *DatabaseConfig) (string, error) {
 // writable by group or others (anyone who can write it can make the server
 // trust their database). Errors name the path, never file contents.
 func LoadDatabaseCAPool(path string) (*x509.CertPool, int, error) {
-	// secretenv.OpenRegular opens O_NONBLOCK, so a FIFO opens at once and is
-	// refused as not regular; a blocking open on a FIFO with no writer would hang
-	// boot instead (guard: secretenv.TestSecretFileReadsGoThroughOpenRegular).
+	// OpenRegular opens non-blocking and fstats the same descriptor, so a FIFO
+	// is refused at once instead of hanging boot in open(2).
 	f, info, err := secretenv.OpenRegular(path, 0)
 	if err != nil {
 		if errors.Is(err, secretenv.ErrNotRegular) {
@@ -283,13 +277,15 @@ func missingRootCertError(modeField, mode, fix string) error {
 //     verify-full/verify-ca: its sslrootcert must be set and pass the same
 //     file checks.
 //   - everything resolveDatabaseTLS refuses (PG-TLS-2): an sslmode outside
-//     validSSLModes, ssl_mode disagreeing with the dsn's sslmode, a dsn
-//     with no sslmode that relies on a service file.
+//     validSSLModes, ssl_mode disagreeing with the dsn's sslmode.
 //
-// Run by Config.Validate at startup and by BuildPostgresDSN on every
+// Run by Config.Validate at startup and by ResolvePostgresConnConfig on every
 // connection a process opens, so an entry point that never calls Validate
 // (the admin subcommands) cannot connect around it.
 func ValidateDatabaseTLS(d *DatabaseConfig) error {
+	if err := refuseConnectionService(d); err != nil {
+		return err
+	}
 	if d.DSN != "" && d.SSLRootCert != "" {
 		return fmt.Errorf("storage.database.ssl_root_cert cannot be combined with storage.database.dsn: the dsn is " +
 			"used as-is, so the key would be ignored; put sslrootcert=<path> in the dsn, or use host/name/user " +
@@ -325,13 +321,41 @@ func ValidateDatabaseTLS(d *DatabaseConfig) error {
 	return checkRootCert("sslrootcert in storage.database.dsn", t.rootCert)
 }
 
+// refuseConnectionService refuses a PostgreSQL connection that would take
+// settings from a connection-service file: `service=` / `servicefile=` in the
+// dsn, or the PGSERVICE environment variable (pgx reads both). The file is
+// merged over the environment and under the dsn, so it can supply the sslmode,
+// sslrootcert and host that the checks in this file never see: a service with
+// sslmode=verify-full and no sslrootcert would make pgx verify against its
+// implicit trust store, the fallback ssl_root_cert exists to close. Resolving
+// the file the way pgx does would mean re-reading it at connect time too, so
+// the config is refused instead. PGSERVICEFILE alone is inert -- pgx reads a
+// service file only when a service is selected -- so it is not refused.
+func refuseConnectionService(d *DatabaseConfig) error {
+	const fix = "Put the connection settings (host, ssl_mode, ssl_root_cert, ...) in storage.database or " +
+		"in the dsn itself instead of a service file; Keyorix does not read service files, so it " +
+		"cannot check the TLS trust they would set"
+	if d.DSN != "" {
+		selects, err := dsnSelectsService(d.DSN)
+		if err != nil {
+			return fmt.Errorf("storage.database.dsn: %w", err)
+		}
+		if selects {
+			return errors.New("storage.database.dsn selects a PostgreSQL connection service (service= or servicefile=), " +
+				"whose file could set sslmode, sslrootcert or host behind the TLS checks -- refusing to start. " + fix)
+		}
+	}
+	if os.Getenv("PGSERVICE") != "" {
+		return errors.New("the PGSERVICE environment variable selects a PostgreSQL connection service, " +
+			"whose file could set sslmode, sslrootcert or host behind the TLS checks -- refusing to start. " +
+			"Unset PGSERVICE for the Keyorix server, or: " + fix)
+	}
+	return nil
+}
+
 // dsnTLS is what parseDSNTLS reads from a connection string.
 type dsnTLS struct {
 	sslmode, sslrootcert string
-	// service is true when the string names a connection service (a
-	// "service" key, whatever its value): pgx then merges that service
-	// file's settings under the string's own.
-	service bool
 }
 
 // dsnTLSSettings is parseDSNTLS's sslmode and sslrootcert.
@@ -340,8 +364,7 @@ func dsnTLSSettings(dsn string) (sslmode, sslrootcert string, err error) {
 	return s.sslmode, s.sslrootcert, err
 }
 
-// parseDSNTLS extracts sslmode, sslrootcert and whether a service is named
-// from a PostgreSQL connection string in either form pgx accepts: a
+// parseDSNTLS extracts sslmode and sslrootcert from a PostgreSQL connection string in either form pgx accepts: a
 // postgres:// or postgresql:// URL, or libpq keyword/value pairs. The
 // keyword/value grammar follows pgx's parseKeywordValueSettings
 // (pgconn/config.go): whitespace separated key=value, values optionally
@@ -359,8 +382,7 @@ func parseDSNTLS(dsn string) (dsnTLS, error) {
 	if err != nil {
 		return dsnTLS{}, err
 	}
-	_, service := settings["service"]
-	return dsnTLS{sslmode: settings["sslmode"], sslrootcert: settings["sslrootcert"], service: service}, nil
+	return dsnTLS{sslmode: settings["sslmode"], sslrootcert: settings["sslrootcert"]}, nil
 }
 
 // urlTLSSettings reads sslmode/sslrootcert from a connection URL's query the
@@ -377,11 +399,54 @@ func parseDSNTLS(dsn string) (dsnTLS, error) {
 // "?sslmode=verify-full&ssl=true" as verify-full, while pgx runs require.
 func urlTLSSettings(dsn string) (dsnTLS, error) {
 	var s dsnTLS
-	params, err := urlQuery(dsn)
+	pairs, err := urlParamPairs(dsn)
 	if err != nil {
 		return s, err
 	}
 	ssl, sslWasLast := "", false
+	for _, kv := range pairs {
+		switch kv[0] {
+		case "sslmode":
+			s.sslmode = kv[1]
+			sslWasLast = false
+		case "ssl":
+			ssl = kv[1]
+			sslWasLast = true
+		case "sslrootcert":
+			s.sslrootcert = kv[1]
+		}
+	}
+	if ssl == "true" && sslWasLast {
+		s.sslmode = "require"
+	}
+	return s, nil
+}
+
+// urlParams returns every key of a connection URL's query, read as described
+// at urlTLSSettings (last occurrence wins; keys and values percent-decoded and
+// space-trimmed). A key present with an empty value is present in the map, as
+// it is to pgx.
+func urlParams(dsn string) (map[string]string, error) {
+	pairs, err := urlParamPairs(dsn)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
+	for _, kv := range pairs {
+		out[kv[0]] = kv[1]
+	}
+	return out, nil
+}
+
+// urlParamPairs returns a connection URL's query as decoded (key, value)
+// pairs in order, for urlParams and urlTLSSettings (which needs the order for
+// pgx's ssl/sslmode precedence).
+func urlParamPairs(dsn string) ([][2]string, error) {
+	params, err := urlQuery(dsn)
+	if err != nil {
+		return nil, err
+	}
+	var out [][2]string
 	// No '#' fragment is cut off: pgx has none, so "?#=&sslmode=verify-full"
 	// is a verify-full connection to pgx and must be one here.
 	for _, pair := range strings.Split(params, "&") {
@@ -390,30 +455,41 @@ func urlTLSSettings(dsn string) (dsnTLS, error) {
 		}
 		rawKey, rawValue, found := strings.Cut(pair, "=")
 		if !found || strings.Contains(rawValue, "=") {
-			return dsnTLS{}, errors.New("malformed query parameter in the connection URL")
+			return nil, errors.New("malformed query parameter in the connection URL")
 		}
 		key, kerr := url.PathUnescape(rawKey)
 		value, verr := url.PathUnescape(rawValue)
 		if kerr != nil || verr != nil {
-			return dsnTLS{}, errors.New("malformed percent-encoding in the connection URL's query")
+			return nil, errors.New("malformed percent-encoding in the connection URL's query")
 		}
-		switch strings.TrimSpace(key) {
-		case "sslmode":
-			s.sslmode = strings.TrimSpace(value)
-			sslWasLast = false
-		case "ssl":
-			ssl = strings.TrimSpace(value)
-			sslWasLast = true
-		case "sslrootcert":
-			s.sslrootcert = strings.TrimSpace(value)
-		case "service":
-			s.service = true
-		}
+		// pgx's uriDecode drops leading/trailing ASCII spaces only: a key
+		// "sslrootcert\r" is a runtime parameter to pgx, not sslrootcert
+		// (fuzz-found by FuzzResolvePostgresConnConfig_PasswordCannotChangeConnection
+		// through checkFinalPostgresTLS).
+		out = append(out, [2]string{strings.Trim(key, " "), strings.Trim(value, " ")})
 	}
-	if ssl == "true" && sslWasLast {
-		s.sslmode = "require"
+	return out, nil
+}
+
+// dsnSelectsService reports whether the connection string names a connection
+// service (the `service` key, present even when empty, as pgx tests it) or a
+// service file (`servicefile`, a pgx extension). pgx then merges that file's
+// settings over the environment and under the string's own, so it can supply
+// sslmode, sslrootcert or host -- settings the check reads only from the string.
+func dsnSelectsService(dsn string) (bool, error) {
+	var settings map[string]string
+	var err error
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		settings, err = urlParams(dsn)
+	} else {
+		settings, err = parseKeywordValueDSN(dsn)
 	}
-	return s, nil
+	if err != nil {
+		return false, err
+	}
+	_, svc := settings["service"]
+	_, file := settings["servicefile"]
+	return svc || file, nil
 }
 
 // urlQuery returns the query string of a postgres:// URL the way pgx's
@@ -552,6 +628,12 @@ func unescapeDSNValue(s string) string {
 		b.WriteByte(s[i])
 	}
 	return b.String()
+}
+
+// quoteDSNValue single-quotes v for a keyword/value DSN, escaping backslash
+// and quote, so a path with spaces or quotes stays one value.
+func quoteDSNValue(v string) string {
+	return "'" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(v) + "'"
 }
 
 // DatabaseTLSPosture describes, in one line, how the server's PostgreSQL

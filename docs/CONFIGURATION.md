@@ -158,8 +158,8 @@ server:
       cert_cache_dir: "certs"     # ACME only: where autocert persists certs between restarts
       allowed_ciphers: []         # optional allowlist of TLS 1.2 cipher suite names; leave empty for the built-in secure default
     tls_mode: ""                  # "" (default: TLS 1.2 floor, forward-secret AEAD only) | "strict" (TLS 1.3 only)
-    trusted_proxies: []           # IPs/CIDRs of your TLS-terminating proxy/LB; their X-Forwarded-For/-Proto are honored
-    hsts_preload: false           # add "preload" to Strict-Transport-Security (see below)
+    trusted_proxies: []           # IPs/CIDRs of your TLS-terminating proxy/LB; their X-Forwarded-For/-Proto are honored (client IP, HSTS, Secure cookies). HTTP only
+    hsts_preload: false           # add "preload" to Strict-Transport-Security (see below). HTTP only
     ratelimit:
       enabled: true
       requests_per_second: 50
@@ -233,6 +233,23 @@ client's value through. `trusted_proxies` is the same list that governs
 - `preload` is off unless you set `hsts_preload: true`. Preload-list submission
   covers the whole registrable domain and is slow to undo, so only the domain's
   owner should opt in.
+
+**Secure cookies.** The same decision, made once per request, sets the `Secure`
+attribute of every cookie the server sets: the session cookie (`kx_session`), the
+CSRF cookie (`csrf_token`) and the impersonation stash cookie
+(`kx_admin_session`), including the ones that clear them on logout. A cookie is
+`Secure` when the listener serves TLS itself, or when the request came from a peer
+in `server.http.trusted_proxies` with `X-Forwarded-Proto: https`; otherwise it is
+not. So behind a TLS-terminating load balancer, list the balancer in
+`trusted_proxies` and the cookies are `Secure` with no other setting. Without that
+entry they go out without `Secure`, exactly as before. A forged
+`X-Forwarded-Proto: https` from any other peer changes nothing, and `Secure` is
+never removed from a cookie that has it today.
+
+**HTTP only.** `trusted_proxies` and `hsts_preload` are read by the HTTP server
+only. The keys parse under `server.grpc` too (both listeners share one config
+shape) but the gRPC server never reads them, so setting either there logs a
+`WARNING` at every start and has no effect. Set them under `server.http`.
 
 The web container's nginx makes its own HSTS decision and strips the backend's
 header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
@@ -359,14 +376,14 @@ validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
 `storage.database.insecure_disable_database_tls` whatever `ssl_mode` says.
 
-**Connection services (`service=`, `PGSERVICE`).** The driver merges a
-service's settings from a service file (`servicefile=`, `PGSERVICEFILE`,
-`~/.pg_service.conf`) under the dsn's own. Keyorix does not read service files.
-A dsn that names a service (or runs with `PGSERVICE` set) and has no `sslmode`
-of its own is refused, because its sslmode would come from that file and
-neither validation nor the posture report could tell what it is. Put
-`sslmode=` (and `sslrootcert=` for `verify-full`/`verify-ca`) in the dsn: the
-dsn's own values take precedence over the service file's.
+**Connection-service files are refused.** `service=` or `servicefile=` in the
+`dsn`, or the `PGSERVICE` environment variable, make the PostgreSQL driver read
+`sslmode`, `sslrootcert` and `host` from a `pg_service.conf` that Keyorix does
+not inspect, which would sidestep the CA requirement above. The server and the
+`admin` commands refuse to start with such a setting; put the same settings in
+`storage.database` (or the `dsn`) instead. `PGSERVICEFILE` on its own does
+nothing (the driver reads a service file only when a service is selected) and
+is not refused.
 
 The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
@@ -383,11 +400,17 @@ connection settings:
 
 | `storage.database.dsn` | A password source is set | Result |
 |---|---|---|
-| empty (host/port/name/user fields) | yes | password added to the connection string |
-| set, **no** password in it | yes | the password is added to the DSN |
+| empty (host/port/name/user fields) | yes | the password is used for the connection |
+| set, **no** password in it | yes | the password is used with the DSN's settings |
 | set, no password in it | no | DSN used as written (e.g. trust auth, `.pgpass`) |
 | set, **with** a password (`password=...` or `postgres://user:pw@...`) | no | DSN used as written |
 | set, **with** a password | **yes** | **refused at startup** |
+
+The password is never written into the DSN: Keyorix parses the DSN with the
+PostgreSQL driver's own parser and sets the password on the parsed settings, so
+no character in it (quotes, backslashes, spaces, `=`, `?`, `@`, ...) can change
+the host, `sslmode`, `sslrootcert` or any other setting the DSN names. A DSN the
+driver cannot parse is refused at startup.
 
 The last row is an error, not a silent choice: the server and every command that
 opens the database (`admin migrate`, `admin validate`, `admin restore`, ...) stop

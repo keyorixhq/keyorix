@@ -21,6 +21,9 @@ vi.mock('../ProjectActivityTab', () => ({
 vi.mock('../ProjectAccessReviewTab', () => ({
     ProjectAccessReviewTab: ({ projectId }: { projectId: number }) => <div>access review tab stub ({projectId})</div>,
 }));
+vi.mock('../ProjectBreakGlassTab', () => ({
+    ProjectBreakGlassTab: ({ projectId }: { projectId: number }) => <div>break-glass tab stub ({projectId})</div>,
+}));
 vi.mock('../ProjectSettingsTab', () => ({
     ProjectSettingsTab: ({ projectId }: { projectId: number }) => <div>settings tab stub ({projectId})</div>,
 }));
@@ -85,6 +88,18 @@ describe('ProjectDetailPage — error state', () => {
         expect(screen.getByText('Unknown')).toBeInTheDocument();
         expect(screen.getByText(/Failed to load project\./)).toBeInTheDocument();
         expect(screen.getByRole('button', { name: 'Back to Projects' })).toBeInTheDocument();
+    });
+
+    // An outsider's GET /projects/{id} is refused (403), so the refusal is the project-level
+    // one on every tab URL, including a direct link to the break-glass tab: the tab (and its
+    // own "Not allowed" notice) never mounts.
+    it('shows only the project-level refusal on a direct break-glass link: no tab, no tab nav', () => {
+        projectQuery = { data: undefined, isLoading: false, isError: true };
+        renderPage('/projects/5/break-glass');
+        expect(screen.getByText(/Failed to load project\./)).toBeInTheDocument();
+        expect(screen.queryByText(/break-glass tab stub/)).not.toBeInTheDocument();
+        expect(screen.queryByText('Not allowed')).not.toBeInTheDocument();
+        expect(screen.queryByRole('link', { name: 'Break-glass' })).not.toBeInTheDocument();
     });
 
     it('navigates to the projects list when Back to Projects is clicked', () => {
@@ -183,7 +198,7 @@ describe('ProjectDetailPage — tab routing', () => {
         const nav = screen.getByRole('link', { name: 'Secrets' }).closest('div');
         expect(nav).not.toBeNull();
         const scoped = within(nav as HTMLElement);
-        ['Secrets', 'Members', 'Activity', 'Access Review', 'Settings'].forEach((label) => {
+        ['Secrets', 'Members', 'Activity', 'Access Review', 'Break-glass', 'Settings'].forEach((label) => {
             expect(scoped.getByRole('link', { name: label })).toBeInTheDocument();
         });
     });

@@ -118,15 +118,19 @@ one command. To get the talking point back, re-seed:
 `./scripts/demo/down.sh --wipe && ./scripts/demo/up.sh`. `make demo-check` fails
 if a fresh demo shows anything other than exactly this one gap.
 
-Anomalies: the **Open anomalies** tile and the Audit -> Anomaly Alerts tab are empty
-until the first detection pass, which runs 1-5 minutes after the server starts and
-then hourly. A day-zero install has no access baseline yet (a user or IP must be
-seen for 24 hours before it counts as "known", so an attacker cannot make
-themselves normal), so that first pass flags the demo's own first accesses as
-low-severity *new user* / *new IP* (and *off hours* outside 06:00-22:00 UTC)
-alerts. Say so rather than hide them: they are informational, none is high
-severity, the "Access-anomaly detection" control stays green (it only turns red on a
-high-severity alert), and Dismiss clears them. See "Known rough edges".
+Anomalies: a fresh demo starts with **no open anomalies**. The detector's first pass
+runs 1-5 minutes after the server starts and flags the seed's own first accesses
+(creating, rotating and revealing a secret as admin, alice's one read, the CI machine
+read) as low-severity *new user* / *new IP* alerts (and *off hours* outside
+06:00-22:00 UTC), because a day-zero install has no access baseline yet (a user or IP
+must be seen for 24 hours before it counts as "known", so an attacker cannot make
+themselves normal). `up.sh` waits for that pass (up to ~5 minutes at the end of the
+run) and acknowledges exactly those alerts, so the Alerts tile and the Compliance
+page are calm when you open them; they stay in Audit -> Anomaly Alerts as
+acknowledged. What you do next is live: log in as alice from a browser and read
+`db-password`, and a fresh *new IP* alert appears at the next pass (hourly), which is
+a good "the detector is on" moment. `make demo-check` fails if a fresh demo still has
+open anomalies 6 minutes after start. See "Known rough edges".
 
 ## 2. MFA enrollment, live (~1.5 min)
 
@@ -307,19 +311,53 @@ on explicitly in the demo's `keyorix.yaml` (`break_glass.enabled: true`,
 emergency role `project_developer`); on any other install add that block yourself
 (see `docs/CONFIGURATION.md#break_glass`) and restart. A user must be a **member
 of the project** (a role scoped to it, e.g. `project_viewer`) to activate; it then
-lifts them to the emergency role for a limited time:
+lifts them to the emergency role for a limited time.
+
+In the seed, **alice** is `project_viewer` on **backend-api, which is project 2**
+(project 1 is `default`, where she has no role, so activating there is refused with
+`break-glass is available only to members of the project`). Alice activates; an
+administrator (`admin`, or the independent reviewer `security-officer`) lists and
+ends it. Each block runs as the user in its first comment line, and `<id>` is the
+activation id the first command prints:
 
 ```bash
-keyorix break-glass activate --project-id 1 --justification "prod incident INC-123" --ttl 1h
-keyorix break-glass list --project-id 1        # the member sees their own activation
-keyorix break-glass revoke --project-id 1 --activation-id <id>   # as an admin (roles.assign)
+# as alice
+keyorix break-glass activate --project-id 2 --justification "prod incident INC-123" --ttl 1h
 ```
 
-`list` run by the member shows only their own activations; run by an admin
-(`roles.read` at the project) it shows everyone's.
+```bash
+# as an administrator (admin or security-officer)
+keyorix break-glass list --project-id 2
+keyorix break-glass revoke --project-id 2 --activation-id <id>
+```
+
+`scripts/demo/check.sh` runs exactly these blocks (`scripts/demo/golden-path-breakglass.sh`
+extracts them from this section, so the doc cannot drift from what works): the
+activation shows as `active` in the list, the revoke ends it, and the audit log
+records `break_glass.activated`, `break_glass.revoked`, `role.assigned` and `role.removed`.
+Alice can also list her own activations (#3184): `keyorix break-glass list --project-id 2`
+run as alice shows only hers; run by an administrator (`roles.read` at the project) it
+shows everyone's.
 
 If it is not enabled the command now says so (`break-glass is not enabled on this
 server; set break_glass.enabled`) instead of a bare `permission denied`.
+
+**The same path in the web UI** (project → **Break-glass** tab; same server rules,
+same audit trail):
+
+1. As the member (e.g. a `project_viewer`): open the project's **Break-glass** tab,
+   write the justification (at least 10 characters), pick how long (the server
+   shortens anything above its `break_glass.max_ttl`) and press **Request
+   emergency access**. The row under *Your activations* turns **Active** and counts
+   down to expiry; when it reaches zero it shows **Expired**.
+2. As the admin (`roles.read` at the project): the same tab now lists
+   *All activations on this project*, with who, when, the justification and the status.
+3. With `roles.assign`, press **Revoke** on an active row and confirm in the dialog.
+   The row turns **Revoked**; the member's own list shows it revoked too.
+
+If break-glass is off, the tab says "Break-glass is not enabled on this server"; if the
+project requires MFA and the session has no second factor, it says so and links to
+enrolment. Someone who is not a member of the project sees a refusal, not a list.
 
 ## 8. Footprint (~30 sec) — close on the koi-pond pitch
 
@@ -354,10 +392,12 @@ soft-delete confirmation text (#2568), stale docker-compose image pins
   shown) after one rejected attempt (e.g. password instead of a code), and
   survives closing/reopening — only a full page reload clears it —
   [#2738](https://github.com/keyorixhq/keyorix/issues/2738).
-- Neither published Docker image (full or `-airgap`) embeds the web UI —
-  only the GitHub Release tarballs do. `scripts/demo/up.sh` works around
-  this by building its own image locally first —
-  [#2752](https://github.com/keyorixhq/keyorix/issues/2752).
+- Fixed since: the published images embed the web UI as of v0.96.0
+  (`ghcr.io/keyorixhq/keyorix-server:0.96.0-airgap` serves it; `check.sh`'s
+  "web UI served" step is green on it) —
+  [#2752](https://github.com/keyorixhq/keyorix/issues/2752). `scripts/demo/up.sh`
+  still builds its own image from the checkout, so the demo always matches the
+  code you are about to show.
 - `admin recovery-key rotate`, like every admin command except a live Postgres
   backup, needs the server stopped. That is by design: it holds the exclusive
   admin lock for the whole rotation
@@ -369,16 +409,16 @@ soft-delete confirmation text (#2568), stale docker-compose image pins
   flagged on the issue for the coordinator to confirm. Stop the server (or
   `docker stop keyorix-demo`) first if you want to demo it live.
 
-**Open anomalies on a day-zero install (found DEMO-SEED-1, 2026-10-12):** the
-first detection pass, 1-5 minutes after the server starts, flags the seed's own
-accesses — creating, rotating and revealing a secret as admin — as *new user* and
-*new IP* (low) and, between 22:00 and 06:00 UTC, *off hours* (medium) on the secret
-they touch: 24 alerts for the untouched seed (measured at 22:19 UTC, so including the
-off-hours ones; fewer in the daytime), none high. This is the detector
-working as designed on an install with no baseline (the baseline-quarantine rule,
-#101), not a seed problem, so the seed does not suppress it and the product's
-thresholds were not changed; whether the creator's own first access to a brand-new
-secret should count as "new" is a product question, not a demo one.
+**Open anomalies on a day-zero install (found DEMO-SEED-1, 2026-10-12; handled by
+DEMO-FIX-12, #3152):** the first detection pass, 1-5 minutes after the server starts,
+flags the seed's own accesses as *new user* / *new IP* (low) and, between 22:00 and
+06:00 UTC, *off hours* (medium). This is the detector working as designed on an
+install with no baseline (the baseline-quarantine rule, #101), so the thresholds were
+not changed. `up.sh` now waits for that first pass and acknowledges only alerts of
+those three types, low/medium severity, whose accessor is a seeded demo principal
+(`scripts/demo/lib.sh` `demo_settle_anomalies`); anything else the pass reports stays
+open and fails `check.sh`. Whether the creator's own first access to a brand-new
+secret should count as "new" remains a product question, not a demo one.
 
 **Polish, safe to demo through:** none currently open that affect this
 script's own steps.
