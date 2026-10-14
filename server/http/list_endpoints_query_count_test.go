@@ -89,7 +89,7 @@ func newLEFixture(t *testing.T, backend string, nUsers int) *leFixture {
 	w := newRRWorld(t, backend, false)
 	f := &leFixture{w: w, rec: newLEQueryRecorder(t, w.a.db), now: time.Now().UTC()}
 	f.users = make([]models.User, 0, nUsers)
-	for i := 0; i < nUsers; i++ {
+	for i := range nUsers {
 		name := fmt.Sprintf("leuser%04d", i)
 		f.users = append(f.users, models.User{Username: name, UsernameFolded: name, Email: name + "@example.com", EmailFolded: name + "@example.com", IsActive: true})
 	}
@@ -111,7 +111,7 @@ func (f *leFixture) project(t *testing.T, name string, n int) uint {
 	require.NoError(t, err)
 	db := f.w.a.db
 	secs := make([]models.SecretNode, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		secs = append(secs, models.SecretNode{
 			Name: fmt.Sprintf("%s-secret-%03d", name, i), ProjectID: p.ID, EnvironmentID: env.ID,
 			IsSecret: true, Type: "generic", Status: "active", OwnerID: f.w.adminID, CreatedBy: "x",
@@ -274,7 +274,7 @@ func TestMachineAuditReport_QueryCountDoesNotGrowWithIdentities(t *testing.T) {
 			f := newLEFixture(t, backend, 1)
 			db := f.w.a.db
 			seed := func(prefix string, n int) {
-				for i := 0; i < n; i++ {
+				for i := range n {
 					m := models.MachineIdentity{ProjectID: f.w.projectID, Name: fmt.Sprintf("%s%03d", prefix, i), IdentityType: "ci", State: "active", CreatedAt: f.now, UpdatedAt: f.now}
 					require.NoError(t, db.Create(&m).Error)
 					used := f.now.Add(-time.Hour)

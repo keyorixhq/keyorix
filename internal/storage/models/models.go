@@ -1574,21 +1574,15 @@ type Notification struct {
 }
 
 type AuditEvent struct {
-	ID        uint `gorm:"primaryKey"`
-	EventType string
-	UserID    *uint
-	// SecretNodeID, ProjectID and EventTime carry the composite indexes behind the
-	// audit views' "newest first" sorts (LIST-ENDPOINTS-1): without them every
-	// GET /audit/logs, per-secret trail and per-project view sorted the whole table
-	// (a temp b-tree over 200k rows: 22-40 ms on SQLite, 10 ms on Postgres, growing
-	// with the table); with them the page is an index range scan (~0.3 ms). Each
-	// index costs every audit INSERT (DB-TUNE-1), so only the sort keys are indexed.
-	SecretNodeID *uint `gorm:"index:idx_audit_events_secret_time,priority:1"`
-	ProjectID    *uint `gorm:"index;index:idx_audit_events_project_time,priority:1"`
+	ID           uint `gorm:"primaryKey"`
+	EventType    string
+	UserID       *uint
+	SecretNodeID *uint
+	ProjectID    *uint `gorm:"index"`
 	IPAddress    string
 	Description  string
-	Success      *bool     `gorm:"default:true"`
-	EventTime    time.Time `gorm:"index;index:idx_audit_events_secret_time,priority:2;index:idx_audit_events_project_time,priority:2"`
+	Success      *bool `gorm:"default:true"`
+	EventTime    time.Time
 
 	// Diff is a JSON object describing what changed on a mutation event (e.g.
 	// secret.updated). It records before/after for non-sensitive metadata

@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -73,10 +74,7 @@ func (c *KeyorixCore) GetMachineAuditReport(ctx context.Context) (*MachineAuditR
 	// a failed per-identity lookup did.
 	credsByMachine := make(map[uint][]*models.MachineIdentityCredential, len(identities))
 	for start := 0; start < len(identities); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(identities) {
-			end = len(identities)
-		}
+		end := min(start+listBatchSize, len(identities))
 		ids := make([]uint, 0, end-start)
 		for _, m := range identities[start:end] {
 			ids = append(ids, m.ID)
@@ -85,9 +83,7 @@ func (c *KeyorixCore) GetMachineAuditReport(ctx context.Context) (*MachineAuditR
 		if err != nil {
 			return nil, err
 		}
-		for id, creds := range batch {
-			credsByMachine[id] = creds
-		}
+		maps.Copy(credsByMachine, batch)
 	}
 
 	for _, m := range identities {

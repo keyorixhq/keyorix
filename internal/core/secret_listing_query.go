@@ -6,6 +6,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 
@@ -428,10 +429,7 @@ func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID
 	sharesBySecret := make(map[uint][]*models.ShareRecord, len(secrets))
 	now := c.shareEffectiveNow()
 	for start := 0; start < len(ids); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(start+listBatchSize, len(ids))
 		batch, berr := c.storage.ListSharesBySecretIDs(ctx, ids[start:end], now)
 		if berr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), berr)
@@ -531,10 +529,7 @@ func (c *KeyorixCore) secretsByIDs(ctx context.Context, ids []uint) (map[uint]*m
 	out := make(map[uint]*models.SecretNode, len(ids))
 	ids = dedupeUints(ids)
 	for start := 0; start < len(ids); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(start+listBatchSize, len(ids))
 		batch, err := c.storage.GetSecretsByIDs(ctx, ids[start:end])
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
@@ -592,17 +587,12 @@ func (c *KeyorixCore) listingTags(ctx context.Context, secrets []*models.SecretW
 		ids = append(ids, s.ID)
 	}
 	for start := 0; start < len(ids); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(ids) {
-			end = len(ids)
-		}
+		end := min(start+listBatchSize, len(ids))
 		batch, err := c.storage.GetSecretTagsBySecretIDs(ctx, ids[start:end])
 		if err != nil {
 			return listingTagLookup{byID: map[uint][]string{}, failed: true}
 		}
-		for id, names := range batch {
-			lookup.byID[id] = names
-		}
+		maps.Copy(lookup.byID, batch)
 	}
 	return lookup
 }

@@ -372,10 +372,7 @@ func (c *KeyorixCore) appendSecretGrantEntries(ctx context.Context, secrets []*m
 	failedShares := map[uint]error{}
 	now := c.shareEffectiveNow()
 	for start := 0; start < len(secrets); start += listBatchSize {
-		end := start + listBatchSize
-		if end > len(secrets) {
-			end = len(secrets)
-		}
+		end := min(start+listBatchSize, len(secrets))
 		ids := make([]uint, 0, end-start)
 		for _, s := range secrets[start:end] {
 			ids = append(ids, s.ID)

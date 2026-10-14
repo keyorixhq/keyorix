@@ -8,6 +8,7 @@ package core
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"time"
 
@@ -69,9 +70,7 @@ func (c *KeyorixCore) SecretsInventory(ctx context.Context, projectID uint) ([]S
 		}
 		// One batched lookup (LIST-ENDPOINTS-1); an owner that cannot be read keeps "".
 		if names, err := c.storage.GetUsernamesByIDs(ctx, ids); err == nil {
-			for id, name := range names {
-				ownerName[id] = name
-			}
+			maps.Copy(ownerName, names)
 		}
 	}
 
