@@ -11,9 +11,22 @@ import (
 )
 
 // maxPendingAccessLogBytes bounds the memory held by lines waiting for the
-// current flusher. Past it a line is dropped and counted, never blocked on: the
-// access log is not the audit trail.
+// current flusher. Past it the writer's stall mode decides: block (default) waits
+// for the sink so no line is lost; drop discards and reports the line. The
+// access log is not the audit trail, which is written separately either way.
 const maxPendingAccessLogBytes = 1 << 20
+
+// accessLogWarnInterval is the minimum gap between two "lines are being dropped"
+// warnings.
+const accessLogWarnInterval = 10 * time.Second
+
+// accessLogDroppedTotal counts lines dropped by every drop-mode writer in this
+// process; AccessLogDropped exposes it to the system-info posture surface.
+var accessLogDroppedTotal atomic.Uint64
+
+// AccessLogDropped reports how many access-log lines this process has dropped
+// because the sink stalled (always 0 in the default block mode).
+func AccessLogDropped() uint64 { return accessLogDroppedTotal.Load() }
 
 // accessLogWriter is the access log's replacement for the global *log.Logger.
 //
@@ -31,18 +44,33 @@ type accessLogWriter struct {
 	prefix string
 	flags  int
 
+	// drop selects the stall mode: false (the zero value) blocks a caller while
+	// the queue is full, true drops and reports its line.
+	drop bool
+	// logf and now are log.Printf and time.Now unless a test replaces them.
+	logf func(format string, args ...any)
+	now  func() time.Time
+
 	mu       sync.Mutex
+	cond     *sync.Cond // signalled when the flusher frees queue space; made lazily
 	pending  []byte
 	spare    []byte
 	flushing bool
+
+	// Drop-mode reporting, guarded by mu.
+	episodeDrops uint64    // dropped since the last recovery line
+	sinceWarn    uint64    // dropped since the last warning
+	lastWarn     time.Time // zero until the first warning
+	warnInFlight bool
 
 	dropped atomic.Uint64
 }
 
 // newAccessLogWriter snapshots the std logger's destination, prefix and flags,
-// so output goes where log.Default() would have sent it.
-func newAccessLogWriter() *accessLogWriter {
-	return &accessLogWriter{out: log.Writer(), prefix: log.Prefix(), flags: log.Flags()}
+// so output goes where log.Default() would have sent it. drop selects
+// server.access_log.on_sink_stall: "drop" (true) or "block" (false).
+func newAccessLogWriter(drop bool) *accessLogWriter {
+	return &accessLogWriter{out: log.Writer(), prefix: log.Prefix(), flags: log.Flags(), drop: drop}
 }
 
 // Dropped reports how many lines were discarded because the sink fell behind.
@@ -53,10 +81,13 @@ func (w *accessLogWriter) Print(v ...interface{}) {
 	line := w.format(time.Now(), fmt.Sprint(v...))
 
 	w.mu.Lock()
-	if len(w.pending) >= maxPendingAccessLogBytes {
-		w.mu.Unlock()
-		w.dropped.Add(1)
-		return
+	for len(w.pending) >= maxPendingAccessLogBytes {
+		if w.drop {
+			w.noteDropLocked() // unlocks
+			return
+		}
+		// Block mode: a full queue means a flusher is mid-write; wait for it.
+		w.condLocked().Wait()
 	}
 	w.pending = append(w.pending, line...)
 	if w.flushing {
@@ -67,13 +98,79 @@ func (w *accessLogWriter) Print(v ...interface{}) {
 	for len(w.pending) > 0 {
 		batch := w.pending
 		w.pending = w.spare[:0]
+		w.condLocked().Broadcast() // the queue just emptied: wake blocked callers
 		w.mu.Unlock()
 		_, _ = w.out.Write(batch) // a failing sink loses lines, as with log.Logger
 		w.mu.Lock()
 		w.spare = batch[:0]
 	}
 	w.flushing = false
+	w.recoveredLocked() // unlocks
+}
+
+func (w *accessLogWriter) condLocked() *sync.Cond {
+	if w.cond == nil {
+		w.cond = sync.NewCond(&w.mu)
+	}
+	return w.cond
+}
+
+func (w *accessLogWriter) report(format string, args ...any) {
+	if w.logf != nil {
+		w.logf(format, args...)
+		return
+	}
+	log.Printf(format, args...)
+}
+
+func (w *accessLogWriter) clock() time.Time {
+	if w.now != nil {
+		return w.now()
+	}
+	return time.Now()
+}
+
+// noteDropLocked counts one dropped line and, at most once per
+// accessLogWarnInterval, reports how many were dropped since the last warning.
+// It releases w.mu. The warning is written from its own goroutine: it goes to the
+// same stalled sink, and the request being dropped must not wait on it. At most
+// one such goroutine exists at a time; counts keep accumulating meanwhile.
+func (w *accessLogWriter) noteDropLocked() {
+	w.dropped.Add(1)
+	accessLogDroppedTotal.Add(1)
+	w.episodeDrops++
+	w.sinceWarn++
+	now := w.clock()
+	if w.warnInFlight || (!w.lastWarn.IsZero() && now.Sub(w.lastWarn) < accessLogWarnInterval) {
+		w.mu.Unlock()
+		return
+	}
+	n, total := w.sinceWarn, w.dropped.Load()
+	w.sinceWarn = 0
+	w.lastWarn = now
+	w.warnInFlight = true
 	w.mu.Unlock()
+	go func() {
+		w.report("WARNING: access log sink is stalled (server.access_log.on_sink_stall=drop): "+
+			"%d access-log lines dropped since the last warning, %d in total; the audit trail is unaffected", n, total)
+		w.mu.Lock()
+		w.warnInFlight = false
+		w.mu.Unlock()
+	}()
+}
+
+// recoveredLocked reports the end of a drop episode once the sink has caught up
+// (the flusher drained the queue). It releases w.mu.
+func (w *accessLogWriter) recoveredLocked() {
+	if w.episodeDrops == 0 {
+		w.mu.Unlock()
+		return
+	}
+	w.episodeDrops, w.sinceWarn = 0, 0
+	w.lastWarn = time.Time{}
+	total := w.dropped.Load()
+	w.mu.Unlock()
+	go w.report("access log sink recovered, %d lines dropped in total", total)
 }
 
 // format renders one line the way log.Logger does for the flags in use.
