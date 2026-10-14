@@ -275,4 +275,66 @@ func TestSuspendProjectSecrets_ClearSyncedCopies(t *testing.T) {
 		assert.Equal(t, 1, suspended, "exactly the secret committed before the refusal is suspended")
 		assert.Len(t, w.events(t, EventSecretSuspended), 1, "and it has its own audit row")
 	})
+
+	t.Run("counts a non-audit per-secret failure in clear mode: partial error, failed secret stays readable", func(t *testing.T) {
+		w := newProjectSuspendWorld(t)
+		ids := []uint{
+			w.secret(t, "a", 1, SecretStatusActive, false),
+			w.secret(t, "b", 1, SecretStatusActive, false),
+			w.secret(t, "c", 1, SecretStatusActive, false),
+		}
+		faulty := faultstorage.NewFaultyStorage(w.c.storage, nil)
+		w.c.storage = faulty
+		// One status transition per secret: the second one fails in storage.
+		faulty.Arm(&faultstorage.FaultSpec{Method: "TransitionSecretStatus", NthCall: 2, Kind: faultstorage.KindError, Err: assert.AnError})
+
+		n, err := w.c.SuspendProjectSecretsWithOptions(ctx, w.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
+		require.True(t, faulty.Fired(), "the transition fault must be reached, or this test proves nothing")
+		var partial *BulkSuspendPartialError
+		require.ErrorAs(t, err, &partial, "a secret left readable must never be reported as success")
+		assert.NotErrorIs(t, err, ErrSuspendAuditUnavailable, "a storage failure is not an audit refusal")
+		assert.False(t, partial.AuditRefused)
+		assert.Equal(t, 2, n)
+		assert.Equal(t, 2, partial.Suspended)
+		assert.Equal(t, 1, partial.Failed)
+		active := 0
+		for _, id := range ids {
+			if w.stored(t, id).Status == SecretStatusActive {
+				active++
+			}
+		}
+		assert.Equal(t, 1, active, "exactly the failed secret is still readable")
+	})
+
+	t.Run("a plain project suspend still skips a non-audit per-secret failure", func(t *testing.T) {
+		w := newProjectSuspendWorld(t)
+		w.secret(t, "a", 1, SecretStatusActive, false)
+		w.secret(t, "b", 1, SecretStatusActive, false)
+		faulty := faultstorage.NewFaultyStorage(w.c.storage, nil)
+		w.c.storage = faulty
+		faulty.Arm(&faultstorage.FaultSpec{Method: "TransitionSecretStatus", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+
+		n, err := w.c.SuspendProjectSecrets(ctx, w.projectID, 1, "")
+		require.True(t, faulty.Fired())
+		require.NoError(t, err)
+		assert.Equal(t, 1, n)
+	})
+
+	t.Run("a storage error in the write-permission re-check is a failure in clear mode, not a denial", func(t *testing.T) {
+		w := newProjectSuspendWorld(t)
+		a := w.secret(t, "a", 1, SecretStatusActive, false)
+		faulty := faultstorage.NewFaultyStorage(w.c.storage, nil)
+		w.c.storage = faulty
+		// The first GetSecret is the per-secret write-permission re-check.
+		faulty.Arm(&faultstorage.FaultSpec{Method: "GetSecret", NthCall: 1, Kind: faultstorage.KindError, Err: assert.AnError})
+
+		n, err := w.c.SuspendProjectSecretsWithOptions(ctx, w.projectID, 1, "", SuspendOptions{ClearSyncedCopies: true})
+		require.True(t, faulty.Fired())
+		var partial *BulkSuspendPartialError
+		require.ErrorAs(t, err, &partial)
+		assert.Zero(t, n)
+		assert.Equal(t, 0, partial.Suspended)
+		assert.Equal(t, 1, partial.Failed)
+		assert.Equal(t, SecretStatusActive, w.stored(t, a).Status)
+	})
 }

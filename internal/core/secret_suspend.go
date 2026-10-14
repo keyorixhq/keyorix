@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -160,6 +161,7 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 		return 0, err
 	}
 	var targets []*models.SecretNode
+	recheckFailed := 0
 	for _, s := range secrets {
 		if s.Status == SecretStatusSuspended && (!opts.ClearSyncedCopies || s.SuspendClearSyncedCopies) {
 			continue // already suspended, nothing to add
@@ -170,6 +172,12 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 		// not be able to via the bulk op (mirrors ExtendExpiringSecrets). Skip (don't
 		// abort) on denial.
 		if _, err := c.EnforceSecretWritePermission(ctx, s.ID, actorID); err != nil {
+			// A denial (or a secret deleted since the list) is a skip. Any other error
+			// is a failed re-check, not a denial: a plain suspend still skips it, but a
+			// clear-synced-copies suspend counts it as a secret it could not suspend.
+			if opts.ClearSyncedCopies && !isSuspendSkip(err) {
+				recheckFailed++
+			}
 			continue
 		}
 		targets = append(targets, s)
@@ -190,39 +198,70 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 	if !persisted && opts.ClearSyncedCopies {
 		return 0, ErrBulkSuspendAuditUnavailable
 	}
-	n := 0
+	n, failed := 0, recheckFailed
 	for _, s := range targets {
 		_, err := c.SuspendSecretWithOptions(ctx, s.ID, actorID, reason, opts)
 		if err == nil {
 			n++
 			continue
 		}
+		if !opts.ClearSyncedCopies {
+			continue // a plain suspend is best-effort per secret, as it always was
+		}
 		// A clear-synced-copies suspend is fail-closed on audit: stop at the first secret
 		// whose own audit row was refused and tell the caller. Secrets already suspended
-		// stay suspended (each committed with its own audit row). Any other per-secret
-		// error, and any error on a plain suspend, keeps the skip-and-continue behaviour.
-		if opts.ClearSyncedCopies && errors.Is(err, ErrSuspendAuditUnavailable) {
-			return n, &BulkSuspendPartialError{Suspended: n, Failed: len(targets) - n}
+		// stay suspended (each committed with its own audit row).
+		if errors.Is(err, ErrSuspendAuditUnavailable) {
+			return n, &BulkSuspendPartialError{Suspended: n, Failed: len(targets) - n + recheckFailed, AuditRefused: true}
 		}
+		// Any other per-secret failure (storage error, commit failure, concurrent status
+		// change) leaves that secret readable: count it so the caller is never told the
+		// whole project was suspended. A secret deleted since the list is not a failure.
+		if !isSuspendSkip(err) {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return n, &BulkSuspendPartialError{Suspended: n, Failed: failed}
 	}
 	return n, nil
 }
 
+// isSuspendSkip reports whether a per-secret error during a bulk suspend is a skip
+// (permission denied, or the secret no longer exists) rather than a failure.
+func isSuspendSkip(err error) bool {
+	return storage.IsSecretNotFound(err) || strings.Contains(err.Error(), i18n.T("ErrorPermissionDenied", nil))
+}
+
 // BulkSuspendPartialError is returned by SuspendProjectSecretsWithOptions when a
-// clear-synced-copies suspend stopped because a secret's own audit row could not be
-// recorded. Suspended secrets stay suspended; Failed counts the targets that are not
-// (the one whose audit was refused and those never attempted). It unwraps to
-// ErrSuspendAuditUnavailable.
+// clear-synced-copies suspend did not suspend every secret it should have. Suspended
+// secrets stay suspended; Failed counts those that are not and remain readable.
+//
+// AuditRefused: the run stopped because a secret's own audit row could not be
+// recorded; Failed then includes that secret and every target never attempted, and
+// the error unwraps to ErrSuspendAuditUnavailable. Otherwise the run finished and
+// Failed counts the secrets whose permission re-check or suspend failed for another
+// reason (storage error, commit failure, concurrent status change).
 type BulkSuspendPartialError struct {
-	Suspended int
-	Failed    int
+	Suspended    int
+	Failed       int
+	AuditRefused bool
 }
 
 func (e *BulkSuspendPartialError) Error() string {
-	return fmt.Sprintf("%v: %d suspended, %d not suspended", ErrSuspendAuditUnavailable, e.Suspended, e.Failed)
+	if e.AuditRefused {
+		return fmt.Sprintf("%v: %d suspended, %d not suspended", ErrSuspendAuditUnavailable, e.Suspended, e.Failed)
+	}
+	return fmt.Sprintf("bulk suspend incomplete: %d suspended, %d could not be suspended and are still readable, retry", e.Suspended, e.Failed)
 }
 
-func (e *BulkSuspendPartialError) Unwrap() error { return ErrSuspendAuditUnavailable }
+// Unwrap returns ErrSuspendAuditUnavailable when the run stopped on an audit refusal.
+func (e *BulkSuspendPartialError) Unwrap() error {
+	if e.AuditRefused {
+		return ErrSuspendAuditUnavailable
+	}
+	return nil
+}
 
 // ResumeProjectSecrets restores value reads of every suspended secret in a project and
 // returns how many it resumed. See SuspendProjectSecrets for semantics.

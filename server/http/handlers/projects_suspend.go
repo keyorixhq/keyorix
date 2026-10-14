@@ -45,7 +45,11 @@ func (h *SecretHandler) SuspendProjectSecrets(w http.ResponseWriter, r *http.Req
 		var partial *core.BulkSuspendPartialError
 		if errors.As(err, &partial) {
 			// Already-suspended secrets stay suspended; the counts let the operator retry.
-			h.sendError(w, "InternalError", "An audit event could not be recorded; the suspension stopped early, retry",
+			msg := "Some secrets could not be suspended and are still readable; retry"
+			if partial.AuditRefused {
+				msg = "An audit event could not be recorded; the suspension stopped early, retry"
+			}
+			h.sendError(w, "InternalError", msg,
 				http.StatusInternalServerError,
 				map[string]int{"suspended": partial.Suspended, "failed": partial.Failed})
 			return
