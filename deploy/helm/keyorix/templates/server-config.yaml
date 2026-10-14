@@ -16,7 +16,7 @@ data:
     # refuse to start. deploy TestShippedHelmConfig_FilePermissionCheckIsOn
     # pins this.
     server:
-      {{- with .Values.server.accessLog.onSinkStall }}
+      {{- with (.Values.server.accessLog | default dict).onSinkStall }}
       {{- if not (has . (list "block" "drop")) }}
       {{- fail (printf "server.accessLog.onSinkStall: %q must be block or drop" (toString .)) }}
       {{- end }}

@@ -83,7 +83,11 @@ func (w *accessLogWriter) Print(v ...interface{}) {
 	w.mu.Lock()
 	for len(w.pending) >= maxPendingAccessLogBytes {
 		if w.drop {
-			w.noteDropLocked() // unlocks
+			n, total, warn := w.noteDropLocked()
+			w.mu.Unlock()
+			if warn {
+				w.warnAsync(n, total)
+			}
 			return
 		}
 		// Block mode: a full queue means a flusher is mid-write; wait for it.
@@ -105,7 +109,11 @@ func (w *accessLogWriter) Print(v ...interface{}) {
 		w.spare = batch[:0]
 	}
 	w.flushing = false
-	w.recoveredLocked() // unlocks
+	total, recovered := w.recoveredLocked()
+	w.mu.Unlock()
+	if recovered {
+		go w.report("access log sink recovered, %d lines dropped in total", total)
+	}
 }
 
 func (w *accessLogWriter) condLocked() *sync.Cond {
@@ -131,25 +139,29 @@ func (w *accessLogWriter) clock() time.Time {
 }
 
 // noteDropLocked counts one dropped line and, at most once per
-// accessLogWarnInterval, reports how many were dropped since the last warning.
-// It releases w.mu. The warning is written from its own goroutine: it goes to the
-// same stalled sink, and the request being dropped must not wait on it. At most
-// one such goroutine exists at a time; counts keep accumulating meanwhile.
-func (w *accessLogWriter) noteDropLocked() {
+// accessLogWarnInterval, says a warning is due: warn is true with the number
+// dropped since the last warning and the total. The caller holds w.mu and, after
+// releasing it, calls warnAsync when warn is set.
+func (w *accessLogWriter) noteDropLocked() (n, total uint64, warn bool) {
 	w.dropped.Add(1)
 	accessLogDroppedTotal.Add(1)
 	w.episodeDrops++
 	w.sinceWarn++
 	now := w.clock()
 	if w.warnInFlight || (!w.lastWarn.IsZero() && now.Sub(w.lastWarn) < accessLogWarnInterval) {
-		w.mu.Unlock()
-		return
+		return 0, 0, false
 	}
-	n, total := w.sinceWarn, w.dropped.Load()
+	n, total = w.sinceWarn, w.dropped.Load()
 	w.sinceWarn = 0
 	w.lastWarn = now
 	w.warnInFlight = true
-	w.mu.Unlock()
+	return n, total, true
+}
+
+// warnAsync writes the drop warning from its own goroutine: it goes to the same
+// stalled sink, and the request being dropped must not wait on it. At most one
+// such goroutine exists at a time (warnInFlight); counts keep accumulating meanwhile.
+func (w *accessLogWriter) warnAsync(n, total uint64) {
 	go func() {
 		w.report("WARNING: access log sink is stalled (server.access_log.on_sink_stall=drop): "+
 			"%d access-log lines dropped since the last warning, %d in total; the audit trail is unaffected", n, total)
@@ -159,18 +171,15 @@ func (w *accessLogWriter) noteDropLocked() {
 	}()
 }
 
-// recoveredLocked reports the end of a drop episode once the sink has caught up
-// (the flusher drained the queue). It releases w.mu.
-func (w *accessLogWriter) recoveredLocked() {
+// recoveredLocked ends a drop episode once the sink has caught up (the flusher
+// drained the queue) and returns the total to report. The caller holds w.mu.
+func (w *accessLogWriter) recoveredLocked() (total uint64, recovered bool) {
 	if w.episodeDrops == 0 {
-		w.mu.Unlock()
-		return
+		return 0, false
 	}
 	w.episodeDrops, w.sinceWarn = 0, 0
 	w.lastWarn = time.Time{}
-	total := w.dropped.Load()
-	w.mu.Unlock()
-	go w.report("access log sink recovered, %d lines dropped in total", total)
+	return w.dropped.Load(), true
 }
 
 // format renders one line the way log.Logger does for the flags in use.
