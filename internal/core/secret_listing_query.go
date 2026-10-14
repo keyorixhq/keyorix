@@ -585,7 +585,7 @@ type listingTagLookup struct {
 // need them for: every secret when a tag filter is present; otherwise only those a
 // search term does not already match by name or description (a name hit costs
 // nothing extra).
-func (c *KeyorixCore) listingTags(ctx context.Context, secrets []*models.SecretWithSharingInfo, want []string, query string) listingTagLookup {
+func (c *KeyorixCore) listingTags(ctx context.Context, secrets []*models.SecretWithSharingInfo, want []string, query string) listingTagLookup { // nosemgrep: keyorix-unbounded-bulk-slice-param -- secrets is the storage listing result (bounded by the listing scan cap), not a client-supplied array; the per-item work is in-memory, tag lookups are batched by listBatchSize
 	lookup := listingTagLookup{byID: map[uint][]string{}}
 	if len(want) == 0 && query == "" {
 		return lookup
