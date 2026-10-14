@@ -335,3 +335,26 @@ with the bundled PostgreSQL, which has no CA to name).
 {{/* Where the server pod mounts externalDatabase.caSecret. */}}
 {{- define "keyorix.externalDatabase.caDir" -}}/app/db-ca{{- end -}}
 {{- define "keyorix.externalDatabase.caFile" -}}{{ include "keyorix.externalDatabase.caDir" . }}/ca.crt{{- end -}}
+
+{{/*
+postgresql.settings (DB-TUNE-1): extra `postgres -c key=value` settings for the
+bundled PostgreSQL. Keys must be plain setting names. Durability is not
+tunable here: the audit row is committed before a secret is returned, so
+synchronous_commit, fsync and full_page_writes may not be turned off. (YAML
+reads a bare `off` as false, hence the boolean spellings.)
+*/}}
+{{- define "keyorix.postgresql.settings" -}}
+{{- $settings := .Values.postgresql.settings | default dict -}}
+{{- range $k, $v := $settings -}}
+{{- if not (regexMatch "^[a-z][a-z0-9_.]*$" $k) -}}
+{{- fail (printf "postgresql.settings: %q is not a PostgreSQL setting name" $k) -}}
+{{- end -}}
+{{- if and (has $k (list "synchronous_commit" "fsync" "full_page_writes")) (has (lower (toString $v)) (list "off" "false" "0" "no")) -}}
+{{- fail (printf "postgresql.settings.%s=%v would let a committed audit entry (or any write) be lost on a crash; it must stay on" $k $v) -}}
+{{- end -}}
+{{- end -}}
+{{- range $k, $v := $settings }}
+- -c
+- {{ printf "%s=%v" $k $v | quote }}
+{{- end -}}
+{{- end -}}
