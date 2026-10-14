@@ -41,7 +41,7 @@ func TestUTCTimes_FastPathBytesMatchFullWalk(t *testing.T) {
 			if err := json.NewEncoder(&fast).Encode(utcTimes(v)); err != nil {
 				t.Fatalf("%s/%s: %v", zname, pname, err)
 			}
-			var ref interface{} = v
+			ref := any(v)
 			if v != nil {
 				ref = utcTimesValue(reflectValueOf(v), 0).Interface()
 			}
