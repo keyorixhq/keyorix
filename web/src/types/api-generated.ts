@@ -1060,14 +1060,14 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List break-glass activations (for review)
-         * @description The project's emergency-access activations, newest first (an active grant past its expiry reads as expired). Requires roles.read.
+         * List break-glass activations (all for review, or your own)
+         * @description Emergency-access activations, newest first (an active grant past its expiry reads as expired). A caller holding roles.read at the project gets every activation of the project (scope "project"). Any other current member of the project (a role scoped to it, as for activation) gets only their OWN activations in the project, active, expired and revoked, with the same fields (scope "own"); nothing about other users' activations, not even a count. A non-member (the same 403 for every project id), a machine identity without roles.read, or a restricted personal access token whose restriction does not allow roles.read at the project, is refused with 403. The per-project MFA policy applies to both views. The answer also carries the server's break-glass limits (settings) so a client offers only lifetimes the server will honour; they are returned only to a caller this list allowed, and hold no secret.
          */
         get: operations["listBreakGlassActivations"];
         put?: never;
         /**
          * Activate break-glass emergency access (self-service)
-         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled, and always when the caller authenticated with a restricted personal access token (ADR-042).
+         * @description Immediately self-grant the configured emergency role at the project scope, time-bound (default + capped by server config), with a required written justification. NOT RBAC-gated — the controls are config-enablement, the justification, a loud audit (break_glass.activated) + admin alert, and auto-expiry. Returns 403 when break-glass is disabled (the error field is the code BreakGlassDisabled; gRPC: PermissionDenied with a google.rpc.ErrorInfo reason BreakGlassDisabled), and always when the caller authenticated with a restricted personal access token (ADR-042).
          */
         post: operations["activateBreakGlass"];
         delete?: never;
@@ -1999,7 +1999,7 @@ export interface paths {
         put?: never;
         /**
          * Render a template, expanding ${secret:<environment>/<name>} references
-         * @description Resolves every ${secret:<environment>/<name>} reference within the project under the caller's own read permissions. A missing or forbidden reference fails the render without returning partial output.
+         * @description Resolves every ${secret:<environment>/<name>} reference within the project under the caller's own read permissions. A missing or forbidden reference fails the render without returning partial output. A referenced secret whose state refuses the read fails the render the same way, with that refusal's status and code. A read refused by the secret's access schedule answers 403 with error SecretAccessOutsideSchedule; an expired, suspended or max-reads-exhausted secret answers 409 (see the SecretReadRefused response).
          */
         post: operations["renderSecretTemplate"];
         delete?: never;
@@ -2041,7 +2041,7 @@ export interface paths {
         };
         /**
          * Get a secret
-         * @description Return a secret by ID; include include_value=true to retrieve the decrypted value.
+         * @description Return a secret by ID; include include_value=true to retrieve the decrypted value. A read refused by the secret's access schedule answers 403 with error SecretAccessOutsideSchedule; an expired, suspended or max-reads-exhausted secret answers 409 (see the SecretReadRefused response).
          */
         get: operations["getSecret"];
         /**
@@ -2161,7 +2161,7 @@ export interface paths {
         };
         /**
          * Read a secret's value by reference
-         * @description Resolve a "project/environment/name" reference (ADR-059) directly to its decrypted value -- for scripts/integrations (e.g. the External Secrets Operator) that template a key string instead of tracking a numeric ID. Always reads and audits the value, like any value read.
+         * @description Resolve a "project/environment/name" reference (ADR-059) directly to its decrypted value -- for scripts/integrations (e.g. the External Secrets Operator) that template a key string instead of tracking a numeric ID. Always reads and audits the value, like any value read. A read refused by the secret's access schedule answers 403 with error SecretAccessOutsideSchedule; an expired, suspended or max-reads-exhausted secret answers 409 (see the SecretReadRefused response).
          */
         get: operations["getSecretValueByRef"];
         put?: never;
@@ -2778,7 +2778,7 @@ export interface paths {
         };
         /**
          * Show a certificate secret's public X.509 metadata
-         * @description Subject, issuer, validity window, SANs, and algorithms of a certificate-valued secret. Never returns the value or any private key.
+         * @description Subject, issuer, validity window, SANs, and algorithms of a certificate-valued secret. Never returns the value or any private key. Refused like a value read: a read outside the secret's access schedule answers 403 with error SecretAccessOutsideSchedule; an expired or suspended secret answers 409 (see the SecretReadRefused response). Inspecting does not charge max_reads, so SecretMaxReadsExhausted is never returned here.
          */
         get: operations["getSecretCertificate"];
         put?: never;
@@ -5080,6 +5080,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Stable code of a 409 secret-state read refusal (see the SecretReadRefused response).
+         * @enum {string}
+         */
+        SecretReadRefusalCode: "SecretExpired" | "SecretSuspended" | "SecretMaxReadsExhausted";
         LoginSuccessData: {
             /** @description Session bearer token */
             token: string;
@@ -5099,6 +5104,8 @@ export interface components {
             permissions?: string[];
             password_change_required?: boolean;
             account_state?: string;
+            /** @description Account-setup steps this session still owes (omitted when none). While present the session is confined to those steps' endpoints (account-setup gate, #3024), so a client should route straight to the setup page rather than render protected pages. Informational: it changes nothing about what the session may access. */
+            pending_steps?: ("change_password" | "enroll_mfa")[];
         };
         /** @description The password (or setup token) was correct, but a second factor is required -- core.ErrMFARequired. The client must complete POST /auth/mfa/verify (TOTP/recovery code) with this challenge, or the WebAuthn login ceremony, to get a real session. */
         MFAChallengeData: {
@@ -5917,6 +5924,23 @@ export interface components {
             expires_at?: string;
             created_at?: string;
         };
+        /** @description The server's effective break-glass limits, returned with the activations list to a caller it allowed. Deployment limits only: no secret, no admin-only data. */
+        BreakGlassSettings: {
+            /** @description break_glass.enabled; false means activation is refused with BreakGlassDisabled */
+            enabled?: boolean;
+            /** @description Name of the role an activation grants */
+            emergency_role?: string;
+            /**
+             * Format: int64
+             * @description Lifetime granted when none is requested (already capped at max_ttl_seconds)
+             */
+            default_ttl_seconds?: number;
+            /**
+             * Format: int64
+             * @description Ceiling a requested lifetime is capped at
+             */
+            max_ttl_seconds?: number;
+        };
         /** @description A secret-rotation policy (ADR-108 PR 1 addition). Snake_case, matching this spec's usual convention and the model's real wire format: models.RotationPolicy (internal/storage/models/models.go) previously had no `json:` tags on most fields, so encoding/json's default marshaling emitted the bare Go field names verbatim (ID, Name, ProjectID, IntervalDays, ...) instead -- a PascalCase wire format silently decoded by any snake_case-tagged consumer (Go's case-insensitive JSON fallback matches "ID"~"id" but not "ProjectID"~"project_id", an extra underscore is not a case difference) as the zero value for every multi-word field. Fixed at the source (the model itself now carries these exact tags) rather than documented here as a PascalCase exception -- see the model's own doc comment for the full writeup, and docs/cli-split-inventory.md §7 PR 1's closure note for how this was found. */
         RotationPolicy: {
             /** Format: uint32 */
@@ -6055,6 +6079,20 @@ export interface components {
                     } | null;
                     /** @description Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order. */
                     pending_steps?: string[];
+                };
+            };
+        };
+        /** @description The caller may read this secret, but the secret's own state refuses the value read (ERRMAP-1). `error` is a stable code clients can branch on and `message` a fixed, client-safe sentence: SecretExpired (its expiration has passed; an operator can extend or clear it), SecretSuspended (resume it to allow reads), SecretMaxReadsExhausted (its max_reads budget is spent; an operator can raise it). A read outside the secret's access schedule is a permission decision and answers 403 with error SecretAccessOutsideSchedule instead. 409, not 410: each state is reversible. Only a caller who may read the secret ever sees these; any other caller gets the same 403/404 as for a secret it cannot see. The gRPC GetSecretValue twin is FailedPrecondition (PermissionDenied for the schedule) with the same message and an ErrorInfo detail (domain keyorix.secrets, reason = the code). */
+        SecretReadRefused: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    success?: boolean;
+                    code?: number;
+                    error?: components["schemas"]["SecretReadRefusalCode"];
+                    message?: string;
                 };
             };
         };
@@ -6409,7 +6447,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Self profile (id, username, email, display_name, role, roles, permissions, last_login_at) */
+            /** @description Self profile (id, username, email, display_name, role, roles, permissions, last_login_at; pending_steps = the account-setup steps this session still owes, omitted when none) */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7656,7 +7694,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data}. data: {activations[] of {id, user_id, role_name, justification, state, expires_at, created_at}, count}. */
+            /** @description Envelope {data}. data: {activations[] of {id, user_id, role_name, justification, state, expires_at, created_at}, count, scope}. */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -7666,6 +7704,12 @@ export interface operations {
                         data?: {
                             activations?: components["schemas"]["BreakGlassActivation"][];
                             count?: number;
+                            /**
+                             * @description "project": every activation of the project (caller holds roles.read). "own": only the caller's own activations.
+                             * @enum {string}
+                             */
+                            scope?: "project" | "own";
+                            settings?: components["schemas"]["BreakGlassSettings"];
                         };
                     };
                 };
@@ -9429,6 +9473,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["SecretReadRefused"];
         };
     };
     listSecrets: {
@@ -9560,6 +9605,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["SecretReadRefused"];
         };
     };
     updateSecret: {
@@ -9576,6 +9622,8 @@ export interface operations {
                 "application/json": {
                     value?: string;
                     max_reads?: number | null;
+                    /** @description Remove the read limit (the secret becomes unlimited). The read counter is kept. */
+                    clear_max_reads?: boolean;
                     /** Format: date-time */
                     expiration?: string;
                     clear_expiration?: boolean;
@@ -9822,6 +9870,7 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            409: components["responses"]["SecretReadRefused"];
         };
     };
     diffSecretVersions: {
@@ -10374,8 +10423,8 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Schedule removed. */
-            204: {
+            /** @description Schedule removed (or none was set). Envelope `{data: {deleted: true}, message: "schedule removed"}`; the handler has always answered 200, not 204 (#3173). */
+            200: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -10945,6 +10994,9 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["SecretReadRefused"];
         };
     };
     getSecretBlastRadius: {
@@ -11620,6 +11672,15 @@ export interface operations {
                                 createdAt: string;
                                 /** @description Username of the share's creator (always the caller here). */
                                 createdBy: string;
+                                /** @description The secret's name. Absent when the caller may not read the secret (#3153). */
+                                secretName?: string;
+                                /**
+                                 * Format: uint32
+                                 * @description The secret's project. Absent with secretName.
+                                 */
+                                projectId?: number;
+                                /** @description The secret's project name. Absent with secretName. */
+                                projectName?: string;
                             }[];
                             total: number;
                             page: number;

@@ -24,6 +24,44 @@ set -e
 # With arguments (`docker compose run --rm backend ./keyorix-server admin ...`)
 # the config copy is made and the arguments are run instead of the server.
 # ---------------------------------------------------------------------------
+# --- BEGIN public_cert (extracted verbatim by server/entrypoint_public_cert_test.go) ---
+# require_regular_file NAME PATH: PATH (the value of env var NAME) must be a regular
+# file (or a symlink to one): refuse a directory, FIFO or device (cp would block or
+# copy something unintended).
+require_regular_file() {
+    if [ ! -f "$2" ] || [ ! -r "$2" ]; then
+        echo "ERROR: $1=$2 is not a readable regular file" >&2
+        return 1
+    fi
+}
+# require_public_cert NAME FILE: FILE (about to be made world-readable) must be a PEM
+# certificate bundle: at least one CERTIFICATE block, only blocks with base64 bodies
+# (blank lines between blocks allowed), nothing else, no PRIVATE KEY block of any kind
+# (RSA/EC/ENCRYPTED/PKCS#8), at most 256 KiB. Never prints file contents.
+require_public_cert() {
+    if [ "$(wc -c < "$2")" -gt 262144 ]; then
+        echo "ERROR: $1 is larger than 256 KiB -- refusing to publish it as a certificate" >&2
+        return 1
+    fi
+    if grep -q 'PRIVATE KEY' "$2"; then
+        echo "ERROR: $1 contains a PRIVATE KEY -- refusing to copy it to a world-readable file (point it at the public certificate)" >&2
+        return 1
+    fi
+    if ! awk '
+        { sub(/\r$/, "") }
+        $0 == "-----BEGIN CERTIFICATE-----" { if (inb) bad = 1; inb = 1; n++; next }
+        $0 == "-----END CERTIFICATE-----" { if (!inb) bad = 1; inb = 0; next }
+        inb && /^[A-Za-z0-9+\/=]+$/ { next }
+        !inb && /^$/ { next }
+        { bad = 1 }
+        END { exit (bad || inb || n == 0) ? 1 : 0 }
+    ' "$2"; then
+        echo "ERROR: $1 is not a PEM certificate bundle (only CERTIFICATE blocks are allowed) -- refusing to copy it to a world-readable file" >&2
+        return 1
+    fi
+}
+# --- END public_cert ---
+
 if [ -n "$KEYORIX_CONFIG_SOURCE" ]; then
     : "${KEYORIX_CONFIG_PATH:?KEYORIX_CONFIG_SOURCE is set, so KEYORIX_CONFIG_PATH must name the private copy}"
     (umask 077 && cp "$KEYORIX_CONFIG_SOURCE" "$KEYORIX_CONFIG_PATH.tmp")
@@ -43,10 +81,18 @@ if [ "$KEYORIX_INIT_SECURE_FILES" = "true" ]; then
     for name in $KEYORIX_TLS_DNS_NAMES; do
         set -- "$@" --tls-dns-name "$name"
     done
-    ./keyorix-server admin init --secure-files "$@"
+    /app/keyorix-server admin init --secure-files "$@"
     if [ -n "$KEYORIX_PUBLIC_CA_FILE" ]; then
         : "${KEYORIX_LOCAL_CA_FILE:?KEYORIX_PUBLIC_CA_FILE needs KEYORIX_LOCAL_CA_FILE (the certificate to copy)}"
-        (umask 022 && cp "$KEYORIX_LOCAL_CA_FILE" "$KEYORIX_PUBLIC_CA_FILE.tmp")
+        # The copy is world-readable on a volume shared with the web container, so
+        # it must be a certificate bundle and nothing else. Copy privately (0600)
+        # first and check the COPY, so the file cannot change between check and use.
+        require_regular_file KEYORIX_LOCAL_CA_FILE "$KEYORIX_LOCAL_CA_FILE" || exit 1
+        (umask 077 && cp "$KEYORIX_LOCAL_CA_FILE" "$KEYORIX_PUBLIC_CA_FILE.tmp")
+        if ! require_public_cert KEYORIX_LOCAL_CA_FILE "$KEYORIX_PUBLIC_CA_FILE.tmp"; then
+            rm -f "$KEYORIX_PUBLIC_CA_FILE.tmp"
+            exit 1
+        fi
         chmod 644 "$KEYORIX_PUBLIC_CA_FILE.tmp"
         mv -f "$KEYORIX_PUBLIC_CA_FILE.tmp" "$KEYORIX_PUBLIC_CA_FILE"
     fi
@@ -156,7 +202,7 @@ resolve_secret KEYORIX_BOOTSTRAP_TOKEN _kx_bootstrap_token || exit 1
 
 # Run the server in the background so we can perform an optional first-boot admin
 # bootstrap once it is healthy, then hand the process the foreground.
-./keyorix-server &
+/app/keyorix-server &
 SERVER_PID=$!
 
 # Always re-foreground the server on exit so signals propagate to it.
@@ -241,6 +287,7 @@ if [ -n "$_kx_admin_password" ]; then
         # server and exit non-zero: never "healthy but unusable" (#3025).
         BOOTSTRAP_ATTEMPTS="${KEYORIX_BOOTSTRAP_ATTEMPTS:-10}"
         BOOTSTRAP_OK=0
+        POLICY_REFUSED=0
         attempt=1
         while [ "$attempt" -le "$BOOTSTRAP_ATTEMPTS" ]; do
             # Self-contained (entrypoint_test.sh runs this block on its own): verify
@@ -256,14 +303,46 @@ if [ -n "$_kx_admin_password" ]; then
                 BOOTSTRAP_OK=1
                 break
             fi
+            # The POST cannot say why it was refused (BusyBox wget drops the body of a
+            # 403), so a password that contains the username looked exactly like a
+            # wrong bootstrap token and crash-looped the container with a hint about
+            # the token (#3201). After the first failure, ask the server binary for
+            # the password policy's verdict (the password goes over stdin; printf is
+            # a shell builtin, so it never reaches an argv). Asking only AFTER a
+            # failure keeps an already-initialised install booting: its POST
+            # succeeds as already_initialized whatever the configured password is.
+            # Exit 2 = the policy refused it (the reason is printed above). Exit 1 or
+            # any other status (stdin/flag error, binary missing, ...) is no verdict.
+            # A verdict is remembered, not acted on at once: a transient first-POST
+            # failure on an already-initialised install with a non-compliant password
+            # must still recover on a retry. If every attempt fails, the verdict is
+            # the reported cause instead of the bootstrap-token hint.
+            if [ "$attempt" -eq 1 ]; then
+                set +e
+                printf '%s' "$_kx_admin_password" | "${_kx_server_bin:-/app/keyorix-server}" admin check-admin-password \
+                    --username "$ADMIN_USER" --email "$ADMIN_EMAIL" --display-name Administrator
+                check_rc=$?
+                set -e
+                if [ "$check_rc" -eq 2 ]; then
+                    POLICY_REFUSED=1
+                fi
+            fi
             echo "Bootstrap attempt ${attempt}/${BOOTSTRAP_ATTEMPTS} failed; retrying in 3s..."
             attempt=$((attempt + 1))
             sleep 3
         done
         if [ "$BOOTSTRAP_OK" -ne 1 ]; then
             rm -rf "$BOOTSTRAP_TMPDIR"
+            if [ "$POLICY_REFUSED" -eq 1 ]; then
+                echo "ERROR: the configured admin password (KEYORIX_ADMIN_PASSWORD or KEYORIX_ADMIN_PASSWORD_FILE) was rejected by the" >&2
+                echo "ERROR: password policy, so the admin '$ADMIN_USER' cannot be bootstrapped. The reason is above; fix the password and restart." >&2
+                kill -TERM "$SERVER_PID" 2>/dev/null
+                wait "$SERVER_PID" 2>/dev/null
+                exit 1
+            fi
             echo "ERROR: admin bootstrap did not complete after ${BOOTSTRAP_ATTEMPTS} attempts" >&2
-            echo "ERROR: (server ready=${SERVER_READY}). Check KEYORIX_BOOTSTRAP_TOKEN matches and the server logs above." >&2
+            echo "ERROR: (server ready=${SERVER_READY}). The admin password was not refused by the password policy, so the usual cause is" >&2
+            echo "ERROR: a KEYORIX_BOOTSTRAP_TOKEN that does not match the server's; the server logs above have the server's own reason." >&2
             kill -TERM "$SERVER_PID" 2>/dev/null
             wait "$SERVER_PID" 2>/dev/null
             exit 1

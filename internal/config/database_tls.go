@@ -19,7 +19,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // SSLRootCertSystem is the ssl_root_cert value that trusts the operating
@@ -47,7 +48,7 @@ func resolveConfigRelativeFile(baseDir, p string) (string, error) {
 	return filepath.Abs(filepath.Join(baseDir, p))
 }
 
-// effectiveSSLMode is the sslmode BuildPostgresDSN writes for a field-built
+// effectiveSSLMode is the sslmode ResolvePostgresConnConfig uses for a field-built
 // DSN: SSLMode, or "require" when unset.
 func (d *DatabaseConfig) effectiveSSLMode() string {
 	if d.SSLMode == "" {
@@ -70,22 +71,17 @@ func sslModeVerifies(mode string) bool {
 // writable by group or others (anyone who can write it can make the server
 // trust their database). Errors name the path, never file contents.
 func LoadDatabaseCAPool(path string) (*x509.CertPool, int, error) {
-	// O_NONBLOCK so a FIFO opens at once and is refused by the IsRegular check
-	// below; a blocking open on a FIFO with no writer would hang boot instead.
-	// It has no effect on reads from the regular file that passes that check.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0) // #nosec G304 -- the operator names their own CA file in the config
+	// OpenRegular opens non-blocking and fstats the same descriptor, so a FIFO
+	// is refused at once instead of hanging boot in open(2).
+	f, info, err := secretenv.OpenRegular(path, 0)
 	if err != nil {
+		if errors.Is(err, secretenv.ErrNotRegular) {
+			return nil, 0, fmt.Errorf("CA file %s: not a regular file", path)
+		}
 		return nil, 0, fmt.Errorf("read CA file: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 
-	info, err := f.Stat()
-	if err != nil {
-		return nil, 0, fmt.Errorf("read CA file: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, 0, fmt.Errorf("CA file %s: not a regular file", path)
-	}
 	if perm := info.Mode().Perm(); perm&0o022 != 0 {
 		return nil, 0, fmt.Errorf("CA file %s has permissions %#o: writable by group or others, refusing to trust it; fix with chmod go-w %s", path, perm, path)
 	}
@@ -163,10 +159,13 @@ func missingRootCertError(modeField, mode, fix string) error {
 //     verify-full/verify-ca: its sslrootcert must be set and pass the same
 //     file checks.
 //
-// Run by Config.Validate at startup and by BuildPostgresDSN on every
+// Run by Config.Validate at startup and by ResolvePostgresConnConfig on every
 // connection a process opens, so an entry point that never calls Validate
 // (the admin subcommands) cannot connect around it.
 func ValidateDatabaseTLS(d *DatabaseConfig) error {
+	if err := refuseConnectionService(d); err != nil {
+		return err
+	}
 	if d.DSN != "" {
 		return validateDSNTLS(d)
 	}
@@ -184,6 +183,38 @@ func ValidateDatabaseTLS(d *DatabaseConfig) error {
 			"so the connection is neither encrypted nor verified; set ssl_mode to verify-full (or remove ssl_root_cert)")
 	}
 	return checkRootCert("storage.database.ssl_root_cert", d.SSLRootCert)
+}
+
+// refuseConnectionService refuses a PostgreSQL connection that would take
+// settings from a connection-service file: `service=` / `servicefile=` in the
+// dsn, or the PGSERVICE environment variable (pgx reads both). The file is
+// merged over the environment and under the dsn, so it can supply the sslmode,
+// sslrootcert and host that the checks in this file never see: a service with
+// sslmode=verify-full and no sslrootcert would make pgx verify against its
+// implicit trust store, the fallback ssl_root_cert exists to close. Resolving
+// the file the way pgx does would mean re-reading it at connect time too, so
+// the config is refused instead. PGSERVICEFILE alone is inert -- pgx reads a
+// service file only when a service is selected -- so it is not refused.
+func refuseConnectionService(d *DatabaseConfig) error {
+	const fix = "Put the connection settings (host, ssl_mode, ssl_root_cert, ...) in storage.database or " +
+		"in the dsn itself instead of a service file; Keyorix does not read service files, so it " +
+		"cannot check the TLS trust they would set"
+	if d.DSN != "" {
+		selects, err := dsnSelectsService(d.DSN)
+		if err != nil {
+			return fmt.Errorf("storage.database.dsn: %w", err)
+		}
+		if selects {
+			return errors.New("storage.database.dsn selects a PostgreSQL connection service (service= or servicefile=), " +
+				"whose file could set sslmode, sslrootcert or host behind the TLS checks -- refusing to start. " + fix)
+		}
+	}
+	if os.Getenv("PGSERVICE") != "" {
+		return errors.New("the PGSERVICE environment variable selects a PostgreSQL connection service, " +
+			"whose file could set sslmode, sslrootcert or host behind the TLS checks -- refusing to start. " +
+			"Unset PGSERVICE for the Keyorix server, or: " + fix)
+	}
+	return nil
 }
 
 func validateDSNTLS(d *DatabaseConfig) error {
@@ -241,10 +272,23 @@ func dsnTLSSettings(dsn string) (sslmode, sslrootcert string, err error) {
 // URI-only alias for sslmode=require) only weakens the mode, so reading it as
 // the explicit sslmode is stricter, never looser.
 func urlTLSSettings(dsn string) (sslmode, sslrootcert string, err error) {
-	params, err := urlQuery(dsn)
+	params, err := urlParams(dsn)
 	if err != nil {
 		return "", "", err
 	}
+	return params["sslmode"], params["sslrootcert"], nil
+}
+
+// urlParams returns every key of a connection URL's query, read as described
+// at urlTLSSettings (last occurrence wins; keys and values percent-decoded and
+// space-trimmed). A key present with an empty value is present in the map, as
+// it is to pgx.
+func urlParams(dsn string) (map[string]string, error) {
+	params, err := urlQuery(dsn)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]string{}
 	// No '#' fragment is cut off: pgx has none, so "?#=&sslmode=verify-full"
 	// is a verify-full connection to pgx and must be one here.
 	for _, pair := range strings.Split(params, "&") {
@@ -253,21 +297,41 @@ func urlTLSSettings(dsn string) (sslmode, sslrootcert string, err error) {
 		}
 		rawKey, rawValue, found := strings.Cut(pair, "=")
 		if !found || strings.Contains(rawValue, "=") {
-			return "", "", errors.New("malformed query parameter in the connection URL")
+			return nil, errors.New("malformed query parameter in the connection URL")
 		}
 		key, kerr := url.PathUnescape(rawKey)
 		value, verr := url.PathUnescape(rawValue)
 		if kerr != nil || verr != nil {
-			return "", "", errors.New("malformed percent-encoding in the connection URL's query")
+			return nil, errors.New("malformed percent-encoding in the connection URL's query")
 		}
-		switch strings.TrimSpace(key) {
-		case "sslmode":
-			sslmode = strings.TrimSpace(value)
-		case "sslrootcert":
-			sslrootcert = strings.TrimSpace(value)
-		}
+		// pgx's uriDecode drops leading/trailing ASCII spaces only: a key
+		// "sslrootcert\r" is a runtime parameter to pgx, not sslrootcert
+		// (fuzz-found by FuzzResolvePostgresConnConfig_PasswordCannotChangeConnection
+		// through checkFinalPostgresTLS).
+		out[strings.Trim(key, " ")] = strings.Trim(value, " ")
 	}
-	return sslmode, sslrootcert, nil
+	return out, nil
+}
+
+// dsnSelectsService reports whether the connection string names a connection
+// service (the `service` key, present even when empty, as pgx tests it) or a
+// service file (`servicefile`, a pgx extension). pgx then merges that file's
+// settings over the environment and under the string's own, so it can supply
+// sslmode, sslrootcert or host -- settings the check reads only from the string.
+func dsnSelectsService(dsn string) (bool, error) {
+	var settings map[string]string
+	var err error
+	if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
+		settings, err = urlParams(dsn)
+	} else {
+		settings, err = parseKeywordValueDSN(dsn)
+	}
+	if err != nil {
+		return false, err
+	}
+	_, svc := settings["service"]
+	_, file := settings["servicefile"]
+	return svc || file, nil
 }
 
 // urlQuery returns the query string of a postgres:// URL the way pgx's

@@ -23,6 +23,7 @@
 package secretenv
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -102,31 +103,96 @@ func ReadFile(path string) (string, error) {
 	return readSecretFile(path, false)
 }
 
-func readSecretFile(path string, checkPerms bool) (string, error) {
-	// Symlinks are followed on purpose: a Kubernetes Secret volume exposes each
-	// key as a symlink into the kubelet's ..data/ directory. The permission
-	// check (CheckPermissions) stats the target, so a symlink cannot be used to
-	// launder a loose file.
-	//
-	// O_NONBLOCK: a plain open(2) of a FIFO (or of some devices) blocks until a
-	// writer appears, before the regular-file check below could refuse it -- a
-	// mis-pointed X_FILE would hang the boot silently. Non-blocking open returns at
-	// once; on a regular file the flag changes nothing.
-	// #nosec G304 G703 -- path is the operator's own X_FILE setting (process environment,
-	// not network input); the file must be a regular file and is size-capped below.
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+// ErrNotRegular is returned (wrapped) by OpenRegular for a FIFO, device, socket
+// or directory.
+var ErrNotRegular = errors.New("secret file is not a regular file")
+
+// OpenRegular is the one way to open a secret or key file for reading. It opens
+// read-only with O_NONBLOCK, fstats the SAME descriptor and refuses anything that
+// is not a regular file, returning the open file and its fstat info so the caller
+// can judge the mode on the descriptor it then reads (no swap window).
+//
+// O_NONBLOCK: a plain open(2) of a FIFO (or of some devices) blocks until a
+// writer appears, before any regular-file check could refuse it -- a mis-pointed
+// path would hang the boot silently, and a 0600 FIFO passes a mode check. A
+// non-blocking open returns at once; on a regular file the flag changes nothing.
+//
+// extraFlags is OR-ed into the open flags (e.g. syscall.O_NOFOLLOW for callers
+// that refuse a symlink). Symlinks are followed by default: a Kubernetes Secret
+// volume exposes each key as a symlink into the kubelet's ..data/ directory.
+//
+// Guard: internal/secretenv's TestSecretFileReadsGoThroughOpenRegular fails when
+// a secret/key read in the scanned packages bypasses this function.
+func OpenRegular(path string, extraFlags int) (*os.File, os.FileInfo, error) {
+	// #nosec G304 G703 -- path is operator configuration (environment, config file or
+	// flag), not network input; the file must be a regular file, checked below.
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK|extraFlags, 0)
 	if err != nil {
+		return nil, nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		return nil, nil, err
+	}
+	if !info.Mode().IsRegular() {
+		_ = f.Close()
+		return nil, nil, ErrNotRegular
+	}
+	return f, info, nil
+}
+
+// NotRegularError is returned by OpenRegularNamed and ReadRegularFile for a path
+// that is a FIFO, device, socket or directory. It reads "<what> <path>: not a
+// regular file" and matches ErrNotRegular under errors.Is.
+type NotRegularError struct {
+	What, Path string
+}
+
+func (e *NotRegularError) Error() string {
+	return e.What + " " + e.Path + ": not a regular file"
+}
+
+func (e *NotRegularError) Is(target error) bool { return target == ErrNotRegular }
+
+// OpenRegularNamed is OpenRegular for operator-supplied non-secret input (a CA
+// bundle, a license, a backup archive): it returns only the file, and names the
+// input and its path in the refusal. Any other open error is returned unchanged
+// (an *os.PathError already carries the path). what is the noun the operator
+// knows the input by, e.g. "CA bundle".
+func OpenRegularNamed(what, path string) (*os.File, error) {
+	f, _, err := OpenRegular(path, 0)
+	if err != nil {
+		if errors.Is(err, ErrNotRegular) {
+			return nil, &NotRegularError{What: what, Path: path}
+		}
+		return nil, err
+	}
+	return f, nil
+}
+
+// ReadRegularFile reads a whole operator-supplied file through OpenRegularNamed:
+// a FIFO or device is refused at once instead of blocking in open(2). Symlinks to
+// a regular file are followed.
+func ReadRegularFile(what, path string) ([]byte, error) {
+	f, err := OpenRegularNamed(what, path)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	return io.ReadAll(f)
+}
+
+func readSecretFile(path string, checkPerms bool) (string, error) {
+	f, info, err := OpenRegular(path, 0)
+	if err != nil {
+		if errors.Is(err, ErrNotRegular) {
+			return "", err
+		}
 		return "", fmt.Errorf("cannot open secret file: %w", unwrapPathError(err))
 	}
 	defer func() { _ = f.Close() }()
 
-	info, err := f.Stat()
-	if err != nil {
-		return "", fmt.Errorf("cannot stat secret file: %w", unwrapPathError(err))
-	}
-	if !info.Mode().IsRegular() {
-		return "", fmt.Errorf("secret file is not a regular file")
-	}
 	if checkPerms {
 		if err := checkInfo(info); err != nil {
 			return "", err

@@ -3,11 +3,13 @@ package services
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
@@ -16,8 +18,9 @@ import (
 
 // BreakGlassGRPCService implements pb.BreakGlassServiceServer over the shared core. It
 // enforces the SAME authorization as the HTTP routes: activate is self-service (any
-// authenticated member — it must work in an emergency), list → scoped roles.read,
-// revoke → scoped roles.assign. core audits every activation and revoke.
+// authenticated member — it must work in an emergency), list → scoped roles.read for
+// the whole project or the caller's own activations otherwise, revoke → scoped
+// roles.assign. core audits every activation and revoke.
 type BreakGlassGRPCService struct {
 	pb.UnimplementedBreakGlassServiceServer
 	core *core.KeyorixCore
@@ -46,7 +49,11 @@ func (s *BreakGlassGRPCService) ActivateBreakGlass(ctx context.Context, req *pb.
 	return breakGlassToProto(a), nil
 }
 
-// ListBreakGlassActivations lists a project's activations. Requires scoped roles.read.
+// ListBreakGlassActivations lists a project's activations. Same decision as the HTTP
+// route (core.ListBreakGlassActivationsForCaller): scoped roles.read lists them all,
+// any other project member only their own, anyone else is refused PermissionDenied exactly as
+// the roles.read check used to refuse them. The per-project MFA policy applies to
+// both views.
 func (s *BreakGlassGRPCService) ListBreakGlassActivations(ctx context.Context, req *pb.ListBreakGlassActivationsRequest) (*pb.ListBreakGlassActivationsResponse, error) {
 	actor, err := requireUser(ctx)
 	if err != nil {
@@ -55,19 +62,35 @@ func (s *BreakGlassGRPCService) ListBreakGlassActivations(ctx context.Context, r
 	if req.GetProjectId() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "project_id is required")
 	}
-	if err := authorizeScoped(ctx, s.core, actor, "roles.read", core.Scope{ProjectID: uint(req.GetProjectId())}); err != nil {
-		return nil, err
-	}
-	acts, err := s.core.ListBreakGlassActivations(ctx, uint(req.GetProjectId()))
+	acts, scope, err := s.core.ListBreakGlassActivationsForCaller(ctx, actor.ActorKind(), actor.PrincipalID(), actor.UserID, uint(req.GetProjectId()))
 	if err != nil {
+		if errors.Is(err, core.ErrBreakGlassListForbidden) {
+			return nil, status.Error(codes.PermissionDenied, "insufficient permissions")
+		}
 		return nil, breakGlassError(err)
+	}
+	if err := enforceProjectMFA(ctx, s.core, actor, uint(req.GetProjectId())); err != nil {
+		return nil, err
 	}
 	out := make([]*pb.BreakGlassActivation, 0, len(acts))
 	for _, a := range acts {
 		out = append(out, breakGlassToProto(a))
 	}
-	return &pb.ListBreakGlassActivationsResponse{Activations: out}, nil
+	bs := s.core.BreakGlassSettings()
+	return &pb.ListBreakGlassActivationsResponse{
+		Activations: out,
+		Scope:       scope,
+		Settings: &pb.BreakGlassSettings{
+			Enabled:           bs.Enabled,
+			EmergencyRole:     bs.EmergencyRole,
+			DefaultTtlSeconds: int64(bs.DefaultTTL / time.Second),
+			MaxTtlSeconds:     int64(bs.MaxTTL / time.Second),
+		},
+	}, nil
 }
+
+// breakGlassErrorDomain is the google.rpc.ErrorInfo domain of break-glass error reasons.
+const breakGlassErrorDomain = "keyorix.breakglass"
 
 // RevokeBreakGlass ends an active activation early. Requires scoped roles.assign.
 func (s *BreakGlassGRPCService) RevokeBreakGlass(ctx context.Context, req *pb.RevokeBreakGlassRequest) (*emptypb.Empty, error) {
@@ -126,7 +149,15 @@ func breakGlassError(err error) error {
 		return status.Error(codes.NotFound, "break-glass activation not found") // GRPC-005: was msg — leaked storage error details
 	case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 		return status.Error(codes.InvalidArgument, "invalid request") // GRPC-005: was msg — leaked minimum justification length
-	case errors.Is(err, core.ErrBreakGlassDisabled), errors.Is(err, core.ErrBreakGlassNotProjectMember):
+	case errors.Is(err, core.ErrBreakGlassDisabled):
+		// Same code and text as before; the typed reason rides in the status details
+		// (google.rpc.ErrorInfo), so a client need not match the text.
+		st := status.New(codes.PermissionDenied, "access denied")
+		if withInfo, derr := st.WithDetails(&errdetails.ErrorInfo{Reason: core.BreakGlassDisabledCode, Domain: breakGlassErrorDomain}); derr == nil {
+			st = withInfo
+		}
+		return st.Err()
+	case errors.Is(err, core.ErrBreakGlassNotProjectMember):
 		return status.Error(codes.PermissionDenied, "access denied")
 	case errors.Is(err, storage.ErrBreakGlassNotActive):
 		return status.Error(codes.FailedPrecondition, "activation is not in a valid state for this operation") // GRPC-005: was msg

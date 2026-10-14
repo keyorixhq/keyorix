@@ -137,6 +137,11 @@ run_step() { # run_step "name" fn_name
     PROBLEMS=$((PROBLEMS + 1))
     FAILED_STEPS+=("$name")
     printf "${RED}❌${NC} %s: %s\n" "$name" "$(tail -1 "$out")"
+    # The one-line summary hides the cause (#3164: s7 failed in CI with only
+    # "exit 1"); show the step's whole output, indented, under the failure.
+    if [ "$(wc -l < "$out")" -gt 1 ]; then
+      sed 's/^/      | /' "$out"
+    fi
   fi
 }
 
@@ -163,9 +168,9 @@ bring_up_postgres() {
   command -v docker >/dev/null 2>&1 || { echo "docker is required"; return 1; }
 
   # docker-compose.yml's default `backend.image:` is a PINNED released tag
-  # (ghcr.io/.../keyorix-server:0.95.3), not this checkout -- using it as-is
+  # (ghcr.io/.../keyorix-server:<pinned release>), not this checkout -- using it as-is
   # would silently check an old release instead of the code actually being
-  # demoed (confirmed live: 0.95.3 predates #2780/#2781's project-visibility
+  # demoed (confirmed live: v0.95.3 predated #2780/#2781's project-visibility
   # fix and reintroduces the exact bug this script exists to catch). Build
   # the SAME locally-built, web-UI-embedded image up.sh uses for SQLite and
   # override backend to use it via an extra compose file -- the stock
@@ -174,7 +179,8 @@ bring_up_postgres() {
     echo "==> building keyorix-demo:airgap (shared with the SQLite path)"
     command -v pnpm >/dev/null 2>&1 || { echo "pnpm is required to build the web UI (see web/package.json)"; return 1; }
     make -C "$REPO_ROOT" populate-webui-dist >/dev/null || { echo "make populate-webui-dist failed"; return 1; }
-    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp -t keyorix-demo:airgap "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
+    demo_stamp_build_args "$REPO_ROOT"
+    docker build -f "$REPO_ROOT/server/Dockerfile" --build-arg BUILD_TAGS=noaws,noazure,nogcp ${DEMO_STAMP_ARGS[@]+"${DEMO_STAMP_ARGS[@]}"} -t keyorix-demo:airgap "$REPO_ROOT" >"$SCRATCH/image-build.log" 2>&1 || {
       cat "$SCRATCH/image-build.log"; echo "docker build failed"; return 1
     }
     git -C "$REPO_ROOT" checkout -- server/webui/dist/index.html 2>/dev/null || true
@@ -224,11 +230,11 @@ services:
     build:
       context: $REPO_ROOT/web
 EOF
-  # docker-compose.secure.yml: the secure baseline (TLS backend behind a
-  # verifying nginx, rate limiting, /metrics token, private config copy). It
-  # needs a backend newer than the pinned release, which the image built
-  # above is (SECURE-DEFAULT-1).
-  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.secure.yml" -f "$override_file" --env-file "$PG_ENV_FILE" up -d --build >"$SCRATCH/compose-up.log" 2>&1
+  # docker-compose.yml is the secure baseline (TLS backend behind a verifying
+  # nginx, rate limiting, /metrics token, private config copy; SECURE-DEFAULT-1).
+  # Before the v0.96.0 tag exists the pinned images are not pullable, so the
+  # override above replaces both with images built from this checkout.
+  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$override_file" --env-file "$PG_ENV_FILE" up -d --build >"$SCRATCH/compose-up.log" 2>&1
   local rc=$?
   cat "$SCRATCH/compose-up.log"
   [ "$rc" -eq 0 ] || return 1
@@ -313,12 +319,17 @@ seed_demo_org() {
   get_secret_by_ref "$MACHINE_TOKEN" "default/development/stripe-api-key"
 
   echo "$MACHINE_TOKEN" > "$REPO_ROOT/.demo-2-pg-state"
+  # #3152: same as up.sh -- let the first anomaly pass see only the seed, and acknowledge
+  # what the seed itself caused, before check.sh's own steps add activity.
+  demo_settle_anomalies "$SERVER_URL" "$ADMIN_TOKEN" "$(docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" ps -q backend 2>/dev/null | head -1)"
   return 0
 }
 
-teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe >/dev/null 2>&1 || true; }
+# check.sh brought this demo up itself (with whatever KEYORIX_DEMO_* names are set), so it
+# owns the default names too: --force-default is the explicit opt-in down.sh asks for (#3149).
+teardown_sqlite() { "$REPO_ROOT/scripts/demo/down.sh" --wipe --force-default >/dev/null 2>&1 || true; }
 teardown_postgres() {
-  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$REPO_ROOT/docker-compose.secure.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
+  docker compose -p "$PG_PROJECT" -f "$REPO_ROOT/docker-compose.yml" -f "$SCRATCH/compose-override.yml" --env-file "$PG_ENV_FILE" down -v >/dev/null 2>&1 || true
   rm -f "$REPO_ROOT/.demo-2-pg-state"
 }
 
@@ -571,6 +582,42 @@ step_acl_cannot_read() {
   return 0
 }
 
+# GOLDEN-PATH "Optional: emergency access (break-glass)" (#3202), run as written:
+# scripts/demo/golden-path-breakglass.sh extracts the doc's commands and runs them
+# with the host CLI (alice activates on project 2, an administrator lists and
+# revokes). ALICE_TOKEN is the MFA-enrolled stand-in with alice's exact grant
+# (project_viewer on backend-api; see step_mfa). Only up.sh enables break-glass
+# (the --postgres compose stack does not), so that is the only backend checked.
+audit_total() { # audit_total ACTION -> prints the number of audit events with that action
+  req GET "/api/v1/audit/logs?action=$1&page_size=1" "$ADMIN_TOKEN"
+  [ "$HTTP_CODE" = "200" ] || { echo "GET /api/v1/audit/logs?action=$1 returned $HTTP_CODE: $RESP_BODY" >&2; return 1; }
+  jget 'd["data"]["total"]'
+}
+step_breakglass() {
+  if [ "$BACKEND" != "sqlite" ]; then
+    echo "SKIP: break-glass is enabled by scripts/demo/up.sh only; the --postgres compose stack leaves it off"
+    return 0
+  fi
+  [ -n "$ALICE_TOKEN" ] || { echo "no viewer session (the mfa step must pass first)"; return 1; }
+  [ -x "$REPO_ROOT/bin/keyorix" ] || { echo "bin/keyorix not found (make build-cli); scripts/demo/up.sh builds it"; return 1; }
+  local actions="break_glass.activated break_glass.revoked role.assigned role.removed" a
+  local before_file="$SCRATCH/bg-audit-before"
+  : > "$before_file"
+  for a in $actions; do
+    echo "$a $(audit_total "$a")" >> "$before_file"
+  done
+  KEYORIX_BG_SERVER="$SERVER_URL" KEYORIX_BG_ALICE_TOKEN="$ALICE_TOKEN" KEYORIX_BG_ADMIN_TOKEN="$ADMIN_TOKEN" \
+    "$SCRIPT_DIR/golden-path-breakglass.sh" || return 1
+  local was now
+  for a in $actions; do
+    was="$(awk -v a="$a" '$1 == a { print $2 }' "$before_file")"
+    now="$(audit_total "$a")"
+    [ "${now:-0}" -gt "${was:-0}" ] 2>/dev/null || { echo "audit: no new $a event after the break-glass section (was $was, now $now) -- docs/demo/GOLDEN-PATH.md says it records one"; return 1; }
+  done
+  echo "break-glass section ran as written; audit recorded $actions"
+  return 0
+}
+
 step_machine_read_by_ref() {
   [ -n "$MACHINE_TOKEN" ] || { echo "no machine token found (.demo-2-state / .demo-2-pg-state missing) -- was this instance brought up via scripts/demo/up.sh or this script?"; return 1; }
   get_secret_by_ref "$MACHINE_TOKEN" "default/development/stripe-api-key"
@@ -773,6 +820,53 @@ step_ui() {
   )
 }
 
+# #3152: a fresh demo must not grow open anomalies on its own. The first detection pass
+# comes 1-5 minutes after the server starts (server/scheduler_run.go
+# anomalyFirstPassDelay), so this waits until the server has been up for 6 minutes, then
+# requires ZERO unacknowledged anomaly alerts. Every alert a fresh seed can cause is
+# either acknowledged by the seed (scripts/demo/lib.sh demo_settle_anomalies: class
+# "seed activity") or fixed at its source (class "detector false positive"); anything
+# still open here is a new regression, or a real finding (a high-severity alert, a
+# spike) that the demo must explain and the seed must not trigger. check.sh's own
+# scratch secret ("check-secret") is ignored: it is created after the seed's pass.
+step_no_open_anomalies() {
+  local up
+  up="$(demo_uptime_seconds "$SERVER_URL")"
+  [ -n "$up" ] || { echo "could not read the server uptime from GET /health"; return 1; }
+  if [ "$up" -lt 360 ]; then
+    echo "waiting $((360 - up))s: the first anomaly pass runs up to 5 minutes after start" >&2
+  fi
+  while [ "$up" -lt 360 ]; do
+    sleep 5
+    up="$(demo_uptime_seconds "$SERVER_URL")"
+    [ -n "$up" ] || { echo "lost the server while waiting for the first anomaly pass"; return 1; }
+  done
+  local open
+  open="$(demo_open_anomalies "$SERVER_URL" "$ADMIN_TOKEN" | awk '$5 != "check-secret"')"
+  case "$open" in
+    ERROR*) echo "GET /api/v1/audit/anomalies failed (${open#ERROR })"; return 1 ;;
+  esac
+  if [ -n "$open" ]; then
+    echo "open anomaly alerts on a fresh demo after ${up}s (ID TYPE SEVERITY ACCESSED_BY SECRET):"
+    echo "$open"
+    echo "fix the cause: scripts/demo/up.sh seed / scripts/demo/lib.sh demo_settle_anomalies, or the detector (internal/core/anomaly.go); do not acknowledge by hand"
+    return 1
+  fi
+  echo "no open anomaly alerts ${up}s after start"
+  return 0
+}
+
+# GOLDEN-PATH.md section 7 (backup/restore), run as written (#3145). Stops and
+# restarts the demo container, so it goes last. Only meaningful against the
+# up.sh demo (the container/volume/image names the doc uses).
+step_backup_restore() {
+  if [ "$BACKEND" != "sqlite" ] || ! docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${KEYORIX_DEMO_CONTAINER:-keyorix-demo}"; then
+    echo "SKIP: no up.sh demo container (keyorix-demo) to back up"
+    return 0
+  fi
+  "$SCRIPT_DIR/golden-path-s7.sh"
+}
+
 # ---------------------------------------------------------------------------
 # run
 # ---------------------------------------------------------------------------
@@ -795,6 +889,7 @@ run_step "verify-write: rotate"               step_verify_rotate
 run_step "verify-write: version history"      step_verify_history
 run_step "acl: alice can read backend-api secret"   step_acl_can_read
 run_step "acl: alice cannot read default secret"    step_acl_cannot_read
+run_step "break-glass: GOLDEN-PATH section as written (alice activates, admin lists/revokes)" step_breakglass
 run_step "machine identity: read secret by ref"     step_machine_read_by_ref
 run_step "audit: log shows actions"   step_audit_logs
 run_step "audit: machine value read is attributed to ci-app" step_machine_read_audited
@@ -808,6 +903,8 @@ fi
 if [ "$UI_MODE" != "skip" ]; then
   run_step "UI walk (Playwright, e2e/real)" step_ui
 fi
+run_step "fresh demo: no open anomalies after 6 minutes (#3152)" step_no_open_anomalies
+run_step "GOLDEN-PATH s7: backup, move aside, restore (verify-audit VALID)" step_backup_restore
 
 if [ "$BROUGHT_UP" = true ] && [ "$KEEP" != true ]; then
   echo ""

@@ -24,10 +24,14 @@ helm install keyorix oci://ghcr.io/keyorixhq/charts/keyorix \
 > (the default username is literally `admin`, so a password like
 > `Admin-Something123!` fails this even though it looks strong). The chart
 > fails the render early (a clear `helm install`/`template` error) if it's
-> under 16 characters; the other rules aren't chart-checkable — get those
-> wrong and the first-boot bootstrap fails instead (the pod comes up,
-> `helm install`/`helm test` succeed, but no admin user is ever created —
-> see `kubectl logs` for the server pod for the actual reason). First-boot
+> under 16 characters or contains the username, the email's local part or
+> `Administrator` (case-insensitively); the character-class and
+> common-password rules aren't chart-checkable — get those wrong and the
+> first-boot bootstrap fails instead: the server pod exits non-zero and
+> crash-loops (since #3025, so a broken login never looks healthy), and
+> `kubectl logs` for the server pod prints the policy's actual reason (for
+> example `admin password rejected: password must not contain your username,
+> email, or display name`). First-boot
 > bootstrap is atomic and retryable: a rejected password writes nothing, so
 > simply retrying `keyorix system init` (or `helm upgrade` with a corrected
 > `auth.adminPassword`, since bootstrap re-runs on every restart until the
@@ -79,7 +83,7 @@ existing release or `existingSecret` keeps working on upgrade.
 | `externalDatabase.sslRootCert` | `""` | CA for the database's certificate (`storage.database.ssl_root_cert`): `system` (OS CA store, for a publicly issued certificate) or the path of a PEM file you mount into the server pod yourself. With `externalDatabase.sslMode: verify-full`/`verify-ca` either this or `externalDatabase.caSecret.name` is **required**: without one `helm template`/`install` fails (and the server would refuse to start). Not together with `caSecret`. |
 | `externalDatabase.caSecret.name` | `""` | A Secret (release namespace) holding the database CA's PEM. The chart mounts it read-only, mode 0440, at `/app/db-ca/ca.crt` in the server pod and renders that path as `ssl_root_cert`. A rotated Secret is picked up without a restart (the driver re-reads the CA per connection). Needs `externalDatabase.sslMode` `verify-full` (recommended), `verify-ca` or `require`. Example: `kubectl create secret generic pg-ca --from-file=ca.crt=./pg-ca.pem` then `--set externalDatabase.sslMode=verify-full --set externalDatabase.caSecret.name=pg-ca`. |
 | `externalDatabase.caSecret.key` | `ca.crt` | The key in that Secret holding the PEM. |
-| `secureBaseline.enabled` | `false` | ADR-112 secure baseline: server TLS (Helm-generated certificate, verified by the web pod), rate limiting, `/metrics` token, bundled Postgres over TLS, runtime files 0600. `admin validate --posture` then reports zero deviations. **Needs a server image newer than v0.95.3**; becomes the default with the next release. See below. |
+| `secureBaseline.enabled` | `true` | ADR-112 secure baseline: server TLS (Helm-generated certificate, verified by the web pod), rate limiting, `/metrics` token, bundled Postgres over TLS, runtime files 0600. `admin validate --posture` then reports zero deviations. On by default since v0.96.0. **Needs a server image newer than v0.95.3**: with an older `image.tag`, set it to `false`. See below. |
 
 ## Upgrading: egress NetworkPolicy
 

@@ -6,6 +6,7 @@ import { ProjectSecretsTab } from './ProjectSecretsTab';
 import { ProjectMembersTab } from './ProjectMembersTab';
 import { ProjectActivityTab } from './ProjectActivityTab';
 import { ProjectAccessReviewTab } from './ProjectAccessReviewTab';
+import { ProjectBreakGlassTab } from './ProjectBreakGlassTab';
 import { ProjectSettingsTab } from './ProjectSettingsTab';
 import { EditProjectModal } from './EditProjectModal';
 import { ROUTES } from '../../constants';
@@ -24,6 +25,7 @@ const TABS: Tab[] = [
     { id: 'members', label: 'Members', path: '/members' },
     { id: 'activity', label: 'Activity', path: '/activity' },
     { id: 'access-review', label: 'Access Review', path: '/access-review' },
+    { id: 'break-glass', label: 'Break-glass', path: '/break-glass' },
     { id: 'settings', label: 'Settings', path: '/settings' },
 ];
 
@@ -48,23 +50,28 @@ const TabNav: React.FC<{ projectId: number }> = ({ projectId }) => {
     const isActive = (tab: Tab) => location.pathname.startsWith(`${base}${tab.path}`);
 
     return (
-        <div className="flex gap-1 border-b mb-6" style={{ borderColor: 'var(--border)' }}>
-            {TABS.map((tab) => {
-                const active = isActive(tab);
-                return (
-                    <Link
-                        key={tab.id}
-                        to={`${base}${tab.path}`}
-                        className="px-4 py-2.5 text-sm font-medium -mb-px border-b-2 transition-colors duration-100"
-                        style={{
-                            borderBottomColor: active ? 'var(--accent)' : 'transparent',
-                            color: active ? 'var(--accent-text)' : 'var(--text-secondary)',
-                        }}
-                    >
-                        {tab.label}
-                    </Link>
-                );
-            })}
+        // The border sits on the wrapper and the scrolling happens in the inner nav: on a phone the
+        // five tabs are wider than the screen, so the strip scrolls inside itself instead of widening
+        // the page (#3154). The nav overlaps the wrapper's border by 1px (-mb-px), as ProfilePage does.
+        <div className="border-b mb-6" style={{ borderColor: 'var(--border)' }}>
+            <nav className="-mb-px flex gap-1 overflow-x-auto">
+                {TABS.map((tab) => {
+                    const active = isActive(tab);
+                    return (
+                        <Link
+                            key={tab.id}
+                            to={`${base}${tab.path}`}
+                            className="px-4 py-2.5 text-sm font-medium border-b-2 transition-colors duration-100 shrink-0 whitespace-nowrap"
+                            style={{
+                                borderBottomColor: active ? 'var(--accent)' : 'transparent',
+                                color: active ? 'var(--accent-text)' : 'var(--text-secondary)',
+                            }}
+                        >
+                            {tab.label}
+                        </Link>
+                    );
+                })}
+            </nav>
         </div>
     );
 };
@@ -158,6 +165,7 @@ export const ProjectDetailPage: React.FC = () => {
                 <Route path="members" element={<ProjectMembersTab projectId={projectId} />} />
                 <Route path="activity" element={<ProjectActivityTab projectId={projectId} />} />
                 <Route path="access-review" element={<ProjectAccessReviewTab projectId={projectId} />} />
+                <Route path="break-glass" element={<ProjectBreakGlassTab projectId={projectId} />} />
                 <Route path="settings" element={<ProjectSettingsTab projectId={projectId} />} />
                 <Route path="*" element={<Navigate to={`/projects/${projectId}`} replace />} />
             </Routes>
