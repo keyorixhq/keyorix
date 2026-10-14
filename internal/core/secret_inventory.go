@@ -62,9 +62,16 @@ func (c *KeyorixCore) SecretsInventory(ctx context.Context, projectID uint) ([]S
 			ownerName[s.OwnerID] = ""
 		}
 	}
-	for id := range ownerName {
-		if u, err := c.storage.GetUser(ctx, id); err == nil && u != nil {
-			ownerName[id] = u.Username
+	if len(ownerName) > 0 {
+		ids := make([]uint, 0, len(ownerName))
+		for id := range ownerName {
+			ids = append(ids, id)
+		}
+		// One batched lookup (LIST-ENDPOINTS-1); an owner that cannot be read keeps "".
+		if names, err := c.storage.GetUsernamesByIDs(ctx, ids); err == nil {
+			for id, name := range names {
+				ownerName[id] = name
+			}
 		}
 	}
 
