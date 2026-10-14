@@ -110,7 +110,10 @@ func rrInStorageGetSecret() bool {
 	frames := runtime.CallersFrames(pcs[:runtime.Callers(3, pcs)])
 	for {
 		f, more := frames.Next()
-		if strings.HasSuffix(f.Function, "store.(*LocalStorage).GetSecret") {
+		// The folded machine-credential statement (PERF-LEVER2) reads the
+		// node that GetSecret then takes, so it counts as that fetch.
+		if strings.HasSuffix(f.Function, "store.(*LocalStorage).GetSecret") ||
+			strings.HasSuffix(f.Function, "store.(*LocalStorage).getMachineCredentialFolded") {
 			return true
 		}
 		if !more {
@@ -153,6 +156,7 @@ func newRRWorld(t *testing.T, backend string, twoReplicas bool) *rrWorld {
 	require.NoError(t, err)
 	ls, ok := st.(*store.LocalStorage)
 	require.True(t, ok, "%T", st)
+	t.Cleanup(func() { _ = ls.Close() }) // every pool it opened, the native read pool included
 	w := &rrWorld{a: rrNewReplica(t, ls), users: map[string]uint{}, tokens: map[string]string{}}
 	if twoReplicas {
 		require.NotEmpty(t, pgTarget, "two replicas need Postgres")

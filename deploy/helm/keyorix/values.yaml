@@ -114,6 +114,14 @@ server:
   # reaches the server through a TLS-terminating load balancer (the chart's Ingress
   # routes to web, whose nginx makes its own decision; see web.trustedProxies).
   trustedProxies: []
+  # accessLog.onSinkStall is the server's server.access_log.on_sink_stall: what a
+  # request does when the access-log sink (the container's stdout/log collector)
+  # stalls and the 1 MiB queue is full. "block" (default, same as empty): wait, so
+  # no access-log line is ever lost. "drop": keeps serving secrets when the log sink
+  # stalls; access-log lines past the 1 MiB queue are dropped and reported (warning
+  # log, GET /api/v1/system/info access_log_dropped); the audit trail is unaffected.
+  accessLog:
+    onSinkStall: ""
   # Persistent volume for the wrapped DEK + KEK salt (/app/keys). MUST persist —
   # losing it makes every stored secret undecryptable. Back it up.
   keysPersistence:
@@ -265,6 +273,26 @@ postgresql:
   # so it can be removed again once the volume is migrated. Rolling back to a chart
   # that runs as 999 after migrating needs the reverse.
   migrateOwnership: false
+  # Extra server settings for the bundled PostgreSQL, rendered as
+  # `postgres -c key=value`. Empty = the image's defaults. Production profile
+  # (docs/PERFORMANCE.md, "Production PostgreSQL profile"), sized for the
+  # 1Gi memory limit below; scale shared_buffers / effective_cache_size with it:
+  #   settings:
+  #     shared_buffers: 256MB        # ~25% of resources.limits.memory
+  #     effective_cache_size: 768MB  # ~75% of resources.limits.memory
+  #     wal_buffers: 16MB
+  #     wal_compression: lz4
+  #     checkpoint_timeout: 15min
+  #     max_wal_size: 2GB            # keep well under persistence.size
+  # Durability is not tunable here: synchronous_commit, fsync and full_page_writes
+  # accept only durable values (on/true/yes/1; synchronous_commit also local,
+  # remote_write, remote_apply). The audit entry is committed before a secret is
+  # returned; ADR-112's fast audit mode is a server option, not a database one.
+  # Settings that would override the secure baseline or run commands are refused:
+  # ssl and ssl_*, hba_file, ident_file, listen_addresses, port,
+  # password_encryption, data_directory, config_file, archive_command,
+  # archive_library, restore_command.
+  settings: {}
   resources:
     requests:
       cpu: 100m

@@ -663,11 +663,17 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (_ sto
 	opened = append(opened, namedLockDB)
 	applyLockPoolSettings(namedLockDB, NamedLockPoolSize, &cfg.Storage.Database)
 
+	nativeReads, err := openPostgresNativeReadPool(&cfg.Storage.Database, nativeReadPoolSize(effectiveMaxOpenConns(db, &cfg.Storage.Database)))
+	if err != nil {
+		return nil, err
+	}
+
 	ls := store.NewLocalStorage(db)
 	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
 	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
 	ls.SetSchedulerLockDB(schedulerLockDB)
 	ls.SetNamedLockDB(namedLockDB)
+	ls.SetNativeReadPool(nativeReads)
 	// ADR-112 Amendment 1: read the computed status rather than the raw bool,
 	// so "configured" and "actually in effect" cannot drift apart between
 	// here and the surfaces that report it (start-up log, posture, API). This
@@ -729,6 +735,21 @@ const SchedulerLockPoolSize = 4
 // configurable, like SchedulerLockPoolSize.
 const NamedLockPoolSize = 8
 
+// NativeReadPoolMaxSize caps the pgxpool the hottest read-path statements run
+// on (store.LocalStorage.SetNativeReadPool): the machine credential lookup,
+// with or without the folded node read, and the node-stamp read. Each request
+// runs at most two of them, each one short statement, so a few connections
+// carry them at any request rate the request pool can feed. Never more than the
+// request pool's own cap (nativeReadPoolSize), so an operator who sizes
+// max_open_conns small keeps a small footprint. Not configurable, like the lock
+// pools.
+const NativeReadPoolMaxSize = 8
+
+// nativeReadPoolSize is the native read pool's cap for a request pool of maxOpen.
+func nativeReadPoolSize(maxOpen int) int {
+	return min(maxOpen, NativeReadPoolMaxSize)
+}
+
 // lockPoolMaxIdleTime closes lock sessions left idle, so the lock pools do not
 // keep Postgres backends open between scheduler intervals or bursts of writes.
 const lockPoolMaxIdleTime = time.Minute
@@ -767,18 +788,25 @@ func warnPostgresPoolHeadroom(db *gorm.DB, dbCfg *config.DatabaseConfig) {
 
 // postgresPoolHeadroomWarning is warnPostgresPoolHeadroom's decision, separated so
 // it is testable without a server. Empty means no warning.
-// The process opens maxOpen plus lockPoolsSize connections at most.
+// The process opens maxOpen plus extraPoolsSize(maxOpen) connections at most.
 func postgresPoolHeadroomWarning(maxOpen, maxConnections, reserved int) string {
 	usable := maxConnections - reserved
-	if maxConnections <= 0 || maxOpen+lockPoolsSize <= usable {
+	extra := extraPoolsSize(maxOpen)
+	if maxConnections <= 0 || maxOpen+extra <= usable {
 		return ""
 	}
-	return fmt.Sprintf("WARNING: storage.database.max_open_conns is %d, plus %d for the lock pools, but the "+
+	return fmt.Sprintf("WARNING: storage.database.max_open_conns is %d, plus %d for the lock and native read pools, but the "+
 		"Postgres server allows only %d non-superuser connections (max_connections=%d minus "+
 		"superuser_reserved_connections=%d). Under load, requests past that fail with SQLSTATE 53300 \"too many "+
 		"clients\" instead of queueing. Lower max_open_conns so that (replicas x (max_open_conns + %d)) stays "+
 		"below %d, or raise max_connections.",
-		maxOpen, lockPoolsSize, usable, maxConnections, reserved, lockPoolsSize, usable)
+		maxOpen, extra, usable, maxConnections, reserved, extra, usable)
+}
+
+// extraPoolsSize is the most connections the pools beside the request pool open
+// together: the scheduler and named lock pools and the native read pool.
+func extraPoolsSize(maxOpen int) int {
+	return lockPoolsSize + nativeReadPoolSize(maxOpen)
 }
 
 // lockPoolsSize is the most connections the scheduler and named lock pools open together.
@@ -1643,17 +1671,19 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 				return err
 			}
 		}
-		// Companion indexes (models.AuditEvent.PrevHash/EntryHash are both
-		// `gorm:"index"`). VerifyAuditChain walks this hash chain as a security
-		// control; without these an upgraded install's audit_events table degrades
-		// to a full table scan on every chain verification as it grows, risking the
-		// check being skipped operationally once it gets too slow to run regularly.
-		// Gated on the table only, not the ALTERs above — see the
-		// secret_nodes.classification companion-index comment for why.
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_audit_events_prev_hash ON audit_events (prev_hash)"); err != nil {
+		// DB-TUNE-1: drop the prev_hash/entry_hash indexes earlier releases
+		// created (models.AuditEvent once tagged both `gorm:"index"`). No query
+		// looks a row up by either hash: VerifyAuditChain, internal/auditverify,
+		// the chain-head read and the checkpoint/anchor code all walk or fetch
+		// audit_events by id, and the links are compared in memory. The two
+		// indexes held random 64-hex keys, most of the table's index storage,
+		// and every audit INSERT paid for both. An older binary booted against
+		// this database recreates them (CREATE INDEX IF NOT EXISTS), which is
+		// harmless. Guard: TestAuditEventHashIndexes_DroppedOnUpgrade.
+		if err := exec("DROP INDEX IF EXISTS idx_audit_events_prev_hash"); err != nil {
 			return err
 		}
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_audit_events_entry_hash ON audit_events (entry_hash)"); err != nil {
+		if err := exec("DROP INDEX IF EXISTS idx_audit_events_entry_hash"); err != nil {
 			return err
 		}
 	}
