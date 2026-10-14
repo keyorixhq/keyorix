@@ -38,11 +38,11 @@ func TestFirstBootKeyBootstrap_LockBeforeInitialize_ExactlyOneWinner(t *testing.
 	lockErrs := make([]error, racers)
 	initErrs := make([]error, racers)
 	svcs := make([]*Service, racers)
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		svcs[i] = NewService(cfg, dir)
 	}
 
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		i := i
 		go func() {
 			defer wg.Done()
@@ -57,12 +57,12 @@ func TestFirstBootKeyBootstrap_LockBeforeInitialize_ExactlyOneWinner(t *testing.
 		}()
 	}
 	wg.Wait()
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		defer svcs[i].Shutdown()
 	}
 
 	winners := 0
-	for i := 0; i < racers; i++ {
+	for i := range racers {
 		if lockErrs[i] == nil {
 			winners++
 			if initErrs[i] != nil {

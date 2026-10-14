@@ -129,10 +129,7 @@ func applyWriteFault(baseDir, path string, data []byte, perm os.FileMode, f *fil
 	case faultCleanError:
 		return f.err
 	case faultShortWrite:
-		k := f.k
-		if k < 0 {
-			k = 0
-		}
+		k := max(f.k, 0)
 		if k > len(data) {
 			k = len(data)
 		}

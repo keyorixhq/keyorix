@@ -77,7 +77,7 @@ func newAccessLogWriter(drop bool) *accessLogWriter {
 func (w *accessLogWriter) Dropped() uint64 { return w.dropped.Load() }
 
 // Print implements chi's middleware.LoggerInterface.
-func (w *accessLogWriter) Print(v ...interface{}) {
+func (w *accessLogWriter) Print(v ...any) {
 	line := w.format(time.Now(), fmt.Sprint(v...))
 
 	w.mu.Lock()

@@ -34,7 +34,7 @@ func (h *SecretHandler) SuspendProjectSecrets(w http.ResponseWriter, r *http.Req
 		h.sendError(w, "InternalError", "Failed to suspend project secrets", http.StatusInternalServerError, nil)
 		return
 	}
-	h.sendSuccess(w, map[string]interface{}{"suspended": n}, "")
+	h.sendSuccess(w, map[string]any{"suspended": n}, "")
 }
 
 // ResumeProjectSecrets handles POST /api/v1/projects/{id}/secrets/resume-all.
@@ -54,5 +54,5 @@ func (h *SecretHandler) ResumeProjectSecrets(w http.ResponseWriter, r *http.Requ
 		h.sendError(w, "InternalError", "Failed to resume project secrets", http.StatusInternalServerError, nil)
 		return
 	}
-	h.sendSuccess(w, map[string]interface{}{"resumed": n}, "")
+	h.sendSuccess(w, map[string]any{"resumed": n}, "")
 }

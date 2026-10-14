@@ -77,11 +77,11 @@ func TestAccessLogWriter_ConcurrentLinesWholeAndOrdered(t *testing.T) {
 	w := &accessLogWriter{out: sink}
 	const goroutines, perG = 32, 200
 	var wg sync.WaitGroup
-	for g := 0; g < goroutines; g++ {
+	for g := range goroutines {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			for i := 0; i < perG; i++ {
+			for i := range perG {
 				w.Print(fmt.Sprintf("g%d seq%d", g, i))
 			}
 		}(g)
@@ -124,7 +124,7 @@ func TestAccessLogWriter_DropsAreCountedNotBlocking(t *testing.T) {
 	go func() { w.Print("first"); close(done) }() // becomes the flusher, stalls in Write
 	<-sink.started
 
-	for i := 0; i < 40; i++ { // 40 x 64 KiB > the 1 MiB cap
+	for range 40 { // 40 x 64 KiB > the 1 MiB cap
 		w.Print(big)
 	}
 	assert.NotZero(t, w.Dropped())
@@ -149,13 +149,12 @@ func TestAccessLogWriter_BlockModeLosesNothing(t *testing.T) {
 	big := strings.Repeat("x", 64<<10)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() { defer wg.Done(); w.Print("first") }() // flusher, stalls in Write
+	wg.Go(func() { ; w.Print("first") }) // flusher, stalls in Write
 	<-sink.started
 
 	const lines = 40 // 40 x 64 KiB > the 1 MiB cap, so late callers must wait
 	returned := make(chan struct{}, lines)
-	for i := 0; i < lines; i++ {
+	for range lines {
 		go func() { w.Print(big); returned <- struct{}{} }()
 	}
 	// Some callers must still be waiting while the sink is stalled.
@@ -164,7 +163,7 @@ func TestAccessLogWriter_BlockModeLosesNothing(t *testing.T) {
 	assert.Zero(t, w.Dropped())
 
 	close(sink.release)
-	for i := 0; i < lines; i++ {
+	for i := range lines {
 		select {
 		case <-returned:
 		case <-time.After(10 * time.Second):
@@ -246,7 +245,7 @@ func TestAccessLogWriter_DropModeReportsRateLimitedAndRecovers(t *testing.T) {
 	go func() { w.Print("first"); close(done) }()
 	<-sink.started
 	big := strings.Repeat("x", 64<<10)
-	for i := 0; i < 16; i++ { // fill the 1 MiB queue
+	for range 16 { // fill the 1 MiB queue
 		w.Print(big)
 	}
 	require.Zero(t, w.Dropped())
@@ -255,7 +254,7 @@ func TestAccessLogWriter_DropModeReportsRateLimitedAndRecovers(t *testing.T) {
 	first := waitLines(1)
 	assert.Contains(t, first[0], "1 access-log lines dropped since the last warning, 1 in total")
 
-	for i := 0; i < 5; i++ { // same instant: counted, no new warning
+	for range 5 { // same instant: counted, no new warning
 		w.Print(big)
 	}
 	time.Sleep(50 * time.Millisecond)

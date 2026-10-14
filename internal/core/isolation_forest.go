@@ -64,10 +64,7 @@ func newIsolationForest(data [][]float64, numTrees, sampleSize int, rng *rand.Ra
 	if len(data) < 2 || numTrees < 1 {
 		return nil
 	}
-	psi := sampleSize
-	if psi > len(data) {
-		psi = len(data)
-	}
+	psi := min(sampleSize, len(data))
 	if psi < 2 {
 		psi = 2
 	}
@@ -76,7 +73,7 @@ func newIsolationForest(data [][]float64, numTrees, sampleSize int, rng *rand.Ra
 	heightLimit := int(math.Ceil(math.Log2(float64(psi))))
 
 	f := &isolationForest{psi: psi, trees: make([]*iTreeNode, 0, numTrees)}
-	for t := 0; t < numTrees; t++ {
+	for range numTrees {
 		sub := subsample(data, psi, rng)
 		f.trees = append(f.trees, buildITree(sub, 0, heightLimit, rng))
 	}
@@ -147,11 +144,11 @@ func pickSplitFeature(samples [][]float64, rng *rand.Rand) (feat int, minV, maxV
 	nFeat := len(samples[0])
 	type rng2 struct{ lo, hi float64 }
 	ranges := make([]rng2, nFeat)
-	for f := 0; f < nFeat; f++ {
+	for f := range nFeat {
 		ranges[f] = rng2{samples[0][f], samples[0][f]}
 	}
 	for _, s := range samples {
-		for f := 0; f < nFeat; f++ {
+		for f := range nFeat {
 			if s[f] < ranges[f].lo {
 				ranges[f].lo = s[f]
 			}
@@ -161,7 +158,7 @@ func pickSplitFeature(samples [][]float64, rng *rand.Rand) (feat int, minV, maxV
 		}
 	}
 	varying := make([]int, 0, nFeat)
-	for f := 0; f < nFeat; f++ {
+	for f := range nFeat {
 		if ranges[f].hi > ranges[f].lo {
 			varying = append(varying, f)
 		}
