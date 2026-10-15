@@ -750,18 +750,20 @@ func (c *KeyorixCore) StartAuditFullVerification(ctx context.Context) (jobID str
 		return "", false, err
 	}
 	c.auditVerifyJobID.Store(id)
-	go c.runAuditFullVerification(id, startedAt)
+	// The job outlives the request: keep the request context's values, drop its
+	// cancellation (runAuditFullVerification bounds it with its own timeout).
+	go c.runAuditFullVerification(context.WithoutCancel(ctx), id, startedAt)
 	return id, true, nil
 }
 
 // runAuditFullVerification is the job body: the unchanged full walk, run under
 // the cross-replica job lock, then recorded in the signed state.
-func (c *KeyorixCore) runAuditFullVerification(id string, startedAt time.Time) {
+func (c *KeyorixCore) runAuditFullVerification(parent context.Context, id string, startedAt time.Time) {
 	defer func() {
 		c.auditVerifyJobID.Store("")
 		c.auditVerifyJobMu.Unlock()
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), auditVerifyJobTimeout)
+	ctx, cancel := context.WithTimeout(parent, auditVerifyJobTimeout)
 	defer cancel()
 	var rep *AuditVerifyReport
 	var v *storage.AuditChainVerification
