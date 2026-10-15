@@ -302,3 +302,22 @@ func TestAuditLists_StorageFailureIs500(t *testing.T) {
 		require.NotContains(t, body, "simulated", "%s leaks the storage error", c.name)
 	}
 }
+
+// TestAuditSearch_OutOfRangeOffsetIs400: an offset that is negative, not a
+// number, past the cap, or large enough to wrap offset+limit is refused with
+// 400 by the handler before any read; a wrapped sum used to pass the cap and
+// force a deep OFFSET scan.
+func TestAuditSearch_OutOfRangeOffsetIs400(t *testing.T) {
+	cs, db := freshAuditSearchCore(t)
+	seedAuditKeysetRows(t, db, 3, time.Now().UTC())
+	h := NewAuditHandler(cs)
+	for _, off := range []string{"9223372036854775800", "9223372036854775807", "99999999999999999999", "-1", "x", strconv.Itoa(core.AuditOffsetCap)} {
+		code, env, body := callAudit(t, h.SearchAuditLogs, "/api/v1/audit/search", url.Values{"limit": {"100"}, "offset": {off}})
+		require.Equal(t, http.StatusBadRequest, code, "offset %s: %s", off, body)
+		require.Equal(t, "InvalidParameter", env.Error, "offset %s", off)
+	}
+	code, _, _ := callAudit(t, h.SearchAuditLogs, "/api/v1/audit/search", url.Values{"limit": {"100"}, "offset": {strconv.Itoa(core.AuditOffsetCap - 100)}})
+	require.Equal(t, http.StatusOK, code, "the last page inside the cap")
+	code, _, _ = callAudit(t, h.SearchAuditLogs, "/api/v1/audit/search", url.Values{"limit": {"100"}, "offset": {"0"}})
+	require.Equal(t, http.StatusOK, code)
+}

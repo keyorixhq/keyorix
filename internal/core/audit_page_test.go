@@ -9,6 +9,7 @@ package core
 import (
 	"context"
 	"errors"
+	"math"
 	"math/rand/v2"
 	"strconv"
 	"testing"
@@ -230,4 +231,32 @@ func TestAuditCursor_RoundTripsTheRowPosition(t *testing.T) {
 // The fixed message must agree with the cap it names.
 func TestAuditOffsetCapMessage_NamesTheCap(t *testing.T) {
 	require.Contains(t, AuditOffsetCapMessage, strconv.Itoa(AuditOffsetCap))
+}
+
+// TestListAuditPage_OffsetNearMaxIntIsRefused: Offset+Limit must not wrap. An
+// offset just under math.MaxInt plus a limit used to overflow negative, pass
+// the cap check and send a deep OFFSET to storage.
+func TestListAuditPage_OffsetNearMaxIntIsRefused(t *testing.T) {
+	w := newAuditPageWorld(t, false)
+	w.insert(t, time.Now().UTC(), 1)
+	ctx := context.Background()
+	for _, req := range []AuditPageRequest{
+		{Offset: math.MaxInt - 50, Limit: 100},
+		{Offset: math.MaxInt, Limit: 1},
+		{Offset: AuditOffsetCap, Limit: 1},
+		{Offset: -1, Limit: 100},
+		{Offset: 0, Limit: AuditOffsetCap + 1},
+		{Offset: 0, Limit: math.MaxInt},
+	} {
+		_, err := w.c.ListAuditPage(ctx, req)
+		require.ErrorIs(t, err, ErrAuditOffsetBeyondCap, "offset %d limit %d", req.Offset, req.Limit)
+	}
+	_, err := w.c.ListAuditPage(ctx, AuditPageRequest{Offset: AuditOffsetCap - 100, Limit: 100})
+	require.NoError(t, err, "the last page inside the cap")
+	// A cursor page with an absurd limit must not wrap Limit+1 either.
+	page, err := w.c.ListAuditPage(ctx, AuditPageRequest{Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Events, 1)
+	_, err = w.c.ListAuditPage(ctx, AuditPageRequest{Limit: math.MaxInt, Cursor: EncodeAuditCursor(page.Events[0])})
+	require.ErrorIs(t, err, ErrAuditOffsetBeyondCap)
 }

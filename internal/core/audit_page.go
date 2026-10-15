@@ -101,6 +101,11 @@ func (k *KeyorixCore) ListAuditPage(ctx context.Context, req AuditPageRequest) (
 	if req.Limit <= 0 {
 		return nil, fmt.Errorf("ListAuditPage: limit must be positive")
 	}
+	// No page is wider than the cap, so neither Limit+1 below nor the offset
+	// check can overflow.
+	if req.Limit > AuditOffsetCap {
+		return nil, ErrAuditOffsetBeyondCap
+	}
 	f := req.Filter
 	f.Ascending = false
 	f.Page = 0
@@ -132,7 +137,9 @@ func (k *KeyorixCore) ListAuditPage(ctx context.Context, req AuditPageRequest) (
 		return page, nil
 	}
 
-	if req.Offset < 0 || req.Offset+req.Limit > AuditOffsetCap {
+	// Offset > Cap-Limit, not Offset+Limit > Cap: the sum wraps negative for
+	// an offset near math.MaxInt and would pass.
+	if req.Offset < 0 || req.Offset > AuditOffsetCap-req.Limit {
 		return nil, ErrAuditOffsetBeyondCap
 	}
 	f.Before = nil
