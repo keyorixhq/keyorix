@@ -50,6 +50,14 @@ var AuditListReplacedIndexes = []string{
 // migration transaction has committed and released that one.
 const auditIndexBuildLockKey = 0x4B455941_49445842 // "KEYAIDXB"
 
+// The pg_locks classid/objid halves of auditIndexBuildLockKey (a bigint advisory
+// key is stored as its high and low 32 bits), for tests that assert the lock is
+// released.
+const (
+	AuditIndexBuildLockClassID = auditIndexBuildLockKey >> 32
+	AuditIndexBuildLockObjID   = auditIndexBuildLockKey & 0xFFFFFFFF
+)
+
 // ErrAuditIndexBuildLockHeld: another session holds auditIndexBuildLockKey, so
 // that process is building (or a just-cancelled build of this one has not
 // released its session yet). Nothing was changed.
@@ -185,17 +193,35 @@ func BuildAuditListIndexesPostgres(ctx context.Context, db *sql.DB, logf func(st
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
+	connClosed := false
+	defer func() {
+		if !connClosed {
+			_ = conn.Close()
+		}
+	}()
 
 	var locked bool
-	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1)", auditIndexBuildLockKey).Scan(&locked); err != nil {
+	var pid int
+	if err := conn.QueryRowContext(ctx, "SELECT pg_try_advisory_lock($1), pg_backend_pid()", auditIndexBuildLockKey).Scan(&locked, &pid); err != nil {
 		return fmt.Errorf("audit index build: lock: %w", err)
 	}
 	if !locked {
 		return ErrAuditIndexBuildLockHeld
 	}
 	defer func() {
-		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", auditIndexBuildLockKey)
+		var unlocked bool
+		err := conn.QueryRowContext(context.Background(), "SELECT pg_advisory_unlock($1)", auditIndexBuildLockKey).Scan(&unlocked)
+		if err == nil && unlocked {
+			return
+		}
+		// A cancelled statement (Close cancelling a running CREATE INDEX
+		// CONCURRENTLY) can leave the session unusable while its backend is still
+		// unwinding the abort. The session lock then lives until that backend
+		// exits, so return only once it has: otherwise the caller's next build
+		// sees ErrAuditIndexBuildLockHeld from our own dying session.
+		_ = conn.Close()
+		connClosed = true
+		waitBuildLockReleased(db, pid)
 	}()
 
 	for _, ix := range AuditListIndexes {
@@ -240,4 +266,33 @@ func BuildAuditListIndexesPostgres(ctx context.Context, db *sql.DB, logf func(st
 		logf("audit index build: dropped %s (replaced by a composite)", name)
 	}
 	return nil
+}
+
+// auditIndexBuildReleaseWait bounds waitBuildLockReleased (a var so tests can
+// shorten it).
+var auditIndexBuildReleaseWait = 30 * time.Second
+
+// waitBuildLockReleased blocks until backend pid no longer holds the build
+// lock, polling pg_locks on a fresh connection from db, or until
+// auditIndexBuildReleaseWait elapses (the lock then frees when the backend
+// exits; the caller's retry covers that). Scoped to our own pid, so a lock held
+// by another replica is never waited on.
+func waitBuildLockReleased(db *sql.DB, pid int) {
+	ctx, cancel := context.WithTimeout(context.Background(), auditIndexBuildReleaseWait)
+	defer cancel()
+	for {
+		var held bool
+		err := db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM pg_locks
+			WHERE locktype = 'advisory' AND granted AND pid = $1
+			  AND classid = $2 AND objid = $3 AND objsubid = 1)`,
+			pid, AuditIndexBuildLockClassID, AuditIndexBuildLockObjID).Scan(&held)
+		if err != nil || !held {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
 }

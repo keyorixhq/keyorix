@@ -347,6 +347,14 @@ func TestStartAuditListIndexBuild_Postgres_CloseCancelsAndNextStartRebuilds(t *t
 	}
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
+	// Close returning means the build's session is gone: no backend may still
+	// hold the build lock, or the next start sees ErrAuditIndexBuildLockHeld.
+	var held int
+	require.NoError(t, sqlDB.QueryRowContext(context.Background(),
+		`SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND granted
+		   AND classid = $1 AND objid = $2 AND objsubid = 1`,
+		store.AuditIndexBuildLockClassID, store.AuditIndexBuildLockObjID).Scan(&held))
+	require.Zero(t, held, "Close returned while a backend still held the audit index build lock")
 	pending, err := store.AuditListIndexesPendingPostgres(context.Background(), sqlDB)
 	require.NoError(t, err)
 	require.True(t, pending, "the cancelled build left work for the next start")
