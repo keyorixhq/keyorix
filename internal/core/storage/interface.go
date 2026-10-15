@@ -2584,6 +2584,12 @@ type AuditChainAnchor struct {
 	PurgedEvents int64
 }
 
+// AuditVerifyJobLockKey is the WithSchedulerLock key that admits one background
+// full audit-chain verification job across replicas ("KEYSAVJB"; distinct from
+// server/main.go's schedLock* keys; uniqueness against every *LockKey constant
+// is guarded by store.TestEveryAdvisoryLockKeyConstantIsUnique).
+const AuditVerifyJobLockKey int64 = 0x4B455953_41564A42
+
 // AuditChainSegment bounds one VerifyAuditChainSegment walk. AfterID/SeedHash
 // come from an authenticated source (a signed checkpoint head, or the signed
 // incremental-verification state); like AuditChainAnchor, the store layer

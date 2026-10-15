@@ -61,11 +61,11 @@ const (
 	// auditVerifyJobTimeout bounds a background full walk (generous: a hang
 	// detector, not a speed limit).
 	auditVerifyJobTimeout = 2 * time.Hour
-	// AuditVerifyJobLockKey is the advisory-lock key admitting one ?full=true
-	// job across replicas ("KEYSAVJB"; distinct from server/main.go's
-	// schedLock* keys and the audit-chain/checkpoint keys).
-	AuditVerifyJobLockKey int64 = 0x4B455953_41564A42
 )
+
+// AuditVerifyJobLockKey admits one ?full=true job across replicas; defined
+// with the storage interface so the advisory-lock key uniqueness guard sees it.
+const AuditVerifyJobLockKey = storage.AuditVerifyJobLockKey
 
 // ErrAuditVerifyJobNotFound reports an unknown or superseded job id.
 var ErrAuditVerifyJobNotFound = errors.New("audit verification job not found")
