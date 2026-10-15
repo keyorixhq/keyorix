@@ -226,10 +226,12 @@ func (c *KeyorixCore) auditTailCheck(ctx context.Context, maxRows int, forWrite 
 	if err != nil {
 		return nil, err
 	}
-	if cp == nil && !forWrite {
+	if cp == nil {
 		// Every checkpoint row is gone: the signed high-water mark certifies the
-		// same (count, head) snapshot, so the read path checks the tail from it
-		// rather than reporting nothing. (The write path falls back to a full walk.)
+		// same (count, head) snapshot, so the tail is checked from it (pinning its
+		// head) rather than reporting nothing. The write path does the same: its
+		// full-walk fallback checks only the count against the mark, so a chain
+		// rewritten through the head plus deleted checkpoint rows would pass it.
 		if cp, err = c.authenticatedHighWaterBase(ctx); err != nil {
 			return nil, err
 		}
@@ -383,6 +385,10 @@ func (c *KeyorixCore) applyAuditStateToReport(r *AuditVerifyReport, st *auditVer
 	case stReason != "":
 		r.Status = AuditVerifyStatusNotProven
 		r.NotProvenReason = stReason
+	case st.Rejected != nil:
+		r.Status = AuditVerifyStatusNotProven
+		r.NotProvenReason = fmt.Sprintf("the persisted verification state was rejected at %s and restarted (%s): nothing is proven until a full verification that started after that completes",
+			st.Rejected.At.UTC().Format(time.RFC3339), st.Rejected.Reason)
 	case st.LastFull == nil:
 		r.Status = AuditVerifyStatusNotProven
 		r.NotProvenReason = "no full verification has completed yet: rows before the latest checkpoint head are not proven until the rolling re-walk completes (or run ?full=true)"
@@ -491,13 +497,16 @@ func (c *KeyorixCore) WriteAuditCheckpointIncremental(ctx context.Context) (*mod
 	}
 	var newCP *models.AuditCheckpoint
 	var failed *auditVerifyFailure
+	var rejected *auditVerifyRejection
 	err := c.storage.WithAuditCheckpointLock(ctx, func() error {
-		// An untrusted state row loads as empty and is overwritten below; the
+		// An untrusted state row is replaced by one that records the rejection
+		// (not_proven until a later full verification, plus an audit event); the
 		// tail check stands on the signed checkpoint alone.
-		st, _, err := c.loadAuditVerifyState(ctx)
+		st, rej, err := c.loadAuditVerifyStateForWrite(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to load audit verification state: %w", err)
 		}
+		rejected = rej
 		cp, ferr, werr := c.writeIncrementalCheckpointLocked(ctx, st)
 		newCP = cp
 		if ferr != nil {
@@ -508,10 +517,7 @@ func (c *KeyorixCore) WriteAuditCheckpointIncremental(ctx context.Context) (*mod
 		}
 		return werr
 	})
-	if failed != nil {
-		c.writeAuditEventFull(ctx, "system.audit_chain_verification_failed", nil, nil, nil, "",
-			"audit chain verification failed ("+failed.Source+"): "+failed.Reason)
-	}
+	c.reportAuditVerifyStateEvents(ctx, rejected, failed)
 	if err != nil {
 		return nil, false, err
 	}
@@ -528,8 +534,13 @@ func (c *KeyorixCore) writeIncrementalCheckpointLocked(ctx context.Context, st *
 		return nil, nil, err
 	}
 	if t.base == nil {
-		// No usable checkpoint: the unchanged full-walk path (first checkpoint,
-		// KEK-provider migration recovery, or a refusal over a tampered one).
+		// No usable checkpoint or high-water mark: the unchanged full-walk path
+		// (first checkpoint, KEK-provider migration recovery, or a refusal over a
+		// tampered one). It is no way around a recorded failure: refuse like the
+		// tail path below, so the failure stays until a full verification clears it.
+		if st.Failure != nil {
+			return nil, nil, auditFailureRefusal(st.Failure)
+		}
 		started := now
 		cp, err := c.writeAuditCheckpointLocked(ctx)
 		if err != nil {
@@ -541,10 +552,11 @@ func (c *KeyorixCore) writeIncrementalCheckpointLocked(ctx context.Context, st *
 			return nil, nil, err
 		}
 		// A passing full walk proves the whole chain now: record it, clear a
-		// sticky failure, and restart the rolling cycle against this head.
+		// rejection recorded before it, and restart the rolling cycle against this
+		// head. (No failure is recorded: the refusal above.)
 		st.LastFull = &auditFullResult{StartedAt: started, CompletedAt: c.now(), ThroughID: cp.HeadID,
 			Source: auditFullSourceCheckpoint, Valid: true}
-		st.Failure = nil
+		clearAuditVerifyMarkers(st, st.Gen, cp.HeadID, true)
 		st.Cycle = nil
 		st.LastCheck = &auditTailCheck{At: c.now(), Valid: true, CheckpointID: cp.ID, ThroughID: cp.HeadID,
 			HeadHash: cp.HeadHash, CertifiedEvents: cp.ChainedEvents, ChainedEvents: cp.ChainedEvents, Checkpointed: true}
@@ -560,8 +572,7 @@ func (c *KeyorixCore) writeIncrementalCheckpointLocked(ctx context.Context, st *
 		return nil, nf, fmt.Errorf("%w a chain that does not verify: %s", ErrAuditCheckpointRefused, v.Reason)
 	}
 	if st.Failure != nil {
-		return nil, nil, fmt.Errorf("%w: a verification failure was recorded at %s (%s: %s) — investigate, then run a full verification (GET /api/v1/audit/verify?full=true)",
-			ErrAuditCheckpointRefused, st.Failure.DetectedAt.UTC().Format(time.RFC3339), st.Failure.Source, st.Failure.Reason)
+		return nil, nil, auditFailureRefusal(st.Failure)
 	}
 	newCP := &models.AuditCheckpoint{
 		ChainedEvents: t.certified,
@@ -577,6 +588,12 @@ func (c *KeyorixCore) writeIncrementalCheckpointLocked(ctx context.Context, st *
 	c.advanceAuditHighWater(ctx, newCP)
 	st.LastCheck.CheckpointID = newCP.ID
 	return newCP, nil, nil
+}
+
+// auditFailureRefusal is the checkpoint refusal while a failure is recorded.
+func auditFailureRefusal(f *auditVerifyFailure) error {
+	return fmt.Errorf("%w: a verification failure was recorded at %s (%s: %s) — investigate, then run a full verification (GET /api/v1/audit/verify?full=true)",
+		ErrAuditCheckpointRefused, f.DetectedAt.UTC().Format(time.RFC3339), f.Source, f.Reason)
 }
 
 // RunAuditVerificationTick is the audit-checkpoint scheduler tick (spec §6): an
@@ -608,6 +625,11 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 	if err != nil {
 		return err
 	}
+	if stReason != "" {
+		// Untrusted (the tick's checkpoint write normally replaced it already):
+		// record the rejection, and start a cycle from that state next tick.
+		return c.updateAuditVerifyState(ctx, func(*auditVerifyState) *auditVerifyFailure { return nil })
+	}
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
 		return err
@@ -617,9 +639,16 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 	}
 	now := c.now()
 	cyc := st.Cycle
-	if cyc == nil || stReason != "" {
-		width := (uint(cp.HeadID) + uint(c.auditVerifySegments) - 1) / uint(max(c.auditVerifySegments, 1))
-		cyc = &auditVerifyCycle{StartedAt: now, TargetID: cp.HeadID, TargetHash: cp.HeadHash,
+	// A cycle older than two cycle durations is restarted rather than resumed:
+	// whatever the persisted progress says, every row is re-walked within a
+	// bounded time (the same bound after which last_full counts as stale).
+	if cyc == nil || now.Sub(cyc.StartedAt) > 2*c.auditVerifyCycleDuration() {
+		segs := uint(1)
+		if c.auditVerifySegments > 1 {
+			segs = uint(c.auditVerifySegments)
+		}
+		width := (cp.HeadID + segs - 1) / segs
+		cyc = &auditVerifyCycle{StartedAt: now, StartedGen: st.Gen, TargetID: cp.HeadID, TargetHash: cp.HeadHash,
 			Width: max(width, c.auditVerifyMinSegmentWidth())}
 	} else {
 		cp2 := *cyc
@@ -678,10 +707,15 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 			st.LastFull = &auditFullResult{StartedAt: cyc.StartedAt, CompletedAt: now, ThroughID: cyc.TargetID,
 				Source: auditFullSourceRolling, Valid: false, FirstBrokenID: failID, Reason: failReason}
 			return recordAuditVerifyFailure(st, now, auditFullSourceRolling, failID, failReason)
+		case st.Rejected != nil && st.Rejected.Gen > cyc.StartedGen:
+			// The state was rejected and restarted while this segment walked:
+			// drop the progress; the next tick starts a cycle from the new state.
 		case completed != nil:
 			st.Cycle = nil
 			st.LastFull = completed
-			st.Failure = nil
+			// Only a failure recorded before this cycle started, at a row it
+			// covered, is cleared; a refusal (no row) needs a full job.
+			clearAuditVerifyMarkers(st, cyc.StartedGen, cyc.TargetID, true)
 			res.CycleCompleted = true
 		default:
 			st.Cycle = cyc
@@ -742,8 +776,10 @@ func (c *KeyorixCore) StartAuditFullVerification(ctx context.Context) (jobID str
 	}
 	id := hex.EncodeToString(raw)
 	startedAt := c.now()
+	var startedGen uint64
 	if err := c.updateAuditVerifyState(ctx, func(st *auditVerifyState) *auditVerifyFailure {
-		st.Job = &auditVerifyJob{ID: id, State: AuditVerifyJobRunning, StartedAt: startedAt}
+		startedGen = st.Gen
+		st.Job = &auditVerifyJob{ID: id, State: AuditVerifyJobRunning, StartedAt: startedAt, StartedGen: startedGen}
 		return nil
 	}); err != nil {
 		c.auditVerifyJobMu.Unlock()
@@ -752,13 +788,15 @@ func (c *KeyorixCore) StartAuditFullVerification(ctx context.Context) (jobID str
 	c.auditVerifyJobID.Store(id)
 	// The job outlives the request: keep the request context's values, drop its
 	// cancellation (runAuditFullVerification bounds it with its own timeout).
-	go c.runAuditFullVerification(context.WithoutCancel(ctx), id, startedAt)
+	go c.runAuditFullVerification(context.WithoutCancel(ctx), id, startedAt, startedGen)
 	return id, true, nil
 }
 
 // runAuditFullVerification is the job body: the unchanged full walk, run under
-// the cross-replica job lock, then recorded in the signed state.
-func (c *KeyorixCore) runAuditFullVerification(parent context.Context, id string, startedAt time.Time) {
+// the cross-replica job lock, then recorded in the signed state. startedGen is
+// the generation of the save that started it: only failures and rejections
+// recorded by then are cleared by a passing walk.
+func (c *KeyorixCore) runAuditFullVerification(parent context.Context, id string, startedAt time.Time, startedGen uint64) {
 	defer func() {
 		c.auditVerifyJobID.Store("")
 		c.auditVerifyJobMu.Unlock()
@@ -780,7 +818,7 @@ func (c *KeyorixCore) runAuditFullVerification(parent context.Context, id string
 	}
 	finished := c.now()
 	uerr := c.updateAuditVerifyState(ctx, func(st *auditVerifyState) *auditVerifyFailure {
-		job := &auditVerifyJob{ID: id, StartedAt: startedAt, FinishedAt: &finished}
+		job := &auditVerifyJob{ID: id, StartedAt: startedAt, StartedGen: startedGen, FinishedAt: &finished}
 		st.Job = job
 		if err != nil {
 			job.State, job.Error = AuditVerifyJobFailed, clientSafeJobError(err)
@@ -791,7 +829,7 @@ func (c *KeyorixCore) runAuditFullVerification(parent context.Context, id string
 			Source: auditFullSourceJob, Valid: v.Valid, FirstBrokenID: v.FirstBrokenID, Reason: v.Reason,
 			UnchainedEvents: v.UnchainedEvents}
 		if v.Valid {
-			st.Failure = nil
+			clearAuditVerifyMarkers(st, startedGen, v.HeadID, false)
 			return nil
 		}
 		return recordAuditVerifyFailure(st, finished, auditFullSourceJob, v.FirstBrokenID, v.Reason)

@@ -329,7 +329,7 @@ func TestIncrementalVerify_TailTruncationWithNewerCheckpointsDeleted(t *testing.
 func TestIncrementalVerify_ForgedStateIgnored(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	c, _, clk := newIncrementalTestCore(t, 7)
+	c, db, clk := newIncrementalTestCore(t, 7)
 	logIncrEvents(t, c, clk, 10)
 	tickOK(t, c)
 	require.Equal(t, AuditVerifyStatusValid, incrVerify(t, c).Status)
@@ -358,11 +358,15 @@ func TestIncrementalVerify_ForgedStateIgnored(t *testing.T) {
 	assert.Equal(t, AuditVerifyStatusNotProven, r.Status)
 	assert.Nil(t, r.LastFullVerificationAt)
 
-	// The next tick overwrites the untrusted row with fresh (unproven) state.
+	// The next tick replaces the untrusted row with fresh state that records the
+	// rejection (not_proven, with an in-chain event), never with a clean slate.
 	clk.advance()
 	tickOK(t, c)
 	r = incrVerify(t, c)
 	assert.Empty(t, r.StateReason)
+	assert.Equal(t, AuditVerifyStatusNotProven, r.Status)
+	assert.Contains(t, r.NotProvenReason, "fails its signature")
+	assert.Equal(t, int64(1), countEvents(t, db, "system.audit_verification_state_rejected"))
 }
 
 // A stale full verification (older than two cycles) is not_proven again.

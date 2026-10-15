@@ -6,7 +6,12 @@
   - The checkpoint scheduler now checks only the rows after the latest signed checkpoint,
     pinning the certified head row. It also re-walks 1/7 of the chain per tick, so every row
     is still re-hashed at least weekly (daily ticks).
-  - Progress and results are kept in a signed state row.
+  - Progress and results are kept in a signed state row. The row is bound to the signed
+    checkpoint trail and carries a generation, so an older signed row that is put back
+    (replay/rollback) is rejected. A rejected row is reported (`not_proven` plus a
+    `system.audit_verification_state_rejected` audit event), never silently replaced.
+    A recorded failure stays until a full verification that started after it and covers
+    the failing row succeeds.
   - `/audit/verify` returns that state plus a bounded tail check. A new `status` field is
     `valid`, `broken` or `not_proven`; `valid` is true only for `valid`. Also new:
     `coverage`, `last_full_verification_at` and `rolling_cycle`.

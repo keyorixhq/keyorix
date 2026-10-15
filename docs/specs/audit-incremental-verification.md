@@ -135,17 +135,43 @@ signing key (KEK-derived, not held by the DB) over
 `"auditverify-state-v1\x00" + JSON`. This domain-separates it from checkpoint,
 high-water and anchor bytes. Fields:
 
-- `cycle`: `{started_at, target_id, target_hash, seed_id, seed_hash, scanned_through, width}` or null.
+- `gen`: the generation, +1 on every save. Saves are serialised by
+  `WithAuditCheckpointLock`, so it strictly increases across replicas.
+- `bind`: `{checkpoint_id, high_water}`, the latest checkpoint row id and the
+  authenticated high-water count when the row was saved. Every checkpoint write
+  saves the state in the same locked section, after the checkpoint and the mark.
+- `rejected`: `{at, gen, reason}` when a writer found the previous row untrusted
+  and started over (see below), or null.
+- `cycle`: `{started_at, started_gen, target_id, target_hash, seed_id, seed_hash, scanned_through, width}` or null.
+  A cycle older than two cycle durations is restarted from the chain start, not resumed.
 - `last_full`: `{started_at, completed_at, through_id, source: rolling|job|checkpoint-full, valid, first_broken_id, reason, unchained_events}`.
 - `last_check`: the last scheduler tail check `{at, valid, from_id, through_id, head_hash, certified_events, checkpoint_id, first_broken_id, reason}`.
-- `failure`: the first detected break `{detected_at, source, first_broken_id, reason}`. It is sticky: only a
-  later **passing full verification** (completed cycle, full job, or checkpoint full-walk fallback) clears it.
-- `job`: the latest `?full=true` job `{id, state, started_at, finished_at, result}`.
+- `failure`: the first detected break `{detected_at, gen, source, first_broken_id, reason}`. It is sticky.
+  Only a **passing full verification that started after it** (its start generation ≥ `failure.gen`)
+  clears it: a completed rolling cycle whose target covers `first_broken_id` (a failure without a
+  row id, i.e. a refusal, needs a full job), or a full job that walked past `first_broken_id`.
+  The checkpoint full-walk fallback never clears it. It refuses while a failure is recorded, like
+  the tail path does.
+- `job`: the latest `?full=true` job `{id, state, started_at, started_gen, finished_at, result}`.
 
-A state row that is absent, malformed or fails its signature (tampered, or
-signed before a KEK-provider migration) is **ignored**. The API reports that,
-the status is `not_proven`, and the next tick starts a fresh cycle and
-overwrites it. Ignoring it can only remove claims, never add them.
+A state row is **not trusted** when it is malformed, fails its signature (tampered,
+or signed before a KEK-provider migration), or is **older than the trail**:
+`bind.checkpoint_id` below the latest checkpoint row id, `bind.high_water` below the
+authenticated high-water count, `gen` below a generation this process already read
+or wrote, or the row is missing after this process read one. The trail is read
+before the row, so a concurrent writer can only make the row look newer. An
+untrusted row claims nothing: the API reports `not_proven` with `state_reason`.
+An authentic but stale row keeps only its sticky `failure`, since a failure can
+only make the verdict stricter.
+
+A writer that finds an untrusted row does **not** overwrite it silently. It starts a
+fresh state (no cycle, no `last_full`, plus an authentic row's failure and job). That
+state records `rejected` and is reported `not_proven`, with the reason, until a full
+verification that started after the rejection completes valid. The writer also appends
+a `system.audit_verification_state_rejected` audit event. The checkpoint refusal gate
+cannot apply to a failure it cannot read. A failure that was lost is re-detected
+instead: by the tail check at every tick, or by the fresh cycle within one cycle.
+The `system.audit_chain_verification_failed` event stays in the chain.
 
 Writes are read-modify-write under `WithAuditCheckpointLock` (cross-replica on
 PG), held only for the short merge, not for the walk. The rolling cycle is
@@ -166,7 +192,8 @@ rollback of the state row.
   `failure`; or `last_full.valid == false`.
 - `not_proven`, with `not_proven_reason`, in any of these cases:
   - no authenticated base checkpoint for a tail check;
-  - no authenticated state;
+  - no trusted state (forged, unverifiable or older than the trail, §3), or a
+    state that records a rejection no later full verification has cleared;
   - no completed full verification yet;
   - the last full verification completed more than 2 cycles ago (stale);
   - the request's tail check ran out of its row budget (250 000 rows) before
@@ -305,15 +332,30 @@ the last full verification time.
   purge that removes the cycle target row fails the cycle (the same residual
   as the head check in #3258).
 - **Key rotation (KEK-provider migration):** the state fails its signature and
-  is ignored. The checkpoint falls back to the full walk, which records
-  `last_full` (`checkpoint-full`).
+  is rejected (`rejected`, audit event). The checkpoint falls back to the full
+  walk, which records `last_full` (`checkpoint-full`) and clears that rejection.
+- **A checkpoint written outside the incremental path** (a replica with the
+  checkpoint scheduler disabled serving `POST /audit/checkpoint`): the state
+  is now older than the trail. Reads report `not_proven`, and the next tick
+  records a rejection. That is fail-closed, not silent. Run every replica with
+  the same scheduler setting.
+- **All checkpoint rows deleted:** the write path, like the read path, checks
+  the tail from the authenticated high-water mark (pinning its head). It falls
+  back to the full walk only when the mark does not authenticate either.
 
 ## 9. Not covered (stated, not hidden)
 
-- Replay of an **older signed** state row can erase a sticky failure or roll
-  back progress. The rows stay broken, so the next cycle re-detects them. The
-  `system.audit_chain_verification_failed` event in the chain is the durable
-  record. No monotonic counter is added.
+- Replay of an older signed state row **within one checkpoint interval, in a
+  process that has not read the newer row** (just after a restart or failover)
+  is not detectable: the binding to the checkpoint trail is the same. That
+  replay can roll back at most one interval of progress, or drop a failure
+  recorded in that interval. The tail check re-detects a tail failure at the
+  next tick. The next checkpoint makes the replayed row stale. The cycle age
+  bound restarts a cycle that does not complete within two cycle durations.
+  A deleted state row after a restart reads as a fresh deployment
+  (`not_proven`, the cycle restarts from the chain start). Rolling back the
+  checkpoint rows, the high-water mark and the state together after a restart
+  is ADR-029's on-box rollback residual (external anchoring closes it).
 - Rows appended after the last checkpoint and then removed from the tail before
   the next tick are not detectable on-box. That is ADR-029's existing residual.
 - gRPC has no full-job RPC yet.

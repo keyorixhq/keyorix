@@ -426,6 +426,10 @@ type KeyorixCore struct {
 	// holds the id of the job this process is running ("" = none).
 	auditVerifyJobMu sync.Mutex
 	auditVerifyJobID atomic.Value
+	// auditVerifyGenSeen is the highest verification-state generation this
+	// process has read or written (audit_verify_state.go): a row below it is a
+	// rollback or replay, like auditMaxCertified for the high-water mark.
+	auditVerifyGenSeen atomic.Uint64
 	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
 	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
 	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.
