@@ -29,14 +29,14 @@ func TestPgBouncer_AuditIndexBuild_LockFollowsThePooler(t *testing.T) {
 	tg := pgBouncerTargetFor(t)
 	xact := tg.pooler == config.PoolerPgBouncerTransaction
 
-	start := time.Now()
 	st := tg.open(t, false) // migrates and builds the indexes
-	// The synchronous startup build must not wait for its own lock
-	// transaction (auditIndexSyncBuildTimeout is 30s).
-	require.Less(t, time.Since(start), 20*time.Second, "the startup index build waited on something")
-	requireNothingPending(t, pgRawOpen(t, tg.direct))
 	ls, ok := st.(*store.LocalStorage)
 	require.True(t, ok, "%T", st)
+	// The startup build of this small table finished before serving: it did not
+	// wait for its own lock transaction past auditIndexSyncBuildTimeout and fall
+	// back to a background build (which would wait for it forever).
+	requireNothingPending(t, pgRawOpen(t, tg.direct))
+	require.False(t, ls.WaitAuditListIndexBuild(), "the startup build fell back to the background")
 	require.Equal(t, xact, ls.TransactionPooling())
 	direct := pgRawOpen(t, tg.direct)
 	for _, ix := range store.AuditListIndexes {
@@ -73,7 +73,7 @@ func TestPgBouncer_AuditIndexBuild_LockFollowsThePooler(t *testing.T) {
 	}
 
 	closed := make(chan error, 1)
-	start = time.Now()
+	start := time.Now()
 	go func() { closed <- ls.Close() }()
 	select {
 	case <-closed:
