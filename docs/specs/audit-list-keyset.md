@@ -96,9 +96,10 @@ tag would be a plain `CREATE INDEX` inside the migration transaction.
 **Postgres.** This runs after the migration transaction has committed, never inside it.
 1. Read `pg_index` for the four names.
 2. If all four exist and are `indisvalid`, finish now (the cost of every boot after the first).
-3. Otherwise run on one dedicated connection that holds a session advisory lock
-   (`pg_try_advisory_lock(872342)`, so one replica builds while the others skip). For each
-   index:
+3. Otherwise take the build advisory lock on one connection (so one replica builds while the
+   others skip; a session lock, or with `storage.database.pooler: pgbouncer-transaction` a
+   transaction-scoped one in a pinned transaction that holds no snapshot,
+   INV-STORE-advisory-lock-pooler-scope) and run the DDL on a second. For each index:
    - an `INVALID` leftover from an interrupted build is dropped with
      `DROP INDEX CONCURRENTLY IF EXISTS`;
    - then `CREATE INDEX CONCURRENTLY IF NOT EXISTS`;
@@ -115,8 +116,9 @@ Small tables (estimate < 200k rows, e.g. a fresh install) build synchronously be
 server starts serving, bounded by a 30 s timeout. A CONCURRENTLY build waits for every open
 writer transaction, so an idle-in-transaction session must not hold the start; past the
 timeout the build is cancelled and continues in the background. While another session holds
-the build lock, a background build retries every 5 s for up to 5 minutes, which covers this
-process's own just-cancelled session. Larger tables build in a background goroutine, logged as
+the build lock, a background build retries every 5 s for up to 5 minutes. A cancelled build
+aborts only the DDL connection; the idle lock connection releases the lock before the build
+returns. Larger tables build in a background goroutine, logged as
 `audit index build: <name> started/done in <d>`, so a liveness probe never kills a long build
 halfway and loops. Until the build finishes, list queries use the old plans. A process that
 dies mid-build leaves an `INVALID` index, which the next boot drops and rebuilds. A build

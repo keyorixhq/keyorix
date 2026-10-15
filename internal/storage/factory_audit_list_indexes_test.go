@@ -30,7 +30,7 @@ func ensureAuditListIndexesForTest(t *testing.T, db *gorm.DB) {
 	if db.Dialector.Name() == "postgres" {
 		sqlDB, err := db.DB()
 		require.NoError(t, err)
-		require.NoError(t, store.BuildAuditListIndexesPostgres(context.Background(), sqlDB, t.Logf))
+		require.NoError(t, store.BuildAuditListIndexesPostgres(context.Background(), sqlDB, false, t.Logf))
 		return
 	}
 	require.NoError(t, store.EnsureAuditListIndexesSQLite(db, t.Logf))
@@ -147,7 +147,7 @@ func TestAuditListIndexes_Postgres_BuildIsIdempotentAndDropsReplaced(t *testing.
 	require.True(t, pending)
 
 	logs := &logCapture{}
-	require.NoError(t, store.BuildAuditListIndexesPostgres(ctx, sqlDB, logs.logf))
+	require.NoError(t, store.BuildAuditListIndexesPostgres(ctx, sqlDB, false, logs.logf))
 	requireAuditListIndexesState(t, db)
 	require.Contains(t, logs.joined(), "CONCURRENTLY")
 	for _, ix := range store.AuditListIndexes {
@@ -160,7 +160,7 @@ func TestAuditListIndexes_Postgres_BuildIsIdempotentAndDropsReplaced(t *testing.
 	require.NoError(t, err)
 	require.False(t, pending)
 	again := &logCapture{}
-	require.NoError(t, store.BuildAuditListIndexesPostgres(ctx, sqlDB, again.logf))
+	require.NoError(t, store.BuildAuditListIndexesPostgres(ctx, sqlDB, false, again.logf))
 	require.Empty(t, again.joined(), "a second build must issue no DDL")
 }
 
@@ -181,7 +181,7 @@ func TestAuditListIndexes_Postgres_InvalidIndexIsRebuilt(t *testing.T) {
 	require.False(t, valid, "fixture: the leftover must be INVALID")
 
 	logs := &logCapture{}
-	require.NoError(t, store.BuildAuditListIndexesPostgres(ctx, sqlDB, logs.logf))
+	require.NoError(t, store.BuildAuditListIndexesPostgres(ctx, sqlDB, false, logs.logf))
 	require.Contains(t, logs.joined(), "idx_audit_events_event_time_id is INVALID")
 	var def string
 	require.NoError(t, db.Raw("SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_audit_events_event_time_id'").Scan(&def).Error)
@@ -228,7 +228,7 @@ func TestAuditListIndexes_Postgres_BuildNeverBlocksAuditWrites(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			return store.BuildAuditListIndexesPostgres(ctx, sqlDB, t.Logf)
+			return store.BuildAuditListIndexesPostgres(ctx, sqlDB, false, t.Logf)
 		})
 		require.NoError(t, err, "an audit INSERT must not wait for the index build")
 	})
@@ -361,7 +361,7 @@ func TestStartAuditListIndexBuild_Postgres_CloseCancelsAndNextStartRebuilds(t *t
 
 	require.NoError(t, holder.Commit().Error)
 	logs := &logCapture{}
-	require.NoError(t, store.BuildAuditListIndexesPostgres(context.Background(), sqlDB, logs.logf), "the next start")
+	require.NoError(t, store.BuildAuditListIndexesPostgres(context.Background(), sqlDB, false, logs.logf), "the next start")
 	requireAuditListIndexesState(t, db)
 	requireNothingPending(t, db)
 }

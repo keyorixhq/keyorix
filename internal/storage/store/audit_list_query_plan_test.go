@@ -73,7 +73,7 @@ func newAuditPlanWorld(t *testing.T, pg bool) *auditPlanWorld {
 	if pg {
 		sqlDB, err := db.DB()
 		require.NoError(t, err)
-		require.NoError(t, BuildAuditListIndexesPostgres(context.Background(), sqlDB, t.Logf))
+		require.NoError(t, BuildAuditListIndexesPostgres(context.Background(), sqlDB, false, t.Logf))
 	} else {
 		require.NoError(t, EnsureAuditListIndexesSQLite(db, t.Logf))
 	}

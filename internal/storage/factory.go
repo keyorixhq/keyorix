@@ -762,7 +762,7 @@ func ensureAuditListIndexesPostgres(ls *store.LocalStorage, db *gorm.DB, openBui
 	}
 	if rows < auditIndexSyncBuildMaxRows {
 		sctx, cancel := context.WithTimeout(ctx, auditIndexSyncBuildTimeout)
-		err := store.BuildAuditListIndexesPostgres(sctx, sqlDB, log.Printf)
+		err := store.BuildAuditListIndexesPostgres(sctx, sqlDB, ls.TransactionPooling(), log.Printf)
 		timedOut := sctx.Err() != nil
 		cancel()
 		switch {
@@ -784,7 +784,7 @@ func ensureAuditListIndexesPostgres(ls *store.LocalStorage, db *gorm.DB, openBui
 		log.Printf("audit index build: skipped, cannot open a build connection: %v", err)
 		return
 	}
-	bdb.SetMaxOpenConns(1)
+	bdb.SetMaxOpenConns(2) // the build lock's connection and the DDL's
 	ls.StartAuditListIndexBuild(bdb, log.Printf)
 }
 

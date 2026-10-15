@@ -309,12 +309,13 @@ type backgroundJob struct {
 // background (docs/specs/audit-list-keyset.md §4: a large table must not hold
 // the server's start, or a liveness probe could kill the build halfway, over
 // and over). db is a dedicated pool the job closes when it finishes. While
-// another session holds the build lock (another replica building, or this
-// process's own just-cancelled startup build not yet released) it retries
+// another session holds the build lock (another replica building) it retries
 // every auditIndexBuildRetry, up to auditIndexBuildRetries times. Close
 // cancels a running build: Postgres aborts the CREATE INDEX CONCURRENTLY,
 // which leaves an INVALID index the next start drops and rebuilds. A failed
 // build is logged, never fatal: a missing index costs speed, not correctness.
+// The build lock takes ls's advisory lock shape (SetTransactionPooling), and db
+// must allow two open connections (BuildAuditListIndexesPostgres).
 func (ls *LocalStorage) StartAuditListIndexBuild(db *sql.DB, logf func(string, ...any)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &backgroundJob{cancel: cancel, done: make(chan struct{})}
@@ -324,7 +325,7 @@ func (ls *LocalStorage) StartAuditListIndexBuild(db *sql.DB, logf func(string, .
 		defer func() { _ = db.Close() }()
 		start := time.Now()
 		for attempt := 0; ; attempt++ {
-			err := BuildAuditListIndexesPostgres(ctx, db, logf)
+			err := BuildAuditListIndexesPostgres(ctx, db, ls.transactionPooling, logf)
 			switch {
 			case err == nil:
 				logf("audit index build: complete in %s", time.Since(start).Round(time.Second))

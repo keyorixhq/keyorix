@@ -1,7 +1,8 @@
 - **INV-STORE-audit-index-build-never-blocks-writes** The audit list indexes are never
   created by a gorm tag or inside a transaction on Postgres. `BuildAuditListIndexesPostgres`
   issues `CREATE INDEX CONCURRENTLY IF NOT EXISTS` / `DROP INDEX CONCURRENTLY` in
-  autocommit on one connection holding a session advisory lock (`auditIndexBuildLockKey`),
+  autocommit on one connection while a second, idle one holds the build advisory lock
+  (`auditIndexBuildLockKey`, shaped by INV-STORE-advisory-lock-pooler-scope),
   rebuilds an INVALID leftover, and drops the replaced single-column indexes only after
   every composite is valid. A plain `CREATE INDEX` takes a SHARE lock and blocks every
   audit INSERT, and with it every secret read, for the whole build. Why: coordinator hold

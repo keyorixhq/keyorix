@@ -46,7 +46,7 @@ func MigrateExisting(db *gorm.DB) error {
 	// audit_events must not hang a fixture forever.
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	err = store.BuildAuditListIndexesPostgres(ctx, sqlDB, log.Printf)
+	err = store.BuildAuditListIndexesPostgres(ctx, sqlDB, false, log.Printf)
 	if errors.Is(err, store.ErrAuditIndexBuildLockHeld) {
 		return nil // another process is building them
 	}
