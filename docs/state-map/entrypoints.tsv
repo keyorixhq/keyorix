@@ -41,15 +41,15 @@ cli	keyorix anomalies escalation list	cli/cmd/anomalies.go	332	runEscalationList
 cli	keyorix anomalies escalation run	cli/cmd/anomalies.go	465	runEscalationRun	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix anomalies list	cli/cmd/anomalies.go	48	runAnomalyList	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit	server/admin/audit.go	17	runAdminAudit	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix audit	cli/cmd/audit.go	21		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
-cli	keyorix audit checkpoint	cli/cmd/audit.go	261	runAuditCheckpoint	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix audit export	cli/cmd/audit.go	134	runAuditExport	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix audit	cli/cmd/audit.go	24		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
+cli	keyorix audit checkpoint	cli/cmd/audit.go	385	runAuditCheckpoint	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix audit export	cli/cmd/audit.go	258	runAuditExport	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit export-checkpoint	server/admin/audit_export_checkpoint.go	35	runExportCheckpoint	C	audit_export_checkpoint.go runExportCheckpoint: primary artifact write is f.Write(data) to the --output file, committed and reported to the operator first; recordAdminAction is a trailing audit-log write after the export already succeeded on disk -- its failure cannot un-write or corrupt the already-exported checkpoint file.
 cli	keyorix audit export-checkpoint-key	server/admin/audit_export_checkpoint_key.go	32	runExportCheckpointKey	C	audit_export_checkpoint_key.go runExportCheckpointKey: primary artifact write is f.Write(encoded) of the derived key to the --output file (0600, O_EXCL; removed again if the write or close fails); recordAdminAction is a trailing audit-log write after the key file already exists on disk -- its failure cannot un-write or corrupt it.
-cli	keyorix audit logs	cli/cmd/audit.go	393	runAuditLogs	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix audit migrate-chain-encoding	cli/cmd/audit.go	317	runAuditMigrateChain	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix audit search	cli/cmd/audit.go	559	runAuditSearch	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix audit verify	cli/cmd/audit.go	34	runAuditVerify	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix audit logs	cli/cmd/audit.go	517	runAuditLogs	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix audit migrate-chain-encoding	cli/cmd/audit.go	441	runAuditMigrateChain	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix audit search	cli/cmd/audit.go	683	runAuditSearch	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix audit verify	cli/cmd/audit.go	43	runAuditVerify	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix backup	server/admin/backup.go	74	runAdminBackup	REVIEW	6 write-shaped call(s) found by a 1-hop scan of the handler body: storage.OpenGormDB, os.OpenFile, f.Close, os.Remove, f.Close, os.Remove
 cli	keyorix billing	cli/cmd/billing.go	24		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix billing report	cli/cmd/billing.go	40	runBillingReport	none	single/no write-shaped call found by a 1-hop scan of the handler body
