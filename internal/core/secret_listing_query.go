@@ -430,7 +430,7 @@ func (c *KeyorixCore) getOwnedSecretsWithSharingInfo(ctx context.Context, userID
 	now := c.shareEffectiveNow()
 	for start := 0; start < len(ids); start += listBatchSize {
 		end := min(start+listBatchSize, len(ids))
-		batch, berr :=c.storage.ListSharesBySecretIDs(ctx, ids[start:end], now)
+		batch, berr := c.storage.ListSharesBySecretIDs(ctx, ids[start:end], now)
 		if berr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), berr)
 		}
