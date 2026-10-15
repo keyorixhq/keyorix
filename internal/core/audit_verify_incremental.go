@@ -1,7 +1,7 @@
 // audit_verify_incremental.go — incremental audit-chain verification
 // (docs/specs/audit-incremental-verification.md).
 //
-// A full walk re-hashes every row and costs ~23 s per 1M rows on PostgreSQL, so
+// A full walk re-hashes every row, so its cost grows with the audit table and
 // it cannot run per request or on every start. This file moves that work, it
 // does not drop it:
 //
@@ -50,15 +50,16 @@ const (
 )
 
 const (
-	// auditVerifyRequestTailRows bounds the tail a request walks (~6 s on PG at
-	// the measured rate). A longer tail is reported not_proven, never valid.
+	// auditVerifyRequestTailRows bounds the tail a request walks, well inside
+	// the HTTP write timeout. A longer tail is reported not_proven, never valid.
 	auditVerifyRequestTailRows = 250_000
 	// auditVerifyMinSegmentWidth: a chain of up to this many ids completes a
 	// whole cycle every tick (the pre-incremental cost).
 	auditVerifyMinSegmentWidth = 100_000
 	// DefaultAuditFullVerificationSegments spreads a cycle over a week of daily ticks.
 	DefaultAuditFullVerificationSegments = 7
-	// auditVerifyJobTimeout bounds a background full walk (~4 min at 10M on PG).
+	// auditVerifyJobTimeout bounds a background full walk (generous: a hang
+	// detector, not a speed limit).
 	auditVerifyJobTimeout = 2 * time.Hour
 	// AuditVerifyJobLockKey is the advisory-lock key admitting one ?full=true
 	// job across replicas ("KEYSAVJB"; distinct from server/main.go's

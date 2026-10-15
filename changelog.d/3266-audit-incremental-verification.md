@@ -1,8 +1,8 @@
 ### Changed
-- **Audit-chain verification is incremental: no full walk on a request or at startup.** At
-  10M rows a full walk takes about 4 minutes on PostgreSQL, so `GET /api/v1/audit/verify`,
-  `POST /api/v1/audit/checkpoint` and `GET /api/v1/compliance/posture` failed on the HTTP
-  timeout from about 2.5M rows, and every start walked the whole chain.
+- **Audit-chain verification is incremental: no full walk on a request or at startup.** A
+  full walk grows linearly with the audit table, so on large trails `GET /api/v1/audit/verify`,
+  `POST /api/v1/audit/checkpoint` and `GET /api/v1/compliance/posture` hit the HTTP write
+  timeout, and every start walked the whole chain.
   - The checkpoint scheduler now checks only the rows after the latest signed checkpoint,
     pinning the certified head row. It also re-walks 1/7 of the chain per tick, so every row
     is still re-hashed at least weekly (daily ticks).

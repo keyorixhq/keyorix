@@ -10,7 +10,7 @@
   (domain-separated; a row that is absent, forged or unverifiable is ignored and reads as
   `not_proven`). The API, posture and gRPC report `valid` only when the tail check passed
   AND a full verification completed within two cycles with no failure recorded. Why: AUDIT-SCALE-1
-  §4.3 (full walks failed over HTTP from about 2.5M rows). Guard: `audit_verify_incremental_test.go`
+  §4.3 (full walks failed over HTTP on large trails). Guard: `audit_verify_incremental_test.go`
   (`TestIncrementalVerify_NotProvenUntilFirstCycleCompletes`, `_TailTamperCaughtAtNextTick`,
   `_OldSegmentTamperCaughtWithinOneCycle`, `_RehashBelowCheckpointHeadCaughtWithinOneCycle`,
   `_RehashThroughCheckpointHeadCaughtImmediately`, `_HeadRowContentEditCaughtImmediately`,

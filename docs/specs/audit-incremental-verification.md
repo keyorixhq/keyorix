@@ -6,13 +6,14 @@ certify `chained + purged`).
 
 ## 1. Why
 
-AUDIT-SCALE-1 (§2.2, §4 item 3) measured that every verification was a full
-linear walk. That costs about 23 s per 1M rows on PostgreSQL and 13.5 s on SQLite. As a result:
+AUDIT-SCALE-1 (§2.2, §4 item 3; figures in that internal report) measured
+that every verification was a full linear walk, whose cost grows with the
+audit table. As a result:
 
-- every server start walked the whole chain in the startup checkpoint tick (244 s at 10M rows on PG);
+- every server start walked the whole chain in the startup checkpoint tick;
 - `GET /audit/verify`, `POST /audit/checkpoint` and `GET /compliance/posture`
-  each walked it per call, and failed on the 60 s HTTP write timeout from about
-  2.5M rows on PG and 4.5M rows on SQLite.
+  each walked it per call, and on large trails failed on the HTTP write
+  timeout.
 
 The work cannot be dropped: the per-row hash chain is unkeyed, so re-hashing
 every row is the only way to find a row whose content changed. This spec
