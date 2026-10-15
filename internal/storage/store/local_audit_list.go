@@ -20,13 +20,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// auditSinceResolveWindow bounds the start-id resolution of an ascending read
-// with a StartTime: a row with event_time >= since but an id below the resolved
-// start would need its writer to have waited longer than this between stamping
-// event_time and taking an id. That wait is bounded by auditWriteTimeout (10s);
-// the margin also covers clock skew between replicas.
-const auditSinceResolveWindow = 5 * time.Minute
-
 // GetAuditLogs retrieves audit events with optional filtering and pagination.
 func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {
 	f := storage.AuditFilter{}
@@ -75,16 +68,18 @@ func (ls *LocalStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditF
 }
 
 // getAuditLogsAscending is the forward id cursor (SIEM export, chronological
-// walks): id ASC from AfterID, no page offset. A StartTime is first resolved to
-// a start id via the time index, so the read is a primary-key range instead of
-// an id-order walk that filters on event_time.
+// walks): id ASC from AfterID, no page offset. On the first page (no AfterID) a
+// StartTime is resolved to the exact lowest id among rows at or after it, via
+// the time index, so the read is a primary-key range instead of an id-order
+// walk that filters every older row out. Later pages start from AfterID, which
+// is already past those older rows; the event_time filter keeps both exact.
 func (ls *LocalStorage) getAuditLogsAscending(ctx context.Context, base func() *gorm.DB, f *storage.AuditFilter, pageSize int) ([]*models.AuditEvent, int64, error) {
 	total, err := countAuditLogs(ls.db.WithContext(ctx), base, f.Count)
 	if err != nil {
 		return nil, 0, fmt.Errorf("failed to count audit logs: %w", err)
 	}
 	q := base()
-	if f.StartTime != nil {
+	if f.StartTime != nil && f.AfterID == nil {
 		startID, ok, err := ls.resolveAuditSinceID(ctx, f.StartTime.UTC())
 		if err != nil {
 			return nil, 0, fmt.Errorf("failed to resolve audit start time: %w", err)
@@ -101,23 +96,13 @@ func (ls *LocalStorage) getAuditLogsAscending(ctx context.Context, base func() *
 	return events, total, nil
 }
 
-// resolveAuditSinceID returns the lowest id among rows with event_time in
-// [since, t0 + auditSinceResolveWindow], where t0 is the first event_time at or
-// after since. ok is false when no row is at or after since. Both reads are
-// ranges of idx_audit_events_event_time_id.
+// resolveAuditSinceID returns the lowest id among ALL rows with event_time >=
+// since (ok false when there are none): exact, whatever the skew between id
+// order and event_time order (clock skew between replicas, a writer that waited
+// long between stamping event_time and taking an id). It reads the
+// (event_time, id) index from since to its end, so its cost grows with the rows
+// at or after since, the same rows the export then returns.
 func (ls *LocalStorage) resolveAuditSinceID(ctx context.Context, since time.Time) (uint, bool, error) {
-	var first []struct{ EventTime time.Time }
-	if err := ls.db.WithContext(ctx).Model(&models.AuditEvent{}).
-		Select("event_time").
-		Where("event_time >= ?", since).
-		Order("event_time ASC, id ASC").
-		Limit(1).
-		Find(&first).Error; err != nil {
-		return 0, false, err
-	}
-	if len(first) == 0 {
-		return 0, false, nil
-	}
 	var minID []struct{ ID *uint }
 	// MIN(id + 0), not MIN(id): Postgres rewrites a bare MIN(id) into "first
 	// row of the primary key that passes the time filter", a walk from id 1
@@ -125,7 +110,7 @@ func (ls *LocalStorage) resolveAuditSinceID(ctx context.Context, since time.Time
 	// time-index range (pinned by TestAuditListQueries_UseTheirIndexes_Postgres).
 	if err := ls.db.WithContext(ctx).Model(&models.AuditEvent{}).
 		Select("MIN(id + 0) AS id").
-		Where("event_time >= ? AND event_time <= ?", since, first[0].EventTime.UTC().Add(auditSinceResolveWindow)).
+		Where("event_time >= ?", since).
 		Find(&minID).Error; err != nil {
 		return 0, false, err
 	}

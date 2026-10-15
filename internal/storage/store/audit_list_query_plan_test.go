@@ -212,8 +212,7 @@ func runAuditListPlanCases(t *testing.T, pg bool) {
 	w.cap.reset()
 	_, _, err = w.ls.GetAuditLogs(ctx, &storage.AuditFilter{Ascending: true, StartTime: &weekAgo, PageSize: 100, Count: storage.AuditCountNone})
 	require.NoError(t, err)
-	w.requireIndexServed(t, "export since: first event_time", w.cap.find(t, "ORDER BY event_time ASC, id ASC"), timeIdx)
-	w.requireIndexServed(t, "export since: MIN(id) window", w.cap.find(t, "MIN(id + 0)"), timeIdx)
+	w.requireIndexServed(t, "export since: MIN(id) over event_time >= since", w.cap.find(t, "MIN(id + 0)"), timeIdx)
 	w.requireIndexServed(t, "export since: page", w.cap.find(t, "id >=", "ORDER BY id ASC"), pkIdx)
 
 	// No exact COUNT(*) over the filter unless asked: capped and none modes

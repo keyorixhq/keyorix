@@ -37,7 +37,10 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 	// Streamed in keyset batches over the time indexes (docs/specs/
 	// audit-list-keyset.md §3): each batch is written and flushed before the
 	// next is read, so neither the server nor the database holds the whole
-	// export. Only the first batch can still turn into an error response.
+	// export. A failure before the first byte is a 500. A failure after it
+	// aborts the connection (http.ErrAbortHandler): the client sees a truncated
+	// transfer, never a well-formed 200 that silently ends early, which an
+	// auditor could take for the complete export.
 	var cw *csv.Writer
 	for written := 0; written < limit; {
 		filter.PageSize = min(csvExportBatchRows, limit-written)
@@ -45,10 +48,10 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 		if err != nil {
 			if cw == nil {
 				sendError(w, "InternalServerError", "Failed to export audit logs", http.StatusInternalServerError, nil)
-			} else {
-				log.Printf("audit export.csv: stopped after %d rows: %v", written, err)
+				return
 			}
-			return
+			log.Printf("audit export.csv: aborting the response after %d rows: %v", written, err)
+			panic(http.ErrAbortHandler)
 		}
 		if cw == nil {
 			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
@@ -62,6 +65,11 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 		}
 		writeAuditCSVRows(cw, events, h.coreService.ResolveUsernames(r.Context(), events), h.coreService.ResolveMachineNames(r.Context(), events))
 		cw.Flush()
+		if err := cw.Error(); err != nil {
+			// The client is gone (or the write failed): nothing more can reach it.
+			log.Printf("audit export.csv: write failed after %d rows: %v", written, err)
+			return
+		}
 		if f, ok := w.(http.Flusher); ok {
 			f.Flush()
 		}

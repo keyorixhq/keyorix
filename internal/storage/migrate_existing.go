@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"log"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -40,5 +42,13 @@ func MigrateExisting(db *gorm.DB) error {
 	if err != nil {
 		return err
 	}
-	return store.BuildAuditListIndexesPostgres(context.Background(), sqlDB, log.Printf)
+	// Bounded like the server's own synchronous build: an idle transaction on
+	// audit_events must not hang a fixture forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	err = store.BuildAuditListIndexesPostgres(ctx, sqlDB, log.Printf)
+	if errors.Is(err, store.ErrAuditIndexBuildLockHeld) {
+		return nil // another process is building them
+	}
+	return err
 }

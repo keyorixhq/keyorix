@@ -13556,7 +13556,7 @@ export interface operations {
             query?: {
                 /** @description Cursor — pass the last returned event id to fetch the next page. */
                 after_id?: number;
-                /** @description RFC3339 lower bound on event time (resolved to a start id through the time index, then paged by id). */
+                /** @description RFC3339 lower bound on event time (resolved to the lowest id at or after it through the time index, then paged by id; exact under clock skew). */
                 since?: string;
                 limit?: number;
             };

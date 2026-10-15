@@ -700,9 +700,17 @@ func (f *DefaultStorageFactory) migrateSQLite(db *gorm.DB) error {
 
 // auditIndexSyncBuildMaxRows is the audit_events size (row estimate) below
 // which the Postgres audit index build runs before the server serves: a fresh
-// install or a small table builds in about a second. A larger table builds in
-// the background (store.LocalStorage.StartAuditListIndexBuild).
-const auditIndexSyncBuildMaxRows = 200_000
+// install or a small table builds in about a second. A larger table is built in
+// the background (store.LocalStorage.StartAuditListIndexBuild). A var so tests
+// can move the threshold.
+var auditIndexSyncBuildMaxRows int64 = 200_000
+
+// auditIndexSyncBuildTimeout bounds that synchronous build. CREATE INDEX
+// CONCURRENTLY waits for every transaction already writing to the table, so one
+// idle-in-transaction session elsewhere could otherwise hold the server's start
+// forever. Past the timeout the build is cancelled (leaving an INVALID index)
+// and continues in the background, which drops and rebuilds it.
+var auditIndexSyncBuildTimeout = 30 * time.Second
 
 // ensureAuditListIndexesPostgres brings the audit list indexes up to date after
 // the migration transaction has committed: CREATE INDEX CONCURRENTLY never runs
@@ -730,10 +738,23 @@ func ensureAuditListIndexesPostgres(ls *store.LocalStorage, db *gorm.DB, openBui
 		return
 	}
 	if rows < auditIndexSyncBuildMaxRows {
-		if err := store.BuildAuditListIndexesPostgres(ctx, sqlDB, log.Printf); err != nil {
+		sctx, cancel := context.WithTimeout(ctx, auditIndexSyncBuildTimeout)
+		err := store.BuildAuditListIndexesPostgres(sctx, sqlDB, log.Printf)
+		timedOut := sctx.Err() != nil
+		cancel()
+		switch {
+		case err == nil:
+			return
+		case errors.Is(err, store.ErrAuditIndexBuildLockHeld):
+			log.Printf("audit index build: another process is building the audit indexes")
+			return
+		case !timedOut:
 			log.Printf("audit index build: failed, retried at the next start: %v", err)
+			return
 		}
-		return
+		log.Printf("audit index build: not finished within %s (a long-running transaction on audit_events?); continuing in the background", auditIndexSyncBuildTimeout)
+	} else {
+		log.Printf("audit index build: audit_events has ~%d rows; building in the background while the server serves", rows)
 	}
 	bdb, err := openBuildDB()
 	if err != nil {
@@ -741,7 +762,6 @@ func ensureAuditListIndexesPostgres(ls *store.LocalStorage, db *gorm.DB, openBui
 		return
 	}
 	bdb.SetMaxOpenConns(1)
-	log.Printf("audit index build: audit_events has ~%d rows; building in the background while the server serves", rows)
 	ls.StartAuditListIndexBuild(bdb, log.Printf)
 }
 

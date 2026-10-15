@@ -542,7 +542,8 @@ func printAuditLogTable(logs []logEntry, footer auditPageFooter) {
 		fmt.Printf("\nShowing %d of %d total event(s).\n", len(logs), *footer.Total)
 	}
 	if footer.NextCursor != nil && *footer.NextCursor != "" {
-		fmt.Printf("Next page: --cursor %s\n", *footer.NextCursor)
+		// Server-supplied text: sanitized like every other value printed here.
+		fmt.Printf("Next page: --cursor %s\n", cliout.SanitizeForTerminal(*footer.NextCursor))
 	}
 }
 

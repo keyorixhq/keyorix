@@ -79,6 +79,9 @@ export const useAuditLogFeed = (params?: { pageSize?: number; projectId?: number
             };
         },
         getNextPageParam: (last) => last.nextCursor || undefined,
+        // Bounds what one tab keeps in memory: 100 pages (10,000 events at the
+        // default page size). Beyond that the oldest pages loaded are dropped.
+        maxPages: 100,
     });
     const pages = query.data?.pages ?? [];
     return {

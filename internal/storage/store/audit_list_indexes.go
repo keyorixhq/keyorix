@@ -50,6 +50,11 @@ var AuditListReplacedIndexes = []string{
 // migration transaction has committed and released that one.
 const auditIndexBuildLockKey = 0x4B455941_49445842 // "KEYAIDXB"
 
+// ErrAuditIndexBuildLockHeld: another session holds auditIndexBuildLockKey, so
+// that process is building (or a just-cancelled build of this one has not
+// released its session yet). Nothing was changed.
+var ErrAuditIndexBuildLockHeld = errors.New("audit index build: another session holds the build lock")
+
 func (ix AuditListIndex) columnList() string { return strings.Join(ix.Columns, ", ") }
 
 // AuditEventsRowEstimate is MAX(id)-MIN(id)+1 of audit_events (two primary-key
@@ -173,8 +178,8 @@ func AuditListIndexesPendingPostgres(ctx context.Context, db *sql.DB) (bool, err
 // interrupted by a crash or a cancelled ctx) is dropped and rebuilt. When
 // another process holds the build lock it returns without doing anything: that
 // process is building, and an INVALID index seen meanwhile is its build in
-// progress, not a leftover. Idempotent: with everything in place it issues no
-// DDL.
+// progress, not a leftover; it returns ErrAuditIndexBuildLockHeld. Idempotent:
+// with everything in place it issues no DDL.
 func BuildAuditListIndexesPostgres(ctx context.Context, db *sql.DB, logf func(string, ...any)) error {
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -187,8 +192,7 @@ func BuildAuditListIndexesPostgres(ctx context.Context, db *sql.DB, logf func(st
 		return fmt.Errorf("audit index build: lock: %w", err)
 	}
 	if !locked {
-		logf("audit index build: another process holds the build lock; leaving the build to it")
-		return nil
+		return ErrAuditIndexBuildLockHeld
 	}
 	defer func() {
 		_, _ = conn.ExecContext(context.Background(), "SELECT pg_advisory_unlock($1)", auditIndexBuildLockKey)
@@ -213,8 +217,12 @@ func BuildAuditListIndexesPostgres(ctx context.Context, db *sql.DB, logf func(st
 		if _, err := conn.ExecContext(ctx, fmt.Sprintf("CREATE INDEX CONCURRENTLY IF NOT EXISTS %s ON audit_events (%s)", ix.Name, ix.columnList())); err != nil {
 			return fmt.Errorf("audit index build: create %s: %w", ix.Name, err)
 		}
-		if st, err := pgIndexState(ctx, conn, ix.Name); err != nil || st != "valid" {
-			return fmt.Errorf("audit index build: %s not valid after build (state %q): %w", ix.Name, st, err)
+		after, err := pgIndexState(ctx, conn, ix.Name)
+		if err != nil {
+			return fmt.Errorf("audit index build: inspect %s after build: %w", ix.Name, err)
+		}
+		if after != "valid" {
+			return fmt.Errorf("audit index build: %s not valid after build (state %q)", ix.Name, after)
 		}
 		logf("audit index build: %s done in %s", ix.Name, time.Since(start).Round(time.Millisecond))
 	}

@@ -8,6 +8,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -114,9 +115,17 @@ func TestAuditListIndexes_SQLite_FreshAndUpgrade(t *testing.T) {
 // single-column indexes of earlier releases present: the state of an upgrade.
 func pgAuditListDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	db, _ := pgAuditListDBDSN(t)
+	return db
+}
+
+// pgAuditListDBDSN is pgAuditListDB plus the database's DSN.
+func pgAuditListDBDSN(t *testing.T) (*gorm.DB, string) {
+	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Cleanup(i18n.ResetForTesting)
-	db := pgRawOpen(t, pgIsolatedDatabaseDSN(t, pgTestDSN(t)))
+	dsn := pgIsolatedDatabaseDSN(t, pgTestDSN(t))
+	db := pgRawOpen(t, dsn)
 	require.NoError(t, (&DefaultStorageFactory{}).migrateDatabase(db))
 	for _, ix := range store.AuditListIndexes {
 		require.NoError(t, db.Exec("DROP INDEX IF EXISTS "+ix.Name).Error)
@@ -124,7 +133,7 @@ func pgAuditListDB(t *testing.T) *gorm.DB {
 	require.NoError(t, db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_project_id ON audit_events (project_id)").Error)
 	require.NoError(t, db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_machine_identity_id ON audit_events (machine_identity_id)").Error)
 	insertAuditRowsRaw(t, db, 20)
-	return db
+	return db, dsn
 }
 
 func TestAuditListIndexes_Postgres_BuildIsIdempotentAndDropsReplaced(t *testing.T) {
@@ -247,4 +256,104 @@ func waitForLockWait(t *testing.T, db *gorm.DB) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("the index build never started waiting on the open writer transaction")
+}
+
+// openBuildPool is the dedicated pool factory a background build gets.
+func openBuildPool(dsn string) func() (*sql.DB, error) {
+	return func() (*sql.DB, error) { return sql.Open("pgx", dsn) }
+}
+
+func requireNothingPending(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	pending, err := store.AuditListIndexesPendingPostgres(context.Background(), sqlDB)
+	require.NoError(t, err)
+	require.False(t, pending, "every audit list index valid, replaced ones dropped")
+}
+
+// holdAuditWriter opens a transaction with an uncommitted audit INSERT, which
+// every CREATE INDEX CONCURRENTLY on audit_events must wait for.
+func holdAuditWriter(t *testing.T, db *gorm.DB) *gorm.DB {
+	t.Helper()
+	holder := db.Begin()
+	require.NoError(t, holder.Error)
+	require.NoError(t, holder.Exec("INSERT INTO audit_events (event_type, event_time) VALUES ('secret.read', now())").Error)
+	t.Cleanup(func() { holder.Rollback() })
+	return holder
+}
+
+func TestEnsureAuditListIndexes_Postgres_SmallTableBuildsBeforeServing(t *testing.T) {
+	db, dsn := pgAuditListDBDSN(t)
+	ls := store.NewLocalStorage(pgRawOpen(t, dsn))
+	ensureAuditListIndexesPostgres(ls, db, openBuildPool(dsn))
+	requireNothingPending(t, db)
+	require.False(t, ls.WaitAuditListIndexBuild(), "below the threshold nothing is left to the background")
+}
+
+func TestEnsureAuditListIndexes_Postgres_LargeTableBuildsInBackground(t *testing.T) {
+	db, dsn := pgAuditListDBDSN(t)
+	old := auditIndexSyncBuildMaxRows
+	auditIndexSyncBuildMaxRows = 5 // the fixture's 20 rows are "large"
+	t.Cleanup(func() { auditIndexSyncBuildMaxRows = old })
+
+	ls := store.NewLocalStorage(pgRawOpen(t, dsn))
+	ensureAuditListIndexesPostgres(ls, db, openBuildPool(dsn))
+	require.True(t, ls.WaitAuditListIndexBuild(), "above the threshold the build runs in the background")
+	requireNothingPending(t, db)
+}
+
+// TestEnsureAuditListIndexes_Postgres_SyncTimeoutFallsBackToBackground: an
+// open writer transaction makes the startup build wait; the start must not
+// wait with it. Past the timeout it goes on in the background and finishes
+// (dropping and rebuilding what the cancelled build left INVALID) once the
+// writer commits.
+func TestEnsureAuditListIndexes_Postgres_SyncTimeoutFallsBackToBackground(t *testing.T) {
+	db, dsn := pgAuditListDBDSN(t)
+	old := auditIndexSyncBuildTimeout
+	auditIndexSyncBuildTimeout = time.Second
+	t.Cleanup(func() { auditIndexSyncBuildTimeout = old })
+	holder := holdAuditWriter(t, db)
+
+	ls := store.NewLocalStorage(pgRawOpen(t, dsn))
+	start := time.Now()
+	ensureAuditListIndexesPostgres(ls, db, openBuildPool(dsn))
+	require.Less(t, time.Since(start), 20*time.Second, "the start must not wait for the open writer")
+
+	require.NoError(t, holder.Commit().Error)
+	require.True(t, ls.WaitAuditListIndexBuild(), "the build continued in the background")
+	requireNothingPending(t, db)
+}
+
+// TestStartAuditListIndexBuild_Postgres_CloseCancelsAndNextStartRebuilds:
+// Close returns promptly while the background build waits (it cancels the
+// CREATE INDEX CONCURRENTLY), and the next start rebuilds what it left.
+func TestStartAuditListIndexBuild_Postgres_CloseCancelsAndNextStartRebuilds(t *testing.T) {
+	db, dsn := pgAuditListDBDSN(t)
+	holder := holdAuditWriter(t, db)
+
+	ls := store.NewLocalStorage(pgRawOpen(t, dsn))
+	bdb, err := openBuildPool(dsn)()
+	require.NoError(t, err)
+	ls.StartAuditListIndexBuild(bdb, t.Logf)
+	waitForLockWait(t, db)
+
+	closed := make(chan error, 1)
+	go func() { closed <- ls.Close() }()
+	select {
+	case <-closed:
+	case <-time.After(20 * time.Second):
+		t.Fatal("Close did not cancel the background index build")
+	}
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	pending, err := store.AuditListIndexesPendingPostgres(context.Background(), sqlDB)
+	require.NoError(t, err)
+	require.True(t, pending, "the cancelled build left work for the next start")
+
+	require.NoError(t, holder.Commit().Error)
+	logs := &logCapture{}
+	require.NoError(t, store.BuildAuditListIndexesPostgres(context.Background(), sqlDB, logs.logf), "the next start")
+	requireAuditListIndexesState(t, db)
+	requireNothingPending(t, db)
 }

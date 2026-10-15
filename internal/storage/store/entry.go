@@ -296,10 +296,13 @@ type backgroundJob struct {
 // StartAuditListIndexBuild runs BuildAuditListIndexesPostgres on db in the
 // background (docs/specs/audit-list-keyset.md §4: a large table must not hold
 // the server's start, or a liveness probe could kill the build halfway, over
-// and over). db is a dedicated pool the job closes when it finishes. Close
-// cancels a running build: Postgres aborts the CREATE INDEX CONCURRENTLY, which
-// leaves an INVALID index the next start drops and rebuilds. A failed build is
-// logged, never fatal: a missing index costs speed, not correctness.
+// and over). db is a dedicated pool the job closes when it finishes. While
+// another session holds the build lock (another replica building, or this
+// process's own just-cancelled startup build not yet released) it retries
+// every auditIndexBuildRetry, up to auditIndexBuildRetries times. Close
+// cancels a running build: Postgres aborts the CREATE INDEX CONCURRENTLY,
+// which leaves an INVALID index the next start drops and rebuilds. A failed
+// build is logged, never fatal: a missing index costs speed, not correctness.
 func (ls *LocalStorage) StartAuditListIndexBuild(db *sql.DB, logf func(string, ...any)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &backgroundJob{cancel: cancel, done: make(chan struct{})}
@@ -308,12 +311,45 @@ func (ls *LocalStorage) StartAuditListIndexBuild(db *sql.DB, logf func(string, .
 		defer close(job.done)
 		defer func() { _ = db.Close() }()
 		start := time.Now()
-		if err := BuildAuditListIndexesPostgres(ctx, db, logf); err != nil {
-			logf("audit index build: failed after %s, retried at the next start: %v", time.Since(start).Round(time.Second), err)
-			return
+		for attempt := 0; ; attempt++ {
+			err := BuildAuditListIndexesPostgres(ctx, db, logf)
+			switch {
+			case err == nil:
+				logf("audit index build: complete in %s", time.Since(start).Round(time.Second))
+				return
+			case errors.Is(err, ErrAuditIndexBuildLockHeld) && attempt < auditIndexBuildRetries:
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(auditIndexBuildRetry):
+				}
+			case errors.Is(err, ErrAuditIndexBuildLockHeld):
+				logf("audit index build: another session kept the build lock; leaving the build to it")
+				return
+			default:
+				logf("audit index build: failed after %s, retried at the next start: %v", time.Since(start).Round(time.Second), err)
+				return
+			}
 		}
-		logf("audit index build: complete in %s", time.Since(start).Round(time.Second))
 	}()
+}
+
+// auditIndexBuildRetry / auditIndexBuildRetries bound how long a background
+// build waits for the build lock (vars so tests can shorten them).
+var (
+	auditIndexBuildRetry   = 5 * time.Second
+	auditIndexBuildRetries = 60
+)
+
+// WaitAuditListIndexBuild blocks until the background build started by
+// StartAuditListIndexBuild has finished and reports whether one was started.
+func (ls *LocalStorage) WaitAuditListIndexBuild() bool {
+	job := ls.auditIndexBuild
+	if job == nil {
+		return false
+	}
+	<-job.done
+	return true
 }
 
 // clockWatermark pairs a mutex with the time.Time it guards, so a single

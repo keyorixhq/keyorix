@@ -66,15 +66,15 @@ same scan.
   10,000). It streams: internal keyset batches of 500 over the index, each batch written and
   flushed before the next is read. There is no count.
 - **`GET /api/v1/audit/export` (SIEM, ascending id, `after_id`).** Unchanged contract, no
-  count. `since` is resolved to a start id first:
-  1. `t0` = the first `event_time ≥ since`, from the time index.
-  2. `id0` = `MIN(id)` over `event_time ∈ [since, t0 + 5 min]`, an index-only range.
-  3. The page is then `id ≥ id0 AND event_time ≥ since ORDER BY id`.
-
-  A row with `event_time ≥ since` and `id < id0` would need its writer to have waited more
-  than 5 minutes between stamping `event_time` and taking an id. That wait is bounded by
-  `auditWriteTimeout` (10 s), so 5 minutes covers it and any realistic clock skew between
-  replicas.
+  count. On the first page (no `after_id`), `since` is resolved to `id0 = MIN(id)` over every
+  row with `event_time ≥ since`. That is an index-only range of `(event_time, id)` from `since`
+  to the end, so it costs as much as the rows the export then returns. The page is then
+  `id ≥ id0 AND event_time ≥ since ORDER BY id`. This is exact even when id order and time
+  order disagree (a writer that waited between stamping `event_time` and taking an id, or
+  clock skew between replicas). Later pages start from `after_id`, already past the older
+  rows, with the same `event_time` filter. A first version resolved `id0` only over
+  `[since, t0 + 5 min]`; review showed it could drop a lower-id row stamped more than
+  5 minutes ahead, and `TestAuditExportSIEM_SinceResolvesToAStartID` pins the case.
 
 Internal callers of `GetAuditLogs` keep the exact count by default (dashboard counters rely
 on it). Callers that discard the total pass `CountNone`.
@@ -112,7 +112,11 @@ writes (and with them secret reads) are never blocked. A plain `CREATE INDEX` ta
 and blocks every INSERT for the whole build.
 
 Small tables (estimate < 200k rows, e.g. a fresh install) build synchronously before the
-server starts serving. Larger tables build in a background goroutine, logged as
+server starts serving, bounded by a 30 s timeout. A CONCURRENTLY build waits for every open
+writer transaction, so an idle-in-transaction session must not hold the start; past the
+timeout the build is cancelled and continues in the background. While another session holds
+the build lock, a background build retries every 5 s for up to 5 minutes, which covers this
+process's own just-cancelled session. Larger tables build in a background goroutine, logged as
 `audit index build: <name> started/done in <d>`, so a liveness probe never kills a long build
 halfway and loops. Until the build finishes, list queries use the old plans. A process that
 dies mid-build leaves an `INVALID` index, which the next boot drops and rebuilds. A build
@@ -130,8 +134,10 @@ order above. Expect a multiple of that on slower disks. The build runs in one tr
 so the WAL file grows to about 1.9 GB and keeps that size afterwards (`journal_size_limit`
 is unset, AUDIT-SCALE-1 §3.8). Every later start finds the indexes and does nothing.
 
-**Rollback.** An older binary started against a migrated database finds the composites and
-ignores them. On the upgrade path it does not recreate the dropped single-column indexes;
+**Rollback and rolling upgrades.** An older binary started against a migrated database finds
+the composites and ignores them. If an older replica's migration does create the
+single-column indexes again during a rolling upgrade, the next start of this version drops
+them again. On the upgrade path it does not recreate the dropped single-column indexes;
 those are only created by a fresh-install AutoMigrate. Nothing here changes the schema
 epoch.
 

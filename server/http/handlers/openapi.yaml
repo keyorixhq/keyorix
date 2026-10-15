@@ -6522,7 +6522,7 @@ paths:
       security: [{bearerAuth: []}]
       parameters:
         - {name: after_id, in: query, schema: {type: integer}, description: Cursor — pass the last returned event id to fetch the next page.}
-        - {name: since, in: query, schema: {type: string, format: date-time}, description: "RFC3339 lower bound on event time (resolved to a start id through the time index, then paged by id)."}
+        - {name: since, in: query, schema: {type: string, format: date-time}, description: "RFC3339 lower bound on event time (resolved to the lowest id at or after it through the time index, then paged by id; exact under clock skew)."}
         - {name: limit, in: query, schema: {type: integer, default: 100, maximum: 1000}}
       responses:
         '200':

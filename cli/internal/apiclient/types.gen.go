@@ -1430,7 +1430,7 @@ type ExportAuditLogsParams struct {
 	// AfterId Cursor — pass the last returned event id to fetch the next page.
 	AfterId *int `form:"after_id,omitempty" json:"after_id,omitempty"`
 
-	// Since RFC3339 lower bound on event time (resolved to a start id through the time index, then paged by id).
+	// Since RFC3339 lower bound on event time (resolved to the lowest id at or after it through the time index, then paged by id; exact under clock skew).
 	Since *time.Time `form:"since,omitempty" json:"since,omitempty"`
 	Limit *int       `form:"limit,omitempty" json:"limit,omitempty"`
 }
