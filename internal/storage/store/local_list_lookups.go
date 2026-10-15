@@ -30,10 +30,7 @@ func forEachIDChunk(ids []uint, fn func(chunk []uint) error) error {
 		uniq = append(uniq, id)
 	}
 	for start := 0; start < len(uniq); start += listLookupChunk {
-		end := start + listLookupChunk
-		if end > len(uniq) {
-			end = len(uniq)
-		}
+		end := min(start+listLookupChunk, len(uniq))
 		if err := fn(uniq[start:end]); err != nil {
 			return err
 		}
