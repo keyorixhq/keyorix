@@ -227,13 +227,14 @@ const auditLinkCheckGenesisSQL = `SELECT CASE WHEN s.n = %[2]d AND s.unlinked = 
 
 // auditLinkCheckStatement is the link check, with its arguments, for n events
 // chained onto the head row (headID, headHash); headID 0 means the batch
-// starts the chain at genesis.
+// starts the chain at genesis. Row ids are passed as uint: pgx encodes them
+// into the bigint parameter and refuses one that does not fit.
 func auditLinkCheckStatement(table string, headID uint, headHash string, n int) (string, []any) {
 	quoted := pgx.Identifier{table}.Sanitize()
 	if headID == 0 {
 		return fmt.Sprintf(auditLinkCheckGenesisSQL, quoted, n, n+1), []any{auditGenesisHash}
 	}
-	return fmt.Sprintf(auditLinkCheckSQL, quoted, n+1), []any{int64(headID), headHash, auditGenesisHash}
+	return fmt.Sprintf(auditLinkCheckSQL, quoted, n+1), []any{headID, headHash, auditGenesisHash}
 }
 
 // errAuditOneFlightRolledBack wraps a one-flight failure that provably wrote
@@ -281,7 +282,7 @@ func (ls *LocalStorage) runAuditOneFlightStatements(ctx context.Context, pc *pgx
 		f.queue(durability)
 	}
 	f.queue("SELECT pg_advisory_xact_lock($1)", int64(auditAdvisoryLockKey))
-	f.queue(fmt.Sprintf(auditHeadCheckSQL, quoted), int64(head.id), head.hash)
+	f.queue(fmt.Sprintf(auditHeadCheckSQL, quoted), head.id, head.hash)
 	preamble := len(f.stmts)
 
 	var eventInserts, logInserts []auditPipelineInsert
