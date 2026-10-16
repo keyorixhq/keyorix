@@ -316,7 +316,9 @@ func (ls *LocalStorage) LogAuditEventWithAccessLog(ctx context.Context, event *m
 	return ls.logAuditEvent(ctx, event, accessLog)
 }
 
-func (ls *LocalStorage) logAuditEvent(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error {
+func (ls *LocalStorage) logAuditEvent(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) (err error) {
+	start := time.Now()
+	defer func() { observeAuditWrite(start, err) }()
 	normalizeAuditEventForHash(event)
 	// ls.auditFlusher is nil on a transaction-scoped LocalStorage (see
 	// WithTransaction/RemoveGlobalAdminRoleGuarded's clone construction) --
@@ -464,10 +466,11 @@ const auditFlusherIdleTimeout = 200 * time.Millisecond
 // auditBatchItem is one pending LogAuditEvent/LogAuditEventWithAccessLog
 // submission, queued for the flusher goroutine to commit as part of a batch.
 type auditBatchItem struct {
-	event     *models.AuditEvent
-	accessLog *models.SecretAccessLog // nil if this submission has no access-log row
-	ctx       context.Context         // the (already-detached) context to run the eventual DB work under
-	done      chan error              // buffered(1); the flusher sends exactly once, always
+	event      *models.AuditEvent
+	accessLog  *models.SecretAccessLog // nil if this submission has no access-log row
+	ctx        context.Context         // the (already-detached) context to run the eventual DB work under
+	done       chan error              // buffered(1); the flusher sends exactly once, always
+	enqueuedAt time.Time               // set by submitAuditBatchItem; feeds keyorix_audit_group_commit_wait_seconds
 }
 
 // auditFlusherState is LocalStorage's audit-batching flusher. nil on a
@@ -496,6 +499,7 @@ type auditFlusherState struct {
 // specifically to catch this regression.
 func (ls *LocalStorage) submitAuditBatchItem(item *auditBatchItem) error {
 	af := ls.auditFlusher
+	item.enqueuedAt = time.Now()
 	af.mu.Lock()
 	if !af.running {
 		af.running = true
@@ -588,6 +592,7 @@ func (ls *LocalStorage) runAuditFlusher(af *auditFlusherState) {
 			lingerTimer.Stop()
 		}
 	commit:
+		observeAuditGroupCommitWait(batch, time.Now())
 		errs := ls.commitAuditBatch(batch)
 		for i, item := range batch {
 			item.done <- errs[i]

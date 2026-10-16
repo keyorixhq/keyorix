@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/tlsmetrics"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	"github.com/keyorixhq/keyorix/server/grpc/services"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -302,6 +303,7 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load gRPC TLS certificate: %w", err)
 	}
+	tlsmetrics.Observe(tlsmetrics.GRPC, cert)
 
 	tlsConfig := &tls.Config{Certificates: []tls.Certificate{cert}} // nosemgrep: go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion -- applyTLSHardening below sets MinVersion unconditionally on every path, same as createGRPCTLSConfig's AutoCert branch above
 	if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS, cfg.Server.GRPC.TLSMode); err != nil {
