@@ -405,9 +405,7 @@ func (h *SecretHandler) updateSecretViaDiff(w http.ResponseWriter, r *http.Reque
 	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	auditDiff := core.BuildSecretUpdateDiff(authoritative, req, false)
 	auditCtx := core.DetachedAuditContext(ctx)
-	goSafe(func() {
-		h.coreService.LogSecretUpdatedWithDiff(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua, auditDiff)
-	}) // #nosec G118
+	h.coreService.LogSecretUpdatedWithDiff(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua, auditDiff) // synchronous (#3276)
 
 	h.sendSuccess(w, newSecretNodeWire(response), i18n.T("SuccessSecretUpdated", nil))
 }

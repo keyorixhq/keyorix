@@ -156,13 +156,13 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Audit the rotation (async, detached) so the rotation inspector and the
-	// activity feed have an attributable secret.rotated event.
+	// Audit the rotation BEFORE responding (#3276) so the rotation inspector,
+	// the activity feed and a client that refetches History right after the
+	// response all see the attributable secret.rotated event. The context is
+	// detached so a client disconnect cannot cancel the write.
 	ip, ua := clientIP(r), r.Header.Get("User-Agent")
 	auditCtx := core.DetachedAuditContext(r.Context())
-	goSafe(func() {
-		h.coreService.LogSecretRotatedWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua)
-	}) // #nosec G118
+	h.coreService.LogSecretRotatedWithProject(auditCtx, userCtx.UserID, uint(id), secret.ProjectID, userCtx.Username, secret.Name, ip, ua)
 
 	h.sendSuccess(w, newSecretNodeWire(secret), "Secret rotated successfully")
 }

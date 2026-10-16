@@ -223,9 +223,7 @@ func (h *FolderHandler) DeleteFolder(w http.ResponseWriter, r *http.Request) {
 	uid, fID, uname := userCtx.UserID, uint(id), userCtx.Username
 	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
-	goSafe(func() {
-		h.coreService.LogSecretDeletedWithProject(auditCtx, uid, fID, node.ProjectID, uname, node.Name, ip, ua)
-	}) // #nosec G118
+	h.coreService.LogSecretDeletedWithProject(auditCtx, uid, fID, node.ProjectID, uname, node.Name, ip, ua) // synchronous (#3276)
 
 	w.WriteHeader(http.StatusNoContent)
 }

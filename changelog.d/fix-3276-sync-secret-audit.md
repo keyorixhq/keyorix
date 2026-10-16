@@ -1,0 +1,2 @@
+### Fixed
+- **Secret create/update/rotate/delete audit rows are written before the response.** The `secret.created`, `secret.updated`, `secret.rotated` and `secret.deleted` events (including the folder-delete path) were written from a background goroutine after the handler responded, so a client that refetched History immediately could miss the event (web-e2e `secrets-crud.spec.ts` "Rotated" flake, #3276). Guarded by `TestSecretMutations_AuditRowExistsWhenHandlerReturns`.

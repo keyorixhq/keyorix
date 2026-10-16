@@ -130,9 +130,7 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 	// #2545: a client-asserted origin (e.g. keyorix-migrate's source path) is recorded as a
 	// labelled note on the audit event — never as attribution; see core.ClientOriginHeader.
 	auditCtx := core.WithClientOrigin(core.DetachedAuditContext(r.Context()), r.Header.Get(core.ClientOriginHeader))
-	goSafe(func() {
-		h.coreService.LogSecretCreatedWithProject(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua)
-	}) // #nosec G118
+	h.coreService.LogSecretCreatedWithProject(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua) // synchronous: audit row exists when we respond (#3276)
 
 	sendCreated(w, newSecretNodeWire(response), i18n.T("SuccessSecretCreated", nil))
 }
@@ -676,9 +674,7 @@ func (h *SecretHandler) UpdateSecret(w http.ResponseWriter, r *http.Request) {
 	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	diff := core.BuildSecretUpdateDiff(oldSecret, req, reqBody.Value != "")
 	auditCtx := core.WithClientOrigin(core.DetachedAuditContext(r.Context()), r.Header.Get(core.ClientOriginHeader)) // #2545, see CreateSecret
-	goSafe(func() {
-		h.coreService.LogSecretUpdatedWithDiff(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua, diff)
-	}) // #nosec G118
+	h.coreService.LogSecretUpdatedWithDiff(auditCtx, uid, sID, response.ProjectID, uname, sname, ip, ua, diff)       // synchronous (#3276)
 
 	h.sendSuccess(w, newSecretNodeWire(response), i18n.T("SuccessSecretUpdated", nil))
 }
@@ -744,9 +740,7 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	uid, sID, uname := userCtx.UserID, uint(id), userCtx.Username
 	ip, ua := clientIP(r), r.Header.Get(hdrUserAgent)
 	auditCtx := core.DetachedAuditContext(r.Context())
-	goSafe(func() {
-		h.coreService.LogSecretDeletedWithProject(auditCtx, uid, sID, secretProjectID, uname, secretName, ip, ua)
-	}) // #nosec G118
+	h.coreService.LogSecretDeletedWithProject(auditCtx, uid, sID, secretProjectID, uname, secretName, ip, ua) // synchronous (#3276)
 
 	// Tell the caller until when this delete is undoable. A failed read-back must not
 	// turn a completed delete into an error, so the header is simply omitted then.
