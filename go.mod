@@ -1,5 +1,7 @@
 module github.com/keyorixhq/keyorix
 
+// CI-SELECT-1 proof: go.mod touched (throwaway branch, never merged).
+
 go 1.27
 
 toolchain go1.27.2
