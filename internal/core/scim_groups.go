@@ -56,9 +56,8 @@ func (c *KeyorixCore) ListSCIMGroupsPage(ctx context.Context, startIndex, count 
 	return groups, int(total), nil
 }
 
-// scimManagedMember reports whether uid identifies a SCIM-managed account (carries a
-// stored ExternalID — only SCIM user-provisioning sets one; a native/local account
-// never does). SCIM group membership mutations (Create/Replace/PATCH) must refuse any
+// scimManagedMember reports whether uid identifies a SCIM-managed account
+// (scimManaged: an IdP externalId outside the "sso:" namespace, #3418). SCIM group membership mutations (Create/Replace/PATCH) must refuse any
 // target that isn't: those endpoints take arbitrary numeric member ids straight off
 // the SCIM payload with no check that the id belongs to an account SCIM actually owns,
 // so a valid (e.g. group-provisioning-only) SCIM bearer token could otherwise add ANY
@@ -73,7 +72,7 @@ func (c *KeyorixCore) scimManagedMember(ctx context.Context, uid uint) bool {
 	if err != nil {
 		return false
 	}
-	return user.ExternalID != ""
+	return scimManaged(user)
 }
 
 // maxSCIMGroupMembersPerCall bounds how many member ids a single SCIM group

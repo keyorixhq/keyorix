@@ -33,6 +33,10 @@ const (
 
 var scimNonAlphanum = regexp.MustCompile(`[^a-z0-9]`)
 
+// ErrSCIMReservedExternalID refuses a SCIM create whose externalId is in the
+// "sso:" namespace reserved for SSO-bound identities (#3418).
+var ErrSCIMReservedExternalID = errors.New(`externalId must not use the reserved "sso:" prefix`)
+
 // deriveSCIMUsername builds a unique alphanumeric username from a SCIM userName
 // (typically an email/UPN): its local-part, lowercased and stripped to [a-z0-9],
 // padded to the 3-char minimum, with a numeric suffix on collision.
@@ -117,6 +121,13 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	if !c.domainAllowed(email) {
 		return nil, fmt.Errorf("email domain is not on the allowlist")
 	}
+	// #3418: the "sso:" namespace of external_id belongs to SSO-bound identities
+	// (resolveSSOUser, provisionSSOUser). An account SCIM created inside it would be
+	// outside SCIM's own scope from birth (scimManaged), and an id such as
+	// "sso:<provider>:<sub>" would pre-bind that SSO subject to an account SCIM chose.
+	if isSSOExternalID(externalID) {
+		return nil, ErrSCIMReservedExternalID
+	}
 	// Fail CLOSED on a lookup error: swallowing it would let a transient DB error during
 	// the dedup check fall through to CreateUser and mint a SECOND identity with the same
 	// email (there is no DB-level email uniqueness), and SSO/SCIM resolve email via
@@ -196,18 +207,37 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	return created, nil
 }
 
-// scimManaged reports whether user was provisioned/adopted via SCIM (carries a
-// stored externalId — only ProvisionSCIMUser sets one; a native/local account never
-// does). UpdateSCIMUser and DeprovisionSCIMUser refuse to operate on an id that
-// isn't: the SCIM PUT/PATCH/DELETE endpoints take an arbitrary numeric id straight
-// off the URL path with no check that it belongs to an account SCIM actually owns,
-// so a valid (e.g. provisioning-only) SCIM bearer token could otherwise rewrite a
-// NATIVE admin's email to a fresh attacker-controlled address (the existing
-// same-email-collision guard only blocks an address already in use) and then claim
-// the account via SSO/SAML email-fallback resolution — an account takeover reachable
-// with no admin-console access at all (#120).
+// scimManaged reports whether user was provisioned via SCIM: it carries a stored
+// IdP externalId OUTSIDE the "sso:" namespace. Every SCIM user and group-member
+// operation refuses an account that isn't: the SCIM endpoints take an arbitrary
+// numeric id straight off the URL path or payload, so a valid (e.g.
+// provisioning-only) SCIM bearer token could otherwise rewrite a NATIVE admin's
+// email to a fresh attacker-controlled address (the same-email-collision guard only
+// blocks an address already in use) and then claim the account via SSO/SAML
+// email-fallback resolution — an account takeover reachable with no admin-console
+// access at all (#120).
+//
+// #3418: external_id is shared with SSO. resolveSSOUser claims a native account on
+// its first verified-email SSO login by writing "sso:<provider>:<sub>", and
+// provisionSSOUser JIT-creates accounts with that form; neither is SCIM's. Plain
+// non-emptiness therefore made every SSO-claimed native account (administrators
+// included) readable, editable, deactivatable and deletable by the SCIM token.
+// ProvisionSCIMUser refuses an "sso:" externalId and an SSO link never rewrites a
+// non-empty one, so the namespace is a durable marker: a SCIM-created account keeps
+// its IdP id across SSO logins, and nothing SCIM did not create can acquire one.
+// Rule for rows that already carry "sso:" (an SSO JIT account an IdP's SCIM sync
+// previously adopted through the userName filter): the row cannot be told apart
+// from a claimed native account, so it is out of SCIM's scope (fail closed); an
+// administrator offboards it.
 func scimManaged(user *models.User) bool {
-	return user.ExternalID != ""
+	return user != nil && user.ExternalID != "" && !isSSOExternalID(user.ExternalID)
+}
+
+// SCIMManaged is scimManaged for the SCIM HTTP handler's userName-filter path,
+// which resolves a user through FindSCIMUser (an any-account email match kept for
+// ProvisionSCIMUser's dedup) and must surface only SCIM-owned accounts.
+func SCIMManaged(user *models.User) bool {
+	return scimManaged(user)
 }
 
 // UpdateSCIMUser applies a SCIM Replace/PATCH to a user: displayName, email, and the

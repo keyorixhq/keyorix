@@ -528,6 +528,12 @@ func ssoExternalID(provider, subject string) string {
 	return ssoExternalIDScheme + provider + ":" + subject
 }
 
+// isSSOExternalID reports whether externalID is in the SSO namespace (an SSO-claimed
+// or SSO JIT-provisioned identity). Such an account is never SCIM-managed (#3418).
+func isSSOExternalID(externalID string) bool {
+	return strings.HasPrefix(externalID, ssoExternalIDScheme)
+}
+
 // ssoBoundToOtherProvider reports whether externalID is an SSO-scoped identity owned by
 // a provider OTHER than `provider`. An account in that state must never be linked to
 // `provider`'s assertion — doing so is exactly the cross-provider account takeover this

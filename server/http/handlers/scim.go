@@ -7,6 +7,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -152,7 +153,7 @@ func (h *SCIMHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 		// but that means a userName-filter query here could otherwise surface (and
 		// leak the numeric id of) a NATIVE account SCIM never provisioned. Only
 		// SCIM-managed accounts are real matches for discovery/reconciliation (#120).
-		if user != nil && user.ExternalID != "" {
+		if core.SCIMManaged(user) {
 			resources = append(resources, toSCIMUser(user))
 		}
 		writeSCIM(w, http.StatusOK, listResponse(resources))
@@ -250,7 +251,7 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusConflict
 		case strings.Contains(msg, errDomainNotAllowed):
 			status = http.StatusForbidden
-		case strings.Contains(msg, "is required"):
+		case strings.Contains(msg, "is required"), errors.Is(err, core.ErrSCIMReservedExternalID):
 			// Deliberately safe validation message from ProvisionSCIMUser — pass through.
 		default:
 			log.Printf("Error provisioning SCIM user %q: %v", p.UserName, err)
