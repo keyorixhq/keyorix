@@ -26,6 +26,9 @@ func newSCIMGuardCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.User{}, &models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.UserRole{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Session{}, &models.AuditEvent{}, &models.Project{}, &models.Environment{},
+		// A SCIM deactivation revokes PATs in its transaction (#3419); without the
+		// table that transaction aborts.
+		&models.PersonalAccessToken{},
 	))
 	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
