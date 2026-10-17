@@ -23,6 +23,9 @@ func newMFAStepUpGrantStore(t *testing.T) *LocalStorage {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.MFAStepUpGrant{}))
+	// CreateMFAStepUpGrant re-checks its owner (requireLiveCredentialOwner);
+	// every grant here needs a live user row, as it does in production.
+	seedCredentialOwners(t, db)
 	return NewLocalStorage(db)
 }
 
@@ -182,6 +185,7 @@ func TestConsumeMFAStepUpGrant_NoneReturnsFalseNil(t *testing.T) {
 func TestConcurrency_ConsumeMFAStepUpGrant_OnlyOneWins(t *testing.T) {
 	db := concurrentDB(t)
 	require.NoError(t, db.AutoMigrate(&models.MFAStepUpGrant{}))
+	seedCredentialOwners(t, db)
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 	now := time.Now()
