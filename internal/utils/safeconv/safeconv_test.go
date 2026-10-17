@@ -84,3 +84,5 @@ func TestIntToUint64(t *testing.T) {
 		assert.Contains(t, err.Error(), "negative")
 	})
 }
+
+// CI-SELECT-1 proof: test-only change in one leaf package (throwaway branch, never merged).
