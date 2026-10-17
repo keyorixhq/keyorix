@@ -72,20 +72,12 @@ Complete documentation for the production-ready Keyorix secret management system
 
 ## 📊 **System Status**
 
-### Production Readiness
-- **Status**: ✅ Production Ready
-- **Test Coverage**: 95% success rate
-- **Performance**: Sub-millisecond response times
-- **Security**: AES-256-GCM encryption validated
-- **Languages**: 5 languages supported
-- **API**: HTTP complete; gRPC partial (data plane only — see ADR-105)
+What this project states about itself, and where each statement is checked:
 
-### Current Metrics
-- **Secrets Managed**: 14+ in testing
-- **Database Performance**: 151-283µs response time
-- **API Health**: < 2ms response time
-- **Memory Usage**: ~45MB efficient
-- **Uptime**: 5h30m+ stable
+- **Encryption**: secrets are encrypted at rest with AES-256-GCM; details and limits in [SECURITY.md](./SECURITY.md).
+- **API**: the HTTP API is the complete surface and is described by the generated OpenAPI document; gRPC covers the data plane only (see ADR-105).
+- **Readiness**: whether a given build is fit for your deployment is decided by your own acceptance run, not by this page. `scripts/demo/check.sh` is the readiness check the demo uses; `keyorix-server admin validate --posture` reports the security posture of a configuration.
+- **Test results**: the CI run for the commit you deploy is the record. This page carries no pass rates, response times, memory or uptime figures, because they would go stale the day after they were written.
 
 ## 🔧 **Quick Reference**
 
@@ -136,16 +128,7 @@ curl http://localhost:8080/openapi.yaml
 - **Examples**: See `/examples` directory
 - **Scripts**: Automation scripts in `/scripts`
 - **Tests**: Comprehensive test suite validation
-- **Performance**: Detailed metrics and benchmarks
 
 ## 🎉 **Documentation Status**
 
-**All documentation is up-to-date and reflects the current production-ready state:**
-
-✅ **Complete**: All major components documented  
-✅ **Current**: Reflects latest test results and features  
-✅ **Validated**: Based on 95% test success rate  
-✅ **Production-Ready**: Ready for immediate deployment  
-✅ **Comprehensive**: Covers all use cases and scenarios  
-
-**Your Keyorix system is fully documented and ready for production use!** 🚀
+These guides are maintained alongside the code, but no page here certifies itself. When a guide and the behaviour of the version you run disagree, the running server (`/openapi.yaml`, `keyorix --help`) is right; please open an issue.
