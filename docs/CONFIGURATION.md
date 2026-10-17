@@ -168,6 +168,8 @@ server:
     metrics_token_file: ""        # or read the token from this file (secret-file rules, see below); set one, not both
   access_log:
     on_sink_stall: block          # block (default) | drop — what a request does when the access-log sink stalls (see below)
+  log:
+    format: text                  # text (default) | json — one JSON object per log line; see docs/operations/logging.md
   grpc:
     # Partial surface, off by default. HTTP is the complete interface; enable this
     # only if you need it, and read docs/adr-105-grpc-scope-and-parity.md first —
@@ -281,25 +283,27 @@ storage:
     #   see "PostgreSQL password precedence" below
     # max_open_conns: 8          # default: 8 for SQLite, 25 for Postgres (see below)
     # max_idle_conns: 8          # default: the effective max_open_conns
+    # native_read_pool_max: 8    # POSTGRES ONLY. Cap of the separate pool the machine
+    #   credential lookup and the node-stamp read run on. Default 8 (unchanged); 1 to
+    #   1000, and never more than max_open_conns. Counted in the boot-time connection
+    #   headroom warning. Raise it only if pg_stat_activity shows requests waiting on
+    #   that pool; each unit is one more PostgreSQL connection per replica.
     conn_max_lifetime_minutes: 30
     # audit_flusher_linger_window: ""  # e.g. "1ms"; default "" (0, no deliberate
     #   wait — the audit-chain batching flusher commits whatever is already
     #   queued immediately, instead of waiting for more writers to join the
-    #   same batch). A nonzero window increases audit-commit throughput under
-    #   HIGH concurrency (c=50-class load) at the cost of added per-request
-    #   latency at LOW concurrency and, on Postgres specifically, a measured
-    #   throughput REGRESSION at MODERATE concurrency (c=10-class) — see
-    #   SESSION-PERF's PR #2420 for the full before/after data. Left at its
-    #   safe default; only set this if production
+    #   same batch). A nonzero window trades per-request latency for larger
+    #   audit batches. Leave it at the default unless the
     #   keyorix_audit_flusher_batch_size/_flushes_total metrics (exposed on
-    #   the server's /metrics endpoint) justify it for your own load shape.
+    #   the server's /metrics endpoint) show a reason for your own load shape.
     # audit_durability: standard   # strict | standard. Default: standard on
     #   PostgreSQL; SQLite runs strict only (standard REFUSES TO START there).
     #   strict: the audit commit waits for the disk sync, no audit entry is lost
     #   to any crash. standard: the audit row is still committed before the
     #   secret is returned (a failed audit write still fails the request), but
-    #   the disk sync is not awaited; an OS crash or power loss can lose up to
-    #   ~600 ms of audit entries as a tail. Config file only. See
+    #   the disk sync is not awaited; an OS crash or power loss can lose the
+    #   last few hundred ms of audit entries as a tail (about 3 x PostgreSQL's
+    #   wal_writer_delay, 600 ms at its default). Config file only. See
     #   docs/security/hardening-guide.md §5a. The old
     #   insecure_audit_skip_durable_sync (true = standard, false = strict) is a
     #   deprecated alias for one minor release.
@@ -315,7 +319,12 @@ storage:
     # pooler: none                # none (default) | pgbouncer-session | pgbouncer-transaction.
     #   POSTGRES ONLY. Names the connection pooler in front of PostgreSQL;
     #   pgbouncer-transaction changes how statements and advisory locks are
-    #   run. See docs/postgresql-poolers.md.
+    #   run. Only PgBouncer is supported; other poolers and proxies (PgCat,
+    #   Odyssey, RDS Proxy, Supavisor, pgpool-II, ...) are not tested and not
+    #   supported. A lost advisory lock (backend killed, failover, partition)
+    #   stops its holder in every mode; a lost server-presence or single_writer
+    #   lock shuts the server down with exit status 1. See
+    #   docs/postgresql-poolers.md.
 ```
 
 ### PostgreSQL TLS
@@ -476,7 +485,10 @@ deliberately, or verify database.path and the working directory -- refusing to c
 empty database in its place
 ```
 
-Create the database deliberately with `keyorix system init --database` (which creates the file
+(The command the message names is stale: the supported way to create the database is
+`keyorix-server admin init --database`, below.)
+
+Create the database deliberately with `keyorix-server admin init --database` (which creates the file
 with `O_CREATE|O_EXCL`), then start the server.
 
 In-memory DSNs (`:memory:`, `...?mode=memory`) are unaffected — there is no file that could
@@ -484,7 +496,7 @@ pre-exist. The Postgres backend is unaffected too.
 
 **Why this is off by default:** the shipped first-boot paths (`server/entrypoint.sh`,
 `docker-compose.yml`) start the server directly and let it create the database, so turning this
-on by default would break every first boot that does not run `keyorix system init --database`
+on by default would break every first boot that does not run `keyorix-server admin init --database`
 first. Turn it on once your deployment creates the file explicitly — which is exactly the point:
 after that, a missing file can only mean something went wrong.
 ### Single-writer mode (`single_writer`)
@@ -520,6 +532,13 @@ deviation. Comparison with Vault/OpenBao's file audit device and how to choose:
 `insecure_audit_skip_durable_sync` is a deprecated alias for one minor release
 (`true` = `standard`, `false` = `strict`); it logs a deprecation line, and
 setting both keys to conflicting levels refuses to start.
+### Log format (`server.log.format`)
+
+`text` (default) keeps the existing human-readable lines. `json` writes every log line as
+one JSON object with `ts`, `level` and `msg`, and the HTTP access log and panic lines also
+carry `request_id`, `principal_type` and `route`. Any other value refuses to start. Fields,
+request-id behaviour and what is and is not redacted: [operations/logging.md](operations/logging.md).
+
 ### Access log when the sink stalls (`server.access_log.on_sink_stall`)
 
 The HTTP access log is written through a 1 MiB in-memory queue to the process
@@ -558,7 +577,7 @@ storage:
 
     # key_provider — default is "password" when omitted.
     key_provider:
-      type: password              # password | file | env | exec | aws-kms | gcp-kms | azure-kms
+      type: password              # password | file | env | exec | shamir | tpm | aws-kms | gcp-kms | azure-kms
 
       # type: file — read raw key material from a path (mounted CSI/sealed
       # secret, KMS sidecar output). Accepts 32 raw bytes, hex, or base64.
@@ -574,7 +593,7 @@ storage:
 
       # type: shamir — reconstruct the KEK from K-of-N Shamir shares (no single
       # custodian holds it). Provide at least the threshold many shares (hex/base64)
-      # via files and/or env vars. Generate with `keyorix encryption shamir-split`.
+      # via files and/or env vars. Generate with `keyorix-server admin encryption shamir-split`.
       # shamir_share_files: [/etc/keyorix/share-1.hex, /etc/keyorix/share-2.hex, /etc/keyorix/share-3.hex]
       # shamir_share_env: [KX_KEK_SHARE_1, KX_KEK_SHARE_2]
       # shamir_commitment is also printed by shamir-split — set it so reconstruction
@@ -612,7 +631,7 @@ storage:
   required. The argv is trusted deployment config, like `file_path`/`env_var`.
 - **`shamir`**: the KEK is split into **N Shamir shares** with a **K-of-N**
   threshold, so no single custodian holds it and at least K must combine to unseal
-  (separation of duties for the master key). Generate with `keyorix encryption
+  (separation of duties for the master key). Generate with `keyorix-server admin encryption
   shamir-split --shares N --threshold K` (the KEK is never printed/stored — only the
   shares are, plus a `shamir_commitment` value). Provide at least K shares at
   startup via `shamir_share_files` and/or `shamir_share_env` (each a hex/base64
@@ -621,7 +640,7 @@ storage:
   attacker holding threshold-1 genuine shares can forge to make ANY chosen value
   reconstruct; with it, the reconstructed KEK is verified against a real HMAC-SHA256
   commitment computed at split time. `KEYORIX_MASTER_PASSWORD` is **not** required.
-  Move an existing install onto it with `keyorix encryption migrate-provider
+  Move an existing install onto it with `keyorix-server admin encryption migrate-provider
   --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`. ⚠️ Losing
   more than N-K shares makes the KEK — and all data — permanently unrecoverable;
   store and back up shares separately.
@@ -633,7 +652,7 @@ storage:
   blob is bound to *this* TPM — it cannot be unsealed on another host, so back up the
   data under a portable provider (or re-seal per host) and note that a TPM
   clear/replacement makes the blob unrecoverable. Move an existing install on with
-  `keyorix encryption migrate-provider --to-type tpm --to-wrapped-key-path keys/kek.tpm`.
+  `keyorix-server admin encryption migrate-provider --to-type tpm --to-wrapped-key-path keys/kek.tpm`.
   ⚠️ **No PCR policy binding yet**: the seal is bound to "this TPM chip", not to a
   verified/measured boot state — no PolicyPCR session is used. Any code capable of
   asking the TPM to unseal the blob succeeds regardless of firmware/bootloader/kernel
@@ -656,11 +675,11 @@ storage:
   `KEYORIX_MASTER_PASSWORD` is **not** required. Startup needs the KMS reachable
   (fail-closed).
 
-> Rotating the **DEK** (`keyorix encryption rotate`) re-encrypts all rows under a
+> Rotating the **DEK** (`keyorix-server admin encryption rotate`) re-encrypts all rows under a
 > new DEK and is independent of the provider.
 >
 > **Switching providers** (e.g. password → a cloud KMS) is
-> `keyorix encryption migrate-provider --to-type <type> … --confirm` (ADR-041): it
+> `keyorix-server admin encryption migrate-provider --to-type <type> … --confirm` (ADR-041): it
 > re-wraps the DEK under the target provider's KEK **without re-encrypting any
 > data** (fast, no DB lock), verifies the target unwraps it, and keeps a backup of
 > the previous wrapped DEK. Migrating `--to-type password` reads the new passphrase
@@ -1253,6 +1272,14 @@ session:
   absolute_ttl: "12h"   # hard cap on total session lifetime; "" or "0" = no ceiling
 ```
 
+**Authentication cache and database outages (not configurable).** A validated
+session, PAT or machine token is cached for about 30 seconds per replica, and
+every cached request still re-checks the credential's revocation state against
+the database. If that re-check fails (database down, failover, pool exhausted),
+the request is refused with `503` and `Retry-After` instead of being served from
+the cache, so a revocation is never hidden by an outage; clients should retry.
+See [UPGRADING.md](UPGRADING.md) §6h.
+
 ## password_policy
 
 Password rules (ADR-025). Absent = conservative built-in defaults; when present,
@@ -1342,6 +1369,12 @@ opening a campaign is a create, not a delete, so it runs even under a legal hold
 The cadence also drives the compliance posture's **projects-overdue** count (and
 `keyorix compliance report` → Access governance → "overdue for recert"), so the
 overdue signal is visible to auditors even before you enable `auto_open`.
+
+`cadence_days` is also the **look-back of the "last used" column** in the access review
+and in a campaign's items: a user with no secret activity in the last `cadence_days`
+days (at most 366) shows no last use, meaning "none within the review period", not
+"never". It applies whether or not the scheduler is enabled. See
+[recertification-activity-window.md](recertification-activity-window.md).
 
 ```yaml
 recertification:

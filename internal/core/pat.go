@@ -160,7 +160,7 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	}
 	pat, err := c.storage.GetPersonalAccessTokenByHash(ctx, sha256Hex(raw))
 	if err != nil {
-		return nil, nil, nil, 0, fmt.Errorf("invalid token")
+		return nil, nil, nil, 0, credentialLookupError(err, "invalid token")
 	}
 	if pat.Revoked {
 		return nil, nil, nil, 0, ErrPATRevoked
@@ -171,7 +171,7 @@ func (c *KeyorixCore) ValidatePATToken(ctx context.Context, raw string) (*models
 	}
 	user, err := c.storage.GetUser(ctx, pat.UserID)
 	if err != nil {
-		return nil, nil, nil, 0, fmt.Errorf("user not found")
+		return nil, nil, nil, 0, credentialLookupError(err, "user not found")
 	}
 	if !user.IsActive {
 		return nil, nil, nil, 0, fmt.Errorf("user inactive")
@@ -225,9 +225,11 @@ func (c *KeyorixCore) TouchPATLastUsed(ctx context.Context, patID uint) {
 // request (session/machine tokens carry no such per-request-narrowable
 // restriction and are unaffected). Returns an error on any lookup failure — the
 // caller must NOT treat that as "unrestricted" (that would fail OPEN on the exact
-// check this exists to keep honest); falling back to the last-known (possibly
-// stale, but still a real, previously-enforced) restriction is the correct
-// degraded behavior on a transient storage error.
+// check this exists to keep honest). Since CACHE-FAILCLOSED-1 the caller does
+// not fall back to the last-known restriction either: a failed re-check
+// refuses the request as temporarily unavailable (INV-MW-cache-hit-recheck-
+// fails-closed), because the same failed read is the one that would have seen
+// a revocation.
 //
 // #G18: also surfaces ErrPATRevoked/ErrPATExpired — previously this only ever
 // read Permissions/ProjectID/EnvironmentID/AllowedCIDRs off the freshly-read

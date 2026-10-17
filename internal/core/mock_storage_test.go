@@ -27,8 +27,8 @@ type MockStorage struct {
 }
 
 // WithSchedulerLock runs fn directly in tests (single instance, no DB lock).
-func (m *MockStorage) WithSchedulerLock(_ context.Context, _ int64, fn func() error) (bool, error) {
-	return true, fn()
+func (m *MockStorage) WithSchedulerLock(ctx context.Context, _ int64, fn func(context.Context) error) (bool, error) {
+	return true, fn(ctx)
 }
 
 // TryAcquireSchedulerLock/ReleaseSchedulerLock are no-ops in tests (single
@@ -41,13 +41,13 @@ func (m *MockStorage) ReleaseSchedulerLock(_ context.Context, _ int64, _ string)
 }
 
 // WithAuditCheckpointLock runs fn directly in tests (single instance, no DB lock).
-func (m *MockStorage) WithAuditCheckpointLock(_ context.Context, fn func() error) error {
-	return fn()
+func (m *MockStorage) WithAuditCheckpointLock(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
 }
 
 // WithBootstrapLock runs fn directly in tests (single instance, no DB lock).
-func (m *MockStorage) WithBootstrapLock(_ context.Context, fn func() error) error {
-	return fn()
+func (m *MockStorage) WithBootstrapLock(ctx context.Context, fn func(context.Context) error) error {
+	return fn(ctx)
 }
 
 // WithNamedLock runs fn directly in tests (single instance, no DB lock).
@@ -389,34 +389,34 @@ func (m *MockStorage) RevertAccessReviewItemClaim(ctx context.Context, itemID ui
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	args := m.Called(ctx, projectID)
+func (m *MockStorage) LastUserSecretActivity(ctx context.Context, projectID uint, since time.Time) (map[uint]time.Time, error) {
+	args := m.Called(ctx, projectID, since)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(map[uint]time.Time), args.Error(1)
 }
 
-func (m *MockStorage) LastUserRoleManagementActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	a := m.Called(ctx, projectID)
+func (m *MockStorage) LastUserRoleManagementActivity(ctx context.Context, projectID uint, since time.Time) (map[uint]time.Time, error) {
+	a := m.Called(ctx, projectID, since)
 	v, _ := a.Get(0).(map[uint]time.Time)
 	return v, a.Error(1)
 }
 
-func (m *MockStorage) LastUserSecretDeletionActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	a := m.Called(ctx, projectID)
+func (m *MockStorage) LastUserSecretDeletionActivity(ctx context.Context, projectID uint, since time.Time) (map[uint]time.Time, error) {
+	a := m.Called(ctx, projectID, since)
 	v, _ := a.Get(0).(map[uint]time.Time)
 	return v, a.Error(1)
 }
 
-func (m *MockStorage) LastUserSecretReadActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	a := m.Called(ctx, projectID)
+func (m *MockStorage) LastUserSecretReadActivity(ctx context.Context, projectID uint, since time.Time) (map[uint]time.Time, error) {
+	a := m.Called(ctx, projectID, since)
 	v, _ := a.Get(0).(map[uint]time.Time)
 	return v, a.Error(1)
 }
 
-func (m *MockStorage) LastUserSecretWriteActivity(ctx context.Context, projectID uint) (map[uint]time.Time, error) {
-	a := m.Called(ctx, projectID)
+func (m *MockStorage) LastUserSecretWriteActivity(ctx context.Context, projectID uint, since time.Time) (map[uint]time.Time, error) {
+	a := m.Called(ctx, projectID, since)
 	v, _ := a.Get(0).(map[uint]time.Time)
 	return v, a.Error(1)
 }
@@ -841,6 +841,14 @@ func (m *MockStorage) CountExpiringSecretsByProject(ctx context.Context, project
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(map[uint]int), args.Error(1)
+}
+
+func (m *MockStorage) CountSecretsByEnvironment(ctx context.Context, envIDs []uint) (map[uint]int64, error) {
+	args := m.Called(ctx, envIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]int64), args.Error(1)
 }
 
 func (m *MockStorage) ListLiveSecretNamesByProject(ctx context.Context, projectIDs []uint, limit int) ([]storage.SecretNameRow, bool, error) {
@@ -1420,6 +1428,30 @@ func (m *MockStorage) IsProjectMember(ctx context.Context, userID, projectID uin
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStorage) ProjectMembershipsAmong(ctx context.Context, userID uint, projectIDs []uint) (map[uint]bool, error) {
+	args := m.Called(ctx, userID, projectIDs)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[uint]bool), args.Error(1)
+}
+
+func (m *MockStorage) ListUserRoleGrants(ctx context.Context, userID uint) ([]storage.UserRoleGrant, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.UserRoleGrant), args.Error(1)
+}
+
+func (m *MockStorage) ListUserLiveGroupMemberships(ctx context.Context, userID uint) ([]storage.UserGroupMembershipAt, error) {
+	args := m.Called(ctx, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]storage.UserGroupMembershipAt), args.Error(1)
+}
+
 func (m *MockStorage) IsGroupProjectScoped(ctx context.Context, groupID, projectID uint) (bool, error) {
 	args := m.Called(ctx, groupID, projectID)
 	return args.Bool(0), args.Error(1)
@@ -1594,6 +1626,34 @@ func (m *MockStorage) SetSystemMetadata(ctx context.Context, key, value string) 
 	return args.Error(0)
 }
 
+func (m *MockStorage) CreatePendingAuditEvent(ctx context.Context, p *models.PendingAuditEvent) error {
+	args := m.Called(ctx, p)
+	return args.Error(0)
+}
+
+func (m *MockStorage) ListPendingAuditEvents(ctx context.Context, afterID uint, limit int) ([]*models.PendingAuditEvent, error) {
+	args := m.Called(ctx, afterID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*models.PendingAuditEvent), args.Error(1)
+}
+
+func (m *MockStorage) ClaimPendingAuditEvent(ctx context.Context, id uint) (bool, error) {
+	args := m.Called(ctx, id)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStorage) RecordPendingAuditEventFailure(ctx context.Context, id uint, reason string) error {
+	args := m.Called(ctx, id, reason)
+	return args.Error(0)
+}
+
+func (m *MockStorage) CountPendingAuditEvents(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockStorage) GetRecoveryKeyRecord(ctx context.Context) (*models.RecoveryKeyRecord, bool, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
@@ -1663,6 +1723,11 @@ func (m *MockStorage) GetAnomalyConfig(ctx context.Context) (*models.AnomalyConf
 
 func (m *MockStorage) SaveAnomalyConfig(ctx context.Context, cfg *models.AnomalyConfigRecord) error {
 	return m.Called(ctx, cfg).Error(0)
+}
+
+func (m *MockStorage) MaxAuditEventID(ctx context.Context) (uint, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(uint), args.Error(1)
 }
 
 func (m *MockStorage) GetAuditLogs(ctx context.Context, filter *storage.AuditFilter) ([]*models.AuditEvent, int64, error) {

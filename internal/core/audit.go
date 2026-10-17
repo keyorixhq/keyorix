@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/logging"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -338,10 +338,16 @@ func (c *KeyorixCore) writeAuditEventDiff(ctx context.Context, eventType string,
 func (c *KeyorixCore) writeAuditEventDiffOn(ctx context.Context, tgt auditTarget, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) (persisted bool) { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("SECURITY: writeAuditEventDiffOn panicked building/emitting audit event %q (best-effort, primary operation already succeeded): %v", eventType, r)
+			logging.Event(ctx, logging.LevelError, fmt.Sprintf("SECURITY: writeAuditEventDiffOn panicked building/emitting audit event %q (best-effort, primary operation already succeeded): %v", eventType, r), "event_type", eventType)
 			persisted = false
 		}
 	}()
+	return c.emitAuditOn(ctx, tgt, buildAuditEvent(ctx, eventType, userID, secretID, projectID, ip, description, diff))
+}
+
+// buildAuditEvent is the success-path event writeAuditEventDiffOn emits, built
+// without emitting it (an owed event is stored first, see audit_owed.go).
+func buildAuditEvent(ctx context.Context, eventType string, userID *uint, secretID *uint, projectID *uint, ip string, description string, diff string) *models.AuditEvent { // NOSONAR -- domain-driven parameter count; each field is a distinct audit attribute
 	t := true
 	event := &models.AuditEvent{
 		EventType:    eventType,
@@ -361,7 +367,7 @@ func (c *KeyorixCore) writeAuditEventDiffOn(ctx context.Context, tgt auditTarget
 		event.ActingAs = userID
 		event.Impersonation = true
 	}
-	return c.emitAuditOn(ctx, tgt, event)
+	return event
 }
 
 // writeAuditEventFailed persists a failed audit event (Success=false), with
@@ -423,8 +429,8 @@ func sanitizeAuditText(s string) string {
 func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accessedBy, action, ip, ua string) {
 	defer func() {
 		if r := recover(); r != nil {
-			log.Printf("SECURITY: writeAccessLog panicked persisting secret access log (secret=%d action=%q accessedBy=%q, best-effort, primary operation already succeeded): %v",
-				secretID, action, accessedBy, r)
+			logging.Event(ctx, logging.LevelError, fmt.Sprintf("SECURITY: writeAccessLog panicked persisting secret access log (secret=%d action=%q accessedBy=%q, best-effort, primary operation already succeeded): %v",
+				secretID, action, accessedBy, r))
 		}
 	}()
 	entry := &models.SecretAccessLog{
@@ -436,8 +442,8 @@ func (c *KeyorixCore) writeAccessLog(ctx context.Context, secretID uint, accesse
 		UserAgent:    ua,
 	}
 	if err := c.storage.CreateSecretAccessLog(ctx, entry); err != nil {
-		log.Printf("SECURITY: failed to persist secret access log (secret=%d action=%q accessedBy=%q): %v",
-			secretID, action, accessedBy, err)
+		logging.Event(ctx, logging.LevelError, fmt.Sprintf("SECURITY: failed to persist secret access log (secret=%d action=%q accessedBy=%q): %v",
+			secretID, action, accessedBy, err))
 	}
 }
 

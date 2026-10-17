@@ -30,10 +30,11 @@ PgBouncer). Docker Compose: set it in `keyorix.docker.yaml`.
 | `transaction` | `pgbouncer-transaction` | yes | Any PgBouncer version; `max_prepared_statements` may be 0 or more (the server uses no named prepared statements in this mode). See the requirements below. |
 | `transaction` | `none` or `pgbouncer-session` | **no** | The server refuses to start when it can tell (see "Start-up check"). |
 | `statement` | — | **no** | Multi-statement transactions are not allowed in statement mode, and Keyorix needs them. |
+| any other pooler or proxy (PgCat, Odyssey, RDS Proxy, Supavisor, pgpool-II, ...) | — | **no** | Not tested. Lock exclusion and lock-loss detection are only established for PgBouncer; see "Other poolers" at the end. |
 
 Tested with PgBouncer 1.24.1 and PostgreSQL 16 (`scripts/pgbouncer-matrix.sh`).
 Other transaction poolers (PgCat, Odyssey, managed proxies) have not been
-tested.
+tested; see "Other poolers: documented behaviour" at the end.
 
 ## What `pgbouncer-transaction` changes
 
@@ -84,12 +85,10 @@ timeouts as above: mutual exclusion across replicas, the presence guard and the
 "a killed holder's lock is released" property hold
 (`TestPgBouncer_StorageSlice`, `TestPgBouncer_BlockingLocks_*`,
 `TestPgBouncer_Locks_SurviveServerTimeouts`, `TestPgBouncer_ServerGuard_*`).
-What they depend on, and what the server does not detect: a lock transaction
-ended from outside (PgBouncer timeouts below, a `pg_terminate_backend`, a
-PostgreSQL restart, a failover) drops its lock with no signal to the holder. A
-server whose presence lock was lost keeps running and an admin command could then
-start beside it. Detecting that (a periodic liveness check on the lock
-connection that stops the server) is not implemented yet.
+What they depend on: a lock transaction ended from outside (PgBouncer timeouts
+below, a `pg_terminate_backend`, a PostgreSQL restart, a failover) drops its
+lock. The server notices and fails closed, in this mode and every other one: see
+"When a lock is lost".
 
 What does not change in any mode: the audit record of a secret read is
 committed before the secret is returned. At `audit_durability: strict` the
@@ -97,6 +96,46 @@ commit waits for the disk sync; at `standard` (the PostgreSQL default) the
 audit transaction uses `SET LOCAL synchronous_commit = off`, which ends with
 that transaction and never reaches another client.
 `TestPgBouncer_StorageSlice/AuditCommit` checks both levels through PgBouncer.
+
+## When a lock is lost (every mode)
+
+An advisory lock ends with the backend (or, in transaction mode, the
+transaction) that holds it. A `pg_terminate_backend`, a PostgreSQL restart, a
+failover, a network partition that PostgreSQL notices first, or a PgBouncer
+timeout or restart ends it, and nothing tells the holder: its critical section
+runs its own queries on other connections. Another replica can take the lock at
+once. On a direct connection and through `pgbouncer-session` the locks are
+session locks, and this is just as true as in transaction mode.
+
+So the server checks every lock connection while the lock is held, in every
+mode: it pings it every 5 seconds (`config.PinnedLockPingInterval`, 5 s timeout),
+and the single_writer holder session is polled every 250 ms anyway. A dead
+connection is reported with one log line for every kind of lock, `<holder>: the
+connection holding the advisory lock is gone, so the lock is lost: <error>`, and:
+
+| Lock | What the holder does when it is lost |
+|---|---|
+| named lock (`WithNamedLock`), scheduler job lock, bootstrap lock, audit-checkpoint lock, audit list index build lock | The critical section's context is cancelled with cause `ErrAdvisoryLockLost`, so its queries stop, and the call returns that error joined with its own: a section that ran without its lock never reports plain success. A scheduler tick is logged as failed; the next tick takes the lock again or skips. |
+| server-presence lock (`serverguard`) | The server logs it, shuts down gracefully and exits with status 1, so an admin command cannot run beside it. The supervisor restarts it. |
+| `single_writer` holder lock | The same: graceful shutdown, exit 1, so a second single-writer server never runs beside it (docs/single-writer.md). |
+| migration lock | Nothing extra: the migration runs on the lock's own connection, so its next statement fails. |
+
+The ping is skipped while a lock statement is using the connection (a nested
+named lock waiting for its key on the outer call's session), so it never queues
+behind that wait and never disturbs it; a wait on a dead connection fails by
+itself. The check sees a dead connection within one interval (up to 10 s with
+the timeout), so a critical section can overlap the next holder's for that
+long: the error makes the overlap visible, it does not prevent it.
+
+Not covered: a lock released while its connection stays alive (nothing in
+Keyorix does that), and a connection that a pooler silently reconnects to a new
+backend behind the client's back (PgBouncer closes the client connection
+instead; other poolers are not supported, see the end of this page). Tested on
+a direct connection (`TestSessionAdvisoryLock_KilledLockBackend_StopsTheHolder`,
+`TestPostgres_ServerGuard_LostSessionPresenceLockIsReported`,
+`TestGuard_KilledHolderBackend_ClosesLost`, and `TestLockLoss_Postgres`, which
+kills the lock backend of a real running server and checks the exit status);
+through PgBouncer by `scripts/pgbouncer-matrix.sh`.
 
 ## PgBouncer requirements for transaction mode
 
@@ -115,13 +154,19 @@ that transaction and never reaches another client.
   one PgBouncer server connection. Per Keyorix replica, allow for:
   1 (presence lock, permanent) + up to 4 (scheduler job locks) + up to 8 (named
   locks) + the request traffic (`max_open_conns`, default 25, and the native
-  read pool, up to 8). The lock connections are held only while a lock is held.
+  read pool, 8 by default: `native_read_pool_max`). The lock connections are held only while a lock is held.
 - Keep startup parameters out of the DSN (`search_path`, `options`, ...).
   PgBouncer refuses unknown startup parameters (or drops them, with
   `ignore_startup_parameters`), and a transaction-mode pooler cannot keep a
   per-client session setting anyway. `application_name` is fine. Set
   `search_path` on the database role instead (`ALTER ROLE keyorix SET
   search_path = ...`).
+  With `pgbouncer-session` or `pgbouncer-transaction` set, the server logs a
+  start-up warning naming any such parameter in the connection settings
+  (`application_name`, `client_encoding`, `DateStyle`, `TimeZone` and
+  `standard_conforming_strings` are the ones PgBouncer accepts by default). It is
+  a warning, not a refusal, because PgBouncer's `ignore_startup_parameters` may
+  be set.
 - Session mode only: keep `server_reset_query = DISCARD ALL` (the default), so
   a disconnected client's session state, advisory locks included, is cleared
   before the server connection is reused.
@@ -172,3 +217,46 @@ transaction mode with `max_prepared_statements = 200`, and runs
 `TestPgBouncer_*` (internal/storage, internal/serverguard) through each.
 `PGB_POOLER=none scripts/pgbouncer-matrix.sh` shows what an undeclared
 transaction pooler does: the server refuses to start.
+
+## Other poolers: documented behaviour (not tested, not supported)
+
+Read from each project's own documentation (2026-10); **none of this has been
+run against Keyorix**. Only PgBouncer is supported. The table is what to check
+before anyone tries another pooler, against the three things Keyorix depends
+on: session advisory locks (direct / session mode), transaction-scoped advisory
+locks held in one long-open transaction (`pgbouncer-transaction`), and the
+start-up check (two open connections served by one backend).
+
+| | PgBouncer (supported) | PgCat | Odyssey | RDS Proxy (PostgreSQL) |
+|---|---|---|---|---|
+| Pool modes | session, transaction, statement | session, transaction (default `transaction`) | session, transaction | transaction-level multiplexing, with automatic "pinning" |
+| Session advisory lock (`pg_advisory_lock`) | kept in session mode; leaks to the next client in transaction mode | works in session mode only (README) | cleared by the default reset query on return (`pg_advisory_unlock_all`, `pool_discard`, default on) | **pins** the client to one database connection until the client disconnects (documented list); behaves like session mode |
+| Transaction-scoped locks (`pg_advisory_xact_*`) | work; the open transaction keeps one server connection | recommended by the README as the transaction-mode alternative | not documented either way | documented as **not** pinning |
+| Pooler timeouts that can end an open lock transaction | `idle_transaction_timeout`, `transaction_timeout`, `client_idle_timeout`, `server_lifetime`-class settings (see above) | `idle_client_in_transaction_timeout` (default 0); `server_lifetime` default 24 h, described as applying "even if in active use"; `statement_timeout` per user (default 0) | `pool_idle_in_transaction_timeout` and `pool_client_idle_timeout` (docs table says session pooling only); `server_lifetime` default 3600 s, reclaimed only while idle | client connection max life **24 h, not configurable**; `IdleClientTimeout` default 1800 s (its effect on a client idle inside an open transaction is not stated) |
+| Prepared statements in transaction mode | `max_prepared_statements` (0 or more; Keyorix uses none) | `prepared_statements_cache_size` (default 0 = off); docs marked TODO | `pool_reserve_prepared_statement` opt-in; incompatible with a discard query that has `DEALLOCATE ALL` | `PREPARE`/`EXECUTE`/`DEALLOCATE`/`DISCARD` pin; whether protocol-level named statements pin is not stated |
+| Session `SET` | per-client state not kept in transaction mode | not documented | `maintain_params` (default on) re-applies client parameters | `SET` and `set_config` **pin** (`SET LOCAL` is not addressed for PostgreSQL) |
+| Does our start-up check fire on an undeclared transaction pooler? | yes when the pool hands both connections one backend (LIFO reuse, the normal start-up case) | unknown; depends on server selection order | unknown | no: a pinning proxy gives each client its own backend, which is right, because the session locks then behave |
+
+What this means for Keyorix, as far as the documentation goes:
+
+- **RDS Proxy with `pooler: none`** is the only combination that looks workable
+  without code changes: session advisory locks pin, so locks behave as on a
+  direct connection. The start-up check passing is correct there. Open problems:
+  the fixed 24 h client connection life ends every session lock (the presence
+  lock included) and `IdleClientTimeout` may do the same. The server would
+  notice ("When a lock is lost") and restart at least once a day; whether the
+  proxy closes the client connection or reconnects it to a new backend unseen
+  is not documented, and the second would not be noticed. Heavy pinning also
+  removes the pooling benefit.
+- **RDS Proxy with `pooler: pgbouncer-transaction`**: transaction-scoped locks do
+  not pin, but the lock transaction's `SET LOCAL` setup statements may, and the
+  24 h limit applies to a transaction that is meant to live for the server's
+  whole lifetime. Untested.
+- **PgCat / Odyssey in transaction mode** would need `pooler:
+  pgbouncer-transaction` (the setting is named after PgBouncer but selects
+  "transaction pooling: no prepared statements, transaction-scoped locks"). The
+  timeouts above that can end an idle open transaction must be 0 / off before the
+  presence and lock transactions are safe; for both, `server_lifetime` against a
+  long-open transaction is not documented well enough to rely on.
+- A start-up check pass is never evidence that a pooler is absent (see "Start-up
+  check"); with any of these, set `pooler` explicitly.

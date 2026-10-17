@@ -367,6 +367,15 @@ interface OperationalSignalsSectionProps {
     failedAuthSeverity: SignalSeverity;
 }
 
+// DASH-FAILED-2FA: the failed-login count is a wrong password plus a wrong second factor
+// (TOTP / recovery code / passkey). A server that predates the split sends only the total.
+function failedLoginsHint(stats: Stats): string {
+    const wrongPassword = stats?.failedLoginsWrongPassword24h;
+    const wrongSecondFactor = stats?.failedLoginsWrongSecondFactor24h;
+    if (wrongPassword === undefined || wrongSecondFactor === undefined) return 'unsuccessful sign-ins';
+    return `${wrongPassword} wrong password · ${wrongSecondFactor} wrong second factor`;
+}
+
 const OperationalSignalsSection: React.FC<OperationalSignalsSectionProps> = ({
     navigate,
     stats,
@@ -384,7 +393,7 @@ const OperationalSignalsSection: React.FC<OperationalSignalsSectionProps> = ({
                     Operational Signals
                 </h2>
             </div>
-            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
                 <SignalCard
                     label="Expiring Secrets"
                     value={expiring.length}
@@ -393,10 +402,18 @@ const OperationalSignalsSection: React.FC<OperationalSignalsSectionProps> = ({
                     onClick={() => navigate(ROUTES.SECRETS + '?sort=expiry_asc&filter=expiring')}
                 />
                 <SignalCard
-                    label="Failed Auth (24h)"
+                    label="Failed Logins (24h)"
                     value={failedAuth}
-                    hint="unsuccessful attempts"
+                    hint={failedLoginsHint(stats)}
                     severity={failedAuthSeverity}
+                    onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=failed')}
+                    notVisible={!can.readAudit}
+                />
+                <SignalCard
+                    label="Refused Secret Reads (24h)"
+                    value={stats?.refusedSecretReads24h ?? 0}
+                    hint="access denied or blocked"
+                    severity={(stats?.refusedSecretReads24h ?? 0) === 0 ? 'neutral' : 'warn'}
                     onClick={() => navigate(ROUTES.AUDIT + '?tab=audit&filter=failed')}
                     notVisible={!can.readAudit}
                 />

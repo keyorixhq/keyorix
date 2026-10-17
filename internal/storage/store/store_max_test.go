@@ -736,7 +736,7 @@ func newAAStore(t *testing.T) *LocalStorage {
 // lastUserActivityByEventTypes — empty result (no events).
 func TestLastUserActivityByEventTypes_NoEvents(t *testing.T) {
 	ls := newAAStore(t)
-	m, err := ls.LastUserSecretActivity(context.Background(), 1)
+	m, err := ls.LastUserSecretActivity(context.Background(), 1, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, m)
 }
@@ -988,7 +988,7 @@ func TestWithAuditCheckpointLock_FnError(t *testing.T) {
 	ls := NewLocalStorage(db)
 
 	sentinel := fmt.Errorf("lock-fn-error")
-	err = ls.WithAuditCheckpointLock(context.Background(), func() error { return sentinel })
+	err = ls.WithAuditCheckpointLock(context.Background(), func(context.Context) error { return sentinel })
 	require.ErrorIs(t, err, sentinel)
 }
 
