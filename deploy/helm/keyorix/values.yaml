@@ -324,17 +324,25 @@ postgresql:
   # so it can be removed again once the volume is migrated. Rolling back to a chart
   # that runs as 999 after migrating needs the reverse.
   migrateOwnership: false
-  # Extra server settings for the bundled PostgreSQL, rendered as
-  # `postgres -c key=value`. Empty = the image's defaults. Production profile
-  # (docs/PERFORMANCE.md, "Production PostgreSQL profile"), sized for the
-  # 1Gi memory limit below; scale shared_buffers / effective_cache_size with it:
-  #   settings:
-  #     shared_buffers: 256MB        # ~25% of resources.limits.memory
-  #     effective_cache_size: 768MB  # ~75% of resources.limits.memory
-  #     wal_buffers: 16MB
-  #     wal_compression: lz4
-  #     checkpoint_timeout: 15min
-  #     max_wal_size: 2GB            # keep well under persistence.size
+  # Server settings for the bundled PostgreSQL, rendered as `postgres -c key=value`.
+  # The default is the recommended profile (docs/PERFORMANCE.md, "Production
+  # PostgreSQL profile"), sized for the 1Gi memory limit below; scale
+  # shared_buffers / effective_cache_size with resources.limits.memory. Helm merges
+  # this map with yours: set a key to change it, `key: null` to drop it and run the
+  # image's default for it.
+  #   shared_buffers        ~25% of resources.limits.memory: the audit tables' hot
+  #                         pages (every secret read appends a row) stay in memory.
+  #   effective_cache_size  ~75% of it; a planner hint, allocates nothing.
+  #   wal_buffers           room for the WAL the audit appends write between flushes.
+  #   wal_compression       smaller full-page images after each checkpoint (lz4:
+  #                         PostgreSQL 15+, the bundled image's version).
+  #   checkpoint_timeout    fewer checkpoints, so fewer full-page images in the WAL.
+  #   max_wal_size          lets checkpoint_timeout, not WAL volume, space the
+  #                         checkpoints; keep it well under persistence.size.
+  # commit_delay / commit_siblings are left at PostgreSQL's defaults (0 / 5): the
+  # audit commits come from one connection per server, one after another, so there
+  # is never a sibling commit to wait for, and a delay would only hold KEYAUDIT
+  # longer.
   # Durability is not tunable here: synchronous_commit, fsync and full_page_writes
   # accept only durable values (on/true/yes/1; synchronous_commit also local,
   # remote_write, remote_apply). The audit entry is committed before a secret is
@@ -346,7 +354,13 @@ postgresql:
   # archive_library, restore_command. session_replication_role is refused too: in
   # 'replica' mode PostgreSQL enforces no foreign keys and fires no ordinary
   # trigger, and the server refuses to start unless it is 'origin' (#3361).
-  settings: {}
+  settings:
+    shared_buffers: 256MB
+    effective_cache_size: 768MB
+    wal_buffers: 16MB
+    wal_compression: lz4
+    checkpoint_timeout: 15min
+    max_wal_size: 2GB
   resources:
     requests:
       cpu: 100m

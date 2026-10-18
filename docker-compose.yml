@@ -59,6 +59,12 @@ services:
     # there. The certificate is public and read in place. The copy happens before
     # the image's entrypoint, so the data volume is never touched by this step
     # (an existing volume upgrades with no data change).
+    # After the TLS args: the recommended PostgreSQL profile (docs/PERFORMANCE.md,
+    # "Production PostgreSQL profile"; the same one the Helm chart ships). Size the
+    # two memory settings to the memory this host gives PostgreSQL (~25% / ~75%)
+    # with KEYORIX_PG_SHARED_BUFFERS / KEYORIX_PG_EFFECTIVE_CACHE_SIZE in .env.
+    # Durability settings are deliberately absent: the defaults (fsync,
+    # synchronous_commit, full_page_writes on) are what the audit trail relies on.
     command:
       - sh
       - -c
@@ -70,6 +76,12 @@ services:
         -c ssl_cert_file=/run/secrets/postgres_tls_cert
         -c ssl_key_file=/tmp/postgres_tls.key
         -c ssl_min_protocol_version=TLSv1.2
+        -c shared_buffers=${KEYORIX_PG_SHARED_BUFFERS:-256MB}
+        -c effective_cache_size=${KEYORIX_PG_EFFECTIVE_CACHE_SIZE:-768MB}
+        -c wal_buffers=16MB
+        -c wal_compression=lz4
+        -c checkpoint_timeout=15min
+        -c max_wal_size=2GB
     secrets:
       - db_password
       - postgres_tls_cert

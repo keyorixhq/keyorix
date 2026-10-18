@@ -34,6 +34,16 @@ SYNC with values.yaml: deploy/helm_reuse_values_test.go fails if they drift.
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- /*
+postgresql.settings is backfilled whole, and only when the key is absent (a
+release from a chart that had no such key, upgraded with --reuse-values): per
+key it would bring back a default the user dropped with `key: null`, which Helm
+removes from the merged values. TestHelmReuseValues_RendersWithOnly095Values fails
+when this map and values.yaml drift apart.
+*/ -}}
+{{- if not (hasKey $v.postgresql "settings") -}}
+{{- $_ := set $v.postgresql "settings" (dict "shared_buffers" "256MB" "effective_cache_size" "768MB" "wal_buffers" "16MB" "wal_compression" "lz4" "checkpoint_timeout" "15min" "max_wal_size" "2GB") -}}
+{{- end -}}
 {{- end -}}
 
 {{/* Base name, overridable, truncated to the 63-char DNS limit. */}}

@@ -25,10 +25,13 @@ SQLite allows one writer at a time, so a larger pool only adds readers; see
 ## Production PostgreSQL profile
 
 Server-side settings for a PostgreSQL that serves Keyorix in production. They
-size memory and WAL for the database; they do **not** touch durability. With
-the Helm chart's bundled database, set them under `postgresql.settings` (the
-chart renders each as `postgres -c key=value`). With an external database, use
-`postgresql.conf` / `ALTER SYSTEM` or your provider's parameter group.
+size memory and WAL for the database; they do **not** touch durability. The Helm
+chart's bundled database and `docker-compose.yml` ship this profile as their
+default (Helm: `postgresql.settings`, rendered as `postgres -c key=value`, merged
+with your values; set a key to `null` in a values file to drop it. Compose: the
+`postgres` service's command, with the two memory sizes taken from
+`KEYORIX_PG_SHARED_BUFFERS` / `KEYORIX_PG_EFFECTIVE_CACHE_SIZE`). With an external
+database, use `postgresql.conf` / `ALTER SYSTEM` or your provider's parameter group.
 
 ```ini
 # Memory: size to the database host / container, not to these numbers.
@@ -43,17 +46,38 @@ max_wal_size = 2GB              # keep well under the volume size
 synchronous_commit = on
 fsync = on
 full_page_writes = on
-# commit_delay / commit_siblings: leave at 0 / 5. Keyorix's audit commits go
-# through one serialized writer per replica, so there are rarely enough
-# concurrent commits for commit_delay to group them.
+# commit_delay / commit_siblings: leave at 0 / 5 (see below).
 ```
 
-The WAL settings (`wal_compression` with longer checkpoint spacing) reduce the
-WAL written per secret read, mostly through fewer and smaller full-page images:
-less disk I/O, smaller WAL archives and lighter replication. Raise
-`shared_buffers` and `effective_cache_size` with the database's memory when the
-audit tables grow beyond it (audit search and export read them). Check any change
-against your own workload.
+Why each setting:
+
+- `shared_buffers`: every secret read appends an audit row and an access-log row,
+  so the newest pages of the audit tables and their indexes are written all the
+  time; keeping them in PostgreSQL's own buffers avoids writing them out and
+  reading them back. A quarter of the database's memory is the usual share;
+  the rest is left to the operating system's page cache.
+- `effective_cache_size`: tells the planner how much of the database the
+  operating system is likely to cache (audit search and export read large
+  ranges). It allocates nothing.
+- `wal_buffers`: room for the WAL the audit appends produce between two flushes,
+  so a flush is never forced by a full buffer.
+- `wal_compression`: the first change to a page after a checkpoint writes the
+  whole page into the WAL; compressing those full-page images is the largest
+  cut in WAL volume for an append-heavy workload (less disk I/O, smaller WAL
+  archives, lighter replication).
+- `checkpoint_timeout` with `max_wal_size`: checkpoints spaced by time rather
+  than forced by WAL volume, so fewer of them and fewer full-page images; keep
+  `max_wal_size` well under the volume size, since that much WAL can accumulate
+  between checkpoints.
+- `commit_delay` / `commit_siblings` stay at PostgreSQL's defaults. They only
+  help when several transactions commit at the same moment and could share one
+  WAL flush. A Keyorix server commits its batched audit rows from one connection,
+  one transaction after another, and secret writes are serialised by the audit
+  chain's lock up to their commit, so there is no sibling commit to wait for: a
+  delay would only hold that lock longer.
+
+Raise `shared_buffers` and `effective_cache_size` with the database's memory when
+the audit tables grow beyond it. Check any change against your own workload.
 
 Durability is not part of the profile. The audit entry for a secret read is
 committed before the secret is returned. `synchronous_commit = off`,

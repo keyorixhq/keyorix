@@ -33,8 +33,28 @@ func TestHelmPostgresSettings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("helm template (defaults): %v\n%s", err, out)
 	}
-	if strings.Contains(out, "postgresql.settings") || !strings.Contains(out, "- ssl=on") {
-		t.Fatalf("default render must keep only the secureBaseline args:\n%s", out)
+	// The default is the recommended profile (PERF-HIGHLOAD-1), next to the
+	// secureBaseline args, and no durability setting at all.
+	for _, want := range []string{`- "shared_buffers=256MB"`, `- "effective_cache_size=768MB"`, `- "wal_buffers=16MB"`,
+		`- "wal_compression=lz4"`, `- "checkpoint_timeout=15min"`, `- "max_wal_size=2GB"`, "- ssl=on"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("default render is missing %s:\n%s", want, out)
+		}
+	}
+	for _, never := range []string{"synchronous_commit", "fsync", "full_page_writes", "commit_delay"} {
+		if strings.Contains(out, never) {
+			t.Errorf("default render must not set %s:\n%s", never, out)
+		}
+	}
+	// Helm merges the map: a key set to null in a values file drops that default.
+	nf := filepath.Join(t.TempDir(), "drop.yaml")
+	if err := os.WriteFile(nf, []byte("postgresql:\n  settings:\n    wal_compression: null\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dropped, err := exec.Command("helm", "template", "kx", chart, "-s", "templates/postgresql.yaml", //nolint:gosec // fixed binary and chart path
+		"--set", "auth.masterPassword=x", "--set", "postgresql.auth.password=x", "-f", nf).CombinedOutput()
+	if err != nil || strings.Contains(string(dropped), "wal_compression") || !strings.Contains(string(dropped), `- "shared_buffers=256MB"`) {
+		t.Errorf("wal_compression: null must drop only that default (err=%v):\n%s", err, dropped)
 	}
 
 	out, err = render("postgresql.settings.shared_buffers=256MB", "postgresql.settings.wal_compression=lz4", "postgresql.settings.synchronous_commit=on")
