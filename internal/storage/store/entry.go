@@ -244,6 +244,13 @@ type LocalStorage struct {
 	// ls.db (auditEventsTable): fixed for the life of the handle, and resolving
 	// it ran a DryRun Find per audit batch (PERF-LOWCONC-1 step 3).
 	auditTable atomic.Pointer[string]
+	// auditLinkedOff turns the flusher's linked flight off for the life of the
+	// handle after a committed linked batch failed the Go cross-check
+	// (local_audit_chain_linked_flight.go); batches then take two flights.
+	auditLinkedOff atomic.Bool
+	// auditColTypes caches the audit events table's column types for the
+	// linked flight's casts (auditEventsColumnTypes), like auditTable.
+	auditColTypes atomic.Pointer[map[string]string]
 	// rolePermCache backs RoleSetHasPermission's read-path cache (PERF-3,
 	// docs/specs/read-path-caching.md PR-2). A pointer so a transaction-scoped
 	// LocalStorage (see WithTransaction) shares the SAME cache as its parent,

@@ -110,6 +110,9 @@ type auditChainHeadCache struct {
 	// pipelinedSends counts batches sent chained onto a pending head (a batch
 	// still in flight, local_audit_chain_pipelined_batches.go).
 	pipelinedSends atomic.Int64
+	// linkedCommits counts batches committed as one linked flight
+	// (local_audit_chain_linked_flight.go).
+	linkedCommits atomic.Int64
 }
 
 // auditOneFlightMaxQuiet caps how many quiet two-flight batches re-arm the
