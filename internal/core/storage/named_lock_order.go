@@ -66,13 +66,13 @@ const NamedLockPendingExpires = "2026-10-18"
 // in internal/core, checks only that every key has a family, not nesting.)
 var NamedLockOrder = []NamedLockFamily{
 	{Prefix: "dual-control-approval:request:", Constructor: "core.dualControlLockKey"},
-	{Prefix: "project-membership:", Constructor: "core.membershipLockKey", PendingPR: "#2669"},
+	{Prefix: "project-membership:", Constructor: "core.membershipLockKey"},
 	{Prefix: "last-admin-guard", Exact: true, Constructor: "core.lastAdminGuardLockKey"},
 	{Prefix: "project-admin-guard:", Nestable: true, Constructor: "core.projectAdminGuardLockKey"},
 	{Prefix: "sod-grant:group:", Nestable: true, Constructor: `core.sodGrantLockKey("group", ...)`},
 	{Prefix: "sod-grant:user:", Nestable: true, Constructor: `core.sodGrantLockKey("user", ...)`},
 	{Prefix: "sod-grant:machine:", Constructor: `core.sodGrantLockKey("machine", ...)`},
-	{Prefix: "secret-dependency-graph:", Constructor: "core.secretDependencyGraphLockKey", PendingPR: "#2670"},
+	{Prefix: "secret-dependency-graph:", Constructor: "core.secretDependencyGraphLockKey"},
 	{Prefix: "environment-secret-guard:", Constructor: "storage.EnvironmentSecretGuardLockKey"},
 }
 
