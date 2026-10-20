@@ -355,8 +355,8 @@ func TestOneFlight_PostgresChecksRunFromGenericPlans(t *testing.T) {
 	require.NoError(t, ls.db.Raw("SELECT statement, generic_plans, custom_plans FROM pg_prepared_statements").Scan(&rows).Error)
 	found := 0
 	for _, r := range rows {
-		if !strings.Contains(r.Statement, "THEN 0") || strings.Contains(r.Statement, "from genesis") {
-			continue // the genesis link check ran once, in the boot batch
+		if !strings.Contains(r.Statement, "THEN 0") || strings.Contains(r.Statement, "from genesis") || strings.Contains(r.Statement, "audit linked batch") {
+			continue // the boot batch's statement ran once (TestLinkedFlight_PostgresRunsFromGenericPlans covers the linked one)
 		}
 		found++
 		// Postgres plans a statement with parameters per execution for its first

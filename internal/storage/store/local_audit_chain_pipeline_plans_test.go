@@ -23,10 +23,11 @@ import (
 // it is planned once and reused from the first flight on.
 func TestCommitBatchAttempt_PostgresHeadReadReusesItsPlan(t *testing.T) {
 	ls, _ := pipelinePGStore(t)
+	ls.auditLinkedOff.Store(true) // the separate head read is the two-flight path's
 	ctx := context.Background()
 	const flights = 8
 	for i := range flights {
-		ls.invalidateAuditChainHead() // the head read is the two-flight path's
+		ls.invalidateAuditChainHead()
 		require.NoError(t, ls.commitBatchAttempt(ctx, buildMultiRowBatch(1+i%3, "plans")))
 	}
 	var rows []struct {

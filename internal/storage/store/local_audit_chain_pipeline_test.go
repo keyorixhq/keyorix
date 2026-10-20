@@ -105,17 +105,24 @@ func requireConnIdle(t *testing.T, ls *LocalStorage) {
 	require.NotEqual(t, first, second, "the pooled connection was handed back inside a transaction")
 }
 
-// A batch commit is two client-to-server flights in both durability modes
-// (BEGIN through the id allocation, then the INSERTs and COMMIT) right after
-// boot and whenever the chain-head cache is not armed, and one flight once it
-// is (AUDIT-1FLIGHT-1). The GORM transaction path takes one per statement (six
+// A batch commit is one client-to-server flight in both durability modes once
+// the chain-head cache is armed (AUDIT-1FLIGHT-1), and also right after boot
+// and whenever it is not: the linked flight (PERF-MULTINODE-1). With linking
+// off ("two-flight") those batches take two flights (BEGIN through the id
+// allocation, then the INSERTs and COMMIT), the path a batch that cannot be
+// linked still takes. The GORM transaction path takes one per statement (six
 // or seven), so this also fails if commitBatchAttempt silently stops using the
 // pipeline.
 func TestCommitBatchAttempt_PostgresFlightCount(t *testing.T) {
-	for _, fast := range []bool{false, true} {
-		t.Run(map[bool]string{false: "default", true: "fast"}[fast], func(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		fast, noLink bool
+	}{{"default", false, false}, {"fast", true, false}, {"default-two-flight", false, true}, {"fast-two-flight", true, true}} {
+		t.Run(tc.name, func(t *testing.T) {
 			ls, writes := pipelinePGStore(t)
-			ls.SetAuditSkipDurableSync(fast)
+			ls.SetAuditSkipDurableSync(tc.fast)
+			ls.auditLinkedOff.Store(tc.noLink)
+			unarmed := map[bool]int{false: 1, true: 2}[tc.noLink]
 			ctx := context.Background()
 			counted := func(n, want int, what string) {
 				t.Helper()
@@ -132,7 +139,7 @@ func TestCommitBatchAttempt_PostgresFlightCount(t *testing.T) {
 			for _, n := range []int{1, 21} {
 				// Warm the connection's statement cache for this batch size in both
 				// shapes, as a long-running server's is; a first use adds a describe
-				// flight. The two-flight batch arms the cache.
+				// flight. The unarmed batch arms the cache.
 				ls.invalidateAuditChainHead()
 				require.NoError(t, ls.commitBatchAttempt(ctx, buildMultiRowBatch(n, "warm")))
 				require.NoError(t, ls.commitBatchAttempt(ctx, buildMultiRowBatch(n, "warm")))
@@ -140,8 +147,8 @@ func TestCommitBatchAttempt_PostgresFlightCount(t *testing.T) {
 				counted(n, 1, "after the flusher's own batch must commit in one flight")
 				counted(n, 1, "after a one-flight batch must commit in one flight")
 				ls.invalidateAuditChainHead()
-				counted(n, 2, "after an invalidation must commit in two flights")
-				counted(n, 1, "after a two-flight batch that found its own head must commit in one flight")
+				counted(n, unarmed, "after an invalidation")
+				counted(n, 1, "after an unarmed batch that found its own head must commit in one flight")
 			}
 			assert.Zero(t, ls.auditHead.oneFlightMisses.Load())
 			v, err := ls.VerifyAuditChain(ctx, nil)
@@ -250,7 +257,8 @@ func TestCommitBatchAttempt_PostgresFailureBetweenFlightsRollsBack(t *testing.T)
 	require.NoError(t, ls.db.Exec("ALTER SEQUENCE audit_events_id_seq OWNED BY NONE").Error)
 
 	// Only the two-flight path allocates ids between its flights; the one-flight
-	// path takes them from the column default.
+	// and linked paths take them from the column default.
+	ls.auditLinkedOff.Store(true)
 	ls.invalidateAuditChainHead()
 	err := ls.commitBatchAttempt(ctx, buildMultiRowBatch(3, "orphaned"))
 	require.Error(t, err)
