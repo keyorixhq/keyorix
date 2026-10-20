@@ -67,7 +67,10 @@ therefore serialized:
    multi-instance Postgres deployments (no-op on SQLite).
 
 The transaction reads the current chain head (`entry_hash` of the highest-`id`
-row), computes the new `entry_hash`, and inserts — all under the lock.
+row), computes the new `entry_hash`, and inserts — all under the lock. (On
+PostgreSQL, a flusher batch whose head the server does not already know is
+linked by the database inside that statement, from the same Go field encoding:
+docs/specs/audit-pipelined-commits.md, "The linked flight".)
 
 **Appends inside a business transaction (AUDIT-MUTATION-TX-1).** Secret create,
 update, rotate, rollback and delete (folders included) append their audit row

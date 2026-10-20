@@ -10,13 +10,14 @@
   snapshot is taken after the lock statement and does not contain its own rows), so a steady-state
   audited read runs 5 statements and a write 4 (+1 at the standard level); a batch too large for
   one INSERT still runs them as three statements (`queueAuditEvents`).
-  Four rules hold. (1) A one-flight failure is retried, once, through the two-flight path (which
-  re-reads the head under the lock) only when it provably wrote nothing
+  Four rules hold. (1) A one-flight failure is retried, once, through the path that re-reads the
+  head under the lock (the linked flight, `INV-STORE-audit-linked-flight`, or two flights for a
+  batch that cannot be linked) only when it provably wrote nothing
   (`auditOneFlightRolledBack`: an error Postgres answered for a statement before COMMIT, or none
   sent); a lost connection or an error on COMMIT is returned as is. (2) The cache arms only after
   a two-flight batch found the flusher's own last row as the head (`need` such batches in a row,
   doubled per miss up to `auditOneFlightMaxQuiet`), and any failure or invalidation disarms it;
-  first batch after boot and first after any error take two flights. (3) Every in-process path
+  first batch after boot and first after any error re-read the head (linked flight). (3) Every in-process path
   that moves the head outside the flusher invalidates it (`invalidateAuditChainHead`): the
   transaction-scoped direct append, `DeleteAuditLogsBefore`, `MigrateAuditChainEncoding`;
   `WithTransaction`/`RemoveGlobalAdminRoleGuarded` clones share the pointer for that only.
