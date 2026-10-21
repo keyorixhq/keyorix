@@ -8,6 +8,12 @@ All notable changes to Keyorix are documented here. This project follows
 `scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
 that section is the text written before the switch.
 
+## v0.96.3 — 2026-10-21
+
+### Security
+- **Go toolchain bumped to 1.27.3**, fixing CVE-2026-111943 (Go standard library) in the server, server-airgap, operator, k8s-sync and mcp images, and GO-2026-6809 (`crypto/x509`), reachable via notary receipt verification.
+- **Web image: `libx11` pinned to >= 1.8.14-r0**, fixing CVE-2026-88806.
+
 ## v0.96.2 — 2026-10-20
 
 ### Security
