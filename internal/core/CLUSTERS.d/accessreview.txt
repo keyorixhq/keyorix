@@ -1,0 +1,6 @@
+# accessreview: access reviews, campaigns, decide/revoke, recertification, JIT, bulk access requests
+# One glob per line, matched against the file name (README.md).
+access_review*.go
+recertification.go
+jit_access.go
+bulk_access_requests.go

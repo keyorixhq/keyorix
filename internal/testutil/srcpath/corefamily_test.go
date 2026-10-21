@@ -111,7 +111,7 @@ func TestRegisterCoreFamilyDir_RejectsBadEntries(t *testing.T) {
 func TestCoreFamilyRel(t *testing.T) {
 	root := RepoRoot()
 	for path, want := range map[string]string{
-		filepath.Join(root, "internal", "core", "secrets.go"):       "secrets.go",
+		filepath.Join(root, "internal", "core", "secrets.go"):        "secrets.go",
 		filepath.Join(root, "internal", "core", "rules", "scope.go"): "internal/core/rules/scope.go",
 		filepath.Join(root, "internal", "anomaly", "forest.go"):      "internal/anomaly/forest.go",
 	} {

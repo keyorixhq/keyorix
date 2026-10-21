@@ -46,15 +46,6 @@ var coreProductionKeyorixDeps = []string{
 	"pkg/trust",
 }
 
-// coreTestOnlyPackages may only ever be imported from _test.go files
-// (ADR-116 decision 2). They do not exist yet; the check is ready for them.
-// R3 (internal/core/guards) checks the same list over every production file
-// of the repository; this is the closure-level check for internal/core.
-var coreTestOnlyPackages = []string{
-	"internal/core/coretests",
-	"internal/core/storage/storagetest",
-}
-
 // importsCoreViolations returns one message per family package whose
 // production closure in graph contains internal/core, with the import chain.
 func importsCoreViolations(graph map[string][]string, family []string) []string {
@@ -110,7 +101,7 @@ func TestCoreFamilyNeverImportsCore(t *testing.T) {
 // package is among them.
 func TestCoreKeyorixDepsMatchAllowlist(t *testing.T) {
 	graph := coreClosure(t)
-	for _, p := range coreTestOnlyPackages {
+	for _, p := range srcpath.CoreTestOnlyDirs {
 		if chain := chainTo(graph, coreImportPath, keyorixPrefix+p); chain != nil {
 			t.Errorf("%s is test-only (ADR-116) but is in internal/core's production closure: %s", p, strings.Join(chain, " -> "))
 		}

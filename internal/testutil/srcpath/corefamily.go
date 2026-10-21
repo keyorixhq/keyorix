@@ -30,6 +30,15 @@ var coreFamilyExtracted = map[string]string{}
 // CoreDir is internal/core, relative to the repository root.
 const CoreDir = "internal/core"
 
+// CoreTestOnlyDirs are the packages ADR-116 creates for tests only
+// (decision 2): no production file may import them (R3, internal/core/guards)
+// and internal/core's production closure must not contain them (R2,
+// internal/core/ports). Repository-relative; they need not exist yet.
+var CoreTestOnlyDirs = []string{
+	"internal/core/coretests",
+	"internal/core/storage/storagetest",
+}
+
 var (
 	coreFamilyMu    sync.Mutex
 	coreFamilyExtra []string // absolute dirs added by AddCoreFamilyDirForTesting
