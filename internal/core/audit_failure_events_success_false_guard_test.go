@@ -26,12 +26,12 @@ import (
 	"go/token"
 	"maps"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
-	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // failureEventName: the last segment of an event name (after the final '.'
@@ -56,7 +56,7 @@ var successAuditWriters = map[string]int{
 
 func TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse(t *testing.T) {
 	t.Parallel()
-	paths, err := filepath.Glob("*.go")
+	paths, err := srcpath.CoreFamilyGoFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,10 +64,7 @@ func TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse(t *testing.T) {
 	var files []*ast.File
 	consts := map[string]string{}
 	for _, path := range paths {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(path) // #nosec G304 -- a glob of this package's own sources
+		src, err := os.ReadFile(path) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 		if err != nil {
 			t.Fatal(err)
 		}
