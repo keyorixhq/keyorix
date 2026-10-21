@@ -7,6 +7,7 @@ package services
 import (
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,11 +41,16 @@ func TestSecretService_DeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompletedDel
 			require.NoError(t, err, "the delete completed, so the RPC succeeds")
 			assert.Nil(t, resp.GetPurgeAt(), "purge date left unset when it could not be read back")
 
-			var deleted, audited int64
+			var deleted int64
 			require.NoError(t, r.db.Raw("SELECT COUNT(*) FROM secret_nodes WHERE id = ? AND deleted_at IS NOT NULL", created.GetId()).Row().Scan(&deleted))
 			assert.EqualValues(t, 1, deleted, "the secret is soft-deleted")
-			require.NoError(t, r.db.Model(&models.AuditEvent{}).Where("event_type = ? AND secret_node_id = ?", "secret.deleted", created.GetId()).Count(&audited).Error)
-			assert.EqualValues(t, 1, audited, "and the secret.deleted audit row is committed")
+			// release/v0.96.x writes the audit row from a detached goroutine (main commits it in the
+			// delete transaction), so poll for it instead of reading once.
+			assert.Eventually(t, func() bool {
+				var audited int64
+				err := r.db.Model(&models.AuditEvent{}).Where("event_type = ? AND secret_node_id = ?", "secret.deleted", created.GetId()).Count(&audited).Error
+				return err == nil && audited == 1
+			}, 5*time.Second, 20*time.Millisecond, "and the secret.deleted audit row is committed")
 		})
 	}
 }

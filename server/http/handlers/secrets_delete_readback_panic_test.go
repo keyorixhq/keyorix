@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,9 +75,15 @@ func TestDeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompletedDelete(t *testing
 			var deleted int64
 			require.NoError(t, db.Raw("SELECT COUNT(*) FROM secret_nodes WHERE id = ? AND deleted_at IS NOT NULL", secret.ID).Row().Scan(&deleted))
 			assert.EqualValues(t, 1, deleted, "the secret is soft-deleted")
-			var audited int64
-			require.NoError(t, db.Raw("SELECT COUNT(*) FROM audit_events WHERE event_type = ?", "secret.deleted").Row().Scan(&audited))
-			assert.EqualValues(t, 1, audited, "and the secret.deleted audit row is committed")
+			// release/v0.96.x writes the audit row from a detached goroutine (main commits it in the
+			// delete transaction), so poll for it instead of reading once.
+			assert.Eventually(t, func() bool {
+				var audited int64
+				if err := db.Raw("SELECT COUNT(*) FROM audit_events WHERE event_type = ?", "secret.deleted").Row().Scan(&audited); err != nil {
+					return false
+				}
+				return audited == 1
+			}, 5*time.Second, 20*time.Millisecond, "and the secret.deleted audit row is committed")
 		})
 	}
 }
