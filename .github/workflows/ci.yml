@@ -37,6 +37,11 @@ on:
         required: false
         default: ''
         type: string
+      verbose_tests:
+        description: 'Run the test-suite legs with go test -v so the job logs carry per-test timings (for scripts/ci/gen-test-weights.py)'
+        required: false
+        default: false
+        type: boolean
   # Nightly full run on main. A push to main skips test-suite, e2e-smoke and
   # most other jobs whenever the merge queue already passed that exact SHA
   # (changes.queue_verified), so "main green" said nothing about the journeys:
@@ -1420,6 +1425,14 @@ jobs:
           # Empty for every leg except storage-store-N (below) -- see that
           # case arm for why this one package gets it and the others don't.
           shuffle_flag=""
+          # -v only on a workflow_dispatch with verbose_tests=true: the job
+          # log then carries `--- PASS: Test (N.NNs)` lines for
+          # scripts/ci/gen-test-weights.py --v-log. Every other event keeps
+          # the quiet log.
+          verbose_flag=""
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.verbose_tests }}" = "true" ]; then
+            verbose_flag="-v"
+          fi
 
           # Every sharded package below gets its -run regex from
           # leg_run_filter: the weighted bin-pack of the package's
@@ -1495,7 +1508,7 @@ jobs:
           # above). If someone proposes enabling Go's test cache here, that's
           # the trade being proposed, whether or not the proposal names it.
           # shellcheck disable=SC2086
-          go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
+          go test -race -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag $verbose_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
       # This job is the ONLY one with a Postgres service container (see this
       # job's own KEYORIX_TEST_PG_DSN comment above), so it is the only place
