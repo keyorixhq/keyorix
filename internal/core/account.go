@@ -375,13 +375,24 @@ func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID,
 // spending a single-use token, rather than burning the link on a policy failure.
 func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User, newPassword string) error {
 	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return passwordPolicyError{fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)}
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
 	if c.passwordReused(ctx, user, newPassword) {
-		return fmt.Errorf("%s: password must not reuse a recent password", i18n.T("ErrorValidation", nil))
+		return passwordPolicyError{fmt.Errorf("%s: password must not reuse a recent password", i18n.T("ErrorValidation", nil))}
 	}
 	return nil
+}
+
+// passwordPolicyError keeps the policy message as the error text and matches
+// ErrPasswordPolicy, so the HTTP layer can tell a refusal the caller must see from
+// an internal failure without comparing strings.
+type passwordPolicyError struct{ err error }
+
+func (e passwordPolicyError) Error() string { return e.err.Error() }
+func (e passwordPolicyError) Unwrap() error { return e.err }
+func (e passwordPolicyError) Is(target error) bool {
+	return target == ErrPasswordPolicy
 }
 
 // applyNewPassword hashes newPassword, stamps it on the user (clearing a restricted

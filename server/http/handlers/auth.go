@@ -873,6 +873,11 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		log.Printf("ChangePassword: user %d error: %v", userCtx.UserID, err)
+		if errors.Is(err, core.ErrPasswordPolicy) {
+			// The caller must see which rule the new password broke to pick another.
+			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+			return
+		}
 		sendError(w, "BadRequest", clientSafe(err), http.StatusBadRequest, nil)
 		return
 	}
