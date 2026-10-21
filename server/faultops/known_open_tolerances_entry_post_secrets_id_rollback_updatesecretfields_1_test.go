@@ -167,9 +167,17 @@ func init() {
 	// specific to the single call that straddles the version write. No
 	// wildcard needed, and no #2549-style treadmill of one new row per red
 	// build expected on this op.
+	// RE-TRIAGED 2026-10-20 (release/v0.96.x, MERGE-FIX-3504A): #2842 is still
+	// open on this release line. On main the rollback is one transaction
+	// (AUDIT-MUTATION-TX-1, shipping in v0.97.0) and the row was removed there;
+	// that change is not in v0.96.x, where RotateSecret's version write is still
+	// the separate step described above, so the oracle still fires and
+	// TestKnownOpenTolerances_AreLoadBearing still needs this row. Expiry moved
+	// to 2026-11-20 only so v0.96.2 can be cut; delete the row if the fix is
+	// backported, otherwise it lapses with the v0.96.x line.
 	registerKnownOpenTolerance("post_secrets_id_rollback_updatesecretfields_1", knownOpenTolerance{
 		op: "REST POST /api/v1/secrets/{id}/rollback", method: "UpdateSecretFields", kind: faultstorage.KindError,
-		nth: 1, oracle: "a", issue: "#2842", expires: "2026-10-17",
+		nth: 1, oracle: "a", issue: "#2842", expires: "2026-11-20",
 		tables:     []string{"SecretVersion"},
 		findingDoc: "#2842",
 	})

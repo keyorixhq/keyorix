@@ -8,6 +8,31 @@ All notable changes to Keyorix are documented here. This project follows
 `scripts/changelog-assemble.sh`. Do not add new entries to "Unreleased" below;
 that section is the text written before the switch.
 
+## v0.96.2 — 2026-10-20
+
+### Security
+- **SAML responses are now checked strictly before processing.** The ACS endpoint accepts only the
+  HTTP-POST binding with plaintext assertions: the artifact binding and encrypted assertions are
+  refused (neither was documented as supported). A response must carry exactly one assertion with
+  one subject `NameID` and one `Conditions` in the SAML 2.0 assertion namespace. Refusals return the
+  same generic SAML login error as every other rejection and are logged server-side.
+
+### Changed
+- **A member can list their own break-glass activations.** `GET /api/v1/projects/{id}/break-glass`, `BreakGlassService.ListBreakGlassActivations` and `keyorix break-glass list` used to require `roles.read`, so a member who had just activated emergency access could not see it. A caller with `roles.read` at the project still gets every activation (`"scope": "project"`, unchanged); any other current member of the project now gets only their own activations (active, expired and revoked, `"scope": "own"`), and nothing about anyone else's, not even a count. The own view shows status, timestamps, justification, expiry and whether it was reviewed or revoked, but omits the review note and the reviewer's and revoker's identities (`review_note`, `reviewed_by`, `revoked_by`, `revoked_by_machine_identity_id`); `"scope": "project"` still carries them. A non-member (the same 403 for every project id, so no project existence or MFA setting leaks), a machine identity without `roles.read`, a restricted PAT whose restriction does not allow `roles.read` at the project, or a failed authorization read are refused with 403 / PermissionDenied as before. The per-project MFA policy applies to both views; listing is still not audited. The CLI labels the own view ("Your break-glass activations"). Guarded by `server/http/break_glass_own_list_test.go`, its gRPC and core twins, and journey 9 (INV-CORE-break-glass-list-own-only).
+
+### Fixed
+- **A fresh demo no longer grows a red Alerts tile a few minutes after start (#3152).** The detector's first pass reports the seed's own first reads and writes as low-severity "first observed access" alerts (no baseline exists yet; detection and thresholds are unchanged). `scripts/demo/up.sh` now waits for that first pass and acknowledges exactly those alerts (new_user / new_ip / off_hours, low or medium, accessor one of the seeded demo principals); anything else stays open.
+- **A first-admin password the policy refuses now fails with its real reason (#3201).** On Helm and compose first boot, a configured admin password that contains the admin's username (for example `Dw5-Admin-...` for user `admin`) crash-looped the server pod with ten `403` retries and a hint that blamed the bootstrap token, because BusyBox `wget` cannot show the refusal body. The entrypoint now asks the new `keyorix-server admin check-admin-password` (the server's own policy, password on stdin) after the first refused POST, prints e.g. `admin password rejected: password must not contain your username, email, or display name`, and, after the bootstrap retries are used up, exits non-zero with that reason instead of the token hint. `check-admin-password` exits 2 for a policy refusal and 1 for any other failure (unreadable stdin, bad flags), which the entrypoint treats as no verdict. An already-initialised install with an old non-compliant password in its config still boots, including after a transient first-POST failure. The password policy itself is unchanged.
+- **The Helm chart and `init-secrets.sh` catch it before deploy.** `helm install`/`template` fails when `auth.adminPassword` contains the username, the email's local part or `Administrator`; `scripts/selfhost/init-secrets.sh` and `keyorix-server admin generate-secrets` never generate such a password, and `init-secrets.sh --from-env` warns about a supplied one.
+- **Main pages no longer scroll sideways at phone width (#3154).** At 390 px the project tab strip, the My Account tab strip, the secret-expiry tabs, the User Management header buttons and the access-review campaign header pushed the whole page wider than the screen (up to 478 px). The tab strips now scroll inside themselves and the two headers wrap.
+
+### Documentation
+- Helm README and `values.yaml` no longer say a rejected bootstrap leaves a healthy pod with no admin; the pod crash-loops (since #3025) and its log has the reason.
+
+### Testing
+- `scripts/demo/check.sh` gains a step that waits until the demo server has been up 6 minutes and fails if any anomaly alert is still open.
+- **`web/e2e/real/mobile-layout.spec.ts`** drives the real UI at 390x844 over the main demo routes and fails when the document scrolls horizontally, naming the elements that stick out (red before this change, green after).
+
 ## v0.96.1 — 2026-10-13
 
 ### Security
