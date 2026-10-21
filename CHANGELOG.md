@@ -14,6 +14,9 @@ that section is the text written before the switch.
 - **Go toolchain bumped to 1.27.3**, fixing CVE-2026-111943 (Go standard library) in the server, server-airgap, operator, k8s-sync and mcp images, and GO-2026-6809 (`crypto/x509`), reachable via notary receipt verification.
 - **Web image: `libx11` pinned to >= 1.8.14-r0**, fixing CVE-2026-88806.
 
+### Fixed
+- **Deleting a secret no longer reports a failure when the purge-date read-back panics (#3508).** `DELETE /api/v1/secrets/{id}` and the gRPC `DeleteSecret` read the purge date back after the soft-delete and its `secret.deleted` audit row had committed. A returned error there was already tolerated; a panic in the storage read was not, so the client saw an aborted request for a delete that had happened. Both paths now run the read-back through `besteffort.Run`: the panic is recovered, logged and counted, and the `Keyorix-Purge-At` header (HTTP) or `purge_at` field (gRPC) is simply omitted, exactly as on the error path. Guarded by `TestDeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompletedDelete` (HTTP), `TestSecretService_DeleteSecret_PurgeAtReadbackFault_DoesNotUndoCompletedDelete` (gRPC) and the `FuzzStorageFaultOperations` op `REST DELETE /api/v1/secrets/{id}` with `GetSecretIncludingDeleted#1/panic`.
+
 ## v0.96.2 — 2026-10-20
 
 ### Security
