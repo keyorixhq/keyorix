@@ -372,6 +372,11 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 	if err != nil {
 		return ctx, nil, "", nil, fmt.Errorf("unknown role %q (system): %w", sysRole, err)
 	}
+	// #3546: refuse at invite time what AssignUserRole would refuse at accept
+	// time (the system role is granted at the global scope).
+	if err := c.requireScopeValidForRoleName(ctx, sysRoleModel.Name, Scope{}); err != nil {
+		return ctx, nil, "", nil, err
+	}
 	if invitedByMachineID != 0 {
 		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
 	}
@@ -1057,6 +1062,10 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 	if grantTTL > 0 {
 		expiresAt = now.Add(grantTTL)
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", roleModel.Name, expiresAt.UTC().Format(time.RFC3339), grantTTL)
+	}
+	// #3546: the role-scope check, before the gates below.
+	if err := c.requireScopeValidForRoleName(ctx, roleModel.Name, scope); err != nil {
+		return nil, fmt.Errorf("failed to grant role: %w", err)
 	}
 	// Same two gates AssignUserRole(WithExpiry) apply, run once here up front: the
 	// escalation-by-proxy grant ceiling (#93/#107/#141) and (inside the lock below)

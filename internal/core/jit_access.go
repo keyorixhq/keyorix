@@ -67,6 +67,10 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 // access-request TTL-approval path must go through AssignUserRoleWithExpiry
 // so both gates apply.
 func (c *KeyorixCore) assignUserRoleWithExpirySkipSoD(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
+	// #3546: refuse a scope the role is not meaningful at (role_scope_guard.go).
+	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
+		return err
+	}
 	if err := c.storage.AssignRoleWithExpiry(ctx, userID, roleID, scope, expiresAt); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -86,6 +90,10 @@ func (c *KeyorixCore) assignUserRoleWithExpirySkipSoD(ctx context.Context, actor
 func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt time.Time, actorIsMachine bool) error {
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
+	}
+	// #3546: refuse a scope the role is not meaningful at (role_scope_guard.go).
+	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
+		return err
 	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err

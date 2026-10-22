@@ -394,6 +394,12 @@ func (c *KeyorixCore) activateBreakGlassLocked(
 	// (jit_access.go).
 	var activation *models.BreakGlassActivation
 	if err := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		// #3546: the activation scope is always project-scoped (projectID==0 is
+		// refused up front); the pure check keeps the rule explicit on this direct
+		// grant write without a read through c.storage inside tx.
+		if err := validateRoleScope(role.Name, scope); err != nil {
+			return err
+		}
 		a, err := tx.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
 			ProjectID:     projectID,
 			UserID:        userID,
