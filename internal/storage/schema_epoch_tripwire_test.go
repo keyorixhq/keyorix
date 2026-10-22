@@ -27,14 +27,17 @@
 // 4 -> 5 for break_glass_activations.degraded/audit_settled_at and
 // pending_audit_events.break_glass_activation_id (BREAKGLASS-OWED-1), additive columns
 // an epoch-4 binary leaves at their "not degraded" defaults. The floor stays 3.
+// 5 -> 6 for roles.assignable_scope (GROUP-ROLE-SCOPE-1 Phase 2, #3546): an epoch-5
+// binary's new roles take the column default (project, fail closed) and its grant
+// check is the Phase 1 name rule. The floor stays 3.
 package storage
 
 import "testing"
 
-func TestCurrentSchemaEpoch_Is5_SeeADR101(t *testing.T) {
-	if currentSchemaEpoch != 5 {
+func TestCurrentSchemaEpoch_Is6_SeeADR101(t *testing.T) {
+	if currentSchemaEpoch != 6 {
 		t.Fatalf(
-			"currentSchemaEpoch is now %d (expected 5) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
+			"currentSchemaEpoch is now %d (expected 6) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
 				"requires every bump to also decide minCompatibleSchemaEpoch (additive-and-safe leaves it "+
 				"unchanged; a migration an older binary cannot safely run against raises it to the new epoch). "+
 				"Make that decision in factory.go, THEN update this test's expected value alongside your "+

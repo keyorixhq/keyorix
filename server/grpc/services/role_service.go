@@ -77,7 +77,7 @@ func (s *RoleGRPCService) CreateRole(ctx context.Context, req *pb.CreateRoleRequ
 	// already propagated an AssignPermissionToRole failure correctly, unlike
 	// the REST side, but still left the role row committed non-atomically
 	// with its permission set).
-	role, perms, err := s.core.CreateRole(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs)
+	role, perms, err := s.core.CreateRoleWithScope(ctx, actor.UserID, req.GetName(), req.GetDescription(), permIDs, req.GetAssignableScope())
 	if err != nil {
 		return nil, mapRoleError(err)
 	}
@@ -125,6 +125,9 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	}
 	if req.Description != nil {
 		role.Description = req.GetDescription()
+	}
+	if req.AssignableScope != nil {
+		role.AssignableScope = req.GetAssignableScope()
 	}
 
 	// A provided non-empty permission list replaces the entire set (matches
@@ -348,9 +351,10 @@ func (s *RoleGRPCService) resolvePermissionIDs(ctx context.Context, actorID uint
 
 func roleToProto(r *models.Role, perms []*models.Permission) *pb.Role {
 	out := &pb.Role{
-		Id:          intToU32(int(r.ID)),
-		Name:        r.Name,
-		Description: r.Description,
+		Id:              intToU32(int(r.ID)),
+		Name:            r.Name,
+		Description:     r.Description,
+		AssignableScope: models.EffectiveRoleAssignableScope(r),
 	}
 	for _, p := range perms {
 		out.Permissions = append(out.Permissions, permissionToProto(p))
@@ -420,7 +424,7 @@ func mapRoleError(err error) error {
 	// PRECISION here does not require reintroducing the CI-blocking MESSAGE
 	// #1669 was correct to remove.
 	case errors.Is(err, core.ErrRoleValidation):
-		return status.Error(codes.InvalidArgument, "invalid role name or description")
+		return status.Error(codes.InvalidArgument, "invalid role name, description or assignable_scope")
 	case strings.Contains(msg, "built-in"):
 		return status.Error(codes.FailedPrecondition, "cannot modify a built-in role")
 	default:

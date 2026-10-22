@@ -97,7 +97,11 @@ func (ls *LocalStorage) AssignPermissionToRole(ctx context.Context, roleID, perm
 // --- Roles ---
 
 func (ls *LocalStorage) CreateRole(ctx context.Context, name identity.FoldedName, description string) (*models.Role, error) {
-	role := &models.Role{Name: name.Display(), NameFolded: name.Folded(), Description: description}
+	// A new custom role is project-assignable, a built-in its fixed scope (#3546
+	// Phase 2); core widens a custom role through UpdateRole when the caller asked
+	// for another scope, in the same transaction.
+	role := &models.Role{Name: name.Display(), NameFolded: name.Folded(), Description: description,
+		AssignableScope: models.DefaultRoleAssignableScope(name.Display())}
 	if err := ls.db.WithContext(ctx).Create(role).Error; err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -110,6 +114,20 @@ func (ls *LocalStorage) CreateRole(ctx context.Context, name identity.FoldedName
 func (ls *LocalStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error {
 	if err := ls.db.WithContext(ctx).Model(&models.Role{}).Where("id = ?", roleID).
 		Update("bypasses_permission_checks", value).Error; err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	return nil
+}
+
+// SetRoleAssignableScope sets models.Role.AssignableScope (#3546 Phase 2),
+// that column only. An invalid value is refused here too, so no caller can
+// store one.
+func (ls *LocalStorage) SetRoleAssignableScope(ctx context.Context, roleID uint, scope string) error {
+	if !models.IsValidRoleAssignableScope(scope) {
+		return fmt.Errorf("%s: invalid assignable scope %q", i18n.T("ErrorValidation", nil), scope)
+	}
+	if err := ls.db.WithContext(ctx).Model(&models.Role{}).Where("id = ?", roleID).
+		Update("assignable_scope", scope).Error; err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return nil

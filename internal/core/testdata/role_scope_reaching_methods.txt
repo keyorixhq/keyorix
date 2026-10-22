@@ -17,6 +17,10 @@ CreateUserWithAssignments
 InviteGlobal
 InviteGlobalWithLink
 InviteMember
+InviteToProject
+InviteToProjectWithLink
+ListPendingInvitationsOutsideAssignableScope
+ListRoleGrantsOutsideAssignableScope
 ReconcileUserBaselineRoles
 SetProjectMemberRole
 SetUserRoles

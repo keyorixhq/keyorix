@@ -58,6 +58,10 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	inv, prov, err := h.coreService.InviteToProjectWithLink(r.Context(), id, body.Email, body.Role, actor.UserID, machineID(r))
+	// #3546 Phase 2: an install-wide role offered on one project (nothing created).
+	if err != nil && inv == nil && sendRoleScopeError(w, err) {
+		return
+	}
 	if err != nil {
 		// See CreateGlobalInvitation's identical carve-out (#2419): a failed
 		// supersede+create of the setup token itself must fail closed, not be

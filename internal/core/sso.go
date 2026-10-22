@@ -704,11 +704,15 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	if roleName == "" {
 		roleName = ssoDefaultRole
 	}
-	// #3546: the default role is granted at the global scope, so a project-tier
-	// default_role would make every JIT user a member of every project. Refuse
-	// the provision (fail closed, like an unknown default_role) before writing.
-	if err := validateRoleScope(roleName, Scope{}); err != nil {
-		return nil, fmt.Errorf("SSO provider %q default_role: %w", p.Name, err)
+	// #3546: the default role is granted at the global scope, so a
+	// project-assignable default_role would make every JIT user a member of
+	// every project. Refuse the provision (fail closed, like an unknown
+	// default_role) before writing. An unknown role is reported by the
+	// transaction below, as before.
+	if dr, derr := c.storage.GetRoleByName(ctx, roleName); derr == nil {
+		if err := validateRoleScope(dr, Scope{}); err != nil {
+			return nil, fmt.Errorf("SSO provider %q default_role: %w", p.Name, err)
+		}
 	}
 	// The user row and its baseline role grant run in one transaction — identical
 	// bootstrap shape to ProvisionSCIMUser (scim.go) and #2295's first-boot fix: a
@@ -1210,11 +1214,11 @@ func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *m
 			rep.blocked++
 			return
 		}
-		// #3546: the mapping grants at the global scope, where a project-tier role
-		// would apply in every project. Not granted (the fail-closed direction) and
-		// not an error: like the escalation block above, a mapping the grant guard
-		// refuses must not refuse the user's login.
-		if validateRoleScope(r.Name, Scope{}) != nil {
+		// #3546: the mapping grants at the global scope, where a
+		// project-assignable role would apply in every project. Not granted (the
+		// fail-closed direction) and not an error: like the escalation block
+		// above, a mapping the grant guard refuses must not refuse the user's login.
+		if validateRoleScope(r, Scope{}) != nil {
 			rep.scopeBlocked++
 			return
 		}

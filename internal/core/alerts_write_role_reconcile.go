@@ -162,6 +162,11 @@ func (c *KeyorixCore) seedAlertOperatorRole(ctx context.Context, alertsWriteID u
 		if err != nil {
 			return fmt.Errorf("create alert_operator role: %w", err)
 		}
+		// #3546 Phase 2: created after the upgrade backfill ran, so it is seeded
+		// here, or it would keep CreateRole's new-role default (project).
+		if err := seedBuiltinRoleAssignableScope(ctx, tx, role); err != nil {
+			return err
+		}
 		if err := tx.AssignPermissionToRole(ctx, role.ID, alertsWriteID); err != nil {
 			return fmt.Errorf("assign alerts.write to alert_operator role: %w", err)
 		}

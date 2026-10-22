@@ -17,6 +17,8 @@ type roleWire struct {
 	Name                     string `json:"name"`
 	Description              string `json:"description,omitempty"`
 	BypassesPermissionChecks bool   `json:"bypasses_permission_checks"`
+	// AssignableScope: where the role may be granted (global, project, any; #3546).
+	AssignableScope string `json:"assignable_scope"`
 }
 
 func newRoleWire(r *models.Role) roleWire {
@@ -25,6 +27,7 @@ func newRoleWire(r *models.Role) roleWire {
 		Name:                     r.Name,
 		Description:              r.Description,
 		BypassesPermissionChecks: r.BypassesPermissionChecks,
+		AssignableScope:          models.EffectiveRoleAssignableScope(r),
 	}
 }
 

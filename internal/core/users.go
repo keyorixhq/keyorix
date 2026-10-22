@@ -333,7 +333,7 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	}
 	// #3546: the system role lands at the global scope, so a project-tier role
 	// there would apply in every project. Project roles go in assignments.
-	if err := c.requireScopeValidForRoleName(ctx, sr.Name, Scope{}); err != nil {
+	if err := c.requireScopeValidForRoleModel(ctx, sr, Scope{}); err != nil {
 		return nil, err
 	}
 	// Escalation-by-proxy guard (#480), mirroring InviteGlobal (#231): a global

@@ -359,7 +359,7 @@ func TestTransitionMembership_ActivateGrantsRole(t *testing.T) {
 	store.On("TransitionProjectMembershipState", ctx, mock.MatchedBy(func(x *models.ProjectMembership) bool {
 		return x.State == MembershipActive && x.ActivatedAt != nil
 	}), MembershipProvisioned).Return(true, nil)
-	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
 	store.On("GetRole", ctx, uint(5)).Return(&models.Role{ID: 5, Name: "project_developer"}, nil) // #3546 role-scope check
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

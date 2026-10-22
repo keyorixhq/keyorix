@@ -110,6 +110,19 @@ func validateRoleNameLength(name string) error {
 // its own. actorID is the admin performing the create (0 = no authenticated
 // principal).
 func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, description string, permissionIDs []uint) (*models.Role, []*models.Permission, error) {
+	return c.CreateRoleWithScope(ctx, actorID, name, description, permissionIDs, "")
+}
+
+// CreateRoleWithScope is CreateRole with the role's assignable scope
+// (#3546 Phase 2): global, project or any; "" means the new-role default,
+// project. The scope is written in the create's own transaction.
+func (c *KeyorixCore) CreateRoleWithScope(ctx context.Context, actorID uint, name, description string, permissionIDs []uint, assignableScope string) (*models.Role, []*models.Permission, error) {
+	if assignableScope == "" {
+		assignableScope = models.RoleAssignableProject
+	}
+	if !models.IsValidRoleAssignableScope(assignableScope) {
+		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), errRoleAssignableScopeInvalid))
+	}
 	if err := validateRoleNameLength(name); err != nil {
 		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
@@ -130,6 +143,12 @@ func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, descri
 		if err != nil {
 			return err
 		}
+		if role.AssignableScope != assignableScope {
+			if err := tx.SetRoleAssignableScope(ctx, role.ID, assignableScope); err != nil {
+				return err
+			}
+			role.AssignableScope = assignableScope
+		}
 		for _, id := range permissionIDs {
 			if err := tx.AssignPermissionToRole(ctx, role.ID, id); err != nil {
 				return err
@@ -149,7 +168,11 @@ func (c *KeyorixCore) CreateRole(ctx context.Context, actorID uint, name, descri
 		// transaction (mutation_audit_tx.go), so they commit or roll back with it
 		// — no phantom row on a rolled-back create (F3b), and no committed role
 		// without its rows.
-		c.logRoleDefinitionChangeOn(ctx, tgt, EventRoleCreated, "created", actorID, role.ID, role.Name)
+		verb := "created"
+		if role.AssignableScope != models.RoleAssignableProject {
+			verb += " (assignable_scope " + role.AssignableScope + ")"
+		}
+		c.logRoleDefinitionChangeOn(ctx, tgt, EventRoleCreated, verb, actorID, role.ID, role.Name)
 		builtinTarget := IsBuiltinRole(role.Name) // always false here (guarded above); kept symmetric with AssignPermissionToRole's own logging
 		for _, id := range assignedPermissionIDs {
 			c.logPermissionAssignedOn(ctx, tgt, actorID, role.ID, id, builtinTarget)
@@ -199,14 +222,20 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		c.LogRoleUpdateDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
 		return nil, nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "cannot update built-in role: "+role.Name)
 	}
+	// #3546 Phase 2: "" keeps the stored assignable scope (read in the
+	// transaction below); anything else must be a valid one.
+	if role.AssignableScope != "" && !models.IsValidRoleAssignableScope(role.AssignableScope) {
+		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), errRoleAssignableScopeInvalid))
+	}
 
 	var updated *models.Role
 	var finalPermissions []*models.Permission
+	var scopeChange string                    // " (assignable_scope a -> b)" when the update changes it
 	builtinTarget := IsBuiltinRole(role.Name) // always false here (guarded above); kept symmetric with Assign/RemovePermissionFromRole's own logging for a future caller of those directly
 	// audit writes the rows of what one transaction changed, last in it.
 	audit := func(tgt auditTarget, rowUpdated bool, removed, assigned []uint) {
 		if rowUpdated {
-			c.logRoleDefinitionChangeOn(ctx, tgt, EventRoleUpdated, "updated", actorID, updated.ID, updated.Name)
+			c.logRoleDefinitionChangeOn(ctx, tgt, EventRoleUpdated, "updated"+scopeChange, actorID, updated.ID, updated.Name)
 		}
 		for _, id := range removed {
 			c.logPermissionRemovedOn(ctx, tgt, actorID, role.ID, id, builtinTarget)
@@ -224,12 +253,24 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 	var narrowed, rest bool
 	if err := c.withOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		// fn may run again (the owed fallback): start from a clean slate.
-		updated, finalPermissions, narrowed, rest = nil, nil, false, false
+		updated, finalPermissions, narrowed, rest, scopeChange = nil, nil, false, false, ""
 		remove, add, err := rolePermissionDiff(ctx, tx, role.ID, newPermissionIDs)
 		if err != nil {
 			return err
 		}
-		if len(add) > 0 {
+		stored, err := tx.GetRole(ctx, role.ID)
+		if err != nil {
+			return err
+		}
+		if role.AssignableScope == "" {
+			role.AssignableScope = stored.AssignableScope
+		}
+		if role.AssignableScope != stored.AssignableScope {
+			scopeChange = fmt.Sprintf(" (assignable_scope %s -> %s)", stored.AssignableScope, role.AssignableScope)
+		}
+		// A scope change that lets the role be granted somewhere it could not be
+		// before is a widening, like an added permission: fail closed (commit 2).
+		if len(add) > 0 || assignableScopeWidens(stored.AssignableScope, role.AssignableScope) {
 			rest = true
 			for _, id := range remove {
 				if err := tx.RemovePermissionFromRole(ctx, role.ID, id); err != nil {
@@ -276,6 +317,19 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	return updated, finalPermissions, nil
+}
+
+// errRoleAssignableScopeInvalid is the validation text for a bad assignable_scope.
+const errRoleAssignableScopeInvalid = "assignable_scope must be one of: global, project, any"
+
+// assignableScopeWidens reports whether moving a role's assignable scope from
+// prev to next allows a grant scope prev did not (any -> project and
+// any -> global narrow; no change is neutral; everything else widens).
+func assignableScopeWidens(prev, next string) bool {
+	if prev == next {
+		return false
+	}
+	return prev != models.RoleAssignableAny
 }
 
 // rolePermissionDiff reads the role's permission set in tx and returns what

@@ -15,12 +15,21 @@
 // TestEveryRoleGrantWriteChecksRoleScope (role_scope_guard_registry_test.go)
 // for the AST-derived proof that every storage grant write in this package is
 // either guarded or exempt for a stated reason.
+//
+// Phase 2: where a role may be granted is the role's own AssignableScope
+// (models.Role, role_assignable_scope.go), not its name. Built-in roles carry
+// their ADR-021 tier (system_* global, project_* project); a new custom role is
+// project unless an admin widens it; custom roles that existed before were
+// backfilled to any.
 package core
 
 import (
 	"context"
 	"errors"
 	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // ErrRoleScopeInvalid is the sentinel every role-scope refusal wraps
@@ -28,8 +37,9 @@ import (
 var ErrRoleScopeInvalid = errors.New("invalid scope for role")
 
 // RoleScopeError is a role-scope refusal. ClientMessage is a fixed,
-// application-generated sentence (a built-in role name and the fix) that is
-// safe to send to a client verbatim.
+// application-generated sentence (the role name and the fix) that is safe to
+// send to a client verbatim. Role names are validated at create time (charset
+// and length), so a name in the message cannot carry markup or control bytes.
 type RoleScopeError struct {
 	ClientMessage string
 }
@@ -48,33 +58,54 @@ func RoleScopeClientMessage(err error) (string, bool) {
 	return "", false
 }
 
-// projectTierRoleNames are the ADR-021 project-tier built-in roles, matched by
-// EXACT name. Deliberately not a "project_" prefix: a custom role an operator
-// happened to name project_* must not change behaviour in a patch release
-// (custom roles get an explicit assignable scope in Phase 2, not a naming
-// convention). Role names are immutable (TestUpdateRoleRequest_CarriesNoNameField)
-// and unique, so a custom role cannot take one of these names.
-var projectTierRoleNames = map[string]bool{
-	"project_admin":     true,
-	"project_developer": true,
-	"project_viewer":    true,
-	"project_auditor":   true,
+// roleAssignableScope is the scope the check enforces for role. A stored role
+// always has one (the column is NOT NULL with a default); an empty value can
+// only come from a hand-built models.Role, and resolves like an unset one on
+// create (models.DefaultRoleAssignableScope): the built-in's fixed scope or,
+// for anything else, project. Fail closed, never any.
+func roleAssignableScope(role *models.Role) string { return models.EffectiveRoleAssignableScope(role) }
+
+// RoleAssignableAtGlobalScope reports whether role may be granted with no
+// project (project 0).
+func RoleAssignableAtGlobalScope(role *models.Role) bool {
+	return roleAssignableScope(role) != models.RoleAssignableProject
 }
 
-// IsProjectTierRole reports whether name is an ADR-021 project-tier built-in
-// role, which is only meaningful at a project scope.
-func IsProjectTierRole(name string) bool { return projectTierRoleNames[name] }
-
 // validateRoleScope is the pure part of the check: an environment scope needs
-// its project, and a project-tier role needs a project.
-func validateRoleScope(roleName string, scope Scope) error {
+// its project, a project-assignable role needs a project, and a
+// global-assignable role must not have one.
+func validateRoleScope(role *models.Role, scope Scope) error {
 	if scope.ProjectID == 0 && scope.EnvironmentID != 0 {
 		return &RoleScopeError{ClientMessage: "environment_id requires project_id: specify the project the environment belongs to"}
 	}
-	if scope.ProjectID == 0 && IsProjectTierRole(roleName) {
-		return &RoleScopeError{ClientMessage: fmt.Sprintf(
-			"role %s is project-scoped; specify a project_id (and optionally environment_id)", roleName)}
+	switch roleAssignableScope(role) {
+	case models.RoleAssignableProject:
+		if scope.ProjectID == 0 {
+			return &RoleScopeError{ClientMessage: fmt.Sprintf(
+				"role %s is project-scoped; specify a project_id (and optionally environment_id)", role.Name)}
+		}
+	case models.RoleAssignableGlobal:
+		if scope.ProjectID != 0 {
+			return &RoleScopeError{ClientMessage: fmt.Sprintf(
+				"role %s is install-wide; grant it without project_id and environment_id", role.Name)}
+		}
 	}
+	return nil
+}
+
+// seedBuiltinRoleAssignableScope sets a built-in role's fixed assignable scope
+// (models.BuiltinRoleAssignableScopes) when it differs. Role seeding only
+// (BootstrapSystem, seedAlertOperatorRole), in the seeding transaction: a role
+// it does not know is left alone.
+func seedBuiltinRoleAssignableScope(ctx context.Context, tx storage.Storage, role *models.Role) error {
+	want, ok := models.BuiltinRoleAssignableScopes[role.Name]
+	if !ok || role.AssignableScope == want {
+		return nil
+	}
+	if err := tx.SetRoleAssignableScope(ctx, role.ID, want); err != nil {
+		return fmt.Errorf("failed to seed the assignable scope of role %s: %w", role.Name, err)
+	}
+	role.AssignableScope = want
 	return nil
 }
 
@@ -104,8 +135,8 @@ func isRoleScopeRestore(ctx context.Context, roleID uint, scope Scope) bool {
 
 // requireScopeValidForRole refuses a grant of roleID at scope when the scope is
 // not valid for the role: an environment without its project, an environment
-// of a different project, or a project-tier role at the global scope. Read-only;
-// call it before any write.
+// of a different project, a project-assignable role at the global scope, or a
+// global-assignable role at a project. Read-only; call it before any write.
 func (c *KeyorixCore) requireScopeValidForRole(ctx context.Context, roleID uint, scope Scope) error {
 	if isRoleScopeRestore(ctx, roleID, scope) {
 		return nil
@@ -114,13 +145,13 @@ func (c *KeyorixCore) requireScopeValidForRole(ctx context.Context, roleID uint,
 	if err != nil {
 		return fmt.Errorf("failed to resolve role %d for its scope check: %w", roleID, err)
 	}
-	return c.requireScopeValidForRoleName(ctx, role.Name, scope)
+	return c.requireScopeValidForRoleModel(ctx, role, scope)
 }
 
-// requireScopeValidForRoleName is requireScopeValidForRole for a caller that
-// already resolved the role.
-func (c *KeyorixCore) requireScopeValidForRoleName(ctx context.Context, roleName string, scope Scope) error {
-	if err := validateRoleScope(roleName, scope); err != nil {
+// requireScopeValidForRoleModel is requireScopeValidForRole for a caller that
+// already resolved the role from storage.
+func (c *KeyorixCore) requireScopeValidForRoleModel(ctx context.Context, role *models.Role, scope Scope) error {
+	if err := validateRoleScope(role, scope); err != nil {
 		return err
 	}
 	if scope.EnvironmentID == 0 {

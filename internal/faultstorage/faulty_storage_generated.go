@@ -6982,6 +6982,22 @@ func (w *FaultyStorage) SetRetentionOverride(ctx context.Context, secretID uint,
 	return w.real.SetRetentionOverride(ctx, secretID, days)
 }
 
+func (w *FaultyStorage) SetRoleAssignableScope(ctx context.Context, roleID uint, scope string) error {
+	fire, kind, injected := w.check("SetRoleAssignableScope")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.SetRoleAssignableScope(ctx, roleID, scope)
+			return injected
+		}
+	}
+	return w.real.SetRoleAssignableScope(ctx, roleID, scope)
+}
+
 func (w *FaultyStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error {
 	fire, kind, injected := w.check("SetRoleBypassesPermissionChecks")
 	if fire {

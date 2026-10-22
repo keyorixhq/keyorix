@@ -38,7 +38,7 @@ import (
 const roleScopeReachFile = "testdata/role_scope_reaching_methods.txt"
 
 // roleScopeRefusalRoots are the functions that construct a *RoleScopeError.
-var roleScopeRefusalRoots = []string{"validateRoleScope", "requireScopeValidForRoleName"}
+var roleScopeRefusalRoots = []string{"validateRoleScope", "requireScopeValidForRoleModel"}
 
 // deriveRoleScopeReachingMethods returns the sorted exported KeyorixCore
 // methods from which a root is reachable.
