@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"runtime/debug"
@@ -144,6 +145,17 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	// Enforce policy + history after the current-password check so an attacker can't
 	// probe the policy without already holding valid credentials (ADR-025).
 	if err := c.validateNewPassword(ctx, user, newPassword); err != nil {
+		if errors.Is(err, ErrPasswordReused) {
+			// The refusal tells the caller the candidate is one of the account's
+			// PAST passwords, which a stolen session could use to test guesses
+			// against the history for free. Charge it like a wrong current
+			// password: the same per-account counter here, and the transport keeps
+			// the per-IP slot (settleCredentialCheck). The candidate itself is
+			// never logged or audited.
+			c.recordFailedLogin(ctx, user)
+			c.writeAuditEventFailed(ctx, "auth.password_reuse_refused", actorPtr(userID), nil, "",
+				fmt.Sprintf("user %d tried to reuse a recent password", userID))
+		}
 		return err
 	}
 	if err := c.applyNewPassword(ctx, user, newPassword); err != nil {
@@ -378,10 +390,26 @@ func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User
 		return passwordPolicyError{fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)}
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
-	if c.passwordReused(ctx, user, newPassword) {
-		return passwordPolicyError{fmt.Errorf("%s: password must not reuse a recent password", i18n.T("ErrorValidation", nil))}
+	if c.passwordHistoryEnabled() {
+		// The current password is already known to the caller (ChangePassword
+		// verified it first), so naming it discloses nothing and costs nothing.
+		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
+			return passwordPolicyError{fmt.Errorf("%s: new password must differ from the current password", i18n.T("ErrorValidation", nil))}
+		}
+		// A PAST password is account history the caller may not know: the wording
+		// stays generic and ChangePassword charges the attempt (ErrPasswordReused).
+		if c.passwordInHistory(ctx, user, newPassword) {
+			return passwordReusedError{passwordPolicyError{fmt.Errorf("%s: this password cannot be used; choose a different password", i18n.T("ErrorValidation", nil))}}
+		}
 	}
 	return nil
+}
+
+// passwordReusedError is a passwordPolicyError that also matches ErrPasswordReused.
+type passwordReusedError struct{ passwordPolicyError }
+
+func (e passwordReusedError) Is(target error) bool {
+	return target == ErrPasswordReused || e.passwordPolicyError.Is(target)
 }
 
 // passwordPolicyError keeps the policy message as the error text and matches
@@ -494,12 +522,20 @@ const EventPasswordChangePATRevokeFailed = "user.password_change_pat_revoke_fail
 // or any of the most recent HistoryCount stored hashes (ADR-025 history_count).
 // Returns false when the history rule is disabled.
 func (c *KeyorixCore) passwordReused(ctx context.Context, user *models.User, newPassword string) bool {
-	if c.passwordPolicy.HistoryCount <= 0 {
+	if !c.passwordHistoryEnabled() {
 		return false
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
 		return true
 	}
+	return c.passwordInHistory(ctx, user, newPassword)
+}
+
+func (c *KeyorixCore) passwordHistoryEnabled() bool { return c.passwordPolicy.HistoryCount > 0 }
+
+// passwordInHistory reports whether newPassword matches one of the most recent
+// HistoryCount stored hashes (not the current one). A lookup failure reports false.
+func (c *KeyorixCore) passwordInHistory(ctx context.Context, user *models.User, newPassword string) bool {
 	hashes, err := c.storage.RecentPasswordHashes(ctx, user.ID, c.passwordPolicy.HistoryCount)
 	if err != nil {
 		return false // best-effort: a history lookup failure must not block a change

@@ -10,7 +10,12 @@
   committed and only when the password alone is full authentication (no TOTP, no
   passkey): with a second factor enrolled, a correct password plus a refused new password
   must not reset the count that factor's guesses feed, as the password step of an MFA
-  login does not. The account-security-factor changes (`requireReauth`) already fed the
+  login does not. A NEW password refused because it is in the password HISTORY
+  (`ErrPasswordReused`, generic wording) is charged the same way: `ChangePassword` calls
+  `recordFailedLogin` and the transport keeps the per-IP slot, because the refusal tells the
+  caller something about past passwords; re-submitting the current password (which the caller
+  just proved they know) and the other policy refusals (`ErrPasswordPolicy`, named by rule)
+  cost nothing (`change_password_policy_refusal_test.go`). The account-security-factor changes (`requireReauth`) already fed the
   counter; their refusals now also carry `ErrReauthRejected` (text unchanged) so the
   transport can keep the per-IP slot (INV-HTTP-every-auth-route-budgeted). Why:
   AUTH-PW-BUDGET (HARDEN-HTTP-1's rate-limit inventory, #3321): both endpoints used a bare

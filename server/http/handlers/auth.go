@@ -814,6 +814,10 @@ func (h *AuthHandler) settleCredentialCheck(r *http.Request, att *credentialAtte
 		}
 	case errors.Is(err, core.ErrReauthRejected), errors.Is(err, core.ErrLoginPostVerdict):
 		// Core audited it; the slot stays counted.
+	case errors.Is(err, core.ErrPasswordReused):
+		// A new password found in the password history is disclosed to the caller,
+		// so it is a guess against that history: it keeps the slot like a wrong
+		// current password (core counted the account lockout and audited it).
 	default:
 		h.returnLoginSlot(r.Context(), att.slot)
 	}

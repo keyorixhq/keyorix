@@ -16,6 +16,13 @@ var (
 	// any other ChangePassword failure may carry storage detail and is not.
 	ErrPasswordPolicy = errors.New("password policy refused the new password")
 
+	// ErrPasswordReused is matched by the refusal of a new password found in the
+	// account's password HISTORY. It also matches ErrPasswordPolicy. The refusal
+	// tells the caller something about past passwords, so ChangePassword counts it
+	// against the account lockout and the HTTP layer keeps the login-budget slot,
+	// exactly as for a wrong current password.
+	ErrPasswordReused = errors.New("new password matches a previous password")
+
 	// ErrUserAlreadyExists is returned when a user-creation or update request
 	// collides with an existing username or email.
 	ErrUserAlreadyExists = errors.New("user already exists")
