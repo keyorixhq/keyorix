@@ -15,7 +15,7 @@ import {
 } from '../../features/admin';
 import type { Group, Role } from '../../types/rbac';
 import { useProjects, useProjectEnvironments } from '../../features/projects/api';
-import { PROJECT_TIER_ROLE_NAMES, type RoleGrantScope } from '../../services/rbac';
+import { roleScopeRefusal, type RoleGrantScope } from '../../services/rbac';
 import { EXPIRY_OPTIONS, expiresAtFromPreset, formatRemaining } from '../../lib/expiry';
 
 interface GroupFormData {
@@ -219,8 +219,9 @@ export const GroupsPage: React.FC = () => {
         if (assignedRoleIds.has(role.id)) {
             removeMutation.mutate({ groupId: manageGroupId, roleId: role.id, scope: grantScope });
         } else {
-            if (PROJECT_TIER_ROLE_NAMES.has(role.name) && !grantProjectId) {
-                setRoleScopeError(`${role.name} is a project role: choose a project above, then check it again.`);
+            const refusal = roleScopeRefusal(role, grantProjectId || undefined);
+            if (refusal) {
+                setRoleScopeError(refusal);
                 return;
             }
             // A non-permanent preset makes this a time-bound (JIT) grant.
