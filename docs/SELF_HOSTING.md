@@ -454,19 +454,16 @@ TOTP anti-replay state *is* carried over: a user who logged in on SQLite is refu
 same code on PostgreSQL within its 30-second step.
 
 **If the restore is interrupted** (`kill -9`, power loss, the database going away): the
-restore cannot be resumed, but it restarts cleanly. The row load is one transaction, so
-the target never holds a partial set of rows (checked by killing it while migrating and
-while loading: no schema, or a schema with 0 rows). What it leaves behind are the key
-files it installed (`keys/dek.key`, `keys/kek.salt`) and, after the migration step, the
-empty schema, so a plain re-run is refused. Either:
-
-- re-run with `--overwrite-existing` (the refusal message suggests it; the key files are
-  replaced and the previous ones kept as `*.pre-restore-<timestamp>`); or
-- start over: delete the key files the restore installed, drop and recreate the empty
-  database, re-run.
-
-Use the second for anything other than a restore you just interrupted: on a database that
-holds other data, `--overwrite-existing` neither empties it nor is it a merge.
+row load is one transaction, so the target never holds a partial set of rows, and the key
+files are installed only after that transaction commits. A restore killed in between leaves
+`.keyorix-restore-journal.json` next to the first key file; the server refuses to start
+until `keyorix-server admin restore --recover` finishes the restore (data committed) or
+undoes it (not committed). Killed before that journal exists, it leaves only inert
+`*.restoring-*` files and, after the migration step, the empty schema, so a plain re-run is
+refused: re-run with `--overwrite-existing`, which empties the target's tables inside the
+load transaction. What each failure point leaves, and the recovery, are in
+[operator/restore-failure-modes.md](operator/restore-failure-modes.md). (Releases up to
+v0.96.x installed the key files before the load; see the warning earlier in this section.)
 
 **Rollback.** The SQLite source is not modified by the restore (checked byte for byte,
 including after killed restores), so rolling back before you cut over is to keep running

@@ -526,6 +526,22 @@ belong together (the second message is a heuristic), `touch` them to a common ti
 "Remove the partial files and let first boot recreate them" is only right on an install that
 has **no data yet**. **In place:** no.
 
+### Interrupted restore — from code
+
+```
+an interrupted `admin restore` left its journal at <dir>/.keyorix-restore-journal.json: the key files and the database may not match until it is resolved. Stop every server on this data, then run `keyorix-server admin restore --recover` (it finishes the restore if its data was committed, and undoes it otherwise)
+```
+
+**Match:** `left its journal at`
+
+**Cause.** An `admin restore` was killed (or failed to install a file) after it staged the
+archive's key files and data, so the key files and the data may be from different points in
+time. `admin backup` and a new `admin restore` refuse with the same message. **Fix.** Stop
+every server on this data and run `keyorix-server admin restore --recover`: it rolls the
+restore forward if its data was committed and back otherwise
+([restore-failure-modes.md](restore-failure-modes.md)). Do not delete the journal by hand.
+**In place:** yes, `--recover`.
+
 ### Key files readable by others, or owned by another account — from code
 
 ```
