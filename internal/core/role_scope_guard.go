@@ -78,11 +78,38 @@ func validateRoleScope(roleName string, scope Scope) error {
 	return nil
 }
 
+// roleScopeRestoreKey marks a ctx that re-grants ONE exact (role, scope) row the
+// same call removed moments before (SetUserRoles' compensating revert). The key
+// type is unexported, so no transport can set it.
+type roleScopeRestoreKey struct{}
+
+type roleScopeRestore struct {
+	roleID uint
+	scope  Scope
+}
+
+// withRoleScopeRestore returns ctx marked as restoring roleID at scope. The
+// scope check is skipped for exactly that (role, scope) and nothing else: a
+// legacy grant the check would refuse today (a project role held globally
+// before #3546) must come back when a partial SetUserRoles is undone, or the
+// revert itself silently drops it (#3554 review follow-up 3).
+func withRoleScopeRestore(ctx context.Context, roleID uint, scope Scope) context.Context {
+	return context.WithValue(ctx, roleScopeRestoreKey{}, roleScopeRestore{roleID: roleID, scope: scope})
+}
+
+func isRoleScopeRestore(ctx context.Context, roleID uint, scope Scope) bool {
+	r, ok := ctx.Value(roleScopeRestoreKey{}).(roleScopeRestore)
+	return ok && r.roleID == roleID && r.scope == scope
+}
+
 // requireScopeValidForRole refuses a grant of roleID at scope when the scope is
 // not valid for the role: an environment without its project, an environment
 // of a different project, or a project-tier role at the global scope. Read-only;
 // call it before any write.
 func (c *KeyorixCore) requireScopeValidForRole(ctx context.Context, roleID uint, scope Scope) error {
+	if isRoleScopeRestore(ctx, roleID, scope) {
+		return nil
+	}
 	role, err := c.storage.GetRole(ctx, roleID)
 	if err != nil {
 		return fmt.Errorf("failed to resolve role %d for its scope check: %w", roleID, err)

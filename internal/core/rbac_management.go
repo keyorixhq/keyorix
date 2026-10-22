@@ -458,7 +458,9 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 	revertPartialApply := func(cause error) error {
 		var revertErrs []error
 		for _, id := range removedSoFar {
-			if rerr := c.AssignUserRole(ctx, actorID, userID, id, scope, actorIsMachine); rerr != nil {
+			// The row existed a moment ago: restore it even if the role-scope check
+			// would refuse it as a new grant (a legacy pre-#3546 global project role).
+			if rerr := c.AssignUserRole(withRoleScopeRestore(ctx, id, scope), actorID, userID, id, scope, actorIsMachine); rerr != nil {
 				revertErrs = append(revertErrs, fmt.Errorf("failed to restore role %d: %w", id, rerr))
 			}
 		}

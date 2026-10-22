@@ -380,6 +380,9 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if resolveErr != nil {
+		if sendRoleScopeError(w, resolveErr) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := resolveErr.Error()
 		switch {
