@@ -252,14 +252,14 @@ The steps are those of [INSTALL-WITH-AI.md](../../INSTALL-WITH-AI.md) with three
    `sha256sum -c --ignore-missing checksums.txt`, and save them as `bin/keyorix-server` and
    `bin/keyorix`.
 2. **PostgreSQL.** You provide an empty database, a role that owns it and a server
-   certificate (the bundled container is not part of this variant). `admin init` always
-   writes a SQLite config and creates `keyorix.db`: after it, delete `keyorix.db*`, set
-   `storage.type: postgres` and replace the `path:` line with a DSN, for example
+   certificate (the bundled container is not part of this variant). Run
+   `admin init --storage-type postgres` (on a binary older than v0.97 that flag is missing:
+   `admin init` then creates `keyorix.db`; delete `keyorix.db*`) and set a DSN, for example
    `dsn: "host=db.internal port=5432 user=keyorix dbname=keyorix sslmode=verify-full sslrootcert=/path/ca.pem"`.
    Keep the password out of the DSN and out of the environment: put it in a 0600 file and
    export `KEYORIX_DB_PASSWORD_FILE=secrets/db_password` for **every** `keyorix-server`
-   command and for the service, next to `KEYORIX_MASTER_PASSWORD_FILE`. There is no
-   `admin init --storage-type` flag.
+   command and for the service, next to `KEYORIX_MASTER_PASSWORD_FILE`. Details:
+   [postgres-single-binary.md](postgres-single-binary.md).
 3. **Everything else is the same**: `admin encryption init`, `admin migrate` and
    `admin validate --posture` (expect `No deviations found.` on PostgreSQL with
    `verify-full`), the first start, `keyorix system init`, MFA enrolment, then steps 6 to 8

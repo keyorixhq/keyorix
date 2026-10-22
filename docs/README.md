@@ -5,6 +5,7 @@
 | Step | Document |
 |------|----------|
 | The one supported pilot install, step by step | [operations/pilot-install.md](./operations/pilot-install.md) |
+| PostgreSQL with the single binary (config, password file, database TLS) | [operations/postgres-single-binary.md](./operations/postgres-single-binary.md) |
 | Binaries, first admin, first secret | [QUICK_START.md](../QUICK_START.md) |
 | Install with an AI assistant, no secret typed or shown | [INSTALL-WITH-AI.md](../INSTALL-WITH-AI.md) |
 | Docker Compose + PostgreSQL, TLS, backups, metrics, troubleshooting | [SELF_HOSTING.md](./SELF_HOSTING.md) |
