@@ -32,6 +32,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
+	"github.com/keyorixhq/keyorix/internal/restorejournal"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/spf13/cobra"
@@ -87,12 +88,24 @@ Each restored file is written atomically (temp file + fsync + rename into
 the target directory, which is itself fsynced afterward), so a failure or
 crash partway through never leaves a target file truncated or half-written.
 
+The key files and the data are installed together or not at all: the
+archive's key files are staged next to their targets, the data is loaded
+(PostgreSQL: one transaction; SQLite: into a staged database file), and only
+once that load has committed are the staged key files (and the SQLite file)
+renamed into place. A restore that fails before that point leaves the live
+key files and data exactly as they were. One killed after it leaves a
+restore journal (.keyorix-restore-journal.json, next to the SQLite database
+or the first key file): the server and 'admin backup' refuse to run until
+'admin restore --recover' finishes the restore (data committed) or undoes it
+(data not committed).
+
 Refuses to overwrite an existing, non-empty database or key file unless
 --overwrite-existing is given. Restore into a fresh/empty data dir with the
 SAME config (same key-material paths) the backup was taken from. With
 --overwrite-existing, an existing file is renamed aside to
 <path>.pre-restore-<timestamp> rather than truncated or overwritten in
-place, so an unrecoverable mistake during the restore still has a way back.
+place, so an unrecoverable mistake during the restore still has a way back;
+on PostgreSQL the target's tables are emptied inside the load transaction.
 
 Rollback protection (design-b3-backup-v2.md §6): restoring an OLDER backup
 than this host has already progressed past can silently resurrect access an
@@ -112,7 +125,8 @@ format still restores, with a deprecation notice -- take a fresh backup
 under the current format when convenient (a v1 archive can only be restored
 into SQLite). The target may be SQLite or PostgreSQL, whichever backend the
 config points at, regardless of the backend the v2 archive came from; for
-PostgreSQL the target database must already exist and be empty.`,
+PostgreSQL the target database must already exist, and be empty unless
+--overwrite-existing is given.`,
 	RunE: runAdminRestore,
 }
 
@@ -124,12 +138,14 @@ func init() {
 		"Reject the archive if any single entry decompresses to more than this many bytes")
 	restoreCmd.Flags().Int64Var(&restoreMaxTotalBytes, "max-total-bytes", defaultMaxRestoreTotalBytes,
 		"Reject the archive if its total decompressed size across all entries exceeds this many bytes")
+	restoreCmd.Flags().BoolVar(&restoreRecover, "recover", false,
+		"Resolve a restore that was interrupted (process killed, power loss) after it started installing: finish it if its data was committed, undo it otherwise")
 	registerPassphraseFlags(restoreCmd, &restorePassphraseSource)
 	rootCmd.AddCommand(restoreCmd)
 }
 
 func runAdminRestore(cmd *cobra.Command, args []string) error {
-	if restoreInput == "" {
+	if restoreInput == "" && !restoreRecover {
 		return fmt.Errorf("--input is required")
 	}
 
@@ -146,6 +162,13 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer lock.Release() //nolint:errcheck
+
+	if restoreRecover {
+		return runAdminRestoreRecover(cfg)
+	}
+	if err := restorejournal.RefuseIfPresent(cfg); err != nil {
+		return err
+	}
 
 	version, err := peekFormatVersion(restoreInput)
 	if err != nil {
@@ -352,8 +375,8 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 		return err
 	}
 
-	// Only past every check above: move staged key files into place, run
-	// migrations against the fresh target, then load the data (design §3.4).
+	// Only past every check above: stage the key files, load the data, and
+	// install both only once the load has committed (restore_commit.go).
 	restoreTS := time.Now().UTC().Format("20060102T150405Z")
 	keyFileData := make([][]byte, len(manifest.KeyFiles))
 	for i, entry := range manifest.KeyFiles {
@@ -363,70 +386,80 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 		}
 		keyFileData[i] = data
 	}
-	// A single atomic-set install, not a per-file loop: these key files form
-	// one encryption configuration's required set (keyfiles.Registry), and a
-	// host with only SOME of them present can never start -- see
-	// writeRestoredFileSet's own doc comment.
-	if err := writeRestoredFileSet(targetKeyPaths, keyFileData, restoreTS); err != nil {
-		return fmt.Errorf("write key file set: %w", err)
-	}
-	if !isPG {
-		// v2 loads rows into a freshly-migrated database rather than writing
-		// a whole DB file (v1), so with --overwrite-existing the existing
-		// database must be moved aside first -- migrating and loading into it
-		// in place fails on the first colliding primary key.
-		if err := moveAsideExistingSQLiteDB(dbPath, restoreTS); err != nil {
-			return err
-		}
-		if err := removeStaleSQLiteSidecars(dbPath); err != nil {
-			return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
-		}
-	}
-
-	fmt.Println("Running migrations against the fresh target database...")
-	if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil {
-		return fmt.Errorf("migrate restored database: %w", err)
-	}
-
-	targetDB, err := storage.OpenGormDB(cfg)
+	journalPath, err := restorejournal.Path(cfg)
 	if err != nil {
-		return fmt.Errorf("open freshly-migrated target database: %w", err)
+		return err
 	}
-	defer closeGormDB(targetDB)
-
-	fmt.Println("Loading data into the restored database (design §3.4)...")
-	if loadErr := targetDB.Transaction(func(tx *gorm.DB) error {
-		if err := backupfmt.LoadArchive(tx, manifest, stagingDir); err != nil {
-			return err
+	if journalPath == "" {
+		return fmt.Errorf("internal error: no restore journal location for this config")
+	}
+	// One set, staged before anything is installed: these key files form one
+	// encryption configuration's required set (keyfiles.Registry), and a host
+	// with only SOME of them present can never start.
+	entries, err := prepareRestoredFileSet(targetKeyPaths, keyFileData)
+	if err != nil {
+		return fmt.Errorf("stage key file set: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			discardStagedEntries(entries)
 		}
-		return backfillOTPExpiryForOlderArchive(tx, manifest)
-	}); loadErr != nil {
-		return fmt.Errorf("load backup data: %w", loadErr)
+	}()
+	journal := restorejournal.Journal{
+		Backend:   "sqlite",
+		Timestamp: restoreTS,
+		Overwrite: restoreOverwriteExisting,
+		CompletedEvent: fmt.Sprintf("restored from backup archive %s (created %s, format v2)",
+			restoreInput, manifest.CreatedAt.Format(time.RFC3339)),
+	}
+	if rollbackCheck.archiveEncoded != "" {
+		journal.WitnessPath, journal.WitnessValue = auditverify.WitnessPath(identityPath), rollbackCheck.archiveEncoded
+	}
+	if rollbackCheck.overrodeRollback {
+		journal.RollbackOverrideEvent = fmt.Sprintf("restored a backup that is %d audit event(s) behind this host's last known state "+
+			"(--allow-rollback was used) -- any user/credential revocation recorded after that point is undone by this restore",
+			rollbackCheck.gapEvents)
 	}
 
 	if isPG {
-		// Every row LoadArchive just inserted carries its ORIGINAL, explicit
-		// primary-key value -- design's whole point, so cross-table
-		// references keep resolving -- but Postgres never auto-advances a
-		// SERIAL/BIGSERIAL column's sequence for an explicit-value INSERT
-		// (only a value-omitted one calls nextval()). Left unresynced, the
-		// very next auto-generated INSERT on any restored table collides
-		// with an already-restored row's id -- found live as this exact
-		// function's own upcoming recordAdminAction call failing with a
-		// duplicate-key error on audit_events, and, worse, as the first real
-		// login attempt against the freshly-restored server returning 401
-		// (a Postgres connection left in an aborted-transaction state by
-		// one of those failures poisons whichever request draws it next).
-		// The same fixup pg_dump/pg_restore already do automatically.
-		sqlDB, err := postgresOpenSQL(cfg)
-		if err != nil {
-			return fmt.Errorf("open target Postgres database to resync sequences: %w", err)
+		journal.Backend = "postgres"
+		if journal.Token, err = newRestoreToken(); err != nil {
+			return err
 		}
-		resyncErr := resyncPostgresSequences(sqlDB)
-		_ = sqlDB.Close()
-		if resyncErr != nil {
-			return fmt.Errorf("resync Postgres sequences after restore: %w", resyncErr)
+		journal.Entries = entries
+		if err := restorejournal.Write(journalPath, journal); err != nil {
+			return err
 		}
+		if committed, err = loadPostgresRestore(cfg, manifest, stagingDir, journal.Token); err != nil {
+			if !committed {
+				if rerr := restorejournal.Remove(journalPath); rerr != nil {
+					return fmt.Errorf("%w (and removing the restore journal failed: %v -- run `keyorix-server admin restore --recover`)", err, rerr)
+				}
+			}
+			return err
+		}
+	} else {
+		stagedDB := fmt.Sprintf("%s.restoring-%s", dbPath, restoreTS)
+		entries = append(entries, restorejournal.Entry{Path: dbPath, Staged: stagedDB, SQLiteDB: true})
+		if err := buildStagedSQLiteRestore(cfg, stagedDB, manifest, stagingDir); err != nil {
+			return err
+		}
+		if err := restoreStepHook("loaded"); err != nil {
+			return err
+		}
+		journal.Entries = entries
+		if err := restorejournal.Write(journalPath, journal); err != nil {
+			return err
+		}
+		committed = true
+		if err := restoreStepHook("journal-written"); err != nil {
+			return err
+		}
+	}
+
+	if err := installJournalEntries(journal); err != nil {
+		return restoreInterruptedError(journalPath, err)
 	}
 
 	var totalRows int64
@@ -435,27 +468,129 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	}
 	fmt.Printf("Restored %d table(s), %d row(s), %d key file(s) from %s (backup created %s)\n",
 		len(manifest.Tables), totalRows, len(manifest.KeyFiles), restoreInput, manifest.CreatedAt.Format(time.RFC3339))
+	if restoreOverwriteExisting {
+		fmt.Printf("The replaced key files and database were kept as <path>.pre-restore-%s.\n", restoreTS)
+	}
 	fmt.Println("Run 'keyorix-server admin diagnose' to further confirm the restore.")
 
-	recordAdminAction(cfg, "admin.restore_completed",
-		fmt.Sprintf("restored from backup archive %s (created %s, format v2)", restoreInput, manifest.CreatedAt.Format(time.RFC3339)), true)
-
-	if rollbackCheck.archiveEncoded != "" {
-		if _, werr := auditverify.WriteWitnessIfHigher(auditverify.WitnessPath(identityPath), rollbackCheck.archiveEncoded); werr != nil {
-			fmt.Printf("note: could not update the rollback-protection witness file: %v\n", werr)
-		}
+	if err := finishRestore(cfg, journalPath, journal); err != nil {
+		return err
 	}
-	if rollbackCheck.overrodeRollback {
-		recordAdminAction(cfg, "admin.restore_rollback_override",
-			fmt.Sprintf("restored a backup that is %d audit event(s) behind this host's last known state "+
-				"(--allow-rollback was used) -- any user/credential revocation recorded after that point is undone by this restore",
-				rollbackCheck.gapEvents), true)
-	}
-
 	if isPG {
 		return verifyRestoredAuditPostgres(cfg)
 	}
 	return verifyRestoredAudit(cfg, dbPath)
+}
+
+// loadPostgresRestore is the PostgreSQL commit point: migrations, then ONE
+// transaction that clears the target (--overwrite-existing), loads the
+// archive, resyncs sequences and writes token. committed reports whether that
+// transaction committed; when its COMMIT fails ambiguously the token is read
+// back, and an unreadable outcome keeps the journal (committed stays true so
+// the caller does not discard what --recover may still need).
+func loadPostgresRestore(cfg *config.Config, manifest backupfmt.Manifest, stagingDir, token string) (committed bool, err error) {
+	if err := restoreStepHook("journal-written"); err != nil {
+		return false, err
+	}
+	fmt.Println("Running migrations against the target database...")
+	if _, err := storage.NewStorageFactory().CreateStorage(cfg); err != nil {
+		return false, fmt.Errorf("migrate restored database: %w", err)
+	}
+	targetDB, err := storage.OpenGormDB(cfg)
+	if err != nil {
+		return false, fmt.Errorf("open freshly-migrated target database: %w", err)
+	}
+	defer closeGormDB(targetDB)
+
+	fmt.Println("Loading data into the restored database in one transaction (design §3.4)...")
+	loadErr := targetDB.Transaction(func(tx *gorm.DB) error {
+		if restoreOverwriteExisting {
+			if err := clearPostgresRestoreTarget(tx); err != nil {
+				return err
+			}
+		}
+		if err := backupfmt.LoadArchive(tx, manifest, stagingDir); err != nil {
+			return err
+		}
+		if err := backfillOTPExpiryForOlderArchive(tx, manifest); err != nil {
+			return err
+		}
+		// Every restored row carries its original, explicit id; PostgreSQL
+		// never advances a sequence for an explicit-value INSERT. See
+		// resyncPostgresSequences.
+		if err := resyncPostgresSequences(tx); err != nil {
+			return fmt.Errorf("resync Postgres sequences after restore: %w", err)
+		}
+		if err := writePostgresRestoreToken(tx, token); err != nil {
+			return fmt.Errorf("record the restore's commit token: %w", err)
+		}
+		return restoreStepHook("loaded")
+	})
+	if loadErr == nil {
+		return true, restoreStepHook("committed")
+	}
+	done, qerr := postgresRestoreTokenCommitted(cfg, token)
+	if qerr != nil {
+		return true, fmt.Errorf("load backup data: %w -- and whether it committed cannot be read back (%v); the "+
+			"restore journal is kept: run `keyorix-server admin restore --recover`", loadErr, qerr)
+	}
+	if done {
+		return true, nil // the COMMIT reached the database; carry on installing the key files
+	}
+	return false, fmt.Errorf("load backup data: %w -- nothing was changed: the transaction rolled back and the "+
+		"live key files were never touched", loadErr)
+}
+
+// buildStagedSQLiteRestore creates, migrates and loads the restored database
+// at stagedDB (next to the live one, which stays untouched), then closes it
+// and folds any WAL into the file so a single rename can install it.
+func buildStagedSQLiteRestore(cfg *config.Config, stagedDB string, manifest backupfmt.Manifest, stagingDir string) (err error) {
+	defer func() {
+		if err != nil {
+			_ = os.Remove(stagedDB)
+			_ = removeStagedSQLiteSidecars(stagedDB)
+		}
+	}()
+	stagedCfg := *cfg
+	stagedCfg.Storage.Database.Path = stagedDB
+	fmt.Println("Running migrations against a fresh staged database...")
+	st, err := storage.NewStorageFactory().CreateStorage(&stagedCfg)
+	if err != nil {
+		return fmt.Errorf("migrate restored database: %w", err)
+	}
+	if c, ok := st.(interface{ Close() error }); ok {
+		_ = c.Close()
+	}
+	targetDB, err := storage.OpenGormDB(&stagedCfg)
+	if err != nil {
+		return fmt.Errorf("open freshly-migrated staged database: %w", err)
+	}
+	fmt.Println("Loading data into the staged database (design §3.4)...")
+	loadErr := targetDB.Transaction(func(tx *gorm.DB) error {
+		if err := backupfmt.LoadArchive(tx, manifest, stagingDir); err != nil {
+			return err
+		}
+		return backfillOTPExpiryForOlderArchive(tx, manifest)
+	})
+	if loadErr == nil {
+		loadErr = targetDB.Exec("PRAGMA wal_checkpoint(TRUNCATE)").Error
+	}
+	closeGormDB(targetDB)
+	if loadErr != nil {
+		return fmt.Errorf("load backup data: %w -- nothing was changed: the live database and key files were never touched", loadErr)
+	}
+	if info, serr := os.Stat(stagedDB + "-wal"); serr == nil && info.Size() > 0 {
+		return fmt.Errorf("staged database %q still has a non-empty WAL after closing -- refusing to install it", stagedDB)
+	}
+	if err := removeStagedSQLiteSidecars(stagedDB); err != nil {
+		return err
+	}
+	f, err := os.Open(stagedDB) // #nosec G304 -- dbPath-derived staging name
+	if err != nil {
+		return err
+	}
+	defer f.Close() //nolint:errcheck
+	return f.Sync()
 }
 
 // validateKeyFileSetV2 is validateKeyFileSetV1 (backup_v1_legacy.go) for
@@ -673,21 +808,33 @@ func runAdminRestoreV1(cfg *config.Config) error {
 
 	restoreTS := time.Now().UTC().Format("20060102T150405Z")
 
-	// A single atomic-set install, not a per-file loop -- see
-	// writeRestoredFileSet's own doc comment (same gap as the v2 path's
-	// key-file restore, fixed there for the same reason).
+	// Keys and database staged first, then installed together under a
+	// journal (restore_commit.go): a crash in between is rolled forward by
+	// --recover instead of leaving new keys beside the old database.
 	keyFilePaths := make([]string, len(manifest.KeyFiles))
 	for i, entry := range manifest.KeyFiles {
 		keyFilePaths[i] = entry.OriginalPath
 	}
-	if err := writeRestoredFileSet(keyFilePaths, keyBlobs, restoreTS); err != nil {
-		return fmt.Errorf("write key file set: %w", err)
+	journalPath, err := restorejournal.Path(cfg)
+	if err != nil {
+		return err
 	}
-	if err := removeStaleSQLiteSidecars(dbPath); err != nil {
-		return fmt.Errorf("clear stale WAL sidecar files for %q: %w", dbPath, err)
+	entries, err := prepareRestoredFileSet(append(keyFilePaths, dbPath), append(keyBlobs, dbBytes))
+	if err != nil {
+		return fmt.Errorf("stage restored files: %w", err)
 	}
-	if err := writeRestoredFile(dbPath, dbBytes, restoreTS); err != nil {
-		return fmt.Errorf("write database %q: %w", dbPath, err)
+	entries[len(entries)-1].SQLiteDB = true
+	journal := restorejournal.Journal{Backend: "sqlite", Timestamp: restoreTS, Overwrite: restoreOverwriteExisting, Entries: entries,
+		CompletedEvent: fmt.Sprintf("restored from backup archive %s (created %s, format v1)", restoreInput, manifest.CreatedAt.Format(time.RFC3339))}
+	if err := restorejournal.Write(journalPath, journal); err != nil {
+		discardStagedEntries(entries)
+		return err
+	}
+	if err := installJournalEntries(journal); err != nil {
+		return restoreInterruptedError(journalPath, err)
+	}
+	if err := restorejournal.Remove(journalPath); err != nil {
+		return err
 	}
 
 	fmt.Println("Applying pending migrations to the restored database (idempotent)...")
@@ -994,34 +1141,16 @@ func expectedKeyFilePaths(cfg *config.Config) ([]string, error) {
 // removeStaleSQLiteSidecars removes dbPath's WAL-mode sidecar files
 // (-wal, -shm) if present. Best-effort existence-based removal: absent is
 // the common/expected case (a genuinely fresh data dir), not an error.
-// moveAsideExistingSQLiteDB renames an existing, non-empty SQLite database
-// (and its -wal/-shm sidecars, which hold committed-but-uncheckpointed pages
-// of that same database) to "<path>.pre-restore-<restoreTS>", the same
-// never-truncate convention writeRestoredFile uses for key files. Only acts
-// under --overwrite-existing; without it refuseNonEmptyExisting has already
-// refused a non-empty target, and a 0-byte placeholder is migrated in place.
-func moveAsideExistingSQLiteDB(dbPath, restoreTS string) error {
-	if !restoreOverwriteExisting {
-		return nil
+// removeStagedSQLiteSidecars removes a staged (never live) database's
+// sidecars: -wal/-shm and the migration lock file migration created for it.
+func removeStagedSQLiteSidecars(stagedDB string) error {
+	if err := removeStaleSQLiteSidecars(stagedDB); err != nil {
+		return err
 	}
-	info, err := os.Stat(dbPath)
-	if os.IsNotExist(err) {
-		return nil
+	if err := os.Remove(stagedDB + ".migration.lock"); err != nil && !os.IsNotExist(err) {
+		return err
 	}
-	if err != nil {
-		return fmt.Errorf("stat existing database %q: %w", dbPath, err)
-	}
-	if info.Size() == 0 {
-		return nil
-	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		src := dbPath + suffix
-		aside := fmt.Sprintf("%s.pre-restore-%s%s", dbPath, restoreTS, suffix)
-		if err := os.Rename(src, aside); err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("move existing %q aside to %q: %w", src, aside, err)
-		}
-	}
-	return fsyncDir(filepath.Dir(dbPath))
+	return nil
 }
 
 func removeStaleSQLiteSidecars(dbPath string) error {
@@ -1064,7 +1193,7 @@ func writeRestoredFile(path string, data []byte, restoreTS string) error {
 	if err != nil {
 		return err
 	}
-	return commitRestoredFile(path, tmpPath, restoreTS)
+	return commitRestoredFile(path, tmpPath, restoreTS, restoreOverwriteExisting)
 }
 
 // writeRestoredFileSet installs a SET of restored files -- the key-material
@@ -1116,7 +1245,7 @@ func writeRestoredFileSet(paths []string, data [][]byte, restoreTS string) error
 	}
 
 	for _, s := range prepared {
-		if err := commitRestoredFile(s.path, s.tmpPath, restoreTS); err != nil {
+		if err := commitRestoredFile(s.path, s.tmpPath, restoreTS, restoreOverwriteExisting); err != nil {
 			return fmt.Errorf("install %q: %w", s.path, err)
 		}
 	}
@@ -1175,7 +1304,7 @@ func prepareRestoredFile(path string, data []byte) (string, error) {
 // must never be able to make a restored key/DB file group- or
 // world-readable.
 //
-// With --overwrite-existing, an existing file at path is renamed aside to
+// With overwrite (--overwrite-existing), an existing file at path is renamed aside to
 // "<path>.pre-restore-<restoreTS>" (never truncated or overwritten in
 // place) before the new file is renamed in, so an unrecoverable mistake
 // during an --overwrite-existing restore still has a way back. Without it,
@@ -1184,12 +1313,12 @@ func prepareRestoredFile(path string, data []byte) (string, error) {
 // refuseNonEmptyExisting's earlier check and this write during which
 // another process could have created path (os.Rename has no portable
 // no-clobber option and would silently replace it).
-func commitRestoredFile(path, tmpPath, restoreTS string) error {
+func commitRestoredFile(path, tmpPath, restoreTS string, overwrite bool) error {
 	dir := filepath.Dir(path)
 	// No-op once renamed/linked into place below.
 	defer os.Remove(tmpPath) //nolint:errcheck
 
-	if restoreOverwriteExisting {
+	if overwrite {
 		if _, err := os.Stat(path); err == nil {
 			aside := fmt.Sprintf("%s.pre-restore-%s", path, restoreTS)
 			if err := os.Rename(path, aside); err != nil {
