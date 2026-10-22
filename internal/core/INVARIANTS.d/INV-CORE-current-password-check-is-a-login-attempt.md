@@ -15,7 +15,11 @@
   `recordFailedLogin` and the transport keeps the per-IP slot, because the refusal tells the
   caller something about past passwords; re-submitting the current password (which the caller
   just proved they know) and the other policy refusals (`ErrPasswordPolicy`, named by rule)
-  cost nothing (`change_password_policy_refusal_test.go`). The account-security-factor changes (`requireReauth`) already fed the
+  cost nothing (`change_password_policy_refusal_test.go`). Only a caller that has verified the
+  current password may be told "must differ from the current password" (`validateNewPasswordAs(..., true)`);
+  the setup/reset-link path (`CompleteSetup`, `validateNewPassword`) verifies nothing, so a candidate
+  equal to the current password gets the same generic refusal as a history password
+  (`setup_consume_reuse_refusal_test.go`). The account-security-factor changes (`requireReauth`) already fed the
   counter; their refusals now also carry `ErrReauthRejected` (text unchanged) so the
   transport can keep the per-IP slot (INV-HTTP-every-auth-route-budgeted). Why:
   AUTH-PW-BUDGET (HARDEN-HTTP-1's rate-limit inventory, #3321): both endpoints used a bare

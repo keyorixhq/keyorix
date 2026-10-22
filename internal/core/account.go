@@ -144,7 +144,7 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	}
 	// Enforce policy + history after the current-password check so an attacker can't
 	// probe the policy without already holding valid credentials (ADR-025).
-	if err := c.validateNewPassword(ctx, user, newPassword); err != nil {
+	if err := c.validateNewPasswordAs(ctx, user, newPassword, true); err != nil {
 		if errors.Is(err, ErrPasswordReused) {
 			// The refusal tells the caller the candidate is one of the account's
 			// PAST passwords, which a stolen session could use to test guesses
@@ -385,24 +385,44 @@ func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID,
 // the password-history rule, without mutating anything. Split from applyNewPassword
 // so callers (e.g. the setup-token consume flow) can reject a weak password BEFORE
 // spending a single-use token, rather than burning the link on a policy failure.
+//
+// It is for callers that have NOT verified the account's current password (the
+// setup/reset link holder): a candidate equal to the current password or found in the
+// history gets the same generic refusal, so the answer discloses neither. ChangePassword
+// verified the current password first and uses validateNewPasswordAs(..., true).
 func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User, newPassword string) error {
+	return c.validateNewPasswordAs(ctx, user, newPassword, false)
+}
+
+// validateNewPasswordAs is validateNewPassword with currentVerified stating whether the
+// caller has just proven it knows the current password. Only then may the refusal name
+// "must differ from the current password": for any other caller that wording would
+// confirm a guess at the current password for free.
+func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.User, newPassword string, currentVerified bool) error {
 	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
 		return passwordPolicyError{fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)}
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
 	if c.passwordHistoryEnabled() {
-		// The current password is already known to the caller (ChangePassword
-		// verified it first), so naming it discloses nothing and costs nothing.
 		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
-			return passwordPolicyError{fmt.Errorf("%s: new password must differ from the current password", i18n.T("ErrorValidation", nil))}
+			if currentVerified {
+				// The caller already knows the current password (ChangePassword verified
+				// it first), so naming it discloses nothing and costs nothing.
+				return passwordPolicyError{fmt.Errorf("%s: new password must differ from the current password", i18n.T("ErrorValidation", nil))}
+			}
+			return reusedPasswordError()
 		}
 		// A PAST password is account history the caller may not know: the wording
 		// stays generic and ChangePassword charges the attempt (ErrPasswordReused).
 		if c.passwordInHistory(ctx, user, newPassword) {
-			return passwordReusedError{passwordPolicyError{fmt.Errorf("%s: this password cannot be used; choose a different password", i18n.T("ErrorValidation", nil))}}
+			return reusedPasswordError()
 		}
 	}
 	return nil
+}
+
+func reusedPasswordError() error {
+	return passwordReusedError{passwordPolicyError{fmt.Errorf("%s: this password cannot be used; choose a different password", i18n.T("ErrorValidation", nil))}}
 }
 
 // passwordReusedError is a passwordPolicyError that also matches ErrPasswordReused.
