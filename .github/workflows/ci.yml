@@ -335,7 +335,6 @@ jobs:
           REF: ${{ github.ref }}
           SHA: ${{ github.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           HAS_CI_FULL_LABEL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full') }}
           BASE_REF: ${{ github.base_ref }}
@@ -354,15 +353,28 @@ jobs:
           echo "full_profile=$full_profile" >> "$GITHUB_OUTPUT"
 
           if [ "$EVENT_NAME" = "merge_group" ]; then
-            # Merge queue (2026-09-28): classify the WHOLE group diff (main's
-            # tip .. the group commit, which includes every earlier PR in the
-            # same group), so a docs-only / web-only group skips the 18-shard
-            # test matrix exactly like the same PR already does on
-            # pull_request. Fail-safe: the compare API lists at most 300
-            # files; at or above that, or on any API error, `changed` is
-            # emptied, and every output below treats an empty list as "run":
-            # *_only false, *_relevant and *_changed true.
-            changed=$(gh api "repos/$REPO/compare/$MG_BASE_SHA...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+            # Merge queue (2026-09-28): classify the WHOLE stack (the target
+            # branch .. the group commit, which includes every earlier entry
+            # in the queue), so a docs-only / web-only stack skips the
+            # 18-shard test matrix exactly like the same PR already does on
+            # pull_request. NOT the diff against merge_group.base_sha: that
+            # is only the entry ahead of this one, and the ruleset's
+            # grouping_strategy is HEADGREEN (only the head of a batch has to
+            # pass), so a docs-only head stacked on a code entry whose own
+            # runs are still pending would merge the batch with its smoke
+            # jobs skipped. The target branch is read from the group ref
+            # (refs/heads/gh-readonly-queue/<branch>/pr-N-<sha>); if it
+            # cannot be parsed, the list stays empty (below). Fail-safe: the
+            # compare API lists at most 300 files; at or above that, or on
+            # any API error, `changed` is emptied, and every output below
+            # treats an empty list as "run": *_only false, *_relevant and
+            # *_changed true.
+            target="${REF#refs/heads/gh-readonly-queue/}"
+            target="${target%/pr-*}"
+            changed=""
+            if [ "$target" != "$REF" ] && [ -n "$target" ]; then
+              changed=$(gh api "repos/$REPO/compare/$target...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+            fi
             if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge 300 ]; then
               changed=""
             fi
@@ -537,7 +549,10 @@ jobs:
               echo "reason=event $EVENT_NAME runs the full suite"
             } >> "$GITHUB_OUTPUT"
           elif [ "$DOCS_ONLY" = "true" ]; then
-            # Every job this selection gates already skips on docs_only.
+            # DOCS_ONLY is computed by `changes` on the whole stack against
+            # the target branch (not just this entry), and every job this
+            # selection gates skips on it (docker-boot-smoke, helm-boot-smoke
+            # and demo-up-smoke carry the condition themselves).
             echo "Docs-only change: every Go job already skips; nothing to select."
             {
               echo "select=false"
@@ -751,7 +766,14 @@ jobs:
       - name: Validate docs/security-closures.d/*.tsv fragments
         run: scripts/gen-security-closures-tsv.sh --check
 
+      # The two self-tests below (~9 of this job's ~13 minutes) run the guard
+      # scripts against synthetic ledgers and real Go tests: their inputs are
+      # scripts/*.sh and Go code, never docs/ or *.md, so they skip on a
+      # docs-only change. docs_only is computed on the whole queue stack, so a
+      # stack that also changes a script or Go file runs them. The "Verify
+      # every ... claim" steps read the real ledgers under docs/ and stay on.
       - name: Self-test the closure guard (must be able to go red)
+        if: needs.changes.outputs.docs_only != 'true'
         run: ./scripts/check-closures.sh --self-test
 
       # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
@@ -763,6 +785,7 @@ jobs:
         run: ./scripts/check-closures.sh
 
       - name: Self-test the ADR conformance guard (must be able to go red)
+        if: needs.changes.outputs.docs_only != 'true'
         run: ./scripts/check-adr-conformance.sh --self-test
 
       - name: Verify every ADR conformance claim names a passing test
@@ -2130,7 +2153,7 @@ jobs:
   # container booting just as well. Outside merge_group the gate is true.
   docker-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_docker_boot == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_docker_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2218,7 +2241,7 @@ jobs:
   # merge_group only, like docker-boot-smoke above.
   demo-up-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_demo == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_demo == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2295,7 +2318,7 @@ jobs:
   # merge_group only.
   helm-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_helm_boot == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_helm_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
