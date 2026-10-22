@@ -85,6 +85,10 @@ the old DEK, or by re-running `rotate`. SQLite (single server) is unchanged.
 ## Rotate the KEK (change the master passphrase)
 
 This re-wraps the DEK under a new passphrase; it does **not** touch any database row.
+It still opens the database (read only, to finish an interrupted DEK rotation first), so the
+database must be reachable with the configured `storage` settings: on PostgreSQL the server
+must be reachable, on SQLite run it from the directory the configured path is relative to.
+`admin encryption migrate-provider` opens it the same way.
 
 ```bash
 keyorix-server admin encryption rotate-kek --config ./keyorix.yaml --confirm --new-passphrase-file ./new_master_password
