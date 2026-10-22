@@ -61,7 +61,8 @@ FROM nginx:alpine@sha256:72ba65eb42c10344912a84ff42408db7d34f2feb642204570ab8fc5
 #   libexpat >= 2.8.5-r0   CVE-2026-93990 (HIGH)
 #   pcre2   >= 10.49-r0    CVE-2026-103111 (HIGH)
 #   tiff    >= 4.7.2-r0    CVE-2026-4775 (HIGH)
-RUN apk update && apk add --no-cache --upgrade 'libuuid>=2.42.3-r1' 'libexpat>=2.8.5-r0' 'pcre2>=10.49-r0' 'tiff>=4.7.2-r0'
+#   libx11  >= 1.8.14-r0   CVE-2026-88806 (HIGH)
+RUN apk update && apk add --no-cache --upgrade 'libuuid>=2.42.3-r1' 'libexpat>=2.8.5-r0' 'pcre2>=10.49-r0' 'tiff>=4.7.2-r0' 'libx11>=1.8.14-r0'
 COPY nginx.conf /etc/nginx/nginx.conf
 COPY keyorix-backend.conf /etc/nginx/keyorix-backend.conf
 # HSTS-behind-a-load-balancer policy: nginx-hsts.conf is the "no trusted proxy,
