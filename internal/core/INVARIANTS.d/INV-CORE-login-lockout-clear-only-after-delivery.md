@@ -34,7 +34,16 @@
   challenge the password step writes for a second-factor account
   (`CreateMFAChallengeHoldingLoginSlot`; guards: the panic cases of
   `TestMFAStepUp_PostVerdictFaultIsIdenticalToAWrongCode` and
-  `TestLogin_CreateMFAChallengeFaultCostsTheSameAsAWrongPassword`). Why: #2894 — `checkLockAndClearLoginFailures` cleared the counter
+  `TestLogin_CreateMFAChallengeFaultCostsTheSameAsAWrongPassword`), and the
+  password-expiry gate's state write (`setPasswordResetRequiredAfterMatch`,
+  #3557; guard: `TestLogin_PasswordExpiryGateFaultCostsTheSameAsAWrongPassword`).
+  The clear itself never turns a delivered authentication into a reported
+  failure: `clearLoginFailures` recovers its own write (#3556), because every
+  caller runs it after the session, grant or change committed; a clear that
+  does not land leaves the counter as the credential check found it (guards:
+  `server/http/handlers/TestLoginDelivery_LockoutClearPanicKeepsTheLoginDelivered`,
+  `TestClearLoginFailures_PanicIsRecovered`,
+  `TestVerifyMFAStepUp_LockoutClearPanicStillDeliversTheGrant`). Why: #2894 — `checkLockAndClearLoginFailures` cleared the counter
   on its way past the TOCTOU re-check, which put the clear BEFORE every
   remaining fallible step of every login path (`internal/core/auth.go`,
   `mfa.go`, `webauthn.go` ×2, `mfa_stepup.go`), and the `completeLogin` failure

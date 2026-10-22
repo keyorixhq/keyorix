@@ -510,7 +510,7 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 		// "unavailable" (503, uncounted) while a CORRECT one whose anti-replay
 		// mark failed stayed "invalid code" (401, counted) — the status code
 		// answered "was the TOTP code right?" (#2894 review).
-		if consumed, err := c.storage.ConsumeMFARecoveryCode(ctx, ch.UserID, sha256Hex(normalizeRecoveryCode(code)), c.now()); err != nil {
+		if consumed, err := c.consumeRecoveryCodeForLogin(ctx, ch.UserID, code); err != nil {
 			storageErr = err
 		} else if consumed {
 			verified, usedRecovery, storageErr = true, true, nil
@@ -562,6 +562,25 @@ func (c *KeyorixCore) VerifyMFACredentials(ctx context.Context, challenge, code 
 		return user, false, nil, nil, err
 	}
 	return user, usedRecovery, consumedTOTPStep, ch.LoginAttemptID, nil
+}
+
+// consumeRecoveryCodeForLogin is the login's ConsumeMFARecoveryCode call. The
+// conditional consume IS the recovery-code check, so a wrong code reaches it as
+// well and a fault here is pre-verdict either way. A PANIC comes back as an
+// error (#3557), so VerifyMFACredentials handles it exactly like the error kind:
+// audited mfa.error, answered "unavailable", uncounted, slot handed back. It
+// used to reach the Recovery middleware with nothing audited, so a consume that
+// landed before the panic burned a correct recovery code with no trace in the
+// audit log; now that case is at least audited.
+func (c *KeyorixCore) consumeRecoveryCodeForLogin(ctx context.Context, userID uint, code string) (consumed bool, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: recovery-code consume for user %d panicked; answering it like a storage error: %v\n%s",
+				userID, r, debug.Stack())
+			consumed, err = false, fmt.Errorf("recovery-code consume for user %d panicked: %v", userID, r)
+		}
+	}()
+	return c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
 }
 
 // markTOTPStepUsedAfterMatch is MarkTOTPStepUsed for a login whose TOTP code
