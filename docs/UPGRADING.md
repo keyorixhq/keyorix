@@ -140,6 +140,15 @@ same `sslmode=` in the dsn, or remove `ssl_mode`. Check with `keyorix-server adm
 --posture` after updating the binary. See
 [CONFIGURATION.md](CONFIGURATION.md#postgresql-tls).
 
+**PostgreSQL: a CA with `ssl_mode` allow/prefer refuses to start**
+(PG-SSL-ROOT-CERT-1). The driver loaded the CA but never checked the server's
+certificate against it. A CA file in `ssl_root_cert` (or `sslrootcert=` in a
+dsn) with an effective sslmode of `disable`, `allow` or `prefer` (a dsn with no
+`sslmode` is `prefer`) is refused, and so is `system` with `disable`. Before
+upgrading, set `ssl_mode: verify-full` (or `sslmode=verify-full` in the dsn).
+Helm: the same `externalDatabase.sslRootCert`/`sslMode` shapes fail `helm
+template`. Walk-through: [operator/postgres-tls.md](operator/postgres-tls.md).
+
 **Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
 CMD). `docker run <image> <command>` and `docker compose run backend <command>`
 still run `<command>`, after the optional config copy (`KEYORIX_CONFIG_SOURCE`);

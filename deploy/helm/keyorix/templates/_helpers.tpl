@@ -302,7 +302,7 @@ after the operator rotated the Secret. Empty (default): the checksum is unchange
 storage.database.ssl_root_cert for an external database (PG-TLS-2): the mounted
 externalDatabase.caSecret, or externalDatabase.sslRootCert, or "". Fails the
 render on the shapes the server would refuse at boot (a verifying sslMode with
-no CA, a CA with sslMode disable) and on ambiguous ones (both set, caSecret
+no CA, a CA with sslMode disable/allow/prefer) and on ambiguous ones (both set, caSecret
 with the bundled PostgreSQL, which has no CA to name).
 */}}
 {{- define "keyorix.externalDatabase.sslRootCert" -}}
@@ -325,6 +325,10 @@ with the bundled PostgreSQL, which has no CA to name).
 {{- end -}}
 {{- include "keyorix.externalDatabase.caFile" . -}}
 {{- else if $db.sslRootCert -}}
+{{- /* PG-SSL-ROOT-CERT-1: the server refuses a CA it would never check against (a file with disable/allow/prefer, "system" with disable). */ -}}
+{{- if and (has $db.sslMode (list "disable" "allow" "prefer")) (or (ne $db.sslRootCert "system") (eq $db.sslMode "disable")) -}}
+{{- fail (printf "externalDatabase.sslRootCert needs externalDatabase.sslMode verify-full (or verify-ca/require), got %q: with %q the CA is never checked and the server refuses to start" (toString $db.sslMode) (toString $db.sslMode)) -}}
+{{- end -}}
 {{- $db.sslRootCert -}}
 {{- else if has $db.sslMode (list "verify-ca" "verify-full") -}}
 {{- fail (printf "externalDatabase.sslMode is %s but no CA is configured: set externalDatabase.caSecret.name (a Secret holding the CA's PEM) or externalDatabase.sslRootCert (\"system\" or a path you mount); the server refuses to start without one" $db.sslMode) -}}
