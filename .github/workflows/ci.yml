@@ -2160,9 +2160,13 @@ jobs:
           # uid is 1001 -- the uid the server runs as, and init-secrets.sh refuses to create
           # files as that uid (the server rejects a group-readable secret it owns). So run
           # it as root with the runner's group: the files come out root:<runner gid> 0640,
-          # the owner the server trusts, readable by the containers via group_add. One run
-          # only: a second one as the runner could not rewrite the root-owned .env.
-          sudo -u root -g "#$(id -g)" ./scripts/selfhost/init-secrets.sh
+          # the owner the server trusts, readable by the containers via group_add. The
+          # runner's sudoers rule is NOPASSWD for (ALL) runas USERS only, so `sudo -g` would
+          # prompt for a password; setpriv, run by root, sets the group instead. One run
+          # only: a second one as the runner could not rewrite the root-owned .env, so the
+          # directory and .env go back to the runner (the files inside stay root-owned).
+          sudo setpriv --reuid=0 --regid="$(id -g)" --clear-groups ./scripts/selfhost/init-secrets.sh
+          sudo chown "$(id -u)" secrets .env
           printf 'services:\n  backend:\n    image: keyorix-server:boot-smoke\n  web:\n    image: keyorix-web:boot-smoke\n    ports:\n      - "18088:80"\n' > docker-compose.override.yml
           docker compose up -d
 
