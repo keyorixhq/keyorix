@@ -23,19 +23,26 @@ import (
 )
 
 // panicOnLockoutClear panics once in UpdateLoginLockoutState, either in place
-// of the write or after it committed.
+// of the write or after it committed. (release/v0.96.x has no hooked()/storeHooks
+// helper; this is the embedded-Storage decorator its own #3277 tests use.)
 func panicOnLockoutClear(inner corestorage.Storage, afterCommit bool, fired *atomic.Bool) corestorage.Storage {
-	return hooked(inner, &storeHooks{
-		UpdateLoginLockoutState: func(next corestorage.Storage, ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error {
-			if fired.CompareAndSwap(false, true) {
-				if afterCommit {
-					_ = next.UpdateLoginLockoutState(ctx, id, attempts, lastFailedAt, lockedUntil, lockoutCount)
-				}
-				panic("injected panic: UpdateLoginLockoutState")
-			}
-			return next.UpdateLoginLockoutState(ctx, id, attempts, lastFailedAt, lockedUntil, lockoutCount)
-		},
-	})
+	return &lockoutClearPanicStorage{Storage: inner, afterCommit: afterCommit, fired: fired}
+}
+
+type lockoutClearPanicStorage struct {
+	corestorage.Storage
+	afterCommit bool
+	fired       *atomic.Bool
+}
+
+func (s *lockoutClearPanicStorage) UpdateLoginLockoutState(ctx context.Context, id uint, attempts int, lastFailedAt, lockedUntil *time.Time, lockoutCount int) error {
+	if s.fired.CompareAndSwap(false, true) {
+		if s.afterCommit {
+			_ = s.Storage.UpdateLoginLockoutState(ctx, id, attempts, lastFailedAt, lockedUntil, lockoutCount)
+		}
+		panic("injected panic: UpdateLoginLockoutState")
+	}
+	return s.Storage.UpdateLoginLockoutState(ctx, id, attempts, lastFailedAt, lockedUntil, lockoutCount)
 }
 
 func TestClearLoginFailures_PanicIsRecovered(t *testing.T) {
