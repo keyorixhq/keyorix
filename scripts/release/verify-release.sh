@@ -977,6 +977,9 @@ self_test() {
     st_expect "$ST_OUT" PASS "$id"
   done
   st_count "$ST_OUT" '^PASS ' 60
+  # the real v0.96.3 release has exactly 32 assets (14 binaries + 15 SBOMs + checksums.txt/.sig/.pem); a 33rd
+  # (checksums.txt.bundle) only exists if release.yml is changed to publish it, then update gen_expected
+  st_count "$ST_OUT" 'all 32 expected assets present' 1
   st_count "$ST_OUT" '^FAIL ' 0
   st_count "$ST_OUT" '^SKIP ' 1 # --no-gh: the cryptographic gh check is the only thing not run
   st_expect "$ST_OUT" SKIP release.provenance.gh
