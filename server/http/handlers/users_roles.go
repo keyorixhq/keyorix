@@ -309,6 +309,9 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 		if sendPartialMutation(w, err) {
 			return // the removals applied, the additions did not (#3488)
 		}
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		} else {

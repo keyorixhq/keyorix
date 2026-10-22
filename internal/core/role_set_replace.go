@@ -64,6 +64,14 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	remove, add := roleSetDiff(current, r.want)
+	// #3546: refuse a role the scope is invalid for BEFORE any removal, so the
+	// refusal changes nothing (applyRoleSetOn writes through the tx, not through
+	// grantUserRoleAudited's own check).
+	for _, id := range add {
+		if err := c.requireScopeValidForRole(ctx, id, r.scope); err != nil {
+			return err
+		}
+	}
 	// The grant ceiling is the actor's own authority, so it is judged before anything
 	// changes; commit 2 judges it again under its lock.
 	if err := c.requireGranterHoldsRoleSet(ctx, r, add); err != nil {

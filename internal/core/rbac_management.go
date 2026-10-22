@@ -603,7 +603,12 @@ func (c *KeyorixCore) grantBaselineRoleBackfill(ctx context.Context, userID, rol
 // AssignUserRole, assignUserRoleSystemGrant (SSO), grantBaselineRoleBackfill,
 // AssignUserRoleWithExpiry and the access-request approval grant.
 // baselineBackfill tags the row as LogRoleAssignedBackfill does.
+// GROUP-ROLE-SCOPE-1 (#3546): refuses a scope the role is not meaningful at
+// (requireScopeValidForRole) before writing, for every one of those callers.
 func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt *time.Time, baselineBackfill bool) error {
+	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
+		return err
+	}
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		var err error
 		if expiresAt != nil {
@@ -625,8 +630,12 @@ func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, actorID, userID,
 
 // grantGroupRoleAudited is grantUserRoleAudited for a group grant
 // (AssignRoleToGroup, AssignGroupRoleWithExpiry): the group_roles row and its
-// role.group_assigned audit row commit together.
+// role.group_assigned audit row commit together. Same role-scope check as
+// grantUserRoleAudited: the DEMO-WALK-4 grant was a group grant (#3546).
 func (c *KeyorixCore) grantGroupRoleAudited(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt *time.Time) error {
+	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
+		return err
+	}
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		var err error
 		if expiresAt != nil {
