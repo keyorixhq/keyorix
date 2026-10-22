@@ -55,5 +55,12 @@ v0.96.1 to main, SQLite and PostgreSQL 16: every check passed. The new binary
 logged the audit index rebuild on PostgreSQL and (PostgreSQL only) the
 `audit durability: standard` line described in `UPGRADING.md` §6c. The v0.96.1
 binary started on the migrated data (the two releases shared schema epoch 2).
-Since HA-READY-1, main is schema epoch 3 with floor 3 (`UPGRADING.md` §6q), so step 5
-now expects the old binary to refuse with the schema-epoch message; not re-run yet.
+Since HA-READY-1, main records floor 3 (it is now at schema epoch 5; `UPGRADING.md` §6q), so a
+v0.96.x binary must refuse in step 5 with `database declares a minimum compatible schema
+epoch of 3`. Step 5 only checks for the words `schema epoch`; not re-run yet against main.
+
+Release to release, v0.96.1 → v0.96.3 with the binaries from the published images, SQLite
+and PostgreSQL 16 (2026-10-22): every check passed, including a DEK rotation before the
+upgrade. Both releases are epoch 2, so v0.96.1 started on the upgraded data and served it.
+The rollback paths that came out of that run, including restoring the pre-upgrade backup
+in place, are in [upgrade-rollback.md](upgrade-rollback.md).
