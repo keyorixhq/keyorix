@@ -1150,7 +1150,7 @@ export interface paths {
         get?: never;
         /**
          * Update a project member's role
-         * @description Change the role assigned to an existing project member.
+         * @description Change the role assigned to an existing project member. The member's other project roles are removed first, then the new role is granted; if the grant cannot be recorded in the audit log the answer is 503 with error MutationPartiallyApplied and details {code: mutation_partially_applied, revocation_applied: true, remainder_applied: false, applied, not_applied, retry_safe: true}: the removals are applied, the new role is not, and the same request can be retried. Swapping the project's only administrator to another administrator role is applied in one step: during an audit outage it changes nothing.
          */
         put: operations["updateProjectMember"];
         post?: never;
@@ -3693,7 +3693,7 @@ export interface paths {
         get: operations["getUserRolesForUser"];
         /**
          * Replace user roles at a scope
-         * @description Replace the user's role assignments at the given project or global scope with the provided role IDs.
+         * @description Replace the user's role assignments at the given project or global scope with the provided role IDs. A replacement that removes roles and adds others is applied in two steps, the removals first; if the additions cannot be recorded in the audit log the answer is 503 with error MutationPartiallyApplied and details {code: mutation_partially_applied, revocation_applied: true, remainder_applied: false, applied, not_applied, retry_safe: true}: the removals are applied, the additions are not, and the same request can be retried.
          */
         put: operations["updateUserRoles"];
         post?: never;
@@ -8005,6 +8005,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     removeProjectMember: {
@@ -12642,6 +12643,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getUserMembershipsForUser: {

@@ -422,67 +422,18 @@ func (c *KeyorixCore) GetUserPermissionsByID(ctx context.Context, userID uint) (
 // assigned there are added. Assignments at other scopes are left untouched.
 // actorIsMachine distinguishes a machine-credential-authenticated caller (also
 // actorID==0) from the true actorID==0 system pseudo-actor.
+//
+// A replacement that removes and adds is a mixed request (role_set_replace.go,
+// INV-CORE-mixed-request-split, #3488): the removals commit first in one
+// transaction, their rows owed, then the additions in one fail-closed transaction.
+// If the additions fail after removals committed, the error is a
+// *PartialMutationError saying which roles were removed and which were not added.
+// Each part is all or nothing: the call never leaves a role set that is neither
+// the old one, the old one minus the removals, nor the new one.
 func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, roleIDs []uint, scope Scope, actorIsMachine bool) error {
-	current, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
-	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
-	}
-	currentSet := make(map[uint]bool, len(current))
-	for _, id := range current {
-		currentSet[id] = true
-	}
-	newSet := make(map[uint]bool, len(roleIDs))
-	for _, id := range roleIDs {
-		newSet[id] = true
-	}
-	// Unlike the ordinary AssignUserRole/RemoveUserRole choke points (each a single
-	// grant/revoke), this is a full role-SET replacement made of several of them in
-	// sequence, with no underlying storage.WithTransaction available (each call has
-	// its own WithNamedLock/SoD-check/audit-log side effects). Previously a failure
-	// partway through returned immediately with NO compensation: the completed
-	// removes stayed removed (stale roles that should have been kept, or the new
-	// set never fully applied), and the caller had no way to tell from the error
-	// alone which changes had actually landed. Track what actually succeeded and
-	// revert it on any later failure — the same compensating-action pattern this
-	// codebase already uses for TransitionMembership/ActivateBreakGlass/
-	// finalizeAccessRequestApproval — so a failure leaves the user's role set
-	// exactly as it was before the call, not some arbitrary in-between state.
-	var removedSoFar, addedSoFar []uint
-	revertPartialApply := func(cause error) error {
-		var revertErrs []error
-		for _, id := range removedSoFar {
-			if rerr := c.AssignUserRole(ctx, actorID, userID, id, scope, actorIsMachine); rerr != nil {
-				revertErrs = append(revertErrs, fmt.Errorf("failed to restore role %d: %w", id, rerr))
-			}
-		}
-		for _, id := range addedSoFar {
-			if rerr := c.RemoveUserRole(ctx, actorID, userID, id, scope); rerr != nil {
-				revertErrs = append(revertErrs, fmt.Errorf("failed to undo role %d: %w", id, rerr))
-			}
-		}
-		if len(revertErrs) > 0 {
-			c.auditProjectScopedFailed(ctx, "rbac.set_user_roles_revert_failed", actorID, scope.ProjectID,
-				fmt.Sprintf("SetUserRoles for user %d failed (%v) and reverting the partial apply also failed (%v) — MANUAL CLEANUP REQUIRED: the user's role set is neither the old nor the new one", userID, cause, revertErrs))
-		}
-		return cause
-	}
-	for _, id := range current {
-		if !newSet[id] {
-			if err := c.RemoveUserRole(ctx, actorID, userID, id, scope); err != nil {
-				return revertPartialApply(err)
-			}
-			removedSoFar = append(removedSoFar, id)
-		}
-	}
-	for _, id := range roleIDs {
-		if !currentSet[id] {
-			if err := c.AssignUserRole(ctx, actorID, userID, id, scope, actorIsMachine); err != nil {
-				return revertPartialApply(err)
-			}
-			addedSoFar = append(addedSoFar, id)
-		}
-	}
-	return nil
+	return c.replaceUserRoleSet(ctx, roleSetReplace{
+		actorID: actorID, userID: userID, scope: scope, actorIsMachine: actorIsMachine, want: roleIDs,
+	})
 }
 
 // sodGrantLockKey is the WithNamedLock key for every role-grant path guarded by the
