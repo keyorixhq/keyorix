@@ -25,7 +25,9 @@ import (
 
 func mustCreateRole(t *testing.T, db *gorm.DB, name string) *models.Role {
 	t.Helper()
-	role := &models.Role{Name: name, Description: name + " role"}
+	// Assignable anywhere: these tests grant it globally (#3546 Phase 2: a new
+	// role's default, project, is refused there).
+	role := &models.Role{Name: name, Description: name + " role", AssignableScope: models.RoleAssignableAny}
 	require.NoError(t, db.Create(role).Error)
 	return role
 }
