@@ -171,7 +171,9 @@ docker compose up -d
   recreate the database instead.
 
 The run ended with `verify-audit on the restored database: VALID`. After `up -d`, the
-seeded data was there and the secret written after the upgrade was gone.
+seeded data was there and the secret written after the upgrade was gone. On that
+throwaway VM the archive was made readable with `chmod 644` rather than the owner-only
+`chown 1001` + `chmod 600` shown above (the form SELF_HOSTING.md §5 recommends).
 
 **In place, SQLite (binary install):** with the server stopped and the old binary,
 
