@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/accessplan"
 	"github.com/keyorixhq/keyorix/migrate/internal/accesstarget"
@@ -115,8 +116,70 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 	if err != nil {
 		return accessplan.BuildInput{}, nil, nil, err
 	}
+	tree, treeWarnings, err := listKVScopeTree(ctx, vc, kvMountsRaw, projects)
+	if err != nil {
+		return accessplan.BuildInput{}, nil, nil, err
+	}
+	warnings = append(warnings, treeWarnings...)
+	mapper.SetKVTree(tree)
 
 	return accessplan.BuildInput{
 		Policies: policies, AppRoles: appRoles, KubernetesRoles: k8sRoles, UserpassUsers: userpassUsers,
 	}, mapper, warnings, nil
+}
+
+// listKVScopeTree lists, on every KV mount, the root and each root directory named like a
+// Keyorix project: the two levels the default convention maps (<project>/<env>/). Names only,
+// never values. A listing Vault refuses is recorded as not listed, and every default-convention
+// stanza whose scope it could hold is then reported unmappable (cross-mount-scope) rather than
+// assumed empty.
+func listKVScopeTree(ctx context.Context, vc *healthscan.Client, mounts []healthscan.KVMount, projects []accessplan.ProjectRef) (map[string]accessplan.KVMountListing, []string, error) {
+	isProject := make(map[string]bool, len(projects))
+	for _, p := range projects {
+		isProject[p.Name] = true
+	}
+	var warnings []string
+	notListed := func(what string, status int) {
+		warnings = append(warnings, fmt.Sprintf("could not list %s (HTTP %d) — default-convention policies whose project/environment it could hold are reported unmappable (cross-mount-scope); grant this token \"list\" there (KV v2: <mount>/metadata/*) to check it", what, status))
+	}
+	tree := make(map[string]accessplan.KVMountListing, len(mounts))
+	for _, mount := range mounts {
+		rootKeys, status, err := healthscan.ListKVKeys(ctx, vc, mount, "")
+		if err != nil {
+			return nil, nil, fmt.Errorf("list KV mount %s: %w", mount.Path, err)
+		}
+		if status != healthscan.StatusOK && status != healthscan.StatusNotFound {
+			notListed("KV mount "+mount.Path, status)
+			tree[mount.Path] = accessplan.KVMountListing{RootListed: false}
+			continue
+		}
+		listing := accessplan.KVMountListing{RootListed: true, Projects: map[string]accessplan.KVProjectListing{}}
+		for _, key := range rootKeys {
+			name, isDir := strings.CutSuffix(key, "/")
+			if !isProject[name] {
+				continue
+			}
+			p, seen := listing.Projects[name]
+			if !seen {
+				p.Listed = true // a secret named <project> holds nothing under <project>/.
+			}
+			if isDir {
+				envKeys, status, err := healthscan.ListKVKeys(ctx, vc, mount, key)
+				if err != nil {
+					return nil, nil, fmt.Errorf("list %s%s: %w", mount.Path, key, err)
+				}
+				if status != healthscan.StatusOK && status != healthscan.StatusNotFound {
+					notListed(mount.Path+key, status)
+					p.Listed = false
+				} else {
+					for _, k := range envKeys {
+						p.Envs = append(p.Envs, strings.TrimSuffix(k, "/"))
+					}
+				}
+			}
+			listing.Projects[name] = p
+		}
+		tree[mount.Path] = listing
+	}
+	return tree, warnings, nil
 }

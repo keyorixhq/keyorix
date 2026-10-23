@@ -2,6 +2,7 @@ package accessplan
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,7 +144,9 @@ type ScopeResolution struct {
 // default convention. Anything narrower (an exact secret path, a deeper subtree, part of an
 // override, one of two overrides into the same scope) is CategoryNarrowerThanScope, and a KV v2
 // metadata/ path is CategoryMetadataOnly: granting the scope there would let the migrated
-// principal read secret values Vault never let it read.
+// principal read secret values Vault never let it read. A default-convention scope that another
+// KV mount's paths also route to (or that SetKVTree's listing cannot rule out) is
+// CategoryCrossMountScope, for the same reason.
 func (m *PathMapper) Resolve(rawPolicyPath string) (res ScopeResolution, category UnmappableCategory, reason string, ok bool) {
 	if m.isKVMetadataPath(rawPolicyPath) {
 		return ScopeResolution{}, CategoryMetadataOnly, fmt.Sprintf("%q is a KV v2 metadata/ path: it grants key listing and version metadata, never secret values, and Keyorix has no permission that narrow — secrets.read would expose every value in the scope", rawPolicyPath), false
@@ -187,7 +190,7 @@ func (m *PathMapper) Resolve(rawPolicyPath string) (res ScopeResolution, categor
 		// provably covers every environment under the project, present and future — the one
 		// case ADR-114 names explicitly as a legitimate use of the env=0 sentinel, not a
 		// fallback for "couldn't resolve the environment."
-		return m.defaultScope(rawPolicyPath, ScopeResolution{ProjectID: project.ID, EnvironmentID: 0})
+		return m.defaultScope(rawPolicyPath, ScopeResolution{ProjectID: project.ID, EnvironmentID: 0}, project.Name, "")
 	}
 	env, found := m.envsByProjectID[project.ID][segments[1]]
 	if !found {
@@ -196,16 +199,86 @@ func (m *PathMapper) Resolve(rawPolicyPath string) (res ScopeResolution, categor
 	if !scopeGlob {
 		return ScopeResolution{}, CategoryNarrowerThanScope, fmt.Sprintf("%q is narrower than environment %q of project %q: a Keyorix grant covers every secret in the environment, and only a policy on the whole environment path (\"<mount>/%s/%s/*\") can be migrated to one — grant the individual secrets manually", rawPolicyPath, env.Name, project.Name, project.Name, env.Name), false
 	}
-	return m.defaultScope(rawPolicyPath, ScopeResolution{ProjectID: project.ID, EnvironmentID: env.ID})
+	return m.defaultScope(rawPolicyPath, ScopeResolution{ProjectID: project.ID, EnvironmentID: env.ID}, project.Name, env.Name)
 }
 
 // defaultScope returns a default-convention resolution unless an override also routes other
-// Vault paths into the same scope (see sharedScopeReason).
-func (m *PathMapper) defaultScope(rawPolicyPath string, res ScopeResolution) (ScopeResolution, UnmappableCategory, string, bool) {
+// Vault paths into the same scope (see sharedScopeReason) or another KV mount holds paths the
+// same convention routes there (see crossMountEvidence).
+func (m *PathMapper) defaultScope(rawPolicyPath string, res ScopeResolution, projectName, envName string) (ScopeResolution, UnmappableCategory, string, bool) {
 	if reason := m.sharedScopeReason(rawPolicyPath, res); reason != "" {
 		return ScopeResolution{}, CategoryNarrowerThanScope, reason, false
 	}
+	own, _ := m.kvMountFor(rawPolicyPath)
+	evidence, shared := m.crossMountEvidence(own.Path, projectName, envName)
+	res.CrossMountEvidence = evidence
+	if len(shared) > 0 {
+		return res, CategoryCrossMountScope, fmt.Sprintf("%q resolves to project %q%s by the default convention, but the same convention also routes another KV mount's paths there (%s): a grant there would reach that mount's imported secrets too, which this policy never allowed — import each mount into its own environment and map it with --path-map, or grant manually", rawPolicyPath, projectName, envLabel(envName), strings.Join(shared, "; ")), false
+	}
 	return res, "", "", true
+}
+
+func envLabel(envName string) string {
+	if envName == "" {
+		return " (every environment)"
+	}
+	return fmt.Sprintf(" / environment %q", envName)
+}
+
+// Cross-mount evidence states, one per KV mount.
+const (
+	crossMountPolicyMount = "policy mount"
+	crossMountAbsent      = "absent"
+	crossMountPresent     = "present"
+	crossMountNotListed   = "not listed"
+)
+
+// crossMountEvidence reports, for the default-convention scope <project>/[<env>/] of a policy
+// on ownMount, what every KV mount holds there per the listing SetKVTree gave: one sorted
+// "<mount><project>/[<env>/]: <state>" line per mount. shared lists the lines of other mounts
+// that hold paths there or could not be listed (fail closed: an unlisted mount may hold them).
+func (m *PathMapper) crossMountEvidence(ownMount, projectName, envName string) (evidence, shared []string) {
+	scope := projectName + "/"
+	if envName != "" {
+		scope += envName + "/"
+	}
+	mounts := make([]string, 0, len(m.kvMounts))
+	for _, km := range m.kvMounts {
+		mounts = append(mounts, km.Path)
+	}
+	sort.Strings(mounts)
+	for _, mount := range mounts {
+		state := m.crossMountState(mount, projectName, envName)
+		if mount == ownMount {
+			state = crossMountPolicyMount
+		}
+		line := mount + scope + ": " + state
+		evidence = append(evidence, line)
+		if state != crossMountPolicyMount && state != crossMountAbsent {
+			shared = append(shared, line)
+		}
+	}
+	return evidence, shared
+}
+
+func (m *PathMapper) crossMountState(mount, projectName, envName string) string {
+	listing, ok := m.kvTree[mount]
+	if !ok || !listing.RootListed {
+		return crossMountNotListed
+	}
+	p, ok := listing.Projects[projectName]
+	switch {
+	case !ok:
+		return crossMountAbsent
+	case envName == "":
+		return crossMountPresent // a project grant covers everything under <project>/.
+	case !p.Listed:
+		return crossMountNotListed
+	case slices.Contains(p.Envs, envName):
+		return crossMountPresent
+	default:
+		return crossMountAbsent
+	}
 }
 
 // sharedScopeReason reports why res cannot be granted for rawPolicyPath when a --path-map
