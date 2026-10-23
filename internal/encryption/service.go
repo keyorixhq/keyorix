@@ -13,6 +13,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 )
 
 // Service provides high-level encryption operations for the application.
@@ -49,9 +50,20 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 ║  NEVER run with encryption disabled in production.               ║
 ╚══════════════════════════════════════════════════════════════════╝`)
 	}
+	km := NewKeyManager(baseDir, cfg.DEKPath, cfg.SaltPath)
+	// The manifest writer for the whole configured set (salt, DEK, provider
+	// blobs, Shamir shares), not just the two files km knows. An unsafe path
+	// is reported by Initialize, like any other key-path configuration error.
+	if ks, err := keyfiles.NewSetWriter(cfg, baseDir); err != nil {
+		if km.configErr == nil {
+			km.configErr = err
+		}
+	} else if ks != nil {
+		km.keySet = ks
+	}
 	return &Service{
 		config:     cfg,
-		keyManager: NewKeyManager(baseDir, cfg.DEKPath, cfg.SaltPath),
+		keyManager: km,
 	}
 }
 

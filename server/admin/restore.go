@@ -367,7 +367,11 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	// one encryption configuration's required set (keyfiles.Registry), and a
 	// host with only SOME of them present can never start -- see
 	// writeRestoredFileSet's own doc comment.
-	if err := writeRestoredFileSet(targetKeyPaths, keyFileData, restoreTS); err != nil {
+	keySet, err := keyfiles.NewSetWriter(&cfg.Storage.Encryption, ".")
+	if err != nil {
+		return fmt.Errorf("key-set manifest: %w", err)
+	}
+	if err := writeRestoredFileSet(targetKeyPaths, keyFileData, restoreTS, keySet); err != nil {
 		return fmt.Errorf("write key file set: %w", err)
 	}
 	if !isPG {
@@ -680,7 +684,11 @@ func runAdminRestoreV1(cfg *config.Config) error {
 	for i, entry := range manifest.KeyFiles {
 		keyFilePaths[i] = entry.OriginalPath
 	}
-	if err := writeRestoredFileSet(keyFilePaths, keyBlobs, restoreTS); err != nil {
+	keySet, err := keyfiles.NewSetWriter(&cfg.Storage.Encryption, ".")
+	if err != nil {
+		return fmt.Errorf("key-set manifest: %w", err)
+	}
+	if err := writeRestoredFileSet(keyFilePaths, keyBlobs, restoreTS, keySet); err != nil {
 		return fmt.Errorf("write key file set: %w", err)
 	}
 	if err := removeStaleSQLiteSidecars(dbPath); err != nil {
@@ -1095,9 +1103,21 @@ func writeRestoredFile(path string, data []byte, restoreTS string) error {
 // "N fast rename/link syscalls run back-to-back with nothing else
 // interleaved" -- still not zero, but as tight as this per-path (not
 // per-directory) file set allows.
-func writeRestoredFileSet(paths []string, data [][]byte, restoreTS string) error {
+//
+// keySet (nil for none) records the set in the key-set manifest (#2900): the
+// restored hashes are staged after every file is prepared and before the
+// first one is installed, and committed after the last. A crash during the
+// installs therefore leaves a set the next boot recognises as a partially
+// installed restore (some files at the staged hashes, the rest not) and
+// refuses, naming the files, rather than one it cannot tell from a healthy
+// set -- the remaining half of #2424.
+func writeRestoredFileSet(paths []string, data [][]byte, restoreTS string, keySet *keyfiles.SetWriter) error {
 	if len(paths) != len(data) {
 		return fmt.Errorf("internal error: %d paths but %d data buffer(s) for a restored file set", len(paths), len(data))
+	}
+	restored := make(map[string][]byte, len(paths))
+	for i, path := range paths {
+		restored[path] = data[i]
 	}
 
 	type staged struct {
@@ -1115,10 +1135,21 @@ func writeRestoredFileSet(paths []string, data [][]byte, restoreTS string) error
 		prepared = append(prepared, staged{path: path, tmpPath: tmpPath})
 	}
 
+	if err := keySet.StageManifest(keyfiles.OpRestore, restored); err != nil {
+		for _, s := range prepared {
+			_ = os.Remove(s.tmpPath)
+		}
+		return fmt.Errorf("stage the key-set manifest (no key file was installed): %w", err)
+	}
 	for _, s := range prepared {
 		if err := commitRestoredFile(s.path, s.tmpPath, restoreTS); err != nil {
 			return fmt.Errorf("install %q: %w", s.path, err)
 		}
+	}
+	if err := keySet.CommitManifest(keyfiles.OpRestore, restored); err != nil {
+		// Not fatal: every file is installed and the staged intent lets the
+		// next server start recognise the set and record the commit.
+		fmt.Fprintf(os.Stderr, "WARNING: the key files were restored but the key-set manifest was not updated (%v); the next server start records it\n", err)
 	}
 	return nil
 }

@@ -382,7 +382,7 @@ func TestWriteRestoredFileSet_AllSucceed_InstallsEveryFile(t *testing.T) {
 	}
 	data := [][]byte{[]byte("salt-bytes"), []byte("dek-bytes"), []byte("provider-bytes")}
 
-	require.NoError(t, writeRestoredFileSet(paths, data, "20260101T000000Z"))
+	require.NoError(t, writeRestoredFileSet(paths, data, "20260101T000000Z", nil))
 
 	for i, p := range paths {
 		got, err := os.ReadFile(p)
@@ -426,7 +426,7 @@ func TestWriteRestoredFileSet_PrepareFailureLeavesNothingInstalled(t *testing.T)
 	err := writeRestoredFileSet(
 		[]string{goodPath, badPath},
 		[][]byte{[]byte("salt-bytes"), []byte("dek-bytes")},
-		"20260101T000000Z",
+		"20260101T000000Z", nil,
 	)
 	require.Error(t, err)
 
@@ -463,7 +463,7 @@ func TestWriteRestoredFileSet_CommitFailureCanStillLeavePartialInstall(t *testin
 	err := writeRestoredFileSet(
 		[]string{goodPath, badPath},
 		[][]byte{[]byte("salt-bytes"), []byte("dek-bytes")},
-		"20260101T000000Z",
+		"20260101T000000Z", nil,
 	)
 	require.Error(t, err)
 

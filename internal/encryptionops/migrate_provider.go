@@ -22,6 +22,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"golang.org/x/sys/unix"
 )
@@ -230,18 +231,48 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 	//    the probe. On any mismatch, restore the previous wrapped DEK and abort.
 	verifySvc := encryption.NewService(&tgtEnc, baseDir)
 	if err := verifySvc.Initialize(newPass); err != nil {
-		RestoreBackup(baseDir, backupRel, enc.DEKPath)
+		RestoreBackup(baseDir, backupRel, enc.DEKPath, keySetWriter(enc, baseDir))
 		return fmt.Errorf("verification failed (target provider could not open) — restored previous DEK (its copy %s is kept; `migrate-provider cleanup` removes it): %w", backupRel, err)
 	}
 	defer verifySvc.Shutdown()
 	got, err := verifySvc.DecryptSecret(probeCT)
 	if err != nil || !bytes.Equal(got, probe) {
-		RestoreBackup(baseDir, backupRel, enc.DEKPath)
+		RestoreBackup(baseDir, backupRel, enc.DEKPath, keySetWriter(enc, baseDir))
 		return fmt.Errorf("verification failed (probe did not round-trip under the target provider) — restored previous DEK (its copy %s is kept; `migrate-provider cleanup` removes it)", backupRel)
+	}
+
+	// The target set just opened and round-tripped the probe: record it in the
+	// key-set manifest as one generation, including the target provider's own
+	// files (a fresh salt, a KMS/TPM blob, Shamir shares from shamir-split)
+	// that the re-wrap's own manifest commit did not know about.
+	if tks := keySetWriter(&tgtEnc, baseDir); tks != nil {
+		if err := tks.CommitManifestFromDisk(keyfiles.OpRewrapDEK, presentPaths(tks.Required())...); err != nil {
+			fmt.Fprintf(os.Stderr, "⚠️  the key-set manifest was not updated for the new provider (%v); the next server start adopts the new files with a warning\n", err)
+		}
 	}
 
 	PrintMigrateSummary(tgtEnc, backupRel)
 	return nil
+}
+
+// keySetWriter is the key-set manifest writer for enc (nil when none applies or
+// the paths are unusable; the boot check reports unusable paths).
+func keySetWriter(enc *config.EncryptionConfig, baseDir string) *keyfiles.SetWriter {
+	ks, err := keyfiles.NewSetWriter(enc, baseDir)
+	if err != nil {
+		return nil
+	}
+	return ks
+}
+
+func presentPaths(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if _, err := os.Stat(p); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // CopyFile copies baseDir/srcRel to baseDir/dstRel, both resolved and opened via
@@ -288,9 +319,25 @@ func CopyFile(baseDir, srcRel, dstRel string) error {
 
 // RestoreBackup copies the backup back over the active DEK path. Best-effort: logs
 // to stderr if the restore itself fails so the operator can recover manually.
-func RestoreBackup(baseDir, backupRel, dekPath string) {
+// ks (nil skips it) records the restored DEK in the key-set manifest: the
+// re-wrap already committed the new DEK there, and an unrecorded rollback
+// would make the next boot refuse the restored file as foreign.
+func RestoreBackup(baseDir, backupRel, dekPath string, ks *keyfiles.SetWriter) {
+	data, err := securefiles.SafeReadFile(baseDir, backupRel)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ CRITICAL: failed to read DEK backup %s: %v\n  Restore it over %s manually before restarting.\n", backupRel, err, dekPath)
+		return
+	}
+	files := map[string][]byte{filepath.Join(baseDir, dekPath): data}
+	if err := ks.StageManifest(keyfiles.OpRewrapRollback, files); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  could not stage the key-set manifest before restoring the DEK backup (%v)\n", err)
+	}
 	if err := CopyFile(baseDir, backupRel, dekPath); err != nil {
 		fmt.Fprintf(os.Stderr, "❌ CRITICAL: failed to restore DEK backup %s → %s: %v\n  Restore it manually before restarting.\n", backupRel, dekPath, err)
+		return
+	}
+	if err := ks.CommitManifest(keyfiles.OpRewrapRollback, files); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  the DEK backup was restored but the key-set manifest was not updated (%v); the next server start records it\n", err)
 	}
 }
 
