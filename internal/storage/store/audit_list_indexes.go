@@ -33,15 +33,21 @@ var AuditListIndexes = []AuditListIndex{
 	{Name: "idx_audit_events_event_time_id", Columns: []string{"event_time", "id"}},
 	{Name: "idx_audit_events_project_event_time", Columns: []string{"project_id", "event_time"}},
 	{Name: "idx_audit_events_secret_event_time", Columns: []string{"secret_node_id", "event_time"}},
-	{Name: "idx_audit_events_machine_event_time", Columns: []string{"machine_identity_id", "event_time"}},
 }
 
-// AuditListReplacedIndexes are the single-column indexes the composites above
-// make redundant. They are dropped only after every AuditListIndexes entry is
-// valid, so no point in the upgrade loses an index a query uses.
+// AuditListReplacedIndexes are the indexes no query uses any more: the
+// single-column indexes the composites above make redundant, and
+// idx_audit_events_machine_event_time (machine_identity_id, event_time), which
+// no code path ever filtered on (PERF-INDEX-1: AuditFilter has no machine
+// field, and the actor-kind predicate only tests machine_identity_id IS NULL)
+// while costing every audit INSERT one btree update. They are dropped only
+// after every AuditListIndexes entry is valid, so no point in the upgrade loses
+// an index a query uses. The machine_identity_id column stays; a future
+// "everything this identity did" view builds its index CONCURRENTLY.
 var AuditListReplacedIndexes = []string{
 	"idx_audit_events_project_id",
 	"idx_audit_events_machine_identity_id",
+	"idx_audit_events_machine_event_time",
 }
 
 // auditIndexBuildLockKey is the Postgres advisory lock that lets one

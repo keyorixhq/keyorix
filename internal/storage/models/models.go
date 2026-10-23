@@ -1609,7 +1609,7 @@ type AuditEvent struct {
 	EventType    string
 	UserID       *uint
 	SecretNodeID *uint
-	// ProjectID, SecretNodeID, MachineIdentityID and EventTime are indexed by
+	// ProjectID, SecretNodeID and EventTime are indexed by
 	// store.AuditListIndexes (composites with event_time), created by code, not
 	// by tags: a tag is a plain CREATE INDEX that blocks audit writes on
 	// Postgres for the whole build (docs/specs/audit-list-keyset.md).
@@ -1649,10 +1649,10 @@ type AuditEvent struct {
 	// before this field existed, ActorType correctly recorded "a machine did
 	// this" while nothing recorded which one -- a real, structural gap, not a
 	// bug in the writer: the audit model had no field to hold a machine
-	// actor. Indexed so "everything this identity did" is a real, queryable
-	// answer, not just a per-row curiosity -- an attribution field a security
-	// review can't query is only half the control. Indexed as
-	// (machine_identity_id, event_time), see store.AuditListIndexes.
+	// actor. Deliberately NOT indexed (PERF-INDEX-1): no query filters on it,
+	// and (machine_identity_id, event_time) cost every audit INSERT a btree
+	// update. A "everything this identity did" view must build its index
+	// CONCURRENTLY (see store.AuditListIndexes) when it is added.
 	MachineIdentityID *uint
 
 	// RequestID is the server-minted id of the HTTP request that wrote the row
