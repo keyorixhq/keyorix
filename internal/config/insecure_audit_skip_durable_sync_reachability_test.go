@@ -34,11 +34,11 @@
 package config
 
 import (
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -69,11 +69,7 @@ var insecureAuditSkipDurableSyncAllowedFiles = map[string]string{}
 // file's own location (internal/config/..), so the scan works regardless of
 // the test runner's working directory.
 func repoRootForFastAuditScan() string {
-	_, thisFile, _, ok := runtime.Caller(0)
-	if !ok {
-		panic("runtime.Caller failed")
-	}
-	return filepath.Join(filepath.Dir(thisFile), "..", "..")
+	return srcpath.RepoRoot()
 }
 
 var fastAuditSelectorRe = regexp.MustCompile(`\.InsecureAuditSkipDurableSync\b`)
