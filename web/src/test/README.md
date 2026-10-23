@@ -101,7 +101,7 @@ test('should render component without router', () => {
 ### Using Mock Data
 
 ```typescript
-import { mockUser, mockSecrets, mockShares } from '@/test/mocks';
+import { mockUser, mockSecrets } from '@/test/mocks';
 
 test('should use mock data', () => {
     expect(mockUser.username).toBe('testuser');
@@ -112,14 +112,10 @@ test('should use mock data', () => {
 ### Setting up Mocks
 
 ```typescript
-import { setupMocks, cleanupMocks } from '@/test/mocks';
+import { setupMocks } from '@/test/mocks';
 
 beforeEach(() => {
     setupMocks();
-});
-
-afterEach(() => {
-    cleanupMocks();
 });
 ```
 
@@ -142,7 +138,7 @@ test('should fill and submit form', async () => {
 ### Complex Form Testing
 
 ```typescript
-import { formHelpers, asyncFormHelpers } from '@/test/form-helpers';
+import { formHelpers } from '@/test/form-helpers';
 
 test('should handle form validation', async () => {
   render(<SecretForm />);
@@ -154,20 +150,7 @@ test('should handle form validation', async () => {
     namespace: 'production'
   });
 
-  await asyncFormHelpers.submitAndWaitForSuccess();
-});
-```
-
-### Accessibility Testing
-
-```typescript
-import { accessibilityHelpers } from '@/test/form-helpers';
-
-test('should have proper accessibility', () => {
-  render(<MyForm />);
-
-  accessibilityHelpers.expectProperLabels(['Email', 'Password']);
-  accessibilityHelpers.expectProperAria('Email');
+  await formHelpers.submitForm();
 });
 ```
 
@@ -214,8 +197,7 @@ Always test both success and error scenarios:
 
 ```typescript
 test('should handle form submission error', async () => {
-  // Mock API to return error
-  mockApiClient.post.mockRejectedValue(new Error('Network error'));
+  // Mock the API call to reject with 'Network error'
 
   render(<MyForm />);
   await formHelpers.submitForm();

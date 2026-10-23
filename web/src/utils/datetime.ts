@@ -26,13 +26,6 @@ export function formatDateTime(value: string | Date | null | undefined, opts: { 
     }).format(d);
 }
 
-/** "Oct 10, 2026" with no time, rendered in the viewer's timezone. */
-export function formatDay(value: string | Date | null | undefined): string {
-    const d = toDate(value);
-    if (!d) return '—';
-    return new Intl.DateTimeFormat('en-US', { year: 'numeric', month: 'short', day: 'numeric' }).format(d);
-}
-
 /** "1 minute ago" / "5 hours ago"; falls back to the full date-time after 30 days. */
 export function formatAgo(value: string | Date | null | undefined, now: number = Date.now()): string {
     const d = toDate(value);
