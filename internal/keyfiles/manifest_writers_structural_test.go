@@ -52,10 +52,10 @@ var manifestUpdateForms = []string{
 // longer writes fails the guard, so this list cannot go stale silently.
 var manifestWriterExemptions = map[string]string{
 	// The write primitives themselves; every caller is checked instead.
-	"internal/encryption:durableWriteSync":        "fault-injectable write primitive",
-	"internal/encryption:durableRename":           "fault-injectable rename primitive",
-	"internal/encryption:KeyManager.keySetWriter": "the manifest's own write path (writes keyset.manifest.json, not a key file)",
-	"server/admin:commitRestoredFile":             "per-file install primitive; writeRestoredFileSet is checked",
+	"internal/encryption:durableWriteSync": "fault-injectable write primitive",
+	"internal/encryption:durableRename":    "fault-injectable rename primitive",
+	"internal/encryption:manifestFS":       "the manifest's own write path (writes keyset.manifest.json, not a key file)",
+	"server/admin:commitRestoredFile":      "per-file install primitive; writeRestoredFileSet is checked",
 	// Writes that are not active key material.
 	"internal/encryption:KeyManager.ensureSaltExists":  "legacy no-provider salt, unreachable from production (Service always sets a provider); the first-boot commit in ensureWrappedDEKExists, which always follows in the same Initialize, records it",
 	"internal/encryptionops:ShamirSplitWithConfig":     "writes new shares into an empty --out-dir with O_EXCL and never touches the active set; the shares enter it through migrate-provider, which records the target set",

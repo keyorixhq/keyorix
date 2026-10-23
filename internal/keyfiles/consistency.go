@@ -110,7 +110,50 @@ type KeySetState struct {
 	Manifest    *Manifest
 	ManifestErr error
 	Files       []KeySetFile
+	// Intent classifies the manifest's staged operation (IntentNone when there
+	// is none); Finish lists the renames that complete a finishable one.
+	Intent IntentState
+	Finish []FinishRename
+	// Leftovers are "<required file>.pending" staging files present on disk.
+	Leftovers []string
 }
+
+// IntentState is what boot concludes about a staged (not committed) operation.
+type IntentState int
+
+const (
+	// IntentNone: nothing is staged.
+	IntentNone IntentState = iota
+	// IntentAbandoned: the operation stopped before any active file changed
+	// (every file it names still has its recorded content). Harmless: any
+	// staging file it left (kek.salt.pending after an interrupted rotate-kek)
+	// is garbage.
+	IntentAbandoned
+	// IntentCompleted: every file it names already has the staged content;
+	// only the manifest commit is missing.
+	IntentCompleted
+	// IntentFinishable: some files have the new content and the others are
+	// still old, but each old one has a "<file>.pending" staging file holding
+	// exactly the staged content (rotate-kek interrupted between the DEK and
+	// the salt rename). Boot completes the renames.
+	IntentFinishable
+)
+
+func (s IntentState) String() string {
+	switch s {
+	case IntentAbandoned:
+		return "abandoned before it changed the active set"
+	case IntentCompleted:
+		return "completed, manifest commit missing"
+	case IntentFinishable:
+		return "interrupted mid-commit, finishable from its staging files"
+	}
+	return "none"
+}
+
+// FinishRename is one staging file boot renames into place to finish an
+// interrupted operation.
+type FinishRename struct{ From, To string }
 
 // InspectKeySet reads the key set enc describes and classifies every present
 // required file against the manifest, without writing anything and without a
@@ -194,6 +237,16 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 		}
 		st.Files = append(st.Files, f)
 	}
+	for _, p := range paths {
+		if _, err := os.Stat(p + ".pending"); err == nil {
+			st.Leftovers = append(st.Leftovers, p+".pending")
+		}
+	}
+	if len(foreign) == 0 && m.Next != nil {
+		if err := st.classifyIntent(); err != nil {
+			return nil, err
+		}
+	}
 	if len(foreign) > 0 {
 		sort.Strings(foreign)
 		return nil, fmt.Errorf(
@@ -224,4 +277,63 @@ func VerifyKeySetConsistency(enc *config.EncryptionConfig, baseDir string) error
 // to an unparseable one).
 func (st *KeySetState) IsManifestMissing() bool {
 	return st != nil && errors.Is(st.ManifestErr, ErrManifestMissing)
+}
+
+// classifyIntent decides what the staged operation left behind. Each file the
+// intent names is "new" when it has the staged content and "old" when it has
+// its recorded content (or has no entry and no staged match, i.e. it was never
+// recorded). All old: abandoned. All new: completed. Mixed: finishable when
+// every old file's "<file>.pending" holds exactly the staged content, and
+// otherwise refused — the active set is incoherent (some files from the new
+// generation, some from the old) and boot cannot complete it on its own.
+func (st *KeySetState) classifyIntent() error {
+	next := st.Manifest.Next
+	var newFiles, oldFiles []KeySetFile
+	for _, f := range st.Files {
+		if _, named := next.Files[f.Key]; !named {
+			continue
+		}
+		if f.MatchesStaged {
+			newFiles = append(newFiles, f)
+		} else {
+			oldFiles = append(oldFiles, f)
+		}
+	}
+	switch {
+	case len(oldFiles) == 0:
+		st.Intent = IntentCompleted
+		return nil
+	case len(newFiles) == 0:
+		st.Intent = IntentAbandoned
+		return nil
+	}
+	var stuck []string
+	var plan []FinishRename
+	for _, f := range oldFiles {
+		staged := f.Path + ".pending"
+		h, err := hashKeyFile(staged)
+		if err != nil || h != next.Files[f.Key] {
+			stuck = append(stuck, f.Path)
+			continue
+		}
+		plan = append(plan, FinishRename{From: staged, To: f.Path})
+	}
+	if len(stuck) > 0 {
+		var done []string
+		for _, f := range newFiles {
+			done = append(done, f.Path)
+		}
+		sort.Strings(done)
+		sort.Strings(stuck)
+		return fmt.Errorf(
+			"key material is incoherent: an interrupted %s (generation %d in the key-set manifest %s) already "+
+				"replaced %s but not %s, and no staging file holds the content it was about to write — the active "+
+				"files no longer belong to one generation, so the first decrypt would fail. Re-run the operation "+
+				"(for a restore: `keyorix-server admin restore --overwrite-existing` from the same backup), or "+
+				"restore the whole set from one backup",
+			next.Operation, next.Generation, st.ManifestPath, strings.Join(done, ", "), strings.Join(stuck, ", "))
+	}
+	st.Intent = IntentFinishable
+	st.Finish = plan
+	return nil
 }

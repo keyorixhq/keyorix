@@ -79,8 +79,10 @@ var crashLabels = []string{
 	"",                             // no crash — clean rotation
 	"kek:after-write-salt-pending", // both active files still old
 	"kek:after-write-dek-pending",  // both active files still old
+	"kek:after-stage-manifest",     // next generation staged in the key-set manifest; both active files still old
 	"kek:after-rename-dek",         // hazard: active DEK new, active salt still old
 	"kek:after-rename-salt",        // on-disk complete (both new)
+	"kek:after-commit-manifest",    // on-disk complete and committed to the key-set manifest
 }
 
 func FuzzKEKRotationCrashConsistency(f *testing.F) {
@@ -154,7 +156,7 @@ func runCrashConsistencyCase(dir, oldPass, newPass, target string) {
 	// CONFIDENTIALITY: after a fully completed rotation, the OLD passphrase must no
 	// longer open the active DEK. Only meaningful when the passphrase actually
 	// changed (same-passphrase rotation legitimately keeps it valid).
-	completed := target == "" || target == "kek:after-rename-salt"
+	completed := target == "" || target == "kek:after-rename-salt" || target == "kek:after-commit-manifest"
 	if completed && newPass != oldPass {
 		kmOld := NewKeyManager(dir, "dek.key", "kek.salt")
 		if err := kmOld.Initialize(oldPass); err == nil {

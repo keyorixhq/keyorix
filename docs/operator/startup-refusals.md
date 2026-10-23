@@ -531,6 +531,26 @@ adopts the current files with a WARN and a `keyset_manifest_adopted` audit event
 partial files and let first boot recreate them" is only right on an install that has **no data
 yet**. **In place:** no.
 
+### Key operation interrupted mid-commit — from code
+
+```
+key file consistency: key material is incoherent: an interrupted <operation> (generation <n> in the key-set manifest <dir>/keyset.manifest.json) already replaced <files> but not <files>, and no staging file holds the content it was about to write ...
+```
+
+**Match:** `key material is incoherent`
+
+**Cause.** A key operation (rotate-kek, restore, ...) was interrupted after it had replaced
+some of the active key files and before the rest, and boot cannot complete it: the key-set
+manifest records the content each file was about to get, and no staging file holds it. The
+active files belong to two generations, so the first decrypt would fail. (An interrupted
+rotate-kek whose `kek.salt.pending` is intact is **not** refused: the server finishes the
+rename at boot, logs a WARN, records an `encryption.keyset_rotation_finished` audit event,
+and from then on the master passphrase is the **new** one given to rotate-kek. A rotation
+interrupted before it changed any active file only logs that its staging files can be
+deleted.) **Fix.** Re-run the operation; for a restore, `keyorix-server admin restore
+--overwrite-existing` from the same backup. Otherwise restore the whole set from one backup.
+**In place:** no.
+
 ### Key files readable by others, or owned by another account — from code
 
 ```

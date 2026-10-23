@@ -36,6 +36,9 @@ type Service struct {
 	// epoch is the cross-replica DEK epoch guard (dek_epoch.go), nil unless
 	// StartDEKEpochGuard ran against PostgreSQL. Encrypt* refuse while it fences.
 	epoch *dekEpochWatch
+	// keyBaseDir is the base directory NewService resolved the configured key
+	// paths against (keyfiles.RequiredKeyFilePaths' baseDir), for ReconcileKeySet.
+	keyBaseDir string
 }
 
 // NewService creates a new encryption Service.
@@ -64,6 +67,7 @@ func NewService(cfg *config.EncryptionConfig, baseDir string) *Service {
 	return &Service{
 		config:     cfg,
 		keyManager: km,
+		keyBaseDir: baseDir,
 	}
 }
 
