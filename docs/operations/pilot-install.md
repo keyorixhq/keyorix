@@ -253,8 +253,9 @@ The steps are those of [INSTALL-WITH-AI.md](../../INSTALL-WITH-AI.md) with three
    `bin/keyorix`.
 2. **PostgreSQL.** You provide an empty database, a role that owns it and a server
    certificate (the bundled container is not part of this variant). Run
-   `admin init --storage-type postgres` (on a binary older than v0.97 that flag is missing:
-   `admin init` then creates `keyorix.db`; delete `keyorix.db*`) and set a DSN, for example
+   `admin init --storage-type postgres` (v0.96.3 and older do not have that flag and fail with
+   `unknown flag`: run plain `admin init`, which creates `keyorix.db`, and delete `keyorix.db*`)
+   and set a DSN, for example
    `dsn: "host=db.internal port=5432 user=keyorix dbname=keyorix sslmode=verify-full sslrootcert=/path/ca.pem"`.
    Keep the password out of the DSN and out of the environment: put it in a 0600 file and
    export `KEYORIX_DB_PASSWORD_FILE=secrets/db_password` for **every** `keyorix-server`

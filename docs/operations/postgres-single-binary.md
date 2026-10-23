@@ -68,8 +68,16 @@ database (`admin init`, `admin migrate`, `admin validate`, `admin backup`,
 
 Run from the install directory, after `admin generate-secrets` (step 3).
 
+**`--storage-type` is newer than v0.96.3.** On v0.96.3 or older, `admin init` fails with
+`unknown flag: --storage-type`, so the first command below does not work there. Instead run
+plain `admin init --config ./keyorix.yaml` (it writes the config, the TLS files and an empty
+SQLite database), then `rm -f keyorix.db keyorix.db-shm keyorix.db-wal keyorix.db.*.lock`, set
+`storage.type: postgres` in `keyorix.yaml`, delete the `path:` line, add the `dsn:` line from
+"Config keys", create `secrets/db_password`, and continue at step 2. On a build that has the
+flag, use step 1 as written. Check which you have with `./bin/keyorix-server admin init --help`.
+
 ```bash
-# 1. Write the config and TLS files WITHOUT a SQLite file.
+# 1. Write the config and TLS files WITHOUT a SQLite file (builds newer than v0.96.3).
 ./bin/keyorix-server admin init --storage-type postgres --config ./keyorix.yaml
 ```
 
@@ -117,6 +125,29 @@ Any PostgreSQL with `ssl = on` works. Keep these in mind:
 - Give Keyorix the CA that signed the **server** certificate, as a PEM file with no
   private key, not writable by group or others.
 
+A throwaway example for a test host (Docker; a CA and a server certificate valid for
+`localhost` and `127.0.0.1`, files in `./pgtls`; the stock image runs as `postgres`, so the
+wrapper copies the key into place with the right owner and mode):
+
+```bash
+mkdir pgtls && cd pgtls
+openssl req -x509 -newkey rsa:2048 -nodes -keyout ca.key -out ca.pem -days 2 -subj "/CN=test CA"
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=localhost"
+printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\n' > san.ext
+openssl x509 -req -in server.csr -CA ca.pem -CAkey ca.key -CAcreateserial -out server.crt -days 2 -extfile san.ext
+chmod 644 server.crt server.key ca.pem && cd ..
+
+docker run -d --name pg -p 127.0.0.1:5432:5432 \
+  -e POSTGRES_USER=keyorix -e POSTGRES_PASSWORD="$(cat secrets/db_password)" -e POSTGRES_DB=keyorix \
+  -v "$PWD/pgtls:/certs:ro" --entrypoint sh postgres:15-alpine -c \
+  'cp /certs/server.crt /certs/server.key /var/lib/postgresql/ \
+   && chown postgres:postgres /var/lib/postgresql/server.* && chmod 600 /var/lib/postgresql/server.key \
+   && exec docker-entrypoint.sh postgres -c ssl=on \
+      -c ssl_cert_file=/var/lib/postgresql/server.crt -c ssl_key_file=/var/lib/postgresql/server.key'
+```
+
+Then use `sslmode=verify-full sslrootcert=$PWD/pgtls/ca.pem` in the DSN with `host=localhost`.
+
 ## What was verified, and what was not
 
 Run on 2026-10-23 with a `keyorix-server` built from `main`, PostgreSQL through the
@@ -129,7 +160,18 @@ sandbox's `kpg` (a loopback test database without TLS):
 - `sslmode=verify-full` with no CA was refused, `sslmode=require` against a server
   without TLS failed with `server refused TLS connection`, and `sslmode=disable` was
   reported by `admin validate --posture` as `insecure_disable_database_tls`.
-- **Pending e2e VM:** the success path with a TLS-enabled PostgreSQL and
-  `verify-full` (`No deviations found.`). The 2026-10 clean-room walk ran it with
-  `ssl_mode: require` and got a clean posture; the `verify-full` variant is covered by the
-  [pilot install](pilot-install.md#binary-only-variant-no-published-images).
+
+Verified 2026-10-23 on v0.96.3 (the release binaries, on the e2e VM, PostgreSQL 15 in the
+container above with `ssl = on`):
+
+- `admin init --storage-type postgres` fails there with `unknown flag: --storage-type`; the
+  fallback in "Steps" (plain `admin init`, delete the SQLite files, edit the config) worked.
+- DSN form with `sslmode=verify-full` and `sslrootcert=<ca.pem>`, password from
+  `KEYORIX_DB_PASSWORD_FILE`: `admin init`, `admin encryption init` and `admin migrate` ran and no
+  `keyorix.db` was recreated; `admin validate --posture` printed `No deviations found.`; the
+  server started and `/health` answered `healthy`.
+- `admin backup` ran beside the running server (78 tables, 2 key files); `admin restore` of that
+  archive into a second database ended with `verify-audit on the restored database: VALID`.
+
+Not run on a release: `admin init --storage-type postgres` (no release has the flag yet) and the
+field form (Form B) with `ssl_root_cert`.
