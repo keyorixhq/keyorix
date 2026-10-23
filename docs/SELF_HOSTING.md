@@ -337,12 +337,23 @@ Restore refuses a non-empty target by default — the normal flow is restoring
 into a fresh database, not overwriting a live one. `--overwrite-existing` lets it
 proceed past that check, and what it then does depends on the backend: on SQLite
 the existing database file and key files are moved aside
-(`*.pre-restore-<timestamp>`); on PostgreSQL only the key files are, and the rows
-are loaded into the tables that already exist, so over a database that holds data
-the restore fails on a duplicate key and leaves the database unchanged (the key
-files have been replaced by then). To restore over a used PostgreSQL database,
-drop and recreate the database first, then restore without the flag. A restore you
-interrupted yourself is the exception, see "If the restore is interrupted" below.
+(`*.pre-restore-<timestamp>`); on PostgreSQL only the key files are, and only when
+the database holds no Keyorix rows (the empty schema an interrupted restore
+leaves). A PostgreSQL database that holds data is refused even with the flag,
+before anything is changed ("already holds Keyorix data"): restore never deletes
+rows. To restore over a used PostgreSQL database, restore into a new, empty
+database instead (or drop and recreate it once you are sure you do not need it),
+and keep the old database with its key files as your way back.
+
+Whatever the backend, the key files are installed last: only after every row has
+loaded and the load transaction has committed. A restore that fails before that
+point (a refused load, a failed migration, the database going away) leaves the
+target's key files untouched, and on SQLite puts a moved-aside database back, so
+the old database and its keys stay a working pair. If the restore fails *after*
+the commit, while renaming the key files into place, it says so: do not start the
+server, either re-run the restore into a new, empty database or put the
+`*.pre-restore-<timestamp>` files back. A restore you interrupted yourself is
+covered in "If the restore is interrupted" below.
 
 **Recovery point (RPO).** The recovery point is the backup itself: a restore
 brings back exactly what the archive's snapshot held (on PostgreSQL the instant the
@@ -457,17 +468,20 @@ same code on PostgreSQL within its 30-second step.
 **If the restore is interrupted** (`kill -9`, power loss, the database going away): the
 restore cannot be resumed, but it restarts cleanly. The row load is one transaction, so
 the target never holds a partial set of rows (checked by killing it while migrating and
-while loading: no schema, or a schema with 0 rows). What it leaves behind are the key
-files it installed (`keys/dek.key`, `keys/kek.salt`) and, after the migration step, the
-empty schema, so a plain re-run is refused. Either:
+while loading: no schema, or a schema with 0 rows). Key files are installed only after
+the load commits, so an interruption before that leaves the target's key files as they
+were (none, on a fresh target; temporary `*.restoring-*` files beside them can be
+deleted). What it can leave behind is the empty schema from the migration step, so a
+plain re-run is refused. Either:
 
-- re-run with `--overwrite-existing` (the refusal message suggests it; the key files are
-  replaced and the previous ones kept as `*.pre-restore-<timestamp>`); or
-- start over: delete the key files the restore installed, drop and recreate the empty
-  database, re-run.
+- re-run with `--overwrite-existing` (the refusal message suggests it; it accepts tables
+  that hold no rows, and any key files already present are replaced and the previous ones
+  kept as `*.pre-restore-<timestamp>`); or
+- start over: drop and recreate the empty database, delete any key files you do not want
+  kept, re-run.
 
-Use the second for anything other than a restore you just interrupted: on a database that
-holds other data, `--overwrite-existing` neither empties it nor is it a merge.
+On a database that holds data, `--overwrite-existing` is refused: it neither empties the
+database nor merges into it.
 
 **Rollback.** The SQLite source is not modified by the restore (checked byte for byte,
 including after killed restores), so rolling back before you cut over is to keep running

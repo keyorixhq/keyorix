@@ -147,11 +147,20 @@ What this does, in order:
    half-written. Refuses to overwrite an existing, non-empty database or key
    file unless `--overwrite-existing` is given; with that flag, the existing
    file is moved aside to `<path>.pre-restore-<timestamp>` rather than
-   truncated, so an unrecoverable mistake still has a way back.
+   truncated, so an unrecoverable mistake still has a way back. On
+   PostgreSQL the flag only accepts a database whose tables hold no Keyorix
+   rows; a populated database is refused before anything is changed.
 4. Pending migrations are applied (idempotent) — so a backup taken on an
    older binary and restored onto a newer one ends up ready to start, not
    merely restored to its old schema.
-5. **`admin verify-audit` runs automatically** against the restored database
+5. The rows are loaded in one transaction, and the key files are renamed
+   into place only after it has committed. If anything fails before that,
+   the target's key files are untouched and a moved-aside SQLite database is
+   put back: the old database and its keys still start together. If the key
+   install itself fails after the commit, restore says so; do not start the
+   server, and either restore into a new, empty database or put the
+   `*.pre-restore-<timestamp>` files back (that is the rollback).
+6. **`admin verify-audit` runs automatically** against the restored database
    and its verdict is printed. Restore **fails (non-zero exit)** if the audit
    chain reports BROKEN. A bare re-walk (no external anchor) can still miss
    tail-truncation or a genesis re-seed — see the next section for the

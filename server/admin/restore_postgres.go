@@ -80,9 +80,13 @@ func postgresOpenSQL(cfg *config.Config) (*sql.DB, error) {
 // content" check the way there is for SQLite, so this asks the same
 // question ("is there already something here") the only way that's
 // meaningful for a whole database/schema.
+//
+// --overwrite-existing relaxes this to refusePopulatedPostgresTarget, never
+// further: it accepts tables that hold no Keyorix rows (the empty schema an
+// interrupted restore leaves), not a populated database.
 func refuseNonEmptyPostgresTarget(cfg *config.Config) error {
 	if restoreOverwriteExisting {
-		return nil
+		return refusePopulatedPostgresTarget(cfg)
 	}
 	db, err := postgresOpenSQL(cfg)
 	if err != nil {
@@ -98,8 +102,64 @@ func refuseNonEmptyPostgresTarget(cfg *config.Config) error {
 	}
 	if count > 0 {
 		return fmt.Errorf("target Postgres database already has %d table(s) -- restore refuses to overwrite it "+
-			"(pass --overwrite-existing if you are certain, e.g. this is a genuine disaster-recovery restore; "+
-			"the normal flow is restoring into a fresh/empty database)", count)
+			"(the normal flow is restoring into a fresh/empty database; pass --overwrite-existing only to re-run "+
+			"over an interrupted restore, whose tables hold no rows -- a database that holds Keyorix data is "+
+			"refused even then)", count)
+	}
+	return nil
+}
+
+// migrationOwnedMetadataKeys are the system_metadata rows a target's own
+// migration (and its triggers) can write before any archived row is loaded,
+// so an otherwise empty Keyorix schema may hold them. Byte-for-byte copies of
+// internal/backupfmt/loader.go's schemaEpochMetadataKey,
+// schemaMinCompatibleEpochMetadataKey and rolePermissionsGenerationMetadataKey
+// (unexported there), the three keys LoadArchive itself skips or tolerates.
+var migrationOwnedMetadataKeys = []string{"schema_epoch", "schema_min_compatible_epoch", "role_permissions_generation"}
+
+// refusePopulatedPostgresTarget is the --overwrite-existing check for a
+// Postgres target: it refuses if any table of storage.AllModels() holds a row
+// (system_metadata: any row other than migrationOwnedMetadataKeys). Restore
+// loads rows with their original primary keys and never deletes any, so a
+// populated database can only fail to load; refusing here, before anything
+// is extracted, migrated or installed, leaves it and its key files exactly as
+// they were. Fails closed: a target it cannot read is refused too.
+func refusePopulatedPostgresTarget(cfg *config.Config) error {
+	db, err := postgresOpenSQL(cfg)
+	if err != nil {
+		return fmt.Errorf("check whether the target Postgres database already holds Keyorix data: %w", err)
+	}
+	defer db.Close() //nolint:errcheck
+
+	for _, m := range storage.AllModels() {
+		s, err := schema.Parse(m, &postgresResyncSchemaCache, schema.NamingStrategy{})
+		if err != nil {
+			return fmt.Errorf("parse schema for %T: %w", m, err)
+		}
+		// #nosec G201 -- s.Table comes from storage.AllModels()'s compiled-in structs, never from archive or request content.
+		q := fmt.Sprintf(`SELECT EXISTS (SELECT 1 FROM %s`, quoteIdentPG(s.Table)) // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
+		var args []any
+		if s.Table == "system_metadata" {
+			q += ` WHERE key NOT IN ($1, $2, $3)`
+			for _, k := range migrationOwnedMetadataKeys {
+				args = append(args, k)
+			}
+		}
+		q += `)`
+		var populated bool
+		if err := db.QueryRow(q, args...).Scan(&populated); err != nil { // nosemgrep: go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- q is built from s.Table (compiled-in) only; every value is a parameterized arg
+			if isPostgresUndefinedTable(err) {
+				continue // not created yet: nothing in it
+			}
+			return fmt.Errorf("check target Postgres table %q for existing rows: %w", s.Table, err)
+		}
+		if populated {
+			return fmt.Errorf("target Postgres database already holds Keyorix data (table %q has rows) -- restore "+
+				"refuses to load into a populated database, even with --overwrite-existing: that flag moves existing "+
+				"key files aside, it never deletes database rows. Nothing was changed. Restore into a new, empty "+
+				"database (create it and point storage.database at it), and keep this database and its key files "+
+				"as they are as your way back", s.Table)
+		}
 	}
 	return nil
 }
