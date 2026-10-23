@@ -89,7 +89,7 @@ func widenedFor(machine string, policies []healthscan.Policy, mapper *PathMapper
 			granted[grantKey{role: it.ProposedName, project: it.ProposedProjectID, env: it.ProposedEnvironmentID}] = true
 			grantedRoleInProject[grantKey{role: it.ProposedName, project: it.ProposedProjectID}] = true
 		case Unmappable:
-			if it.Category == CategoryNarrowerThanScope || it.Category == CategoryMetadataOnly {
+			if it.Category == CategoryNarrowerThanScope || it.Category == CategoryMetadataOnly || it.Category == CategoryCrossMountScope {
 				refused[it.SourceRef] = it
 			}
 		}
