@@ -1,7 +1,9 @@
-# ADR-116: TPM-sealed KEK: PCR policy, off-TPM recovery and fail-closed unseal
+# ADR-117: TPM-sealed KEK: PCR policy, off-TPM recovery and fail-closed unseal
 
-**Status:** Proposed (2026-10-23). Nothing here is accepted until Andrei approves it, and no
-production key path changes before then.
+**Status:** Proposed (2026-10-23). Andrei approved it as Proposed on 2026-10-23, with the answers
+recorded under "Decisions (Andrei, 2026-10-23)" below, so the implementation sessions (PR A and
+PR B of the design note) may start. It is not Accepted, and no production key path changes before
+the implementation PRs merge.
 **Date:** 2026-10-23
 **Session:** RD-TPM-SEAL-1, against origin/main `760e92e32`.
 **Design note:** [design-rd-tpm-seal.md](design-rd-tpm-seal.md) (formats, flows, CLI, test plan,
@@ -56,7 +58,9 @@ in use.
 ### D2. Optional PCR policy: PolicyPCR over the SHA-256 bank, PCR 7 by default
 
 - `key_provider.tpm.pcr_policy`: `none` (today's behaviour), `secure-boot` (PCR 7), or an explicit
-  list (`pcrs: [7, 11]`). The bank is fixed at SHA-256 and is not configurable.
+  list (`pcrs: [7, 11]`). The bank is fixed at SHA-256 and is not configurable. The default for
+  new installs is `secure-boot` when Secure Boot is on, else `none` with a posture note
+  (Decision 2); existing installs stay `none`.
 - With a policy, the sealed object's `authPolicy` is the PolicyPCR digest and `UserWithAuth` is
   **false**, so the password path is closed. Prototype: a password-session unseal of such an
   object is refused with `TPM_RC_AUTH_UNAVAILABLE`.
@@ -91,8 +95,9 @@ the **same** authority chain.
 - The recovery code is **not** the admin recovery key (design-b2) and is never derived from it.
   That follows PQWRAP Q6 (decided): one secret must not both authenticate admin recovery and
   decrypt the data.
-- `pcr_policy: none` installs may add a slot (recommended, because it covers TPM loss) but are not
-  required to, which keeps existing installs working unchanged.
+- `pcr_policy: none` installs are offered a slot by default at `init` (it covers TPM loss) and can
+  skip it with `--no-recovery-slot`; it is not mandatory, which keeps existing installs working
+  unchanged (Decision 3).
 - When PQWRAP option R lands, its hybrid escrow recipient slot in the keyset (wrapping the DEK to
   an offline ML-KEM+X25519 key) is an accepted **alternative** recovery for PCR mode. It is not
   built here.
@@ -166,9 +171,9 @@ published attack on TPM-only disk encryption [VERIFY].
 
 A TPM object cannot be revoked. A v1 blob in an old backup still unseals on the same TPM with no
 PCR check, and `rotate-kek` re-wraps the **same** DEK. `admin encryption tpm reseal --pcr-policy
-secure-boot` therefore prints this, and the runbook recommends `admin encryption rotate` (ADR-010
-DEK sweep) after enabling PCR mode, for installs whose old backups are not under the same
-protection. The same rule applies after rotating a recovery code. General statement: **a DEK is
+secure-boot` therefore prints this and offers `admin encryption rotate` (ADR-010 DEK sweep)
+interactively, default yes on a TTY, never silently; `--no-dek-rotate` skips it (Decision 6). The
+runbook recommends the sweep for installs whose old backups are not under the same protection. The same rule applies after rotating a recovery code. General statement: **a DEK is
 only as protected as the weakest wrap of it that was ever written.**
 
 ## Consequences
@@ -214,14 +219,39 @@ funding or certification material.
 | fTPM reset by a firmware update; board swap | Blob dead | Recovery slot (D3); runbook step "have the recovery code before updating firmware" |
 | Recovery code leaked | Anyone with the data dir decrypts anywhere | Shown once, TTY only, rotate command, sticky posture after use; D9 for old copies |
 | Recovery code lost and the PCR state changed | Data loss, by design | `init` refuses PCR mode without a confirmed code (re-type check); `status` warns if the slot is missing |
-| dbx updates pushed by the OS vendor move PCR 7 unexpectedly | Unplanned recovery events | `status` drift check; documented. A "suspend for one reboot" mode is deferred (NEEDS ANDREI) |
+| dbx updates pushed by the OS vendor move PCR 7 unexpectedly | Unplanned recovery events | `status` drift check; documented. A "suspend for one reboot" mode is deferred (Decision 5: not now) |
 | go-tpm is pre-1.0 (v0.9.8, 2025-12-29; last commit 2026-10-01; Apache-2.0) | API churn | Pinned; wrapper kept small. The simulator needs cgo (test-only) |
 | Discrete-TPM bus interposer (active) | MITM of the session salt | SRK-name pin (D7) detects a swapped parent; a full active attacker on the bus is out of scope |
 | Simulator is not hardware | Claims could overreach | D8: lab validation pending; nothing claimed beyond the reference implementation |
 
-## Open decisions (NEEDS ANDREI)
+## Decisions (Andrei, 2026-10-23)
 
-Listed with recommendations in the session report and in design note §11: default `pcr_policy`
-for new installs; whether the recovery slot is mandatory without a PCR policy; whether to build a
-"suspend for one reboot" mode; whether PQWRAP's escrow slot replaces or complements the recovery
-code; and whether `tpm reseal` into PCR mode should run the DEK sweep automatically.
+Andrei approved this ADR as Proposed and chose the recommended option for each open question
+(asks #3667, answered 2026-10-23 21:34). The answers carried no conditions beyond the option
+chosen; the obligations below follow from those options and bind the implementation PRs.
+
+1. **Approval.** Approved as Proposed with the recommended answers to the five questions below,
+   so the next session may implement PR A and PR B. Status stays Proposed.
+2. **Default `pcr_policy` for new installs: `secure-boot` when Secure Boot is on, else `none`
+   with a posture note.** *Reason:* PCR 7 binding is the useful default only where Secure Boot
+   gives it meaning (D2), and it needs a recovery code to be safe. *Obligations:* `init` under
+   `secure-boot` requires a confirmed recovery code (D3); with Secure Boot off it seals with
+   `none` and records a posture note; existing installs stay `none` until they opt in.
+3. **Recovery slot for `pcr_policy: none` installs: offered by default at init, skippable with
+   `--no-recovery-slot`; not mandatory.** *Reason:* it covers board swap, TPM clear and fTPM
+   reset, which `none` installs face today with total data loss, without breaking existing
+   installs. *Obligations:* skipping must be an explicit flag; `status` warns when no slot
+   exists; a PCR policy still requires the slot (D3).
+4. **PQWRAP escrow slot complements the recovery code; it does not replace it.** *Reason:* the
+   code wraps the KEK, so the same KEK comes back and no audit key transition is needed; the
+   escrow slot wraps the DEK to an offline ML-KEM + X25519 key. The code is the simple default;
+   the escrow slot is the alternative for organisations with an offline key ceremony.
+   *Obligations:* PCR mode must keep working with the code alone when option R ships.
+5. **"Suspend PCR policy for one reboot": not now.** *Reason:* recovery plus the `status` drift
+   check come first, and the unbound window needs lab data on how often dbx updates move PCR 7.
+   *Obligations:* do not build it in phase 1; revisit with lab data.
+6. **DEK sweep on entering PCR mode: offered interactively (default yes on a TTY), never silent;
+   `--no-dek-rotate` skips it.** *Reason:* old v1 blobs in backups still unseal on the same TPM
+   without PCR checks, and `rotate-kek` keeps the same DEK (D9). *Obligations:* `reseal` prints
+   the D9 statement whenever the sweep is skipped, and never runs the sweep without the prompt
+   or an explicit flag.

@@ -1,7 +1,7 @@
 # Demo: TPM-sealed KEK, PCR mismatch and recovery (5 minutes)
 
 > **NOT IMPLEMENTED.** This script is written against the CLI that
-> [ADR-116](../adr-116-tpm-sealed-kek-pcr-policy-recovery.md) proposes (status: Proposed). The
+> [ADR-117](../adr-117-tpm-sealed-kek-pcr-policy-recovery.md) proposes (status: Proposed). The
 > `admin encryption tpm …` commands, the `key_provider.tpm` config block and the messages below
 > do not exist on main yet. Running it today fails at step 1. Tool flags marked [VERIFY] were not
 > run in this session. Lab validation is **pending the e2e VM**.

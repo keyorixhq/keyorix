@@ -23,7 +23,7 @@ should be filed as an issue.
 | [`authorization-rbac.md`](authorization-rbac.md) | Scoped RBAC, the admin-bypass structural marker, privilege-ceiling derivation |
 | [`audit-chain.md`](audit-chain.md) | Hash-chained audit events, signed checkpoints, offline verification |
 | [`secret-storage-key-hierarchy.md`](secret-storage-key-hierarchy.md) | Envelope encryption, the KEK/DEK hierarchy, Shamir, HSM/KMS/TPM providers |
-| [`tpm-sealed-kek.md`](tpm-sealed-kek.md) | The `tpm` provider: host binding, missing boot-state binding, no off-TPM recovery, bus exposure, and the rows ADR-116 (Proposed) would change |
+| [`tpm-sealed-kek.md`](tpm-sealed-kek.md) | The `tpm` provider: host binding, missing boot-state binding, no off-TPM recovery, bus exposure, and the rows ADR-117 (Proposed) would change |
 | [`backup-restore.md`](backup-restore.md) | `admin backup`/`restore` on SQLite and PostgreSQL (live snapshot or `--exclusive`), the manual `pg_dump` alternative, audit-chain-verified restore |
 | [`update-bundles-airgap.md`](update-bundles-airgap.md) | Signed offline update bundles, offline license validation, air-gapped OIDC |
 | [`connectors.md`](connectors.md) | AWS/Azure/GCP/Vault/rotation-target connectors, tenant scoping, SSRF guards |

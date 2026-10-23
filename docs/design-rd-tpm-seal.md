@@ -1,9 +1,9 @@
 # Design: TPM-sealed KEK with PCR policy and off-TPM recovery (RD-TPM-SEAL-1)
 
-Status: **design for decision, no product code.** The decisions are in
-[ADR-116](adr-116-tpm-sealed-kek-pcr-policy-recovery.md) (Proposed). Every trust, crypto or
-authorization item waits for Andrei's approval of that ADR. Session RD-TPM-SEAL-1, 2026-10-23,
-origin/main `760e92e32`.
+Status: **design, no product code yet.** The decisions are in
+[ADR-117](adr-117-tpm-sealed-kek-pcr-policy-recovery.md) (Proposed). Andrei approved it as
+Proposed on 2026-10-23 with the answers in §11, so PR A and PR B (§10) may be implemented.
+Session RD-TPM-SEAL-1, 2026-10-23, origin/main `760e92e32`; answers applied by RD-TPM-SEAL-2.
 
 Inputs read: `internal/crypto/tpm_provider.go`, `tpm_provider_test.go`, `tpm_binding_test.go`,
 `keyprovider.go`, `provider_tier.go`, `internal/encryption/key_provider_downgrade.go`,
@@ -61,7 +61,7 @@ and a 160-byte TPM2B private. The recovery slot is 97 bytes (4 magic, 1 version,
 
 Two limits apply to all three: the claims hold against someone holding the data dir (or a disk or
 image **without** the TPM). They do not hold against root on the running host, and PCR 7 does not
-tell apart two OS images signed under the same authority (ADR-116 Technical risks).
+tell apart two OS images signed under the same authority (ADR-117 Technical risks).
 
 ## 4. Sealed blob v2
 
@@ -251,20 +251,24 @@ One PR per session (COMMON-RULES). Size target about 400 lines per PR, so two PR
 **Later, separate sessions:** the swtpm CI job (`.github`), lab runs on the e2e VM and on
 hardware, PQWRAP escrow slot integration once #3662's option R ships.
 
-## 11. Open decisions (NEEDS ANDREI), with recommendations
+## 11. Decisions (Andrei, 2026-10-23)
 
-1. **Default `pcr_policy` for new TPM installs.** Recommend `secure-boot` when Secure Boot is on
+All five were answered with the recommended option (asks #3667). The full wording, reasons and
+obligations are in the ADR, section "Decisions (Andrei, 2026-10-23)".
+
+
+1. **Default `pcr_policy` for new TPM installs.** Decided: `secure-boot` when Secure Boot is on
    (init then requires the recovery code); otherwise `none` with a posture note. Existing installs
    stay `none`.
-2. **Recovery slot without a PCR policy.** Recommend: offered by default at init, skippable with
+2. **Recovery slot without a PCR policy.** Decided: offered by default at init, skippable with
    `--no-recovery-slot` (it covers board loss, which `none` installs face too).
 3. **"Suspend for one reboot" before planned updates** (seal without policy for one boot, then
-   reseal; BitLocker-like [VERIFY]). Recommend: not now. The recovery flow plus `status` drift
+   reseal; BitLocker-like [VERIFY]). Decided: not now. The recovery flow plus `status` drift
    checks first; revisit after lab data on how often dbx updates move PCR 7.
-4. **PQWRAP escrow slot vs recovery code.** Recommend: complements, not replaces. The code is the
+4. **PQWRAP escrow slot vs recovery code.** Decided: complements, not replaces. The code is the
    simple default for SMEs; the hybrid escrow slot is the option for organisations with an
    offline key ceremony.
-5. **Automatic DEK sweep when entering PCR mode.** Recommend: offer it interactively (default yes
+5. **Automatic DEK sweep when entering PCR mode.** Decided: offer it interactively (default yes
    on a TTY), never silently; `--no-dek-rotate` to skip, with D9 printed.
 
 ## 12. Not in this design
