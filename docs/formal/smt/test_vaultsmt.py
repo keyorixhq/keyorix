@@ -168,6 +168,7 @@ class RealCasesTest(unittest.TestCase):
                     model = json.load(f)
                 res = vs.check_case(model)
                 self.assertEqual(verdict, res.verdict)
+                self.assertEqual([], res.unknown_parts, "undecided parts")
                 ops = {cx["op"] for cx in res.counterexamples}
                 self.assertTrue(must_ops <= ops, "missing %s in %s" % (must_ops - ops, ops))
                 for cx in res.counterexamples:

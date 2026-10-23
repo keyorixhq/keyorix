@@ -83,12 +83,15 @@ def main(argv):
                  res.first_query_s, res.total_s, res.queries, tag))
         for cx in res.counterexamples:
             print("    widens: " + vs.explain(cx))
-        undecided += res.verdict == "unknown"
+        for mount, op, pre in res.unknown_parts:
+            print("    UNDECIDED (solver timeout): %s on %s%s*" % (op, mount, pre))
+        undecided += res.verdict == "unknown" or bool(res.unknown_parts)
         results.append({"case": model["case"], "constructed": bool(model.get("constructed")),
                         "verdict": res.verdict, "vacuous": res.vacuous,
                         "rules": len(model["vault_rules"]), "grants": len(model["grants"]),
                         "first_query_s": res.first_query_s, "total_s": res.total_s,
                         "queries": res.queries, "smt_bytes": res.smt_bytes,
+                        "unknown_parts": res.unknown_parts,
                         "counterexamples": res.counterexamples})
     if out_json:
         with open(out_json, "w") as f:

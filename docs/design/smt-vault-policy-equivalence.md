@@ -114,10 +114,12 @@ The 10 cases, 8 of them from real seeded policies:
 | constructed-exact-path | constructed, one exact secret path | widens: the whole environment |
 | constructed-metadata-list-only | constructed, `list` on `metadata/` | widens: browse becomes read |
 
-Every "subset" verdict on the real policies is vacuous: the migration proposed no grant at
-all, so the solver confirmed only that nothing was granted. The solver proved no
-non-trivial real migration correct, because each real migration that does grant
-something widens access.
+Every whole-case "subset" verdict on the real policies is vacuous: the migration
+proposed no grant at all, so the solver confirmed only that nothing was granted. The
+non-trivial proofs are per operation. For `testbed-approle-migrator` and
+`journey4-n4-readonly`, reading secret values is proved within the Vault policy for
+every name (the read parts are UNSAT); only listing and metadata widen. Each real
+migration that grants anything widens in at least one operation.
 
 ### The counterexample, explained
 

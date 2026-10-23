@@ -407,6 +407,7 @@ class CaseResult:
         self.total_s = 0.0
         self.queries = 0
         self.smt_bytes = 0
+        self.unknown_parts = []  # (mount, op, import prefix) the solver did not decide
 
 
 def _decode(model, values):
@@ -560,6 +561,7 @@ def check_case_split(model, timeout_s=300, enumerate_ops=True, solver="z3"):
                 res.max_part_rules = max(res.max_part_rules, nrules)
                 if status == "unknown":
                     unknown = True
+                    res.unknown_parts.append((mpath, op, imp["path_prefix"]))
                     continue
                 if status == "unsat":
                     continue
