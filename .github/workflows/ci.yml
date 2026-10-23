@@ -241,8 +241,10 @@ jobs:
       web_only: ${{ steps.filter.outputs.web_only }}
       # True when every changed file is in a category verified to contain no
       # Go source and nothing any Go build/test/lint/vuln-scan step reads:
-      # scripts/ (shell/Python tooling, not part of any go.mod -- verified no
-      # .go files), .semgrep/ (rule YAML), demo/ and integrations/ (shell/
+      # scripts/ (shell/Python tooling; its Go packages -- scripts/ci,
+      # scripts/demo, scripts/metrics, ... -- are excluded by the .go rule in
+      # the filter step, and a guard test reading one of its non-Go files runs
+      # in docs-guards instead), .semgrep/ (rule YAML), demo/ and integrations/ (shell/
       # YAML/JS samples, verified no .go files), root repo-metadata files, and
       # any workflow file EXCEPT ci.yml itself (this file defines the gating
       # logic below, so a change to it must always run the full suite to
@@ -464,6 +466,13 @@ jobs:
           elif echo "$changed" | grep -q '^scripts/edge/'; then
             # scripts/edge/ drives Go builds (edge-builds: ARM cross-build and
             # the footprint guard), so it is not Go-free either.
+            echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
+          elif echo "$changed" | grep -q '\.go$'; then
+            # A .go file is never Go-free, wherever it lives: scripts/ci,
+            # scripts/demo, scripts/metrics and others are root-module
+            # packages with their own tests, and a change confined to them
+            # skipped every Go job (CI-GUARD-TRIGGERS-1;
+            # scripts/ci/guardinputs TestGoSourcesNeverSkipTheGoJobs).
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
           elif [ -z "$changed" ] || echo "$changed" | grep -vE '^(scripts/|\.semgrep/|demo/|integrations/|\.github/workflows/|\.gitignore$|\.gitattributes$|LICENSE$|COPYRIGHT$)' > /dev/null; then
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
@@ -2030,6 +2039,60 @@ jobs:
           echo "guard packages:"; echo "$pkgs"
           # shellcheck disable=SC2086
           go test -count=1 -timeout 600s -run '^Test[A-Za-z0-9_]*(Guard|Sweep|Completeness)' $pkgs
+
+  # Guards whose inputs are not Go code (CI-GUARD-TRIGGERS-1). Every Go job
+  # above skips a docs_only / web_only / go_unaffected / operator_only change,
+  # so a guard that reads a Markdown file, web/nginx.conf, a script or
+  # operator/ code had no runner for the one change that can break it: #3616
+  # (QUICK_START.md only) merged past TestDocsShowNoLiteralSecretOnCommandLine
+  # and turned main red. This job has none of those skips. It runs, on every
+  # pull_request and merge_group run, the Test funcs of each test file in
+  # scripts/ci/guard-inputs.tsv whose input globs match a changed path
+  # (scripts/ci/run-input-guards.sh); nothing matching means a ~1 minute job.
+  # The changed list is read like the changes job reads it; when it cannot be
+  # read (API error, the compare API's 300-file cap) every mapped guard runs.
+  # scripts/ci/guardinputs/guardinputs_test.go fails a PR that adds a guard
+  # reading such a path without a map row, or that changes this job's `if:` or
+  # the changes step so a mapped input no longer reaches a runner.
+  docs-guards:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+
+      - name: Changed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            changed=$(gh api "repos/$REPO/compare/$MG_BASE_SHA...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+            if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge 300 ]; then
+              echo "300 or more changed files (the compare API cap): running every mapped guard"
+              changed=""
+            fi
+          else
+            changed=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename') || changed=""
+          fi
+          printf '%s\n' "$changed" > "$RUNNER_TEMP/changed.txt"
+          echo "Changed files:"
+          cat "$RUNNER_TEMP/changed.txt"
+
+      - name: Guards whose inputs changed
+        run: scripts/ci/run-input-guards.sh "$RUNNER_TEMP/changed.txt"
 
   lint:
     needs: [changes]
