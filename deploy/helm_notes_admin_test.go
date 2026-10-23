@@ -89,4 +89,40 @@ func TestHelmNotesAdminStep(t *testing.T) {
 			}
 		}
 	})
+	// DEMO-FIXES-VERIFY-1 3b: the printed init command must work as printed.
+	// The chart default (secureBaseline on) is TLS-only, so http:// gets HTTP 400
+	// and the CLI must trust the self-signed cert via ca_file (it has no
+	// skip-verify flag); without --admin-email the init is rejected (Email, 403).
+	t.Run("manual init command matches the rendered TLS mode", func(t *testing.T) {
+		n := notes(t, "--set", "auth.masterPassword=x")
+		if !strings.Contains(n, "system init --server https://localhost:8080 ") {
+			t.Errorf("TLS-only server: init must use https:\n%s", n)
+		}
+		if strings.Contains(n, "system init --server http://") {
+			t.Errorf("TLS-only server: init must not use http://:\n%s", n)
+		}
+		if !strings.Contains(n, "--admin-email ") {
+			t.Errorf("init command lacks --admin-email:\n%s", n)
+		}
+		caAt := strings.Index(n, "keyorix config set ca_file")
+		initAt := strings.Index(n, "system init --server")
+		if caAt < 0 || initAt < 0 || caAt > initAt {
+			t.Errorf("ca_file must be set before the init command (ca=%d init=%d):\n%s", caAt, initAt, n)
+		}
+		if !strings.Contains(n, "chmod 600 keyorix-server.crt") {
+			t.Errorf("the CLI insists on a 0600 ca_file; NOTES must chmod it:\n%s", n)
+		}
+
+		plain := notes(t, "--set", "auth.masterPassword=x", "--set", "secureBaseline.enabled=false")
+		if !strings.Contains(plain, "system init --server http://localhost:8080 ") ||
+			strings.Contains(plain, "system init --server https://") {
+			t.Errorf("plain-HTTP server: init must use http://:\n%s", plain)
+		}
+		if !strings.Contains(plain, "--admin-email ") {
+			t.Errorf("plain-HTTP init command lacks --admin-email:\n%s", plain)
+		}
+		if strings.Contains(plain, "config set ca_file") {
+			t.Errorf("plain-HTTP server needs no ca_file step:\n%s", plain)
+		}
+	})
 }
