@@ -464,3 +464,16 @@ func (s *Service) DEKEpochGuardRunning() bool {
 	defer s.mu.RUnlock()
 	return s.epoch != nil
 }
+
+// DEKFingerprint returns the fingerprint of this service's DEK, the value the
+// DEK epoch records for it (aead.EncryptionService.Fingerprint: an HMAC, not key
+// material). `admin encryption key-secret` labels a key Secret with it, so an
+// operator can tell which key Secret a database (its dek.epoch row) needs.
+func (s *Service) DEKFingerprint() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return "", fmt.Errorf("DEK fingerprint: encryption service not initialized")
+	}
+	return s.encryptionService.Fingerprint()
+}
