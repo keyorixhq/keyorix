@@ -46,8 +46,10 @@ func TestActivateBreakGlass_SecondActivationWhileActiveIs409(t *testing.T) {
 				Message string `json:"message"`
 			}
 			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body), w.Body.String())
-			assert.Contains(t, body.Message, "you already have an active break-glass grant",
+			assert.Equal(t, "you already have an active break-glass grant on this project; revoke it before activating again", body.Message,
 				"the UI shows this message, so the 4xx must carry core's reason, not the generic 500 text")
+			assert.NotContains(t, body.Message, "Validation error",
+				"a conflict with current state is not a validation error")
 		})
 	}
 }
