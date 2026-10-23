@@ -19,9 +19,10 @@ const rolePrefix = "vault-migrated"
 // (ADR-114's permission-mapping table). "" means no Keyorix equivalent exists for that
 // capability alone (every such capability either already got its own special handling — sudo,
 // deny — before reaching here, or is simply not one of the four this tool recognizes).
+// "list" maps to nothing: it reveals key names only, and secrets.read would add the values.
 func capabilityToPermission(capability string) string {
 	switch capability {
-	case "read", "list":
+	case "read":
 		return "secrets.read"
 	case "create", "update":
 		return "secrets.write"
@@ -147,6 +148,13 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 				denyPaths = append(denyPaths, b.Path)
 			default:
 				perms := mappedPermissions(b.Capabilities)
+				if len(perms) == 0 && containsCapability(b.Capabilities, "list") {
+					items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref,
+						Category: CategoryMetadataOnly,
+						Reason:   fmt.Sprintf("capabilities %v list key names but never read values — Keyorix has no list-only permission, and secrets.read would expose every value in the scope", b.Capabilities),
+					})
+					continue
+				}
 				if len(perms) == 0 {
 					items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref,
 						Category: CategorySentinelOrTemplated,
