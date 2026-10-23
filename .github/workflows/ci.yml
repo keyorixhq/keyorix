@@ -1982,6 +1982,67 @@ jobs:
           echo "web-e2e-real-smoke-shard matrix result: $SHARDS_RESULT"
           [ "$SHARDS_RESULT" = "success" ]
 
+  # SMOKE-FLAKE-1: a FAST pull_request run skips web-e2e-real-smoke (CI-LIGHT-1), so a PR that
+  # adds or edits a real-backend spec reached the merge queue without that spec ever having run:
+  # #3554 (group-role-scope.spec.ts, red on main for ~21 h, 73 of 93 merge-group rounds failed)
+  # and #3568 (suspend-clear-synced-copies-expired.spec.ts, red in its own queue rounds). This runs
+  # ONLY the spec files the PR adds or modifies, each on its own freshly booted server (about 30 s
+  # per file), and nothing when there are none. The full suite still runs in the merge queue.
+  web-e2e-changed-specs:
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.full_profile != 'true' && needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Real-backend spec files this PR adds or changes
+        id: specs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          specs="$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- 'web/e2e/real/*.spec.ts' | sed 's#^web/##' | tr '\n' ' ')"
+          echo "specs=${specs% }" >> "$GITHUB_OUTPUT"
+          echo "changed real-backend specs: ${specs:-none (nothing to run)}"
+      - name: Set up Go
+        if: steps.specs.outputs.specs != ''
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.specs.outputs.specs != ''
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.specs.outputs.specs != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install web dependencies
+        if: steps.specs.outputs.specs != ''
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install Playwright browser
+        if: steps.specs.outputs.specs != ''
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run the changed specs against a real backend
+        if: steps.specs.outputs.specs != ''
+        env:
+          KEYORIX_E2E_SPECS: ${{ steps.specs.outputs.specs }}
+        run: make e2e-web-smoke
+      - name: Upload the failed groups' logs, screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-e2e-changed-specs-report
+          path: web/playwright-report/
+          retention-days: 7
+
   # repo-guards (2026-10-05): the repo-wide structural guard tests (every
   # Test...Guard / ...Sweep / ...Completeness test: state-map completeness,
   # key-material wipe sweep, BeforeSave bypass, check-then-act, MFA step-up
