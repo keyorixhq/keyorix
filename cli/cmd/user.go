@@ -122,6 +122,8 @@ func init() {
 	userCreateCmd.Flags().BoolVar(&userCreateSetupLink, "setup-link", false, "Provision a setup link instead of an admin-set password (ADR-028)")
 	userCreateCmd.Flags().BoolVar(&userCreateOneTimePassword, "one-time-password", false, "Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login")
 	userCreateCmd.Flags().StringVar(&userCreateBy, "by", "", "Acting admin email (unused in this REST-only CLI -- kept for flag compatibility; the session behind your bearer token is always the acting admin)")
+	// Never read (SUBTRACT-202610; Andrei 2026-10-23): remove after one minor release.
+	_ = userCreateCmd.Flags().MarkDeprecated("by", "it has no effect (the acting admin is always your session) and will be removed in the next minor release")
 }
 
 func runUserCreate(cmd *cobra.Command, _ []string) error {
