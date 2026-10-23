@@ -235,3 +235,181 @@ risk the owed-audit design note already names).
   identity. The cryptography is checked by the verifier's own tests and fuzz
   targets.
 - **Re-derived delegation.** Authorization is outside the model.
+
+## 5. Prototype check (throwaway, not committed)
+
+To check the record format against the existing chain verifier, a throwaway
+Go program was written under `.scratch/agentproto/`. It is not committed. It
+used the real `internal/auditverify.ComputeEntryHash` and
+`EntryHashMatchesAnyKnownEncoding`, and nothing else from the repository. It
+did the following:
+
+- built 7 rows: 5 ledger rows (session start, intent, a bound `secret.read`,
+  outcome, session end) between 2 unrelated rows;
+- put `kx-agent-v1` objects in `diff`;
+- chained the rows from genesis;
+- checked the segment proof, a tree (RFC 9162 hashing) and the pairing rules.
+
+Results:
+
+| Check | Result |
+|---|---|
+| every row's `entry_hash` re-derives with the independent verifier hash, ledger `diff` included | pass. The format needs no encoding change |
+| segment rows link from genesis | pass |
+| one changed byte in an intent's `diff` no longer re-derives | pass |
+| inclusion proofs for the 5 ledger rows reach the tree head | pass |
+| a tampered row whose leaf is taken from its **stored** `entry_hash` still proves inclusion | as expected. This is why ADR-116 §5 check 2 derives the leaf from the fields |
+| the same tampered row with its leaf **derived** fails inclusion | pass |
+| a tree bundle with the outcome left out | caught three ways: no terminal record, a `seq` gap, and `last_seq` ≠ count |
+| an outcome with no earlier intent | caught |
+
+The prototype also showed that owed rows reach the chain after later rows.
+Checking `seq` in chain order would therefore raise false gaps, so ADR-116 §4
+compares `seq` as a set. The prototype did not measure performance and
+supports no number.
+
+## 6. Demo script (≤ 5 minutes) — NOT IMPLEMENTED
+
+**Every command below is a future CLI or API. None of it exists today.** It
+is the acceptance demo for the implementation (R6: "agent uses a secret →
+intent + outcome recorded → export verified offline"). Command names follow
+ADR-116 and may change with the CLI-UX-2 conventions.
+
+| Time | Step | Command (future) | What the audience sees |
+|---|---|---|---|
+| 0:00 | Setup: an `agent` identity with a project viewer role | `keyorix machine-identity create deploy-bot --project shop --type agent` then `keyorix machine-identity role grant deploy-bot project_viewer --project shop` | an identity of type `agent`; no token yet |
+| 0:40 | A human delegates a 15-minute run | `keyorix agent session start deploy-bot --scope 'secrets.read:prod/*' --ttl 15m --task-ref DEPLOY-42` | a session id and a `kx_agent_…` credential shown once; `agent.session_started` in `keyorix audit list --type 'agent.*'` |
+| 1:20 | The agent reads without an intent: refused | `KEYORIX_TOKEN=$KX_AGENT keyorix secret get prod/db-password` | `403 agent_intent_required`; a denied `secret.read` row with that reason |
+| 1:50 | The agent declares an intent | `keyorix agent intent declare --secret prod/db-password --purpose deploy --max-uses 1` | intent id 812, plus the audit row id and `entry_hash` as a receipt |
+| 2:20 | The agent reads under the intent | `keyorix secret get prod/db-password --intent 812` | the value; a `secret.read` row bound to intent 812 |
+| 2:40 | A second read is refused | same command again | `403 agent_intent_exhausted` |
+| 3:00 | The agent reports | `keyorix agent intent outcome 812 --status success` | an `agent.outcome` row; the intent is closed |
+| 3:20 | A second intent is left without an outcome (agent killed); fast-forward the sweeper | `keyorix agent intent declare … --not-after 10s`, read, `kill`; `keyorix-server admin sweep-agent-intents --now` (a demo-only trigger) | an `agent.outcome_missing` row with `reads_used: 1` |
+| 3:50 | Export for an auditor, with a nonce | `keyorix agent-ledger export --session 9 --nonce demo-2026 -o bundle.json` | `bundle.json`; an `agent_ledger.exported` row |
+| 4:10 | Verify offline: no server, no DB | `keyorix-server admin verify-audit --agent-bundle bundle.json --checkpoint-key-file ck.key --expect-nonce demo-2026` | `VERIFIED`; findings: 1 missing outcome (intent 813); coverage (head id, time, anchor); the "does not prove" lines |
+| 4:35 | Tamper and re-verify | change one byte of intent 812's `purpose` in `bundle.json`, run the same command | `BROKEN: record 1043 entry_hash does not re-derive` |
+
+Fallback without a TSA or a key: the verdict is `NOT_PROVEN`. Say why: the
+head is not authenticated. That is the honest result, not a failure of the
+demo.
+
+## 7. Implementation plan (next sessions), one commit per step
+
+Rules for the split:
+
+- each PR stands alone and stays under about 400 changed lines excluding
+  tests;
+- hot files (`openapi.yaml`, `server/main.go`, middleware token routing) are
+  edited in the last commit of their PR;
+- ADR-116 must be Accepted before PR A starts;
+- when PR A starts, an `adrOpenDecisionRegistry` entry (premise: the gate
+  exists) is added for any decision still open.
+
+**PR A — core and storage** (`internal/core`, `internal/storage`; after
+OPT-AUDIT-RT-1 frees the audit write path, if D2 is taken):
+
+1. Models and migrations: `agent_sessions` and `agent_intents`;
+   `identity_type = agent`; the permission `agents.delegate`. Tests: migration
+   up/down on SQLite and PostgreSQL.
+2. Session start/end/revoke in core: the delegation ceiling (actor-derived),
+   fail-closed start, owed end/revoke, `seq` allocation under the session
+   lock. Tests: the ceiling matrix (delegator lacks, agent lacks, global
+   admin, impersonation refused); owed end under audit refusal.
+3. Intent declare: `withAuditedMutation`, the `kx-agent-v1` builder, scope
+   re-derivation at each intent. Tests: fail closed on audit refusal; a
+   narrowed delegator narrows the intent.
+4. Release gate in the core value-read entry points: intent lock, target
+   check, `uses_left` decremented in the read's audit transaction, the four
+   denial reasons. Tests: concurrent reads never exceed `max_uses` (the
+   `TestMaxReads_*` shape, on PostgreSQL across replicas); no release when the
+   intent row is not committed (fault injection); every value route carries
+   the gate (a registry test like `TestValueReadRoutes_AuditTheirRefusals`).
+5. Outcome through `commitOwingAudit`; the sweeper (scheduler lock); late
+   outcomes. Tests: audit refused → owed → backfilled exactly once; sweeper on
+   two replicas writes one row; a faultops registry entry for each new owing
+   op.
+6. `INVARIANTS.d` fragments: INV-CORE-agent-release-needs-committed-intent,
+   INV-CORE-agent-intent-terminal-owed, INV-CORE-agent-scope-actor-ceiling.
+
+**PR B — transports** (`server/http`, `server/grpc`, `server/middleware`):
+
+1. HTTP handlers and gRPC methods (parity, ADR-105). Real-server journey.
+2. `kx_agent_` credential routing in `validateToken` and the gRPC
+   interceptor. Coordinate with OPT-READPATH-2 or follow it.
+3. `openapi.yaml` and proto: last commit.
+
+**PR C — export and offline verify** (`internal/auditverify/agentbundle`,
+`server/admin`, export handler):
+
+1. `kx-agent-v1` strict parser in the verifier package (a leaf; no core or
+   storage imports). Fuzz target on the parser; differential test against the
+   writer's builder over shared fixtures.
+2. Bundle builder (segment mode) and `GET /agent-ledger/export` with the
+   fail-closed export row and the nonce.
+3. `verify-audit --agent-bundle`: checks 1–5 of ADR-116 §5, verdict ranks,
+   the "does not prove" output. Tamper tests in the
+   `TestExhaustiveByteTamper_*` style for every ledger field.
+
+**PR D — tree heads (if D4 = tree):** the scheduler computes tree heads after
+a chain verification, stores the left frontier at purges, and serves
+inclusion and consistency proofs. RFC 9162 test vectors.
+
+**PR E — clients:** CLI commands (after CLI-UX-2); `keyorix-mcp` declares an
+intent and reports an outcome per `keyorix_get_secret` call (MCP is the first
+real agent); operator guide; `docs/demo/agent-ledger.md` from §6 (coordinate
+with DEMO-LOCAL-2).
+
+**PR F — formal:** the model changes and configurations from §4. They go
+first if possible: a seeded-bug verdict table before the code is the cheapest
+review.
+
+**PR G — threat model:** each AGL row switches from GAP to its new test.
+
+## 8. One-page brief (for the memoria técnica; public-repo content only)
+
+**Agent evidence ledger: tamper-evident, pre-execution records of AI-agent
+credential use**
+
+*Problem.* AI agents now fetch credentials from secret stores to act on
+production systems. Existing secret-store audit logs record that a value was
+read. They do not record who the agent was acting for, what it said it would
+do before it got the value, or what happened afterwards. They also offer no
+proof that a third party can check. Agent-logging proposals, such as the
+IETF individual draft `draft-sharif-agent-audit-trail`, have the agent record
+its own actions, and a self-written record proves only what the agent chose
+to write.
+
+*Approach.* Keyorix holds the credential, so it can enforce the record:
+
+- **Delegated agent sessions.** A person or service starts an agent run with a
+  scope no wider than its own authority. The scope is re-checked at every
+  step.
+- **Intent before release.** The agent declares purpose and targets. Keyorix
+  writes that intent into its hash-chained audit log, and releases no value
+  until the intent is durably committed. Each release is bound to its intent.
+- **Outcome after, never lost.** The agent's outcome is recorded. If the agent
+  goes silent, Keyorix records that, so "no outcome" is a fact in the log,
+  not a gap. These post-event records use Keyorix's owed-audit mechanism, whose
+  no-loss and no-block properties are machine-checked with a TLA+ model.
+- **Offline verification.** An export bundle carries the records, hash-chain
+  or Merkle proofs and external anchors (RFC 3161). An auditor verifies it
+  without the server or database, and the report states what it does not
+  prove.
+
+*What is new.* The pre-execution record is enforced by the secret-holding
+authority, not self-reported. A missing outcome has a defined, recorded
+meaning, with formally checked semantics. The ledger reuses the existing
+audit chain without changing its encoding, so existing verification keeps
+working. (A search claim, not a proof: we have not found this combination
+published.)
+
+*Status (2026-10-23).* Design and ADR proposed (ADR-116), threat model and
+formal-model plan written, record format checked with a throwaway prototype
+against the existing verifier. Implementation is planned in seven reviewable
+steps.
+
+*Relevance.* It provides evidence for logging duties for AI systems, such as
+EU AI Act Art. 12 record-keeping (mapping in §2; every external claim is
+marked for verification), and ICT logging in financial services (DORA). It is
+an accountability record, not a behaviour record: it cannot prove what an
+agent did with a credential after release, and says so.

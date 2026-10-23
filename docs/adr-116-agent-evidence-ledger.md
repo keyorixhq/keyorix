@@ -283,7 +283,7 @@ stored bytes and never re-encodes them. The fields are:
 | `v` | all | `1` |
 | `kind` | all | `session_started`, `session_ended`, `intent`, `outcome`, `outcome_missing`, `read`, `exported` |
 | `session` | all but `exported` | agent session id |
-| `seq` | all but `exported` | per-session sequence number, from 1, with no gaps (assigned under the session row lock) |
+| `seq` | all but `exported` | per-session sequence number, from 1, with no gaps, assigned under the session row lock and only to a row that will be written. A `secret.read` row skipped under `insecure_audit_skip_reads` takes no `seq`. An owed row reaches the chain late, so the seq values of a session form the set 1..n; they are not in chain order |
 | `agent` | all but `exported` | `{"mi": <machine identity id>, "name": <name at the time>}` |
 | `delegator` | `session_started`, `intent` | `{"type": "user"\|"machine_identity", "id": <id>}` |
 | `scope_digest` | `session_started`, `intent` | SHA-256 of the canonical scope; `session_started` also carries the scope itself |
@@ -356,8 +356,10 @@ package. The checks, in order:
 
 1. Every record's `entry_hash` re-derives from its fields and `prev_hash`.
 2. Segment mode: the rows link without a break up to the head. Tree mode: each
-   inclusion proof reaches the tree head. With `--anchor`: the tree is
-   consistent with the earlier head.
+   inclusion proof reaches the tree head, starting from the leaf **derived in
+   check 1, never from the stored `entry_hash`**. The prototype showed that a
+   tampered row keeps its stored hash, which still proves inclusion. With
+   `--anchor`: the tree is consistent with the earlier head.
 3. The head is authenticated by the checkpoint key and/or an RFC 3161 token
    checked against `--tsa-roots`. Otherwise the verdict is NOT_PROVEN, never
    VERIFIED (the `auditverify` verdict ranks, INV-AUDITVERIFY-05).
@@ -367,7 +369,8 @@ package. The checks, in order:
      than `max_uses`;
    - each closed intent has exactly one terminal row (`outcome` or
      `outcome_missing`), plus at most one later `late` outcome;
-   - `seq` has no gaps;
+   - a session's `seq` values form the set 1..n, compared as a set and not
+     in chain order, and n equals `last_seq` once the session has ended;
    - the delegator is recorded, and every intent falls inside its session's
      lifetime.
 5. The export row is present and carries `--expect-nonce` if one is given.
