@@ -1,6 +1,7 @@
 package deploy
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -17,18 +18,23 @@ import (
 // manual-init command must read the Secret the release actually uses.
 //
 // Notes are only printed by `helm install`, so this renders with
-// --dry-run=client (no cluster needed) and takes the text after "NOTES:".
-// Skips when helm is not installed, like the other chart tests.
+// --dry-run=client and takes the text after "NOTES:". Some helm releases probe
+// the cluster even for a client dry run (CI: "Kubernetes cluster unreachable"),
+// so KUBECONFIG points at the in-process fake API server of fakeKube; nothing is
+// created there. Skips when helm is not installed, like the other chart tests.
 func TestHelmNotesAdminStep(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm not installed -- skipping chart NOTES check")
 	}
 	chart := filepath.Join("..", "deploy", "helm", "keyorix")
+	kubeconfig := fakeKube(t, nil)
 	notes := func(t *testing.T, extra ...string) string {
 		t.Helper()
 		args := append([]string{"install", "kx", chart, "--dry-run=client", "--namespace", "kx-ns",
 			"--set", "postgresql.auth.password=x"}, extra...)
-		out, err := exec.Command("helm", args...).CombinedOutput() //nolint:gosec // fixed binary and chart path
+		cmd := exec.Command("helm", args...) //nolint:gosec // fixed binary and chart path
+		cmd.Env = append(os.Environ(), "KUBECONFIG="+kubeconfig)
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("helm install --dry-run=client: %v\n%s", err, out)
 		}

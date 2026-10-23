@@ -271,7 +271,7 @@ func (e *env) shimPopulateWebUIDist(t *testing.T) {
 // buildVersion returns the VERSION build-arg of the recorded `docker build`.
 func (e *env) buildVersion(t *testing.T) string {
 	t.Helper()
-	for _, line := range strings.Split(e.calls(t), "\n") {
+	for line := range strings.SplitSeq(e.calls(t), "\n") {
 		if !strings.HasPrefix(line, "build ") {
 			continue
 		}
