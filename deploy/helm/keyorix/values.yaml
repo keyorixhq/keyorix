@@ -103,9 +103,9 @@ server:
   # One replica (default): the single-instance deployment, keys on a ReadWriteOnce
   # volume, Recreate rollouts. More than one is the HA topology of ADR-039 and the
   # render FAILS unless it can work:
-  #   - keysPersistence.enabled with accessMode ReadWriteMany: every replica must
-  #     read the same wrapped DEK and KEK salt (a per-pod or ReadWriteOnce volume
-  #     gives each replica its own keys);
+  #   - keysSecret (Secret mode): every replica reads the same key files read-only
+  #     from one Secret and none generates keys (a ReadWriteMany keys volume is
+  #     refused);
   #   - singleWriter must be false (single-writer mode allows exactly one server).
   # The chart renders PostgreSQL only, so SQLite (single-process) cannot be
   # combined with replicas here. With replicas > 1 the chart also renders a
@@ -147,6 +147,14 @@ server:
   # log, GET /api/v1/system/info access_log_dropped); the audit trail is unaffected.
   accessLog:
     onSinkStall: ""
+  # Secret mode (docs/multi-replica-keys.md): the key files (data.key, kek.salt)
+  # come read-only from the Secret `name`, created before install with
+  # `keyorix-server admin encryption key-secret generate` (the chart never sees key
+  # material). Required for replicas > 1; needs keysPersistence.enabled=false.
+  # Back the Secret up apart from the database backups.
+  keysSecret:
+    enabled: false
+    name: ""
   # Persistent volume for the wrapped DEK + KEK salt (/app/keys). MUST persist —
   # losing it makes every stored secret undecryptable. Back it up.
   keysPersistence:
