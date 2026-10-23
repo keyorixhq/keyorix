@@ -123,7 +123,7 @@ func (m *PathMapper) Resolve(rawPolicyPath string) (res ScopeResolution, categor
 		if strings.HasPrefix(rawPolicyPath, ov.prefix) {
 			res := ScopeResolution{ProjectID: ov.projectID, EnvironmentID: ov.environmentID}
 			if !globCovers(rawPolicyPath, dirPrefix(ov.prefix)) {
-				return ScopeResolution{}, CategoryNarrowerThanScope, fmt.Sprintf("%q covers only part of --path-map %q (project %d / environment %d): a grant on that scope would also reach every other secret in it, which this policy never allowed — add a --path-map whose prefix is exactly this policy's path (\"<prefix>/*\"), or grant manually", rawPolicyPath, ov.prefix, ov.projectID, ov.environmentID), false
+				return ScopeResolution{}, CategoryNarrowerThanScope, fmt.Sprintf("%q covers only part of --path-map %q (project %d / environment %d): a grant on that scope would also reach every other secret in it, which this policy never allowed — import that Vault subtree into its own environment and map it with --path-map %q=<projectID>:<environmentID>, or grant manually", rawPolicyPath, ov.prefix, ov.projectID, ov.environmentID, strings.TrimSuffix(rawPolicyPath, "*")), false
 			}
 			if reason := m.sharedScopeReason(rawPolicyPath, res); reason != "" {
 				return ScopeResolution{}, CategoryNarrowerThanScope, reason, false
