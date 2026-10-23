@@ -1,5 +1,5 @@
 ### Security
-- **Webhook URLs are secrets in the CLI and the web form (CLI-UX-2).** `keyorix notification channel add|update` take the URL with `--url-file <path>` or `--url-file -` (stdin); `--url` is refused like the other secret flags (`KEYORIX_ALLOW_INSECURE_SECRET_FLAGS=1` warns instead). `channel get` says the URL shown is masked. The web form uses a password-type field, and an existing channel shows its masked URL with a "Replace URL" button. The server side (create-only full URL, encrypted at rest with a startup backfill) was already in #3438; see `docs/UPGRADING.md` 6j.
+- **Webhook URLs are secrets in the CLI and the web form (CLI-UX-2).** `keyorix notification channel add|update` take the URL with `--url-file <path>` or `--url-file -` (stdin); `--url` is refused like the other secret flags (`KEYORIX_ALLOW_INSECURE_SECRET_FLAGS=1` warns instead). `channel get` says the URL shown is masked. The web form uses a password-type field, and an existing channel shows its masked URL with a "Replace URL" button. The server side (create-only full URL, encrypted at rest with a startup backfill) was already in #3438; see `docs/UPGRADING.md` 6x.
 
 ### Added
 - **`KEYORIX_TOKEN_FILE`** (mode 0600/0400, or 0440 for a mounted Secret) as the file form of `KEYORIX_TOKEN`; a bad file is an error naming it, never a fallback. `keyorix doctor` names the token source.
