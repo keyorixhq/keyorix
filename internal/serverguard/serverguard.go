@@ -167,6 +167,21 @@ func (p *Presence) Release() error {
 // after a failed acquisition) is a safe no-op to Release.
 type Exclusive struct {
 	release func() error
+	lost    chan struct{} // closed when the lock is found lost; nil if it cannot be
+}
+
+// Lost is closed when the PostgreSQL exclusive lock is found lost while held
+// (the same causes as Presence.Lost). From that moment a server can start
+// beside the admin command, and with storage.encryption.key_dir_lock: database
+// this lock is the only thing that keeps a replica off the key files a
+// rotation is rewriting (docs/multi-replica-keys.md), so the caller should
+// stop. A nil channel for SQLite, remote storage and a nil *Exclusive; never
+// closed after Release.
+func (e *Exclusive) Lost() <-chan struct{} {
+	if e == nil {
+		return nil
+	}
+	return e.lost
 }
 
 // Release releases the exclusive lock. Safe to call on a nil Exclusive.
@@ -422,7 +437,13 @@ func acquirePostgresExclusive(cfg *config.Config) (*Exclusive, error) {
 		_ = sqlDB.Close()
 		return nil, &lockHeldErr{fmt.Errorf("another process holds this database (a live server, or another admin command) via postgres advisory lock %d", serverPresenceLockKey)}
 	}
-	return &Exclusive{release: func() error {
+	// Watched like the presence lock (INV-STORAGE-session-advisory-lock-loss):
+	// the admin command's own work runs on other connections, so nothing else
+	// would notice this one's backend ending.
+	lost := make(chan struct{})
+	stopWatch := config.WatchPinnedLockConn(conn, "serverguard admin exclusive lock", func(error) { close(lost) })
+	return &Exclusive{lost: lost, release: func() error {
+		stopWatch() // before the unlock below, which needs the connection to itself
 		relCtx, relCancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer relCancel()
 		// See acquirePostgresPresence's release closure for why this is

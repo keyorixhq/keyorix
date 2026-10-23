@@ -286,6 +286,7 @@ func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
 		}
 		return nil, fmt.Errorf("cannot connect to the database to check for a running server: %v — admin commands must not run concurrently with a server, but this could not be verified; pass --force if you are certain this is safe", err)
 	}
+	stopOnLostDatabaseLock(lock)
 	return lock, nil
 }
 

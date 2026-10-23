@@ -2,7 +2,10 @@ package serverguard
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -81,8 +84,41 @@ func WithKeyInitLock(cfg *config.Config, wait time.Duration, fn func() error) er
 		// A failed unlock is still released when conn closes (deferred above).
 		_, _ = conn.ExecContext(relCtx, "SELECT pg_advisory_unlock($1)", keyInitLockKey)
 	}()
-	return fn()
+	return runHoldingKeyInitLock(conn, fn)
 }
+
+// errKeyInitLockLost is returned (joined with fn's own error) when the
+// key-initialisation lock's connection died while fn ran.
+var errKeyInitLockLost = errors.New("the key-initialisation lock was lost while the key files were being written (its database connection died), so another replica may have written them at the same time; refusing to start with keys that may not match the key directory -- restart to load the files now on disk")
+
+// runHoldingKeyInitLock runs fn while watching conn, which holds the
+// key-initialisation lock, and checks it once more when fn returns: fn is
+// usually shorter than one watch interval, and a loss at any point means a
+// sibling replica could have generated or recovered the key files beside this
+// one. Either way the caller gets errKeyInitLockLost and must not start with
+// the keys fn loaded (INV-STORAGE-session-advisory-lock-loss).
+func runHoldingKeyInitLock(conn *sql.Conn, fn func() error) error {
+	var lost atomic.Bool
+	stop := config.WatchPinnedLockConn(conn, keyInitLockWho, func(error) { lost.Store(true) })
+	err := fn()
+	stop() // before the final ping, which needs the connection to itself
+	if !lost.Load() {
+		pctx, cancel := context.WithTimeout(context.Background(), config.PinnedLockPingTimeout)
+		perr := conn.PingContext(pctx)
+		cancel()
+		if perr != nil {
+			config.ReportAdvisoryLockLost(keyInitLockWho, perr)
+			lost.Store(true)
+		}
+	}
+	if lost.Load() {
+		return errors.Join(err, errKeyInitLockLost)
+	}
+	return err
+}
+
+// keyInitLockWho names the key-initialisation lock in the lock-loss log line.
+const keyInitLockWho = "key-initialisation lock"
 
 // keyInitLockArgs is pgLockArgs with keyInitLockKey in place of the presence key.
 func keyInitLockArgs(xact bool) []any {

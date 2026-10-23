@@ -15,6 +15,7 @@ Served at: server `GET /metrics` (unauthenticated; keep inside your perimeter)
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `keyorix_account_state_unrecognized_total` | counter | - | Count of AccountLoginBlocked calls against a blank or unrecognized users.account_state value, failed closed. |
+| `keyorix_advisory_lock_lost_total` | counter | `lock` | PostgreSQL advisory locks found lost while held (their connection died), by lock: presence, admin_exclusive, single_writer, key_init, named, scheduler, bootstrap, audit_checkpoint, audit_index_build, other. |
 | `keyorix_audit_flusher_batch_size` | summary | - | Number of audit-chain entries committed per batch flush. |
 | `keyorix_audit_flusher_flushes_total` | counter | - | Audit-chain batch-commit flushes (one per transaction/fsync, covering 1-N queued entries each). |
 | `keyorix_audit_flusher_pipelined_batches_total` | counter | - | Audit-chain batches sent while the previous batch was still in flight (pipelined commits). |
@@ -87,6 +88,7 @@ Every label used above and why its values are bounded. Secret names, paths, user
 | `check` | closed set: tail, full (audit verification kinds) |
 | `limiter` | closed set of rate limiters (ratelimitmetrics.Limiter: principal, token_auth_failure, grpc_principal, grpc_token_auth_failure) |
 | `listener` | closed set: http, grpc (tlsmetrics.HTTP / tlsmetrics.GRPC) |
+| `lock` | closed set of advisory-lock kinds (config.lockLossKinds plus `other`), listed in the metric help |
 | `method` | HTTP method collapsed to the 9 RFC verbs plus `other` (middleware.normalizeMethod) |
 | `op` | closed set: encrypt, decrypt |
 | `outcome` | closed enum documented in the metric help (success/failure/skipped, delivered/failed/dropped, ...) |
