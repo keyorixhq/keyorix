@@ -63,7 +63,10 @@ With the owed-record table refusing inserts and a crash at the wrong
 moment (no audit outage needed), a revocation's audit row is lost with no
 log line. Say:
 "The model exists to find this. The gap is already documented for the loud
-case; the silent variant is new, and it goes to the backlog as a decision."
+case; the silent variant was new." That configuration now runs the pre-fix
+code as seeded bug `late_after_wait`. Show the fix passing:
+`run-tlc.sh pendingfault_fixed.cfg` (RD-TLA-OWED-FIX-1: late record right
+after the commit, rows named before it).
 
 ## 4:15 – 5:00 Everything at once (optional: the full run takes about 20 minutes, so start it before the demo and show its table)
 

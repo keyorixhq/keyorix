@@ -42,7 +42,9 @@ exhaustively within stated bounds against these properties:
 | `OwedOrderPreserved`, `NarrowingFirst`, `BreakGlassSettlementSound`, `BackfillConverges` | invariant / liveness | Amendment 6 order, split order, verifier verdict, drain |
 
 Four seeded bugs, each in its own configuration, show that the properties
-are not vacuous: TLC must find each one. The verdict table is in the README.
+are not vacuous: TLC must find each one. A fifth, `late_after_wait`, is the
+owed-audit code before RD-TLA-OWED-FIX-1, kept so the silent-loss trace
+stays reproducible. The verdict table is in the README.
 `run-tlc.sh` reruns every configuration and fails if any verdict changes.
 
 ## New vs state of the art
@@ -99,9 +101,10 @@ are not vacuous: TLC must find each one. The verdict table is in the README.
     backfill" gap, logged loudly.
   - With that fault plus a process crash at the wrong moment, the row is
     lost **silently** (`NoSilentLoss` fails). The collect-only rows live only
-    in memory, so no log line is written. INV-CORE-revocation-audit-owed says
-    that "a crash between the commit and the append loses nothing". That is
-    true only on the normal path, not on the collect-only fallback.
+    in memory, so no log line is written. INV-CORE-revocation-audit-owed said
+    that "a crash between the commit and the append loses nothing". That was
+    true only on the normal path, not on the collect-only fallback. Narrowed in
+    code by RD-TLA-OWED-FIX-1 (see Consequences).
 - **Chain order is not effect order.** An owed row is appended after rows of
   later effects (`explore_effect_order.cfg`). For a mixed request across an
   outage, the remainder's row can precede the narrowing's row in the chain. A
@@ -120,8 +123,13 @@ are not vacuous: TLC must find each one. The verdict table is in the README.
   written with the effect, so some window remains between the commit and
   any later record. It can be narrowed, for example by queueing the late
   record right after the commit, before the bounded append wait, rather
-  than after the append fails. The invariant's crash sentence can also be
-  scoped to the normal path. Either change is its own PR. This note does
-  not decide it; it goes to the coordinator as a question.
+  than after the append fails. Decided (ask `rd-tla-owed-silent-loss`, a)
+  and done in RD-TLA-OWED-FIX-1: the late record is written right after the
+  commit and the rows are named in a `SECURITY:` line before it. The model
+  keeps the old code as seeded bug `late_after_wait`; `pendingfault_fixed.cfg`
+  checks the fix (`LossOnlyWhereUnrecordable`). The invariant's crash
+  sentence now names the paths that remain: a crash before the late record
+  commits, and the late record refused too followed by a crash before the
+  direct append. Both are loud.
 - A future change to the owed-audit protocol can be checked in minutes with
   `run-tlc.sh` before it is implemented.

@@ -37,25 +37,28 @@ The heap is capped at 3 GB. The largest configuration fits in it.
 
 ## Configurations and verdicts
 
-TLC 2.19, breadth-first, complete state space. The state counts are
-deterministic. Runtimes depend on the machine and are not recorded here.
+TLC 2.19, breadth-first, complete state space. The state counts of the
+passing configurations are deterministic. Runtimes depend on the machine and are not recorded here.
 
 | Configuration | Population (`Kind`) | Replicas | Flips | Crashes | Pending fault | Expected verdict | Distinct states |
 |---|---|---|---|---|---|---|---|
 | `small.cfg` | revoke, widen, breakglass | 2 | 2 | 1 | no | all invariants and both liveness properties hold | 27,242 |
 | `wide.cfg` | revoke, mixed, widen, breakglass | 2 | 3 | 1 | no | all invariants hold | 5,816,207 |
 | `wide_liveness.cfg` | revoke, mixed, widen, breakglass | 2 | 2 | 1 | no | both liveness properties hold | 3,183,628 |
-| `pendingfault_rest.cfg` | revoke, mixed, widen, breakglass | 2 | 3 | 1 | yes | every invariant except the two "no loss" ones holds | 12,286,765 |
-| `pendingfault_gap.cfg` | revoke, widen, breakglass | 1 | 3 | 0 | yes | `NoUnrecordedEffect` violated (known, loud gap) | 205 |
-| `pendingfault_silent.cfg` | revoke, widen, breakglass | 1 | 3 | 1 | yes | `NoSilentLoss` violated (silent gap, see Findings) | 221 |
-| `explore_effect_order.cfg` | mixed, revoke | 1 | 2 | 0 | no | `EffectOrderIsChainOrder` violated (by design, see Findings) | 349 |
+| `pendingfault_rest.cfg` | revoke, mixed, widen, breakglass | 2 | 3 | 1 | yes | every invariant except `NoUnrecordedEffect` holds, `NoSilentLoss` and `LossOnlyWhereUnrecordable` included | 18,633,638 |
+| `pendingfault_fixed.cfg` | revoke, widen, breakglass | 1 | 3 | 1 | yes | `NoSilentLoss`, `LossOnlyWhereUnrecordable` and the other invariants hold, `RevocationNeverBlocked` too (RD-TLA-OWED-FIX-1) | 25,717 |
+| `pendingfault_gap.cfg` | revoke, widen, breakglass | 1 | 3 | 0 | yes | `NoUnrecordedEffect` violated (known, loud gap) | 619 |
+| `pendingfault_silent.cfg` | revoke, widen, breakglass | 1 | 3 | 1 | yes | seeded bug 5 (`late_after_wait`, the code before RD-TLA-OWED-FIX-1): `NoSilentLoss` violated | 120 |
+| `bug_late_after_wait.cfg` | revoke | 1 | 2 | 1 | yes | seeded bug 5: `LossOnlyWhereUnrecordable` violated | 103 |
+| `explore_effect_order.cfg` | mixed, revoke | 1 | 2 | 0 | no | `EffectOrderIsChainOrder` violated (by design, see Findings) | 270 |
 | `bug_widen_owed.cfg` | revoke, widen | 1 | 2 | 0 | no | seeded bug 1: `WideningFailClosed` violated | 23 |
 | `bug_mixed_fail_closed.cfg` | mixed | 1 | 1 | 0 | no | seeded bug 2: `RevocationNeverBlocked` violated (temporal) | 9 |
-| `bug_claim_split.cfg` | revoke | 2 | 2 | 0 | no | seeded bug 3: `ChainValid` violated | 136 |
+| `bug_claim_split.cfg` | revoke | 2 | 2 | 0 | no | seeded bug 3: `ChainValid` violated | 140 |
 | `bug_backfill_any_order.cfg` | revoke | 1 | 2 | 0 | no | seeded bug 4: `OwedOrderPreserved` violated | 104 |
 
 For a violated configuration, "distinct states" is the count when TLC
-stopped at the first counterexample.
+stopped at the first counterexample; with several workers it varies a
+little from run to run (only the passing counts are deterministic).
 
 "Small first, then widen": `small.cfg` came first. `wide.cfg` adds the mixed
 request, the extra flip and the larger population. A wide configuration
@@ -67,7 +70,8 @@ grant, so it adds states but no behaviour.
 
 | Model | Code | Rule |
 |---|---|---|
-| `CommitOwed`: the change and one `pending_audit_events` record per owed row in one transaction; no `auditUp` guard; collect-only fallback (`pid = 0`) when the record insert fails | `runOwedAuditMutation`, `recordOwedOn`, `commitOwingAudit` (`internal/core/audit_owed.go`) | ADR-112 Amendment 6 ("revocations stay never-blocked"); INV-CORE-revocation-audit-owed; INV-CORE-plain-suspend-audit-owed |
+| `CommitOwed`: the change and one `pending_audit_events` record per owed row in one transaction; no `auditUp` guard; collect-only fallback (`pid = 0`) when the record insert fails, the rows named before that commit (`riskLogged`) | `runOwedAuditMutation`, `recordOwedOn`, `commitOwingAudit` (`internal/core/audit_owed.go`) | ADR-112 Amendment 6 ("revocations stay never-blocked"); INV-CORE-revocation-audit-owed; INV-CORE-plain-suspend-audit-owed |
+| `QueueLate` (pc `queue`): right after a collect-only commit, before the eviction and the append wait, one transaction records every owed row; if refused the rows stay `pid = 0` (`unqueued`) | `queueOwedRowsLate`, the late record in `commitOwingAudit` | INV-CORE-revocation-audit-owed (RD-TLA-OWED-FIX-1) |
 | `Evict` before `SettleRow` | `runOwedAuditMutation` returns `settle`, called after the auth-cache eviction | INV-CORE-revocation-audit-owed ("settle is called last") |
 | `SettleRow`: claim and append in one step; the first refusal ends the attempts; rows without a record are queued late, else `lostLogged` | `settleOwedAudit`, `writeOwedAudit`, `appendOwedAudit`, `queueOwedAuditLate`, `noteOwedAuditNotAttempted` | INV-CORE-revocation-audit-owed (SUPERFAN-1022 note 1; the "NOT queued for backfill" gap) |
 | `CommitAudited` / `WidenOrWrite`: effect and rows in one transaction, only if the audit log accepts them | `withAuditedMutation`, `failClosedAuditResult` (`mutation_audit_tx.go`) | INV-CORE-security-mutation-audit-same-tx; INV-CORE-secret-mutation-audit-same-tx |
@@ -84,7 +88,8 @@ grant, so it adds states but no behaviour.
 |---|---|---|
 | `RevocationNeverBlocked` (liveness) | every revoke or mixed request ends with its narrowing in force (or its process crashed), even when the audit log never comes back | revocation never blocked |
 | `NoUnrecordedEffect` | every row owed by a committed effect is in the chain, in `pending_audit_events`, or held by the live request about to write it | no unrecorded effect |
-| `NoSilentLoss` | as above, or logged as "NOT queued for backfill" | (separates the loud gap from a silent one) |
+| `NoSilentLoss` | as above, or logged as "NOT queued for backfill", or named before its collect-only commit | (separates the loud gap from a silent one) |
+| `LossOnlyWhereUnrecordable` | a committed row is lost only if the process died before any storage step after its collect-only commit (`windowLost`, a ghost), or its late record was refused too (`unqueued`, a ghost; `lostLogged`) | RD-TLA-OWED-FIX-1: names the paths the code cannot close |
 | `WideningFailClosed` | a committed grant, write, mixed remainder or normal break-glass has its rows in the chain; a degraded break-glass has them in the chain or the ledger | widening fail closed |
 | `ChainValid` | every entry links to its predecessor; no row twice; no row without its effect | hash chain valid |
 | `CompleteAfterBackfill` | audit up, nothing pending, nothing in flight ⇒ chain = effects, chain valid, every degraded activation settled | hash chain valid after backfill |
@@ -108,6 +113,12 @@ grant, so it adds states but no behaviour.
    twice. Found as `ChainValid` (`ExactlyOnce`).
 4. `backfill_any_order`: the backfill takes any pending record, not the
    oldest. Found as `OwedOrderPreserved`.
+5. `late_after_wait`: the code before RD-TLA-OWED-FIX-1. After a
+   collect-only commit no line names the rows, and their late record is
+   tried only after a refused append. Found as `NoSilentLoss`
+   (`pendingfault_silent.cfg`) and as `LossOnlyWhereUnrecordable`
+   (`bug_late_after_wait.cfg`: commit with the pending table down, eviction,
+   crash at settle; the same shape as the Go red test).
 
 ## Findings
 
@@ -128,10 +139,13 @@ grant, so it adds states but no behaviour.
    (the collect-only fallback). The audit log is also down at settle time,
    and the late queue fails too. The revocation then applies and its rows
    are only logged as "NOT queued for backfill". TLC reports
-   `NoUnrecordedEffect` in 6 states. This is the documented gap in
-   INV-CORE-revocation-audit-owed: it needs two faults and is loud.
-3. **New: a silent variant of that gap.** `pendingfault_silent.cfg` finds
-   it in 5 states. The pending insert fails, the revocation commits through
+   `NoUnrecordedEffect` in 7 states (6 before the fix added the late-record
+   step). This is the documented gap in INV-CORE-revocation-audit-owed: it
+   needs two faults and is loud.
+3. **A silent variant of that gap: found, then closed in code
+   (RD-TLA-OWED-FIX-1).** The text below describes the pre-fix code, now
+   seeded bug 5 (`late_after_wait`). `pendingfault_silent.cfg` finds
+   it in 4 states. The pending insert fails, the revocation commits through
    the collect-only fallback, and the process crashes before settle. The
    owed rows lived only in process memory, so they are gone with no log
    line, no counter, and no pending record. `NoSilentLoss` is violated.
@@ -142,8 +156,24 @@ grant, so it adds states but no behaviour.
    record committed with the effect". That holds on the normal path only.
    The fault it needs (`pending_audit_events` refusing an insert while the
    same database commits the revocation) is unlikely but is the case the
-   fallback exists for. This model does not change the code; the report
-   routes it as a question.
+   fallback exists for.
+
+   **The fix (Andrei, ask `rd-tla-owed-silent-loss` (a)).** The late record
+   is written in its own transaction right after the collect-only commit,
+   before the eviction and the append wait (`QueueLate`). Before that
+   commit, a `SECURITY:` line names every row that commits without its
+   record (`riskLogged`). `pendingfault_fixed.cfg` and
+   `pendingfault_rest.cfg` pass `NoSilentLoss` and
+   `LossOnlyWhereUnrecordable`. What remains cannot be closed, because
+   there no record can commit together with the effect:
+   - a crash after the collect-only commit and before its late record
+     commits;
+   - the late record refused too, then a crash before the direct append;
+   - the late record and the append both refused (finding 2, loud).
+
+   Each of these is now loud: the row was named before the commit. The
+   red/green Go test is `.../pending-record-error+crash-at-audit` in
+   `TestRevocationAudit_EffectCommitsAndRowIsOwedNeverLost`.
 4. **By design, worth stating: chain order is not effect order.**
    `explore_effect_order.cfg` (a 9-state trace) shows a revocation's owed row
    landing in the chain after the row of a later effect. Inside ONE mixed

@@ -40,7 +40,8 @@ CONSTANTS
     PendingFault,  \* TRUE: pending_audit_events may also refuse inserts (second, independent fault)
     Bug            \* "none", or the name of one seeded bug (see README)
 
-ASSUME Bug \in {"none", "widen_owed", "mixed_fail_closed", "claim_split", "backfill_any_order"}
+ASSUME Bug \in {"none", "widen_owed", "mixed_fail_closed", "claim_split", "backfill_any_order",
+                "late_after_wait"}
 ASSUME PendingFault \in BOOLEAN
 ASSUME MaxFlips \in Nat /\ MaxCrashes \in Nat
 
@@ -87,12 +88,18 @@ VARIABLES
     lostLogged,  \* rows logged "NOT queued for backfill (record it by hand)"
     bgDegraded,  \* [Reqs -> BOOLEAN]: break-glass committed on the degraded path
     bgSettled,   \* [Reqs -> BOOLEAN]: audit_settled_at set
-    wk           \* [Workers -> [st, rec]]: backfill replicas
+    wk,          \* [Workers -> [st, rec]]: backfill replicas
+    riskLogged,  \* rows named in a SECURITY line before a collect-only commit (RD-TLA-OWED-FIX-1)
+    unqueued,    \* GHOST: rows whose late record, tried right after the commit, was refused
+    windowLost   \* GHOST: rows of a request that died before any storage step after its commit (see Crash)
+
+ghostVars == <<riskLogged, unqueued, windowLost>>
 
 vars == <<auditUp, pendingUp, flips, crashes, pc, applied, inForce, effLog, chain,
-          pending, nextId, sink, lostLogged, bgDegraded, bgSettled, wk>>
+          pending, nextId, sink, lostLogged, bgDegraded, bgSettled, wk, riskLogged,
+          unqueued, windowLost>>
 
-PCs == {"start", "evict", "settle", "c2", "done", "failed", "partial", "refused", "crashed"}
+PCs == {"start", "queue", "evict", "settle", "c2", "done", "failed", "partial", "refused", "crashed"}
 Terminal == {"done", "failed", "partial", "refused", "crashed"}
 
 -----------------------------------------------------------------------------
@@ -145,6 +152,9 @@ Init ==
     /\ bgDegraded = [r \in Reqs |-> FALSE]
     /\ bgSettled = [r \in Reqs |-> FALSE]
     /\ wk = [w \in Workers |-> [st |-> "idle", rec |-> NoRec]]
+    /\ riskLogged = {}
+    /\ unqueued = {}
+    /\ windowLost = {}
 
 -----------------------------------------------------------------------------
 (* Environment: audit outage, pending-table outage, process crash *)
@@ -155,6 +165,7 @@ AuditFlip ==
     /\ flips' = flips + 1
     /\ UNCHANGED <<pendingUp, crashes, pc, applied, inForce, effLog, chain, pending,
                    nextId, sink, lostLogged, bgDegraded, bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 PendingFlip ==
     /\ PendingFault
@@ -163,20 +174,27 @@ PendingFlip ==
     /\ flips' = flips + 1
     /\ UNCHANGED <<auditUp, crashes, pc, applied, inForce, effLog, chain, pending,
                    nextId, sink, lostLogged, bgDegraded, bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 \* The process dies and restarts at once. Committed rows survive; in-memory sinks and
 \* backfill progress do not. In-flight requests end; the restarted process has a cold
-\* auth cache, so a committed narrowing is in force from then on.
+\* auth cache, so a committed narrowing is in force from then on. GHOST windowLost: the
+\* record-less rows (pid 0) of a request that died before any storage step after its commit
+\* (pc "queue" or "evict": only the in-memory cache eviction and, with the fix, the
+\* late record itself lie in between). The same window in both variants.
 Crash ==
     /\ crashes < MaxCrashes
-    /\ LET live == {r \in Reqs : pc[r] \in {"evict", "settle", "c2"}} IN
+    /\ LET live == {r \in Reqs : pc[r] \in {"queue", "evict", "settle", "c2"}} IN
        /\ pc' = [r \in Reqs |-> IF r \in live THEN "crashed" ELSE pc[r]]
+       /\ windowLost' = windowLost \cup
+            UNION {{sink[r][i].row : i \in {j \in 1..Len(sink[r]) : sink[r][j].pid = 0}} :
+                   r \in {q \in live : pc[q] \in {"queue", "evict"}}}
        /\ sink' = [r \in Reqs |-> IF r \in live THEN <<>> ELSE sink[r]]
        /\ inForce' = [r \in Reqs |-> inForce[r] \/ (r \in live /\ \E p \in applied[r] : Narrowing(r, p))]
     /\ wk' = [w \in Workers |-> [st |-> "idle", rec |-> NoRec]]
     /\ crashes' = crashes + 1
     /\ UNCHANGED <<auditUp, pendingUp, flips, applied, effLog, chain, pending, nextId,
-                   lostLogged, bgDegraded, bgSettled>>
+                   lostLogged, bgDegraded, bgSettled, riskLogged, unqueued>>
 
 -----------------------------------------------------------------------------
 (* Requests *)
@@ -184,7 +202,10 @@ Crash ==
 \* runOwedAuditMutation: the change and a pending record of each owed row commit in
 \* ONE transaction. Not guarded by auditUp: the audit log cannot block it. If the
 \* record insert fails, the change is re-run with a collect-only target and commits
-\* without records (the rows stay in memory, pid 0).
+\* without records (the rows stay in memory, pid 0). RD-TLA-OWED-FIX-1: the rows are
+\* named in a SECURITY line before that commit (riskLogged) and their late record is
+\* the next step (QueueLate). SEEDED BUG 5 ("late_after_wait", the code before that
+\* fix): no line names them and the late record is tried only after a refused append.
 CommitOwed(r) ==
     /\ pc[r] = "start"
     /\ UsesOwedPath(r)
@@ -196,11 +217,35 @@ CommitOwed(r) ==
             THEN /\ pending' = pending \cup NewRecs(rs, NoBG)
                  /\ nextId' = nextId + Len(rs)
                  /\ sink' = [sink EXCEPT ![r] = [i \in 1..Len(rs) |-> [row |-> rs[i], pid |-> nextId + i - 1]]]
+                 /\ pc' = [pc EXCEPT ![r] = "evict"]
+                 /\ UNCHANGED riskLogged
             ELSE /\ UNCHANGED <<pending, nextId>>
                  /\ sink' = [sink EXCEPT ![r] = [i \in 1..Len(rs) |-> [row |-> rs[i], pid |-> 0]]]
-    /\ pc' = [pc EXCEPT ![r] = "evict"]
+                 /\ IF Bug = "late_after_wait"
+                      THEN /\ pc' = [pc EXCEPT ![r] = "evict"]
+                           /\ UNCHANGED riskLogged
+                      ELSE /\ pc' = [pc EXCEPT ![r] = "queue"]
+                           /\ riskLogged' = riskLogged \cup {rs[i] : i \in 1..Len(rs)}
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, inForce, chain, lostLogged,
-                   bgDegraded, bgSettled, wk>>
+                   bgDegraded, bgSettled, wk, unqueued, windowLost>>
+
+\* queueOwedRowsLate / the late record in commitOwingAudit: right after a collect-only
+\* commit, before the auth-cache eviction and the append wait, every owed row is
+\* recorded in one transaction. If the pending table still refuses, the rows stay in
+\* memory (pid 0) and SettleRow handles them as before.
+QueueLate(r) ==
+    /\ pc[r] = "queue"
+    /\ LET rs == [i \in 1..Len(sink[r]) |-> sink[r][i].row] IN
+       IF pendingUp
+         THEN /\ pending' = pending \cup NewRecs(rs, NoBG)
+              /\ nextId' = nextId + Len(rs)
+              /\ sink' = [sink EXCEPT ![r] = [i \in 1..Len(rs) |-> [row |-> rs[i], pid |-> nextId + i - 1]]]
+              /\ UNCHANGED unqueued
+         ELSE /\ unqueued' = unqueued \cup {rs[i] : i \in 1..Len(rs)}
+              /\ UNCHANGED <<pending, nextId, sink>>
+    /\ pc' = [pc EXCEPT ![r] = "evict"]
+    /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, applied, inForce, effLog, chain,
+                   lostLogged, bgDegraded, bgSettled, wk, riskLogged, windowLost>>
 
 \* The auth-cache eviction: the narrowing is in force for the next request. It comes
 \* BEFORE settle, so a slow or refusing audit log never delays it.
@@ -210,6 +255,7 @@ Evict(r) ==
     /\ pc' = [pc EXCEPT ![r] = "settle"]
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, applied, effLog, chain, pending,
                    nextId, sink, lostLogged, bgDegraded, bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 \* settleOwedAudit / writeOwedAudit / appendOwedAudit: one owed row per step. Claim and
 \* append are one transaction. The first refusal ends the attempts: rows with a record
@@ -244,6 +290,7 @@ SettleRow(r) ==
                      /\ UNCHANGED <<chain, bgSettled>>
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, applied, inForce, effLog,
                    bgDegraded, wk>>
+    /\ UNCHANGED ghostVars
 
 \* withAuditedMutation: the change and its audit rows in ONE transaction, or nothing.
 CommitAudited(r, p, okPc, failPc) ==
@@ -263,6 +310,7 @@ WidenOrWrite(r) ==
     /\ CommitAudited(r, "main", "done", "failed")
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, inForce, pending, nextId, sink,
                    lostLogged, bgDegraded, bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 \* commitSplitRemainder: commit 2 of a mixed request, fail closed. A failure leaves
 \* commit 1 in force and answers PartialMutationError (503, retry_safe).
@@ -271,6 +319,7 @@ CommitRemainder(r) ==
     /\ CommitAudited(r, "c2", "done", "partial")
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, inForce, pending, nextId, sink,
                    lostLogged, bgDegraded, bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 \* SEEDED BUG 2 (the pre-MERGE-FIX-3482G shape, REVIEW-3482 F1): a mixed request
 \* takes ONE direction for the whole call; because it widens, all of it fails closed.
@@ -287,6 +336,7 @@ MixedWhole(r) ==
               /\ UNCHANGED <<applied, chain, effLog>>
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, inForce, pending, nextId, sink,
                    lostLogged, bgDegraded, bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 \* activateBreakGlassLocked: normal path fail closed; if only the audit append failed,
 \* activateBreakGlassDegraded commits grant + owed records (tagged with the activation)
@@ -313,6 +363,7 @@ BreakGlass(r) ==
                 /\ UNCHANGED <<applied, effLog, chain, pending, nextId, bgDegraded>>
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, inForce, sink, lostLogged,
                    bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 \* The client retries. A mixed request's retry re-runs commit 1 as a no-op (idempotent)
 \* and only commit 2 has work left.
@@ -321,9 +372,10 @@ Retry(r) ==
     /\ pc' = [pc EXCEPT ![r] = IF @ = "partial" THEN "c2" ELSE "start"]
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, applied, inForce, effLog, chain,
                    pending, nextId, sink, lostLogged, bgDegraded, bgSettled, wk>>
+    /\ UNCHANGED ghostVars
 
 ReqStep(r) ==
-    \/ CommitOwed(r) \/ Evict(r) \/ SettleRow(r)
+    \/ CommitOwed(r) \/ QueueLate(r) \/ Evict(r) \/ SettleRow(r)
     \/ WidenOrWrite(r) \/ CommitRemainder(r) \/ MixedWhole(r) \/ BreakGlass(r)
     \/ Retry(r)
 
@@ -339,6 +391,7 @@ List(w) ==
        \E e \in cand : wk' = [wk EXCEPT ![w] = [st |-> "listed", rec |-> e]]
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, pc, applied, inForce, effLog,
                    chain, pending, nextId, sink, lostLogged, bgDegraded, bgSettled>>
+    /\ UNCHANGED ghostVars
 
 \* appendOwedAudit: claim (DELETE ... reporting whether this call removed it), settle
 \* the break-glass activation if this was its last row, append; one transaction. A
@@ -361,6 +414,7 @@ Write(w) ==
                 /\ wk' = [wk EXCEPT ![w] = [st |-> "idle", rec |-> NoRec]]
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, pc, applied, inForce, effLog,
                    nextId, sink, lostLogged, bgDegraded>>
+    /\ UNCHANGED ghostVars
 
 Claim(w) ==
     /\ wk[w].st = "appended"
@@ -371,6 +425,7 @@ Claim(w) ==
     /\ wk' = [wk EXCEPT ![w] = [st |-> "idle", rec |-> NoRec]]
     /\ UNCHANGED <<auditUp, pendingUp, flips, crashes, pc, applied, inForce, effLog,
                    chain, nextId, sink, lostLogged, bgDegraded>>
+    /\ UNCHANGED ghostVars
 
 WorkerStep(w) == List(w) \/ Write(w) \/ Claim(w)
 
@@ -414,8 +469,17 @@ TypeOK ==
 NoUnrecordedEffect == EffectRows \subseteq (ChainRows \cup PendingRows \cup InFlight)
 
 (* I1': weaker: a row may also be "logged as lost" (the documented both-writes-fail *)
-(* gap). Used to separate a loud gap from a silent one.                            *)
-NoSilentLoss == EffectRows \subseteq (ChainRows \cup PendingRows \cup InFlight \cup lostLogged)
+(* gap) or named before its collect-only commit as at risk (RD-TLA-OWED-FIX-1).    *)
+(* Used to separate a loud gap from a silent one.                                  *)
+LostRows == EffectRows \ (ChainRows \cup PendingRows \cup InFlight)
+NoSilentLoss == LostRows \subseteq (lostLogged \cup riskLogged)
+
+(* I1'': RD-TLA-OWED-FIX-1. A committed row is lost only on a path where no record  *)
+(* of it could be written with or after the effect: the process died before any    *)
+(* storage step after the collect-only commit (windowLost), or that late record was *)
+(* refused too (unqueued; lostLogged is the subset whose append also failed). A     *)
+(* crash anywhere after a late record that was accepted loses nothing.             *)
+LossOnlyWhereUnrecordable == LostRows \subseteq (lostLogged \cup unqueued \cup windowLost)
 
 (* I2: widening is fail closed. A committed fail-closed part has its rows in the   *)
 (* chain. The one designed exception, a degraded break-glass activation, has its   *)
