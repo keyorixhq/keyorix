@@ -568,8 +568,9 @@ What to do: if you pin the token yourself, replace it with
 `openssl rand -hex 32` before upgrading. An already-initialised server never uses the
 token again, so on such an install you can also simply unset it.
 
-**UNVERIFIED** against a release build; covered by
-`server/secret_file_test.go:TestResolveBootstrapToken_ShortPinnedTokenRefused` and
+Not run against a release build. Proved on main by
+`server/secret_file_test.go:TestResolveBootstrapToken_ShortPinnedTokenRefused` and, with a
+server binary built from main on SQLite (the `e2e` build tag),
 `scripts/e2e/bootstrap_token_strength_test.go:TestBootstrapTokenStrength_SQLite`.
 
 `scripts/selfhost/init-secrets.sh --from-env` copies a `KEYORIX_BOOTSTRAP_TOKEN` from the
@@ -595,7 +596,7 @@ answers. A session whose user row was deleted is now refused `401` on its next
 request instead of being served until the cache entry expired. See
 [`security/threat-models/authentication.md`](security/threat-models/authentication.md) AUTH-11.
 
-## 6g. "Last used" in access recertification now means "within the review period"
+## 6w. "Last used" in access recertification now means "within the review period"
 
 The per-user "last used" of the project access review (and of the items a campaign
 snapshots from it) used to be the user's most recent secret activity anywhere in the
@@ -620,12 +621,13 @@ deleted; raise `cadence_days` (up to 366) for a longer look-back.
 
 Details: [recertification-activity-window.md](recertification-activity-window.md).
 
-## 6q. Schema epoch 3: v0.96.x cannot run against an upgraded database
+## 6q. Compatibility floor 3: v0.96.x cannot run against an upgraded database
 
-This release raises the schema epoch and its compatibility floor to 3 (ADR-101).
+This release raises the schema compatibility floor to 3 (ADR-101); its schema epoch
+is 5 (epochs 4 and 5 are additive and leave the floor at 3, see 6o.1).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
-epoch of 3`. That is deliberate. Two formats v0.96.x cannot handle are now in the
+epoch of 3 (database schema epoch 5)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
 database:
 
 - **The v2 audit retention anchor (#3258).** v0.96.x reads it as malformed, so its
@@ -657,8 +659,11 @@ In short:
 - expect `GET /audit/verify` on old replicas to report "broken" after a purge until
   they are replaced.
 
-Rollback across this release needs a restore (section 7).
-## 6j. The first run after upgrade scans the audit history once
+Rollback across this release needs a restore (section 7). Proved with a real v0.96.1
+binary against a database a current server had migrated (PostgreSQL, natively, not a
+container or Kubernetes) by `scripts/e2e/mixed_version_test.go:TestMixedVersion_RollingUpgrade_Postgres`
+(`e2e` build tag; CI does not run it yet).
+
 ## 6r. "Last used" / "last seen" are written in the background
 
 `last_used_at` on personal access tokens and machine credentials, and
@@ -672,6 +677,7 @@ without a graceful stop loses up to 30 seconds of these stamps. With several
 replicas each writes its own observations and the stored value only moves
 forward. No access decision uses these columns; the stale-credential and
 hygiene reports work in days. Details: [`specs/last-used-coalescing.md`](specs/last-used-coalescing.md).
+
 ## 6j. First start after the upgrade: recover-admin alerting reads the audit history once
 
 The recover-admin alert (`admin.recover_admin` use is always notified to your
@@ -703,41 +709,41 @@ What bounds it, from the code (`internal/core/recover_admin_alert.go`):
 
 The "last used" lookups of the access recertification are not part of this scan: they
 have no first-run pass. Each lookup reads only the review period, at most 366 days,
-through the `(project_id, event_time)` index (see 6g), so their cost follows the size
+through the `(project_id, event_time)` index (see 6w), so their cost follows the size
 of that window for the project, not the size of the whole audit table.
 
 ## 6k. v0.97.0: breaking changes at a glance
 
 Read this table, then the sections it points to, before upgrading to v0.97.0.
-An entry marked **(pending #NNNN)** describes a pull request that is not merged
-yet; it is written from that PR and must be re-checked when the PR merges. The
-checklist to follow is [operator/upgrade-checklist-v0.97.md](operator/upgrade-checklist-v0.97.md).
+Every row below is merged on main and its section was re-checked against the merged
+code. The checklist to follow is
+[operator/upgrade-checklist-v0.97.md](operator/upgrade-checklist-v0.97.md).
 
 | Change | Section |
 |---|---|
-| CLI refuses secrets given as flags (pending #3325) | §6l |
+| CLI refuses secrets given as flags (#3325) | §6l |
 | CLI exit codes 2 to 6 (#3316) | §6m |
-| `session_replication_role` must be `origin` (pending #3366) | §6n |
-| Grants and break-glass fail closed when the audit row cannot be written (pending #3367) | §6o |
+| `session_replication_role` must be `origin` (#3366) | §6n |
+| Grants fail closed when the audit row cannot be written; break-glass goes degraded (#3367) | §6o, §6o.1 |
 | Audit list paging limits, listener limits, refused-read status codes, 503 on a database outage | §6p |
-| `KEYORIX_BOOTSTRAP_TOKEN` shorter than 32 characters refused (pending #3341) | written in #3341 (heading number assigned when it merges) |
-| `server.grpc.tls.auto_cert: true` refused (pending #3365, AUTH-2) | written in #3365 (heading number assigned when it merges) |
-| `mfa.failed` and other `*_failed` audit rows stored with `success=false` (pending #3365, AUTH-2) | written in #3365 (heading number assigned when it merges) |
-| Schema epoch 3, compatibility floor 3: no binary downgrade (pending #3364) | written in #3364 (heading number assigned when it merges) |
+| `KEYORIX_BOOTSTRAP_TOKEN` shorter than 32 characters refused (#3341) | §6g |
+| `server.grpc.tls.auto_cert: true` refused (#3365, AUTH-2) | §6t |
+| `mfa.failed` and other `*_failed` audit rows stored with `success=false` (#3365, AUTH-2) | §6u |
+| Compatibility floor 3: a v0.96.x binary cannot start on an upgraded database; rollback is a restore (#3364) | §6q, §7 |
 | Weak SCIM token and an unneeded KMS context fallback refused at start-up (#3397, #3398) | §6i |
 | `audit_durability` defaults to `standard` on PostgreSQL (#3268) | §6c |
 | `ssl_root_cert`, the `ssl_mode` allowlist, Compose Postgres over TLS (#3162, #3189, #3203) | §2 |
+| CLI: webhook URLs refused as `--url` (CLI-UX-2) | §6x |
 
-§6g is taken on main (access-recertification window). The sections of the three
-open pull requests (#3341, #3365, #3364) take the next free heading numbers
-when they merge. No Helm value was renamed
-or removed in this window; the chart's new values are additive (see
-`deploy/helm/keyorix/values.yaml`).
+Each heading number in this document is unique. The sections are not in alphabetical
+order because they were added by different pull requests; look a section up by its
+number. No Helm value was renamed or removed in this window; the chart's new values
+are additive (see `deploy/helm/keyorix/values.yaml`).
 
-## 6l. BREAKING (pending #3325): secrets are refused as CLI flags
+## 6l. BREAKING: secrets are refused as CLI flags
 
 `keyorix` no longer accepts a secret on the command line, where it shows in
-`ps`, in shell history and in CI logs. These 13 flags are refused by default,
+`ps`, in shell history and in CI logs. These 15 flags are refused by default,
 hidden from `--help`, and the command fails (exit code 2) with a message that
 names the flag and the safe form. The value is never echoed.
 
@@ -750,10 +756,11 @@ names the flag and the safe form. The value is never echoed.
 | `user create --password` | `KEYORIX_INITIAL_PASSWORD`, the prompt, `--setup-link` or `--one-time-password` |
 | `secret create --value`, `secret update --value` | `--from-file <relative path>`, `--from-file -` (stdin), or `--interactive` |
 | `secret rotate --value` | leave it out: hidden prompt, or stdin when piped |
+| `notification channel add --url`, `notification channel update --url` | `--url-file <relative path>` or `--url-file -` (stdin); see 6x |
 
 What to do:
 
-1. Find the scripts: `rg -n -- '--(password|mfa-code|current-password|new-password|admin-password|bootstrap-token|value)\b|mfa (activate|stepup).*--code' <your repos>`.
+1. Find the scripts: `rg -n -- '--(password|mfa-code|current-password|new-password|admin-password|bootstrap-token|value|url)\b|mfa (activate|stepup).*--code' <your repos>`.
 2. Move each to the safe form above. A secret in an environment variable is
    still visible to the same user's other processes, so prefer `_FILE` (mode 0600)
    or stdin in CI.
@@ -761,13 +768,16 @@ What to do:
    back into the old warning. It is a migration aid named in the error, not a
    feature; do not leave it in production scripts.
 
-`notification channel add|update --url` is not covered (a webhook URL is
-configuration that `notification channel get` shows to admins). The server and the
-REST/gRPC APIs are unchanged: only the CLI refuses.
+The server and the REST/gRPC APIs are unchanged: only the CLI refuses. The two
+`notification channel ... --url` rows were added after the first version of this
+refusal, because a webhook URL carries its token in the path.
 
-UNVERIFIED against a release build; covered in #3325 by
-`TestRefusedSecretFlagsAreRefused`, `TestSecretFlagsAreAllClassified` and
-`TestJourney_CLISecretsNeverOnTheCommandLine`.
+Not run against a release build. Proved on main by `cli/cmd/secretflags_test.go`
+(`TestRefusedSecretFlagsAreRefused`, one case per row above, and
+`TestSecretFlagsAreAllClassified`), and by
+`scripts/e2e/journeys/journey_cli_secret_flags_test.go:TestJourney_CLISecretsNeverOnTheCommandLine`
+(the built CLI against a built server on SQLite, `e2e` build tag). All three were run
+for this entry.
 
 ## 6m. CLI exit codes 2 to 6 (#3316)
 
@@ -792,14 +802,16 @@ exit 0, and now exits 2; a stray positional argument on a command that takes non
 (`keyorix secret get 42`) is refused instead of ignored. A panic prints a one-line
 internal error; the stack trace needs `KEYORIX_DEBUG=1`.
 
-## 6n. BREAKING (pending #3366): PostgreSQL `session_replication_role` must be `origin`
+## 6n. BREAKING: PostgreSQL `session_replication_role` must be `origin`
 
 With `session_replication_role = replica` PostgreSQL fires no ordinary trigger, so
 the trigger that stamps the secret read cache did not run and a suspended secret
 could still be read as active. The trigger is now installed `ENABLE ALWAYS`
 (the migration converts the existing one) and **the server refuses to start unless
 its own database sessions report `origin`**; `admin` commands that open the
-database (DEK rotation sweep, `admin validate --posture`) refuse too. The
+database through the same code refuse too (the DEK rotation sweep, backup, restore,
+migrate and the other commands that call `storage.OpenGormDB` or `CreateStorage`;
+the `verify-audit` reader opens PostgreSQL by its own path and does not check). The
 refusal comes from the effective value, so it catches every source: the server
 default, `ALTER DATABASE ... SET`, `ALTER ROLE [IN DATABASE] ... SET`, `PGOPTIONS`
 and a DSN startup option.
@@ -825,35 +837,62 @@ is refused by the template and by `values.schema.json`.
 The same PR also fixes nested named locks that could stall every named lock on a
 replica (#3358), with no configuration change.
 
-UNVERIFIED against a release build; covered in #3366 by
-`TestCreateStorage_Postgres_RefusesNonOriginReplicationRole` and
-`TestSecretNodeCacheEpoch_ReplicaRoleWriter_StillMovesStamp_Postgres` (PostgreSQL).
+Not run against a release build. Proved on main (PostgreSQL) by
+`internal/storage/postgres_replication_role_postgres_test.go:TestCreateStorage_Postgres_RefusesNonOriginReplicationRole`
+and `internal/storage/store/secret_node_cache_epoch_replication_role_postgres_test.go:TestSecretNodeCacheEpoch_ReplicaRoleWriter_StillMovesStamp_Postgres`.
+For this entry only the "startup parameter in the DSN" case ran (it passed): the
+sandbox's PostgreSQL role is not a superuser and cannot set the parameter for the
+other cases, so those and the trigger test still need a run against a superuser role.
 
-## 6o. Grants and break-glass fail closed without their audit row (pending #3367)
+## 6o. Grants fail closed without their audit row (#3367)
 
 A role grant, credential or other access-granting change used to commit first and
 write its audit row afterwards, so a crash or a refused audit append between the
 two left a grant with no record. These changes now write the audit row in the same
 database transaction (SQLite and PostgreSQL): if the row cannot be written, the
-request fails with `could not record the change in the audit log; nothing was
-changed, retry` and nothing changes. Covered: role grants (direct, JIT, SSO-mapped,
+change is rolled back and nothing changes. Covered: role grants (direct, JIT, SSO-mapped,
 project member add, access-request approval), group role grants and membership,
 role and permission definitions, break-glass activation (but see 6o.1: when the
 audit log refuses it, it now commits degraded with an owed record instead of
 failing), secret shares and ACL
 grants, machine identity create, token issue and rotate, PAT create, user create
 (setup link, one-time password), project and environment create, SoD policy create
-and delete. The inventory is `docs/specs/security-mutation-audit-inventory.md` in #3367.
+and delete. The inventory is `docs/specs/security-mutation-audit-inventory.md`.
+
+**What the caller sees.** The core error is `could not record the change in the audit
+log; nothing was changed, retry` (`core.ErrMutationAuditUnavailable`). The REST handlers
+do not map it to a status of its own: it reaches the handler's default error branch, so
+the client gets **HTTP 500** with that handler's generic message (for example
+`POST /api/v1/user-roles` answers `{"code":500,"error":"InternalError","message":"Failed
+to assign role"}`), not a 503 and not the sentence above. The sentence is in the server
+log (`Error assigning role: could not record the change in the audit log; ...`, plus
+`ERROR SECURITY: failed to persist audit event ...`). Checked for the role grant with a
+fault on the audit append: 500, no grant row left. The other covered endpoints go through
+their own handlers' default branch and were not each checked. So automation cannot tell
+this refusal from any other 500 by the status: retry a 500 on these endpoints, and look in
+the server log when it keeps failing. The one 503 on these paths is a request that both
+narrows and widens access (a user deactivated and renamed in one call, a role update
+that removes and adds permissions): the narrowing part is applied, the rest is not, and
+the answer is `503 MutationPartiallyApplied` (`mutation_partially_applied`, gRPC
+`Unavailable`); the same request is safe to repeat.
 
 Revocations (role, share, ACL, token, session removal, suspend, delete) are
-unchanged on purpose: they are never blocked by the audit log and still audit after
-their commit.
+unchanged on purpose: the audit log never blocks them. Their audit row is now owed in
+the same transaction (`pending_audit_events`) and appended after the commit, so a refused
+append or a crash no longer loses it.
 
 What to do: nothing in the configuration. Operationally, a healthy audit path is
 now a precondition for granting access (break-glass excepted, see 6o.1). Before upgrading, run `keyorix-server admin verify-audit` and check
 database health and free disk space, and make sure automation that creates users,
-roles, shares or tokens retries on this error. The HTTP status of the refusal was
-not verified for this entry.
+roles, shares or tokens retries on a 500 (see above).
+
+Not run against a release build. Proved on main (SQLite) by
+`internal/core/security_mutation_audit_tx_test.go:TestSecurityMutationAudit_RowExistsIffMutationCommitted`,
+`TestWithAuditedMutation_NoRowFailsClosed`, `security_mutation_audit_direction_test.go`,
+`audit_split_test.go:TestMixedRequestSplit_NarrowingNeverBlockedRemainderFailsClosed` and
+`break_glass_degraded_test.go` (all run for this entry; the PostgreSQL legs need
+`KEYORIX_TEST_PG_DSN` and were not run). The HTTP status above is from a throwaway handler
+test (the `AssignRole` handler over a faulty storage, not committed).
 
 ## 6o.1 Break-glass works while the audit log is down (degraded mode)
 
@@ -894,6 +933,9 @@ runbook describes ("Settling by hand").
 What to do: nothing in the configuration. Alert on the new metric. Operators:
 `docs/operator/break-glass-runbook.md`. Monitoring that treats verify-audit exit 2 as
 failure will fire while a degraded activation is unsettled, which is intended.
+The `503 BreakGlassUnrecordable` answer is in `server/http/handlers/break_glass.go`; the
+degraded path is proved by `internal/core/break_glass_degraded_test.go` (SQLite legs run
+for this entry; the PostgreSQL leg was not).
 
 ## 6p. API and client-visible behaviour changes
 
@@ -1002,6 +1044,11 @@ server:
 
 or terminate gRPC TLS at a proxy. `server.http.tls.auto_cert` is unchanged.
 
+Not run against a release build. Proved on main by
+`internal/config/config_extra_test.go:TestValidate_GRPCAutoCertRefused` (both `enabled`
+values), `internal/config/config_load_test.go:TestValidate_RejectsGRPCAutoCert` and
+`server/grpc/server_s23_test.go:TestNewServer_RefusesAutoCert`, all run for this entry.
+
 ## 6u. Failure audit events are now stored with `success = false`
 
 `mfa.failed`, `mfa.error`, `webauthn.failed` and the other audit events whose name
@@ -1014,6 +1061,10 @@ New rows have `success = false`. **Rows written before the upgrade keep
 `success = true`**: audit rows are hash-chained and never rewritten. A query or SIEM
 rule that must cover older history should match on `event_type` as well as
 `success`. `access_request.rejected` is unchanged (it records a successful decision).
+Proved on main by `internal/core/audit_failure_events_success_false_test.go`
+(`TestMFAFailed_IsStoredWithSuccessFalse` and its siblings) and the family guard
+`audit_failure_events_success_false_guard_test.go:TestFailureNamedAuditEvents_AreWrittenWithSuccessFalse`,
+run for this entry (not against a release build).
 
 ## 6v. SCIM no longer creates or manages `sso:` accounts (#3493)
 
@@ -1062,7 +1113,7 @@ sessions or PATs; see SCIM-7 in
 and [Offboarding an SSO / JIT account](CONFIGURATION.md#offboarding-an-sso--jit-account).
 Deactivate such accounts, or revoke their PATs, in Keyorix.
 
-## 6j. CLI: webhook URLs and tokens stay off the command line
+## 6x. CLI: webhook URLs and tokens stay off the command line
 
 Changes in the `keyorix` CLI and web UI; the server needs no action. Check your scripts
 before upgrading the CLI:
