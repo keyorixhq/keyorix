@@ -527,7 +527,7 @@ maintain the manifest). The check compares content, so how the files were copied
 cp`, `rsync`) and their modification times play no part. **Fix.** Restore the whole set from one
 backup with `keyorix-server admin restore` (it records a new manifest). If you replaced the named
 files deliberately and they do belong together, remove `keyset.manifest.json`: the next start
-adopts the current files with a WARN and a `keyset_manifest_adopted` audit event. "Remove the
+adopts the current files with a WARN and an `encryption.keyset_manifest_adopted` audit event. "Remove the
 partial files and let first boot recreate them" is only right on an install that has **no data
 yet**. **In place:** no.
 

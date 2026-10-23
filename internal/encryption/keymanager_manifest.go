@@ -90,6 +90,12 @@ func (km *KeyManager) commitKeySetFromDisk(op string, paths []string) {
 // interrupted key operation from its staging files (ReconcileKeySet).
 const EventKeySetRotationFinished = "encryption.keyset_rotation_finished"
 
+// EventKeySetManifestAdopted is the audit event recorded when boot records key
+// files the manifest had no record of: the whole set on the first start after
+// the upgrade that introduced the manifest (or over an unparseable one), or a
+// file a newly configured provider brought in (#2900 criterion 4).
+const EventKeySetManifestAdopted = "encryption.keyset_manifest_adopted"
+
 // ReconcileKeySet is boot's manifest step (keyfiles.ReconcileKeySet): refuse
 // a partial, mixed or incoherent key set; finish an interrupted operation the
 // manifest proves finishable; record a completed one whose commit was lost;
@@ -103,6 +109,11 @@ func (s *Service) ReconcileKeySet() error {
 	}
 	for _, w := range res.Warnings {
 		log.Printf("[WARN] key set: %s", w)
+	}
+	if len(res.Adopted) > 0 {
+		s.recordKeySetEvent(EventKeySetManifestAdopted, fmt.Sprintf(
+			"boot adopted key files into the key-set manifest without a prior record (%s): %s",
+			res.AdoptReason, strings.Join(res.Adopted, ", ")))
 	}
 	if res.Finished != "" {
 		var renamed []string

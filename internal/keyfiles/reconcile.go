@@ -8,8 +8,12 @@
 package keyfiles
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 )
@@ -22,6 +26,12 @@ type ReconcileResult struct {
 	Warnings []string
 	Finished string
 	Renamed  []FinishRename
+	// Adopted lists the files recorded without a prior record: the whole set
+	// when the manifest was missing or unparseable, otherwise the unrecorded
+	// files. Non-empty means an audit event.
+	Adopted []string
+	// AdoptReason says why (for the audit event and the log line).
+	AdoptReason string
 }
 
 // ReconcileKeySet runs InspectKeySet (returning its refusal unchanged) and
@@ -44,10 +54,20 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		return nil, err
 	}
 	res := &ReconcileResult{}
-	if st.Fresh || st.Manifest == nil {
+	if st.Fresh {
 		return res, nil
 	}
 	fs = fs.withDefaults()
+	required, err := RequiredKeyFilePaths(enc, baseDir)
+	if err != nil {
+		return nil, err
+	}
+	if st.Manifest == nil {
+		if err := adoptWholeSet(st, required, fs, res); err != nil {
+			return nil, err
+		}
+		return res, nil
+	}
 	next := st.Manifest.Next
 	switch st.Intent {
 	case IntentFinishable:
@@ -67,10 +87,6 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 			next.Operation, next.Generation, st.ManifestPath))
 		fallthrough
 	case IntentCompleted:
-		required, err := RequiredKeyFilePaths(enc, baseDir)
-		if err != nil {
-			return nil, err
-		}
 		files := map[string][]byte{}
 		for _, f := range st.Files {
 			if _, named := next.Files[f.Key]; !named {
@@ -86,6 +102,19 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		if err := w.CommitManifest(next.Operation, files); err != nil {
 			return nil, fmt.Errorf("record the %s in the key-set manifest: %w", next.Operation, err)
 		}
+	}
+
+	if len(st.Unrecorded) > 0 {
+		w := &SetWriter{manifestPath: st.ManifestPath, required: required, fs: fs}
+		if err := w.CommitManifestFromDisk(OpAdopted, st.Unrecorded...); err != nil {
+			return nil, fmt.Errorf("record %s in the key-set manifest: %w", strings.Join(st.Unrecorded, ", "), err)
+		}
+		res.Adopted = append(res.Adopted, st.Unrecorded...)
+		res.AdoptReason = "not recorded in the key-set manifest (a key provider added to the configuration after the manifest was written)"
+		res.Warnings = append(res.Warnings, fmt.Sprintf(
+			"%s were not recorded in the key-set manifest: recorded their current content in %s; from now on a "+
+				"different version of them is refused",
+			strings.Join(st.Unrecorded, ", "), st.ManifestPath))
 	}
 
 	dekPending := ""
@@ -112,4 +141,43 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		}
 	}
 	return res, nil
+}
+
+// adoptWholeSet is warn-and-adopt (#2900 criterion 4) for a complete set
+// whose manifest is missing — every install that predates the manifest, on
+// its first start after the upgrade — or unparseable: record the current
+// files as generation 1, once, and continue. The set's presence was already
+// checked (a partial set never gets here). An unparseable manifest is moved
+// aside, not overwritten, so it can be inspected.
+//
+// What adoption cannot know is whether the files it records belong together:
+// it trusts the set as it is, exactly as every boot did before the manifest
+// existed. The guarantee starts from this generation on.
+func adoptWholeSet(st *KeySetState, required []string, fs ManifestFS, res *ReconcileResult) error {
+	m, err := adoptFromDisk(filepath.Dir(st.ManifestPath), required, 1, true)
+	if err != nil {
+		return err
+	}
+	reason := "no key-set manifest (an install that predates it)"
+	if !errors.Is(st.ManifestErr, ErrManifestMissing) {
+		aside := fmt.Sprintf("%s.unparseable-%s", st.ManifestPath, time.Now().UTC().Format("20060102T150405Z"))
+		if err := os.Rename(st.ManifestPath, aside); err != nil {
+			return fmt.Errorf("move the unparseable key-set manifest aside to %s: %w", aside, err)
+		}
+		reason = fmt.Sprintf("the key-set manifest was unparseable (%v; moved aside to %s)", st.ManifestErr, aside)
+	}
+	if err := writeManifest(st.ManifestPath, m, fs); err != nil {
+		return err
+	}
+	for _, f := range required {
+		if _, ok := m.Files[manifestKey(filepath.Dir(st.ManifestPath), f)]; ok {
+			res.Adopted = append(res.Adopted, f)
+		}
+	}
+	res.AdoptReason = reason
+	res.Warnings = append(res.Warnings, fmt.Sprintf(
+		"%s: adopted the current key files (%s) as generation 1 of %s, trusting them as they are; from now on a "+
+			"key file from another generation is refused at boot",
+		reason, strings.Join(res.Adopted, ", "), st.ManifestPath))
+	return nil
 }

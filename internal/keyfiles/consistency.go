@@ -116,6 +116,10 @@ type KeySetState struct {
 	Finish []FinishRename
 	// Leftovers are "<required file>.pending" staging files present on disk.
 	Leftovers []string
+	// Unrecorded are present required files the manifest has no entry for and
+	// no staged hash matching (a provider added to the config after the
+	// manifest was written). ReconcileKeySet adopts them.
+	Unrecorded []string
 }
 
 // IntentState is what boot concludes about a staged (not committed) operation.
@@ -168,6 +172,11 @@ type FinishRename struct{ From, To string }
 //     rewritten by a tool that does not maintain the manifest), whatever its
 //     mtime — cp, install, docker cp and kubectl cp all stamp the current time,
 //     which is why the mtime heuristic this replaces could not see it.
+//
+// A complete set with no manifest, or an unparseable one, is NOT refused:
+// every install that predates #2900 is in that state after the upgrade, and
+// refusing would brick it. ReconcileKeySet adopts it (warn-and-adopt). A
+// PARTIAL set is refused whatever the manifest says.
 //
 // A leftover "*.pending" rotation-staging file is never part of the required
 // set (RequiredKeyFilePaths does not add one), so it cannot make a set
@@ -234,6 +243,9 @@ func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, 
 		}
 		if f.Recorded && !f.MatchesRecorded && !f.MatchesStaged {
 			foreign = append(foreign, fmt.Sprintf("%s (recorded by %s at generation %d)", p, f.Entry.Operation, f.Entry.Generation))
+		}
+		if !f.Recorded && !f.MatchesStaged {
+			st.Unrecorded = append(st.Unrecorded, p)
 		}
 		st.Files = append(st.Files, f)
 	}
