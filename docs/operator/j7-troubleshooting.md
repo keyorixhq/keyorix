@@ -80,6 +80,12 @@ This is exactly right — every `admin` subcommand (`init`, `migrate`, `backup`,
 `encryption rotate`, ...) needs the database to itself. Stop the server, or confirm you
 really mean to run alongside it and pass `--force`.
 
+`keyorix.db.server.lock` is never a stale lock file: the lock on it is an `flock` that
+ends when its holder process exits. **Do not delete it.** Deleting it does not release
+the lock; the running server keeps it on the deleted file, and the next admin command
+creates a new one and runs beside the server unprotected. A run with `--force` without
+the lock is recorded as such in its audit event.
+
 ## Expired TLS certificate
 
 **Known gap:** the server does not check its own certificate's expiry at startup — it

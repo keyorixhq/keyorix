@@ -68,7 +68,15 @@
 //     absolute, "." or "..", a symlinked directory, DSN query parameters)
 //     meets on one lock file (TestSQLitePathSpellings_MeetOnTheSameLock). A
 //     symlink to the database FILE, or a hard link, used by only one side does
-//     not: the two sides then lock different sidecar files.
+//     not: the two sides then lock different sidecar files. "file:" URI
+//     spellings resolve to the file SQLite opens
+//     (TestSQLiteURISpellings_MeetOnTheSameLock).
+//   - The SQLite lock lives on the sidecar's inode, not its name. Deleting or
+//     replacing <db path>.server.lock while a server holds it (taking it for a
+//     stale lock file: it never is, an flock ends with its process) leaves the
+//     server on the old inode, and the next admin command creates a new file
+//     and gets the exclusive lock beside it. Nothing detects that today
+//     (REVIEW-SERVERGUARD-RECOVERYKEY-1 F4).
 //   - Postgres advisory locks share one numeric keyspace across the whole
 //     database cluster, not namespaced per application. A collision with an
 //     unrelated application choosing the same key is possible in principle;
@@ -85,6 +93,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -230,18 +239,32 @@ func ProbeRunning(cfg *config.Config) (running bool, detail string, err error) {
 }
 
 // sqliteLockPath resolves the sidecar lock path for cfg's configured
-// database, mirroring internal/storage/factory.go's localStorageDBFile: an
-// in-memory database (no real on-disk file) has nothing to guard.
+// database, like internal/storage/factory.go's localStorageDBFile: an
+// in-memory database (no real on-disk file) has nothing to guard. Unlike it,
+// a SQLite URI filename ("file:/data/secrets.db", "file:///...",
+// "file://localhost/...", percent-encoded, with a query) is resolved to the
+// file SQLite opens, so it meets a plain spelling of the same path on one
+// sidecar (TestSQLiteURISpellings_MeetOnTheSameLock), and only the query
+// marks a database in-memory ("mode=memory" in a directory name does not).
 func sqliteLockPath(cfg *config.Config) (path string, isRealFile bool) {
 	dbPath := cfg.Storage.Database.Path
 	if dbPath == "" {
 		dbPath = "./secrets.db"
 	}
-	base := dbPath
-	if idx := strings.IndexByte(base, '?'); idx != -1 {
-		base = base[:idx]
+	base, query, _ := strings.Cut(dbPath, "?")
+	if rest, ok := strings.CutPrefix(base, "file:"); ok {
+		rest, _, _ = strings.Cut(rest, "#")
+		if hier, ok := strings.CutPrefix(rest, "//"); ok {
+			if authority, p, _ := strings.Cut(hier, "/"); authority == "" || authority == "localhost" {
+				rest = "/" + p
+			}
+		}
+		if dec, err := url.PathUnescape(rest); err == nil {
+			rest = dec
+		}
+		base = rest
 	}
-	if base == "" || base == ":memory:" || strings.Contains(dbPath, "mode=memory") {
+	if base == "" || base == ":memory:" || strings.Contains(query, "mode=memory") {
 		return "", false
 	}
 	return base + serverLockSuffix, true
