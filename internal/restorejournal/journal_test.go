@@ -68,3 +68,70 @@ func TestDir_PerBackend(t *testing.T) {
 		t.Fatalf("remote: %q %v", d, err)
 	}
 }
+
+// TestDir_RelativePathIsMadeAbsolute: a relative database path resolves
+// against the working directory, as it does for the server, and the journal
+// location is reported absolute so messages name the real file.
+func TestDir_RelativePathIsMadeAbsolute(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &config.Config{}
+	cfg.Storage.Type = "sqlite"
+	cfg.Storage.Database.Path = "data/secrets.db"
+	if d, err := Dir(cfg); err != nil || d != filepath.Join(wd, "data") {
+		t.Fatalf("got %q %v, want %q", d, err, filepath.Join(wd, "data"))
+	}
+}
+
+// TestWrite_SyncsEveryStagedDirectoryBeforeTheJournal: a key file staged in
+// a directory other than the journal's must have its directory entry on disk
+// before a journal naming it is, or power loss can keep the journal and lose
+// the staged file. Write fsyncs each distinct staged-file directory, then the
+// journal's own directory after the rename.
+func TestWrite_SyncsEveryStagedDirectoryBeforeTheJournal(t *testing.T) {
+	jdir, keyDir, saltDir := t.TempDir(), t.TempDir(), t.TempDir()
+	jpath := filepath.Join(jdir, FileName)
+	var synced []string
+	journalOnDisk := map[string]bool{}
+	orig := syncDir
+	t.Cleanup(func() { syncDir = orig })
+	syncDir = func(dir string) error {
+		synced = append(synced, dir)
+		_, err := os.Stat(jpath)
+		journalOnDisk[dir] = err == nil
+		return orig(dir)
+	}
+	j := Journal{Backend: "postgres", Timestamp: "20261023T000000Z", Entries: []Entry{
+		{Path: filepath.Join(keyDir, "dek.key"), Staged: filepath.Join(keyDir, "dek.key.restoring-1")},
+		{Path: filepath.Join(keyDir, "other.key"), Staged: filepath.Join(keyDir, "other.key.restoring-2")},
+		{Path: filepath.Join(saltDir, "kek.salt"), Staged: filepath.Join(saltDir, "kek.salt.restoring-3")},
+	}}
+	if err := Write(jpath, j); err != nil {
+		t.Fatal(err)
+	}
+	want := []string{keyDir, saltDir, jdir}
+	if len(synced) != len(want) {
+		t.Fatalf("synced %v, want %v", synced, want)
+	}
+	for i, d := range want {
+		if synced[i] != d {
+			t.Fatalf("synced %v, want %v", synced, want)
+		}
+	}
+	if journalOnDisk[keyDir] || journalOnDisk[saltDir] {
+		t.Fatalf("a staged-file directory was synced after the journal appeared: %v", journalOnDisk)
+	}
+}
+
+func TestHashBytesMatchesHashFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "f")
+	if err := os.WriteFile(p, []byte("key material"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := HashFile(p)
+	if err != nil || got != HashBytes([]byte("key material")) || len(got) != 64 {
+		t.Fatalf("HashFile=%q err=%v", got, err)
+	}
+}

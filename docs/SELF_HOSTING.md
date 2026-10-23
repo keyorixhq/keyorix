@@ -458,8 +458,9 @@ row load is one transaction, so the target never holds a partial set of rows, an
 files are installed only after that transaction commits. A restore killed in between leaves
 `.keyorix-restore-journal.json` next to the first key file; the server refuses to start
 until `keyorix-server admin restore --recover` finishes the restore (data committed) or
-undoes it (not committed). Killed before that journal exists, it leaves only inert
-`*.restoring-*` files and, after the migration step, the empty schema, so a plain re-run is
+undoes it (not committed); if it cannot vouch for a staged key file it refuses and changes
+nothing. Killed before that journal exists, it leaves only `*.restoring-*` files (removed by
+the next restore or `--recover`) and, after the migration step, the empty schema, so a plain re-run is
 refused: re-run with `--overwrite-existing`, which empties the target's tables inside the
 load transaction. What each failure point leaves, and the recovery, are in
 [operator/restore-failure-modes.md](operator/restore-failure-modes.md). (Releases up to

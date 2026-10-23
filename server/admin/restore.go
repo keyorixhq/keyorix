@@ -169,6 +169,14 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	if err := restorejournal.RefuseIfPresent(cfg); err != nil {
 		return err
 	}
+	if !forceFlag {
+		// No journal: any staged file beside the live ones is an orphan of a
+		// restore killed before it wrote one (never under --force, which may
+		// run beside another command holding the lock).
+		if err := removeOrphanStagedFiles(cfg); err != nil {
+			return err
+		}
+	}
 
 	version, err := peekFormatVersion(restoreInput)
 	if err != nil {
@@ -406,6 +414,9 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			discardStagedEntries(entries)
 		}
 	}()
+	if err := restoreStepHook("staged"); err != nil {
+		return err
+	}
 	journal := restorejournal.Journal{
 		Backend:   "sqlite",
 		Timestamp: restoreTS,
@@ -414,7 +425,11 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			restoreInput, manifest.CreatedAt.Format(time.RFC3339)),
 	}
 	if rollbackCheck.archiveEncoded != "" {
-		journal.WitnessPath, journal.WitnessValue = auditverify.WitnessPath(identityPath), rollbackCheck.archiveEncoded
+		witnessPath, werr := filepath.Abs(auditverify.WitnessPath(identityPath))
+		if werr != nil {
+			return fmt.Errorf("resolve the rollback-protection witness path: %w", werr)
+		}
+		journal.WitnessPath, journal.WitnessValue = witnessPath, rollbackCheck.archiveEncoded
 	}
 	if rollbackCheck.overrodeRollback {
 		journal.RollbackOverrideEvent = fmt.Sprintf("restored a backup that is %d audit event(s) behind this host's last known state "+
@@ -440,10 +455,17 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			return err
 		}
 	} else {
-		stagedDB := fmt.Sprintf("%s.restoring-%s", dbPath, restoreTS)
-		entries = append(entries, restorejournal.Entry{Path: dbPath, Staged: stagedDB, SQLiteDB: true})
+		absDB, aerr := filepath.Abs(dbPath)
+		if aerr != nil {
+			return fmt.Errorf("resolve %q: %w", dbPath, aerr)
+		}
+		stagedDB := fmt.Sprintf("%s.restoring-%s", absDB, restoreTS)
+		entries = append(entries, restorejournal.Entry{Path: absDB, Staged: stagedDB, SQLiteDB: true})
 		if err := buildStagedSQLiteRestore(cfg, stagedDB, manifest, stagingDir); err != nil {
 			return err
+		}
+		if entries[len(entries)-1].SHA256, err = restorejournal.HashFile(stagedDB); err != nil {
+			return fmt.Errorf("hash staged database: %w", err)
 		}
 		if err := restoreStepHook("loaded"); err != nil {
 			return err
@@ -458,7 +480,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 		}
 	}
 
-	if err := installJournalEntries(journal); err != nil {
+	if err := installJournalEntries(journalPath, &journal); err != nil {
 		return restoreInterruptedError(journalPath, err)
 	}
 
@@ -830,7 +852,7 @@ func runAdminRestoreV1(cfg *config.Config) error {
 		discardStagedEntries(entries)
 		return err
 	}
-	if err := installJournalEntries(journal); err != nil {
+	if err := installJournalEntries(journalPath, &journal); err != nil {
 		return restoreInterruptedError(journalPath, err)
 	}
 	if err := restorejournal.Remove(journalPath); err != nil {
@@ -1323,6 +1345,9 @@ func commitRestoredFile(path, tmpPath, restoreTS string, overwrite bool) error {
 			aside := fmt.Sprintf("%s.pre-restore-%s", path, restoreTS)
 			if err := os.Rename(path, aside); err != nil {
 				return fmt.Errorf("move existing %q aside to %q: %w", path, aside, err)
+			}
+			if err := restoreStepHook("moved-aside"); err != nil {
+				return err
 			}
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("stat %q: %w", path, err)

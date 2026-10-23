@@ -359,13 +359,21 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 		journal       bool // a journal is left behind
 		forward       bool // recovery rolls forward
 	}{
+		{"sqlite", "staged", false, false},
 		{"sqlite", "loaded", false, false},
 		{"sqlite", "journal-written", true, true},
+		{"sqlite", "moved-aside", true, true},
 		{"sqlite", "installed-1", true, true},
+		{"sqlite", "installed-3", true, true}, // the last entry: the database
+		{"sqlite", "finishing", true, true},
+		{"postgres", "staged", false, false},
 		{"postgres", "journal-written", true, false},
 		{"postgres", "loaded", true, false},
 		{"postgres", "committed", true, true},
+		{"postgres", "moved-aside", true, true},
 		{"postgres", "installed-1", true, true},
+		{"postgres", "installed-2", true, true}, // the last key file
+		{"postgres", "finishing", true, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.backend+"/"+tc.step, func(t *testing.T) {
@@ -380,6 +388,14 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 				require.Equal(t, f.liveKeys, readOverwriteKeys(t, f.dir))
 				require.Equal(t, []string{"after-backup", "in-backup"}, f.projectNames(t))
 				require.Equal(t, auditBefore, f.auditEventCount(t))
+				// The staged copies the killed process left are removed by
+				// the next --recover (or restore).
+				restoreRecover = true
+				t.Cleanup(func() { restoreRecover = false })
+				out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })
+				require.NoError(t, err, "recover output:\n%s", out)
+				require.Empty(t, f.restoreLeftovers(t))
+				require.Equal(t, f.liveKeys, readOverwriteKeys(t, f.dir))
 				return
 			}
 			require.Error(t, bootErr, "the boot check must refuse while a restore journal exists")
@@ -392,11 +408,27 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 			require.Error(t, err, "a backup must refuse while a journal exists")
 			require.Contains(t, err.Error(), "admin restore --recover")
 
+			if tc.step == "finishing" {
+				j, _, jerr := restorejournal.Read(filepath.Join(f.dir, restorejournal.FileName))
+				require.NoError(t, jerr)
+				require.True(t, j.Installed, "the journal must record the install before the finish step starts")
+			}
+
 			restoreRecover = true
 			t.Cleanup(func() { restoreRecover = false })
 			out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })
 			require.NoError(t, err, "recover output:\n%s", out)
 			require.NoError(t, restorejournal.RefuseIfPresent(cfg), "recovery must remove the journal")
+			if tc.step == "finishing" {
+				// Documented (restore-failure-modes.md): the finish step's audit
+				// events precede the journal's removal, so a crash between them
+				// records them twice -- never zero times.
+				var completed int64
+				f.withDB(t, func(db *gorm.DB) {
+					require.NoError(t, db.Model(&models.AuditEvent{}).Where("event_type = ?", "admin.restore_completed").Count(&completed).Error)
+				})
+				require.Equal(t, int64(2), completed)
+			}
 
 			if tc.forward {
 				require.Contains(t, out, "Rolled forward")
@@ -423,15 +455,35 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 // config's own key files and database, or a staged name that is not a
 // restore staging file next to its target, and rename nothing.
 func TestAdminRestoreRecover_RefusesForeignJournalEntries(t *testing.T) {
-	cases := map[string]restorejournal.Entry{
-		"foreign target":  {Path: "elsewhere.txt", Staged: "elsewhere.txt.restoring-1"},
-		"foreign staged":  {Path: "dek.key", Staged: "planted-dek"},
-		"other directory": {Path: "dek.key", Staged: "../dek.key.restoring-1"},
+	planted := restorejournal.HashBytes([]byte("planted"))
+	cases := map[string]func(dir string) restorejournal.Entry{
+		"foreign target": func(dir string) restorejournal.Entry {
+			return restorejournal.Entry{Path: filepath.Join(dir, "elsewhere.txt"), Staged: filepath.Join(dir, "elsewhere.txt.restoring-1"), SHA256: planted}
+		},
+		"foreign staged": func(dir string) restorejournal.Entry {
+			return restorejournal.Entry{Path: filepath.Join(dir, "dek.key"), Staged: filepath.Join(dir, "planted-dek"), SHA256: planted}
+		},
+		"other directory": func(dir string) restorejournal.Entry {
+			sub := filepath.Join(dir, "sub")
+			_ = os.MkdirAll(sub, 0o750)
+			return restorejournal.Entry{Path: filepath.Join(dir, "dek.key"), Staged: filepath.Join(sub, "dek.key.restoring-1"), SHA256: planted}
+		},
+		"relative target": func(string) restorejournal.Entry {
+			return restorejournal.Entry{Path: "dek.key", Staged: "dek.key.restoring-1", SHA256: planted}
+		},
+		"no content hash": func(dir string) restorejournal.Entry {
+			return restorejournal.Entry{Path: filepath.Join(dir, "dek.key"), Staged: filepath.Join(dir, "dek.key.restoring-1")}
+		},
 	}
-	for name, entry := range cases {
+	for name, mk := range cases {
 		t.Run(name, func(t *testing.T) {
 			f := newOverwriteFixture(t, "sqlite", false)
-			require.NoError(t, os.WriteFile(filepath.Join(f.dir, entry.Staged), []byte("planted"), 0600))
+			entry := mk(f.dir)
+			staged := entry.Staged
+			if !filepath.IsAbs(staged) {
+				staged = filepath.Join(f.dir, staged)
+			}
+			require.NoError(t, os.WriteFile(staged, []byte("planted"), 0600))
 			jpath := filepath.Join(f.dir, restorejournal.FileName)
 			require.NoError(t, restorejournal.Write(jpath, restorejournal.Journal{
 				Backend: "sqlite", Timestamp: "20260101T000000Z", Overwrite: true, Entries: []restorejournal.Entry{entry}}))

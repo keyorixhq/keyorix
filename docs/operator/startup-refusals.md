@@ -538,8 +538,10 @@ an interrupted `admin restore` left its journal at <dir>/.keyorix-restore-journa
 archive's key files and data, so the key files and the data may be from different points in
 time. `admin backup` and a new `admin restore` refuse with the same message. **Fix.** Stop
 every server on this data and run `keyorix-server admin restore --recover`: it rolls the
-restore forward if its data was committed and back otherwise
-([restore-failure-modes.md](restore-failure-modes.md)). Do not delete the journal by hand.
+restore forward if its data was committed and back otherwise, and refuses (changing
+nothing) when a staged key file is missing or altered
+([restore-failure-modes.md](restore-failure-modes.md)). Run it with the same config and
+working directory as the restore. Do not delete the journal by hand.
 **In place:** yes, `--recover`.
 
 ### Key files readable by others, or owned by another account — from code

@@ -6,21 +6,31 @@
 //  1. Stage: every key file is written and fsynced next to its target as
 //     <path>.restoring-<rand>; nothing live is touched. SQLite also builds
 //     the whole restored database at <db>.restoring-<ts> and loads it there.
-//  2. Journal: restorejournal.Write records every staged file.
+//  2. Journal: restorejournal.Write fsyncs every staged file's directory,
+//     then records every staged file with its SHA-256.
 //  3. Commit point. PostgreSQL: one transaction clears the target tables
 //     (under --overwrite-existing), loads the archive, resyncs sequences and
 //     writes the journal's token into system_metadata. SQLite: the journal
 //     itself (it is written only once every staged file is complete).
-//  4. Install: each staged file is renamed over its target, the original
-//     moved aside to <path>.pre-restore-<ts>.
-//  5. Finish: audit events, witness, journal removed.
+//  4. Install: every entry is checked first (a staged file must still hash
+//     to its recorded SHA-256; a missing one counts as installed only if the
+//     live file does), then each staged file is renamed over its target, the
+//     original moved aside to <path>.pre-restore-<ts>, and the journal is
+//     rewritten as installed.
+//  5. Finish: audit events, witness, journal removed. A crash inside this
+//     step makes --recover write the audit events again (they precede the
+//     journal's removal so that a crash can duplicate them but never lose
+//     them).
 //
 // A failure before the commit point removes the staged files and the
 // journal: the live keys and data are exactly what they were. A failure or
 // crash after it leaves the journal, the server refuses to start
 // (restorejournal.RefuseIfPresent), and --recover rolls the restore forward.
 // A crash before it (PostgreSQL) leaves a journal whose token never reached
-// the database, and --recover rolls back.
+// the database, and --recover rolls back. A crash before step 2 leaves only
+// staged files, which the next restore or --recover removes
+// (removeOrphanStagedFiles). Recovery that cannot vouch for a staged file
+// refuses and changes nothing.
 package admin
 
 import (
@@ -73,21 +83,74 @@ func newRestoreToken() (string, error) {
 }
 
 // prepareRestoredFileSet stages every file of a set (prepareRestoredFile)
-// without installing any; on error nothing is left behind.
+// without installing any; on error nothing is left behind. The entries carry
+// absolute paths and each staged file's SHA-256.
 func prepareRestoredFileSet(paths []string, data [][]byte) ([]restorejournal.Entry, error) {
 	if len(paths) != len(data) {
 		return nil, fmt.Errorf("internal error: %d paths but %d data buffer(s) for a restored file set", len(paths), len(data))
 	}
 	var entries []restorejournal.Entry
 	for i, path := range paths {
-		tmpPath, err := prepareRestoredFile(path, data[i])
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			discardStagedEntries(entries)
+			return nil, fmt.Errorf("resolve %q: %w", path, err)
+		}
+		tmpPath, err := prepareRestoredFile(abs, data[i])
 		if err != nil {
 			discardStagedEntries(entries)
 			return nil, err
 		}
-		entries = append(entries, restorejournal.Entry{Path: path, Staged: tmpPath})
+		entries = append(entries, restorejournal.Entry{Path: abs, Staged: tmpPath, SHA256: restorejournal.HashBytes(data[i])})
 	}
 	return entries, nil
+}
+
+// removeOrphanStagedFiles removes what a restore killed before it wrote its
+// journal leaves beside cfg's key files and database: <target>.restoring-*
+// staged copies (archive key material, mode 0600, plus a staged SQLite
+// database and its sidecars) and journal temp files. Only call it holding
+// the database lock with no journal present; each removal is printed.
+func removeOrphanStagedFiles(cfg *config.Config) error {
+	targets, err := expectedKeyFilePaths(cfg)
+	if err != nil {
+		return err
+	}
+	if !isPostgresStorage(cfg) {
+		targets = append(targets, sqliteDBPath(cfg))
+	}
+	prefixes := map[string][]string{} // directory -> name prefixes
+	for _, t := range targets {
+		abs, err := filepath.Abs(t)
+		if err != nil {
+			return fmt.Errorf("resolve %q: %w", t, err)
+		}
+		dir := filepath.Dir(abs)
+		prefixes[dir] = append(prefixes[dir], filepath.Base(abs)+".restoring-")
+	}
+	if jdir, err := restorejournal.Dir(cfg); err == nil && jdir != "" {
+		prefixes[jdir] = append(prefixes[jdir], restorejournal.FileName+".tmp-")
+	}
+	for dir, pfx := range prefixes {
+		names, err := os.ReadDir(dir)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("list %q for leftover restore files: %w", dir, err)
+		}
+		for _, de := range names {
+			if !de.Type().IsRegular() || !slices.ContainsFunc(pfx, func(p string) bool { return strings.HasPrefix(de.Name(), p) }) {
+				continue
+			}
+			p := filepath.Join(dir, de.Name())
+			if err := os.Remove(p); err != nil {
+				return fmt.Errorf("remove leftover restore file %q: %w", p, err)
+			}
+			fmt.Printf("Removed a leftover staged file from an earlier interrupted restore (it never became live): %s\n", p)
+		}
+	}
+	return nil
 }
 
 // discardStagedEntries removes staged files that were never installed.
@@ -100,10 +163,18 @@ func discardStagedEntries(entries []restorejournal.Entry) {
 	}
 }
 
-// installJournalEntries installs every staged file of j. Idempotent, so a
-// recovery can run it again after a crash part-way through: an entry whose
-// staged file is gone was already installed.
-func installJournalEntries(j restorejournal.Journal) error {
+// installJournalEntries installs every staged file of j, then rewrites the
+// journal at journalPath as installed. Idempotent, so a recovery can run it
+// again after a crash part-way through. Every entry is checked before the
+// first rename (checkJournalEntries): an entry that cannot be vouched for
+// stops the install with nothing renamed.
+func installJournalEntries(journalPath string, j *restorejournal.Journal) error {
+	if j.Installed {
+		return nil
+	}
+	if err := checkJournalEntries(j.Entries); err != nil {
+		return err
+	}
 	for i, e := range j.Entries {
 		if err := installJournalEntry(e, j.Timestamp, j.Overwrite); err != nil {
 			return fmt.Errorf("install %q: %w", e.Path, err)
@@ -112,13 +183,50 @@ func installJournalEntries(j restorejournal.Journal) error {
 			return err
 		}
 	}
+	j.Installed = true
+	if err := restorejournal.Write(journalPath, *j); err != nil {
+		return fmt.Errorf("record the install in the restore journal: %w", err)
+	}
+	return nil
+}
+
+// errUnvouchedStagedFile marks a journal entry recovery cannot vouch for.
+var errUnvouchedStagedFile = errors.New("recovery refuses to install it")
+
+// checkJournalEntries verifies, before anything is renamed, that every entry
+// is either still staged with the content the restore staged, or already
+// installed (the live file has that content). Anything else -- a staged file
+// lost to a crash (its directory entry never reached the disk) beside a live
+// file that is not the restored one, or a staged file whose content changed
+// -- is refused: rolling forward would pair the restored data with key files
+// from another point in time.
+func checkJournalEntries(entries []restorejournal.Entry) error {
+	for _, e := range entries {
+		got, err := restorejournal.HashFile(e.Staged)
+		if err == nil {
+			if got != e.SHA256 {
+				return fmt.Errorf("staged file %q does not have the content the restore staged for %q (SHA-256 %s, journal "+
+					"records %s): %w", e.Staged, e.Path, got, e.SHA256, errUnvouchedStagedFile)
+			}
+			continue
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("read staged file %q: %w", e.Staged, err)
+		}
+		live, lerr := restorejournal.HashFile(e.Path)
+		if lerr == nil && live == e.SHA256 {
+			continue // installed by an earlier run
+		}
+		return fmt.Errorf("staged file %q is missing and %q is not the restored file (a crash lost the staged copy "+
+			"before it was installed): %w", e.Staged, e.Path, errUnvouchedStagedFile)
+	}
 	return nil
 }
 
 func installJournalEntry(e restorejournal.Entry, ts string, overwrite bool) error {
 	staged, err := os.Lstat(e.Staged)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil // installed by an earlier run
+		return nil // installed by an earlier run (checkJournalEntries saw the live file match)
 	}
 	if err != nil {
 		return fmt.Errorf("stat staged file %q: %w", e.Staged, err)
@@ -171,6 +279,9 @@ func finishRestore(cfg *config.Config, journalPath string, j restorejournal.Jour
 	}
 	if j.RollbackOverrideEvent != "" {
 		recordAdminAction(cfg, "admin.restore_rollback_override", j.RollbackOverrideEvent, true)
+	}
+	if err := restoreStepHook("finishing"); err != nil {
+		return err
 	}
 	if err := restorejournal.Remove(journalPath); err != nil {
 		return fmt.Errorf("the restore is complete, but its journal could not be removed (%w) -- the server refuses "+
@@ -269,6 +380,11 @@ func runAdminRestoreRecover(cfg *config.Config) error {
 		return fmt.Errorf("%w -- recovery refuses to guess; inspect the file", err)
 	}
 	if !found {
+		if !forceFlag {
+			if err := removeOrphanStagedFiles(cfg); err != nil {
+				return err
+			}
+		}
 		fmt.Printf("No interrupted restore found (no %s). Nothing to do.\n", journalPath)
 		return nil
 	}
@@ -297,7 +413,11 @@ func runAdminRestoreRecover(cfg *config.Config) error {
 		return nil
 	}
 
-	if err := installJournalEntries(j); err != nil {
+	if err := installJournalEntries(journalPath, &j); err != nil {
+		if errors.Is(err, errUnvouchedStagedFile) {
+			return fmt.Errorf("%w -- recovery refuses to roll forward and changed nothing; the journal %s is kept and the "+
+				"server keeps refusing to start. See docs/operator/restore-failure-modes.md (\"Recovery refuses\")", err, journalPath)
+		}
 		return restoreInterruptedError(journalPath, err)
 	}
 	if err := finishRestore(cfg, journalPath, j); err != nil {
@@ -317,32 +437,65 @@ func runAdminRestoreRecover(cfg *config.Config) error {
 // one of cfg's own key files or its SQLite database, and every staged file
 // must be a restore staging name in its target's directory. A journal is a
 // file anyone with write access to that directory could plant; recovery must
-// not become a way to rename arbitrary files over arbitrary paths.
+// not become a way to rename arbitrary files over arbitrary paths, or to
+// write the rollback-protection witness anywhere but this deployment's own
+// witness file. Paths are compared absolute: run from another working
+// directory, relative key paths name other files, and the journal is refused.
 func validateJournalEntries(cfg *config.Config, j restorejournal.Journal) error {
 	wantBackend := "sqlite"
+	identityPath := sqliteDBPath(cfg)
 	if isPostgresStorage(cfg) {
 		wantBackend = "postgres"
+		var err error
+		if identityPath, err = postgresTargetIdentityPath(cfg); err != nil {
+			return err
+		}
 	}
 	if j.Backend != wantBackend {
 		return fmt.Errorf("restore journal is for backend %q, this config is %q", j.Backend, wantBackend)
 	}
-	allowed, err := expectedKeyFilePaths(cfg)
+	paths, err := expectedKeyFilePaths(cfg)
+	if err != nil {
+		return err
+	}
+	dbPath, err := filepath.Abs(sqliteDBPath(cfg))
 	if err != nil {
 		return err
 	}
 	if wantBackend == "sqlite" {
-		allowed = append(allowed, sqliteDBPath(cfg))
+		paths = append(paths, dbPath)
+	}
+	allowed := make([]string, 0, len(paths))
+	for _, p := range paths {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return err
+		}
+		allowed = append(allowed, abs)
 	}
 	for _, e := range j.Entries {
 		if !slices.Contains(allowed, e.Path) {
-			return fmt.Errorf("restore journal names %q, which is not one of this config's key files or database", e.Path)
+			return fmt.Errorf("restore journal names %q, which is not one of this config's key files or database "+
+				"(relative paths resolve against the working directory: run --recover from the directory the restore ran in)", e.Path)
 		}
-		if e.SQLiteDB != (wantBackend == "sqlite" && e.Path == sqliteDBPath(cfg)) {
+		if e.SQLiteDB != (wantBackend == "sqlite" && e.Path == dbPath) {
 			return fmt.Errorf("restore journal marks %q inconsistently as the SQLite database", e.Path)
 		}
 		if filepath.Dir(e.Staged) != filepath.Dir(e.Path) ||
 			!strings.HasPrefix(filepath.Base(e.Staged), filepath.Base(e.Path)+".restoring-") {
 			return fmt.Errorf("restore journal's staged file %q is not a restore staging file for %q", e.Staged, e.Path)
+		}
+		if len(e.SHA256) != 64 || strings.Trim(e.SHA256, "0123456789abcdef") != "" {
+			return fmt.Errorf("restore journal's entry for %q has no valid SHA-256 of its staged content", e.Path)
+		}
+	}
+	if j.WitnessPath != "" || j.WitnessValue != "" {
+		want, err := filepath.Abs(auditverify.WitnessPath(identityPath))
+		if err != nil {
+			return err
+		}
+		if j.WitnessPath != want {
+			return fmt.Errorf("restore journal's rollback-protection witness path %q is not this deployment's witness file %q", j.WitnessPath, want)
 		}
 	}
 	return nil

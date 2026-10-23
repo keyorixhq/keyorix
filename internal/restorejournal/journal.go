@@ -10,9 +10,12 @@
 package restorejournal
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -27,10 +30,16 @@ const FileName = ".keyorix-restore-journal.json"
 const Version = 1
 
 // Entry is one file the restore installs: Staged is a complete, fsynced
-// replacement in the same directory as Path, renamed over it on commit.
+// replacement in the same directory as Path, renamed over it on commit. Both
+// paths are absolute.
 type Entry struct {
 	Path   string `json:"path"`
 	Staged string `json:"staged"`
+	// SHA256 is the hex SHA-256 of Staged's content. Recovery installs a
+	// staged file only if it still hashes to this, and treats a missing
+	// staged file as installed only if Path does: a staged file whose
+	// directory entry was lost to a crash must never read as "done".
+	SHA256 string `json:"sha256"`
 	// SQLiteDB marks the database file: its -wal/-shm sidecars belong to the
 	// file being replaced and are moved aside with it.
 	SQLiteDB bool `json:"sqlite_db,omitempty"`
@@ -50,6 +59,11 @@ type Journal struct {
 	Timestamp string  `json:"timestamp"`
 	Overwrite bool    `json:"overwrite"`
 	Entries   []Entry `json:"entries"`
+	// Installed is set (journal rewritten) once every entry is installed.
+	// From then on the live files are the restore's and may change (the
+	// restore's own audit events go into a SQLite database), so recovery
+	// only finishes the remaining steps.
+	Installed bool `json:"installed,omitempty"`
 
 	// The steps that follow a commit, so a recovery can finish them.
 	CompletedEvent        string `json:"completed_event"`
@@ -63,19 +77,24 @@ func IsPostgres(cfg *config.Config) bool {
 	return cfg.Storage.Type == "postgres" || cfg.Storage.Type == "postgresql"
 }
 
-// Dir is the directory holding the journal: the database file's directory on
-// SQLite, the first key-material file's directory on PostgreSQL (the same
-// host-local anchor the rollback-protection witness uses there). "" when no
-// restore can run against cfg (remote storage, or PostgreSQL with no key
-// files configured).
+// Dir is the absolute directory holding the journal: the database file's
+// directory on SQLite, the first key-material file's directory on PostgreSQL
+// (the same host-local anchor the rollback-protection witness uses there).
+// Relative database and key paths resolve against the working directory, as
+// they do for the server and every admin command, so the journal sits next
+// to the very files a process with this config and working directory uses.
+// "" when no restore can run against cfg (remote storage, or PostgreSQL with
+// no key files configured: restore refuses that earlier, it has no host-local
+// witness anchor).
 func Dir(cfg *config.Config) (string, error) {
+	var dir string
 	switch {
 	case cfg.Storage.Type == "local" || cfg.Storage.Type == "sqlite":
 		dbPath := cfg.Storage.Database.Path
 		if dbPath == "" {
 			dbPath = "./secrets.db"
 		}
-		return filepath.Dir(dbPath), nil
+		dir = filepath.Dir(dbPath)
 	case IsPostgres(cfg):
 		specs, err := keyfiles.Registry(&cfg.Storage.Encryption, ".")
 		if err != nil {
@@ -84,10 +103,15 @@ func Dir(cfg *config.Config) (string, error) {
 		if len(specs) == 0 {
 			return "", nil
 		}
-		return filepath.Dir(specs[0].Path), nil
+		dir = filepath.Dir(specs[0].Path)
 	default:
 		return "", nil
 	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve restore journal directory %q: %w", dir, err)
+	}
+	return abs, nil
 }
 
 // Path is the journal's full path for cfg, "" when Dir is "".
@@ -118,9 +142,15 @@ func Read(path string) (j Journal, found bool, err error) {
 	return j, true, nil
 }
 
-// Write durably creates the journal at path (temp file, fsync, rename, fsync
-// of the directory): once Write returns, a crash cannot lose it.
+// Write durably creates or replaces the journal at path (temp file, fsync,
+// rename, fsync of the directory): once Write returns, a crash cannot lose
+// it. Before the journal is created it fsyncs every entry's staged-file
+// directory (SyncEntryDirs), so a journal on disk implies its staged files'
+// names are too.
 func Write(path string, j Journal) error {
+	if err := SyncEntryDirs(j.Entries); err != nil {
+		return err
+	}
 	j.Version = Version
 	data, err := json.MarshalIndent(j, "", "  ")
 	if err != nil {
@@ -147,7 +177,7 @@ func Write(path string, j Journal) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return fmt.Errorf("install restore journal: %w", err)
 	}
-	return SyncDir(dir)
+	return syncDir(dir)
 }
 
 // Remove deletes the journal at path and fsyncs its directory.
@@ -176,6 +206,49 @@ func RefuseIfPresent(cfg *config.Config) error {
 		"match until it is resolved. Stop every server on this data, then run `keyorix-server admin restore --recover` "+
 		"(it finishes the restore if its data was committed, and undoes it otherwise)", path)
 }
+
+// SyncEntryDirs fsyncs every distinct directory holding an entry's staged
+// file, so the staged files' directory entries are on disk before a journal
+// naming them is: otherwise a crash can keep the journal and lose a staged
+// key file in another directory.
+func SyncEntryDirs(entries []Entry) error {
+	seen := map[string]bool{}
+	for _, e := range entries {
+		dir := filepath.Dir(e.Staged)
+		if seen[dir] {
+			continue
+		}
+		seen[dir] = true
+		if err := syncDir(dir); err != nil {
+			return fmt.Errorf("fsync staged-file directory %q: %w", dir, err)
+		}
+	}
+	return nil
+}
+
+// HashFile is the hex SHA-256 of the file at path.
+func HashFile(path string) (string, error) {
+	f, err := os.Open(path) // #nosec G304 -- a journal entry's path, validated against cfg before recovery reads it
+	if err != nil {
+		return "", err
+	}
+	defer f.Close() //nolint:errcheck
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// HashBytes is HashFile for content in memory.
+func HashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+// syncDir is SyncDir behind a seam, so a test can see which directories a
+// journal write made durable.
+var syncDir = SyncDir
 
 // SyncDir fsyncs a directory so a create, rename or remove in it survives a
 // crash.
