@@ -876,12 +876,15 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
 			return
 		}
-		log.Printf("ChangePassword: user %d error: %v", userCtx.UserID, err)
-		if errors.Is(err, core.ErrPasswordPolicy) {
+		if msg, refused := core.PolicyRefusalMessage(err); refused {
 			// The caller must see which rule the new password broke to pick another.
-			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
+			// The message is fixed wording from core; the log line is fixed too, so
+			// nothing that came out of a password check reaches a log call.
+			log.Printf("ChangePassword: user %d: new password refused by policy", userCtx.UserID)
+			sendError(w, "BadRequest", msg, http.StatusBadRequest, nil)
 			return
 		}
+		log.Printf("ChangePassword: user %d error: %v", userCtx.UserID, err)
 		sendError(w, "BadRequest", clientSafe(err), http.StatusBadRequest, nil)
 		return
 	}

@@ -81,6 +81,10 @@ func TestChangePassword_EachPolicyRuleIsNamed(t *testing.T) {
 			assert.NotContains(t, w.Body.String(), "internal error")
 			requireNoPasswordMaterial(t, "response", w.Body.String(), tc.candidate, lockoutOracleTestPassword)
 			requireNoPasswordMaterial(t, "log", logs.String(), tc.candidate, lockoutOracleTestPassword)
+			// PG-DRILL-2: the refusal is logged as a fixed line, not as the error
+			// (go/clear-text-logging followed the error text into the log call).
+			assert.Contains(t, logs.String(), "new password refused by policy")
+			assert.NotContains(t, logs.String(), tc.rule, "the log line is fixed; the rule text goes only to the caller")
 			require.Zero(t, loginAttemptsFor(t, db), "a refused NEW password is not a failed credential")
 		})
 	}

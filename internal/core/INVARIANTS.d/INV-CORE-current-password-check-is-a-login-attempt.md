@@ -33,3 +33,11 @@
   `TestRequireReauth_RejectionsCarryTheSentinel`), and the call-site allowlist in
   `login_lockout_clear_site_guard_test.go` (the two clears and the re-check are listed with
   their reasons).
+  The text of a refused new password is fixed wording built from the policy's rule enum
+  (`PasswordPolicy.Unmet`/`DescribeAll`), never from or wrapping an error returned by a
+  check that was handed the candidate, and the handler logs a fixed line for it instead of
+  the error (PG-DRILL-2: CodeQL `go/clear-text-logging` followed the wrapped validator error
+  into the log call and failed the merge queue). Guard:
+  `change_password_fixed_text_test.go` (`TestChangePassword_PolicyRefusalTextIsFixedAndWrapsNothing`,
+  `TestChangePassword_NamedRefusalsWrapNothing`, `TestValidateNewPassword_RefusalWrapsNothing`) and the
+  log assertions in `TestChangePassword_EachPolicyRuleIsNamed`.

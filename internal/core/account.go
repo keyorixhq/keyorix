@@ -154,7 +154,7 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 			// never logged or audited.
 			c.recordFailedLogin(ctx, user)
 			c.writeAuditEventFailed(ctx, "auth.password_reuse_refused", actorPtr(userID), nil, "",
-				fmt.Sprintf("user %d tried to reuse a recent password", userID))
+				fmt.Sprintf("user %d submitted a candidate the history refused", userID))
 		}
 		return err
 	}
@@ -399,8 +399,11 @@ func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User
 // "must differ from the current password": for any other caller that wording would
 // confirm a guess at the current password for free.
 func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.User, newPassword string, currentVerified bool) error {
-	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
-		return passwordPolicyError{fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)}
+	// The refusal text is assembled from the policy's fixed wording for each broken
+	// rule. It is never built from, or wrapping, an error returned by a check that
+	// was handed the candidate: the text must not be derivable from the password.
+	if unmet := c.passwordPolicy.Unmet(newPassword, user); len(unmet) > 0 {
+		return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": password must " + c.passwordPolicy.DescribeAll(unmet)}
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
 	if c.passwordHistoryEnabled() {
@@ -408,38 +411,53 @@ func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.Us
 			if currentVerified {
 				// The caller already knows the current password (ChangePassword verified
 				// it first), so naming it discloses nothing and costs nothing.
-				return passwordPolicyError{fmt.Errorf("%s: new password must differ from the current password", i18n.T("ErrorValidation", nil))}
+				return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": new password must differ from the current password"}
 			}
-			return reusedPasswordError()
+			return newHistoryRefusal()
 		}
 		// A PAST password is account history the caller may not know: the wording
 		// stays generic and ChangePassword charges the attempt (ErrPasswordReused).
 		if c.passwordInHistory(ctx, user, newPassword) {
-			return reusedPasswordError()
+			return newHistoryRefusal()
 		}
 	}
 	return nil
 }
 
-func reusedPasswordError() error {
-	return passwordReusedError{passwordPolicyError{fmt.Errorf("%s: this password cannot be used; choose a different password", i18n.T("ErrorValidation", nil))}}
+// PolicyRefusalMessage returns the fixed, caller-facing text of a refused new
+// password (ErrPasswordPolicy). The HTTP layer shows it and logs a fixed line instead
+// of the error, so no log call receives a value that came out of a password check.
+func PolicyRefusalMessage(err error) (string, bool) {
+	var r interface{ RefusalMessage() string }
+	if errors.As(err, &r) {
+		return r.RefusalMessage(), true
+	}
+	return "", false
 }
 
-// passwordReusedError is a passwordPolicyError that also matches ErrPasswordReused.
-type passwordReusedError struct{ passwordPolicyError }
-
-func (e passwordReusedError) Is(target error) bool {
-	return target == ErrPasswordReused || e.passwordPolicyError.Is(target)
+func newHistoryRefusal() error {
+	return historyRefusal{policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": this password cannot be used; choose a different password"}}
 }
 
-// passwordPolicyError keeps the policy message as the error text and matches
-// ErrPasswordPolicy, so the HTTP layer can tell a refusal the caller must see from
-// an internal failure without comparing strings.
-type passwordPolicyError struct{ err error }
+// historyRefusal is a policyRefusal that also matches ErrPasswordReused.
+type historyRefusal struct{ policyRefusal }
 
-func (e passwordPolicyError) Error() string { return e.err.Error() }
-func (e passwordPolicyError) Unwrap() error { return e.err }
-func (e passwordPolicyError) Is(target error) bool {
+func (e historyRefusal) Is(target error) bool {
+	return target == ErrPasswordReused || e.policyRefusal.Is(target)
+}
+
+// policyRefusal is the refusal of a new password. Its text (msg) is fixed wording
+// naming the rule, shown to the caller who needs it to pick another password; it
+// matches ErrPasswordPolicy so the HTTP layer can tell it from an internal failure
+// without comparing strings. It wraps no other error on purpose: see
+// validateNewPasswordAs.
+type policyRefusal struct{ msg string }
+
+func (e policyRefusal) Error() string { return e.msg }
+
+// RefusalMessage is the caller-facing text; see PolicyRefusalMessage.
+func (e policyRefusal) RefusalMessage() string { return e.msg }
+func (e policyRefusal) Is(target error) bool {
 	return target == ErrPasswordPolicy
 }
 
