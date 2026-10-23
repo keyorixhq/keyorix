@@ -240,6 +240,12 @@ func (s *Service) StartDEKEpochGuard(db *gorm.DB, release func()) error {
 	if err := s.verifyOrSeedDEKEpoch(db, own); err != nil {
 		return err
 	}
+	// This DEK is the database's current one: a redo marker still present is a
+	// completed rotation's (RecoverInterruptedRotation keeps it on PostgreSQL
+	// when this key directory has no pending DEK).
+	if err := s.clearCompletedRotationMarker(db); err != nil {
+		log.Printf("[WARN] could not clear the redo marker of a completed DEK rotation: %v", err)
+	}
 	w := &dekEpochWatch{db: db, own: own, release: release, base: base, stop: make(chan struct{}), done: make(chan struct{})}
 	w.markMatch(0) // verified just now, after base
 	s.mu.Lock()
