@@ -1,6 +1,7 @@
 package pgdsn
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
@@ -18,6 +19,13 @@ func replaceURLDBName(base, newName string) string {
 	if err != nil {
 		// Never return base unchanged: that is exactly the silent no-op that
 		// pointed "isolated" tests at the shared database.
+		//
+		// A *url.Error quotes the whole raw URL, password included, so only
+		// its inner error (which describes the problem, not the input) is shown.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		panic(fmt.Sprintf("pgdsn: cannot parse URL DSN: %v", err))
 	}
 	u.Path = "/" + newName
