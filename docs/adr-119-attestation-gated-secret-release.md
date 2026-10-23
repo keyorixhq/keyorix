@@ -1,4 +1,4 @@
-# ADR-116: Attestation-gated secret release (Keyorix as RATS relying party)
+# ADR-119: Attestation-gated secret release (Keyorix as RATS relying party)
 
 **Status:** Proposed (2026-10-23). Not accepted until Andrei approves; no code follows before then.
 **Date:** 2026-10-23

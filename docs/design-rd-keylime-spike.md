@@ -3,7 +3,7 @@
 Status: **draft for decision. Design only; nothing was run.** The lab part is **pending e2e VM**
 (see §8). Nothing here is accepted until Andrei approves it, and no production path changes
 before then. The gating mechanism proposed in §5 has its own ADR,
-[ADR-116](adr-116-attestation-gated-secret-release.md), status Proposed.
+[ADR-119](adr-119-attestation-gated-secret-release.md), status Proposed.
 
 Session RD-KEYLIME-SPIKE-1, 2026-10-23, against origin/main `760e92e32` (docs only).
 
@@ -234,7 +234,7 @@ relying party needs is freshness of the *result*. Design:
   requires roughly synchronized clocks in the timestamp pattern, with the threshold covering
   maximum skew `[RFC9334 App. A.1]`. Skew handling is a decision (D4).
 
-## 5. Proposed gating mechanism (summary of ADR-116)
+## 5. Proposed gating mechanism (summary of ADR-119)
 
 1. A per-project (later per-secret) policy `require_attestation` naming a verifier, an agent
    binding, a `max_age`, and allowed states (default: {3}).
@@ -384,7 +384,7 @@ implementation, each row paired with a red/green test (§11). Evidence column he
 
 ## 11. Implementation plan for the next session (commits)
 
-Precondition: Andrei's decisions D1 to D7 in §12 and ADR-116 moved to Accepted. Until then no
+Precondition: Andrei's decisions D1 to D7 in §12 and ADR-119 moved to Accepted. Until then no
 code.
 
 1. `docs`: threat model `attestation-gated-release.md` rows ATT-1..10 with `GAP` markers where
@@ -418,7 +418,7 @@ Hot-files note: step 4 touches wiring files; keep it the last, tiny commit.
 | D5 | Gate is deny-only, after Authorize, fail-closed, no weaker-fallback flag | Yes |
 | D6 | Emergency override past attestation (break-glass) in iteration 1 | No in iteration 1; revisit with break-glass design owners |
 | D7 | Licence comfort with running Apache-2.0 Keylime as a separate process and documenting it | Yes; Andrei to confirm |
-| D8 | ADR number 116 (may collide with RD-TPM-SEAL-1) | Take next free at merge time; `check-adr-numbers` will catch it |
+| D8 | ADR number (116 collided with the other drafts) | Resolved: renumbered to ADR-119 (116 = signed audit checkpoints, 117 = TPM-sealed KEK, 118 = agent evidence ledger, 120 = attenuating agent tokens) |
 
 ## 13. One-page brief for the memoria técnica
 

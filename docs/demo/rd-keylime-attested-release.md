@@ -1,7 +1,7 @@
 # Demo: a secret released only to an attested host (5 minutes)
 
 **Status: NOT IMPLEMENTED. Pending e2e VM.** Written against the *future* CLI proposed in
-[ADR-116](../adr-116-attestation-gated-secret-release.md); the command names below are
+[ADR-119](../adr-119-attestation-gated-secret-release.md); the command names below are
 placeholders and do not exist. Lab environment: software TPM (swtpm) plus Keylime verifier,
 registrar and agent. A software TPM shows the protocol, **not** hardware-rooted trust; say so out
 loud during the demo.
