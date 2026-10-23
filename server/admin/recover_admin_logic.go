@@ -237,7 +237,7 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 	writeErr := store.LogAuditEvent(ctx, &models.AuditEvent{
 		EventType:   "admin.recover_admin",
 		UserID:      &uid,
-		Description: description,
+		Description: withLockBypassNote(description),
 		Success:     &ok,
 		ActorType:   adminActorType,
 		EventTime:   time.Now(),
