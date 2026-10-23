@@ -76,7 +76,7 @@ func TestCryptoInventory_TableFlagsClassicalKeys(t *testing.T) {
 		t.Fatalf("table must not request the CBOM: %q", q)
 	}
 	// the AES-256 row must not carry the flag
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if strings.Contains(line, "AES-256-GCM") && strings.Contains(line, "QUANTUM-VULNERABLE") {
 			t.Fatalf("AES-256 row wrongly flagged: %q", line)
 		}
