@@ -1,0 +1,1 @@
+SCIM-SSO-FIRSTLOGIN-1	./internal/core	TestSCIMUserFirstSSOLogin_ClearsPendingFirstLogin	default-ci	59c9e8d	3655	an SSO login clears pending_first_login only for SCIM-owned accounts; local accounts, suspended and deprovisioned stay restricted or blocked
