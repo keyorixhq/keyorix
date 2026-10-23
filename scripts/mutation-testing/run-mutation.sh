@@ -45,13 +45,23 @@ export MUTATION_STATE_DIR
 
 mkdir -p "$MUTATION_STATE_DIR"
 
-# Packages to mutation-test, one per line: "<go-package-path>|<label>". Widen
-# this deliberately, one package at a time, as each is brought into good
-# shape -- see .github's retired mutation-testing.yml (superseded by this
-# script) for the reasoning on why this starts scoped to two packages
-# instead of the whole repo.
+# Packages to mutation-test, one per line:
+# "<go-package-path>|<label>[|<min-efficacy-pct>]". Widen this deliberately,
+# one package at a time, as each is brought into good shape -- see .github's
+# retired mutation-testing.yml (superseded by this script) for the reasoning
+# on why this starts scoped to two packages instead of the whole repo.
+#
+# The optional third field is an absolute floor, measured when the package was
+# brought in (MUTANT-SEC-1, gremlins --workers 1). Falling below it fails the
+# run at the end, in addition to the relative-regression notice from
+# notify-summary.sh. The remaining survivors in these packages are equivalent
+# mutants (see the item commits), so the floor is the measured value, not 100.
 PACKAGES="internal/core|core
-internal/storage/store|storage-store"
+internal/storage/store|storage-store
+internal/keyfiles|keyfiles|93.55
+internal/securefiles|securefiles|98.31
+internal/recoverykey|recoverykey|82.35
+internal/evidencesink|evidencesink|100"
 
 cd "$KEYORIX_REPO"
 
@@ -60,7 +70,9 @@ git fetch origin main --quiet
 git checkout main --quiet
 git reset --hard origin/main --quiet
 
-while IFS='|' read -r pkg label; do
+below_floor=0
+
+while IFS='|' read -r pkg label min_efficacy; do
   [[ -z "$pkg" ]] && continue
   case "$pkg" in \#*) continue ;; *) ;; esac
 
@@ -94,6 +106,16 @@ while IFS='|' read -r pkg label; do
   python3 "$SCRIPT_DIR/summarize.py" "$label" >"$summary_json"
 
   "$SCRIPT_DIR/notify-summary.sh" "$label" "$summary_json" "${summary_json_prev:-}"
+
+  if [[ -n "${min_efficacy:-}" ]]; then
+    if ! python3 -c 'import json, sys
+eff = json.load(open(sys.argv[1])).get("test_efficacy_pct")
+sys.exit(0 if eff is not None and eff >= float(sys.argv[2]) else 1)' "$summary_json" "$min_efficacy"; then
+      echo "=== $(date -u +%FT%TZ) $label is below its efficacy floor ${min_efficacy}% -- see $summary_json ===" >&2
+      below_floor=1
+    fi
+  fi
 done <<<"$PACKAGES"
 
 echo "=== $(date -u +%FT%TZ) mutation-testing run complete ==="
+exit "$below_floor"
