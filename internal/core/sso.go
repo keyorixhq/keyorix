@@ -704,22 +704,26 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	if roleName == "" {
 		roleName = ssoDefaultRole
 	}
-	// #3546: the default role is granted at the global scope, so a
-	// project-assignable default_role would make every JIT user a member of
-	// every project. Refuse the provision (fail closed, like an unknown
-	// default_role) before writing. An unknown role is reported by the
-	// transaction below, as before.
-	if dr, derr := c.storage.GetRoleByName(ctx, roleName); derr == nil {
-		if err := validateRoleScope(dr, Scope{}); err != nil {
-			return nil, fmt.Errorf("SSO provider %q default_role: %w", p.Name, err)
-		}
-	}
 	// The user row and its baseline role grant run in one transaction — identical
 	// bootstrap shape to ProvisionSCIMUser (scim.go) and #2295's first-boot fix: a
 	// role-assign failure after a best-effort create used to leave a JIT-provisioned
 	// SSO user with zero roles, unable to do anything until an admin noticed.
 	var created *models.User
 	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		// #3546: the default role is granted at the global scope, so a
+		// default_role that may not be held install-wide (a project role, a new
+		// custom role) would make every JIT user a member of every project.
+		// The role is resolved and scope-checked on the transaction's own read,
+		// before any write and on the same row the grant uses: a failed read
+		// refuses the provision (fail closed, never "skip the check"), and a
+		// role narrowed since an earlier read is checked as it is now.
+		r, rerr := tx.GetRoleByName(ctx, roleName)
+		if rerr != nil {
+			return fmt.Errorf("failed to resolve default role %q: %w", roleName, rerr)
+		}
+		if serr := validateRoleScope(r, Scope{}); serr != nil {
+			return fmt.Errorf("SSO provider %q default_role: %w", p.Name, serr)
+		}
 		var cerr error
 		created, cerr = tx.CreateUser(ctx, &models.User{
 			Username: username, UsernameFolded: foldedUsername.Folded(),
@@ -730,13 +734,12 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		if cerr != nil {
 			return cerr
 		}
-		r, rerr := tx.GetRoleByName(ctx, roleName)
-		if rerr != nil {
-			return fmt.Errorf("failed to resolve default role %q: %w", roleName, rerr)
-		}
 		return tx.AssignRole(ctx, created.ID, r.ID, Scope{})
 	})
 	if err != nil {
+		if errors.Is(err, ErrRoleScopeInvalid) {
+			return nil, err
+		}
 		// #117: the FindSCIMUser reuse-check above races with a concurrent JIT-provision
 		// (or any other create) for the identical email — both can pass it before either
 		// commits. The DB-level partial unique index catches the loser here and CreateUser
