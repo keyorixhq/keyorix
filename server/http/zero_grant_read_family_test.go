@@ -396,6 +396,15 @@ func testZeroGrantMachineProjectListIsEmpty200(t *testing.T, backend string) {
 			// A route-gated read is a 403, not an empty answer.
 			code, body = w.get(t, w.tokens[persona], fmt.Sprintf("/api/v1/projects/%d", w.canaryPID))
 			assert.Equal(t, http.StatusForbidden, code, body)
+			// ADR-096 Amendment 1 part 3: the empty 200 is only for a token that
+			// authenticates. The same token with its last character changed is 401.
+			tok := w.tokens[persona]
+			swap := byte('A')
+			if tok[len(tok)-1] == swap {
+				swap = 'B'
+			}
+			code, body = w.get(t, tok[:len(tok)-1]+string(swap), "/api/v1/projects")
+			assert.Equal(t, http.StatusUnauthorized, code, "a mangled machine token must be 401, not an empty 200: %s", body)
 		})
 	}
 }
