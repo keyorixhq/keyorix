@@ -174,17 +174,6 @@ storage:
     dek_path: "keys/dek.key"
     salt_path: "keys/kek.salt"
 
-secrets:
-  chunking:
-    # Enable chunking large secrets into smaller parts
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 10
-
-  limits:
-    # Maximum number of secrets per user
-    max_secrets_per_user: 1000
-
 security:
   # Check file permission safety on startup
   enable_file_permission_check: true

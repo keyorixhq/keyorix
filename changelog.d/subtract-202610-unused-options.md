@@ -1,0 +1,2 @@
+### Documentation
+- **Dropped config keys that never did anything from the shipped templates and docs.** `secrets.chunking.*` and `secrets.limits.max_secrets_per_user` were never read by any code: there is no secret chunking and no per-user secret cap. They are gone from `configs/keyorix.yaml.tpl`, `server/config/production.yaml`, `server/config/web-enabled.yaml` and CONFIGURATION.md, which now documents the real `secrets.limits.max_secret_size` instead. Existing config files that still set them keep loading unchanged.
