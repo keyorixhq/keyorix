@@ -653,7 +653,10 @@ In short:
 Rollback across this release needs a restore (section 7). Proved with a real v0.96.1
 binary against a database a current server had migrated (PostgreSQL, natively, not a
 container or Kubernetes) by `scripts/e2e/mixed_version_test.go:TestMixedVersion_RollingUpgrade_Postgres`
-(`e2e` build tag; CI does not run it yet).
+(`e2e` build tag; CI does not run it yet) and, on SQLite in the default test run, by
+`internal/storage/factory_schema_epoch_v096_refusal_test.go` (a v0.96.x epoch against a
+database this build migrated; red when the floor is lowered to 2). Not checked: a container
+image, Helm, or a second replica on another host (**pending e2e VM**).
 
 ## 6r. "Last used" / "last seen" are written in the background
 
@@ -1160,9 +1163,13 @@ If an upgrade goes wrong:
 4. If the new version's database has already advanced the recorded schema
    epoch (ADR-097), a straight downgrade of the *binary* while keeping the
    already-migrated database is refused at startup by design (`database
-   schema epoch N is newer than this binary's schema epoch M`) — this is
-   why step 2 restores data from before the failed upgrade rather than
-   attempting to run the new binary's data on the old binary.
+   schema epoch N is newer than this binary's schema epoch M`, or, from v0.97.0
+   on, `database declares a minimum compatible schema epoch of 3 (database
+   schema epoch 5)`; see 6q) — this is why step 2 restores data from before the
+   failed upgrade rather than attempting to run the new binary's data on the
+   old binary. **For v0.97.0, rollback is a restore**: a v0.96.x binary never
+   starts again on a database a v0.97 server has started against, and nothing
+   lowers the recorded floor.
 
 ## 8. See also
 
