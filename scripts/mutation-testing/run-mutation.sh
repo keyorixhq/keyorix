@@ -59,7 +59,11 @@ mkdir -p "$MUTATION_STATE_DIR"
 # script) for the reasoning on why this starts scoped to few packages
 # instead of the whole repo.
 PACKAGES="internal/core|core
-internal/storage/store|storage-store"
+internal/storage/store|storage-store
+# internal/saml: efficacy 97.70% (85 killed, 2 equivalent survivors), 21 not covered; needs the timeout coefficient (see above)
+internal/saml|saml|40
+# internal/secretenv: efficacy 100% (31 killed), 4 not covered (switch case expressions, pinned by a truth table)
+internal/secretenv|secretenv"
 
 cd "$KEYORIX_REPO"
 

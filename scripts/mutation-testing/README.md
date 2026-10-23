@@ -270,6 +270,30 @@ by design — this is for "run this one package now, in parallel," not a
 replacement for widening `PACKAGES` in `run-mutation.sh` if the intent is
 to cover it on an ongoing weekly basis.
 
+## Security packages: `saml` and `secretenv`
+
+`internal/saml` and `internal/secretenv` are in `PACKAGES` because they guard login and
+key-material decisions. `PACKAGES` lines are `<package>|<label>[|<timeout-coefficient>]`;
+the third field is passed to gremlins as `--timeout-coefficient`.
+
+`saml` needs it. gremlins derives each mutant's timeout from the coverage-gathering run,
+and the saml tests run in a fraction of a second while rebuilding the package against
+crewjam/saml takes about a second, so with the default timeout most mutants came back
+`TIMED OUT`. `summarize.py` counts only `KILLED` and `LIVED`, so such a run reports a
+meaningless efficacy instead of a failure. A `TIMED OUT` count that is a large share of
+a package's mutants means the timeout is too tight, not that the tests are strong: raise the
+coefficient for that package (40 for saml) rather than reading the efficacy.
+
+Survivor counts when the packages were added: `saml` 4 before the tests in
+`provider_validation_properties_test.go`, 2 after; `secretenv` 0 before and after (its
+not-covered mutants were the case expressions of `lookup`'s switch and an untested
+`OpenRegularNamed`/`ReadRegularFile`). The 2 remaining `saml` survivors are equivalent
+(`provider.go` `err == io.EOF` in the epilogue check returns nil on both branches; the
+Subject/Conditions counters swap under negation and are then compared with the same
+number). The not-covered `saml` mutants are in `samltest` (test support code with no tests
+of its own) and in `case` expressions of `strictAssertionShape`, which Go's coverage profile
+cannot attribute to a block.
+
 ## Design notes
 
 - Read-only against the repo: unlike the fuzzing box (which pushes corpus
