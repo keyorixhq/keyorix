@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// These tests feed the gate REAL data (testdata/codeql/README.md): the SARIF of
+// These tests feed the gate REAL data (testdata/codeql/README.md; *.sarif is gitignored, hence .sarif.json): the SARIF of
 // main's go-server analysis and main's open and dismissed CodeQL alerts, served
 // through the alerts-API path. With the full baseline main itself must pass;
 // with one alert removed the gate must fail and say where and why, in the log
@@ -34,7 +34,7 @@ func withoutLines(tsv, substr string) string {
 }
 
 func TestCodeQLGateRealSARIF(t *testing.T) {
-	sarifs := map[string]string{"go-server.sarif": readFixture(t, "main-go-server.sarif")}
+	sarifs := map[string]string{"go-server.sarif": readFixture(t, "main-go-server.sarif.json")}
 	open := readFixture(t, "main-alerts-open.tsv")
 	dismissed := readFixture(t, "main-alerts-dismissed.tsv")
 
@@ -135,8 +135,8 @@ func TestCodeQLGateRealSARIF(t *testing.T) {
 // dismissed alert 604 gone, the first step of its real code flow is printed.
 func TestCodeQLGateRealJavaScriptSARIF(t *testing.T) {
 	sarifs := map[string]string{
-		"go-server.sarif":  readFixture(t, "main-go-server.sarif"),
-		"javascript.sarif": readFixture(t, "main-javascript.sarif"),
+		"go-server.sarif":  readFixture(t, "main-go-server.sarif.json"),
+		"javascript.sarif": readFixture(t, "main-javascript.sarif.json"),
 	}
 	open := readFixture(t, "main-alerts-open.tsv")
 	dismissed := readFixture(t, "main-alerts-dismissed.tsv")
@@ -163,7 +163,7 @@ func TestCodeQLGateRealJavaScriptSARIF(t *testing.T) {
 // The summary table row of a new result names rule, severity, file:line,
 // message and flow start.
 func TestCodeQLGateSummaryRow(t *testing.T) {
-	sarifs := map[string]string{"go-server.sarif": readFixture(t, "main-go-server.sarif")}
+	sarifs := map[string]string{"go-server.sarif": readFixture(t, "main-go-server.sarif.json")}
 	sum := filepath.Join(t.TempDir(), "summary.md")
 	_, err := runGateAPI(t, sarifs, map[string]string{
 		"open":      readFixture(t, "main-alerts-open.tsv"),

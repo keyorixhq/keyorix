@@ -2,7 +2,7 @@
 
 Copied from the live repository on 2026-10-23 (CODEQL-PR-GATE-1), not written by hand.
 
-- `main-go-server.sarif`: an excerpt of the SARIF of main's `/language:go-server`
+- `main-go-server.sarif.json`: an excerpt of the SARIF of main's `/language:go-server`
   code-scanning analysis 2016612438 (CodeQL 2.27.3, commit 1a43c2dec), fetched with
   `gh api repos/keyorixhq/keyorix/code-scanning/analyses/2016612438 -H "Accept: application/sarif+json"`.
   All 7 results are kept. Trimmed: rule objects keep only `id` and the `security-severity` /
@@ -10,7 +10,7 @@ Copied from the live repository on 2026-10-23 (CODEQL-PR-GATE-1), not written by
   each code flow keeps its first two steps and its last one; `relatedLocations` keeps two.
   The merge-queue runs that motivated the change (40024087095, 40025800055) kept no artifact,
   so their own SARIF cannot be recovered; this is the same analysis on main.
-- `main-javascript.sarif`: the same for main's `/language:javascript-typescript` analysis
+- `main-javascript.sarif.json`: the same for main's `/language:javascript-typescript` analysis
   2016618512 (commit d5ec9da78): all 3 results, `partialFingerprints` also dropped, rules
   limited to the three the results use, each code flow kept to its first and last step. Its
   js/clear-text-logging result carries a real code flow (the Go export's does not).
