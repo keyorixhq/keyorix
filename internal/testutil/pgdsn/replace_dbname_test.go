@@ -1,7 +1,9 @@
 package pgdsn
 
 import (
+	"fmt"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgconn"
@@ -90,6 +92,26 @@ func TestPGReplaceDBName_KeywordExactOutput(t *testing.T) {
 			t.Errorf("PGReplaceDBName(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
+}
+
+// TestPGReplaceDBName_PanicMessageHasNoPassword: url.Parse's *url.Error quotes
+// the raw URL, so formatting it whole would put the password in the panic text.
+func TestPGReplaceDBName_PanicMessageHasNoPassword(t *testing.T) {
+	const pw = "hunter2-do-not-leak"
+	defer func() {
+		r := recover()
+		if r == nil {
+			t.Fatal("expected a panic for an unparseable URL DSN")
+		}
+		msg := fmt.Sprint(r)
+		if strings.Contains(msg, pw) {
+			t.Fatal("panic message contains the DSN password") // never print msg
+		}
+		if !strings.Contains(msg, "cannot parse URL DSN") {
+			t.Fatalf("panic message lost its context: %q", msg)
+		}
+	}()
+	PGReplaceDBName("postgres://kx:"+pw+"@h:notaport/db", "n")
 }
 
 func TestPGReplaceDBName_UnparseableURLPanics(t *testing.T) {
