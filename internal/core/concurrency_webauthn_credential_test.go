@@ -73,12 +73,12 @@ func TestConcurrency_WebAuthnPersistUpdatedCredential_NoStaleCounterRegression(t
 		go func() {
 			defer wg.Done()
 			<-start
-			c.persistUpdatedCredential(ctx, 1, lowCred)
+			c.persistUpdatedCredential(ctx, 1, verifiedFrom(lowCred))
 		}()
 		go func() {
 			defer wg.Done()
 			<-start
-			c.persistUpdatedCredential(ctx, 1, highCred)
+			c.persistUpdatedCredential(ctx, 1, verifiedFrom(highCred))
 		}()
 		close(start)
 		wg.Wait()
@@ -120,7 +120,7 @@ func TestConcurrency_WebAuthnPersistUpdatedCredential_StaleWriteAfterWinnerIsRej
 	ctx := context.Background()
 
 	// Winner (legitimate device) commits first: counter advances 0 -> 100.
-	c.persistUpdatedCredential(ctx, 1, &webauthn.Credential{ID: credID, Authenticator: webauthn.Authenticator{SignCount: 100}})
+	c.persistUpdatedCredential(ctx, 1, verifiedFrom(&webauthn.Credential{ID: credID, Authenticator: webauthn.Authenticator{SignCount: 100}}))
 
 	var afterWinner models.WebAuthnCredential
 	require.NoError(t, db.Where("credential_id = ?", credID).First(&afterWinner).Error)
@@ -131,7 +131,7 @@ func TestConcurrency_WebAuthnPersistUpdatedCredential_StaleWriteAfterWinnerIsRej
 	// Loser (cloned authenticator) had validated its assertion against the stale
 	// baseline (0) and now tries to persist a counter that is higher than that stale
 	// baseline but lower than what's now actually stored.
-	c.persistUpdatedCredential(ctx, 1, &webauthn.Credential{ID: credID, Authenticator: webauthn.Authenticator{SignCount: 5}})
+	c.persistUpdatedCredential(ctx, 1, verifiedFrom(&webauthn.Credential{ID: credID, Authenticator: webauthn.Authenticator{SignCount: 5}}))
 
 	var final models.WebAuthnCredential
 	require.NoError(t, db.Where("credential_id = ?", credID).First(&final).Error)

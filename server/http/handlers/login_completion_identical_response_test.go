@@ -35,6 +35,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -146,7 +147,7 @@ func newWebAuthnCompletionEnvOver(t *testing.T, wrap func(corestorage.Storage) c
 		RPID: "example.org", RPDisplayName: "Keyorix", RPOrigins: []string{"https://example.org"},
 	})
 	require.NoError(t, err)
-	c.SetWebAuthn(rp)
+	c.SetWebAuthn(webauthnrp.Wrap(rp))
 
 	// The spec vector's credential, with the Flags its authenticatorData
 	// actually asserts (a mismatch is its own rejection).
