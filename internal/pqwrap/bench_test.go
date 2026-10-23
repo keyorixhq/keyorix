@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Benchmarks for the design note's performance budget (§12). Numbers go in
+// Benchmarks for the design note's performance budget (§14). Numbers go in
 // the session report, not in repo docs.
 func BenchmarkWrap(b *testing.B) {
 	for _, s := range allSuites {
