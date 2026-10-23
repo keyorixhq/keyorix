@@ -89,6 +89,7 @@ internal/storage/store/remote_storage_importer_allowlist_test.go	operator/**/*.g
 internal/storage/store/secret_nodes_soft_delete_sweep_test.go	operator/**/*.go	repo-root walk
 internal/storage/store/secret_version_cache_epoch_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
 internal/testutil/sqlitetest/shared_cache_literal_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
+internal/secretenv/describe_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files; skips no module
 operator/api/v1alpha1/keyorixsecret_types_test.go	operator/config/crd/bases/*.yaml	generated CRD against the Go types (the operator job runs it too)
 #
 # --- reviewed: does not read operator/ (subtree walk, or skips it / nested modules) --
@@ -118,3 +119,4 @@ server/http/grant_primitive_gate_table_test.go	!operator/**	skipSecretACLDir ski
 server/http/secret_acl_gate_guard_test.go	!operator/**	skipSecretACLDir skips nested modules
 server/http/share_secret_isgroup_guard_test.go	!operator/**	skipSecretACLDir skips nested modules
 internal/securefiles/securefiles_s21_test.go	!internal/**	t.TempDir() fixtures only
+server/secret_file_relative_echo_test.go	!**	Go walk skips nested modules; also reads server/entrypoint.sh, which no skip covers
