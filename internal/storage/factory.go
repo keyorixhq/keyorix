@@ -1744,26 +1744,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 			return err
 		}
 	}
-	// Companion indexes for models.SecretAccessLog (see its doc comment). An install
-	// that predates them, or that gained the table via the SESSION-U U1 AutoMigrate
-	// below before they existed, would otherwise keep full-scanning this table once
-	// per secret per anomaly pass. On Postgres a plain CREATE INDEX blocks writes to
-	// secret_access_logs for the build's duration — once, during boot, under the
-	// migration lock, like every other index in this function.
-	if tableExists(db, "secret_access_logs") {
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_secret_time ON secret_access_logs (secret_node_id, access_time)"); err != nil {
-			return err
-		}
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_access_time ON secret_access_logs (access_time, secret_node_id)"); err != nil {
-			return err
-		}
-		// (secret_node_id, action) answers a secret's lifetime read count
-		// (total_reads, core.SecretTotalReads) from the index alone; with only the
-		// (secret_node_id, access_time) index it needed a heap lookup per row.
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_access_logs_secret_action ON secret_access_logs (secret_node_id, action)"); err != nil {
-			return err
-		}
-	}
+	// models.SecretAccessLog's indexes (store.SecretAccessLogIndexes) are built by
+	// the audit index step after this migration (SQLite: migrateSQLite;
+	// Postgres: ensureAuditListIndexesPostgres, CONCURRENTLY), not here.
 
 	// Track last successful login per user (nil = never logged in).
 	if tableExists(db, "users") && !columnExists(db, "users", "last_login_at") {

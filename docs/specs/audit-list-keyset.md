@@ -144,6 +144,10 @@ them again. On the upgrade path it does not recreate the dropped single-column i
 those are only created by a fresh-install AutoMigrate. Nothing here changes the schema
 epoch.
 
+## 4a. secret_access_logs (PERF-INDEX-1)
+
+The same build step (same advisory lock, `CREATE/DROP INDEX CONCURRENTLY`, replaced indexes dropped only after the new ones are valid) maintains `secret_access_logs`: `idx_secret_access_logs_secret_time_action (secret_node_id, access_time, action)` on both backends; `idx_secret_access_logs_access_time_brin` (BRIN on `access_time`) on Postgres, the btree `idx_secret_access_logs_access_time` on SQLite. Replaced: `_secret_time`, `_secret_action` (and the btree `_access_time` on Postgres).
+
 ## 5. Acceptance criteria
 
 1. EXPLAIN-shape tests on SQLite and Postgres. On Postgres they run with `enable_seqscan` and

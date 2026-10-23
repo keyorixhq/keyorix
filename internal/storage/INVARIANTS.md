@@ -93,15 +93,18 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   created by migration. Guard: `factory_break_glass_index_test.go:TestBreakGlassActiveIndex_CreatedByMigration`.
 - **INV-STORAGE-14** Companion/sibling indexes are created on upgrade, not only fresh install.
   Guard: `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade`.
-- **INV-STORAGE-36** The anomaly hot-path indexes — `idx_anomaly_alerts_dedup` (matching
-  `CreateAnomalyAlert`'s dedup predicate), `idx_secret_access_logs_secret_time`,
-  `idx_secret_access_logs_access_time` — exist on a fresh install (struct tags) AND converge on
-  an upgraded one (`CREATE INDEX IF NOT EXISTS` in `migrateDatabase`), on both dialects. They
-  are additive, so no schema-epoch bump. Why: PERF-2 performance study (the dedup count was
-  the single most expensive query; per-secret access-log reads full-scanned). Guard:
-  `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade` (SQLite),
-  `factory_anomaly_index_postgres_test.go:TestAnomalyIndexes_Postgres_CreatedOnUpgrade`
-  (pg-gated).
+- **INV-STORAGE-36** The anomaly hot-path index `idx_anomaly_alerts_dedup` (matching
+  `CreateAnomalyAlert`'s dedup predicate) exists on a fresh install (struct tags) AND converges on
+  an upgraded one (`CREATE INDEX IF NOT EXISTS` in `migrateDatabase`), on both dialects. The
+  `secret_access_logs` indexes (`idx_secret_access_logs_secret_time_action`; plus the BRIN
+  `idx_secret_access_logs_access_time_brin` on Postgres, the btree `idx_secret_access_logs_access_time`
+  on SQLite) are built by the audit index step (`store.SecretAccessLogIndexes*`), `CREATE INDEX
+  CONCURRENTLY` on Postgres, and the three older ones are dropped once the new ones are valid
+  (PERF-INDEX-1). All additive for an older binary, so no schema-epoch bump. Why: PERF-2
+  performance study (the dedup count was the single most expensive query; per-secret access-log
+  reads full-scanned). Guard: `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade`
+  (SQLite), `factory_anomaly_index_postgres_test.go:TestAnomalyIndexes_Postgres_CreatedOnUpgrade`
+  (pg-gated), `factory_secret_access_log_indexes_test.go` (both dialects).
 
 ## Backfills and fatal-migration discipline
 

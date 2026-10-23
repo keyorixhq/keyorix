@@ -42,10 +42,8 @@ func TestCompanionIndexes_CreatedOnUpgrade(t *testing.T) {
 		// C-PERF-FIXES: CreateAnomalyAlert's dedup count and the anomaly detector's
 		// per-secret / candidate access-log reads.
 		{"anomaly_alerts dedup (composite)", "idx_anomaly_alerts_dedup"},
-		{"secret_access_logs (secret_node_id, access_time)", "idx_secret_access_logs_secret_time"},
-		{"secret_access_logs.access_time", "idx_secret_access_logs_access_time"},
-		// total_reads: a secret's lifetime read count, answered from the index alone.
-		{"secret_access_logs (secret_node_id, action)", "idx_secret_access_logs_secret_action"},
+		// (the secret_access_logs indexes moved to store.SecretAccessLogIndexes,
+		// built after the migration: TestSecretAccessLogIndexes_*)
 	}
 
 	dbPath := filepath.Join(t.TempDir(), "companion-index.db")
