@@ -194,7 +194,10 @@ migrated grant can.
 - **Solver performance is shape-dependent.** The single-query encoding degrades sharply.
   The split encoding stayed fast across the tested sizes and shapes, but `+`-heavy
   policies make larger regular-expression intersections, and string solving has no
-  general complexity guarantee. A production check needs a per-part timeout that
+  general complexity guarantee. Rules that start with a `+` segment cannot be sliced
+  away, so every part carries all of them. Solving stayed fast, but the emitted text
+  grows with parts × such rules, which in the tested range became the dominant cost
+  (sharing them through one solver session with push/pop would remove it). A production check needs a per-part timeout that
   reports "unknown" loudly. It must never report "subset".
 - **Toolchain.** z3/cvc5 are not in CI or in the product. The Go golden test runs in CI;
   the solver tests do not. Shipping this as a migration gate means either a solver
