@@ -1,6 +1,6 @@
 # Hybrid post-quantum key wrapping (X25519 + ML-KEM)
 
-Status: **draft for decision; Q1 and Q3–Q8 decided 2026-10-23 (§15); Q2 and Q9 open**. Design only, with an unwired proof of concept. Nothing here is
+Status: **draft for decision; all nine decisions (§15) answered by Andrei on 2026-10-23**; the note itself still awaits approval. Design only, with an unwired proof of concept. Nothing here is
 accepted until Andrei approves it, and no production key path changes before then.
 Session RD-PQWRAP-1, 2026-10-23, against origin/main `da6fbb33d`.
 
@@ -142,8 +142,16 @@ parameter sets.
   relying on ML-KEM's ciphertext-binding (C2PRI) property. It exists only for ML-KEM-768; the 1024
   hybrid in that draft pairs with P-384, not X25519. Our format is internal (no interoperability
   requirement), so the generic combiner costs nothing that matters (one SHA-256 over about 2.4 KB)
-  and does not depend on a property of one parameter set. Decision Q2 asks whether to switch
-  anyway.
+  and does not depend on a property of one parameter set.
+- **Decided (Q2, Andrei, 2026-10-23):** keep this concatenation KDF for the at-rest format; use age's
+  hybrid recipients (HPKE) for operator-facing deliveries. **Condition, now an acceptance criterion:**
+  the KDF input must include **both** KEM ciphertexts and **both** recipient public keys, not only the
+  two shared secrets. (X-Wing itself binds the X25519 ciphertext and public key and leaves the ML-KEM
+  pair to ML-KEM's own binding; this design binds all four explicitly.) Enforced by
+  `TestDeriveWrapKey_BindsEveryComponent`: changing any one of the seven inputs alone (both ciphertexts,
+  both public keys, both shared secrets, the header) must change the derived key. Mutation-checked:
+  dropping each ciphertext or public key from the transcript makes the test fail and name that
+  component. The frozen vectors pin the same thing byte for byte.
 - **Why not XOR of secrets or nested encryption.** XOR loses IND-CCA when one component is broken
   and malleable. Nesting (wrap under X25519, then under ML-KEM) doubles the format and gives no
   stronger guarantee than the concatenation combiner.
@@ -414,7 +422,7 @@ Design:
 
 ## 13. Legacy-readable guarantee, rollback and downgrade
 
-- **Read both forever.** Every binary after this change reads `legacy-60` and `keyset-v1`. The legacy
+- **Read both forever** (**decided, Q9, Andrei, 2026-10-23**: the legacy reader stays indefinitely). Every binary after this change reads `legacy-60` and `keyset-v1`. The legacy
   reader is about 20 lines. Keeping it costs nothing and avoids a hard migration deadline, the same
   reasoning as design-b3's decision to keep a v1-archive reader. A frozen legacy fixture in
   `testdata` must keep unwrapping, as a guard.
@@ -448,14 +456,14 @@ against this budget. The measured numbers are in the session report, not here.
 | # | Question | Recommendation |
 |---|---|---|
 | Q1 | Where the envelope is used: R (keyset with recipient slots), K (KEM everything) or H (public-key flows only) | **Decided 2026-10-23:** R |
-| Q2 | Combiner: keep the generic concatenation KDF (as built) or switch to stdlib `crypto/hpke` MLKEM768-X25519 (X-Wing) | Keep it for the at-rest format; use age's hybrid recipients (HPKE) for operator-facing deliveries |
+| Q2 | Combiner: keep the generic concatenation KDF (as built) or switch to stdlib `crypto/hpke` MLKEM768-X25519 (X-Wing) | **Decided 2026-10-23, with a condition:** keep it for the at-rest format; use age's hybrid recipients (HPKE) for operator-facing deliveries |
 | Q3 | Classical partner for ML-KEM-1024: X25519 (as built) or P-384 (approved ECDH) | **Decided 2026-10-23:** X25519; add a P-384 suite only when a FIPS customer needs it |
 | Q4 | Azure Key Vault RSA-OAEP KEK wrap | **Decided 2026-10-23:** posture warning now; Managed HSM symmetric key as follow-up; no breaking change |
 | Q5 | Accept hybrid age recipients for recovery-key delivery and warn on classical ones | **Decided 2026-10-23:** yes, as its own small PR now, warn on classical |
 | Q6 | Escrow recipient separate from the recovery-key authenticator | **Decided 2026-10-23:** separate, optional, off by default |
 | Q7 | Keyorix FIPS mode: move GCM to `NewGCMWithRandomNonce`, add a startup check and a posture line | **Decided 2026-10-23:** yes, a separate backlog item, before any FIPS claim |
 | Q8 | Reword R4's acceptance from "new writes use hybrid envelopes" to "every public-key wrap at rest is hybrid; key files self-describing; legacy readable; rewrap migrates key files; backups rewrap offline" | **Decided 2026-10-23:** reworded as proposed |
-| Q9 | Legacy-60 reader lifetime | Keep indefinitely |
+| Q9 | Legacy-60 reader lifetime | **Decided 2026-10-23:** keep indefinitely |
 
 ## 16. New vs state of the art
 
