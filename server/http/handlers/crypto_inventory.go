@@ -120,14 +120,17 @@ func cryptoInventoryInputs(ctx context.Context, cfg *config.Config, coreService 
 		}
 	}
 
-	for _, t := range []struct {
+	// A listener that is switched off holds no live certificate, whatever its
+	// tls block says.
+	for _, l := range []struct {
 		name string
-		tls  config.TLSConfig
-	}{{"http", cfg.Server.HTTP.TLS}, {"grpc", cfg.Server.GRPC.TLS}} {
-		if !t.tls.Enabled {
+		inst config.ServerInstanceConfig
+	}{{"http", cfg.Server.HTTP}, {"grpc", cfg.Server.GRPC}} {
+		if !l.inst.Enabled || !l.inst.TLS.Enabled {
 			continue
 		}
-		in.TLS = append(in.TLS, cryptoinventory.TLSInput{Name: t.name, CertFile: t.tls.CertFile, KeyFile: t.tls.KeyFile, AutoCert: t.tls.AutoCert})
+		t := l.inst.TLS
+		in.TLS = append(in.TLS, cryptoinventory.TLSInput{Name: l.name, CertFile: t.CertFile, KeyFile: t.KeyFile, AutoCert: t.AutoCert})
 	}
 
 	if cfg.OIDC.Enabled {

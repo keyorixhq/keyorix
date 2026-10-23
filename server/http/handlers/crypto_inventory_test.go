@@ -63,7 +63,12 @@ func newCryptoInvFixture(t *testing.T) *cryptoInvFixture {
 
 	cfg := &config.Config{}
 	cfg.Storage.Encryption = config.EncryptionConfig{Enabled: true, DEKPath: dekPath}
+	cfg.Server.HTTP.Enabled = true
 	cfg.Server.HTTP.TLS = config.TLSConfig{Enabled: true, CertFile: certPath, KeyFile: filepath.Join(dir, "tls.key")}
+	// gRPC is switched off but still carries a tls block (the generated baseline
+	// config does exactly this): it holds no live certificate and must not be listed.
+	cfg.Server.GRPC.Enabled = false
+	cfg.Server.GRPC.TLS = config.TLSConfig{Enabled: true, CertFile: certPath, KeyFile: filepath.Join(dir, "tls.key")}
 
 	coreSvc := core.NewKeyorixCore(store.NewLocalStorage(db))
 	return &cryptoInvFixture{h: MakeCryptoInventoryHandler(cfg, coreSvc), db: db, cfg: cfg, keyBytes: keyDER}
@@ -94,6 +99,7 @@ func TestCryptoInventoryHandler_JSON(t *testing.T) {
 		byID[a.ID] = a
 	}
 	require.Contains(t, byID, "tls.http")
+	assert.NotContains(t, byID, "tls.grpc", "a disabled listener holds no live certificate")
 	assert.True(t, byID["tls.http"].Risk.QuantumVulnerable, "ECDSA certificate must be flagged")
 	assert.Equal(t, "ECDSA-P256", byID["tls.http"].Algorithm)
 	require.Contains(t, byID, "dek")

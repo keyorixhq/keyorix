@@ -84,6 +84,22 @@ func TestCBOM_ValidatesForEveryProviderShape(t *testing.T) {
 	require.NoError(t, validate(t, sch, doc))
 }
 
+// TestCBOM_ValidateExportedFile validates a CBOM exported from a REAL server, e.g.
+//
+//	keyorix crypto inventory --format cbom --output keyorix.cbom.json
+//	KEYORIX_CBOM_FILE=$PWD/keyorix.cbom.json go test ./internal/cryptoinventory -run ExportedFile -v
+//
+// It skips when the variable is unset. This is the demo's "export validates" step.
+func TestCBOM_ValidateExportedFile(t *testing.T) {
+	path := os.Getenv("KEYORIX_CBOM_FILE")
+	if path == "" {
+		t.Skip("set KEYORIX_CBOM_FILE to a CBOM exported from a running server to validate it")
+	}
+	doc, err := os.ReadFile(path) // #nosec G304 -- operator-supplied test input
+	require.NoError(t, err)
+	require.NoError(t, validate(t, compileCycloneDX16(t), doc), "exported CBOM must validate against CycloneDX 1.6")
+}
+
 // The schema check must have teeth: a document that breaks the CBOM rules fails.
 func TestCBOM_SchemaRejectsBrokenDocuments(t *testing.T) {
 	sch := compileCycloneDX16(t)
