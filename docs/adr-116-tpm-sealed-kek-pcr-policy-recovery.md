@@ -208,7 +208,7 @@ funding or certification material.
 
 | Risk | Effect | Mitigation / status |
 |---|---|---|
-| Root on the running, correctly booted host | Unseals: PCRs are correct at runtime | **Not addressed by TPM sealing at all**, same as today. Needs remote attestation (R10 Keylime) or an operator factor at boot |
+| Root on the running, correctly booted host | Unseals: PCRs are correct at runtime | **Not addressed by TPM sealing at all**, same as today. Needs remote attestation (a separate R&D item, e.g. Keylime) or an operator factor at boot |
 | Another OS signed under the same authority (same distro's live image via shim) | PCR 7 can be identical, so it unseals | Stated limit. PCR 4/11 or signed-policy (PolicyAuthorize) designs narrow it at the cost of more recovery events; deferred |
 | vTPM state copied with the VM image (hypervisor or backup level) | "Stolen VM image" claim fails | Holds only if the vTPM state is not taken with the disk [VERIFY per hypervisor/cloud]. Documented as a limit |
 | fTPM reset by a firmware update; board swap | Blob dead | Recovery slot (D3); runbook step "have the recovery code before updating firmware" |

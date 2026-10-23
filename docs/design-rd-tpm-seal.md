@@ -21,7 +21,7 @@ reference implementation (the go-tpm-tools simulator), never as "a real chip doe
 In: the `tpm` key provider. Optional PCR policy, an off-TPM recovery slot, a fail-closed and
 classified unseal, recovery and reseal commands, alerting, a swtpm-based test plan, and docs.
 
-Out: remote attestation (R10, Keylime comparison); signed or authorized PCR policies
+Out: remote attestation (a separate R&D item, e.g. a Keylime comparison); signed or authorized PCR policies
 (PolicyAuthorize); TPM-backed audit signing; NV-index rollback counters; Windows TPM (TBS).
 Where they would plug in is noted in §12.
 
@@ -269,6 +269,6 @@ hardware, PQWRAP escrow slot integration once #3662's option R ships.
 
 ## 12. Not in this design
 
-Root on the running host (needs attestation, R10), signed PCR policies (PolicyAuthorize; would
+Root on the running host (needs remote attestation), signed PCR policies (PolicyAuthorize; would
 cut recovery events after kernel updates), anti-rollback of the data dir with a TPM NV counter,
 TPM-held audit signing keys, and Windows support (`transport.OpenTPM` path).
