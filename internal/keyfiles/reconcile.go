@@ -100,14 +100,22 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		}
 		w := &SetWriter{manifestPath: st.ManifestPath, required: required, fs: fs}
 		if err := w.CommitManifest(next.Operation, files); err != nil {
-			return nil, fmt.Errorf("record the %s in the key-set manifest: %w", next.Operation, err)
+			if st.Intent == IntentFinishable {
+				return nil, fmt.Errorf("finish the interrupted %s: record it in the key-set manifest: %w", next.Operation, err)
+			}
+			// Completed: the files are already right and the staged intent keeps
+			// classifying them as completed, so the next start records it.
+			res.Warnings = append(res.Warnings, fmt.Sprintf(
+				"could not record the completed %s in %s (%v); the key set is coherent, the next start tries again",
+				next.Operation, st.ManifestPath, err))
 		}
 	}
 
 	if len(st.Unrecorded) > 0 {
 		w := &SetWriter{manifestPath: st.ManifestPath, required: required, fs: fs}
 		if err := w.CommitManifestFromDisk(OpAdopted, st.Unrecorded...); err != nil {
-			return nil, fmt.Errorf("record %s in the key-set manifest: %w", strings.Join(st.Unrecorded, ", "), err)
+			res.Warnings = append(res.Warnings, adoptFailedWarning(strings.Join(st.Unrecorded, ", "), st.ManifestPath, err))
+			return res, nil
 		}
 		res.Adopted = append(res.Adopted, st.Unrecorded...)
 		res.AdoptReason = "not recorded in the key-set manifest (a key provider added to the configuration after the manifest was written)"
@@ -143,6 +151,19 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 	return res, nil
 }
 
+// adoptFailedWarning is the WARN when adoption cannot write the manifest
+// (typically a read-only key directory: a Kubernetes Secret volume, or a
+// read-only copy with key_dir_lock: database). Not a refusal: the set is then
+// exactly as checked as it was before the manifest existed (presence only),
+// which is no worse than the version being upgraded from.
+func adoptFailedWarning(what, manifestPath string, err error) string {
+	return fmt.Sprintf(
+		"could not record %s in the key-set manifest %s (%v), so the key files are not checked for a mixed "+
+			"generation on this start; on a read-only key directory, generate the manifest where the keys are "+
+			"written and ship it with them",
+		what, manifestPath, err)
+}
+
 // adoptWholeSet is warn-and-adopt (#2900 criterion 4) for a complete set
 // whose manifest is missing — every install that predates the manifest, on
 // its first start after the upgrade — or unparseable: record the current
@@ -162,12 +183,14 @@ func adoptWholeSet(st *KeySetState, required []string, fs ManifestFS, res *Recon
 	if !errors.Is(st.ManifestErr, ErrManifestMissing) {
 		aside := fmt.Sprintf("%s.unparseable-%s", st.ManifestPath, time.Now().UTC().Format("20060102T150405Z"))
 		if err := os.Rename(st.ManifestPath, aside); err != nil {
-			return fmt.Errorf("move the unparseable key-set manifest aside to %s: %w", aside, err)
+			res.Warnings = append(res.Warnings, adoptFailedWarning("the key set", st.ManifestPath, err))
+			return nil
 		}
 		reason = fmt.Sprintf("the key-set manifest was unparseable (%v; moved aside to %s)", st.ManifestErr, aside)
 	}
 	if err := writeManifest(st.ManifestPath, m, fs); err != nil {
-		return err
+		res.Warnings = append(res.Warnings, adoptFailedWarning("the key set", st.ManifestPath, err))
+		return nil
 	}
 	for _, f := range required {
 		if _, ok := m.Files[manifestKey(filepath.Dir(st.ManifestPath), f)]; ok {

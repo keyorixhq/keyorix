@@ -136,3 +136,31 @@ func TestReconcile_ProviderAddedAfterManifest_FileIsAdopted(t *testing.T) {
 		t.Fatalf("manifest = %+v, %v; want the blob adopted and the rest untouched", m, err)
 	}
 }
+
+// A read-only key directory (a Kubernetes Secret volume, a read-only copy with
+// key_dir_lock: database) cannot take the manifest. Adoption then warns and
+// boot continues, as checked as before the upgrade, instead of refusing and
+// bricking the install on its first start after the upgrade.
+func TestReconcile_PreManifestSetOnReadOnlyKeyDir_WarnsAndBoots(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores the directory mode this test relies on")
+	}
+	dir := t.TempDir()
+	enc := passwordSetConfig()
+	writeSetWithoutManifest(t, dir, enc)
+	if err := os.Chmod(dir, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+
+	res, err := ReconcileKeySet(enc, dir, ManifestFS{})
+	if err != nil {
+		t.Fatalf("a read-only key directory must not refuse boot on the first start after the upgrade: %v", err)
+	}
+	if len(res.Adopted) != 0 {
+		t.Errorf("nothing can be adopted into a read-only directory, got %v", res.Adopted)
+	}
+	if !strings.Contains(strings.Join(res.Warnings, "\n"), "could not record the key set") {
+		t.Errorf("the skipped adoption must be warned about, got %q", res.Warnings)
+	}
+}
