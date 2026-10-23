@@ -6055,13 +6055,6 @@ func TestListAnomalyAlerts_NoCoreServiceS4(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestAcknowledgeAnomalyAlert_NoCoreServiceS4(t *testing.T) {
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	AcknowledgeAnomalyAlert(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 func TestAcknowledgeAnomalyAlert_BadIDNoCore(t *testing.T) {
 	// Bad ID but no core service — hits internal error first
 	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
