@@ -1,6 +1,6 @@
 # Design note: attenuating agent tokens (RD-AAT-1)
 
-Status: R&D design, ADR-116 **Proposed**. Nothing here is implemented. The prototype and
+Status: R&D design, ADR-120 **Proposed**. Nothing here is implemented. The prototype and
 the SMT model were throwaway and are not in the repo. This note records what they
 checked and how to rebuild them.
 
@@ -9,7 +9,7 @@ checked and how to rebuild them.
 Agents delegate. An orchestrator asks a worker to read one secret, the worker should
 get authority for that secret only, for minutes, and nobody should be able to widen
 it on the way, including the worker. AATs (draft-niyikiza-oauth-attenuating-agent-tokens-02,
-see ADR-116 for the source and its [VERIFY]) do this offline: each holder signs a
+see ADR-120 for the source and its [VERIFY]) do this offline: each holder signs a
 narrower child for the next holder; any verifier with Keyorix's public key checks the
 chain.
 
@@ -23,8 +23,8 @@ Orchestrator agent ── derives offline ──> child AAT: ref exact payments/
                                   keyorix-mcp presents chain + PoP per tool call
                                              v
                          Keyorix server = enforcement point
-                         Section 8 in process -> root not revoked, principal active
-                         -> AATRestriction on ctx -> Authorize chokepoint (∩ live RBAC)
+                         Section 8 in process -> session active, agent + delegator active
+                         -> AATRestriction on ctx -> Authorize chokepoint (∩ agent roles ∩ delegator now)
                          -> ledger intent record (durable) -> value -> outcome record
 ```
 
@@ -41,13 +41,13 @@ with a trust-anchor file and no network.
 | tool identifiers | `<iss>/tools/secrets.read`, `<iss>/tools/secrets.list` | exact-string match, no normalisation (draft 3.3.1) |
 | `secrets.read` args | `ref`: `project/environment/name`, required | same format as keyorix-mcp |
 | `secrets.list` args | `environment`, optional | |
-| constraints (v1) | `exact`, `one_of` on `ref`; `one_of` on `environment` | `keyorix_ref_glob` designed, off (ADR-116 decision 6) |
+| constraints (v1) | `exact`, `one_of` on `ref`; `one_of` on `environment` | `keyorix_ref_glob` designed, off (ADR-120 decision 6) |
 | `del_max_depth` | default 2, max 4 at issuance; verifier accepts up to 8 | 8 is the draft's interop floor |
 | lifetime | root default 15 min, max 1 h | children can only be shorter (I3) |
 | `aud` / `aat_aud` | server audience URL; `aat_aud` required at the server | blocks replay at another verifier |
 | PoP `jti` | tracked for every `secrets.read`, shared across replicas | draft step 7i |
 | `authorization_details` other types | ignored, carry no authority | draft 3.3 |
-| `sub` | absent; principal comes from the root record Keyorix keeps | draft omits `sub` on purpose |
+| `sub` | absent; the agent and delegator come from the session record (root `jti` = session id) | draft omits `sub` on purpose |
 
 Example root payload (Keyorix profile, JCS-serialised before signing):
 
@@ -84,16 +84,18 @@ A child keeps one tool, sets `ref` to `exact`, `del_max_depth` 1, `exp` 5 minute
 1. Parse the presentation from the body or gRPC metadata (size limits first, step 2).
 2. Run Section 8 steps 1-7 in process. On any failure: deny with a generic error to the
    caller (as MCP-4 / ADR-096) and audit the step and reason.
-3. Root `jti` not revoked, root principal active: local lookups (Keyorix issued the root).
+3. The root's agent session (root `jti` = session id, PR #3668) is `active`, and the agent
+   identity and the delegator are active: local lookups (Keyorix issued the root).
 4. Build an `AATRestriction` from the leaf (tool → permission, `ref` → scope + name) and
    put it on the request context. `Authorize`/`AuthorizePrincipal` apply it first, then
-   resolve the root principal's live roles. `IsGlobalAdmin` and `RequireRole` deny for
+   resolve the agent's live roles and the delegator's current permissions. `IsGlobalAdmin` and `RequireRole` deny for
    any AAT request (the ADR-042 pattern).
 5. PoP `jti` record (insert-or-nothing, read back) — step 7i runs last, after every
    other check, as the draft orders it.
-6. Ledger intent record durable → value → outcome record (R6).
+6. Ledger `agent.intent` row written from the presentation, durable → value → outcome
+   record (ADR-120 decision 13, PR #3668).
 
-The restriction is a filter: if the leaf names a secret the principal has since lost
+The restriction is a filter: if the leaf names a secret the agent or the delegator has since lost
 access to, nothing is granted.
 
 ## 4. Monotonicity, machine-checked: the SMT encoding sketch
@@ -146,7 +148,7 @@ segments follow by applying it twice.
 `(project, environment | all)`). `∃ ref ∈ pattern: ¬granted(project(ref), env(ref))`.
 `payments/production/*` is unsat; `payments/*/db-password` is **sat** when the
 principal has only production and staging grants (any later environment), which is why
-ADR-116 decision 4 refuses environment globs without an environment-0 grant.
+ADR-120 decision 4 refuses environment globs without an environment-0 grant.
 
 ### Results (counts, no timings)
 
@@ -197,17 +199,18 @@ mallory replays worker's chain with own PoP    DENY  step 7b   pop signature doe
 
 (The prototype used bare MCP tool names; the profile above uses issuer URIs.)
 
-## 6. Ledger fields (R6 link)
+## 6. Ledger fields (R6 link, PR #3668)
 
-The intent record for an AAT read carries: root `jti` and issuer `kid`; per token the
-SHA-256 of its signing input; leaf holder key thumbprint; PoP `jti` and `iat`; tool;
-`ref`. Never the value, never `hta` beyond `ref`. A denied presentation is recorded with
+The ledger's `agent.intent` row for an AAT read is written from the verified presentation
+(no separate intent call): session id (= root `jti`), target `ref`, tool URI, `max_uses`
+1, `not_after` = end of the PoP window. Its hashed `diff` adds issuer `kid`, per token the
+SHA-256 of its signing input, the leaf holder key thumbprint, and PoP `jti` and `iat`. Never the value, never `hta` beyond `ref`. A denied presentation is recorded with
 its step and reason. The export keeps the chain bytes (authorization metadata, not a
 secret: a stored AAT is useless without its holder key, the draft notes) so `verify` can
-rerun Section 8 offline. Field mapping to EU AI Act Art. 12 belongs to the ledger ADR
-(RD-AGENT-LEDGER-1), not here.
+rerun Section 8 offline, next to the ledger's own chain proofs. Field mapping to EU AI Act
+Art. 12 belongs to the ledger ADR (PR #3668), not here.
 
-## 7. Implementation plan (next session, after ADR-116 is accepted)
+## 7. Implementation plan (next session, after ADR-120 is accepted)
 
 One PR per concern, each green on its own; the verifier lands first because everything
 else depends on it.
@@ -221,7 +224,7 @@ else depends on it.
    widenings, verify denies at the matching step.
 3. Issuer key: generation, KEK wrapping, `kid`, key-set endpoint and export file;
    rotation overlap; config leaves (`internal/config` + surface leaves file).
-4. Root issuance endpoint for machine identities: `req_cnf` challenge, request-as-parent
+4. Root issuance as agent-session start (PR #3668 section 1): `req_cnf` challenge, request-as-parent
    attenuation, decision-4 RBAC ceiling (syntactic rule + table test derived from the
    SMT cases), root record + revocation; OpenAPI + CLI + web follow the contract rule.
 5. Server enforcement: presentation parsing (body / gRPC metadata), `AATRestriction` at the
@@ -232,6 +235,6 @@ else depends on it.
    widen denied → revoke root → denied.
 7. `keyorix-mcp` holder mode: leaf key file, PoP per tool call, `KEYORIX_TOKEN` not needed
    in this mode; MCP threat rows updated.
-8. Ledger intent/outcome records for AAT reads (after the R6 ADR is accepted).
+8. Ledger intent/outcome records for AAT reads (after the ledger ADR in PR #3668 is accepted).
 9. `docs/formal/aat/`: the SMT model (parts A-F) with a non-CI runner, like `docs/formal/smt`.
 10. Threat-model rows AAT-1..AAT-14: replace each GAP with the test that lands.

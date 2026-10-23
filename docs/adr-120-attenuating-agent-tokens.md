@@ -1,7 +1,9 @@
-# ADR-116: Attenuating agent tokens (offline delegation that can only narrow)
+# ADR-120: Attenuating agent tokens (offline delegation that can only narrow)
 
 **Status:** Proposed (2026-10-23). Design only; nothing is implemented.
 **Date:** 2026-10-23
+**Number:** 120, because four open R&D PRs (#3665-#3668) all claim 116. If they are
+renumbered 116-119 in PR order, 120 stays free.
 **Context:** R&D item RD-AAT-1. Design note with the prototype results, the SMT
 encoding and the implementation plan: [`design-rd-aat.md`](design-rd-aat.md).
 Threat rows: [`security/threat-models/agent-delegation-tokens.md`](security/threat-models/agent-delegation-tokens.md).
@@ -58,19 +60,30 @@ Each item states the decision and why.
    trust-anchor management to deployments. A key that only signs AATs limits the
    damage if it leaks, and the overlap makes rotation possible without downtime.
 
-3. **A root token is issued only to an authenticated non-human principal**: a
-   machine identity (ADR-030), or the agent identity of the agent evidence ledger
-   design (RD-AGENT-LEDGER-1, not yet written) once that is accepted. The request
-   carries `authorization_details` and `req_cnf`, as the draft says. The holder proves
-   possession of the `req_cnf` key by signing a Keyorix challenge. *Why:* the draft
-   requires that proof and leaves its mechanism to the deployment. Binding the root to
-   an existing principal keeps one place where authority comes from (RBAC).
+3. **A root token is an agent session in AAT form.** The agent evidence ledger
+   design (RD-AGENT-LEDGER-1, open as PR #3668, ADR number pending) makes an agent a
+   machine identity of type `agent`. Each run is an agent session, started by a
+   delegator who holds `agents.delegate`. The session scope is capped by the agent's
+   roles and by the delegator's permissions at that moment. Issuing a root AAT is
+   starting such a session, with the same checks and the same
+   `agent.session_started` row:
+   - the root `jti` is the session id;
+   - `authorization_details` is the session scope;
+   - `exp` is at most the session's `expires_at`.
 
-4. **The root never exceeds the issuing principal's RBAC, for any secret name,
+   The request also carries `req_cnf`, as the draft says, and the holder proves
+   possession of that key by signing a Keyorix challenge. Whether non-agent machine
+   identities (for example CI) may also hold roots is NEEDS ANDREI 2. *Why:* there
+   is then one delegation model, not two. The ledger already derives the ceiling
+   from the actor (CLAUDE.md, "a ceiling that inspects only the target is not a
+   ceiling"). AAT adds only what a session credential lacks: holder binding, and
+   narrowing offline across hops.
+
+4. **The root never exceeds the session ceiling, for any secret name,
    including names created later.** Issuance treats the request as the parent and the
-   principal's grants as the ceiling. It refuses a `ref` pattern that covers a
-   project or environment the principal holds no `secrets.read` grant on, unless the
-   principal holds that grant at environment 0 (all environments). *Why:* an offline
+   session ceiling as the cap (decision 3). It refuses a `ref` pattern that covers a
+   project or environment where that ceiling holds no `secrets.read`, unless it holds
+   `secrets.read` at environment 0 (all environments). *Why:* an offline
    enforcement point cannot consult Keyorix RBAC, so the root is the only ceiling it
    sees. The SMT model shows the case that sampling misses: `payments/*/db-password`
    issued to a principal with grants on `payments/production` and `payments/staging`
@@ -94,19 +107,21 @@ Each item states the decision and why.
    the type fail closed. Shipping it unregistered would break interoperability with
    any third-party verifier.
 
-7. **At the Keyorix server, a verified chain only narrows the root principal's live
-   RBAC.** The server runs Section 8 in process, with no lookup per derived token.
-   It then checks that the root `jti` is not revoked and the root principal is
-   active (both are local lookups, because Keyorix issued the root). It turns the
+7. **At the Keyorix server, a verified chain only narrows the session's live
+   authority.** The server runs Section 8 in process, with no lookup per derived
+   token. It then checks that the root's session is `active` and that the agent
+   identity and the delegator are still active. These are local lookups, because
+   Keyorix issued the root. It turns the
    leaf's capability into a restriction carried on the request context. That
    restriction is enforced first at the `Authorize`/`AuthorizePrincipal` chokepoint,
    exactly like the ADR-042 PAT restriction. `IsGlobalAdmin` and `RequireRole` fail
    closed for AAT requests, as they already do for restricted PATs. The effective
-   authority is therefore the leaf's capability intersected with the root principal's
-   live RBAC. *Why:* this reuses the one authorization chokepoint every path already
-   goes through (ADR-042's reasoning). It also brings back what the draft gives up,
-   which is revocation: revoking the root, suspending the principal or removing a
-   grant takes effect on the next request.
+   authority is therefore C(leaf) ∩ roles(agent) ∩ permissions(delegator, now). This
+   is the ledger's per-intent rule, with the leaf in place of the session scope.
+   *Why:* this reuses the one authorization chokepoint every path already goes
+   through (ADR-042's reasoning). It also brings back what the draft gives up, which
+   is revocation: revoking the session, suspending the agent or the delegator, or
+   removing a grant takes effect on the next request.
 
 8. **Verifying offline anywhere** uses a stdlib-only Go package and
    `keyorix aat verify --trust-anchors <file>`. Neither contacts Keyorix. These
@@ -150,15 +165,24 @@ Each item states the decision and why.
     key is out of the model's reach. A process boundary is the cheapest such
     boundary that already exists.
 
-13. **Evidence (R6 link).** Every accepted presentation for a secret read writes the
-    agent evidence ledger's intent record before the value is released: root `jti`,
-    each token's signing-input digest, the leaf holder key thumbprint, the PoP `jti`,
-    the tool and the `ref`. It never writes the value. The ledger's outcome record
-    follows. A denial is audited with its Section 8 step and reason. The ledger
-    export keeps the chain bytes, so an auditor can rerun Section 8 offline. *Why:*
-    audit-before-disclosure is non-negotiable (ADR-115). Delegation happens offline,
-    so the chain presented at use time is the only record of who delegated to whom,
-    and it is signed by every holder.
+13. **A verified presentation is the ledger intent (R6 link, PR #3668).** The
+    ledger asks for an intent before every release. That is normally a separate
+    `POST …/intents` call followed by a header on the read. For an AAT read, the
+    server instead writes the `agent.intent` row from the verified presentation.
+    The row has one target (the `ref`), the tool URI, `max_uses` 1, and `not_after`
+    set to the end of the PoP window. The hashed `diff` carries the chain evidence:
+    each token's signing-input digest, the leaf holder key thumbprint and the PoP
+    `jti`. The row is written through the same audited-mutation writer, in a
+    transaction that commits before the value is released. If the audit append
+    fails, no value is released. The ledger's outcome record follows. A denial is
+    audited with its Section 8 step and reason. The export keeps the chain bytes, so
+    an auditor can rerun Section 8 offline. The value is never recorded. Whether a
+    `purpose_code` must come from a signed claim in the leaf is NEEDS ANDREI 6.
+    *Why:* audit-before-disclosure is non-negotiable (the ledger ADR and ADR-115
+    state it). The PoP is already a fresh, per-call signed statement of what the
+    agent is about to do, so a second round trip adds nothing. Delegation happens
+    offline, so the chain presented at use time is the only record of who delegated
+    to whom, and every holder signed it.
 
 14. **SMT is a design-time and review tool, not a runtime dependency.** The runtime
     runs only the draft's polynomial structural checks (the draft requires that of
@@ -178,8 +202,9 @@ Each item states the decision and why.
 ## Monotonic attenuation, stated once
 
 For a chain `root = T0, …, Tn = leaf` accepted at time `t`:
-`C(Tn) ⊆ … ⊆ C(T0) ⊆ RBAC(principal, issuance)`. At the Keyorix server, effective
-authority is `C(Tn) ∩ RBAC(principal, t)`. At an offline verifier it is `C(Tn)`, so
+`C(Tn) ⊆ … ⊆ C(T0) ⊆ roles(agent) ∩ permissions(delegator, issuance)`. At the Keyorix
+server, effective authority is `C(Tn) ∩ roles(agent) ∩ permissions(delegator, t)`.
+At an offline verifier it is `C(Tn)`, so
 everything that offline verification buys rests on the issuance-time inclusion
 (decision 4).
 
@@ -259,8 +284,11 @@ everything that offline verification buys rests on the issuance-time inclusion
 ## NEEDS ANDREI (open decisions; recommendations in the RD-AAT-1 report)
 
 1. `keyorix_ref_glob`: request IANA registration, or keep core types only?
-2. Who may hold a root: machine identities only, or also the R6 agent identity type?
+2. Who may hold a root: agent sessions only (recommended), or also non-agent machine
+   identities?
 3. PoP `jti` tracking for every read (recommended), or only with a nonce?
 4. Tool identifier form: issuer-URL URIs (recommended), or bare names like the MCP
    tool names?
 5. FIPS mode: keep AAT off under `KEYORIX_FIPS_MODE` until FIPS status is checked?
+6. Ledger intent from a presentation: is the tool URI enough, or must the leaf carry a
+   signed `purpose_code` claim?

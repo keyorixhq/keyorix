@@ -1,7 +1,7 @@
 # Demo: agent tokens that can only narrow (5 minutes) — NOT IMPLEMENTED
 
 > **Status: not implemented.** This script is written against the CLI that
-> [ADR-116](../adr-116-attenuating-agent-tokens.md) (Proposed) describes. None of the
+> [ADR-120](../adr-120-attenuating-agent-tokens.md) (Proposed) describes. None of the
 > `keyorix aat …` commands, the issuance endpoint or the `keyorix-mcp` holder mode exist
 > yet. The expected outputs come from the RD-AAT-1 throwaway prototype (see
 > [`design-rd-aat.md`](../design-rd-aat.md) section 5). They show the intended
@@ -12,9 +12,10 @@ derives a five-minute token for one secret without contacting Keyorix. A worker 
 it and nothing else. Every attempt to widen it is refused with a reason. Anyone holding
 Keyorix's public key can verify the chain offline.
 
-Needs (when implemented): a Keyorix server with the demo seed, a machine identity
-`agent-orchestrator` with `secrets.read` on `payments/production` and `payments/staging`,
-and the `keyorix` CLI.
+Needs (when implemented): a Keyorix server with the demo seed; an agent identity
+`agent-orchestrator` (a machine identity of type `agent`, PR #3668) with `secrets.read`
+on `payments/production` and `payments/staging`; a user `alice` who holds
+`agents.delegate` and the same reads; and the `keyorix` CLI, logged in as `alice`.
 
 ## 0:00 – 0:30 The problem (talk)
 
@@ -27,7 +28,7 @@ and the `keyorix` CLI.
 
 ```
 keyorix aat keygen --out orch.key                       # holder key for the orchestrator
-keyorix aat issue --machine agent-orchestrator --holder-key orch.key \
+keyorix aat issue --agent agent-orchestrator --holder-key orch.key \
   --tool secrets.read --ref payments/production/db-password \
   --ref payments/production/stripe-key --ref payments/staging/db-password \
   --ttl 15m --max-depth 2 --out root.aat
@@ -35,12 +36,16 @@ keyorix aat inspect root.aat
 ```
 
 Expected: `depth 0/2, expires in 15m, tool …/tools/secrets.read ref one_of [3 refs]`.
-Say: "Keyorix checked the request against this machine's RBAC for every possible name,
-including secrets created later."
+Say: "Alice started an agent session, and the root token is that session in a form the
+agent can narrow offline. Keyorix capped it by the agent's roles and Alice's own
+permissions."
 
 Then show a refusal:
-`keyorix aat issue … --ref-glob 'payments/*/db-password'` is refused with
-`ref pattern covers environments agent-orchestrator has no grant on (e.g. payments/A/db-password)`.
+`keyorix aat issue … --ref mobile/production/api-key` is refused with
+`ref mobile/production/api-key is outside the session ceiling (agent roles ∩ alice)`.
+With the `keyorix_ref_glob` extension (designed, off in v1), `--ref-glob 'payments/*/db-password'`
+would be refused too, because it covers environments created later
+(`e.g. payments/A/db-password`).
 
 ## 1:15 – 2:15 Derive offline, use it (run)
 
@@ -102,4 +107,4 @@ In the agent, the same read is now denied: `root token revoked`. Say: "Offline v
 only see expiry, but Keyorix checks the root and the machine's live RBAC on every
 request." Show `keyorix audit list --since 5m`: one intent and one outcome for the
 permitted read, with the root id and the chain digests, and the denials with their
-steps. (The ledger records depend on the RD-AGENT-LEDGER-1 ADR.)
+steps. (The ledger records depend on the ledger ADR in PR #3668.)
