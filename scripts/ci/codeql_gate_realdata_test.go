@@ -131,6 +131,35 @@ func TestCodeQLGateRealSARIF(t *testing.T) {
 	}
 }
 
+// Main's JS/TS analysis next to the Go one: both pass with main's alerts; with
+// dismissed alert 604 gone, the first step of its real code flow is printed.
+func TestCodeQLGateRealJavaScriptSARIF(t *testing.T) {
+	sarifs := map[string]string{
+		"go-server.sarif":  readFixture(t, "main-go-server.sarif"),
+		"javascript.sarif": readFixture(t, "main-javascript.sarif"),
+	}
+	open := readFixture(t, "main-alerts-open.tsv")
+	dismissed := readFixture(t, "main-alerts-dismissed.tsv")
+	out, err := runGateAPI(t, sarifs, map[string]string{"open": open, "dismissed": dismissed}, "")
+	if err != nil || !strings.Contains(out, "2 SARIF file(s), 5 result(s) with security-severity >= 7.0") {
+		t.Fatalf("main must pass: err=%v\n%s", err, out)
+	}
+	out, err = runGateAPI(t, sarifs, map[string]string{"open": open, "dismissed": withoutLines(dismissed, "demo/app.js")}, "")
+	if err == nil {
+		t.Fatalf("gate passed, want a failure:\n%s", out)
+	}
+	for _, w := range []string{
+		"NEW high-severity result 1 of 1 [/language:javascript-typescript/]",
+		"  location: demo/app.js:13\n",
+		"  message:  This logs sensitive data returned by process environment as clear text.\n",
+		"  flow:     source demo/app.js:6: process.env (step 1 of 2)\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+}
+
 // The summary table row of a new result names rule, severity, file:line,
 // message and flow start.
 func TestCodeQLGateSummaryRow(t *testing.T) {
