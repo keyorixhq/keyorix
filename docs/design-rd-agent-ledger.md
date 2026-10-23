@@ -2,7 +2,7 @@
 
 Status: R&D design (RD-AGENT-LEDGER-1), 2026-10-23. Docs only, **nothing here
 is implemented**. The decision record is
-[ADR-116](adr-116-agent-evidence-ledger.md) (Proposed). This note adds what an
+[ADR-118](adr-118-agent-evidence-ledger.md) (Proposed). This note adds what an
 ADR should not carry: the mapping to external rules, the threat summary, the
 plan for the formal model, a demo script, a one-page brief and the
 implementation plan.
@@ -75,7 +75,7 @@ input, and the natural persons who verified the results.
 
 | Art. 12 element | Ledger field / mechanism | Fit |
 |---|---|---|
-| 12(1) automatic recording over the lifetime | server-written rows, not agent-written; chained; retention floor (ADR-116 §6) | supports the *secret-use* slice of an AI system's events only, not the model's own events |
+| 12(1) automatic recording over the lifetime | server-written rows, not agent-written; chained; retention floor (ADR-118 §6) | supports the *secret-use* slice of an AI system's events only, not the model's own events |
 | 12(2)(a) situations that may present a risk | `agent.outcome_missing`; denied `secret.read` with `agent_intent_*` reasons; `late` outcomes; intents with wide `targets` | evidence of anomalous credential use; deciding what is a "risk" stays with the provider |
 | 12(2)(b) post-market monitoring | export bundle (`/agent-ledger/export`) and per-session completeness (`seq`, `last_seq`) | input to the provider's monitoring; not monitoring in itself |
 | 12(2)(c) monitoring of operation by the deployer | `agent.session_started` (delegator, scope), `agent.intent` (purpose, targets), `reads_used` | deployer-side evidence of what the agent was allowed and declared |
@@ -101,11 +101,11 @@ Mandatory fields (§3.1, read): `record_id`, `timestamp`, `agent_id`,
 | `session_id` | `diff.session` | |
 | `action_type` / `action_detail` | `event_type` / the `diff` record | the draft's `tool_call` detail has `tool_name`, `parameters_hash`; ours has `tool` and `input_digest` |
 | `outcome` | `diff.status` on `agent.outcome`; `denied` for refused reads | draft values: `success`, `failure`, `timeout`, `denied`, `escalated`. Our `outcome_missing` maps closest to `timeout`; `partial` and `abandoned` have no draft equivalent |
-| `trust_level` (L0–L4) | not stored | derivable: session credential + server-side gate. Assigning a level is a policy decision → NEEDS ANDREI D8 in the report |
+| `trust_level` (L0–L4) | not stored | derivable from session credential + server-side gate, but assigning a level is a policy claim. Decided (D8, Andrei 2026-10-23): not stored in the MVP; derived only in a future draft-shaped exporter |
 | `parent_record_id` | `diff.intent` on read/outcome rows | |
 | `prev_hash` | `prev_hash` | different canonicalisation: the draft hashes RFC 8785 JCS of the previous record; ours is the ADR-029 length-prefixed field encoding |
 | `record_phase` | `agent.intent` = `pre_execution`; `secret.read` = `concurrent`; `agent.outcome` / `outcome_missing` = `post_execution` | the draft (§4.3) requires a `pre_execution` record before state-changing actions in high-risk systems; ours is enforced by the authority, not self-reported |
-| optional `input_hash` / `output_hash` | `input_digest` / `output_digest` | the draft: SHA-256, "used instead of raw input to preserve privacy"; ADR-116 §6 recommends a keyed digest instead |
+| optional `input_hash` / `output_hash` | `input_digest` / `output_digest` | the draft: SHA-256, "used instead of raw input to preserve privacy"; ADR-118 §6 recommends a keyed digest instead |
 | optional `model_id` | `diff.agent_meta.model_id` | agent-asserted |
 | optional `batch` (`merkle_root`, `leaf_index`, `inclusion_proof`) | tree mode of the export | both use the RFC 6962 / 9162 construction |
 | optional `external_timestamp` | RFC 3161 token on the checkpoint / tree head | |
@@ -128,8 +128,8 @@ row. They are questions, not claims.
 | the responsible person or organisation | `diff.delegator`, project |
 | inputs/outputs or references to them, privacy-preserving | `input_digest`, `output_digest`; no text by default |
 | integrity and protection of logs | ADR-029 chain, checkpoints, RFC 3161, export bundle with offline verify |
-| retention and access control for logs | ADR-116 §6; export gated by `audit.read` + `system.read` |
-| an information model / schema | `kx-agent-v1` (ADR-116 §4) |
+| retention and access control for logs | ADR-118 §6; export gated by `audit.read` + `system.read` |
+| an information model / schema | `kx-agent-v1` (ADR-118 §4) |
 
 ### 2.5 DORA ICT logging (every row [VERIFY])
 
@@ -184,7 +184,7 @@ risk the owed-audit design note already names).
 | new variable `released` (`[Reqs -> Nat]`) and action `Release(i)` | guard: `Bug # "release_before_commit" => <<i, 1>> \in ChainRows` and the intent is open and `released[i] < MaxUses` | the read gate; the read row itself is abstracted as part of the release (audit-before-disclosure is already established) |
 | new variable `agentGone` and action `AgentGone(i)` | the agent stops: no outcome request will run | agent crash or exit |
 | action `Sweep(i)` | enabled when the intent is open and `agentGone[i]` (the deadline is abstracted as "the agent is gone"); commits the close plus the `outcome_missing` row through `CommitOwed` | the sweeper |
-| operator `Verify(b)` over a bundle `b` (a subsequence of `chain` plus a pending count) | `"BROKEN"` if links are broken, a row appears twice, an outcome or release has no earlier intent, or `seq` has a gap; `"INDETERMINATE"` if pending > 0 or an intent is open; else `"VERIFIED"` | `verify-audit --agent-bundle` checks 1, 2 and 4 (ADR-116 §5); hashing is abstracted as row identity, as in `ChainLinked` |
+| operator `Verify(b)` over a bundle `b` (a subsequence of `chain` plus a pending count) | `"BROKEN"` if links are broken, a row appears twice, an outcome or release has no earlier intent, or `seq` has a gap; `"INDETERMINATE"` if pending > 0 or an intent is open; else `"VERIFIED"` | `verify-audit --agent-bundle` checks 1, 2 and 4 (ADR-118 §5); hashing is abstracted as row identity, as in `ChainLinked` |
 | action `Tamper` on an exported copy only | drop, duplicate or reorder one row of `Export(h)` | AGL-8 |
 
 ### 4.2 Properties
@@ -227,7 +227,7 @@ risk the owed-audit design note already names).
 
 - **Amendment 3's `standard` tail loss.** The model has no tail loss, so it
   cannot show the D2 risk (an intent and its reads lost together after a
-  release). That risk is argued in prose (ADR-116 technical risks), not
+  release). That risk is argued in prose (ADR-118 technical risks), not
   checked.
 - **Time.** Deadlines, TTLs and `not_after` are abstracted as the "agent
   gone" event.
@@ -258,13 +258,13 @@ Results:
 | segment rows link from genesis | pass |
 | one changed byte in an intent's `diff` no longer re-derives | pass |
 | inclusion proofs for the 5 ledger rows reach the tree head | pass |
-| a tampered row whose leaf is taken from its **stored** `entry_hash` still proves inclusion | as expected. This is why ADR-116 §5 check 2 derives the leaf from the fields |
+| a tampered row whose leaf is taken from its **stored** `entry_hash` still proves inclusion | as expected. This is why ADR-118 §5 check 2 derives the leaf from the fields |
 | the same tampered row with its leaf **derived** fails inclusion | pass |
 | a tree bundle with the outcome left out | caught three ways: no terminal record, a `seq` gap, and `last_seq` ≠ count |
 | an outcome with no earlier intent | caught |
 
 The prototype also showed that owed rows reach the chain after later rows.
-Checking `seq` in chain order would therefore raise false gaps, so ADR-116 §4
+Checking `seq` in chain order would therefore raise false gaps, so ADR-118 §4
 compares `seq` as a set. The prototype did not measure performance and
 supports no number.
 
@@ -273,7 +273,7 @@ supports no number.
 **Every command below is a future CLI or API. None of it exists today.** It
 is the acceptance demo for the implementation (R6: "agent uses a secret →
 intent + outcome recorded → export verified offline"). Command names follow
-ADR-116 and may change with the CLI-UX-2 conventions.
+ADR-118 and may change with the CLI-UX-2 conventions.
 
 | Time | Step | Command (future) | What the audience sees |
 |---|---|---|---|
@@ -301,12 +301,17 @@ Rules for the split:
   tests;
 - hot files (`openapi.yaml`, `server/main.go`, middleware token routing) are
   edited in the last commit of their PR;
-- ADR-116 must be Accepted before PR A starts;
-- when PR A starts, an `adrOpenDecisionRegistry` entry (premise: the gate
-  exists) is added for any decision still open.
+- ADR-118 must be Accepted before PR A starts (Andrei approved implementing
+  from Proposed on 2026-10-23; the status change is separate from that
+  approval);
+- all decisions D1-D8 are answered (ADR-118, "Decisions (Andrei,
+  2026-10-23)"), so no `adrOpenDecisionRegistry` entry is needed for them.
 
-**PR A — core and storage** (`internal/core`, `internal/storage`; after
-OPT-AUDIT-RT-1 frees the audit write path, if D2 is taken):
+**PR A — core and storage** (`internal/core`, `internal/storage`; the strict
+per-transaction intent commit of D2 waits for OPT-AUDIT-RT-1 to free the audit
+write path. Until it lands, intents inherit the global `audit_durability`, the
+MVP does not fully guarantee strict intents, and the agent-ledger posture and
+status output must say so explicitly):
 
 1. Models and migrations: `agent_sessions` and `agent_intents`;
    `identity_type = agent`; the permission `agents.delegate`. Tests: migration
@@ -346,11 +351,12 @@ OPT-AUDIT-RT-1 frees the audit write path, if D2 is taken):
    writer's builder over shared fixtures.
 2. Bundle builder (segment mode) and `GET /agent-ledger/export` with the
    fail-closed export row and the nonce.
-3. `verify-audit --agent-bundle`: checks 1–5 of ADR-116 §5, verdict ranks,
+3. `verify-audit --agent-bundle`: checks 1–5 of ADR-118 §5, verdict ranks,
    the "does not prove" output. Tamper tests in the
    `TestExhaustiveByteTamper_*` style for every ledger field.
 
-**PR D — tree heads (if D4 = tree):** the scheduler computes tree heads after
+**PR D — tree heads (D4: segment mode ships first, tree heads are their own PR
+and land before a third-party auditor relies on the export):** the scheduler computes tree heads after
 a chain verification, stores the left frontier at purges, and serves
 inclusion and consistency proofs. RFC 9162 test vectors.
 
@@ -403,7 +409,7 @@ audit chain without changing its encoding, so existing verification keeps
 working. (A search claim, not a proof: we have not found this combination
 published.)
 
-*Status (2026-10-23).* Design and ADR proposed (ADR-116), threat model and
+*Status (2026-10-23).* Design and ADR proposed (ADR-118), threat model and
 formal-model plan written, record format checked with a throwaway prototype
 against the existing verifier. Implementation is planned in seven reviewable
 steps.

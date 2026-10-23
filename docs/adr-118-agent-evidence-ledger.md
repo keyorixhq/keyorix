@@ -1,13 +1,22 @@
-# ADR-116: Agent evidence ledger (intent before release, outcome after, offline-verifiable export)
+# ADR-118: Agent evidence ledger (intent before release, outcome after, offline-verifiable export)
 
-**Status:** Proposed (2026-10-23). Needs Andrei's approval before any code: it
-adds a principal flavour, a credential kind and a release gate, so it crosses a
-trust and authorization boundary. Open decisions are listed at the end.
+**Status:** Proposed (2026-10-23). Andrei answered all open decisions D1-D8 on
+2026-10-23 and approved implementing from this Proposed status; the answers and
+their binding conditions are in "Decisions (Andrei, 2026-10-23)" at the end.
+The ADR is not marked Accepted here (the implementation plan requires Accepted
+before PR A starts). It was numbered ADR-116 in its first draft and is
+ADR-118 from the number allocation of 2026-10-23: 116 = signed audit
+checkpoints (#3665), 117 = TPM-sealed KEK (#3667), 118 = this ADR (#3668),
+119 = attestation-gated secret release (#3666), 120 = attenuating agent tokens
+(#3669).
 **Date:** 2026-10-23
 **Context:** R&D item R6 (agent evidence ledger MVP). Builds on ADR-029 (hash
 chain), ADR-030 (machine identities), ADR-061 (`keyorix-mcp`), ADR-112
 Amendments 3, 4 and 6 (audit durability, skipped reads, owed audit rows) and
 the owed-audit TLA+ model (`docs/design-rd-tla-owed-audit.md`, #3647).
+Related drafts (all Proposed): ADR-116 signed audit checkpoints (#3665) can
+anchor the ledger's tree heads and exports; ADR-120 attenuating agent tokens
+(#3669) is the credential an agent session could present.
 Design detail, field mapping, TLA+ extension plan, demo and implementation
 plan: `docs/design-rd-agent-ledger.md`. Threat rows:
 `docs/security/threat-models/agent-evidence-ledger.md`.
@@ -170,9 +179,11 @@ value is returned, as today. Its `diff` carries `{"agent_intent": <id>,
 
 So no value is released unless the intent row was committed **in an earlier
 transaction**, and the read row was committed **before the response**. The
-intent row is durable at the deployment's `audit_durability` level. Section 7
-(decision D2) proposes committing intent rows at `strict` even on a `standard`
-install.
+intent row is durable at the deployment's `audit_durability` level. Decision D2
+(Decisions section) commits intent rows at `strict` even on a `standard`
+install once the store has a per-transaction durability override. **Until it
+does, intents inherit the global `audit_durability`, so the MVP does not fully
+guarantee strict intents**, and the posture and status output says so.
 
 **Skipped reads.** `insecure_audit_skip_reads` (ADR-112 Amendment 4) can still
 skip the per-read row. The intent row and its terminal row are not reads, so
@@ -428,7 +439,7 @@ The report states:
 | Fold the intent into the `secret.read` row | Then nothing is declared before the read, an unused or refused intent leaves no trace, one intent cannot cover several reads, and no deadline exists from which a missing outcome could be derived. |
 | A separate agent hash chain or table | A second write path and a second verifier, and no provable order between the two chains. The brief and the constraints exclude changing the write path; adding a second one is worse. |
 | Store records in the IETF draft's format (JCS-canonical, per-record ES256 / ML-DSA signature) | The draft is an individual -08 draft and still changing. Per-record signatures need an asymmetric server key that R8 has not delivered yet. A field-mapping export to the draft's shape is cheap later (design note, mapping table). |
-| Agent-signed records only (client-side ledger) | Self-asserted: the party being audited writes its own record. Kept as a later addition: an agent-held key, or an attested runtime (D17), can sign `agent_meta` and the outcome. |
+| Agent-signed records only (client-side ledger) | Self-asserted: the party being audited writes its own record. Kept as a later addition: an agent-held key, or an attested runtime (ADR-119, attestation-gated secret release, #3666), can sign `agent_meta` and the outcome. |
 | Outcome fail closed | An outage would then lose outcomes when agents exit, and an agent would retry for ever. The owed path keeps the record durable without blocking anything (seeded bug `outcome_fail_closed` in the TLA+ plan). |
 
 ## New vs state of the art
@@ -474,9 +485,11 @@ The report states:
   implementation PR, not to repository docs.
 - **Durability at `standard`.** At the PostgreSQL default, an OS crash can
   lose a tail of up to ~600 ms of audit rows, and an intent and its reads can
-  be lost together after the value was released. Decision D2 proposes
-  committing intent rows at `strict`. That needs a per-transaction durability
-  override in the store, a file another session currently owns.
+  be lost together after the value was released. Decision D2 commits intent
+  rows at `strict` once the store has a per-transaction durability override
+  (a file another session currently owns). Until then intents inherit the
+  global `audit_durability`, so the MVP does not fully guarantee strict
+  intents. See D2 below.
 - **Independent verifier drift.** The `kx-agent-v1` parser exists twice, in the
   writer and in the verifier. A differential test over shared fixtures
   (INV-AUDITVERIFY-02's pattern) is part of the plan.
@@ -506,28 +519,51 @@ The report states:
 - Nothing changes for existing machine identities, PATs or users. The ledger
   applies only to sessions of `agent` identities.
 
-## Open decisions (NEEDS ANDREI)
+## Decisions (Andrei, 2026-10-23)
 
-- **D1 Identity:** a machine identity of type `agent` plus a delegated session
-  (this ADR), or a new principal kind. Recommendation: the flavour.
-- **D2 Intent durability:** commit `agent.intent` rows at `strict` even on a
-  `standard` install. Recommendation: yes, once the store offers a
-  per-transaction override; until then, inherit the deployment's level and
-  document it.
-- **D3 Static tokens:** may an `agent` identity also hold ADR-030 long-lived
-  tokens that bypass the intent gate? Recommendation: no by default
-  (`agent_ledger.allow_static_tokens: false`); an agent is reached only
-  through sessions.
-- **D4 Proof mode:** ship segment mode first, then tree heads, or tree heads
-  from the start. Recommendation: segment first (no new server component),
-  tree heads as their own PR, before a third-party auditor relies on the
-  export.
-- **D5 Text recording:** `agent_ledger.record_text` as a plain setting with a
-  posture line, or an `insecure_` opt-out. Recommendation: a plain setting. It
-  adds personal data to the log and does not weaken a security control.
-- **D6 Missing-outcome deadline:** grace after `not_after`, default 5 min.
-  Recommendation: 5 min, configurable from 1 to 60 min.
-- **D7 Gating:** the ledger in the AGPL core or as a gated feature.
-  Recommendation: core. It is part of the audit story, and gating evidence
-  would weaken the secure-by-default baseline (ADR-112 open question 5 is the
-  related licensing question).
+Andrei answered D1-D8 on 2026-10-23 and approved every recommended option. The
+ADR stays **Proposed**: he approved implementing from the Proposed status, and
+the ADR process has not moved it to Accepted. Each answer below is binding on
+the implementation.
+
+- **D1 Identity: a machine identity of type `agent` plus a delegated session.**
+  Not a new principal kind. Reason: a new kind adds a third authorization
+  branch and ID space and a new hashed `actor_type` value that every audit
+  consumer would have to learn. Condition: no new principal kind, and no new
+  hashed audit column.
+- **D2 Intent durability: strict for `agent.intent` rows once the store has a
+  per-transaction durability override; inherit `audit_durability` until
+  then.** Reason: at `standard` an OS crash can lose an intent and its reads
+  together after the value was released. **Binding obligation:** until the
+  store offers the per-transaction override, intents inherit the global
+  `audit_durability`, and the MVP does not fully guarantee strict intents. The
+  ADR, the posture and status output, and the operator guide must say this
+  plainly, and the output must not describe intents as strictly durable while
+  the override is missing. The override belongs to the store area owned by
+  OPT-AUDIT-RT-1; this ADR does not edit the audit write path.
+- **D3 Static tokens: no by default.** An `agent` identity holds no ADR-030
+  long-lived tokens that bypass the intent gate
+  (`agent_ledger.allow_static_tokens: false`); an agent is reached only through
+  sessions. Reason: a static token would let an agent read with no declared
+  intent.
+- **D4 Proof mode: segment mode first, tree heads as their own PR.** Tree heads
+  land before any third-party auditor relies on the export. Reason: segment
+  mode needs no new server component. Known cost: it discloses every unrelated
+  row in the range, so the operator guide says that.
+- **D5 Text recording: a plain setting.** `agent_ledger.record_text` defaults
+  to false, and turning it on produces an INFO line at every start, a settings
+  diff row and a posture line. It is not an `insecure_` opt-out. Reason: it
+  adds personal data or prompt-like text to the log but does not weaken a
+  security control.
+- **D6 Missing-outcome deadline: 5 minutes after `not_after`, configurable from
+  1 to 60 minutes.** Not a fixed 15 minutes.
+- **D7 Gating: the ledger is in the AGPL core.** Reason: it is part of the
+  audit story, and the project rule is that security is never paywalled; gating
+  evidence would weaken the secure-by-default baseline. No licence-gated check
+  in the ledger code paths. (ADR-112 open question 5 remains the related
+  licensing question for other features.)
+- **D8 Trust level: not in the MVP.** Ledger rows carry no `trust_level` field.
+  A level in the style of the IETF draft's L0-L4 may be derived only inside a
+  future draft-shaped exporter. Reason: deriving a level from the credential
+  kind and the server gate is a policy claim, and the draft is an individual
+  -08 draft that is still changing. Condition: no stored `trust_level`.
