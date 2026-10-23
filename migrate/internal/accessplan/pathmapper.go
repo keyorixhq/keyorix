@@ -46,6 +46,33 @@ type PathMapper struct {
 	projectsByName  map[string]ProjectRef
 	envsByProjectID map[int]map[string]EnvironmentRef
 	kvMounts        []KVMountInfo
+	kvTree          map[string]KVMountListing // nil = the Vault tree was never listed.
+}
+
+// KVMountListing is what plan-access listed in one KV mount at the two levels the default
+// convention maps: the mount root and, for each root key naming a Keyorix project, that
+// directory.
+type KVMountListing struct {
+	// RootListed is false when LIST of the mount root was denied or failed.
+	RootListed bool
+	// Projects holds every root key (trailing "/" stripped) that names a Keyorix project.
+	Projects map[string]KVProjectListing
+}
+
+// KVProjectListing is one <project> key at a KV mount's root.
+type KVProjectListing struct {
+	// Listed is false when <project>/ is a directory whose LIST was denied or failed.
+	Listed bool
+	// Envs holds the keys directly under <project>/ (trailing "/" stripped): environment
+	// directories, or secrets stored at that level.
+	Envs []string
+}
+
+// SetKVTree gives the mapper the KV tree plan-access listed, keyed by mount path as
+// KVMountInfo.Path spells it ("kv1/"). Without it, a default-convention path on a Vault with
+// more than one KV mount is Unmappable: nothing proves the other mounts are empty there.
+func (m *PathMapper) SetKVTree(tree map[string]KVMountListing) {
+	m.kvTree = tree
 }
 
 // NewPathMapper builds a PathMapper. rawOverrides is the raw --path-map flag values, each
@@ -101,6 +128,9 @@ func parsePathOverride(raw string) (pathOverride, error) {
 type ScopeResolution struct {
 	ProjectID     int
 	EnvironmentID int // 0 = global-within-project.
+	// CrossMountEvidence is set for a default-convention resolution (also when it is refused
+	// as CategoryCrossMountScope); see Item.CrossMountEvidence.
+	CrossMountEvidence []string
 }
 
 // Resolve maps a raw Vault ACL policy path (e.g. "secret/data/team-a/prod/*", or
