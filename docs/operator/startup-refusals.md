@@ -607,7 +607,7 @@ failed to initialize core service: failed to initialize encryption: ... aws-kms 
 **Cause.** `insecure_allow_kms_context_fallback` (aws-kms, gcp-kms) lets a wrapped KEK that
 has no `kms_encryption_context` binding yet still open while you migrate it. The stored
 KEK now opens *with* its context, so the migration
-(`keyorix encryption migrate-provider --to-kms-encryption-context=...`) is done and the flag
+(`keyorix-server admin encryption migrate-provider --to-kms-encryption-context=...`) is done and the flag
 only keeps the weaker path open: a blob someone planted under the shared KMS key with no
 context would still unwrap. Since #3398 the server refuses instead of running with it.
 **Fix.** Remove `insecure_allow_kms_context_fallback` from `storage.encryption.key_provider`
