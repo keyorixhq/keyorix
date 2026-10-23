@@ -1,6 +1,6 @@
 # Hybrid post-quantum key wrapping (X25519 + ML-KEM)
 
-Status: **draft for decision**. Design only, with an unwired proof of concept. Nothing here is
+Status: **draft for decision; Q1, Q3, Q7 and Q8 decided 2026-10-23 (§15)**. Design only, with an unwired proof of concept. Nothing here is
 accepted until Andrei approves it, and no production key path changes before then.
 Session RD-PQWRAP-1, 2026-10-23, against origin/main `da6fbb33d`.
 
@@ -277,7 +277,7 @@ KMS side (§8). Smallest change, but it leaves the 60-byte headerless, context-f
 the escrow slot has to live in some other file.
 
 **Recommendation: R.** It contains H, adds a feature operators ask for (recovery without the KEK),
-and keeps the claims accurate. Decision Q1.
+and keeps the claims accurate. **Decided (Q1, Andrei, 2026-10-23): option R.**
 
 ## 8. Interplay with key providers and KMS
 
@@ -330,7 +330,8 @@ posture. An operator can set `GODEBUG=fips140=on` (approved implementations, non
 allowed). `fips140=only` breaks at the first encryption, because `wrapKey` and the
 `EncryptionService` pass their own random nonce to `cipher.NewGCM`. Fixing that (moving to
 `NewGCMWithRandomNonce`, whose layout `nonce‖ct‖tag` is the same as today's) is a prerequisite for
-any FIPS claim, and independent of PQ. Decision Q7.
+any FIPS claim, and independent of PQ. **Decided (Q7, Andrei, 2026-10-23):** a separate backlog item,
+not part of R4.
 
 **The PoC:** it uses `NewGCMWithRandomNonce`. Each X25519 operation runs inside
 `fips140.WithoutEnforcement`, scoped to that one call, with the same justification the standard
@@ -443,14 +444,14 @@ against this budget. The measured numbers are in the session report, not here.
 
 | # | Question | Recommendation |
 |---|---|---|
-| Q1 | Where the envelope is used: R (keyset with recipient slots), K (KEM everything) or H (public-key flows only) | **R** |
+| Q1 | Where the envelope is used: R (keyset with recipient slots), K (KEM everything) or H (public-key flows only) | **Decided 2026-10-23:** R |
 | Q2 | Combiner: keep the generic concatenation KDF (as built) or switch to stdlib `crypto/hpke` MLKEM768-X25519 (X-Wing) | Keep it for the at-rest format; use age's hybrid recipients (HPKE) for operator-facing deliveries |
 | Q3 | Classical partner for ML-KEM-1024: X25519 (as built) or P-384 (approved ECDH) | **Decided 2026-10-23:** X25519; add a P-384 suite only when a FIPS customer needs it |
 | Q4 | Azure Key Vault RSA-OAEP KEK wrap | Posture warning now; Managed HSM symmetric key as follow-up; no breaking change |
 | Q5 | Accept hybrid age recipients for recovery-key delivery and warn on classical ones | Yes, as its own small PR now |
 | Q6 | Escrow recipient separate from the recovery-key authenticator | Yes, separate, optional, off by default |
-| Q7 | Keyorix FIPS mode: move GCM to `NewGCMWithRandomNonce`, add a startup check and a posture line | Yes, as its own backlog item, before any FIPS claim |
-| Q8 | Reword R4's acceptance from "new writes use hybrid envelopes" to "every public-key wrap at rest is hybrid; key files self-describing; legacy readable; rewrap migrates key files; backups rewrap offline" | Yes |
+| Q7 | Keyorix FIPS mode: move GCM to `NewGCMWithRandomNonce`, add a startup check and a posture line | **Decided 2026-10-23:** yes, a separate backlog item, before any FIPS claim |
+| Q8 | Reword R4's acceptance from "new writes use hybrid envelopes" to "every public-key wrap at rest is hybrid; key files self-describing; legacy readable; rewrap migrates key files; backups rewrap offline" | **Decided 2026-10-23:** reworded as proposed |
 | Q9 | Legacy-60 reader lifetime | Keep indefinitely |
 
 ## 16. New vs state of the art
