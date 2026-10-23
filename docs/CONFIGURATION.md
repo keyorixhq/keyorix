@@ -208,7 +208,8 @@ server:
 `auto_cert` is ACME — it needs a public domain and inbound 80/443, so it does not work
 for a local, internal-only, or air-gapped deployment. For those, set `cert_file`/
 `key_file` to a PEM cert and key instead (gRPC's `tls:` block takes the same two
-fields; `domains`/`cert_cache_dir`/`allowed_ciphers` apply to HTTP only). `auto_cert`
+fields, `server.grpc.tls.cert_file` and `server.grpc.tls.key_file`;
+`domains`/`cert_cache_dir`/`allowed_ciphers` apply to HTTP only). `auto_cert`
 is HTTP-only: `server.grpc.tls.auto_cert: true` is refused at start-up, because gRPC has
 no ACME client and the flag used to start a listener whose every handshake failed. A quick
 self-signed pair for local use:
@@ -270,9 +271,10 @@ entry they go out without `Secure`, exactly as before. A forged
 never removed from a cookie that has it today.
 
 **HTTP only.** `trusted_proxies` and `hsts_preload` are read by the HTTP server
-only. The keys parse under `server.grpc` too (both listeners share one config
-shape) but the gRPC server never reads them, so setting either there logs a
-`WARNING` at every start and has no effect. Set them under `server.http`.
+only. The keys parse under `server.grpc` too (`server.grpc.trusted_proxies` and
+`server.grpc.hsts_preload`; both listeners share one config shape) but the gRPC
+server never reads them, so setting either there logs a `WARNING` at every start and
+has no effect. Set them under `server.http`.
 
 The web container's nginx makes its own HSTS decision and strips the backend's
 header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
@@ -281,8 +283,12 @@ behind a TLS-terminating load balancer").
 ### gRPC keepalive and connection limits (`server.grpc.keepalive`)
 
 Durations are Go duration strings (`"15m"`); an unset or unparseable value takes the
-default. Only the gRPC server reads this block (the keys parse under `server.http` too,
-but have no effect there).
+default. Only the gRPC server reads this block. The same eight keys parse under
+`server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
+`server.http.keepalive.min_time`, `server.http.keepalive.permit_without_stream`,
+`server.http.keepalive.max_connection_age`, `server.http.keepalive.max_connection_age_grace`,
+`server.http.keepalive.max_connection_idle` and `server.http.keepalive.handshake_timeout`)
+but have no effect there.
 
 | Key | Default | Meaning |
 |---|---|---|
