@@ -35,6 +35,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -48,7 +49,11 @@ type KeyManager struct {
 	// called from NewService, which cannot either, from seven call sites), so
 	// the error is held here and returned by Initialize -- the first method
 	// that touches a key file, and the one whose failure stops a boot.
-	configErr  error
+	configErr error
+	// keySet keeps the key-set manifest (#2900) current; see
+	// keymanager_manifest.go. NewService replaces the salt+DEK default with
+	// the writer for the whole configured set (provider blobs, shares).
+	keySet     *keyfiles.SetWriter
 	currentDEK []byte
 	// dekSnapshot is the raw wrapped-DEK bytes read from disk at the moment
 	// currentDEK was last set (Initialize/RotateDEKWithSweep). It
@@ -215,6 +220,7 @@ func NewKeyManager(baseDir, dekPath, saltPath string) *KeyManager {
 		baseDir:    base,
 		keyVersion: "v1",
 		configErr:  err,
+		keySet:     defaultKeySetWriter(base, dek, salt),
 	}
 }
 
@@ -454,6 +460,9 @@ func (km *KeyManager) ensureWrappedDEKExists(kek []byte) error {
 		if err := durableSyncDir(filepath.Dir(dekFullPath), "init:syncdir-dek"); err != nil {
 			return fmt.Errorf("failed to sync key directory: %w", err)
 		}
+		// First-boot generation: the salt / provider blobs deriveKEK just
+		// persisted and this DEK are the whole set, all written by this boot.
+		km.commitKeySetFromDisk(keyfiles.OpFirstBoot, km.keySet.Required())
 		fmt.Printf("✅ Generated and wrapped new DEK at %s\n", dekFullPath)
 	}
 

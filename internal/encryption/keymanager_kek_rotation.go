@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -167,6 +168,18 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 	rotationCheckpointHook("kek:after-write-dek-pending")
 	pendingDEKFull := filepath.Join(km.baseDir, pendingDEKPath)
 	activeDEKFull := filepath.Join(km.baseDir, km.dekPath)
+	// Stage the next generation in the key-set manifest before the first
+	// active file changes: from here a crash leaves a state boot classifies
+	// from the recorded hashes alone (keyfiles.ReconcileKeySet) — harmless
+	// staging while both active files are old, a rotation boot can finish
+	// once the DEK is renamed. A failure aborts with nothing changed.
+	newFiles := map[string][]byte{km.saltFullPath(): newSalt, activeDEKFull: newWrappedDEK}
+	if err := km.stageKeySet(keyfiles.OpRotateKEK, newFiles); err != nil {
+		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
+		_ = os.Remove(pendingDEKFull)
+		return fmt.Errorf("rotate KEK: stage the key-set manifest (no key file was changed): %w", err)
+	}
+	rotationCheckpointHook("kek:after-stage-manifest")
 	if err := durableRename(pendingDEKFull, activeDEKFull, "kek:rename-dek"); err != nil {
 		// Do not assume the rename didn't happen: an error here can be reported
 		// AFTER the rename actually applied (e.g. an NFS lost-reply/retransmit
@@ -225,6 +238,8 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 		return fmt.Errorf("rotate KEK: fsync key directory after promoting salt (the rotation itself already fully applied on disk — its durability is unconfirmed; retry to confirm): %w", err)
 	}
 	rotationCheckpointHook("kek:after-rename-salt")
+	km.commitKeySet(keyfiles.OpRotateKEK, newFiles)
+	rotationCheckpointHook("kek:after-commit-manifest")
 	return nil
 }
 
