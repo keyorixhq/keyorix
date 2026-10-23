@@ -214,3 +214,23 @@ func TestJSONMode_RedactsPlainLines(t *testing.T) {
 	assert.NotContains(t, out, "Sup3rSecretValue")
 	assert.NotContains(t, out, "AAAAAAAAAAAA")
 }
+
+// TestServerRequestID_OnlyServerMinted: the audit writer's accessor returns an id only
+// when SetServerRequestID set it; an external SetRequestID afterwards revokes that.
+func TestServerRequestID_OnlyServerMinted(t *testing.T) {
+	assert.Empty(t, ServerRequestID(context.Background()), "no holder")
+
+	ctx, h := WithHolder(context.Background())
+	h.SetRequestID("from-a-header")
+	assert.Empty(t, ServerRequestID(ctx), "an external id is never the server's")
+
+	h.SetServerRequestID("0123456789abcdef01234567")
+	assert.Equal(t, "0123456789abcdef01234567", ServerRequestID(ctx))
+
+	h.SetClientRequestID("client-x")
+	assert.Equal(t, "0123456789abcdef01234567", ServerRequestID(ctx), "the client field does not touch the id")
+	assert.Equal(t, "client-x", h.Snapshot().ClientRequestID)
+
+	h.SetRequestID("overwritten-from-outside")
+	assert.Empty(t, ServerRequestID(ctx), "overwriting with an external id clears the server mark")
+}
