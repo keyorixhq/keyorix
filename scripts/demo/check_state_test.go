@@ -27,6 +27,26 @@ type fakeAPI struct {
 	machine   string // bearer token seen on the by-ref read
 }
 
+// The handler goroutines run while the test body is still setting up and asserting, so every
+// access from the test goes through these (the -race CI leg caught the unlocked version).
+func (f *fakeAPI) setAlerts(a ...map[string]any) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.alerts = a
+}
+
+func (f *fakeAPI) setGaps(g ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.gaps = g
+}
+
+func (f *fakeAPI) seen() (loginPass, machine string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.loginPass, f.machine
+}
+
 func (f *fakeAPI) handler() http.Handler {
 	mux := http.NewServeMux()
 	reply := func(w http.ResponseWriter, v any) {
@@ -49,10 +69,11 @@ func (f *fakeAPI) handler() http.Handler {
 		reply(w, map[string]any{"token": "admin-session"})
 	})
 	mux.HandleFunc("/api/v1/secrets/value", func(w http.ResponseWriter, r *http.Request) {
+		tok := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
 		f.mu.Lock()
-		f.machine = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		f.machine = tok
 		f.mu.Unlock()
-		if f.machine != "kx_machine_native" {
+		if tok != "kx_machine_native" {
 			http.Error(w, `{"error":"missing authorization header"}`, http.StatusUnauthorized)
 			return
 		}
@@ -165,8 +186,8 @@ func TestCheck_UrlFindsNativeStateEnv(t *testing.T) {
 	if !strings.Contains(out, "credentials from") || !strings.Contains(out, "state.env") {
 		t.Fatalf("check.sh did not say which state file it used:\n%s", out)
 	}
-	if e.api.loginPass != "native-admin-pw" || e.api.machine != "kx_machine_native" {
-		t.Fatalf("state.env credentials not used: login=%q machine token=%q", e.api.loginPass, e.api.machine)
+	if pass, machine := e.api.seen(); pass != "native-admin-pw" || machine != "kx_machine_native" {
+		t.Fatalf("state.env credentials not used: login=%q machine token=%q", pass, machine)
 	}
 }
 
@@ -175,8 +196,8 @@ func TestCheck_ExplicitStateFlag(t *testing.T) {
 	state := filepath.Join(e.root, "elsewhere", "native.env")
 	e.writeNativeState(t, state, e.url)
 	out, code := e.run(t, "machine identity", "--url", e.url, "--state", state)
-	if code != 0 || e.api.machine != "kx_machine_native" {
-		t.Fatalf("--state not honoured, exit %d, token %q:\n%s", code, e.api.machine, out)
+	if _, machine := e.api.seen(); code != 0 || machine != "kx_machine_native" {
+		t.Fatalf("--state not honoured, exit %d, token %q:\n%s", code, machine, out)
 	}
 }
 
@@ -200,7 +221,7 @@ func TestCheck_MissingStateFlagFileFailsFast(t *testing.T) {
 func TestCheck_FreshDemoStaysStrictOnNewUserAlert(t *testing.T) {
 	e := newCheckEnv(t)
 	e.writeNativeState(t, filepath.Join(e.root, ".demo-native", "state.env"), e.url)
-	e.api.alerts = []map[string]any{alert(1, "new_user", "low", "alice")}
+	e.api.setAlerts(alert(1, "new_user", "low", "alice"))
 	out, code := e.run(t, "admin login|no open anomalies", "--url", e.url)
 	if code != 1 || !strings.Contains(out, "open anomaly alerts on a fresh demo") || !strings.Contains(out, "--used") {
 		t.Fatalf("a fresh demo must FAIL on any open alert (and hint at --used), got %d:\n%s", code, out)
@@ -210,7 +231,7 @@ func TestCheck_FreshDemoStaysStrictOnNewUserAlert(t *testing.T) {
 func TestCheck_UsedDemoWarnsOnNewUserAndNewIP(t *testing.T) {
 	e := newCheckEnv(t)
 	e.writeNativeState(t, filepath.Join(e.root, ".demo-native", "state.env"), e.url)
-	e.api.alerts = []map[string]any{alert(1, "new_user", "low", "alice"), alert(2, "new_ip", "medium", "ci-app")}
+	e.api.setAlerts(alert(1, "new_user", "low", "alice"), alert(2, "new_ip", "medium", "ci-app"))
 	out, code := e.run(t, "admin login|no open anomalies", "--url", e.url, "--used")
 	if code != 0 || !strings.Contains(out, "WARN") || !strings.Contains(out, "new_user/new_ip alerts from earlier reads are expected") ||
 		!strings.Contains(out, "1 warning(s)") {
@@ -221,7 +242,7 @@ func TestCheck_UsedDemoWarnsOnNewUserAndNewIP(t *testing.T) {
 func TestCheck_UsedDemoStillFailsOnOtherAlerts(t *testing.T) {
 	e := newCheckEnv(t)
 	e.writeNativeState(t, filepath.Join(e.root, ".demo-native", "state.env"), e.url)
-	e.api.alerts = []map[string]any{alert(1, "new_user", "low", "alice"), alert(2, "volume_spike", "high", "ci-app")}
+	e.api.setAlerts(alert(1, "new_user", "low", "alice"), alert(2, "volume_spike", "high", "ci-app"))
 	out, code := e.run(t, "admin login|no open anomalies", "--url", e.url, "--used")
 	if code != 1 || !strings.Contains(out, "volume_spike") {
 		t.Fatalf("--used must still FAIL on a non-new_user/new_ip alert, got %d:\n%s", code, out)
@@ -231,8 +252,8 @@ func TestCheck_UsedDemoStillFailsOnOtherAlerts(t *testing.T) {
 func TestCheck_ComplianceGapFreshStrictUsedWarns(t *testing.T) {
 	e := newCheckEnv(t)
 	e.writeNativeState(t, filepath.Join(e.root, ".demo-native", "state.env"), e.url)
-	e.api.gaps = []string{"secret-rotation", "anomaly-detection"}
-	e.api.alerts = []map[string]any{alert(1, "new_ip", "high", "ci-app")}
+	e.api.setGaps("secret-rotation", "anomaly-detection")
+	e.api.setAlerts(alert(1, "new_ip", "high", "ci-app"))
 
 	out, code := e.run(t, "admin login|compliance", "--url", e.url)
 	if code != 1 || !strings.Contains(out, "exactly one gap") {
@@ -242,7 +263,7 @@ func TestCheck_ComplianceGapFreshStrictUsedWarns(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "WARN") || !strings.Contains(out, "expected; --used") {
 		t.Fatalf("--used must WARN when the gap is caused by new_user/new_ip alerts only, got %d:\n%s", code, out)
 	}
-	e.api.alerts = append(e.api.alerts, alert(2, "volume_spike", "high", "ci-app"))
+	e.api.setAlerts(alert(1, "new_ip", "high", "ci-app"), alert(2, "volume_spike", "high", "ci-app"))
 	if out, code = e.run(t, "admin login|compliance", "--url", e.url, "--used"); code != 1 {
 		t.Fatalf("--used must FAIL when another alert type is open, got %d:\n%s", code, out)
 	}
