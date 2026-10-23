@@ -13,6 +13,15 @@ example `v0.96.1`) throughout.
       are re-checked against `git log PREV..origin/main --first-parent` (a PR merged
       after the draft was written is not in it).
 - [ ] `main` is green: `gh run list --branch main --limit 5`.
+- [ ] Mutation check on the security packages (about 4 minutes on a laptop; the
+      weekly mutation run is stopped as of 2026-10-23 and would only cover
+      `internal/core` and `internal/storage/store`):
+      `GOMAXPROCS=2 gremlins unleash --workers 2 ./internal/crypto` and the same for
+      `./internal/keyfiles`. Test efficacy must not be lower than the last recorded
+      value (2026-10-23: crypto 88.2%, keyfiles 100%; the crypto survivors are #3612).
+      Add `./internal/secretenv` and `./internal/saml` once their mutants are
+      reachable (today most are not covered). Record the new numbers here when they
+      change.
 - [ ] If the release is meant to ship linux/arm (armv7): the Makefile `release`
       target and `_sbom-generate` have the targets (they did not at v0.97.0 prep;
       `make release` builds linux/darwin × amd64/arm64 only), `install.sh` maps
@@ -49,7 +58,17 @@ scripts/preflight.sh
    ```sh
    go test ./deploy/ -count=1        # TestComposeImagePinsMatchLatestRelease is red until the pins match
    ```
-   Also move `V=` in `QUICK_START.md` if the release changes what it describes.
+   Also move `V=` in `QUICK_START.md` to this release, and check that **README and
+   `QUICK_START.md` at the release tag match `main` for install commands** (v0.96.3 shipped
+   docs pointing at v0.96.0 and a README block that cannot work: INSTALL-CLEANROOM-1 F2, F3):
+
+   ```sh
+   scripts/release/check-docs-version.sh vX.Y.Z   # every install-doc pin must equal the tag
+   ```
+   It covers README, QUICK_START, INSTALL-WITH-AI, `docs/SELF_HOSTING.md` and the compose
+   files; intentional exceptions go in `scripts/release/docs-version-exceptions.txt` with a
+   reason. It checks versions only: also read the install commands in README and
+   `QUICK_START.md` once as a new user would.
 4. **Refresh `server/default.pgo`** (`docs/pgo.md`, `scripts/pgo/refresh.sh`). Needs a
    load run: not done in the dry run (pending the bench host).
 5. Move the finished draft to `docs/releases/vX.Y.Z.md` (or whatever the notes become)
