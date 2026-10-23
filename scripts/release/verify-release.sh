@@ -10,6 +10,14 @@
 # and offline signature checks), gh (cryptographic SLSA check). A check whose tool
 # is missing is reported SKIP, never PASS.
 #
+# cosign versions: the image and Helm chart signatures were made by cosign v3, which
+# stores them as OCI referrers (new bundle format); cosign v2 only looks for the old
+# sha256-<digest>.sig tag and reports "no signatures found" on a perfectly good
+# release. So the image and chart signature checks REQUIRE cosign >= 3; with an older
+# cosign they are SKIPped with an explicit precondition message (INCOMPLETE, exit 2),
+# never reported as FAIL. checksums.txt is signed by cosign v2.5.2 (release.yml pins
+# it, because v3 changes the sign-blob flags); cosign v2 and v3 both verify it.
+#
 # What a release is supposed to contain is taken from .github/workflows/release.yml
 # and docker-publish.yml (see docs/operator/verifying-releases.md for the table):
 #   * GitHub Release: 14 binaries, 15 CycloneDX SBOMs, checksums.txt (+ .sig/.pem,
@@ -82,13 +90,17 @@ Options:
   --skip-binaries       do not download/hash the 14 binaries (SBOMs still checked)
   --skip-images         do not check images
   --skip-charts         do not check Helm charts
-  --cosign-args "..."   extra arguments for every cosign call (for example
-                        "--offline" or "--insecure-ignore-tlog=true" in an
-                        air-gapped setup; see the operator guide)
+  --cosign-args "..."   extra arguments for every cosign call (see the operator
+                        guide; note that neither "--offline" nor
+                        "--insecure-ignore-tlog=true" makes checksums.txt
+                        verifiable without network today)
   --no-cosign|--no-gh   behave as if the tool were not installed
   --allow-skip          exit 0 even if some checks were SKIPped (never hides FAIL)
   --self-test           run the built-in tests (fixtures; no network)
   -h, --help            this text
+
+Needs cosign >= 3 for the image and chart signature checks (older cosign cannot
+see their referrer signatures: those checks are SKIPped, exit 2, not FAILed).
 
 Environment: REGISTRY_USER/REGISTRY_PASSWORD (only for a mirror that needs
 read credentials), GITHUB_TOKEN (rate limit only), KVR_CURL_TIMEOUT (seconds).
@@ -120,6 +132,34 @@ detail() { # indented follow-up lines for the previous result, from a file
 # ----------------------------------------------------------------------- tools
 have() { command -v "$1" >/dev/null 2>&1; }
 have_cosign() { [ "$NO_COSIGN" = 0 ] && have cosign; }
+
+# cosign version, detected once (detect_cosign). COSIGN_MAJOR stays empty when it
+# cannot be parsed (a dev build); then the image/chart checks are attempted anyway.
+COSIGN_VERSION=""
+COSIGN_MAJOR=""
+COSIGN_OLD_SKIPS=0
+COSIGN_MIN_MAJOR=3
+detect_cosign() {
+  have_cosign || return 0
+  COSIGN_VERSION=$(cosign version 2>&1 | sed -n 's/^GitVersion:[[:space:]]*//p' | head -n 1)
+  COSIGN_MAJOR=$(printf '%s\n' "$COSIGN_VERSION" | sed -n 's/^v\{0,1\}\([0-9][0-9]*\)\.[0-9][0-9]*.*/\1/p')
+  if [ -z "$COSIGN_MAJOR" ]; then
+    log "  cosign version not recognised (${COSIGN_VERSION:-no output}): assuming it can read referrer signatures"
+  else
+    log "  cosign $COSIGN_VERSION"
+  fi
+  if ! cosign_reads_referrers; then
+    log "  NOTE: cosign $COSIGN_VERSION is older than v3: checksums.txt can be verified, but the image and chart signature checks will be SKIPped (precondition, not a failure). Install cosign >= 3."
+  fi
+}
+# cosign_reads_referrers: false only for a cosign known to be older than v3
+cosign_reads_referrers() { [ -z "$COSIGN_MAJOR" ] || [ "$COSIGN_MAJOR" -ge "$COSIGN_MIN_MAJOR" ]; }
+
+# cosign_too_old ID: the precondition message for an image/chart signature check
+cosign_too_old() {
+  COSIGN_OLD_SKIPS=$((COSIGN_OLD_SKIPS + 1))
+  skip "$1" "PRECONDITION NOT MET, not a verification failure: cosign $COSIGN_VERSION is too old to see referrer signatures (images and charts are signed with cosign v3). Install cosign >= 3 and re-run."
+}
 have_gh_auth() { [ "$NO_GH" = 0 ] && have gh && gh auth status >/dev/null 2>&1; }
 
 sha256_of() { # FILE -> hex
@@ -176,6 +216,20 @@ gh_get() { # API-PATH OUT -> 0 on 200. Never sends registry credentials.
   local HTTP_USERPWD=""
   local tok=${GITHUB_TOKEN:-${GH_TOKEN:-}}
   http_get "$GH_API/$1" "$2" "application/vnd.github+json" "$tok"
+}
+
+# gh_limited OUT: true if the last gh_get was refused by the GitHub API rate limit (60
+# anonymous requests per hour per IP; one full run needs about 12). That says nothing
+# about the release, so the callers SKIP instead of FAIL.
+gh_limited() {
+  case $HTTP_STATUS in
+    429) return 0 ;;
+    403) grep -qi 'rate limit' "$1" 2>/dev/null || grep -qi '^x-ratelimit-remaining: *0' "$1.hdr" 2>/dev/null ;;
+    *) return 1 ;;
+  esac
+}
+gh_limited_skip() { # ID OUT
+  skip "$1" "GitHub API rate limit reached (HTTP $HTTP_STATUS): this check did not run - NOT a verification failure. Set GITHUB_TOKEN (any token, no scopes needed) or wait for the limit to reset, then re-run."
 }
 
 # ------------------------------------------------------------- registry client
@@ -311,6 +365,8 @@ check_source() {
   if printf '%s\n' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
     SHA=$sha
     pass source.commit "tag $TAG -> $SHA"
+  elif gh_limited "$WORK/commit.json"; then
+    gh_limited_skip source.commit
   else
     fail source.commit "tag $TAG does not exist in $REPO (GitHub API HTTP $HTTP_STATUS) - wrong TAG or --repo"
   fi
@@ -329,6 +385,7 @@ check_release_assets() {
     return 1
   else
     if ! gh_get "repos/$REPO/releases/tags/$TAG" "$WORK/release.json"; then
+      if gh_limited "$WORK/release.json"; then gh_limited_skip $id; return 1; fi
       fail $id "no published GitHub Release for $TAG (HTTP $HTTP_STATUS) - the release job did not publish, or the release is still a draft"
       return 1
     fi
@@ -511,6 +568,7 @@ check_binary_provenance() {
   [ -f "$ASSETS_DIR/checksums.txt" ] || { skip $id "checksums.txt not available"; return; }
   d=$(awk '$2 == "keyorix-server_linux_amd64" {print $1}' "$ASSETS_DIR/checksums.txt")
   if ! gh_get "repos/$REPO/attestations/sha256:$d" "$WORK/att.bin.json"; then
+    if gh_limited "$WORK/att.bin.json"; then gh_limited_skip $id; return; fi
     fail $id "no GitHub attestation found for keyorix-server_linux_amd64 (sha256:$d, HTTP $HTTP_STATUS) - attest-build-provenance did not run or lacked 'attestations: write'"
     return
   fi
@@ -550,6 +608,7 @@ check_run() {
   local id=$1 wf=$2 jobs_expected=$3 need_scan=$4 runid conc
   if [ "$OFFLINE" = 1 ] || [ -z "${SHA:-}" ]; then skip "$id" "needs the GitHub API and the tag commit (--offline / commit unknown)"; return; fi
   if ! gh_get "repos/$REPO/actions/runs?head_sha=$SHA&event=push&per_page=100" "$WORK/runs.json"; then
+    if gh_limited "$WORK/runs.json"; then gh_limited_skip "$id"; return; fi
     fail "$id" "cannot list workflow runs for $SHA (HTTP $HTTP_STATUS)"
     return
   fi
@@ -564,6 +623,7 @@ check_run() {
     return
   fi
   if ! gh_get "repos/$REPO/actions/runs/$runid/jobs?per_page=100" "$WORK/jobs.$runid.json"; then
+    if gh_limited "$WORK/jobs.$runid.json"; then gh_limited_skip "$id"; return; fi
     fail "$id" "cannot read the jobs of run $runid (HTTP $HTTP_STATUS)"
     return
   fi
@@ -596,6 +656,23 @@ check_run() {
 # index_platforms FILE -> "os/arch" per real platform entry
 index_platforms() {
   jq -r '.manifests[]? | select((.platform.os // "unknown") != "unknown") | "\(.platform.os)/\(.platform.architecture)"' "$1" | sort
+}
+
+# BuildKit attestation manifest layers carry the in-toto predicate type as an
+# annotation. Real values (all six 0.96.3 images on every platform, and
+# keyorix-k8s-sync 0.87.0-0.89.0; fixture testdata/real-buildkit-v0.96.3):
+# "https://spdx.dev/Document" and "https://slsa.dev/provenance/v1". No published
+# image uses "https://spdx.dev/Spdx", so it is not accepted.
+SBOM_PREDICATE="https://spdx.dev/Document"
+SLSA_PREDICATE="https://slsa.dev/provenance"
+
+# att_layer_digest MANIFEST-FILE PREDICATE-TYPE-PREFIX -> digest of the first matching layer
+att_layer_digest() {
+  jq -r --arg t "$2" '.layers[]? | select((.annotations["in-toto.io/predicate-type"] // "") | startswith($t)) | .digest' "$1" | head -n 1
+}
+# att_layer_types MANIFEST-FILE -> comma-separated predicate types present (for error messages)
+att_layer_types() {
+  jq -r '[.layers[]? | (.annotations["in-toto.io/predicate-type"] // "none")] | join(",")' "$1" 2>/dev/null
 }
 
 check_image() { # name repo suffix platforms
@@ -645,15 +722,15 @@ check_image() { # name repo suffix platforms
       bad_prov="$bad_prov ${p:7:12}:no-attestation-manifest"
       continue
     fi
-    for atype in "https://spdx.dev/Spdx" "https://slsa.dev/provenance"; do
-      lay=$(jq -r --arg t "$atype" '.layers[]? | select((.annotations["in-toto.io/predicate-type"] // "") | startswith($t)) | .digest' "$am" | head -n 1)
+    for atype in "$SBOM_PREDICATE" "$SLSA_PREDICATE"; do
+      lay=$(att_layer_digest "$am" "$atype")
       if [ -z "$lay" ] || ! reg_get "$path" blobs "$lay" "$am.blob" ""; then
-        if [ "$atype" = "https://spdx.dev/Spdx" ]; then bad_sbom="$bad_sbom ${p:7:12}:no-sbom-layer"; else bad_prov="$bad_prov ${p:7:12}:no-provenance-layer"; fi
+        if [ "$atype" = "$SBOM_PREDICATE" ]; then bad_sbom="$bad_sbom ${p:7:12}:no-sbom-layer(layer types: $(att_layer_types "$am"))"; else bad_prov="$bad_prov ${p:7:12}:no-provenance-layer(layer types: $(att_layer_types "$am"))"; fi
         continue
       fi
       if [ "sha256:$(sha256_of "$am.blob")" != "$lay" ]; then
-        if [ "$atype" = "https://spdx.dev/Spdx" ]; then bad_sbom="$bad_sbom ${p:7:12}:blob-digest-mismatch"; else bad_prov="$bad_prov ${p:7:12}:blob-digest-mismatch"; fi
-      elif [ "$atype" = "https://spdx.dev/Spdx" ]; then
+        if [ "$atype" = "$SBOM_PREDICATE" ]; then bad_sbom="$bad_sbom ${p:7:12}:blob-digest-mismatch"; else bad_prov="$bad_prov ${p:7:12}:blob-digest-mismatch"; fi
+      elif [ "$atype" = "$SBOM_PREDICATE" ]; then
         jq -e '(.predicate.spdxVersion | type == "string") and ((.predicate.packages // []) | length > 0)' "$am.blob" >/dev/null 2>&1 || bad_sbom="$bad_sbom ${p:7:12}:sbom-unparsable-or-empty"
       else
         jq -e '(.predicateType | startswith("https://slsa.dev/provenance")) and (.predicate | type == "object")' "$am.blob" >/dev/null 2>&1 || bad_prov="$bad_prov ${p:7:12}:provenance-unparsable"
@@ -664,16 +741,18 @@ check_image() { # name repo suffix platforms
   if [ -z "$bad_prov" ]; then pass "$id.buildkit-provenance" "BuildKit provenance attestation present and parses for every platform"; else fail "$id.buildkit-provenance" "BuildKit provenance attestation problem:$bad_prov"; fi
 
   # cosign signature, by digest, against docker-publish.yml at this exact tag
-  if have_cosign; then
+  if have_cosign && ! cosign_reads_referrers; then
+    cosign_too_old "$id.signature"
+  elif have_cosign; then
     log "  cosign verify $ref@${digest:0:19}..."
     if cosign_verify "$id.signature" "$REGISTRY/$repo@$digest" "https://github.com/$REPO/.github/workflows/docker-publish.yml@refs/tags/$TAG"; then
       pass "$id.signature" "cosign: signed by docker-publish.yml@refs/tags/$TAG (issuer $ISSUER)"
     else
-      fail "$id.signature" "cosign verify FAILED for $ref@$digest - unsigned, signed by another identity, or signature not mirrored"
+      fail "$id.signature" "cosign verify FAILED for $ref@$digest - unsigned, signed by another identity, or signature not copied to the mirror (a mirror must carry the referrer signature: see the operator guide)"
       detail "$WORK/cosign.err" 4
     fi
   else
-    skip "$id.signature" "cosign not installed (or --no-cosign). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/docker-publish.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
+    skip "$id.signature" "cosign not installed (or --no-cosign; needs cosign >= 3). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/docker-publish.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
   fi
 
   # GitHub SLSA attestation for the image digest (digest-addressed, so valid for mirrors too)
@@ -689,6 +768,8 @@ check_image() { # name repo suffix platforms
     else
       fail "$id.slsa" "attestation(s) for $digest exist but none is SLSA provenance of docker-publish.yml @ refs/tags/$TAG"
     fi
+  elif gh_limited "$WORK/att.$name.json"; then
+    gh_limited_skip "$id.slsa"
   else
     fail "$id.slsa" "no GitHub attestation for $digest (HTTP $HTTP_STATUS) - attest-build-provenance did not run for this image"
   fi
@@ -724,22 +805,25 @@ check_chart() { # chart
   else
     fail "$id.version" "chart metadata mismatch: name='$cn' (want $c) version='$cv' (want $VER) appVersion='$ca' (want $VER)"
   fi
-  if have_cosign; then
+  if have_cosign && ! cosign_reads_referrers; then
+    cosign_too_old "$id.signature"
+  elif have_cosign; then
     log "  cosign verify $ref@${digest:0:19}..."
     if cosign_verify "$id.signature" "$REGISTRY/charts/$c@$digest" "https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$TAG"; then
       pass "$id.signature" "cosign: signed by release.yml@refs/tags/$TAG"
     else
-      fail "$id.signature" "cosign verify FAILED for $ref@$digest"
+      fail "$id.signature" "cosign verify FAILED for $ref@$digest - unsigned, signed by another identity, or signature not copied to the mirror (a mirror must carry the referrer signature, and the chart digest must be unchanged: see the operator guide)"
       detail "$WORK/cosign.err" 4
     fi
   else
-    skip "$id.signature" "cosign not installed (or --no-cosign). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
+    skip "$id.signature" "cosign not installed (or --no-cosign; needs cosign >= 3). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
   fi
 }
 
 # ------------------------------------------------------------------------ main
 run_checks() {
   gen_expected
+  detect_cosign
   SHA=""
   log "== $REPO $TAG: source commit"
   check_source
@@ -783,6 +867,10 @@ EOF
 summary() {
   printf '\n'
   printf 'Summary for %s %s: %d PASS, %d FAIL, %d SKIP\n' "$REPO" "$TAG" "$N_PASS" "$N_FAIL" "$N_SKIP"
+  if [ "$COSIGN_OLD_SKIPS" -gt 0 ]; then
+    printf 'PRECONDITION NOT MET: cosign %s cannot see the referrer signatures of images and charts, so %d signature check(s) did not run.\n' "$COSIGN_VERSION" "$COSIGN_OLD_SKIPS"
+    printf '                      Install cosign >= 3 (https://github.com/sigstore/cosign/releases) and re-run. This is not a verification failure.\n'
+  fi
   if [ "$N_FAIL" -gt 0 ]; then
     printf 'RESULT: FAILED - do not deploy this release until every FAIL above is explained.\n'
     return 1
@@ -815,9 +903,11 @@ st_blob() { # FIXDIR FILE-CONTENT-PATH -> prints digest; stores as blob-<hex>
   printf 'sha256:%s' "$d"
 }
 
-st_world() { # DIR  (env: ST_SAN, ST_BAD_APPVERSION, ST_NO_TAG)
+st_world() { # DIR  (env: ST_SAN, ST_BAD_APPVERSION, ST_NO_TAG, ST_SBOM_TYPE)
   local W=$1 R=selftest/keyorix T=v9.9.9 V=9.9.9 S=0123456789abcdef0123456789abcdef01234567
   local F="$W/fx" A="$W/assets" n oa b
+  local RB
+  RB="$(dirname "$SELF")/testdata/real-buildkit-v0.96.3"
   mkdir -p "$F" "$A"
   gen_expected
   # assets
@@ -877,11 +967,19 @@ st_world() { # DIR  (env: ST_SAN, ST_BAD_APPVERSION, ST_NO_TAG)
     for pl in $plats; do
       printf '{"schemaVersion":2,"note":"platform manifest %s %s"}\n' "$name" "$pl" >"$W/pm.json"
       pdig=sha256:$(sha256_of "$W/pm.json")
-      printf '{"predicateType":"https://spdx.dev/Spdx","predicate":{"spdxVersion":"SPDX-2.3","packages":[{"name":"p"}]}}\n' >"$W/sbom.json"
-      printf '{"predicateType":"https://slsa.dev/provenance/v0.2","predicate":{"buildType":"x"}}\n' >"$W/prov.json"
+      # attestation manifest + layers copied from the real v0.96.3 keyorix-k8s-sync image (BuildKit):
+      # only the layer digests/sizes (and the subject) are replaced, because the real SBOM statement
+      # is trimmed to a few array elements (see testdata/real-buildkit-v0.96.3/README.md)
+      cp "$RB/sbom.blob.trimmed.json" "$W/sbom.json"
+      cp "$RB/provenance.blob.json" "$W/prov.json"
       sdig=$(st_blob "$F" "$W/sbom.json")
       bdig=$(st_blob "$F" "$W/prov.json")
-      jq -nc --arg s "$sdig" --arg b "$bdig" '{schemaVersion:2,mediaType:"application/vnd.oci.image.manifest.v1+json",layers:[{digest:$s,annotations:{"in-toto.io/predicate-type":"https://spdx.dev/Spdx"}},{digest:$b,annotations:{"in-toto.io/predicate-type":"https://slsa.dev/provenance/v0.2"}}]}' >"$W/am.json"
+      jq -c --arg s "$sdig" --argjson ss "$(wc -c <"$W/sbom.json" | tr -d ' ')" --arg b "$bdig" --argjson bs "$(wc -c <"$W/prov.json" | tr -d ' ')" \
+        --arg sub "$pdig" --argjson subs "$(wc -c <"$W/pm.json" | tr -d ' ')" --arg sbomtype "${ST_SBOM_TYPE:-}" \
+        '.layers[0].digest = $s | .layers[0].size = $ss | .layers[1].digest = $b | .layers[1].size = $bs
+         | .subject.digest = $sub | .subject.size = $subs
+         | if $sbomtype != "" then .layers[0].annotations["in-toto.io/predicate-type"] = $sbomtype else . end' \
+        "$RB/attestation-manifest.json" >"$W/am.json"
       adig=sha256:$(sha256_of "$W/am.json")
       cp "$W/am.json" "$F/manifest-${adig#sha256:}"
       tsv "https://registry.test/v2/keyorix/$repo/manifests/$adig" "manifest-${adig#sha256:}"
@@ -949,14 +1047,30 @@ st_run() { # NAME EXPECTED-EXIT [args...]  (world in $WORK/st/$NAME)
   fi
 }
 
-# fake cosign: succeeds unless FAKE_COSIGN=fail
+# fake cosign. `cosign version` prints GitVersion: $FAKE_COSIGN_VERSION (default v3.0.6, the
+# real format). Like the real thing, a cosign older than v3 verifies blobs but finds no signature
+# on an image or chart (they are OCI referrers); FAKE_COSIGN=fail makes every verification fail.
 st_fake_cosign() {
   mkdir -p "$WORK/st/bin"
   cat >"$WORK/st/bin/cosign" <<'EOF'
 #!/bin/sh
-[ "${FAKE_COSIGN:-ok}" = ok ] && exit 0
-echo "Error: no matching signatures: fake cosign failure" >&2
-exit 1
+if [ "$1" = version ]; then
+  [ -n "${FAKE_COSIGN_VERSION-v3.0.6}" ] && echo "GitVersion:    ${FAKE_COSIGN_VERSION-v3.0.6}"
+  exit 0
+fi
+if [ "${FAKE_COSIGN:-ok}" != ok ]; then
+  echo "Error: no matching signatures: fake cosign failure" >&2
+  exit 1
+fi
+case "${FAKE_COSIGN_VERSION-v3.0.6}" in
+  v2.* | v1.*)
+    if [ "$1" = verify ]; then
+      echo "Error: no signatures found" >&2
+      exit 10
+    fi
+    ;;
+esac
+exit 0
 EOF
   chmod +x "$WORK/st/bin/cosign"
 }
@@ -970,7 +1084,7 @@ self_test() {
   local base=(--repo selftest/keyorix --registry registry.test/keyorix --no-gh)
   local id n
 
-  log "self-test 1/7: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
+  log "self-test 1/11: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
   st_world "$WORK/st/ok"
   PATH="$WORK/st/bin:$PATH" st_run ok 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   for id in source.commit release.assets release.checksums.listing release.checksums.sboms release.checksums.binaries release.signature.cosign release.signature.cert release.signature.offline release.sbom release.provenance ci.release-run ci.docker-publish-run image.server.tag image.server.shatag image.server.platforms image.server.sbom image.server.buildkit-provenance image.server.signature image.server.slsa image.server-airgap.tag image.k8s-sync.signature image.operator.slsa image.mcp.platforms image.web.platforms chart.keyorix.version chart.keyorix-operator.signature; do
@@ -983,7 +1097,7 @@ self_test() {
   PATH="$WORK/st/bin:$PATH" st_run ok-allow 0 "${base[@]}" --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 2/7: one altered binary, one missing SBOM, cosign rejecting everything"
+  log "self-test 2/11: one altered binary, one missing SBOM, cosign rejecting everything"
   st_world "$WORK/st/mut"
   printf 'tampered\n' >>"$WORK/st/mut/assets/keyorix_linux_amd64"
   rm "$WORK/st/mut/assets/keyorix-migrate_darwin_arm64_sbom.cdx.json"
@@ -1003,7 +1117,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL chart.keyorix.signature
   st_expect "$ST_OUT" PASS image.web.tag
 
-  log "self-test 3/7: checksums.txt altered after signing"
+  log "self-test 3/11: checksums.txt altered after signing"
   st_world "$WORK/st/sum"
   awk '{ if ($2 == "keyorix_darwin_arm64") $1 = "0000000000000000000000000000000000000000000000000000000000000000"; print $1 "  " $2 }' "$WORK/st/sum/assets/checksums.txt" >"$WORK/st/sum/c.txt"
   mv "$WORK/st/sum/c.txt" "$WORK/st/sum/assets/checksums.txt"
@@ -1012,13 +1126,13 @@ self_test() {
   st_expect "$ST_OUT" FAIL release.checksums.binaries
   st_expect "$ST_OUT" FAIL release.provenance
 
-  log "self-test 4/7: certificate names a different workflow"
+  log "self-test 4/11: certificate names a different workflow"
   ST_SAN="https://github.com/selftest/keyorix/.github/workflows/evil.yml@refs/tags/v9.9.9" st_world "$WORK/st/san"
   PATH="$WORK/st/bin:$PATH" st_run san 1 "${base[@]}" --assets-dir "$WORK/st/san/assets" --fixtures "$WORK/st/san/fx" v9.9.9
   st_expect "$ST_OUT" FAIL release.signature.cert
   st_expect "$ST_OUT" PASS release.signature.offline
 
-  log "self-test 5/7: chart appVersion wrong, one image tag missing"
+  log "self-test 5/11: chart appVersion wrong, one image tag missing"
   ST_BAD_APPVERSION=9.9.8 ST_NO_TAG=web st_world "$WORK/st/chart"
   PATH="$WORK/st/bin:$PATH" st_run chart 1 "${base[@]}" --assets-dir "$WORK/st/chart/assets" --fixtures "$WORK/st/chart/fx" v9.9.9
   st_expect "$ST_OUT" FAIL chart.keyorix.version
@@ -1026,7 +1140,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL image.web.tag
   st_expect "$ST_OUT" PASS image.server.tag
 
-  log "self-test 6/7: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
+  log "self-test 6/11: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
   st_world "$WORK/st/skip"
   printf 'https://registry.test/v2/\t-\t000\t\n' >"$WORK/st/skip/fx/index.tsv.new"
   awk -F'\t' '$1 != "https://registry.test/v2/"' "$WORK/st/skip/fx/index.tsv" >>"$WORK/st/skip/fx/index.tsv.new"
@@ -1038,7 +1152,7 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.offline
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 7/7: replay of GitHub-side data copied from the real v0.96.3 release"
+  log "self-test 7/11: replay of GitHub-side data copied from the real v0.96.3 release"
   local real
   real="$(dirname "$SELF")/testdata/real-v0.96.3"
   if [ -d "$real" ]; then
@@ -1055,6 +1169,76 @@ self_test() {
     log "  real fixtures missing: $real"
     ST_BAD=$((ST_BAD + 1))
   fi
+
+  log "self-test 8/11: cosign v2 verifies checksums.txt but cannot see referrer signatures: SKIP + precondition, never FAIL"
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v2.5.2 st_run cosign2 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.signature.cosign
+  st_expect "$ST_OUT" SKIP image.server.signature
+  st_expect "$ST_OUT" SKIP image.web.signature
+  st_expect "$ST_OUT" SKIP chart.keyorix.signature
+  st_expect "$ST_OUT" SKIP chart.keyorix-operator.signature
+  st_expect "$ST_OUT" PASS image.server.sbom
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" '^PASS ' 51
+  st_count "$ST_OUT" '^SKIP ' 10 # gh + 6 image + 3 chart signatures
+  st_count "$ST_OUT" 'too old to see referrer signatures.*Install cosign >= 3' 9
+  st_count "$ST_OUT" '^PRECONDITION NOT MET: cosign v2.5.2 cannot see the referrer signatures' 1
+  st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
+  st_count "$ST_OUT" 'do not deploy' 0
+  # a real problem is still a FAIL with an old cosign: blob verification works there
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v2.5.2 FAKE_COSIGN=fail st_run cosign2fail 1 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.signature.cosign
+  st_expect "$ST_OUT" SKIP image.server.signature
+  # a cosign that is new enough is asked, and its refusal is a FAIL
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v3.0.0 FAKE_COSIGN=fail st_run cosign3fail 1 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL image.server.signature
+  st_expect "$ST_OUT" FAIL chart.keyorix.signature
+  st_count "$ST_OUT" 'too old to see referrer signatures' 0
+  # --skip-images/--skip-charts need no v3: no precondition message
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v2.5.2 st_run cosign2skip 2 "${base[@]}" --skip-images --skip-charts --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.signature.cosign
+  st_count "$ST_OUT" 'PRECONDITION NOT MET' 0
+
+  log "self-test 9/11: unrecognised cosign version string (dev build, no output): the checks are attempted"
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=devel st_run cosigndev 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" PASS image.server.signature
+  st_expect "$ST_OUT" PASS chart.keyorix.signature
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION='' st_run cosignnone 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" PASS image.web.signature
+
+  log "self-test 10/11: BuildKit attestation layers as the real registry serves them"
+  local RB want got
+  RB="$(dirname "$SELF")/testdata/real-buildkit-v0.96.3"
+  # verbatim copy of the real v0.96.3 keyorix-k8s-sync attestation manifest (sha256:862b7c3f...)
+  got=$(att_layer_digest "$RB/attestation-manifest.json" "$SBOM_PREDICATE")
+  want=sha256:545eac42f314e153f360661f272b1215b641de7ef5470caf5eecb5fc78d72fcf
+  if [ "$got" = "$want" ]; then ST_OK=$((ST_OK + 1)); else ST_BAD=$((ST_BAD + 1)); printf '  SELF-TEST MISMATCH: real SBOM layer is %s, expected %s\n' "$got" "$want" >&2; fi
+  got=$(att_layer_digest "$RB/attestation-manifest.json" "$SLSA_PREDICATE")
+  want=sha256:75ca1aea6d23d9123609466e00dfad85e15be5311df9b30e10a315c947b5647b
+  if [ "$got" = "$want" ]; then ST_OK=$((ST_OK + 1)); else ST_BAD=$((ST_BAD + 1)); printf '  SELF-TEST MISMATCH: real provenance layer is %s, expected %s\n' "$got" "$want" >&2; fi
+  # the invented type the first version of this script expected must not be accepted
+  ST_SBOM_TYPE="https://spdx.dev/Spdx" st_world "$WORK/st/sbomtype"
+  PATH="$WORK/st/bin:$PATH" st_run sbomtype 1 "${base[@]}" --assets-dir "$WORK/st/sbomtype/assets" --fixtures "$WORK/st/sbomtype/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL image.server.sbom
+  st_expect "$ST_OUT" FAIL image.web.sbom
+  st_expect "$ST_OUT" PASS image.server.buildkit-provenance
+  st_count "$ST_OUT" 'no-sbom-layer\(layer types: https://spdx.dev/Spdx,https://slsa.dev/provenance/v1\)' 6
+
+  log "self-test 11/11: GitHub API rate limit (HTTP 403 'API rate limit exceeded') is INCOMPLETE, never FAIL"
+  st_world "$WORK/st/rate"
+  printf '{"message":"API rate limit exceeded for 203.0.113.7. (But here'"'"'s the good news: Authenticated requests get a higher rate limit.)","documentation_url":"https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting"}\n' >"$WORK/st/rate/fx/ratelimit.json"
+  awk -F'\t' -v OFS='\t' '$1 ~ /^https:\/\/api\.github\.com\// { $2 = "ratelimit.json"; $3 = "403" } { print }' "$WORK/st/rate/fx/index.tsv" >"$WORK/st/rate/fx/index.tsv.new"
+  mv "$WORK/st/rate/fx/index.tsv.new" "$WORK/st/rate/fx/index.tsv"
+  PATH="$WORK/st/bin:$PATH" st_run rate 2 "${base[@]}" --assets-dir "$WORK/st/rate/assets" --fixtures "$WORK/st/rate/fx" v9.9.9
+  st_expect "$ST_OUT" SKIP source.commit
+  st_expect "$ST_OUT" SKIP release.provenance
+  st_expect "$ST_OUT" SKIP ci.release-run
+  st_expect "$ST_OUT" SKIP image.server.slsa
+  st_expect "$ST_OUT" PASS release.signature.cosign
+  st_expect "$ST_OUT" PASS image.server.signature
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" 'GitHub API rate limit reached \(HTTP 403\).*NOT a verification failure' 8
+  st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
   printf 'self-test: %d assertions passed, %d failed\n' "$ST_OK" "$ST_BAD"
   [ "$ST_BAD" = 0 ] || { log "outputs kept in $WORK/st"; KEEP_WORK=1; return 1; }
