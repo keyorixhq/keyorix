@@ -1097,6 +1097,11 @@ The first boot adds `roles.assignable_scope` (schema epoch 6; the compatibility 
 `any`** (nothing that worked before breaks). Roles created after the upgrade default to
 `project`.
 
+The legacy roles stay `any` on purpose: they are granted per project today, to machine
+identities and to users (`keyorix machine grant-role <name> --project default --role viewer`,
+`keyorix rbac assign-role --user <email> --role admin --project payments`), and those grants
+keep working, as do install-wide grants of them.
+
 What to check:
 
 - **API clients that create roles and then grant them without `project_id`** now get 400:
@@ -1106,6 +1111,12 @@ What to check:
   project invitation) is now refused; grant it without a project.
 - **The startup `WARNING` lists** existing grants outside their role's scope and pending
   invitations that can no longer be accepted. Nothing is changed or removed automatically.
+- **Mixed versions and rolling back the binary.** An epoch-5 binary (allowed by the
+  compatibility floor) ignores `assignable_scope`: it refuses only the four `project_*`
+  built-ins without a project. While it runs, a custom role set to `project` or `global`, or a
+  `system_*` role offered on a project, is not refused by that binary. Roles it creates get
+  the column default, `project`. Finish the rollout (or the rollback) promptly and read the
+  startup `WARNING` on the new version afterwards.
 
 ## 7. Rollback
 

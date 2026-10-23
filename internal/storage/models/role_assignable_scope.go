@@ -34,8 +34,10 @@ func IsValidRoleAssignableScope(s string) bool { return slices.Contains(RoleAssi
 // are "any": they are granted per project today (e.g. `machine grant-role
 // --project P --role viewer`, `rbac assign-role --role admin --project P`),
 // and a project grant is narrower than a global one, so restricting them
-// would only break callers. Pending Andrei (ask 3546-phase2-legacy-roles-scope;
-// the alternative is "global").
+// would only break callers. Decided (ask 3546-phase2-legacy-roles-scope,
+// option a): "any", pinned by TestLegacyRolesAreAssignableAnywhere. Tightening
+// them to "global" is a separate, deliberate change with its own UPGRADING
+// note, not part of a security fix.
 var BuiltinRoleAssignableScopes = map[string]string{
 	"super_admin": RoleAssignableAny,
 	"admin":       RoleAssignableAny,
