@@ -48,9 +48,11 @@ type recoverAdminSummary struct {
 // from anywhere but a host-side config-file read, see recover_admin.go),
 // then reset account state / password / MFA / WebAuthn / lockout / sessions
 // on that ONE account, and record it. Every failure path returns before any
-// storage write happens except the final audit event, which is written
-// regardless of whether the audit chain was already broken (design §4: a
-// broken chain does not block recovery, it's recorded alongside it).
+// storage write happens, except a wrong recovery key, which writes an
+// admin.recover_admin_failed audit event (recordRecoveryKeyMismatch) and
+// nothing else; the success audit event is written regardless of whether
+// the audit chain was already broken (design §4: a broken chain does not
+// block recovery, it's recorded alongside it).
 func performRecoverAdmin(ctx context.Context, store corestorage.Storage, userIdentifier, rawRecoveryKey string, keyless bool) (*recoverAdminSummary, error) {
 	return performRecoverAdminWithTTL(ctx, store, userIdentifier, rawRecoveryKey, keyless, core.DefaultRecoveryOneTimePasswordExpiry)
 }
@@ -94,6 +96,7 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 				"(or enable security.recover_admin.insecure_keyless_admin_recovery, not recommended outside labs/demo use)")
 		}
 		if !recoverykey.Verify(rawRecoveryKey, record.KeyHash) {
+			recordRecoveryKeyMismatch(ctx, store, summary, record.KeyVersion)
 			return nil, fmt.Errorf("recovery key does not match")
 		}
 		summary.recoveryKeyVersion = record.KeyVersion
@@ -244,6 +247,31 @@ func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, su
 	})
 	if writeErr != nil {
 		fmt.Printf("note: could not record this recovery to the audit chain (%v)\n", writeErr)
+	}
+}
+
+// recordRecoveryKeyMismatch writes the audit event for a recover-admin attempt
+// refused because the recovery key did not match (Success=false), the
+// counterpart of admin.recover_admin as auth.login_failed is of auth.login:
+// host access plus key guessing against an admin account must reach the
+// audit chain, not only the operator's terminal. Names the host user, the
+// target and the key generation; never the key typed or its hash. Best effort,
+// like recordRecoveryAuditEvent: the refusal stands either way.
+func recordRecoveryKeyMismatch(ctx context.Context, store corestorage.Storage, summary *recoverAdminSummary, keyVersion int) {
+	uid := summary.userID
+	failed := false
+	err := store.LogAuditEvent(ctx, &models.AuditEvent{
+		EventType: "admin.recover_admin_failed",
+		UserID:    &uid,
+		Description: withLockBypassNote(fmt.Sprintf(
+			"keyorix-server admin recover-admin, run by host user %s, for account %q (user id %d): refused, the recovery key did not match (stored generation %d); nothing was changed",
+			summary.operator, summary.username, summary.userID, keyVersion)),
+		Success:   &failed,
+		ActorType: adminActorType,
+		EventTime: time.Now(),
+	})
+	if err != nil {
+		fmt.Printf("note: could not record this refused attempt to the audit chain (%v)\n", err)
 	}
 }
 
