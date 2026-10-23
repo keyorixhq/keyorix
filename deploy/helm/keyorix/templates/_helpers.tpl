@@ -3,7 +3,7 @@ Fill in chart values that older releases did not have. `helm upgrade
 --reuse-values` replaces this chart's values.yaml defaults with the OLD
 release's values, so a key added after that release (secureBaseline.*,
 web.hsts.*, web.trustedProxies, postgresql.runAsUser, auth.existingSecretKeys.*,
-externalDatabase.caSecret.*)
+externalDatabase.caSecret.*, server.keysSecret.*)
 is absent and `.Values.secureBaseline.enabled` is a nil-pointer error. Every
 template that reads such a key includes this first (`{{- include
 "keyorix.valuesDefaults" . -}}`; it renders nothing). Only a MISSING (or null)
@@ -18,6 +18,7 @@ SYNC with values.yaml: deploy/helm_reuse_values_test.go fails if they drift.
   "web" (dict "trustedProxies" (list) "hsts" (dict "mode" "auto" "maxAge" 31536000 "includeSubDomains" true))
   "postgresql" (dict "runAsUser" 70 "migrateOwnership" false)
   "externalDatabase" (dict "caSecret" (dict "name" "" "key" "ca.crt"))
+  "server" (dict "keysSecret" (dict "enabled" false "name" ""))
 -}}
 {{- range $top, $sub := $defaults -}}
 {{- if not (kindIs "map" (get $v $top)) -}}{{- $_ := set $v $top (dict) -}}{{- end -}}
@@ -415,18 +416,49 @@ default off.
 {{- end -}}
 
 {{/*
+Secret mode (HA-SECRET-KEYS-1, docs/multi-replica-keys.md): the key files
+(data.key, kek.salt, and keyset.manifest.json when the key set has one) come
+read-only from the Kubernetes Secret server.keysSecret.name instead of the keys
+PVC. The chart never creates that Secret and never sees key material: the
+operator creates it with `keyorix-server admin encryption key-secret generate`
+(new install) or `... export` (existing keys, after a rotation). The server runs
+with storage.encryption.key_dir_lock: database and writes nothing to its key
+directory, so no replica can generate keys of its own.
+Renders "true" or nothing; fails closed on a Secret mode that cannot work.
+*/}}
+{{- define "keyorix.server.keysSecretMode" -}}
+{{- $ks := .Values.server.keysSecret | default dict -}}
+{{- if $ks.enabled -}}
+{{- if not $ks.name -}}
+{{- fail "server.keysSecret.enabled=true needs server.keysSecret.name: the Secret holding data.key and kek.salt, created with `keyorix-server admin encryption key-secret generate` (docs/multi-replica-keys.md)" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$" (toString $ks.name)) -}}
+{{- fail (printf "server.keysSecret.name: %q is not a valid Secret name" (toString $ks.name)) -}}
+{{- end -}}
+{{- if .Values.server.keysPersistence.enabled -}}
+{{- fail "server.keysSecret.enabled=true reads the keys from the Secret: set server.keysPersistence.enabled=false. An existing keys PVC is kept (helm.sh/resource-policy: keep); export its key set into the Secret first (`keyorix-server admin encryption key-secret export`) and delete the PVC only once the Secret is verified (docs/multi-replica-keys.md)" -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
+{{/*
 The server replica count, validated. One replica (the default) is the
-single-instance deployment: Recreate strategy, one ReadWriteOnce keys volume. More
-than one is the HA topology of ADR-039 and is refused unless it can work:
+single-instance deployment: Recreate strategy, the keys on a ReadWriteOnce volume
+(or, opted in, from a key Secret). More than one is the HA topology of ADR-039 and
+is refused unless it can work:
   - storage.database.single_writer means exactly one server (docs/single-writer.md:
     a second server refuses to start), so server.singleWriter and replicas > 1
     exclude each other;
-  - every replica must read the SAME wrapped DEK and KEK salt, so the keys volume
-    must be persistent and shared (ReadWriteMany). A per-pod or ReadWriteOnce volume
-    gives each replica its own keys, or leaves the extra pods Pending/unable to
-    decrypt what a sibling wrote.
+  - every replica must read the SAME wrapped DEK and KEK salt and none may
+    generate its own, so the keys come read-only from one Secret (Secret mode,
+    which also renders key_dir_lock: database). A shared writable keys volume is
+    refused: whether it works depends on the filesystem's flock semantics, and a
+    ReadWriteMany volume does not give the key/data separation of a Secret
+    backed up on its own (docs/multi-replica-keys.md).
 The chart renders PostgreSQL only (storage.type is not configurable), so SQLite,
-which is single-process, cannot be combined with replicas here.
+which is single-process, cannot be combined with replicas here; the server's own
+config validation refuses key_dir_lock: database on SQLite as well.
 */}}
 {{- define "keyorix.server.replicas" -}}
 {{- $r := 1 -}}
@@ -438,11 +470,11 @@ which is single-process, cannot be combined with replicas here.
 {{- if .Values.server.singleWriter -}}
 {{- fail (printf "server.replicas=%d with server.singleWriter=true: single-writer mode allows exactly one Keyorix server (docs/single-writer.md); set server.replicas=1 or server.singleWriter=false" $r) -}}
 {{- end -}}
-{{- if not .Values.server.keysPersistence.enabled -}}
-{{- fail (printf "server.replicas=%d needs server.keysPersistence.enabled=true on a ReadWriteMany volume: replicas must share one wrapped DEK and KEK salt" $r) -}}
+{{- if and .Values.server.keysPersistence.enabled (eq (toString .Values.server.keysPersistence.accessMode) "ReadWriteMany") -}}
+{{- fail (printf "server.replicas=%d with a ReadWriteMany keys volume: a shared writable keys volume is not a supported HA mode. Use Secret mode: server.keysSecret.enabled=true, server.keysSecret.name=<Secret>, server.keysPersistence.enabled=false (docs/multi-replica-keys.md)" $r) -}}
 {{- end -}}
-{{- if ne (toString .Values.server.keysPersistence.accessMode) "ReadWriteMany" -}}
-{{- fail (printf "server.replicas=%d needs server.keysPersistence.accessMode=ReadWriteMany (got %q): replicas must share one wrapped DEK and KEK salt" $r (toString .Values.server.keysPersistence.accessMode)) -}}
+{{- if not (include "keyorix.server.keysSecretMode" .) -}}
+{{- fail (printf "server.replicas=%d needs Secret mode (server.keysSecret.enabled=true, server.keysSecret.name=<Secret>, server.keysPersistence.enabled=false): every replica must read the same key files read-only, and none may generate its own (docs/multi-replica-keys.md)" $r) -}}
 {{- end -}}
 {{- end -}}
 {{- $r -}}
