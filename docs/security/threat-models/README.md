@@ -30,6 +30,7 @@ should be filed as an issue.
 | [`web-ui.md`](web-ui.md) | Session-cookie delivery, CSRF, CSP, client-side state — with the same narrower-scope caveat the system-wide document states |
 | [`ha-consistency.md`](ha-consistency.md) | Cross-replica check-then-act races — a threat class no competitor-published security model surveyed names at all |
 | [`mcp-server.md`](mcp-server.md) | `keyorix-mcp`: prompt injection and exfiltration modeled as first-class threats, not a one-line disclaimer |
+| [`agent-delegation-tokens.md`](agent-delegation-tokens.md) | Attenuating agent tokens (ADR-116, Proposed, not implemented): offline delegation that can only narrow, replay, issuance against RBAC, holder keys out of the model's reach |
 | [`sharing-and-acl.md`](sharing-and-acl.md) | Direct and group shares, `SecretACL` grants, share elevation (a viewer holding a write share), revoke, ownership transfer, and the soft-delete / restore cascade |
 | [`break-glass.md`](break-glass.md) | Self-service emergency access: activation gates, expiry, the owed-audit degraded path, alert recipients, independent review, PAT-restricted callers |
 | [`scim-and-sso-accounts.md`](scim-and-sso-accounts.md) | The SCIM bearer token, SCIM ownership of accounts, deprovision (sessions and PATs), SSO account binding and group reconcile, an SSO-managed sole administrator |
