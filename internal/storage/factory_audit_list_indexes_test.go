@@ -2,7 +2,7 @@ package storage
 
 // factory_audit_list_indexes_test.go — the audit list indexes
 // (store.AuditListIndexes) are created on fresh and upgraded databases, replace
-// the single-column project_id / machine_identity_id indexes, and on Postgres
+// the single-column project_id / machine_identity_id indexes and the unused machine_event_time composite (dropped), and on Postgres
 // are built CONCURRENTLY: idempotent, an INVALID leftover is rebuilt, and audit
 // writes are never blocked (docs/specs/audit-list-keyset.md §4, §5.5).
 
@@ -93,6 +93,8 @@ func TestAuditListIndexes_SQLite_FreshAndUpgrade(t *testing.T) {
 	}
 	require.NoError(t, db.Exec("CREATE INDEX idx_audit_events_project_id ON audit_events (project_id)").Error)
 	require.NoError(t, db.Exec("CREATE INDEX idx_audit_events_machine_identity_id ON audit_events (machine_identity_id)").Error)
+	// PERF-INDEX-1: the composite earlier releases built and no query used.
+	require.NoError(t, db.Exec("CREATE INDEX idx_audit_events_machine_event_time ON audit_events (machine_identity_id, event_time)").Error)
 	insertAuditRowsRaw(t, db, 20)
 
 	logs := &logCapture{}
@@ -132,6 +134,7 @@ func pgAuditListDBDSN(t *testing.T) (*gorm.DB, string) {
 	}
 	require.NoError(t, db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_project_id ON audit_events (project_id)").Error)
 	require.NoError(t, db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_machine_identity_id ON audit_events (machine_identity_id)").Error)
+	require.NoError(t, db.Exec("CREATE INDEX IF NOT EXISTS idx_audit_events_machine_event_time ON audit_events (machine_identity_id, event_time)").Error)
 	insertAuditRowsRaw(t, db, 20)
 	return db, dsn
 }
