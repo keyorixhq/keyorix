@@ -533,6 +533,56 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 	return err
 }
 
+// invitationGrantScopes lists the (role name, scope) grants applyInvitationGrants
+// would make for inv, in the same shape: a global invite's system role at the
+// global scope plus each assignment at its project, or a project invite's role
+// at its project.
+func invitationGrantScopes(inv *models.ProjectInvitation) ([]invitationGrant, error) {
+	if inv.SystemRole == "" && inv.AssignmentsJSON == "" {
+		return []invitationGrant{{role: inv.Role, scope: Scope{ProjectID: inv.ProjectID}}}, nil
+	}
+	var out []invitationGrant
+	if inv.SystemRole != "" {
+		out = append(out, invitationGrant{role: inv.SystemRole, scope: Scope{}})
+	}
+	if inv.AssignmentsJSON != "" {
+		var assignments []ProjectAssignment
+		if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &assignments); err != nil {
+			return nil, fmt.Errorf("failed to decode assignments: %w", err)
+		}
+		for _, a := range assignments {
+			out = append(out, invitationGrant{role: a.Role, scope: Scope{ProjectID: a.ProjectID}})
+		}
+	}
+	return out, nil
+}
+
+type invitationGrant struct {
+	role  string
+	scope Scope
+}
+
+// requireInvitationGrantScopesValid refuses an invitation any of whose grants
+// the role-scope check would refuse (#3546), before anything is written. An
+// unknown role or an undecodable assignment list is left to
+// applyInvitationGrants, which reports it as it always has.
+func (c *KeyorixCore) requireInvitationGrantScopesValid(ctx context.Context, inv *models.ProjectInvitation) error {
+	grants, err := invitationGrantScopes(inv)
+	if err != nil {
+		return nil //nolint:nilerr // applyInvitationGrants reports the decode error
+	}
+	for _, g := range grants {
+		role, err := c.storage.GetRoleByName(ctx, g.role)
+		if err != nil {
+			continue // applyInvitationGrants reports the unknown role
+		}
+		if err := c.requireScopeValidForRoleName(ctx, role.Name, g.scope); err != nil {
+			return fmt.Errorf("invitation %d can no longer be accepted, ask the inviter for a new one: %w", inv.ID, err)
+		}
+	}
+	return nil
+}
+
 // revokeInvitationGrants best-effort undoes applyInvitationGrants for userID. Used
 // exclusively by completeInvitationAccept when it discovers, only after granting,
 // that the invitation was concurrently revoked (#412): the conditional

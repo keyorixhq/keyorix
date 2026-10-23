@@ -138,7 +138,10 @@ func (h *AuthHandler) CompleteSSO(w http.ResponseWriter, r *http.Request) {
 	session, _, returnTo, err := h.coreService.CompleteSSO(r.Context(), provider, code, state, r.Header.Get("User-Agent"), clientIP(r))
 	if err != nil {
 		msg := err.Error()
-		if !isSafeSSOError(msg) {
+		if scopeMsg, ok := ssoRoleScopeErrorMessage(err); ok {
+			log.Printf("SSO login via provider %q refused by the role-scope check: %v", provider, err)
+			msg = scopeMsg
+		} else if !isSafeSSOError(msg) {
 			log.Printf("Error completing SSO login via provider %q: %v", provider, err)
 			msg = clientSafe(err)
 		}
