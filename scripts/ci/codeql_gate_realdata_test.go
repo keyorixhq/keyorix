@@ -160,6 +160,36 @@ func TestCodeQLGateRealJavaScriptSARIF(t *testing.T) {
 	}
 }
 
+// The 23 Oct queue failure (#3543), reproduced with CodeQL 2.27.3 on the
+// merge-group commit: the gate must fail on exactly the two results the queue
+// annotated, and say where the sensitive data comes from.
+func TestCodeQLGateQueue3543Reproduction(t *testing.T) {
+	sarifs := map[string]string{"go-server.sarif": readFixture(t, "queue-3543-clear-text-logging.sarif.json")}
+	out, err := runGateAPI(t, sarifs, map[string]string{
+		"open":      readFixture(t, "main-alerts-open.tsv"),
+		"dismissed": readFixture(t, "main-alerts-dismissed.tsv"),
+	}, "")
+	if err == nil {
+		t.Fatalf("gate passed, want the queue's failure:\n%s", out)
+	}
+	for _, w := range []string{
+		"known on main (open or dismissed): go/clear-text-logging (security-severity 7.5) at server/admin/recover_admin.go:141",
+		"NEW high-severity result 1 of 2",
+		"  location: internal/core/session_undelivered.go:60\n",
+		"NEW high-severity result 2 of 2",
+		"  location: server/http/handlers/auth.go:879\n",
+		"  message:  Sensitive data returned by an access to passwordPolicyError flows to a logging call.\n",
+		"  flow:     source internal/core/account.go:425: struct literal (step 1 of 3)\n",
+	} {
+		if !strings.Contains(out, w) {
+			t.Errorf("output lacks %q:\n%s", w, out)
+		}
+	}
+	if n := strings.Count(out, "::error "); n != 2 {
+		t.Errorf("%d annotations, want 2 (as in runs 40024087095 and 40025800055):\n%s", n, out)
+	}
+}
+
 // The summary table row of a new result names rule, severity, file:line,
 // message and flow start.
 func TestCodeQLGateSummaryRow(t *testing.T) {

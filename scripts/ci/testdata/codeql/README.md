@@ -14,6 +14,16 @@ Copied from the live repository on 2026-10-23 (CODEQL-PR-GATE-1), not written by
   2016618512 (commit d5ec9da78): all 3 results, `partialFingerprints` also dropped, rules
   limited to the three the results use, each code flow kept to its first and last step. Its
   js/clear-text-logging result carries a real code flow (the Go export's does not).
+- `queue-3543-clear-text-logging.sarif.json`: the 23 Oct queue failure itself, reproduced.
+  The queue runs kept no SARIF, so the merge-group commit of run 40024087095
+  (2c5b9a738, #3543 on top of main f2e7cddd5) was analysed locally with the same CodeQL
+  bundle as CI (2.27.3, `codeql-bundle-osx64`, sha256 5a035e81...b215 as published):
+  `codeql database create --language=go --command='go build ./...'` (CGO_ENABLED=0) and
+  `codeql database analyze ... codeql/go-queries:Security/CWE-312/CleartextLogging.ql`.
+  It yields exactly the queue's two annotations (server/http/handlers/auth.go:879,
+  internal/core/session_undelivered.go:60) plus main's dismissed recover_admin.go:141.
+  Trimmed as above. Unlike the API export, the CLI puts the rules under `tool.driver.rules`
+  and these results carry `codeFlows`, so both SARIF shapes are covered.
 - `main-alerts-open.tsv`, `main-alerts-dismissed.tsv`: main's open and dismissed CodeQL alerts
   at the same time, as the gate's own query prints them (`ruleId<TAB>path`, from
   `code-scanning/alerts?state=<state>&ref=refs/heads/main&tool_name=CodeQL`). Alert numbers,
