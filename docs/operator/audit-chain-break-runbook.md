@@ -19,7 +19,7 @@ triage, containment and evidence. Section 5 lists what does exist and what is mi
 | Where | Command / signal | Verdicts |
 |---|---|---|
 | Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`; non-zero exit on the last two |
-| Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
+| Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
 | Compliance posture | `GET /api/v1/compliance/posture`, field `audit_integrity` | reads the persisted state, walks nothing |
 | Offline, independent code | `keyorix-server admin verify-audit` | exit `0` VALID, `1` BROKEN, `2` INDETERMINATE, `3` usage/input error |
 | Restore | `keyorix-server admin restore` runs `verify-audit` on the restored database | fails (non-zero) on BROKEN |
@@ -34,6 +34,18 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
 - `NOT PROVEN` is not a break. It means the server has no recent full verification, or its
   persisted verification state was untrusted (`system.audit_verification_state_rejected`
   event). Run `keyorix audit verify --full`, which clears it if the chain is sound.
+- A reason starting `audit verification state discontinuity (<kind>)` is `BROKEN` and never
+  clears: the signed verification state was deleted, garbled, signed under another key epoch,
+  claims rows that are gone ("past the chain head"), or is an older row put back over a
+  recorded break. That state held the proof of what was certified, so the server cannot say
+  whether rows were lost before this point. It appends a
+  `system.audit_verification_state_discontinuity` event, raises
+  `keyorix_audit_verify_state_discontinuity` and `keyorix_audit_verify_failure_recorded`, and
+  keeps checkpointing new rows. `--full` does not clear it. Treat it like a truncation
+  (sections 2, 5, 6): compare against an external anchor, a backup or the high-water witness
+  file. A `rotate-kek` or `migrate-provider` currently also produces `other key epoch`, because
+  a key change does not yet carry the state over. There is no command to accept it yet
+  (`docs/design-audit-reseal-options.md`).
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.
 

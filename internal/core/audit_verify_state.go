@@ -21,6 +21,16 @@
 // over, records the rejection in the new signed row (reported as not_proven until
 // a full verification that started after it completes) and appends a
 // system.audit_verification_state_rejected event.
+//
+// A row that is deleted, garbled, signed under another key epoch, claims rows
+// past the chain head, or predates a break the chain records cannot be continued
+// at all (AUDIT-VERIFY-STATE-1): it carried the pin and sticky failure that prove
+// rows were lost, so starting over would erase that evidence. Such a row raises
+// a sticky discontinuity instead (auditVerifyDiscontinuity): status broken with
+// its own reason, the failure gauge, a SECURITY log line and an in-chain
+// system.audit_verification_state_discontinuity event. No verification clears
+// it. A deleted row is told from an honest first start by the in-chain
+// system.audit_verification_state_initialized marker every state keeps alive.
 package core
 
 import (
@@ -31,8 +41,38 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+)
+
+// In-chain events about the state row. The marker exists while a state does
+// (re-appended when retention purged it); the other two are breaks a row saved
+// before them cannot have seen.
+const (
+	auditVerifyStateMarkerEvent        = "system.audit_verification_state_initialized"
+	auditVerifyStateDiscontinuityEvent = "system.audit_verification_state_discontinuity"
+	auditChainVerificationFailedEvent  = "system.audit_chain_verification_failed"
+)
+
+// Discontinuity kinds (each also appears in the reported reason).
+const (
+	auditDiscDeleted     = "deleted"
+	auditDiscGarbled     = "garbled"
+	auditDiscOtherEpoch  = "other key epoch"
+	auditDiscPastHead    = "past the chain head"
+	auditDiscBeforeBreak = "before a recorded break"
+)
+
+// auditVerifyEvidencePage bounds one evidence-scan read; auditVerifyEvidenceRescan
+// re-reads that many ids below the previous bound, for an event whose id was
+// taken before the bound but committed after the previous scan.
+const (
+	auditVerifyEvidencePage   = 1000
+	auditVerifyEvidenceRescan = 1024
 )
 
 // auditVerifyStateKey is the system_metadata key of the signed state row.
@@ -151,19 +191,143 @@ type auditVerifyPin struct {
 	HeadHash string `json:"head_hash"`
 }
 
+// auditVerifyDiscontinuity records that the persisted state could not be
+// continued (see the package comment). Sticky: nothing in this package clears
+// it; accepting a real loss needs an audited operator action
+// (docs/design-audit-reseal-options.md).
+type auditVerifyDiscontinuity struct {
+	DetectedAt time.Time `json:"detected_at"`
+	Kind       string    `json:"kind"`
+	Reason     string    `json:"reason"`
+}
+
 // auditVerifyState is the whole signed row.
 type auditVerifyState struct {
 	V int `json:"v"`
+	// KID is the key version the row was signed under. It is read unauthenticated
+	// only to name a signature failure (another key epoch or garbled); both are
+	// discontinuities.
+	KID string `json:"kid,omitempty"`
 	// Gen is strictly increasing across saves; Bind is the trail at save time.
-	Gen       uint64                `json:"gen"`
-	Bind      auditVerifyBinding    `json:"bind"`
-	Pin       *auditVerifyPin       `json:"pin,omitempty"`
-	Rejected  *auditVerifyRejection `json:"rejected,omitempty"`
-	Cycle     *auditVerifyCycle     `json:"cycle,omitempty"`
-	LastFull  *auditFullResult      `json:"last_full,omitempty"`
-	LastCheck *auditTailCheck       `json:"last_check,omitempty"`
-	Failure   *auditVerifyFailure   `json:"failure,omitempty"`
-	Job       *auditVerifyJob       `json:"job,omitempty"`
+	Gen  uint64             `json:"gen"`
+	Bind auditVerifyBinding `json:"bind"`
+	// AuditHead is the highest audit event id at save time (0 on rows saved
+	// before it existed): a row may not claim rows past the head, nor predate a
+	// break event after it while lacking that break.
+	AuditHead     uint                      `json:"audit_head,omitempty"`
+	Pin           *auditVerifyPin           `json:"pin,omitempty"`
+	Rejected      *auditVerifyRejection     `json:"rejected,omitempty"`
+	Discontinuity *auditVerifyDiscontinuity `json:"discontinuity,omitempty"`
+	Cycle         *auditVerifyCycle         `json:"cycle,omitempty"`
+	LastFull      *auditFullResult          `json:"last_full,omitempty"`
+	LastCheck     *auditTailCheck           `json:"last_check,omitempty"`
+	Failure       *auditVerifyFailure       `json:"failure,omitempty"`
+	Job           *auditVerifyJob           `json:"job,omitempty"`
+
+	// detected is a discontinuity found by the load this state came from; a
+	// writer reports it (event, log, counter) after saving. needMarker: the save
+	// found no live in-chain marker. Neither is persisted.
+	detected   *auditVerifyDiscontinuity
+	needMarker bool
+}
+
+// claimedThrough is the highest audit event id the row says existed.
+func (s *auditVerifyState) claimedThrough() uint {
+	n := s.AuditHead
+	if s.Pin != nil {
+		n = max(n, s.Pin.HeadID)
+	}
+	if s.LastCheck != nil {
+		n = max(n, s.LastCheck.ThroughID)
+	}
+	if s.LastFull != nil {
+		n = max(n, s.LastFull.ThroughID)
+	}
+	if s.Cycle != nil {
+		n = max(n, s.Cycle.TargetID, s.Cycle.SeedID)
+	}
+	return n
+}
+
+// auditVerifyEvidence is what the chain says about state rows: the newest id of
+// each event type above (0 = none seen) and the head id.
+type auditVerifyEvidence struct {
+	head, marker, failure, discontinuity uint
+}
+
+// auditVerifyEvidenceIndex caches auditVerifyEvidence per process, so each scan
+// reads only the ids appended since the last one.
+type auditVerifyEvidenceIndex struct {
+	mu      sync.Mutex
+	through uint
+	ev      auditVerifyEvidence
+}
+
+// scanAuditVerifyEvidence brings the evidence up to the current head. The first
+// call in a process reads the whole table (filtered by event type, the matches
+// are rare); later calls read only what was appended since.
+func (c *KeyorixCore) scanAuditVerifyEvidence(ctx context.Context) (auditVerifyEvidence, error) {
+	idx := &c.auditVerifyEvidence
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	head, err := c.storage.MaxAuditEventID(ctx)
+	if err != nil {
+		return auditVerifyEvidence{}, err
+	}
+	after := idx.through - min(idx.through, auditVerifyEvidenceRescan)
+	for after < head {
+		from := after
+		evs, _, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
+			Actions:   []string{auditVerifyStateMarkerEvent, auditChainVerificationFailedEvent, auditVerifyStateDiscontinuityEvent},
+			AfterID:   &from,
+			UpToID:    &head,
+			Ascending: true,
+			PageSize:  auditVerifyEvidencePage,
+			Count:     storage.AuditCountNone,
+		})
+		if err != nil {
+			return auditVerifyEvidence{}, fmt.Errorf("failed to read audit verification evidence: %w", err)
+		}
+		if len(evs) == 0 {
+			break
+		}
+		for _, e := range evs {
+			switch e.EventType {
+			case auditVerifyStateMarkerEvent:
+				idx.ev.marker = max(idx.ev.marker, e.ID)
+			case auditChainVerificationFailedEvent:
+				idx.ev.failure = max(idx.ev.failure, e.ID)
+			case auditVerifyStateDiscontinuityEvent:
+				idx.ev.discontinuity = max(idx.ev.discontinuity, e.ID)
+			}
+			after = max(after, e.ID)
+		}
+	}
+	idx.through = max(idx.through, head)
+	idx.ev.head = head
+	return idx.ev, nil
+}
+
+// discontinuedAuditVerifyState is the state a load returns for a row that cannot
+// be continued. prev is the row when it authenticated (its generation, pin,
+// failure, job and an earlier discontinuity are kept: they only make the verdict
+// stricter); nil when it was deleted or does not authenticate.
+func (c *KeyorixCore) discontinuedAuditVerifyState(prev *auditVerifyState, kind, reason string) *auditVerifyState {
+	d := &auditVerifyDiscontinuity{DetectedAt: c.now(), Kind: kind, Reason: reason}
+	st := &auditVerifyState{V: 1, Discontinuity: d, detected: d}
+	if prev != nil {
+		st.Gen, st.Pin, st.Failure, st.Job = prev.Gen, prev.Pin, prev.Failure, prev.Job
+		if prev.Discontinuity != nil {
+			st.Discontinuity = prev.Discontinuity
+		}
+	}
+	return st
+}
+
+// auditDiscontinuityText is the reported reason of a discontinuity.
+func auditDiscontinuityText(d *auditVerifyDiscontinuity) string {
+	return fmt.Sprintf("audit verification state discontinuity (%s) detected at %s: %s. Continuity with every earlier verification is lost: rows removed or altered before this point may no longer be detectable. This alarm is sticky; no verification clears it (docs/operator/audit-chain-break-runbook.md)",
+		d.Kind, d.DetectedAt.UTC().Format(time.RFC3339), d.Reason)
 }
 
 func (c *KeyorixCore) signAuditVerifyState(payload []byte) string {
@@ -207,19 +371,20 @@ func (c *KeyorixCore) bumpAuditVerifyGen(gen uint64) {
 }
 
 // loadAuditVerifyState reads and authenticates the state row. A missing row is
-// an empty state with no reason (a fresh or upgraded deployment), unless this
-// process already read or wrote one. A row that exists but cannot be trusted
-// returns a non-empty reason and a state that claims nothing: empty when it is
-// malformed or fails its signature; when it is authentic but older than the
-// signed checkpoint trail or than a generation this process saw (a replay or
-// rollback), only its generation, sticky failure and job are kept (a failure
-// only ever makes the verdict stricter). Only a storage failure is an error.
+// an empty state with no reason only when nothing proves one existed (a fresh
+// or upgraded deployment). A row that cannot be continued — deleted, malformed,
+// failing its signature, claiming rows past the chain head, or saved before a
+// break the chain records — returns a state carrying a sticky Discontinuity
+// (and detected set) with no reason. A row that is authentic but older than
+// the signed checkpoint trail or than a generation this process saw (a replay
+// or rollback) returns a non-empty reason and keeps only its generation,
+// sticky failure, discontinuity and job. Only a storage failure is an error.
 func (c *KeyorixCore) loadAuditVerifyState(ctx context.Context) (st *auditVerifyState, reason string, err error) {
 	st, reason, err = c.loadAuditVerifyStateUnobserved(ctx)
 	switch {
 	case err != nil:
-	case reason != "":
-		c.observeAuditVerifyStateUntrusted(st)
+	case reason != "" || st.detected != nil:
+		c.observeAuditVerifyStateUntrusted(st, reason != "")
 	case c.AuditCheckpointsAvailable():
 		c.observeAuditVerifyState(st)
 	}
@@ -243,19 +408,61 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	if err != nil {
 		return nil, "", err
 	}
+	// Read after the row: ids only grow, so a row saved before this read cannot
+	// look past the head, and an event it predates is already visible.
+	ev, err := c.scanAuditVerifyEvidence(ctx)
+	if err != nil {
+		return nil, "", err
+	}
 	seen := c.auditVerifyGenSeen.Load()
 	if !ok {
-		if seen > 0 {
-			return &auditVerifyState{V: 1}, fmt.Sprintf("the persisted verification state is missing although this server already read generation %d (deleted or rolled back) and was ignored", seen), nil
+		switch {
+		case seen > 0:
+			return c.discontinuedAuditVerifyState(nil, auditDiscDeleted,
+				fmt.Sprintf("the persisted verification state is missing although this server already read generation %d", seen)), "", nil
+		case ev.marker > 0 || ev.discontinuity > 0:
+			return c.discontinuedAuditVerifyState(nil, auditDiscDeleted,
+				fmt.Sprintf("the persisted verification state is missing although audit event #%d records that one exists", max(ev.marker, ev.discontinuity))), "", nil
+		}
+		if why, err := c.auditCheckpointTrailUnauthenticated(ctx); err != nil {
+			return nil, "", err
+		} else if why != "" {
+			return c.discontinuedAuditVerifyState(nil, auditDiscDeleted,
+				"the persisted verification state is missing while "+why), "", nil
 		}
 		return &auditVerifyState{V: 1}, "", nil
 	}
-	s, why := c.decodeAuditVerifyState(val)
+	s, kind, why := c.decodeAuditVerifyState(val)
 	if s == nil {
-		return &auditVerifyState{V: 1}, why, nil
+		return c.discontinuedAuditVerifyState(nil, kind, why), "", nil
+	}
+	// A row that already carries a discontinuity has raised the alarm: the
+	// checks below would only find the same gap again.
+	if s.Discontinuity == nil {
+		if claimed := s.claimedThrough(); claimed > ev.head {
+			return c.discontinuedAuditVerifyState(s, auditDiscPastHead,
+				fmt.Sprintf("the authentic persisted verification state covers audit event #%d, but the chain ends at #%d: rows it verified were removed", claimed, ev.head)), "", nil
+		}
+		if kind, why, err := c.auditVerifyStateHeadGone(ctx, s); err != nil {
+			return nil, "", err
+		} else if kind != "" {
+			return c.discontinuedAuditVerifyState(s, kind, why), "", nil
+		}
+	}
+	// Rows saved before AuditHead existed (s.AuditHead == 0) cannot be placed
+	// against the chain; the replay checks below still apply to them.
+	if s.AuditHead > 0 {
+		switch {
+		case s.Failure == nil && ev.failure > s.AuditHead:
+			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak,
+				fmt.Sprintf("the persisted verification state was saved at audit event #%d without the verification failure recorded at audit event #%d (an older row put back to erase it)", s.AuditHead, ev.failure)), "", nil
+		case s.Discontinuity == nil && ev.discontinuity > s.AuditHead:
+			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak,
+				fmt.Sprintf("the persisted verification state was saved at audit event #%d without the discontinuity recorded at audit event #%d (an older row put back to erase it)", s.AuditHead, ev.discontinuity)), "", nil
+		}
 	}
 	untrusted := func(why string) (*auditVerifyState, string, error) {
-		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Job: s.Job},
+		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job},
 			"the persisted verification state " + why + " (a replayed or rolled-back row) and was ignored", nil
 	}
 	if s.Gen < seen {
@@ -269,27 +476,93 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	return s, "", nil
 }
 
+// auditCheckpointTrailUnauthenticated describes a latest checkpoint or
+// high-water mark that exists but fails its signature under the current key
+// ("" when there is none). With no state row and no in-chain marker left (the
+// chain was cut back past it), that is the remaining proof that the trail was
+// certified before, under a key nothing vouches for: a relabel or an
+// unrecorded key change, never an honest first start.
+func (c *KeyorixCore) auditCheckpointTrailUnauthenticated(ctx context.Context) (string, error) {
+	cp, err := c.storage.LatestAuditCheckpoint(ctx)
+	if err != nil {
+		return "", err
+	}
+	if cp != nil && !c.checkpointSignatureValid(cp) {
+		return fmt.Sprintf("audit checkpoint #%d exists but fails its signature under the current key (claiming key version %q)", cp.ID, cp.KeyVersion), nil
+	}
+	val, ok, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey)
+	if err != nil || !ok {
+		return "", err
+	}
+	if hw, sig, parsed := parseAuditHighWater(val); !parsed || !c.checkpointSigMatches(hw, sig) {
+		return "the audit high-water mark exists but does not authenticate under the current key", nil
+	}
+	return "", nil
+}
+
+// auditVerifyStateHeadGone checks the head row an authentic state certified
+// (its pin, or for a row saved before pins its last valid tail check): it
+// returns a discontinuity kind and reason when that row is missing (unless a
+// signed retention purge removed it) or carries another hash. Ids are never
+// reused, so after new rows are appended this is what still shows the gap the
+// claimedThrough comparison saw before.
+func (c *KeyorixCore) auditVerifyStateHeadGone(ctx context.Context, s *auditVerifyState) (kind, reason string, err error) {
+	var id uint
+	var hash string
+	switch {
+	case s.Pin != nil && s.Pin.HeadID != 0:
+		id, hash = s.Pin.HeadID, s.Pin.HeadHash
+	case s.LastCheck != nil && s.LastCheck.Valid && s.LastCheck.ThroughID != 0:
+		id, hash = s.LastCheck.ThroughID, s.LastCheck.HeadHash
+	default:
+		return "", "", nil
+	}
+	got, found, err := c.storage.AuditEntryHashByID(ctx, id)
+	switch {
+	case err != nil:
+		return "", "", err
+	case found && got == hash:
+		return "", "", nil
+	case found:
+		return auditDiscPastHead, fmt.Sprintf("audit event #%d, the head the authentic persisted verification state certified, was rewritten", id), nil
+	}
+	anchor, err := c.loadAuditRetentionAnchor(ctx)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to load audit chain re-anchor: %w", err)
+	}
+	if anchor != nil && id < anchor.RowID {
+		return "", "", nil // removed by a sanctioned retention purge
+	}
+	return auditDiscPastHead, fmt.Sprintf("audit event #%d, the head the authentic persisted verification state certified, is missing: rows it verified were removed", id), nil
+}
+
 // decodeAuditVerifyState parses and authenticates a stored state row under the
-// current key. It returns nil and the reason when the row is malformed or
-// fails its signature. It applies no replay or rollback check: callers that
-// need one (loadAuditVerifyStateUnobserved) add it.
-func (c *KeyorixCore) decodeAuditVerifyState(val string) (*auditVerifyState, string) {
+// current key. When the row is malformed or fails its signature it returns nil,
+// the discontinuity kind and the reason. It applies no replay or rollback
+// check: callers that need one (loadAuditVerifyStateUnobserved) add it.
+func (c *KeyorixCore) decodeAuditVerifyState(val string) (*auditVerifyState, string, string) {
+	const malformed = "the persisted verification state is malformed (garbled or truncated)"
 	parts := strings.Split(val, auditVerifyStateSep)
 	if len(parts) != 3 || parts[0] != "avs-v1" {
-		return nil, "the persisted verification state is malformed and was ignored"
+		return nil, auditDiscGarbled, malformed
 	}
 	payload, derr := base64.RawURLEncoding.DecodeString(parts[1])
 	if derr != nil {
-		return nil, "the persisted verification state is malformed and was ignored"
-	}
-	if !hmac.Equal([]byte(c.signAuditVerifyState(payload)), []byte(parts[2])) {
-		return nil, "the persisted verification state fails its signature under the current key (tampered, or written before a KEK-provider migration) and was ignored"
+		return nil, auditDiscGarbled, malformed
 	}
 	var s auditVerifyState
-	if jerr := json.Unmarshal(payload, &s); jerr != nil || s.V != 1 {
-		return nil, "the persisted verification state is malformed and was ignored"
+	jerr := json.Unmarshal(payload, &s)
+	if !hmac.Equal([]byte(c.signAuditVerifyState(payload)), []byte(parts[2])) {
+		// The key version is not authenticated here: it only names the failure.
+		if jerr == nil && s.KID != "" && s.KID != c.auditCkptKeyVersion {
+			return nil, auditDiscOtherEpoch, fmt.Sprintf("the persisted verification state fails its signature under the current key version %q and claims key version %q (a key change that did not carry the state over, or a relabelled row)", c.auditCkptKeyVersion, s.KID)
+		}
+		return nil, auditDiscGarbled, "the persisted verification state fails its signature under the current key (tampered, or signed under an earlier key before rows recorded their key version)"
 	}
-	return &s, ""
+	if jerr != nil || s.V != 1 {
+		return nil, auditDiscGarbled, malformed
+	}
+	return &s, "", ""
 }
 
 // signedAuditVerifyPin returns what the stored state row proves the chain
@@ -314,7 +587,7 @@ func (c *KeyorixCore) signedAuditVerifyPin(ctx context.Context) (*auditVerifyPin
 	if err != nil || !ok {
 		return nil, err
 	}
-	s, _ := c.decodeAuditVerifyState(val)
+	s, _, _ := c.decodeAuditVerifyState(val)
 	if s == nil {
 		return nil, nil
 	}
@@ -370,8 +643,17 @@ func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyS
 	if prev != nil && (st.Pin == nil || prev.Events > st.Pin.Events) {
 		st.Pin = prev
 	}
+	head, err := c.storage.MaxAuditEventID(ctx)
+	if err != nil {
+		return err
+	}
+	if st.needMarker, err = c.auditVerifyMarkerMissing(ctx); err != nil {
+		return err
+	}
 	st.V = 1
+	st.KID = c.auditCkptKeyVersion
 	st.Bind = bind
+	st.AuditHead = head
 	payload, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -393,6 +675,7 @@ func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyS
 func (c *KeyorixCore) updateAuditVerifyState(ctx context.Context, fn func(st *auditVerifyState) (newFailure *auditVerifyFailure)) error {
 	var failed *auditVerifyFailure
 	var rejected *auditVerifyRejection
+	var saved *auditVerifyState
 	err := c.storage.WithAuditCheckpointLock(ctx, func(ctx context.Context) error {
 		st, rej, err := c.loadAuditVerifyStateForWrite(ctx)
 		if err != nil {
@@ -400,18 +683,45 @@ func (c *KeyorixCore) updateAuditVerifyState(ctx context.Context, fn func(st *au
 		}
 		rejected = rej
 		failed = fn(st)
-		return c.saveAuditVerifyState(ctx, st)
+		if err := c.saveAuditVerifyState(ctx, st); err != nil {
+			return err
+		}
+		saved = st
+		return nil
 	})
 	if err != nil {
 		return err
 	}
-	c.reportAuditVerifyStateEvents(ctx, rejected, failed)
+	c.reportAuditVerifyStateEvents(ctx, saved, rejected, failed)
 	return nil
 }
 
-// reportAuditVerifyStateEvents appends the in-chain records of a rejected state
-// row and of a newly recorded failure (both after the save).
-func (c *KeyorixCore) reportAuditVerifyStateEvents(ctx context.Context, rejected *auditVerifyRejection, failed *auditVerifyFailure) {
+// auditVerifyMarkerMissing reports whether the chain lacks a live marker: none
+// was seen, or the newest one is gone (a retention purge took it).
+func (c *KeyorixCore) auditVerifyMarkerMissing(ctx context.Context) (bool, error) {
+	ev, err := c.scanAuditVerifyEvidence(ctx)
+	if err != nil || ev.marker == 0 {
+		return err == nil, err
+	}
+	_, found, err := c.storage.AuditEntryHashByID(ctx, ev.marker)
+	return !found, err
+}
+
+// reportAuditVerifyStateEvents runs after a save of st (nil when nothing was
+// saved): it reports a discontinuity the load detected, appends the marker the
+// save found missing, and appends the in-chain records of a rejected state row
+// and of a newly recorded failure.
+func (c *KeyorixCore) reportAuditVerifyStateEvents(ctx context.Context, st *auditVerifyState, rejected *auditVerifyRejection, failed *auditVerifyFailure) {
+	if st != nil && st.detected != nil {
+		auditVerifyStateDiscontinuities.Inc()
+		log.Printf("SECURITY: audit verification state discontinuity (%s): %s", st.detected.Kind, st.detected.Reason)
+		c.writeAuditEventFailedFull(ctx, auditVerifyStateDiscontinuityEvent, nil, nil, nil, "",
+			auditDiscontinuityText(st.detected))
+	}
+	if st != nil && st.needMarker {
+		c.writeAuditEventFull(ctx, auditVerifyStateMarkerEvent, nil, nil, nil, "",
+			"audit verification state in use: a missing verification state row is reported as a discontinuity from now on")
+	}
 	if rejected != nil {
 		c.writeAuditEventFailedFull(ctx, "system.audit_verification_state_rejected", nil, nil, nil, "",
 			"audit verification state rejected and restarted: "+rejected.Reason)
