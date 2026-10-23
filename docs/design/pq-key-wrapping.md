@@ -339,7 +339,8 @@ library's HPKE hybrid uses. `TestFIPS140OnlyMode` re-runs the round trip in a ch
 so the test does catch the problem it names. In a validated deployment the security strength
 claimed is ML-KEM's; X25519 adds defence in depth that the validation does not count. For a
 customer whose lab will not accept even an auxiliary non-approved component, a P-384 suite
-(`0x0003`, approved ECDH) is the fallback. Decision Q3.
+(`0x0003`, approved ECDH) is the fallback. **Decided (Q3, Andrei, 2026-10-23):** X25519 for both
+suites now; a P-384 suite is added only when a FIPS customer needs it.
 
 ## 10. Recovery key and recovery options (#3617)
 
@@ -444,7 +445,7 @@ against this budget. The measured numbers are in the session report, not here.
 |---|---|---|
 | Q1 | Where the envelope is used: R (keyset with recipient slots), K (KEM everything) or H (public-key flows only) | **R** |
 | Q2 | Combiner: keep the generic concatenation KDF (as built) or switch to stdlib `crypto/hpke` MLKEM768-X25519 (X-Wing) | Keep it for the at-rest format; use age's hybrid recipients (HPKE) for operator-facing deliveries |
-| Q3 | Classical partner for ML-KEM-1024: X25519 (as built) or P-384 (approved ECDH) | X25519; add a P-384 suite only when a FIPS customer needs it |
+| Q3 | Classical partner for ML-KEM-1024: X25519 (as built) or P-384 (approved ECDH) | **Decided 2026-10-23:** X25519; add a P-384 suite only when a FIPS customer needs it |
 | Q4 | Azure Key Vault RSA-OAEP KEK wrap | Posture warning now; Managed HSM symmetric key as follow-up; no breaking change |
 | Q5 | Accept hybrid age recipients for recovery-key delivery and warn on classical ones | Yes, as its own small PR now |
 | Q6 | Escrow recipient separate from the recovery-key authenticator | Yes, separate, optional, off by default |
