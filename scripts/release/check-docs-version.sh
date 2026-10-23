@@ -9,7 +9,7 @@
 #
 # What it checks (the list of recognised pin shapes is PIN_RE below; a version that only
 # appears in prose such as "does not exist in v0.95.3" is not a pin and is not checked):
-#   README.md QUICK_START.md INSTALL-WITH-AI.md docs/SELF_HOSTING.md docker-compose*.yml
+#   README.md QUICK_START.md INSTALL-WITH-AI.md docs/SELF_HOSTING.md docs/operations/quickstart-60s.md docker-compose*.yml
 #   deploy/**/docker-compose*.yml (not testdata)
 # Intentional exceptions live in scripts/release/docs-version-exceptions.txt, one per line:
 #   <path><TAB><fixed text that must appear on the pinning line><TAB><reason>
@@ -42,7 +42,7 @@ usage() {
 # files_of ROOT -> candidate files (relative paths), one per line
 files_of() {
   local f
-  for f in README.md QUICK_START.md INSTALL-WITH-AI.md docs/SELF_HOSTING.md; do
+  for f in README.md QUICK_START.md INSTALL-WITH-AI.md docs/SELF_HOSTING.md docs/operations/quickstart-60s.md; do
     [ -f "$1/$f" ] && echo "$f"
   done
   (cd "$1" && ls docker-compose*.yml 2>/dev/null)
