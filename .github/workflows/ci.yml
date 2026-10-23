@@ -2252,13 +2252,31 @@ jobs:
           echo "backend never answered /api/v1/version 200 within 120s (last HTTP code: ${code:-none})" >&2
           exit 1
 
+      # SMOKE-FLAKE-1: both steps used to die on "required variable KEYORIX_SECRETS_GID is missing"
+      # whenever the job failed before init-secrets.sh wrote .env (every failure of 2026-10-21/22
+      # and 2026-10-23), so a red run printed no container log at all. The fallback only lets
+      # compose parse the file for logs/down; the up step above is unchanged.
       - name: Dump compose logs on failure
         if: failure()
-        run: docker compose logs --no-color
+        env:
+          COMPOSE_PROJECT_NAME: kx-ci-boot-smoke
+        run: |
+          KEYORIX_SECRETS_GID="${KEYORIX_SECRETS_GID:-$(id -g)}" docker compose logs --no-color > boot-smoke-compose.log 2>&1 || true
+          cat boot-smoke-compose.log
+
+      - name: Upload compose logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-boot-smoke-compose-logs
+          path: boot-smoke-compose.log
+          retention-days: 7
 
       - name: Tear down
         if: always()
-        run: docker compose down -v
+        env:
+          COMPOSE_PROJECT_NAME: kx-ci-boot-smoke
+        run: KEYORIX_SECRETS_GID="${KEYORIX_SECRETS_GID:-$(id -g)}" docker compose down -v
 
   # DEMO-2: scripts/demo/up.sh builds its OWN local air-gapped image (the
   # published ghcr.io/keyorixhq/keyorix-server-airgap image never embeds the
@@ -2455,11 +2473,18 @@ jobs:
           echo "::error::admin login never succeeded (last HTTP status: ${code:-none}) -- first-boot bootstrap did not complete"
           exit 1
 
+      # SMOKE-FLAKE-1: a failure before the kind cluster exists (the 2026-10-23 Docker Hub 500 on
+      # the web image build) made this step fail on "connection to the server localhost:8080
+      # was refused" and print nothing useful; it now says the cluster was never created.
       - name: Describe pods and dump logs on failure
         if: failure()
         run: |
-          kubectl get pods -o wide
-          kubectl describe pods
+          if ! kubectl cluster-info >/dev/null 2>&1; then
+            echo "no kind cluster: the job failed before 'Create kind cluster' (see the first failed step above)"
+            exit 0
+          fi
+          kubectl get pods -o wide || true
+          kubectl describe pods || true
           kubectl logs -l app.kubernetes.io/instance=kx,app.kubernetes.io/component=server --tail=200 || true
 
       - name: Tear down
