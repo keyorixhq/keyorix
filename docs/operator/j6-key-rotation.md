@@ -61,8 +61,13 @@ fingerprint in `system_metadata`, not key material), and every replica checks it
    then re-encrypts with the encrypted tables locked against writes (reads
    continue) and records the new epoch in the same transaction.
 4. Copy the new `dek.key` (and `kek.salt` with the password provider) from that
-   host to every other replica's key directory, or confirm they share the
-   volume (Helm `ReadWriteMany` keys volume).
+   host to every other replica's key directory. With the Helm chart's Secret mode,
+   rotate in a workspace and publish the result as a new key Secret instead
+   (`admin encryption key-secret unpack` / `export`; procedure and crash recovery in
+   [multi-replica-keys.md, "Rotation in Secret mode"](../multi-replica-keys.md#rotation-in-secret-mode)).
+   Keep the rotating host's key directory until every replica runs on the new key
+   set: if the rotation was interrupted after its commit, its `dek.key.pending` is the
+   only copy of the new DEK.
 5. Start the replicas.
 
 A replica whose `dek.key` is still the old one refuses to start:
