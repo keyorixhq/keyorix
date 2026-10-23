@@ -1088,6 +1088,46 @@ before upgrading the CLI:
   "an internal error occurred". Behaviour is unchanged: the target is still refused unless a
   server operator sets that option.
 
+## 6w. The key-set manifest: first start adopts your key files (#2900)
+
+The server now keeps `keyset.manifest.json` next to the DEK: a SHA-256 and a
+generation number for every key file (salt, wrapped DEK, KMS/TPM blob, Shamir
+shares). Every key operation updates it (first boot, `rotate`, `rotate-kek`,
+`migrate-provider`, `restore`), and every start compares the files with it, so a
+key directory assembled from two backups is refused at boot, whatever the files'
+modification times, instead of failing at the first decrypt.
+
+- **First start after the upgrade.** An existing install has no manifest. The
+  server records the current files once, logs `[WARN] key set: no key-set
+  manifest (an install that predates it): adopted the current key files ...`,
+  writes an `encryption.keyset_manifest_adopted` audit event, and starts. Nothing
+  to do. An incomplete set (some key files missing) is still refused, as before.
+- **An interrupted `rotate-kek` is finished at start-up.** If `rotate-kek` stopped
+  after it replaced the DEK but before the salt, the server completes the rename
+  from `kek.salt.pending`, logs a WARN, writes an
+  `encryption.keyset_rotation_finished` audit event, and from then on the master
+  passphrase is the **new** one you gave `rotate-kek`. A rotation that stopped
+  before it changed anything only logs that its staging files can be deleted.
+- **Never rotate keys with an N-1 admin binary.** An older `keyorix-server admin`
+  (a rollback, an old admin image, a second host not yet upgraded) neither
+  updates this manifest nor checks the DEK epoch (section 6s). A key it rewrites
+  makes the next start of this version refuse the file as "does not match the
+  key-set manifest", and on PostgreSQL leaves the epoch naming the old DEK so
+  replicas with the new keys refuse to start. Upgrade every host and admin image
+  before the next `rotate`, `rotate-kek`, `migrate-provider` or `restore`. If it
+  already happened and you know the files belong together, stop the server,
+  remove `keyset.manifest.json` (the next start adopts the current files, with
+  the WARN and audit event above), and see section 6s for the epoch.
+- **Moving or hand-copying key files.** Copy the whole key directory, manifest
+  included. Restoring a single file from another backup is refused at start-up;
+  use `keyorix-server admin restore`, which installs the whole set and records a
+  new manifest.
+
+The manifest's hashes are not keyed: they catch a mixed or half-restored set, not
+someone who can already write the key directory. See
+[`operator/startup-refusals.md`](operator/startup-refusals.md) ("Key file set
+incomplete or mixed", "Key operation interrupted mid-commit").
+
 ## 7. Rollback
 
 If an upgrade goes wrong:
@@ -1106,6 +1146,9 @@ If an upgrade goes wrong:
    prints a loud warning and records the override to the audit trail.
 3. `admin verify-audit` after restore, on whichever binary you rolled back
    to, to confirm the audit chain is intact.
+   Do not run key operations (`rotate`, `rotate-kek`, `migrate-provider`) on the
+   rolled-back binary: it does not maintain the key-set manifest (section 6w),
+   and the next upgrade would refuse the keys it wrote.
 4. If the new version's database has already advanced the recorded schema
    epoch (ADR-097), a straight downgrade of the *binary* while keeping the
    already-migrated database is refused at startup by design (`database
