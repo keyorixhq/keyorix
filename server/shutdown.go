@@ -17,6 +17,13 @@ func flushLastUsedOnShutdown(coreService *core.KeyorixCore) {
 	coreService.FlushLastUsed(ctx)
 }
 
+// flushSecretReadDenialsOnShutdown writes the secret-read denial summary rows
+// for aggregation windows still open at shutdown (#3377). Without it the counts
+// of refusals after each window's first row are lost on SIGTERM.
+func flushSecretReadDenialsOnShutdown(coreService *core.KeyorixCore) {
+	coreService.FlushSecretReadDenials()
+}
+
 // closeAuditForwarder flushes/closes the wired SIEM audit forwarder (if any) on
 // shutdown. core.AuditForwarder only declares Forward (core has no dependency
 // on the concrete siem package), so the Close method is reached via a local
