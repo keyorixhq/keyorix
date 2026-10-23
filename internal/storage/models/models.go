@@ -1328,20 +1328,22 @@ func (l *DynamicSecretLease) BeforeSave(_ *gorm.DB) error {
 	return nil
 }
 
-// SecretAccessLog indexes: (secret_node_id, access_time) serves the anomaly
-// detector's per-secret ListSecretAccessLogs range read, and (access_time,
-// secret_node_id) its ListSecretIDsAccessedSince candidate scan (covering, so
-// SQLite range-scans it instead of full-scanning the first index for DISTINCT)
-// plus the other time-bounded aggregates in local_audit.go. Before these, each per-secret read was a full
-// table scan of an append-only table written on every secret access. Upgraded
-// installs gain them via migrateDatabase's CREATE INDEX IF NOT EXISTS block.
+// SecretAccessLog indexes are declared in store.SecretAccessLogIndexes (and the
+// Postgres-only store.SecretAccessLogIndexesPostgres), created by code and not by
+// tags: a tag is a plain CREATE INDEX inside the migration transaction, which on
+// Postgres blocks every audited read's access-log INSERT for the whole build.
+// (secret_node_id, access_time, action) serves per-secret history, the anomaly
+// detector's per-secret range read, and total_reads from the index alone;
+// access_time serves the anomaly candidate scan and the other time-bounded
+// aggregates in local_audit.go (a BRIN on Postgres, a btree on SQLite). Before
+// these, each per-secret read was a full table scan of an append-only table.
 type SecretAccessLog struct {
 	ID              uint `gorm:"primaryKey"`
-	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2;index:idx_secret_access_logs_secret_action,priority:1"`
+	SecretNodeID    uint
 	SecretVersionID uint
 	AccessedBy      string
-	AccessTime      time.Time `gorm:"index:idx_secret_access_logs_secret_time,priority:2;index:idx_secret_access_logs_access_time,priority:1"`
-	Action          string    `gorm:"index:idx_secret_access_logs_secret_action,priority:2"`
+	AccessTime      time.Time
+	Action          string
 	IPAddress       string
 	UserAgent       string
 }
