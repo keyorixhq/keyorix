@@ -514,17 +514,22 @@ on a config without the key reports the same state as "looks like a brand-new in
 
 ```
 key file consistency: key material is an incomplete set: present (<files>); missing (<files>) — this is not a state any provisioning path produces; restore the full set from one backup, or remove the partial files and let first-boot generation recreate them
-key file consistency: key material group looks mixed from different generations: <files> — this is a BEST-EFFORT mtime heuristic ...
+key file consistency: key material does not match the key-set manifest <dir>/keyset.manifest.json: <file> (recorded by <operation> at generation <n>) — these files come from a different generation than the rest of the set ...
 ```
 
-**Match:** `key material is an incomplete set`, `key material group looks mixed from different generations`
+**Match:** `key material is an incomplete set`, `key material does not match the key-set manifest`
 
-**Cause.** Only some files of one key set are present, or their modification times differ by
-more than the tolerance (typically a partial restore, or a backup of one file taken
-before a rotation). **Fix.** Restore the whole set from one backup. If the files really
-belong together (the second message is a heuristic), `touch` them to a common time.
-"Remove the partial files and let first boot recreate them" is only right on an install that
-has **no data yet**. **In place:** no.
+**Cause.** Only some files of one key set are present, or a file's content matches neither the
+hash the key-set manifest (`keyset.manifest.json`, next to the DEK) records for it nor a staged
+one: it comes from another backup or generation (typically a partial restore, one file copied in
+from an older backup, or a key operation run with an older `keyorix-server` binary that does not
+maintain the manifest). The check compares content, so how the files were copied (`cp`, `kubectl
+cp`, `rsync`) and their modification times play no part. **Fix.** Restore the whole set from one
+backup with `keyorix-server admin restore` (it records a new manifest). If you replaced the named
+files deliberately and they do belong together, remove `keyset.manifest.json`: the next start
+adopts the current files with a WARN and a `keyset_manifest_adopted` audit event. "Remove the
+partial files and let first boot recreate them" is only right on an install that has **no data
+yet**. **In place:** no.
 
 ### Key files readable by others, or owned by another account — from code
 
