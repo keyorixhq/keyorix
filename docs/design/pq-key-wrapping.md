@@ -1,6 +1,6 @@
 # Hybrid post-quantum key wrapping (X25519 + ML-KEM)
 
-Status: **draft for decision; Q1, Q3, Q7 and Q8 decided 2026-10-23 (§15)**. Design only, with an unwired proof of concept. Nothing here is
+Status: **draft for decision; Q1 and Q3–Q8 decided 2026-10-23 (§15); Q2 and Q9 open**. Design only, with an unwired proof of concept. Nothing here is
 accepted until Andrei approves it, and no production key path changes before then.
 Session RD-PQWRAP-1, 2026-10-23, against origin/main `da6fbb33d`.
 
@@ -293,7 +293,8 @@ and keeps the claims accurate. **Decided (Q1, Andrei, 2026-10-23): option R.**
      recoverability, not confidentiality.
   3. Wait for Azure to offer ML-KEM wrapping and add it then as another provider mode.
 
-  Recommended: 2 now (no break for existing installs), 1 as a follow-up.
+  **Decided (Q4, Andrei, 2026-10-23):** 2 now (posture warning and docs, no break for existing
+  installs), 1 (Managed HSM symmetric key) as a follow-up.
 - AWS KMS and GCP KMS: symmetric keys by default, so no action. If an operator configures an
   asymmetric key (RSA decrypt), refuse it or flag it in the posture. Today the providers call
   symmetric `Encrypt`; asymmetric keys are not used, but nothing checks that. Follow-up: a startup
@@ -351,11 +352,13 @@ suites now; a P-384 suite is added only when a FIPS customer needs it.
 - **Delivery is the quantum gap** (§3): the `--recipient` output is age X25519 or ssh-ed25519.
   `filippo.io/age` v1.3.2, already in `go.mod`, supports hybrid `mlkem768x25519` recipients
   (`age.ParseHybridRecipient`). Accepting them, and warning on a classical recipient, is a small
-  change that does not depend on this ADR. Decision Q5.
+  change that does not depend on this ADR. **Decided (Q5, Andrei, 2026-10-23):** yes, as its own
+  small PR now, warning on classical recipients.
 - **Do not turn the recovery key into the escrow key.** Option R's escrow recipient is a separate key
   pair with a separate ceremony. If one secret both authenticated admin recovery and decrypted every
   DEK, stealing it would give both powers at once, and #3617 §1's "host root plus the recovery key
-  adds no new power" argument would no longer hold. Decision Q6.
+  adds no new power" argument would no longer hold. **Decided (Q6, Andrei, 2026-10-23):** a separate
+  key pair, optional, off by default.
 - #3617 §3 recommends a pre-commit decrypt check for DEK rotation. The rewrap job below uses the same
   check (unwrap the new envelope and compare before committing).
 
@@ -447,9 +450,9 @@ against this budget. The measured numbers are in the session report, not here.
 | Q1 | Where the envelope is used: R (keyset with recipient slots), K (KEM everything) or H (public-key flows only) | **Decided 2026-10-23:** R |
 | Q2 | Combiner: keep the generic concatenation KDF (as built) or switch to stdlib `crypto/hpke` MLKEM768-X25519 (X-Wing) | Keep it for the at-rest format; use age's hybrid recipients (HPKE) for operator-facing deliveries |
 | Q3 | Classical partner for ML-KEM-1024: X25519 (as built) or P-384 (approved ECDH) | **Decided 2026-10-23:** X25519; add a P-384 suite only when a FIPS customer needs it |
-| Q4 | Azure Key Vault RSA-OAEP KEK wrap | Posture warning now; Managed HSM symmetric key as follow-up; no breaking change |
-| Q5 | Accept hybrid age recipients for recovery-key delivery and warn on classical ones | Yes, as its own small PR now |
-| Q6 | Escrow recipient separate from the recovery-key authenticator | Yes, separate, optional, off by default |
+| Q4 | Azure Key Vault RSA-OAEP KEK wrap | **Decided 2026-10-23:** posture warning now; Managed HSM symmetric key as follow-up; no breaking change |
+| Q5 | Accept hybrid age recipients for recovery-key delivery and warn on classical ones | **Decided 2026-10-23:** yes, as its own small PR now, warn on classical |
+| Q6 | Escrow recipient separate from the recovery-key authenticator | **Decided 2026-10-23:** separate, optional, off by default |
 | Q7 | Keyorix FIPS mode: move GCM to `NewGCMWithRandomNonce`, add a startup check and a posture line | **Decided 2026-10-23:** yes, a separate backlog item, before any FIPS claim |
 | Q8 | Reword R4's acceptance from "new writes use hybrid envelopes" to "every public-key wrap at rest is hybrid; key files self-describing; legacy readable; rewrap migrates key files; backups rewrap offline" | **Decided 2026-10-23:** reworded as proposed |
 | Q9 | Legacy-60 reader lifetime | Keep indefinitely |
