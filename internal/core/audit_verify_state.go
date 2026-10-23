@@ -65,6 +65,9 @@ const (
 	auditDiscOtherEpoch  = "other key epoch"
 	auditDiscPastHead    = "past the chain head"
 	auditDiscBeforeBreak = "before a recorded break"
+	// A key transition record missing, forged or for another key epoch
+	// (audit_key_transition.go).
+	auditDiscKeyTransition = "key transition"
 )
 
 // auditVerifyEvidencePage bounds one evidence-scan read; auditVerifyEvidenceRescan
@@ -218,11 +221,14 @@ type auditVerifyState struct {
 	Pin           *auditVerifyPin           `json:"pin,omitempty"`
 	Rejected      *auditVerifyRejection     `json:"rejected,omitempty"`
 	Discontinuity *auditVerifyDiscontinuity `json:"discontinuity,omitempty"`
-	Cycle         *auditVerifyCycle         `json:"cycle,omitempty"`
-	LastFull      *auditFullResult          `json:"last_full,omitempty"`
-	LastCheck     *auditTailCheck           `json:"last_check,omitempty"`
-	Failure       *auditVerifyFailure       `json:"failure,omitempty"`
-	Job           *auditVerifyJob           `json:"job,omitempty"`
+	// KeyEpoch names the key transition that carried this state over to the
+	// key that signs it (audit_key_transition.go); nil before any.
+	KeyEpoch  *auditKeyEpoch      `json:"key_epoch,omitempty"`
+	Cycle     *auditVerifyCycle   `json:"cycle,omitempty"`
+	LastFull  *auditFullResult    `json:"last_full,omitempty"`
+	LastCheck *auditTailCheck     `json:"last_check,omitempty"`
+	Failure   *auditVerifyFailure `json:"failure,omitempty"`
+	Job       *auditVerifyJob     `json:"job,omitempty"`
 
 	// detected is a discontinuity found by the load this state came from; a
 	// writer reports it (event, log, counter) after saving. needMarker: the save
@@ -252,7 +258,7 @@ func (s *auditVerifyState) claimedThrough() uint {
 // auditVerifyEvidence is what the chain says about state rows: the newest id of
 // each event type above (0 = none seen) and the head id.
 type auditVerifyEvidence struct {
-	head, marker, failure, discontinuity uint
+	head, marker, failure, discontinuity, keyTransition uint
 }
 
 // auditVerifyEvidenceIndex caches auditVerifyEvidence per process, so each scan
@@ -278,7 +284,7 @@ func (c *KeyorixCore) scanAuditVerifyEvidence(ctx context.Context) (auditVerifyE
 	for after < head {
 		from := after
 		evs, _, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-			Actions:   []string{auditVerifyStateMarkerEvent, auditChainVerificationFailedEvent, auditVerifyStateDiscontinuityEvent},
+			Actions:   []string{auditVerifyStateMarkerEvent, auditChainVerificationFailedEvent, auditVerifyStateDiscontinuityEvent, auditKeyTransitionEvent},
 			AfterID:   &from,
 			UpToID:    &head,
 			Ascending: true,
@@ -299,6 +305,8 @@ func (c *KeyorixCore) scanAuditVerifyEvidence(ctx context.Context) (auditVerifyE
 				idx.ev.failure = max(idx.ev.failure, e.ID)
 			case auditVerifyStateDiscontinuityEvent:
 				idx.ev.discontinuity = max(idx.ev.discontinuity, e.ID)
+			case auditKeyTransitionEvent:
+				idx.ev.keyTransition = max(idx.ev.keyTransition, e.ID)
 			}
 			after = max(after, e.ID)
 		}
@@ -316,7 +324,7 @@ func (c *KeyorixCore) discontinuedAuditVerifyState(prev *auditVerifyState, kind,
 	d := &auditVerifyDiscontinuity{DetectedAt: c.now(), Kind: kind, Reason: reason}
 	st := &auditVerifyState{V: 1, Discontinuity: d, detected: d}
 	if prev != nil {
-		st.Gen, st.Pin, st.Failure, st.Job = prev.Gen, prev.Pin, prev.Failure, prev.Job
+		st.Gen, st.Pin, st.Failure, st.Job, st.KeyEpoch = prev.Gen, prev.Pin, prev.Failure, prev.Job, prev.KeyEpoch
 		if prev.Discontinuity != nil {
 			st.Discontinuity = prev.Discontinuity
 		}
@@ -432,7 +440,10 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 		}
 		return &auditVerifyState{V: 1}, "", nil
 	}
-	s, kind, why := c.decodeAuditVerifyState(val)
+	s, kind, why, err := c.decodeAuditVerifyStateCarried(ctx, val)
+	if err != nil {
+		return nil, "", err
+	}
 	if s == nil {
 		return c.discontinuedAuditVerifyState(nil, kind, why), "", nil
 	}
@@ -448,6 +459,11 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 		} else if kind != "" {
 			return c.discontinuedAuditVerifyState(s, kind, why), "", nil
 		}
+		if why, err := c.auditKeyTransitionProblem(ctx, s, ev); err != nil {
+			return nil, "", err
+		} else if why != "" {
+			return c.discontinuedAuditVerifyState(s, auditDiscKeyTransition, why), "", nil
+		}
 	}
 	// Rows saved before AuditHead existed (s.AuditHead == 0) cannot be placed
 	// against the chain; the replay checks below still apply to them.
@@ -462,7 +478,7 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 		}
 	}
 	untrusted := func(why string) (*auditVerifyState, string, error) {
-		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job},
+		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job, KeyEpoch: s.KeyEpoch},
 			"the persisted verification state " + why + " (a replayed or rolled-back row) and was ignored", nil
 	}
 	if s.Gen < seen {
@@ -587,9 +603,9 @@ func (c *KeyorixCore) signedAuditVerifyPin(ctx context.Context) (*auditVerifyPin
 	if err != nil || !ok {
 		return nil, err
 	}
-	s, _, _ := c.decodeAuditVerifyState(val)
+	s, _, _, err := c.decodeAuditVerifyStateCarried(ctx, val)
 	if s == nil {
-		return nil, nil
+		return nil, err
 	}
 	var pin auditVerifyPin
 	switch {

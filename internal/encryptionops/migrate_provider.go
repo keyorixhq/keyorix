@@ -198,6 +198,10 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 	}
 	defer oldSvc.Shutdown()
 	closeGormDB(db)
+	audit, err := openAuditKeyChange(cfg, oldSvc)
+	if err != nil {
+		return err
+	}
 
 	// 2. Encrypt a probe value under the current DEK — used after re-wrapping to
 	//    verify the target provider yields the *same* DEK (data still decryptable).
@@ -220,7 +224,7 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 		return fmt.Errorf("failed to build target provider: %w", err)
 	}
 	fmt.Printf("🔄 Re-wrapping DEK: %s → %s provider...\n", ProviderLabel(enc.KeyProvider.Type), opts.ToType)
-	if err := oldSvc.RewrapDEKWithProvider(newProvider); err != nil {
+	if err := oldSvc.RewrapDEKWithProviderPrepare(newProvider, audit.prepare); err != nil {
 		// RewrapDEK leaves the active DEK untouched on failure — drop the backup.
 		_ = os.Remove(filepath.Join(baseDir, backupRel))
 		return fmt.Errorf("re-wrap failed — no changes made to the active DEK: %w", err)
@@ -239,6 +243,9 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 		RestoreBackup(baseDir, backupRel, enc.DEKPath)
 		return fmt.Errorf("verification failed (probe did not round-trip under the target provider) — restored previous DEK (its copy %s is kept; `migrate-provider cleanup` removes it)", backupRel)
 	}
+	// The audit checkpoint key is KEK-derived: carry the audit verification
+	// state over to the target provider's key (prepared before the re-wrap).
+	audit.complete(verifySvc)
 
 	PrintMigrateSummary(tgtEnc, backupRel)
 	return nil
