@@ -76,6 +76,8 @@ certs/
 *.pem
 *.p12
 *.pfx
+# the PUBLIC signing certificate of the real v0.96.3 release (self-test fixture of verify-release.sh)
+!scripts/release/testdata/real-v0.96.3/assets/checksums.txt.pem
 
 # --- Node.js / Web Build Artifacts ---
 node_modules/
