@@ -438,6 +438,11 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 		if err != nil {
 			return ctx, nil, "", nil, fmt.Errorf("unknown role %q: %w", a.Role, err)
 		}
+		// #3546: refuse at invite time what the accept would refuse (an
+		// install-wide role offered on one project), like buildProjectInvite.
+		if err := c.requireScopeValidForRoleModel(ctx, assignRole, Scope{ProjectID: a.ProjectID}); err != nil {
+			return ctx, nil, "", nil, err
+		}
 		// Same ceiling check InviteToProject applies to its own role parameter —
 		// without this, a non-admin roles.assign holder could bundle a
 		// permission-rich project assignment into an otherwise-innocuous global

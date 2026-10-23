@@ -267,6 +267,10 @@ func roleScopeEntryPoints(w *roleScopeWorld) map[string]func(ctx context.Context
 			_, err := c.InviteToProject(ctx, w.p1, "erin@example.com", "system_viewer", w.adminID, 0)
 			return err
 		},
+		"InviteGlobal install-wide role in a project assignment": func(ctx context.Context) error {
+			_, err := c.InviteGlobal(ctx, "ivan@example.com", "", []ProjectAssignment{{ProjectID: w.p1, Role: "system_admin"}}, w.adminID, 0)
+			return err
+		},
 		"AssignRoleToGroup new custom role (project by default) globally": func(ctx context.Context) error {
 			return c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customProject.ID, Scope{}, false)
 		},
