@@ -372,6 +372,11 @@ func (c *KeyorixCore) buildGlobalInvite(ctx context.Context, email, systemRole s
 	if err != nil {
 		return ctx, nil, "", nil, fmt.Errorf("unknown role %q (system): %w", sysRole, err)
 	}
+	// #3546: refuse at invite time what AssignUserRole would refuse at accept
+	// time (the system role is granted at the global scope).
+	if err := c.requireScopeValidForRoleName(ctx, sysRoleModel.Name, Scope{}); err != nil {
+		return ctx, nil, "", nil, err
+	}
 	if invitedByMachineID != 0 {
 		ctx = WithSelfMachineGranter(ctx, invitedByMachineID)
 	}
@@ -526,6 +531,56 @@ func (c *KeyorixCore) applyInvitationGrants(ctx context.Context, inv *models.Pro
 	// Project-scoped invite: single project membership.
 	_, err := c.inviteMemberWithMode(ctx, inv.ProjectID, userID, inv.Role, inv.InvitedBy, inv.InvitedByMachineIdentityID, inv.ValidationModeAtInvite, false)
 	return err
+}
+
+// invitationGrantScopes lists the (role name, scope) grants applyInvitationGrants
+// would make for inv, in the same shape: a global invite's system role at the
+// global scope plus each assignment at its project, or a project invite's role
+// at its project.
+func invitationGrantScopes(inv *models.ProjectInvitation) ([]invitationGrant, error) {
+	if inv.SystemRole == "" && inv.AssignmentsJSON == "" {
+		return []invitationGrant{{role: inv.Role, scope: Scope{ProjectID: inv.ProjectID}}}, nil
+	}
+	var out []invitationGrant
+	if inv.SystemRole != "" {
+		out = append(out, invitationGrant{role: inv.SystemRole, scope: Scope{}})
+	}
+	if inv.AssignmentsJSON != "" {
+		var assignments []ProjectAssignment
+		if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &assignments); err != nil {
+			return nil, fmt.Errorf("failed to decode assignments: %w", err)
+		}
+		for _, a := range assignments {
+			out = append(out, invitationGrant{role: a.Role, scope: Scope{ProjectID: a.ProjectID}})
+		}
+	}
+	return out, nil
+}
+
+type invitationGrant struct {
+	role  string
+	scope Scope
+}
+
+// requireInvitationGrantScopesValid refuses an invitation any of whose grants
+// the role-scope check would refuse (#3546), before anything is written. An
+// unknown role or an undecodable assignment list is left to
+// applyInvitationGrants, which reports it as it always has.
+func (c *KeyorixCore) requireInvitationGrantScopesValid(ctx context.Context, inv *models.ProjectInvitation) error {
+	grants, err := invitationGrantScopes(inv)
+	if err != nil {
+		return nil //nolint:nilerr // applyInvitationGrants reports the decode error
+	}
+	for _, g := range grants {
+		role, err := c.storage.GetRoleByName(ctx, g.role)
+		if err != nil {
+			continue // applyInvitationGrants reports the unknown role
+		}
+		if err := c.requireScopeValidForRoleName(ctx, role.Name, g.scope); err != nil {
+			return fmt.Errorf("invitation %d can no longer be accepted, ask the inviter for a new one: %w", inv.ID, err)
+		}
+	}
+	return nil
 }
 
 // revokeInvitationGrants best-effort undoes applyInvitationGrants for userID. Used
@@ -1057,6 +1112,10 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 	if grantTTL > 0 {
 		expiresAt = now.Add(grantTTL)
 		grantDesc = fmt.Sprintf("%s until %s (TTL %s)", roleModel.Name, expiresAt.UTC().Format(time.RFC3339), grantTTL)
+	}
+	// #3546: the role-scope check, before the gates below.
+	if err := c.requireScopeValidForRoleName(ctx, roleModel.Name, scope); err != nil {
+		return nil, fmt.Errorf("failed to grant role: %w", err)
 	}
 	// Same two gates AssignUserRole(WithExpiry) apply, run once here up front: the
 	// escalation-by-proxy grant ceiling (#93/#107/#141) and (inside the lock below)

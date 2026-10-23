@@ -615,6 +615,9 @@ func initializeCoreService(cfg *config.Config) (*core.KeyorixCore, *encryption.S
 		log.Printf("alerts.write role reconciliation: %v (continuing)", err)
 	}
 
+	// #3546: list existing global-scope grants of project roles for review (read-only).
+	logGlobalProjectRoleGrantsNotice(cfg, coreService)
+
 	// Wire the bootstrap token that gates POST /system/init. Prefer an operator-set
 	// KEYORIX_BOOTSTRAP_TOKEN (for automation); otherwise generate one and, while the
 	// install is still empty, log it so the operator can complete first-boot init. This

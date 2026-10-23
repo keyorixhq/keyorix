@@ -213,6 +213,10 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	if _, err := c.storage.GetRole(ctx, roleID); err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRoleNotFound", nil), err)
 	}
+	// #3546: refuse a scope the role is not meaningful at (role_scope_guard.go).
+	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
+		return err
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
@@ -416,6 +420,13 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 	newSet := make(map[uint]bool, len(roleIDs))
 	for _, id := range roleIDs {
 		newSet[id] = true
+		// #3546: refuse a role the scope is invalid for BEFORE any removal below,
+		// so the refusal never needs the compensating revert.
+		if !currentSet[id] {
+			if err := c.requireScopeValidForRole(ctx, id, scope); err != nil {
+				return err
+			}
+		}
 	}
 	// Unlike the ordinary AssignUserRole/RemoveUserRole choke points (each a single
 	// grant/revoke), this is a full role-SET replacement made of several of them in
@@ -433,7 +444,9 @@ func (c *KeyorixCore) SetUserRoles(ctx context.Context, actorID, userID uint, ro
 	revertPartialApply := func(cause error) error {
 		var revertErrs []error
 		for _, id := range removedSoFar {
-			if rerr := c.AssignUserRole(ctx, actorID, userID, id, scope, actorIsMachine); rerr != nil {
+			// The row existed a moment ago: restore it even if the role-scope check
+			// would refuse it as a new grant (a legacy pre-#3546 global project role).
+			if rerr := c.AssignUserRole(withRoleScopeRestore(ctx, id, scope), actorID, userID, id, scope, actorIsMachine); rerr != nil {
 				revertErrs = append(revertErrs, fmt.Errorf("failed to restore role %d: %w", id, rerr))
 			}
 		}
@@ -553,6 +566,10 @@ func (c *KeyorixCore) withOrderedUserSoDLocks(ctx context.Context, ids []uint, f
 // this closes that sibling instance by threading the real value through
 // instead of hardcoding false.
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
+	// #3546: refuse a scope the role is not meaningful at (role_scope_guard.go).
+	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
+		return err
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
@@ -601,6 +618,10 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 // (IdP group membership can change on every login, which is at least as fast a
 // grant/revoke cycle as an explicit JIT grant).
 func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, userID, roleID uint, scope Scope) error {
+	// #3546: refuse a scope the role is not meaningful at (role_scope_guard.go).
+	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
+		return err
+	}
 	// #1646: see AssignUserRole's identical WithNamedLock use.
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("user", userID), func(ctx context.Context) error {
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {

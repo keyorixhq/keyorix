@@ -50,6 +50,9 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		// #2905: mapped by sentinel (errors.Is), not by matching text that
