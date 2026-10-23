@@ -17,6 +17,24 @@ import (
 // trusting what a --plan file says — this function is what makes that re-derivation exact and
 // not a second, drifting implementation.
 func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *accesstarget.Client, k8sIssuer string, pathMapOverrides []string) (accessplan.Plan, []string, error) {
+	in, mapper, warnings, err := readAccessInputs(ctx, vc, reader, pathMapOverrides)
+	if err != nil {
+		return accessplan.Plan{}, nil, err
+	}
+
+	built := accessplan.Build(in, mapper, k8sIssuer)
+
+	if err := accessplan.Reconcile(ctx, built.Items, reader); err != nil {
+		return accessplan.Plan{}, nil, fmt.Errorf("reconcile against Keyorix: %w", err)
+	}
+
+	return built, warnings, nil
+}
+
+// readAccessInputs reads every Vault policy/auth-method surface ADR-114 maps and every Keyorix
+// project/environment, and builds the PathMapper: the shared input of plan-access,
+// apply-access and audit-access.
+func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *accesstarget.Client, pathMapOverrides []string) (accessplan.BuildInput, *accessplan.PathMapper, []string, error) {
 	var warnings []string
 	warn := func(what string) {
 		warnings = append(warnings, "could not read "+what+" (permission denied) — treated as empty; see healthscan-policy.hcl for the policy stanza that would allow it")
@@ -24,7 +42,7 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 
 	kvMountsRaw, status, err := healthscan.ListKVMounts(ctx, vc)
 	if err != nil {
-		return accessplan.Plan{}, nil, fmt.Errorf("list KV mounts: %w", err)
+		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list KV mounts: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/mounts")
@@ -36,7 +54,7 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 
 	policies, unreadablePolicies, status, err := healthscan.ListPolicies(ctx, vc)
 	if err != nil {
-		return accessplan.Plan{}, nil, fmt.Errorf("list policies: %w", err)
+		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list policies: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/policies/acl")
@@ -47,7 +65,7 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 
 	appRoles, unreadableApproles, _, status, err := healthscan.ListAppRoleRoleConfigs(ctx, vc)
 	if err != nil {
-		return accessplan.Plan{}, nil, fmt.Errorf("list AppRole roles: %w", err)
+		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list AppRole roles: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/auth (AppRole roles)")
@@ -58,7 +76,7 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 
 	k8sRoles, unreadableK8s, _, status, err := healthscan.ListKubernetesAuthRoleConfigs(ctx, vc)
 	if err != nil {
-		return accessplan.Plan{}, nil, fmt.Errorf("list Kubernetes auth roles: %w", err)
+		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list Kubernetes auth roles: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/auth (Kubernetes auth roles)")
@@ -69,7 +87,7 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 
 	userpassUsers, unreadableUserpass, _, status, err := healthscan.ListUserpassUsers(ctx, vc)
 	if err != nil {
-		return accessplan.Plan{}, nil, fmt.Errorf("list userpass users: %w", err)
+		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list userpass users: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/auth (userpass users)")
@@ -80,7 +98,7 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 
 	projectsRaw, err := reader.ListProjects(ctx)
 	if err != nil {
-		return accessplan.Plan{}, nil, fmt.Errorf("list Keyorix projects: %w", err)
+		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list Keyorix projects: %w", err)
 	}
 	projects := make([]accessplan.ProjectRef, 0, len(projectsRaw))
 	environments := make(map[int][]accessplan.EnvironmentRef, len(projectsRaw))
@@ -88,23 +106,17 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 		projects = append(projects, p)
 		envs, err := reader.ListEnvironments(ctx, p.ID)
 		if err != nil {
-			return accessplan.Plan{}, nil, fmt.Errorf("list environments for project %q: %w", p.Name, err)
+			return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list environments for project %q: %w", p.Name, err)
 		}
 		environments[p.ID] = envs
 	}
 
 	mapper, err := accessplan.NewPathMapper(projects, environments, kvMounts, pathMapOverrides)
 	if err != nil {
-		return accessplan.Plan{}, nil, err
+		return accessplan.BuildInput{}, nil, nil, err
 	}
 
-	built := accessplan.Build(accessplan.BuildInput{
+	return accessplan.BuildInput{
 		Policies: policies, AppRoles: appRoles, KubernetesRoles: k8sRoles, UserpassUsers: userpassUsers,
-	}, mapper, k8sIssuer)
-
-	if err := accessplan.Reconcile(ctx, built.Items, reader); err != nil {
-		return accessplan.Plan{}, nil, fmt.Errorf("reconcile against Keyorix: %w", err)
-	}
-
-	return built, warnings, nil
+	}, mapper, warnings, nil
 }

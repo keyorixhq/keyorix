@@ -1088,6 +1088,26 @@ before upgrading the CLI:
   "an internal error occurred". Behaviour is unchanged: the target is still refused unless a
   server operator sets that option.
 
+## 6w. SECURITY: audit Vault access migrated with keyorix-migrate v0.96.0–v0.96.3
+
+If you ran `keyorix-migrate vault apply-access` with v0.96.0, v0.96.1, v0.96.2 or v0.96.3,
+some migrated machine identities may hold grants wider than their Vault policy: a policy
+path narrower than the project/environment it was mapped to (one secret, a sub-folder, part
+of a `--path-map` prefix) was granted on the whole environment, and `list`-only or KV v2
+`metadata/` stanzas were granted `secrets.read`. Upgrading `keyorix-migrate` does not change
+grants that already exist. With the new `keyorix-migrate`, run (read-only, same flags as the
+original `apply-access`):
+
+```sh
+keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
+  --server https://keyorix.example.com --token-file ./pat.txt \
+  --k8s-issuer https://k8s.example.com --path-map <the same --path-map values>
+```
+
+It lists each grant that is wider than its Vault policy, why, and the API call that revokes
+exactly that grant (exit 1 when it finds any). Revoke them, then re-run `plan-access`: the
+narrow stanzas are now reported for review instead of widened.
+
 ## 7. Rollback
 
 If an upgrade goes wrong:
