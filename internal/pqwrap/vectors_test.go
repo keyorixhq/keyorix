@@ -72,7 +72,7 @@ func fixedNonce(nonce []byte) func([]byte) (cipher.AEAD, error) {
 	}
 }
 
-func mustHex(t *testing.T, s string) []byte {
+func mustHex(t testing.TB, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
 	if err != nil {
@@ -84,7 +84,7 @@ func mustHex(t *testing.T, s string) []byte {
 // buildVector computes every field of v from its inputs (seed, encapsulation
 // randomness, ephemeral secret, nonce, context, key) through the package's
 // own seal path with deterministic randomness.
-func buildVector(t *testing.T, v vector) vector {
+func buildVector(t testing.TB, v vector) vector {
 	t.Helper()
 	s := Suite(v.Suite)
 	priv, err := NewPrivateKeyFromSeed(s, mustHex(t, v.Seed))
