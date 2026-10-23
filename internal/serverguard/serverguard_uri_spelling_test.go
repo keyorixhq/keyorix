@@ -56,7 +56,7 @@ func TestSQLiteURISpellings_MeetOnTheSameLock(t *testing.T) {
 		"file:" + canonical,
 		"file://" + canonical,
 		"file://localhost" + canonical,
-		"file:" + canonical + "?cache=shared",
+		"file:" + canonical + "?_busy_timeout=5000",
 		"file:secrets.db",
 		"file:" + strings.ReplaceAll(canonical, " ", "%20"),
 	}
@@ -102,7 +102,7 @@ func TestSQLiteModeMemoryDirectoryName_StillLocked(t *testing.T) {
 		t.Fatal("a server and an admin command both held the lock on a real database under a \"mode=memory\" directory")
 	}
 	// The real in-memory forms still need no lock.
-	for _, mem := range []string{":memory:", "file::memory:?cache=shared", "file:x?mode=memory", "x.db?mode=memory&cache=shared"} {
+	for _, mem := range []string{":memory:", "file::memory:", "file:x?mode=memory", "x.db?_busy_timeout=5000&mode=memory"} {
 		if _, real := sqliteLockPath(&config.Config{Storage: config.StorageConfig{Database: config.DatabaseConfig{Path: mem}}}); real {
 			t.Errorf("%q is in-memory but got a sidecar lock path", mem)
 		}
