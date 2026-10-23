@@ -176,7 +176,7 @@ func pointRowAtSpecChallenge(t *testing.T, db *gorm.DB, purpose, challenge strin
 // runNoUVLogin begins a ceremony through core (so the stored row is the
 // relying party's own) and finishes it with the spec assertion, whose
 // authenticator did NOT verify the user.
-func runNoUVLogin(t *testing.T, passwordless bool, decorate func(ports.WebAuthnRelyingParty) ports.WebAuthnRelyingParty) (error, int64) {
+func runNoUVLogin(t *testing.T, passwordless bool, decorate func(ports.WebAuthnRelyingParty) ports.WebAuthnRelyingParty) (int64, error) {
 	t.Helper()
 	c, db := newWebAuthnSpecTestCore(t)
 	c.SetWebAuthn(decorate(c.webauthnRP))
@@ -198,7 +198,7 @@ func runNoUVLogin(t *testing.T, passwordless bool, decorate func(ports.WebAuthnR
 		pointRowAtSpecChallenge(t, db, "login", challenge)
 		_, _, _, err = c.FinishWebAuthnLogin(ctx, ch, token, "ua", "203.0.113.5", parsed)
 	}
-	return err, countWhere(t, db, &models.Session{}, "user_id = ?", 1)
+	return countWhere(t, db, &models.Session{}, "user_id = ?", 1), err
 }
 
 // TestAssertionWithoutUV_RefusedThroughCore_RedWhenPreferred (proof b, end to
@@ -212,15 +212,15 @@ func TestAssertionWithoutUV_RefusedThroughCore_RedWhenPreferred(t *testing.T) {
 	same := func(rp ports.WebAuthnRelyingParty) ports.WebAuthnRelyingParty { return rp }
 	pref := func(rp ports.WebAuthnRelyingParty) ports.WebAuthnRelyingParty { return uvPreferred{rp} }
 	for _, passwordless := range []bool{false, true} {
-		err, sessions := runNoUVLogin(t, passwordless, same)
+		sessions, err := runNoUVLogin(t, passwordless, same)
 		require.Error(t, err, "passwordless=%v: an assertion without UV must be refused", passwordless)
 		assert.Contains(t, err.Error(), "assertion verification failed")
-		var perr *protocol.Error
-		require.True(t, errors.As(err, &perr), "the library's error stays in the chain: %v", err)
+		perr, ok := errors.AsType[*protocol.Error](err)
+		require.True(t, ok, "the library's error stays in the chain: %v", err)
 		assert.Contains(t, perr.DevInfo, "User verification required")
 		assert.Zero(t, sessions)
 
-		err, sessions = runNoUVLogin(t, passwordless, pref)
+		sessions, err = runNoUVLogin(t, passwordless, pref)
 		require.NoError(t, err, "passwordless=%v: mutation: with UV preferred it logs in (else this scenario does not exercise UV)", passwordless)
 		assert.Equal(t, int64(1), sessions)
 	}

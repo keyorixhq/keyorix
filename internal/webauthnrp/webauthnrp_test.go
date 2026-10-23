@@ -137,8 +137,7 @@ func TestAssertionWithoutUV_IsRejected_RedWhenPreferred(t *testing.T) {
 }
 
 func errDevInfo(err error) string {
-	var perr *protocol.Error
-	if errors.As(err, &perr) {
+	if perr, ok := errors.AsType[*protocol.Error](err); ok {
 		return perr.DevInfo
 	}
 	return ""
@@ -228,8 +227,7 @@ func TestErrors_LibraryErrorAndResolveErrorKeptInChain(t *testing.T) {
 	bad := specAssertion(t, nil)
 	bad.Response.Signature = []byte("not-the-real-signature")
 	_, err := rp.ValidateLogin(user, withSpecChallenge(t, &webauthn.SessionData{UserID: specUserID(1)}), bad)
-	var perr *protocol.Error
-	if !errors.As(err, &perr) {
+	if _, ok := errors.AsType[*protocol.Error](err); !ok {
 		t.Fatalf("a failed assertion must surface the library's *protocol.Error, got %T %v", err, err)
 	}
 
