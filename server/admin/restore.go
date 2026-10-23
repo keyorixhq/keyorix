@@ -58,6 +58,12 @@ const (
 	defaultMaxRestoreTotalBytes = 2 * defaultMaxRestoreEntryBytes
 )
 
+// restoreBeforeCommitHook, when non-nil, runs inside the v2 load transaction
+// after every row is loaded and before that transaction commits. Test-only:
+// it lets a test fail the load at its last possible point. Always nil in
+// production.
+var restoreBeforeCommitHook func(tx *gorm.DB) error
+
 var (
 	restoreInput             string
 	restoreOverwriteExisting bool
@@ -399,7 +405,13 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 		if err := backupfmt.LoadArchive(tx, manifest, stagingDir); err != nil {
 			return err
 		}
-		return backfillOTPExpiryForOlderArchive(tx, manifest)
+		if err := backfillOTPExpiryForOlderArchive(tx, manifest); err != nil {
+			return err
+		}
+		if restoreBeforeCommitHook != nil {
+			return restoreBeforeCommitHook(tx)
+		}
+		return nil
 	}); loadErr != nil {
 		return fmt.Errorf("load backup data: %w", loadErr)
 	}
