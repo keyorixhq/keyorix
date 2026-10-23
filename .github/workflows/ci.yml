@@ -2048,7 +2048,8 @@ jobs:
   # and turned main red. This job has none of those skips. It runs, on every
   # pull_request and merge_group run, the Test funcs of each test file in
   # scripts/ci/guard-inputs.tsv whose input globs match a changed path
-  # (scripts/ci/run-input-guards.sh); nothing matching means a ~1 minute job.
+  # (scripts/ci/run-input-guards.sh). The map checker itself always runs; a
+  # docs-only change selects 4-6 packages (measured on the last 20 merged PRs).
   # The changed list is read like the changes job reads it; when it cannot be
   # read (API error, the compare API's 300-file cap) every mapped guard runs.
   # scripts/ci/guardinputs/guardinputs_test.go fails a PR that adds a guard
