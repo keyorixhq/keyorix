@@ -36,6 +36,7 @@ should be filed as an issue.
 | [`dynamic-secrets-and-leases.md`](dynamic-secrets-and-leases.md) | Lease issue and revoke, the admin DSN at rest, SSRF guards on the target, ephemeral backends that cannot be revoked early, lease versus project delete |
 | [`notifications-webhooks.md`](notifications-webhooks.md) | Channel URL as a bearer credential (encrypted at rest, #2433), SSRF on outbound delivery, redaction in audit diffs and logs, alert loss and replay |
 | [`rate-limits-and-lockout.md`](rate-limits-and-lockout.md) | The login budget, per-account lockout, per-IP versus per-principal limits, the in-memory-per-replica residual, lockout clear audit |
+| [`agent-evidence-ledger.md`](agent-evidence-ledger.md) | ADR-116 (Proposed, not implemented): delegated agent sessions, intent before release, owed outcomes, export replay and omission; every row a GAP citing the reused mechanism's test |
 
 ## What's not here
 

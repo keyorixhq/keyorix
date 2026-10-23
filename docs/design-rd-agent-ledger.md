@@ -140,3 +140,98 @@ row. They are questions, not claims.
 | retention of logs in line with the entity's policy | audit retention plus the ledger floor |
 | clock synchronisation | server clock; RFC 3161 time on anchors |
 | detection of anomalous activity | `outcome_missing`, denied reads, counters, notification |
+
+## 3. Threats
+
+The threat rows are in
+[`security/threat-models/agent-evidence-ledger.md`](security/threat-models/agent-evidence-ledger.md)
+(AGL-1 to AGL-9). Every row is a GAP until the implementation lands, and
+cites the test of the mechanism the design reuses. In short:
+
+| Brief threat | Row | Design answer | What stays open |
+|---|---|---|---|
+| forged agent identity | AGL-1, AGL-2 | session credential bound to one session, short TTL; scope derived from the delegator's and the agent's authority, re-derived at every intent | a stolen credential works until the TTL ends or someone revokes it; no proof of possession in the MVP |
+| intent without outcome | AGL-4 | every intent is owed a terminal row; the sweeper writes `agent.outcome_missing` through the owed path | the owed path's double-fault gap (#3656) |
+| outcome without intent | AGL-5 | API refuses it; the verifier flags any outcome without an earlier intent | a lying outcome is undetectable |
+| replay of an export | AGL-7 | export row with a caller nonce inside the bundle; coverage in the report; consistency with an earlier anchor | without a nonce, only authenticity is shown, not freshness |
+| compromised agent host | AGL-6 | blast radius bounded and fully recorded | a released value cannot be recalled |
+| chain truncation | AGL-8 | existing checkpoints and anchors; segment mode is complete; `seq` gaps in tree mode | open sessions in tree mode; a host admin before the last external anchor |
+
+## 4. Extension plan for the TLA+ model (no model change in this PR)
+
+The owed-audit model (`docs/formal/owed-audit/`, #3647) already has the
+pieces the ledger reuses:
+
+- the audit-log outage (`auditUp`);
+- the pending-table fault (`pendingUp`, `PendingFault`);
+- crashes;
+- the owed commit, settle and backfill (`CommitOwed`, `SettleRow`, `List` /
+  `Write`);
+- the fail-closed commit (`CommitAudited`);
+- the chain abstraction (`chain` as a sequence of `[row, prev]`).
+
+The ledger should be added **to that model, not as a new one**, so that every
+ledger property is checked under the same outage, fault and crash behaviour.
+A separate copy of those actions would drift from the original (the drift
+risk the owed-audit design note already names).
+
+### 4.1 Model changes (next session)
+
+| Change | Shape | Maps to |
+|---|---|---|
+| `Kind` value `"intent"` | one row, fail closed: takes the existing `WidenOrWrite` / `CommitAudited` path | `agent.intent` with `withAuditedMutation` |
+| `Kind` value `"outcome"` with a constant `IntentOf[r]` | one row, owed: takes the existing `CommitOwed` path; the effect closes the intent | `agent.outcome` with `commitOwingAudit` |
+| new variable `released` (`[Reqs -> Nat]`) and action `Release(i)` | guard: `Bug # "release_before_commit" => <<i, 1>> \in ChainRows` and the intent is open and `released[i] < MaxUses` | the read gate; the read row itself is abstracted as part of the release (audit-before-disclosure is already established) |
+| new variable `agentGone` and action `AgentGone(i)` | the agent stops: no outcome request will run | agent crash or exit |
+| action `Sweep(i)` | enabled when the intent is open and `agentGone[i]` (the deadline is abstracted as "the agent is gone"); commits the close plus the `outcome_missing` row through `CommitOwed` | the sweeper |
+| operator `Verify(b)` over a bundle `b` (a subsequence of `chain` plus a pending count) | `"BROKEN"` if links are broken, a row appears twice, an outcome or release has no earlier intent, or `seq` has a gap; `"INDETERMINATE"` if pending > 0 or an intent is open; else `"VERIFIED"` | `verify-audit --agent-bundle` checks 1, 2 and 4 (ADR-116 §5); hashing is abstracted as row identity, as in `ChainLinked` |
+| action `Tamper` on an exported copy only | drop, duplicate or reorder one row of `Export(h)` | AGL-8 |
+
+### 4.2 Properties
+
+| Property | Kind | Statement |
+|---|---|---|
+| `NoReleaseWithoutDurableIntent` | invariant | `\A i : released[i] > 0 => <<i, 1>> \in ChainRows`. A release implies that the intent row is in the chain (committed), not only in flight or pending |
+| `TerminalRecordedOrOwed` | invariant | every closed intent's terminal row is in `ChainRows \cup PendingRows \cup InFlight`. This follows from `NoUnrecordedEffect` once closing is an owed effect; it is stated separately so that a counterexample names the ledger |
+| `OutcomeEventuallyRecordedOrOwed` | liveness | `\A i : released[i] > 0 ~> (Terminal(i) \in ChainRows \cup PendingRows)`, under weak fairness of `Sweep`, even if the audit log never comes back |
+| `ExportVerifiesOffline` | invariant | `\A h \in 1..Len(chain) : Verify(Export(h)) # "BROKEN"`: an honest chain never verifies as BROKEN; it is `"VERIFIED"` when `Quiescent` |
+| `TamperDetected` | invariant (over `Tamper` states) | a tampered export never verifies as `"VERIFIED"` |
+| `PairingOrder` | invariant | in chain order, an intent's row precedes every release bound to it and its terminal row (an owed outcome is appended late, but never before its intent, because the intent is fail closed) |
+
+### 4.3 Seeded bugs (each must be found)
+
+1. `release_before_commit`: the gate accepts an intent whose row is still in
+   flight. Expected: `NoReleaseWithoutDurableIntent`, via a crash between the
+   release and the commit.
+2. `outcome_fail_closed`: the outcome takes the fail-closed path. Expected: a
+   lasso in `OutcomeEventuallyRecordedOrOwed` with the audit log down and the
+   agent gone (the sweeper fails closed too).
+3. `sweep_without_record`: the sweeper closes the intent without the owed
+   record. Expected: `TerminalRecordedOrOwed` with a crash before the append.
+4. `verifier_ignores_seq`: `Verify` skips the `seq` gap check. Expected:
+   `TamperDetected`, with a dropped row in tree mode.
+
+### 4.4 Configurations to add
+
+| Configuration | Population | Expected verdict |
+|---|---|---|
+| `agent_small.cfg` | intent, outcome, revoke; 2 replicas, 2 flips, 1 crash | every invariant and both liveness properties hold |
+| `agent_wide.cfg` | 2 intents (one with an outcome, one abandoned), widen, revoke; 3 flips | every invariant holds |
+| `agent_liveness.cfg` | as `agent_small` | `OutcomeEventuallyRecordedOrOwed`, `RevocationNeverBlocked`, `BackfillConverges` hold |
+| `agent_pendingfault.cfg` | as `agent_small`, `PendingFault = TRUE` | `TerminalRecordedOrOwed` violated: the known, loud gap inherited from the owed path (until #3656's change is modelled) |
+| `bug_release_before_commit.cfg`, `bug_outcome_fail_closed.cfg`, `bug_sweep_without_record.cfg`, `bug_verifier_ignores_seq.cfg` | the smallest population that shows each bug | the seeded property violated |
+
+`run-tlc.sh` gets the new verdict rows, so a changed verdict fails the run.
+
+### 4.5 What the model will not cover
+
+- **Amendment 3's `standard` tail loss.** The model has no tail loss, so it
+  cannot show the D2 risk (an intent and its reads lost together after a
+  release). That risk is argued in prose (ADR-116 technical risks), not
+  checked.
+- **Time.** Deadlines, TTLs and `not_after` are abstracted as the "agent
+  gone" event.
+- **Hashes, Merkle proofs and signatures.** They are abstracted as row
+  identity. The cryptography is checked by the verifier's own tests and fuzz
+  targets.
+- **Re-derived delegation.** Authorization is outside the model.
