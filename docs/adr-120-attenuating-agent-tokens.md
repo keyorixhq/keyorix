@@ -2,8 +2,9 @@
 
 **Status:** Proposed (2026-10-23). Design only; nothing is implemented.
 **Date:** 2026-10-23
-**Number:** 120, because four open R&D PRs (#3665-#3668) all claim 116. If they are
-renumbered 116-119 in PR order, 120 stays free.
+**Number:** 120 (approved by Andrei, 2026-10-23). The four sibling R&D drafts are
+numbered 116 = signed audit checkpoints (#3665), 117 = TPM-sealed KEK (#3667),
+118 = agent evidence ledger (#3668), 119 = attestation-gated secret release (#3666).
 **Context:** R&D item RD-AAT-1. Design note with the prototype results, the SMT
 encoding and the implementation plan: [`design-rd-aat.md`](design-rd-aat.md).
 Threat rows: [`security/threat-models/agent-delegation-tokens.md`](security/threat-models/agent-delegation-tokens.md).
@@ -61,7 +62,7 @@ Each item states the decision and why.
    damage if it leaks, and the overlap makes rotation possible without downtime.
 
 3. **A root token is an agent session in AAT form.** The agent evidence ledger
-   design (RD-AGENT-LEDGER-1, open as PR #3668, ADR number pending) makes an agent a
+   design (ADR-118, RD-AGENT-LEDGER-1, open as PR #3668) makes an agent a
    machine identity of type `agent`. Each run is an agent session, started by a
    delegator who holds `agents.delegate`. The session scope is capped by the agent's
    roles and by the delegator's permissions at that moment. Issuing a root AAT is
@@ -72,9 +73,9 @@ Each item states the decision and why.
    - `exp` is at most the session's `expires_at`.
 
    The request also carries `req_cnf`, as the draft says, and the holder proves
-   possession of that key by signing a Keyorix challenge. Whether non-agent machine
-   identities (for example CI) may also hold roots is NEEDS ANDREI 2. *Why:* there
-   is then one delegation model, not two. The ledger already derives the ceiling
+   possession of that key by signing a Keyorix challenge. In v1 only agent sessions
+   hold roots; non-agent machine identities (for example CI) do not (Decision A2).
+   *Why:* there is then one delegation model, not two. The ledger already derives the ceiling
    from the actor (CLAUDE.md, "a ceiling that inspects only the target is not a
    ceiling"). AAT adds only what a session credential lacks: holder binding, and
    narrowing offline across hops.
@@ -102,7 +103,7 @@ Each item states the decision and why.
    `one_of`). A Keyorix extension type, `keyorix_ref_glob`, is designed: its `check`
    is `path.Match`, and its subsumption procedure is syntactic and runs in linear
    time. The SMT model proves the procedure sound for every pattern of its grammar.
-   It stays disabled until NEEDS ANDREI 1 is decided. *Why:* the draft says a chain
+   It stays disabled in v1 (Decision A1). *Why:* the draft says a chain
    with an unregistered extension type is not conformant, and verifiers that lack
    the type fail closed. Shipping it unregistered would break interoperability with
    any third-party verifier.
@@ -165,7 +166,7 @@ Each item states the decision and why.
     key is out of the model's reach. A process boundary is the cheapest such
     boundary that already exists.
 
-13. **A verified presentation is the ledger intent (R6 link, PR #3668).** The
+13. **A verified presentation is the ledger intent (R6 link, ADR-118, PR #3668).** The
     ledger asks for an intent before every release. That is normally a separate
     `POST …/intents` call followed by a header on the read. For an AAT read, the
     server instead writes the `agent.intent` row from the verified presentation.
@@ -176,9 +177,9 @@ Each item states the decision and why.
     transaction that commits before the value is released. If the audit append
     fails, no value is released. The ledger's outcome record follows. A denial is
     audited with its Section 8 step and reason. The export keeps the chain bytes, so
-    an auditor can rerun Section 8 offline. The value is never recorded. Whether a
-    `purpose_code` must come from a signed claim in the leaf is NEEDS ANDREI 6.
-    *Why:* audit-before-disclosure is non-negotiable (the ledger ADR and ADR-115
+    an auditor can rerun Section 8 offline. The value is never recorded. A leaf may
+    carry a signed `purpose_code` claim, which is recorded if present (Decision A6).
+    *Why:* audit-before-disclosure is non-negotiable (ADR-118 and ADR-115
     state it). The PoP is already a fresh, per-call signed statement of what the
     agent is about to do, so a second round trip adds nothing. Delegation happens
     offline, so the chain presented at use time is the only record of who delegated
@@ -241,8 +242,8 @@ everything that offline verification buys rests on the issuance-time inclusion
   (explicit `typ`, `Ed25519` instead of `EdDSA`, `aat_hash`, the optional/`"*"`
   arguments). Pin one revision, and keep the vectors as the conformance test.
 - **The extension type registration is undecided** (whether to use an IANA registry
-  or a URI type is open in the draft). This blocks shipping `keyorix_ref_glob`
-  (decision 6).
+  or a URI type is open in the draft). This keeps `keyorix_ref_glob` off in v1
+  (decision 6, Decision A1).
 - **The holder key is within the model's reach.** If the agent process can read its
   own key, every token bound to that key is usable at full scope. Decision 12 moves
   the key into `keyorix-mcp`. A compromised agent host is still out of scope (see
@@ -257,8 +258,8 @@ everything that offline verification buys rests on the issuance-time inclusion
   cvc5 proves it at once. The model therefore depends on two solvers, and the CI
   guarantee must come from tests, not from the solver.
 - **FIPS mode.** Whether `crypto/ed25519` is approved inside the Go FIPS 140-3 module
-  is **[VERIFY]**. If it is not, AAT must be off under `KEYORIX_FIPS_MODE` until
-  ES256 is added.
+  is **[VERIFY]**. AAT is off under `KEYORIX_FIPS_MODE` until that is verified, or
+  until ES256 is added (Decision A5).
 - **No post-quantum signature.** The draft makes Ed25519 mandatory, and no ML-DSA
   JOSE profile is assumed here (**[VERIFY]** the JOSE registrations). Root lifetimes
   are short, so the exposure is to forging new roots, not to harvesting old ones.
@@ -281,14 +282,42 @@ everything that offline verification buys rests on the issuance-time inclusion
   chokepoint, a PoP `jti` table, an MCP holder mode and ledger records. The commit
   plan is in the design note.
 
-## NEEDS ANDREI (open decisions; recommendations in the RD-AAT-1 report)
+## Decisions (Andrei, 2026-10-23)
 
-1. `keyorix_ref_glob`: request IANA registration, or keep core types only?
-2. Who may hold a root: agent sessions only (recommended), or also non-agent machine
-   identities?
-3. PoP `jti` tracking for every read (recommended), or only with a nonce?
-4. Tool identifier form: issuer-URL URIs (recommended), or bare names like the MCP
-   tool names?
-5. FIPS mode: keep AAT off under `KEYORIX_FIPS_MODE` until FIPS status is checked?
-6. Ledger intent from a presentation: is the tool URI enough, or must the leaf carry a
-   signed `purpose_code` claim?
+Andrei answered all six open questions on 2026-10-23, each as recommended, with no
+conditions beyond the ADR numbering above. The status stays **Proposed** (approved to
+implement as Proposed). The letters A1-A6 are referred to from the Decision section.
+
+- **A1. `keyorix_ref_glob`: v1 ships the core constraint types only (`exact`,
+  `one_of`).** *Reason:* the draft makes a chain with an unregistered extension type
+  non-conformant, and third-party verifiers fail closed on it. *Obligation:* keep the
+  glob designed but disabled, and request registration later with the SMT soundness
+  proof (part E) as evidence. A private Keyorix-only glob does not ship.
+- **A2. Only agent sessions (the ADR-118 `agent` identity type) hold a root AAT in
+  v1.** *Reason:* root issuance is agent-session start and reuses the ledger's
+  delegator ceiling. A plain machine identity would need its own ceiling rule and has
+  no delegator. *Obligation:* issuance refuses any principal that is not an agent
+  session. Non-agent machine identities (CI, services) are a later ADR.
+- **A3. The server records every accepted PoP `jti` for `secrets.read` in shared
+  storage, on every read (insert or nothing, retention equal to the PoP window).**
+  *Reason:* it is cross-replica and needs no extra round trip, unlike an
+  enforcement-point nonce. The draft requires it for side-effect tools and
+  recommends it for sensitive responses. *Obligation:* decision 10 stands as written,
+  with the atomicity and fault-injection coverage listed under the technical risks. No
+  server-nonce alternative in v1.
+- **A4. Tool identifiers are issuer-URL URIs** (`<issuer>/tools/secrets.read`,
+  `<issuer>/tools/secrets.list`), not bare MCP tool names. *Reason:* the draft says
+  tool ids should be URIs and compares them as exact strings, and bare names collide
+  across agents. *Obligation:* `keyorix-mcp` maps its tool names to these URIs; the
+  comparison stays exact-string.
+- **A5. AAT is off under `KEYORIX_FIPS_MODE` until Ed25519's status in the Go FIPS
+  140-3 module is confirmed.** *Reason:* the draft makes Ed25519 mandatory and its FIPS
+  approval in Go's module is unverified. *Obligation:* the issuer and verifier refuse
+  to start in FIPS mode with a clear message (fail closed). They are enabled only after
+  a verified result, or after ES256 is added.
+- **A6. A leaf may carry an optional signed `purpose_code` claim.** It is recorded in
+  the ledger intent row if present; otherwise the tool URI alone is recorded.
+  *Reason:* ADR-118 intents carry an operator-defined `purpose_code`. Draft-02
+  passthrough claims carry no authority, but the deriver signs them, so they are
+  usable as evidence. *Obligation:* the claim never widens authority and is never
+  required. It is evidence only.

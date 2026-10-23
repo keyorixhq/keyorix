@@ -84,7 +84,7 @@ A child keeps one tool, sets `ref` to `exact`, `del_max_depth` 1, `exp` 5 minute
 1. Parse the presentation from the body or gRPC metadata (size limits first, step 2).
 2. Run Section 8 steps 1-7 in process. On any failure: deny with a generic error to the
    caller (as MCP-4 / ADR-096) and audit the step and reason.
-3. The root's agent session (root `jti` = session id, PR #3668) is `active`, and the agent
+3. The root's agent session (root `jti` = session id, ADR-118, PR #3668) is `active`, and the agent
    identity and the delegator are active: local lookups (Keyorix issued the root).
 4. Build an `AATRestriction` from the leaf (tool → permission, `ref` → scope + name) and
    put it on the request context. `Authorize`/`AuthorizePrincipal` apply it first, then
@@ -93,7 +93,7 @@ A child keeps one tool, sets `ref` to `exact`, `del_max_depth` 1, `exp` 5 minute
 5. PoP `jti` record (insert-or-nothing, read back) — step 7i runs last, after every
    other check, as the draft orders it.
 6. Ledger `agent.intent` row written from the presentation, durable → value → outcome
-   record (ADR-120 decision 13, PR #3668).
+   record (ADR-120 decision 13, ADR-118, PR #3668).
 
 The restriction is a filter: if the leaf names a secret the agent or the delegator has since lost
 access to, nothing is granted.
@@ -199,7 +199,7 @@ mallory replays worker's chain with own PoP    DENY  step 7b   pop signature doe
 
 (The prototype used bare MCP tool names; the profile above uses issuer URIs.)
 
-## 6. Ledger fields (R6 link, PR #3668)
+## 6. Ledger fields (R6 link, ADR-118, PR #3668)
 
 The ledger's `agent.intent` row for an AAT read is written from the verified presentation
 (no separate intent call): session id (= root `jti`), target `ref`, tool URI, `max_uses`
@@ -208,7 +208,7 @@ SHA-256 of its signing input, the leaf holder key thumbprint, and PoP `jti` and 
 its step and reason. The export keeps the chain bytes (authorization metadata, not a
 secret: a stored AAT is useless without its holder key, the draft notes) so `verify` can
 rerun Section 8 offline, next to the ledger's own chain proofs. Field mapping to EU AI Act
-Art. 12 belongs to the ledger ADR (PR #3668), not here.
+Art. 12 belongs to ADR-118 (the ledger, PR #3668), not here.
 
 ## 7. Implementation plan (next session, after ADR-120 is accepted)
 
@@ -224,7 +224,7 @@ else depends on it.
    widenings, verify denies at the matching step.
 3. Issuer key: generation, KEK wrapping, `kid`, key-set endpoint and export file;
    rotation overlap; config leaves (`internal/config` + surface leaves file).
-4. Root issuance as agent-session start (PR #3668 section 1): `req_cnf` challenge, request-as-parent
+4. Root issuance as agent-session start (ADR-118, PR #3668 section 1): `req_cnf` challenge, request-as-parent
    attenuation, decision-4 RBAC ceiling (syntactic rule + table test derived from the
    SMT cases), root record + revocation; OpenAPI + CLI + web follow the contract rule.
 5. Server enforcement: presentation parsing (body / gRPC metadata), `AATRestriction` at the
@@ -235,6 +235,6 @@ else depends on it.
    widen denied → revoke root → denied.
 7. `keyorix-mcp` holder mode: leaf key file, PoP per tool call, `KEYORIX_TOKEN` not needed
    in this mode; MCP threat rows updated.
-8. Ledger intent/outcome records for AAT reads (after the ledger ADR in PR #3668 is accepted).
+8. Ledger intent/outcome records for AAT reads (after ADR-118, PR #3668, is accepted).
 9. `docs/formal/aat/`: the SMT model (parts A-F) with a non-CI runner, like `docs/formal/smt`.
 10. Threat-model rows AAT-1..AAT-14: replace each GAP with the test that lands.

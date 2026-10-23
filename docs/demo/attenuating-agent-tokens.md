@@ -13,7 +13,7 @@ it and nothing else. Every attempt to widen it is refused with a reason. Anyone 
 Keyorix's public key can verify the chain offline.
 
 Needs (when implemented): a Keyorix server with the demo seed; an agent identity
-`agent-orchestrator` (a machine identity of type `agent`, PR #3668) with `secrets.read`
+`agent-orchestrator` (a machine identity of type `agent`, ADR-118, PR #3668) with `secrets.read`
 on `payments/production` and `payments/staging`; a user `alice` who holds
 `agents.delegate` and the same reads; and the `keyorix` CLI, logged in as `alice`.
 
@@ -107,4 +107,4 @@ In the agent, the same read is now denied: `root token revoked`. Say: "Offline v
 only see expiry, but Keyorix checks the root and the machine's live RBAC on every
 request." Show `keyorix audit list --since 5m`: one intent and one outcome for the
 permitted read, with the root id and the chain digests, and the denials with their
-steps. (The ledger records depend on the ledger ADR in PR #3668.)
+steps. (The ledger records depend on ADR-118, the agent evidence ledger, PR #3668.)
