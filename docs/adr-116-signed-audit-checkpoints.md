@@ -2,10 +2,11 @@
 
 ## Status
 
-**Proposed** (2026-10-23, RD-AUDIT-CKPT-1, R&D prototype R8). Needs Andrei's
-approval before any code: it adds a signing key, a statement format and a new
-binary at a trust and crypto boundary. Nothing in this ADR is implemented.
-The open decisions are listed under "Decisions for approval".
+**Proposed** (2026-10-23, RD-AUDIT-CKPT-1, R&D prototype R8). Andrei answered
+all ten open questions on 2026-10-23 and approved implementation to start
+with the status staying Proposed; the answers and their binding conditions are
+under "Decisions (Andrei, 2026-10-23)". The ADR moves out of Proposed only
+through the normal ADR process. Nothing in this ADR is implemented.
 
 Design detail, formats, verifier rules and the commit plan:
 `docs/design-rd-audit-ckpt.md`. Demo script (against the future CLI, not
@@ -18,6 +19,11 @@ design (`docs/design-b4-offline-audit-verify.md`), the recovery options note
 reading, not in code: #3648 (audit key-transition record), #3621 (fail-closed
 verification state), #3662 (RD-PQWRAP-1 hybrid wrapping conventions), #3647
 (TLA+ model of owed-audit).
+
+Sibling drafts, numbered together on 2026-10-23: ADR-117 TPM-sealed KEK
+(#3667), ADR-118 agent evidence ledger (#3668), ADR-119 attestation-gated
+secret release (#3666), ADR-120 attenuating agent tokens (#3669). This ADR is
+referenced by them as ADR-116.
 
 ## Context
 
@@ -125,6 +131,8 @@ INDETERMINATE, never VALID.
   may insert an audit row below the head of a signed statement.
 - A backfilled row gains a hashed `owed_ref` field: the pending id and the
   SHA-256 of the owed event JSON (a chain-encoding change, design note §5).
+  Rows in the previous encoding version stay valid: the verifier accepts both
+  versions (see Q5 obligation below).
 - Verifier rule: every owed record listed by statement N must, by statement
   N+1, either still be listed or appear exactly once as an `owed_ref` in the
   rows between them. A record that disappears without reaching the chain is
@@ -137,7 +145,15 @@ INDETERMINATE, never VALID.
 
 A new binary built from a new package `pkg/auditproof` that imports only the
 Go standard library (enforced by a dependency guard like
-`internal/auditverify/dependency_guard_test.go`). It reads an **evidence
+`internal/auditverify/dependency_guard_test.go`). ML-DSA-65 is in the standard
+library at the repo's Go version (checked 2026-10-23: `go.mod` says `go 1.27`,
+toolchain `go1.27.3`; `crypto/mldsa` exists in the Go 1.27.2 source tree
+with `MLDSA65()`, public key 1952 bytes, signature 3309 bytes), so no circl or
+other third-party module is needed and the binary is described as
+**stdlib-only**. If an implementation step ever needs a non-stdlib module
+(for example for TSA receipt parsing), the binary must instead be described as
+"minimal-deps" in the ADR, the release notes and `--version`, and the
+dependency guard stays with an explicit allowlist. It reads an **evidence
 bundle** (design note §6): statements, the owed sets the digests commit to, and
 audit rows in a new **chain-exact export** format that carries every hashed
 field verbatim. It needs no server, no database, no Keyorix secret and no
@@ -178,23 +194,27 @@ still need #3648 (re-sign and carry the state across), which this ADR keeps.
   history going forward. What changes is that a statement already given to
   someone else is a signed commitment: a rewrite after that point is a
   detectable fork, provable by the two signatures. Moving the signing key off
-  the host (KMS asymmetric signing, HSM, TPM-sealed seed from R7) is the way to
+  the host (KMS asymmetric signing, HSM, TPM-sealed seed per ADR-117) is the way to
   constrain the host administrator, and is listed as a later option.
 
-## Decisions for approval
+## Decisions (Andrei, 2026-10-23)
 
-| # | Decision | Recommendation |
-|---|---|---|
-| Q1 | Signing key source: (a) random seed wrapped under the KEK, (b) derived from the KEK, (c) off-host signer now | (a); (c) as a follow-up provider |
-| Q2 | Hybrid composition: (a) AND of Ed25519 and ML-DSA-65 with our own domain prefix and context, (b) follow the IETF composite ML-DSA encoding [VERIFY] | (a), with a re-encoding path if the IETF work is final |
-| Q3 | Statement encoding: (a) own TLV binary, (b) C2SP signed-note text [VERIFY] | (a) |
-| Q4 | Keep the HMAC checkpoint for the online path and write statements next to it | yes; retiring HMAC is a later ADR |
-| Q5 | Add a hashed `owed_ref` to backfilled rows (chain-encoding change) | yes |
-| Q6 | Merkle tree / selective disclosure (prove one row without revealing others) | defer; record as a prerequisite for R6 export bundles |
-| Q7 | Verifier as a separate `keyorix-verify` binary from a stdlib-only `pkg/auditproof` | yes |
-| Q8 | Publication: export command plus the existing RFC 3161 notary over each statement; witness co-signing later | yes |
-| Q9 | Signing-key rotation is its own offline command; rotate-kek re-wraps only | yes |
-| Q10 | Without `--pin` the verdict is INDETERMINATE | yes |
+All ten questions were answered on 2026-10-23, each with the recommended
+option (a). The status stays Proposed: implementation is approved to start as
+Proposed. Q5 and Q7 carry binding conditions.
+
+| # | Question | Decision | Reason |
+|---|---|---|---|
+| Q1 | Signing key source | **(a)** random seed in a new key file wrapped under the KEK, like `dek.key`; `rotate-kek` only re-wraps. Off-host signer (c) remains a follow-up provider. | The auditor's pinned key id survives KEK rotation and provider migration. |
+| Q2 | Hybrid composition | **(a)** AND of Ed25519 and ML-DSA-65 with our own domain prefix and context; both key ids inside the signed bytes. Re-encode later if the IETF composite work is final. | The IETF encoding is not final; ours is small and documented. |
+| Q3 | Statement encoding | **(a)** own length-prefixed TLV. | Canonical, unambiguous and fuzzable; matches the chain's encoding style. |
+| Q4 | HMAC checkpoint | **(a)** keep it for the online path; write the statement next to it in the same transaction under `WithAuditCheckpointLock`. Retiring HMAC (and #3648's machinery) is a later ADR. | Smallest blast radius. |
+| Q5 | `owed_ref` on backfilled rows | **(a)** 14th hashed field under an explicit chain-encoding version, #1452-style migration. **Obligation:** the verifier (`keyorix-verify` and the server's verify) keeps accepting rows in the previous chain-encoding version; the implementation plan has a test with old-version rows next to new-version rows (design note §13, PR C). | Lets the offline verifier prove an owed record reached the chain; the count-only alternative cannot tell which record vanished. |
+| Q6 | Merkle tree / selective disclosure | **(a)** defer; linear chain in v1. Recorded as a prerequisite for the agent evidence bundles of ADR-118 (R6), which need redacted per-record proofs. | The current entry hash needs every field of every row, so redacted proofs need a new leaf hash or a tree. |
+| Q7 | Verifier home | **(a)** separate `keyorix-verify` binary built from `pkg/auditproof`, with checksum, SBOM and a dependency guard. **Condition checked:** ML-DSA-65 is in the Go standard library at the repo's Go version (`crypto/mldsa`, `go 1.27`, toolchain `go1.27.3`; source read in the 1.27.2 tree), so the binary is **stdlib-only**. If any step needs circl or another third-party module, the ADR and the binary say "minimal-deps" instead, and the dependency guard stays either way. | Auditors need neither the server binary nor its dependency tree. |
+| Q8 | Publication | **(a)** export command plus the existing RFC 3161 notary over each statement's bytes; witness co-signing later. | Deleting the newest statements is detectable only against a copy held elsewhere. |
+| Q9 | Signing-key rotation | **(a)** its own offline command, `admin audit signing-key rotate` with prepare/commit/complete and a key change statement signed by both keys; `rotate-kek` only re-wraps. | Keeps the auditors' pinned key stable across KEK changes; the compromise runbook rotates both. |
+| Q10 | Unpinned verification | **(a)** without `--pin`, `keyorix-verify` reports INDETERMINATE with reason "key not pinned", never VALID. | An unpinned genesis key is trust-on-first-use; a log re-seeded under an attacker key would otherwise verify. |
 
 ## Consequences
 

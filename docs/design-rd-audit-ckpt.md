@@ -1,8 +1,9 @@
 # Design note: signed audit checkpoints and the standalone verifier (RD-AUDIT-CKPT-1)
 
-Status: R&D prototype R8, design for decision, 2026-10-23. Nothing here is
-implemented. Decision record: `docs/adr-116-signed-audit-checkpoints.md`
-(Proposed). Demo script: `docs/demo/rd-audit-ckpt.md` (written against the
+Status: R&D prototype R8, 2026-10-23. Andrei answered all open questions the
+same day (recorded in the ADR under "Decisions (Andrei, 2026-10-23)"); nothing
+here is implemented. Decision record: `docs/adr-116-signed-audit-checkpoints.md`
+(Proposed, approved to implement as Proposed). Demo script: `docs/demo/rd-audit-ckpt.md` (written against the
 future CLI, not implemented).
 
 ## 1. Summary
@@ -208,7 +209,8 @@ export for an auditor under the same access rules as today's export. A
 redacted bundle cannot be verified with the current entry hash, because the
 hash streams `prev_hash` first and then every field, so a verifier needs every
 field to recompute it. Selective disclosure needs a different leaf hash or a
-Merkle tree (Q6, deferred).
+Merkle tree (Q6, deferred; a prerequisite for the redacted per-record
+evidence bundles of ADR-118).
 
 ## 7. Verifier rules (`keyorix-verify`)
 
@@ -223,7 +225,9 @@ Input: bundle, `--pin`, optional `--since <statement file>`, optional
    signatures and moves the epoch.
 3. Owed lists match their digests (§5).
 4. Rows: ascending ids; `prev_hash` links; recompute `entry_hash` under the
-   row's encoding version. At each checkpoint statement whose certified count
+   row's encoding version. The verifier accepts every encoding version the
+   chain has used (the 13-field version and the `owed_ref` version, Q5), also
+   mixed in one chain; only an unknown version is refused. At each checkpoint statement whose certified count
    is reached: the head id and hash match, and the owed rule holds.
 5. A statement that certifies more rows than the bundle holds: BROKEN
    (truncation).
@@ -233,7 +237,9 @@ Input: bundle, `--pin`, optional `--since <statement file>`, optional
    to `fork-proof.json`.
 7. TSA receipts, when present and `--tsa-roots` given, are verified with
    `internal/notary`'s logic (reimplemented or vendored into `pkg/auditproof`
-   under the stdlib-only rule; open point for the implementation).
+   under the stdlib-only rule; open point for the implementation. If it
+   cannot stay stdlib-only, the binary is called "minimal-deps", see ADR-116
+   Q7).
 
 Verdicts and exit codes follow `admin verify-audit`: 0 VALID, 1 BROKEN, 2
 INDETERMINATE, 3 usage or I/O error. Key ids are displayed as `ask-<64 hex>`.
@@ -318,8 +324,8 @@ shape as `ComputeEntryHash`. Results:
 | Composition | AND, own encoding | IETF composite ML-DSA [VERIFY] | not final when written; our encoding is small and documented; re-encode later if needed |
 | Statement encoding | TLV | C2SP signed note [VERIFY] | note format assumes a Merkle root and text lines; our fields are richer; TLV matches the chain's length-prefixed style |
 | Statement per | each checkpoint | each row | about 3.4 KB of signature per row and a signing operation on the write path |
-| Inclusion proofs | linear chain | Merkle tree (RFC 9162 style [VERIFY]) | O(log n) single-row proofs and redaction, but a new tree over the existing chain; deferred until R6 needs per-record proofs |
-| Verifier home | `pkg/auditproof` + `cmd/keyorix-verify` | `keyorix-server admin verify-audit --bundle` | the auditor should not need the server binary or its dependency tree; a stdlib-only package is small enough to review |
+| Inclusion proofs | linear chain | Merkle tree (RFC 9162 style [VERIFY]) | O(log n) single-row proofs and redaction, but a new tree over the existing chain; deferred until R6 (ADR-118) needs per-record proofs |
+| Verifier home | `pkg/auditproof` + `cmd/keyorix-verify` | `keyorix-server admin verify-audit --bundle` | the auditor should not need the server binary or its dependency tree; a stdlib-only package is small enough to review; `crypto/mldsa` is in the Go 1.27 standard library, so no third-party module is needed (ADR-116 Q7) |
 
 ## 11. Field and standard mapping
 
@@ -329,7 +335,7 @@ was read) and is marked [VERIFY].
 | Need | Mechanism here | Reference |
 |---|---|---|
 | Integrity and non-repudiation of logs | signed statements over the hash chain, fork proofs | NIS2 Directive Art. 21(2) risk measures [VERIFY]; DORA Art. 9 ICT security and Art. 12 logging [VERIFY]; ISO/IEC 27001:2022 Annex A 8.15 logging [VERIFY] |
-| Automatic logging for AI systems (R6 export bundles) | the same bundle and verifier | EU AI Act Art. 12 [VERIFY] |
+| Automatic logging for AI systems (R6 export bundles, ADR-118) | the same bundle and verifier | EU AI Act Art. 12 [VERIFY] |
 | Post-quantum signature | ML-DSA-65 | FIPS 204 [VERIFY] (API facts read from Go source) |
 | Classical signature | Ed25519 | RFC 8032 [VERIFY]; FIPS 186-5 lists EdDSA [VERIFY] |
 | Hybrid transition | AND composition | BSI TR-02102-1 and ANSSI guidance recommend hybrids during the transition [VERIFY] |
@@ -386,7 +392,11 @@ each green on its own, each commit with red tests first.
 **PR C: owed set and `owed_ref`**
 7. red: core tests (backfill writes `owed_ref`; a deleted pending record
    after a statement makes verification BROKEN; older encoding refused);
-   auditverify differential test extended.
+   auditverify differential test extended; **backward-compat test (Q5
+   obligation)**: a chain holding rows in the previous encoding version
+   followed by rows with `owed_ref` verifies VALID in both `keyorix-verify` and
+   the server's `VerifyAuditChain`, and a tampered old-version row is still
+   BROKEN (the old path must not become a bypass).
 8. green: encoding version with the 14th field, migration, backfill change,
    owed set in the statement, online check in `VerifyAuditChain`.
 9. TLA: `Checkpoint` action and `CommittedOwedNeverVanishes` in
