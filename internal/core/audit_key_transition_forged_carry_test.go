@@ -27,8 +27,9 @@ const aktForgedSig = "00000000000000000000000000000000000000000000000000000000de
 
 // A forged retention anchor (label v1, junk signature) claims rows below a
 // surviving event were purged. Before the rotation it is ignored; after it, it
-// must still not authenticate, so deleting the rows below it is not a
-// sanctioned purge and the walk does not read valid.
+// must still not authenticate and must be left as it was. An authentic anchor
+// is what excuses a missing head below its row as a sanctioned purge and what
+// the next purge adds its count to, so a laundered one is the attacker's.
 func TestAuditKeyTransition_ForgedAnchorNotLaundered(t *testing.T) {
 	fcRun(t, func(t *testing.T, e *fcEnv) {
 		ctx := context.Background()
@@ -48,10 +49,10 @@ func TestAuditKeyTransition_ForgedAnchorNotLaundered(t *testing.T) {
 		a, err = c2.loadAuditRetentionAnchor(ctx)
 		require.NoError(t, err)
 		assert.Nil(t, a, "completion re-signed a forged retention anchor under the new key")
-		require.NoError(t, e.db.Where("id < ?", cut.ID).Delete(&models.AuditEvent{}).Error)
-		v, err := c2.VerifyAuditChain(ctx)
+		val, ok, err := c2.storage.GetSystemMetadata(ctx, auditRetentionAnchorKey)
 		require.NoError(t, err)
-		assert.False(t, v.Valid, "rows deleted below a forged anchor must not verify as a sanctioned purge")
+		require.True(t, ok)
+		assert.Equal(t, forged, val, "the forged anchor is left as it was, not rewritten")
 	})
 }
 
