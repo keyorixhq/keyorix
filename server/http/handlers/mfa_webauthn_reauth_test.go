@@ -16,6 +16,7 @@ import (
 
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/pquerna/otp/totp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -60,7 +61,7 @@ func setupMFAReauthTest(t *testing.T) (*AuthHandler, *core.KeyorixCore, *gorm.DB
 		RPID: "localhost", RPDisplayName: "Keyorix", RPOrigins: []string{"https://localhost"},
 	})
 	require.NoError(t, err)
-	coreService.SetWebAuthn(rp)
+	coreService.SetWebAuthn(webauthnrp.Wrap(rp))
 
 	return NewAuthHandler(coreService, false), coreService, db
 }
