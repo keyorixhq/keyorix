@@ -71,20 +71,31 @@ func groupUsersRolesRBAC(ctx *smokeCtx) {
 	// Roles: create a custom role bundling a permission the bootstrap admin
 	// already holds (secrets.read), assign it to the new user via the
 	// user-roles endpoints, then read it back both ways
-	// (GET /users/{id}/roles and GET /user-roles/user/{userId}).
+	// (GET /users/{id}/roles and GET /user-roles/user/{userId}). It is granted
+	// globally here and at a project in groupMachineIdentities, so it is
+	// created assignable anywhere: a new custom role defaults to project-only
+	// (#3546), which the global grant below would refuse.
 	roleCreated := c.callExpect("POST", "POST /api/v1/roles", "/api/v1/roles", map[string]interface{}{
 		"name": "e2e-smoke-role", "description": "SESSION-I smoke role", "permissions": []string{"secrets.read"},
+		"assignable_scope": "any",
 	}, 201)
 	var roleEnv struct {
-		Role idOnly `json:"role"`
+		Role struct {
+			ID              uint   `json:"id"`
+			AssignableScope string `json:"assignable_scope"`
+		} `json:"role"`
 	}
 	c.unmarshalData(roleCreated, &roleEnv, "create role")
+	if roleEnv.Role.AssignableScope != "any" {
+		c.t.Errorf("POST /api/v1/roles: assignable_scope %q, want \"any\"", roleEnv.Role.AssignableScope)
+	}
 	ctx.roleID = roleEnv.Role.ID
 	r := fmt.Sprintf("/api/v1/roles/%d", ctx.roleID)
 
 	c.callExpect("GET", "GET /api/v1/roles", "/api/v1/roles", nil, 200)
 	c.callExpect("GET", "GET /api/v1/roles/{id}", r, nil, 200)
 	c.callExpect("GET", "GET /api/v1/roles/by-name", "/api/v1/roles/by-name?name=e2e-smoke-role", nil, 200)
+	// No assignable_scope in the update: the stored scope (any) is kept.
 	c.callExpect("PUT", "PUT /api/v1/roles/{id}", r, map[string]interface{}{
 		"name": "e2e-smoke-role", "description": "SESSION-I smoke role (updated)", "permissions": []string{"secrets.read"},
 	}, 200)
@@ -107,6 +118,40 @@ func groupUsersRolesRBAC(ctx *smokeCtx) {
 		c.callExpect("DELETE", "DELETE /api/v1/user-roles", "/api/v1/user-roles", map[string]interface{}{
 			"user_id": ctx.userID, "role_id": ctx.roleID, "project_id": 0, "environment_id": 0,
 		}, 200, 204)
+	}
+
+	// The assignable-scope rule (#3546) on a real server: a custom role created
+	// without assignable_scope is project-only, so a global grant (project 0)
+	// is refused with 400 and nothing is written, while the same role at a
+	// project is granted.
+	if ctx.userID != 0 && ctx.projectID != 0 {
+		projRole := c.callExpect("POST", "POST /api/v1/roles", "/api/v1/roles", map[string]interface{}{
+			"name": "e2e-smoke-project-role", "description": "SESSION-I smoke project role", "permissions": []string{"secrets.read"},
+		}, 201)
+		var projRoleEnv struct {
+			Role struct {
+				ID              uint   `json:"id"`
+				AssignableScope string `json:"assignable_scope"`
+			} `json:"role"`
+		}
+		c.unmarshalData(projRole, &projRoleEnv, "create project role")
+		if projRoleEnv.Role.AssignableScope != "project" {
+			c.t.Errorf("POST /api/v1/roles without assignable_scope: got %q, want \"project\"", projRoleEnv.Role.AssignableScope)
+		}
+		pr := projRoleEnv.Role.ID
+		c.callExpect("POST", "POST /api/v1/user-roles", "/api/v1/user-roles", map[string]interface{}{
+			"user_id": ctx.userID, "role_id": pr, "project_id": 0, "environment_id": 0,
+		}, 400)
+		c.callExpect("DELETE", "DELETE /api/v1/user-roles", "/api/v1/user-roles", map[string]interface{}{
+			"user_id": ctx.userID, "role_id": pr, "project_id": 0, "environment_id": 0,
+		}, 404)
+		c.callExpect("POST", "POST /api/v1/user-roles", "/api/v1/user-roles", map[string]interface{}{
+			"user_id": ctx.userID, "role_id": pr, "project_id": ctx.projectID, "environment_id": 0,
+		}, 201)
+		c.callExpect("DELETE", "DELETE /api/v1/user-roles", "/api/v1/user-roles", map[string]interface{}{
+			"user_id": ctx.userID, "role_id": pr, "project_id": ctx.projectID, "environment_id": 0,
+		}, 200, 204)
+		c.callExpect("DELETE", "DELETE /api/v1/roles/{id}", fmt.Sprintf("/api/v1/roles/%d", pr), nil, 200, 204)
 	}
 
 	// Project membership: add the new user to the smoke project via both
@@ -162,13 +207,24 @@ func groupGroups(ctx *smokeCtx) {
 	c.callExpect("POST", "POST /api/v1/groups/{id}/members", g+"/members", map[string]interface{}{"user_id": ctx.userID}, 200, 201)
 	c.callExpect("GET", "GET /api/v1/groups/{id}/members", g+"/members", nil, 200)
 
+	// The group role is granted globally (no project_id), so it is created
+	// global-only: a new custom role defaults to project-only (#3546).
 	roleForGroup := c.callExpect("POST", "POST /api/v1/roles", "/api/v1/roles", map[string]interface{}{
 		"name": "e2e-smoke-group-role", "description": "SESSION-I smoke", "permissions": []string{"secrets.read"},
+		"assignable_scope": "global",
 	}, 201)
 	var groupRoleEnv struct {
 		Role idOnly `json:"role"`
 	}
 	c.unmarshalData(roleForGroup, &groupRoleEnv, "create group role")
+	if ctx.projectID != 0 {
+		// A global-only role is refused at a project (400, nothing written),
+		// and removing the grant that was never written is a 404, not a 5xx.
+		c.callExpect("POST", "POST /api/v1/groups/{id}/roles", g+"/roles",
+			map[string]interface{}{"role_id": groupRoleEnv.Role.ID, "project_id": ctx.projectID}, 400)
+		c.callExpect("DELETE", "DELETE /api/v1/groups/{id}/roles/{roleId}",
+			fmt.Sprintf("%s/roles/%d?project_id=%d", g, groupRoleEnv.Role.ID, ctx.projectID), nil, 404)
+	}
 	c.callExpect("POST", "POST /api/v1/groups/{id}/roles", g+"/roles", map[string]interface{}{"role_id": groupRoleEnv.Role.ID}, 200, 201)
 	c.callExpect("GET", "GET /api/v1/groups/{id}/roles", g+"/roles", nil, 200)
 	c.callExpect("DELETE", "DELETE /api/v1/groups/{id}/roles/{roleId}", fmt.Sprintf("%s/roles/%d", g, groupRoleEnv.Role.ID), nil, 200, 204)

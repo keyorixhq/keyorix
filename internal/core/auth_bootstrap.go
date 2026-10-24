@@ -378,6 +378,12 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 				role = created
 			}
 			roleIDs[rdef.Name] = role.ID
+			// #3546 Phase 2: the built-in's fixed assignable scope (system roles
+			// global, project roles project, legacy roles any), from the one table
+			// the upgrade backfill also reads.
+			if err := seedBuiltinRoleAssignableScope(ctx, tx, role); err != nil {
+				return err
+			}
 			// ADR-084: the four admin-tier seeded roles get the structural bypass
 			// flag here, at creation, via the one narrow storage primitive that
 			// exists for exactly this — never through CreateRole/UpdateRole's

@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { rbacApi, type RoleGrantScope } from '../../services/rbac';
 import { groupsApi } from '../../services/groups';
+import type { RoleAssignableScope } from '../../types/rbac';
 
 // ── Role hooks ──────────────────────────────────────────────────────────────
 
@@ -37,7 +38,8 @@ export const useRolePermissions = (roleId: number | null) =>
 export const useCreateRole = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (body: { name: string; description: string }) => rbacApi.createRole(body),
+        mutationFn: (body: { name: string; description: string; assignable_scope?: RoleAssignableScope }) =>
+            rbacApi.createRole(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rbac', 'roles'] }),
     });
 };
@@ -45,8 +47,13 @@ export const useCreateRole = () => {
 export const useUpdateRole = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({ id, body }: { id: number; body: { name: string; description: string } }) =>
-            rbacApi.updateRole(id, body),
+        mutationFn: ({
+            id,
+            body,
+        }: {
+            id: number;
+            body: { name: string; description: string; assignable_scope?: RoleAssignableScope };
+        }) => rbacApi.updateRole(id, body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rbac', 'roles'] }),
     });
 };

@@ -281,10 +281,9 @@ func TestRBACHandler_RemoveRoleFromGroup_WithScope_S12(t *testing.T) {
 	))
 	w := httptest.NewRecorder()
 	h.RemoveRoleFromGroup(w, req)
-	// The role isn't assigned to the group — expect not-found or 500 (internal
-	// "not assigned" message maps to 500 in this handler). The key is that
+	// The role isn't assigned to the group: not found. The key is that
 	// queryUint ran (project_id=5, environment_id=3 were parsed).
-	assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // ── rbac.go: AssignRole expiry guard ─────────────────────────────────────────
