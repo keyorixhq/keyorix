@@ -66,7 +66,7 @@ func main() {
 }
 
 func goList(args ...string) ([]byte, error) {
-	cmd := exec.Command("go", append([]string{"list"}, args...)...)
+	cmd := exec.Command("go", append([]string{"list"}, args...)...) // #nosec G204 -- fixed "go list"; args are fixed flags plus the -pkg value the operator passed to this hand-run dev tool, no remote input
 	cmd.Stderr = os.Stderr
 	return cmd.Output()
 }
