@@ -33,15 +33,11 @@
       "environment_id": 11
     }
   ],
-  "grants": [
+  "grants": [],
+  "unmappable": [
     {
-      "permissions": [
-        "secrets.read"
-      ],
-      "project_id": 1,
-      "environment_id": 11,
-      "source_ref": "policy:payments-readonly path:secret/data/payments/*"
+      "source_ref": "policy:payments-readonly path:secret/data/payments/*",
+      "category": "path-narrower-than-scope"
     }
-  ],
-  "unmappable": []
+  ]
 }
