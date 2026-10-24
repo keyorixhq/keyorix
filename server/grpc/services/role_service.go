@@ -126,6 +126,10 @@ func (s *RoleGRPCService) UpdateRole(ctx context.Context, req *pb.UpdateRoleRequ
 	if req.Description != nil {
 		role.Description = req.GetDescription()
 	}
+	// "" keeps the scope core reads inside its transaction. Sending back the
+	// value read above would undo a narrowing another admin committed in
+	// between, as a widening (REVIEW-3585-DEEP-1 F4).
+	role.AssignableScope = ""
 	if req.AssignableScope != nil {
 		role.AssignableScope = req.GetAssignableScope()
 	}

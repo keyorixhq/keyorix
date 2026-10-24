@@ -439,3 +439,44 @@ func TestInviteMember_InstallWideRoleIsRefusedAtInviteTime(t *testing.T) {
 		})
 	}
 }
+
+// TestUpdateRole_KeepScopeSurvivesANarrowingBetweenCommits is the core half of
+// REVIEW-3585-DEEP-1 F4: "" (keep the stored scope) on an update that adds a
+// permission runs in two commits. A narrowing (any -> project) committed by
+// another admin between them must be kept: commit 2 used to write the scope
+// commit 1 had read.
+func TestUpdateRole_KeepScopeSurvivesANarrowingBetweenCommits(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	w := newRoleScopeWorld(t, c)
+	perms, err := c.ListPermissions(ctx)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(perms), 2)
+	require.NoError(t, st.AssignPermissionToRole(ctx, w.customAny.ID, perms[0].ID))
+
+	txs, narrowed := 0, false
+	hc := NewKeyorixCore(hooked(st, &storeHooks{
+		WithTransaction: func(next storage.Storage, ctx context.Context, fn func(storage.Storage) error) error {
+			txs++
+			if txs == 2 { // after commit 1, before commit 2: admin B narrows
+				require.NoError(t, next.SetRoleAssignableScope(ctx, w.customAny.ID, models.RoleAssignableProject))
+				narrowed = true
+			}
+			return next.WithTransaction(ctx, fn)
+		},
+	}))
+	role, err := st.GetRole(ctx, w.customAny.ID)
+	require.NoError(t, err)
+	role.AssignableScope = "" // keep
+	role.Description = "A adds a permission"
+	add := []uint{perms[0].ID, perms[1].ID}
+	_, final, err := hc.UpdateRole(ctx, w.adminID, role, &add)
+	require.NoError(t, err)
+	require.True(t, narrowed, "the update never reached a second commit")
+	require.Len(t, final, 2, "the added permission landed")
+
+	stored, err := st.GetRole(ctx, w.customAny.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.RoleAssignableProject, stored.AssignableScope, "commit 2 undid the narrowing with commit 1's read")
+	require.Equal(t, "A adds a permission", stored.Description)
+}

@@ -1,6 +1,7 @@
 package http
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -190,4 +192,34 @@ func stripUserRoleIDs(in []models.UserRole) []models.UserRole {
 		out = append(out, models.UserRole{UserID: g.UserID, RoleID: g.RoleID, ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID})
 	}
 	return out
+}
+
+// TestUpdateRoleHTTP_ConcurrentNarrowingIsKept is REVIEW-3585-DEEP-1 F4: admin A
+// sends a description-only update while admin B narrows the role any -> project.
+// The handler reads the role before core's transaction; B's narrowing commits
+// right after that read (the callback below). The handler used to send A's
+// stale `any` back, which core took for a widening and wrote: B's narrowing was
+// silently undone. Leaving the field out now keeps the stored scope.
+func TestUpdateRoleHTTP_ConcurrentNarrowingIsKept(t *testing.T) {
+	w := newRoleScopeHTTPWorld(t)
+	id, _ := w.createRoleHTTP(t, `{"name":"ops-all","description":"ops","permissions":["secrets.read"],"assignable_scope":"any"}`)
+
+	armed := true
+	require.NoError(t, w.db.Callback().Query().After("gorm:query").Register("test:narrow-after-handler-read", func(tx *gorm.DB) {
+		if _, inTx := tx.Statement.ConnPool.(*sql.Tx); inTx || !armed {
+			return
+		}
+		if r, ok := tx.Statement.Dest.(*models.Role); ok && r.ID == id {
+			armed = false // admin B's narrowing commits between A's read and A's transaction
+			require.NoError(t, w.db.Model(&models.Role{}).Where("id = ?", id).Update("assignable_scope", models.RoleAssignableProject).Error)
+		}
+	}))
+
+	status, body := w.put(t, fmt.Sprintf("/api/v1/roles/%d", id), `{"description":"renamed by A"}`)
+	require.Equal(t, http.StatusOK, status, body)
+	require.False(t, armed, "the concurrent narrowing never landed in the handler's read window")
+	require.Equal(t, models.RoleAssignableProject, w.storedScope(t, id), "A's description-only update undid B's narrowing")
+	var r models.Role
+	require.NoError(t, w.db.First(&r, id).Error)
+	require.Equal(t, "renamed by A", r.Description)
 }

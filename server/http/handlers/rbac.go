@@ -355,6 +355,10 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	if req.Description != nil {
 		role.Description = *req.Description
 	}
+	// "" keeps the scope core reads inside its transaction. Sending back the
+	// value GetRole read above would undo a narrowing another admin committed
+	// in between, as a widening (REVIEW-3585-DEEP-1 F4).
+	role.AssignableScope = ""
 	if req.AssignableScope != nil {
 		role.AssignableScope = *req.AssignableScope
 	}

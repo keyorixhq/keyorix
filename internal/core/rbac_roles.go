@@ -250,6 +250,10 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 	// neutral: all of it commits here, never blocked by the audit log. One that adds
 	// is a widening: this transaction applies only its removals (a mixed update,
 	// MERGE-FIX-3482K, ask 3482-mixed-update-role-share (a)), or nothing at all.
+	// "" means keep the stored scope: decided once here and resolved against the
+	// row read in EACH transaction below (commit 1, its owed rerun, commit 2), so
+	// a narrowing committed in between is kept, never rewritten from a stale read.
+	keepScope := role.AssignableScope == ""
 	var narrowed, rest bool
 	if err := c.withOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		// fn may run again (the owed fallback): start from a clean slate.
@@ -262,7 +266,7 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		if err != nil {
 			return err
 		}
-		if role.AssignableScope == "" {
+		if keepScope {
 			role.AssignableScope = stored.AssignableScope
 		}
 		if role.AssignableScope != stored.AssignableScope {
@@ -299,6 +303,13 @@ func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models
 		remove, add, err := rolePermissionDiff(ctx, tx, role.ID, newPermissionIDs)
 		if err != nil {
 			return err
+		}
+		if keepScope {
+			stored, err := tx.GetRole(ctx, role.ID)
+			if err != nil {
+				return err
+			}
+			role.AssignableScope = stored.AssignableScope
 		}
 		if updated, finalPermissions, err = c.updateRoleTx(ctx, tx, role, remove, add); err != nil {
 			return err

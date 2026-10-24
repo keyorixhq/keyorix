@@ -10,7 +10,11 @@
   `role_scope_guard.go`), so every transport is covered; every handler/RPC that calls a core
   method able to return the refusal maps `ErrRoleScopeInvalid` to HTTP 400 / gRPC
   InvalidArgument. Widening a role's scope is fail-closed on the audit log like adding a
-  permission. Grants written before #3546 are not changed; the startup notice
+  permission. A role update that does not carry the scope sends "" (keep), which core resolves
+  against the row read in each of its transactions, so a concurrent narrowing is never undone
+  from a stale read (REVIEW-3585-DEEP-1 F4; `TestUpdateRoleHTTP_ConcurrentNarrowingIsKept`,
+  `TestRoleService_UpdateRole_ConcurrentNarrowingIsKept`,
+  `TestUpdateRole_KeepScopeSurvivesANarrowingBetweenCommits`). Grants written before #3546 are not changed; the startup notice
   (`server/wire_global_project_roles.go`) lists every grant outside its role's scope and every
   pending invitation that can no longer be accepted. Why: #3546 (DEMO-WALK-4: a group grant of
   project_developer with no project_id applied in every project).
