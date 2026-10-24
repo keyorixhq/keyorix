@@ -456,6 +456,9 @@ type KeyorixCore struct {
 	// publish (audit_verify_metrics.go) cannot overwrite a newer one.
 	auditVerifyPubMu        sync.Mutex
 	auditVerifyGenPublished uint64
+	// auditVerifyEvidence caches the in-chain verification-state events seen so
+	// far (audit_verify_state.go), so a load scans only new rows.
+	auditVerifyEvidence auditVerifyEvidenceIndex
 	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
 	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
 	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.
