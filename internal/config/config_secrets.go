@@ -5,6 +5,8 @@ import (
 )
 
 type SecretsConfig struct {
+	// Deprecated: never read; setting it warns at start-up (ignoredSettingPaths).
+	// Delete with LimitsConfig.MaxSecretsPerUser after one minor release.
 	Chunking ChunkingConfig `yaml:"chunking"`
 	Limits   LimitsConfig   `yaml:"limits"`
 }
@@ -16,6 +18,7 @@ type ChunkingConfig struct {
 }
 
 type LimitsConfig struct {
+	// Deprecated: never read; setting it warns at start-up (ignoredSettingPaths).
 	MaxSecretsPerUser int `yaml:"max_secrets_per_user"`
 	// MaxSecretSize caps a secret value's size in bytes, enforced on create/update/
 	// rotate (never on read/delete — a secret already stored above the cap, e.g. from

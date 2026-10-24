@@ -92,7 +92,7 @@ func main() {
 		{"server.grpc", "gRPC server configuration"},
 		{"storage.database", "Database connection settings"},
 		{"storage.encryption", "Encryption key paths and settings"},
-		{"secrets", "Secret management limits and chunking"},
+		{"secrets", "Secret size limit"},
 		{"security", "File permission and security policies"},
 		{"soft_delete", "Soft delete and retention settings"},
 		{"purge", "Automatic cleanup scheduling"},

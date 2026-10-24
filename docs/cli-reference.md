@@ -5967,7 +5967,6 @@ keyorix user create --username bob --email bob@example.com --setup-link
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (unused in this REST-only CLI -- kept for flag compatibility; the session behind your bearer token is always the acting admin) |
 | `--display-name` | `string` | — | Display name (defaults to username) |
 | `--email` | `string` | — | Email (required) |
 | `--one-time-password` | — | — | Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login |
