@@ -129,7 +129,7 @@ func (r *reportOnly) summary() {
 		r.TB.Logf("guard rollout: %s is report-only (%s) and found nothing", r.row.Test, r.row.IntroducedBy)
 		return
 	}
-	r.TB.Logf("GUARD REPORT-ONLY: %s would have FAILED with %d finding(s); it is report-only until %s/%s.tsv is deleted", r.row.Test, r.count, RolloutDir, r.row.Test)
+	r.TB.Logf("GUARD REPORT-ONLY: %s would have failed with %d finding(s); it is report-only until %s/%s.tsv is deleted", r.row.Test, r.count, RolloutDir, r.row.Test)
 	path := os.Getenv(EnvRolloutReport)
 	if path == "" {
 		return
