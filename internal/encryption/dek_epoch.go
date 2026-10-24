@@ -240,6 +240,12 @@ func (s *Service) StartDEKEpochGuard(db *gorm.DB, release func()) error {
 	if err := s.verifyOrSeedDEKEpoch(db, own); err != nil {
 		return err
 	}
+	// This DEK is the database's current one: a redo marker still present is a
+	// completed rotation's (RecoverInterruptedRotation keeps it on PostgreSQL
+	// when this key directory has no pending DEK).
+	if err := s.clearCompletedRotationMarker(db); err != nil {
+		log.Printf("[WARN] could not clear the redo marker of a completed DEK rotation: %v", err)
+	}
 	w := &dekEpochWatch{db: db, own: own, release: release, base: base, stop: make(chan struct{}), done: make(chan struct{})}
 	w.markMatch(0) // verified just now, after base
 	s.mu.Lock()
@@ -463,4 +469,17 @@ func (s *Service) DEKEpochGuardRunning() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.epoch != nil
+}
+
+// DEKFingerprint returns the fingerprint of this service's DEK, the value the
+// DEK epoch records for it (aead.EncryptionService.Fingerprint: an HMAC, not key
+// material). `admin encryption key-secret` labels a key Secret with it, so an
+// operator can tell which key Secret a database (its dek.epoch row) needs.
+func (s *Service) DEKFingerprint() (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if !s.initialized {
+		return "", fmt.Errorf("DEK fingerprint: encryption service not initialized")
+	}
+	return s.encryptionService.Fingerprint()
 }

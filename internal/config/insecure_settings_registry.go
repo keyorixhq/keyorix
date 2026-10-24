@@ -38,7 +38,10 @@
 // test no matter what the config struct grew next to it.
 package config
 
-import "slices"
+import (
+	"slices"
+	"strings"
+)
 
 // InsecureSetting is one entry in the ADR-112 opt-out-rule registry.
 type InsecureSetting struct {
@@ -392,10 +395,14 @@ var InsecureSettingsRegistry = []InsecureSetting{
 		SourcePaths: []string{"storage.encryption.key_provider.shamir_commitment"},
 		Describe:    "Shamir KEK reconstruction falls back to a forgeable magic-byte check only",
 		InEffect: func(c *Config) bool {
-			return anyKeyProviderInEffect(c, func(kp KeyProviderConfig) bool { return kp.Type == "shamir" && kp.ShamirCommitment == "" })
+			return anyKeyProviderInEffect(c, func(kp KeyProviderConfig) bool {
+				return kp.Type == "shamir" && strings.TrimSpace(kp.ShamirCommitment) == ""
+			})
 		},
 		Value: func(c *Config) string {
-			return boolStr(anyKeyProviderInEffect(c, func(kp KeyProviderConfig) bool { return kp.Type == "shamir" && kp.ShamirCommitment == "" }))
+			return boolStr(anyKeyProviderInEffect(c, func(kp KeyProviderConfig) bool {
+				return kp.Type == "shamir" && strings.TrimSpace(kp.ShamirCommitment) == ""
+			}))
 		},
 	},
 	{

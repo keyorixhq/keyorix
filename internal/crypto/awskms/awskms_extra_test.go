@@ -131,6 +131,11 @@ func TestAWSKMS_DecryptError(t *testing.T) {
 // (New itself cannot be tested without real AWS credentials, but the empty-key
 // guard fires before any network call.)
 func TestAWSKMS_New_EmptyKeyID(t *testing.T) {
+	// Hermetic: were the guard ever bypassed, New must stay on loopback (it then
+	// "succeeds" and this test fails fast) rather than reach the real AWS
+	// endpoint/IMDS and hang until the test timeout.
+	isolateAWSEnv(t)
+	t.Setenv("AWS_ENDPOINT_URL", describeKeyServer(t, "arn:aws:kms:us-east-1:1:key/x").URL)
 	_, err := New(context.Background(), "", nil, false, nil)
 	if err == nil {
 		t.Fatal("expected an error for an empty key ID")

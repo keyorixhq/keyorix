@@ -111,8 +111,15 @@ data:
         {{- end }}
       encryption:
         enabled: true
-        # The wrapped DEK + KEK salt live on the persisted keys volume. These MUST
-        # survive restarts — losing them, or changing KEYORIX_MASTER_PASSWORD,
-        # makes every stored secret undecryptable.
+        # The wrapped DEK + KEK salt live on the persisted keys volume, or come
+        # read-only from server.keysSecret. These MUST survive restarts — losing
+        # them, or changing KEYORIX_MASTER_PASSWORD, makes every stored secret
+        # undecryptable.
         dek_path: "/app/keys/data.key"
         salt_path: "/app/keys/kek.salt"
+        {{- if include "keyorix.server.keysSecretMode" . }}
+        # server.keysSecret (Secret mode, docs/multi-replica-keys.md): the key
+        # directory is read-only, so no flock on it; first-boot and crash-recovery
+        # exclusion run under PostgreSQL advisory locks instead.
+        key_dir_lock: database
+        {{- end }}
