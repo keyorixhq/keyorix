@@ -50,6 +50,9 @@ const (
 	aktStepCheckpoint = "checkpoint"
 	aktStepState      = "state"
 	aktStepEvent      = "event"
+	// aktStepPrepareState runs in PrepareAuditKeyTransition after the state
+	// save, before the record is built (same lock section).
+	aktStepPrepareState = "prepare-state"
 )
 
 // auditKeyTransition is one record. The JSON payload is what both MACs cover.
@@ -302,15 +305,28 @@ func (c *KeyorixCore) PrepareAuditKeyTransition(ctx context.Context, newKey []by
 	if err != nil {
 		return err
 	}
-	if err := c.updateAuditVerifyState(ctx, func(st *auditVerifyState) *auditVerifyFailure {
-		if v.Valid {
-			return nil
+	// The state save and the record share one lock section, so no other writer
+	// replaces the row between them; the record still names the row only if
+	// it reads back authentic (buildAuditKeyTransition).
+	var saved *auditVerifyState
+	var rejected *auditVerifyRejection
+	var failed *auditVerifyFailure
+	err = c.storage.WithAuditCheckpointLock(ctx, func(ctx context.Context) error {
+		st, rej, err := c.loadAuditVerifyStateForWrite(ctx)
+		if err != nil {
+			return fmt.Errorf("audit key transition: save the verification state: %w", err)
 		}
-		return recordAuditVerifyFailure(st, c.now(), auditKeyTransitionSource, v.FirstBrokenID, "before key change: "+v.Reason)
-	}); err != nil {
-		return fmt.Errorf("audit key transition: save the verification state: %w", err)
-	}
-	return c.storage.WithAuditCheckpointLock(ctx, func(ctx context.Context) error {
+		rejected = rej
+		if !v.Valid {
+			failed = recordAuditVerifyFailure(st, c.now(), auditKeyTransitionSource, v.FirstBrokenID, "before key change: "+v.Reason)
+		}
+		if err := c.saveAuditVerifyState(ctx, st); err != nil {
+			return fmt.Errorf("audit key transition: save the verification state: %w", err)
+		}
+		saved = st
+		if err := c.aktHook(aktStepPrepareState); err != nil {
+			return err
+		}
 		recs, _, perr, err := c.loadAuditKeyTransitions(ctx)
 		if err != nil {
 			return err
@@ -327,7 +343,7 @@ func (c *KeyorixCore) PrepareAuditKeyTransition(ctx context.Context, newKey []by
 		if n := len(recs); n > 0 && recs[n-1].OldKID == c.auditCkptKeyVersion {
 			recs = recs[:n-1] // an aborted attempt: its key files never committed
 		}
-		rec, err := c.buildAuditKeyTransition(ctx, recs)
+		rec, err := c.buildAuditKeyTransition(ctx, recs, st.Gen)
 		if err != nil {
 			return err
 		}
@@ -340,11 +356,23 @@ func (c *KeyorixCore) PrepareAuditKeyTransition(ctx context.Context, newKey []by
 		rec.macNew = auditKeyTransitionMAC(newKey, "new", rec.payload, rec.macOld)
 		return c.storage.SetSystemMetadata(ctx, auditKeyTransitionsKey, encodeAuditKeyTransitions(append(recs, rec)))
 	})
+	// The state was saved even when the record could not be written.
+	c.reportAuditVerifyStateEvents(ctx, saved, rejected, failed)
+	return err
 }
 
 // buildAuditKeyTransition fills a record (all but the MACs) from a fresh
-// walk and the stored artifacts. The caller holds WithAuditCheckpointLock.
-func (c *KeyorixCore) buildAuditKeyTransition(ctx context.Context, recs []*auditKeyTransition) (*auditKeyTransition, error) {
+// walk and the stored artifacts. The caller holds WithAuditCheckpointLock and
+// has just saved the state as generation stateGen.
+//
+// The record names an artifact only when it authenticates under the current
+// (old) key: completion re-signs what the record names under the new key, so
+// a forged value named here (a DB-write actor's anchor or high-water mark with
+// the old key version label and a junk signature) would come out authentic.
+// An artifact that does not authenticate gets an empty digest: it is not
+// carried over, and under the new key it reads as it did under the old one
+// (an ignored anchor, a tampered high-water mark, a discontinuity for the state).
+func (c *KeyorixCore) buildAuditKeyTransition(ctx context.Context, recs []*auditKeyTransition, stateGen uint64) (*auditKeyTransition, error) {
 	v, err := c.VerifyAuditChain(ctx)
 	if err != nil {
 		return nil, err
@@ -359,21 +387,53 @@ func (c *KeyorixCore) buildAuditKeyTransition(ctx context.Context, recs []*audit
 	if len(recs) > 0 {
 		rec.Prev = recs[len(recs)-1].digest()
 	}
-	for key, dst := range map[string]*string{auditVerifyStateKey: &rec.State, auditHighWaterKey: &rec.HighWater, auditRetentionAnchorKey: &rec.Anchor} {
-		val, _, err := c.storage.GetSystemMetadata(ctx, key)
+	for _, a := range []struct {
+		key       string
+		dst       *string
+		authentic func(val string) bool
+	}{
+		{auditVerifyStateKey, &rec.State, func(val string) bool {
+			s, _, _ := c.decodeAuditVerifyState(val)
+			return s != nil && s.Gen == stateGen
+		}},
+		{auditHighWaterKey, &rec.HighWater, c.auditHighWaterAuthentic},
+		{auditRetentionAnchorKey, &rec.Anchor, c.auditRetentionAnchorAuthentic},
+	} {
+		val, ok, err := c.storage.GetSystemMetadata(ctx, a.key)
 		if err != nil {
 			return nil, err
 		}
-		*dst = auditDigest(val)
+		if !ok {
+			continue
+		}
+		if !a.authentic(val) {
+			log.Printf("SECURITY: audit key transition: the stored %s does not authenticate under key version %q; it is not carried over to the new key", a.key, c.auditCkptKeyVersion)
+			continue
+		}
+		*a.dst = auditDigest(val)
 	}
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if cp != nil {
+	if cp != nil && c.checkpointSignatureValid(cp) {
 		rec.CheckpointID, rec.Checkpoint = cp.ID, auditCheckpointDigest(cp)
 	}
 	return rec, nil
+}
+
+// auditHighWaterAuthentic reports whether a stored high-water value is signed
+// under the current key and names the current key version.
+func (c *KeyorixCore) auditHighWaterAuthentic(val string) bool {
+	hw, sig, ok := parseAuditHighWater(val)
+	return ok && hw.KeyVersion == c.auditCkptKeyVersion && c.checkpointSigMatches(hw, sig)
+}
+
+// auditRetentionAnchorAuthentic reports whether a stored retention anchor is
+// signed under the current key and names the current key version.
+func (c *KeyorixCore) auditRetentionAnchorAuthentic(val string) bool {
+	a, ok := parseAuditRetentionAnchor(val)
+	return ok && a.keyVersion == c.auditCkptKeyVersion && hmac.Equal([]byte(c.expectedRetentionAnchorSig(a)), []byte(a.sig))
 }
 
 // CompleteAuditKeyTransition is the second step, run with the NEW key: by the
@@ -480,8 +540,9 @@ func (c *KeyorixCore) aktHook(step string) error {
 }
 
 // resignCarriedRetentionAnchor re-signs the anchor the record names under the
-// current key (same row and purged count). One that already authenticates, or
-// differs from the recorded digest, is left alone.
+// current key (same row and purged count). The record names an anchor only
+// when it authenticated under the old key at prepare. One that already
+// authenticates, or differs from the recorded digest, is left alone.
 func (c *KeyorixCore) resignCarriedRetentionAnchor(ctx context.Context, t *auditKeyTransition) (bool, error) {
 	val, ok, err := c.storage.GetSystemMetadata(ctx, auditRetentionAnchorKey)
 	if err != nil || !ok || auditDigest(val) != t.Anchor {
@@ -498,7 +559,8 @@ func (c *KeyorixCore) resignCarriedRetentionAnchor(ctx context.Context, t *audit
 }
 
 // resignCarriedHighWater re-signs the high-water mark the record names under
-// the current key (same count and head).
+// the current key (same count and head). The record names a mark only when it
+// authenticated under the old key at prepare.
 func (c *KeyorixCore) resignCarriedHighWater(ctx context.Context, t *auditKeyTransition) (bool, error) {
 	val, ok, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey)
 	if err != nil || !ok || auditDigest(val) != t.HighWater {
