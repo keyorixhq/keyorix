@@ -30,7 +30,9 @@
   lost row cannot make generations restart and collide. A failure event is appended
   only after the save that records its generation succeeds (a failed save appends
   none, and the next tick records the still-broken chain), so a transient save error
-  is not a discontinuity. Fail-closed false positive: a
+  is not a discontinuity; this holds for every caller that records a failure (the
+  checkpoint tick, the rolling and job updates, and the key-transition prepare and
+  completion). Fail-closed false positive: a
   failure event is appended after the lock is released, so if a full verification that
   started after the recording save clears that failure (or records another) before the
   append lands, the saved row reads as a discontinuity. Why: AUDIT-VERIFY-STATE-1, the residual risk of #3547.
@@ -43,4 +45,4 @@
   `_OlderFailureRowSavedAfterItsEvent`, `_RecordingRowAfterRestart`,
   `_ClearedFailureAtEventHead`, `_GenerationsOutliveLostRow`,
   `_UnplacedRowDiscontinuityEventOnly`, `_SaveFailureDuringBreak`), `TestAuditVerifyEvidence_ForeignFailure`,
-  `TestAuditFailureEventGen`.
+  `TestAuditFailureEventGen`, `TestAuditKeyTransition_PrepareSaveFailureDuringBreak`.

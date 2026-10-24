@@ -20,12 +20,15 @@ import (
 // Create against a corpus of secret paths with an oracle written independently of pathmapper.go
 // (a regexp of Vault's glob syntax, a directory-prefix routing model).
 //
-// What it does NOT check: a scope reachable from a second KV mount through the default
-// convention ("secret/data/team-a/prod/x" and "kv1/team-a/prod/x" both route to team-a/prod) —
-// the routing model below keeps each secret on its own mount's convention only. A scope that a
-// --path-map entry targets is modelled as holding only override subtrees (the override declares
-// the scope's content). Nor does it know which Vault paths an operator actually imported into an
-// environment: plan-access never sees that, and neither does this test.
+// The default convention routes every mount's secrets ("secret/data/team-a/prod/x" and
+// "kv1/team-a/prod/x" both land in team-a/prod), and the mapper gets the KV tree listing of the
+// same corpus, as plan-access lists it: the corpus is asymmetric (kv1 holds only team-b and
+// payments paths) so that both cross-mount refusals and default-convention Creates occur.
+//
+// What it does NOT check: a scope that a --path-map entry targets is modelled as holding only
+// override subtrees (the override declares the scope's content). Nor does it know which Vault
+// paths an operator actually imported into an environment: plan-access never sees that, and
+// neither does this test.
 func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 	mounts := []KVMountInfo{{Path: "secret/", KVVersion: 2}, {Path: "kv1/", KVVersion: 1}}
 	projects := []ProjectRef{{ID: 1, Name: "team-a"}, {ID: 2, Name: "team-b"}}
@@ -63,30 +66,41 @@ func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 		if rel == "" {
 			continue
 		}
-		secrets = append(secrets, "secret/data/"+rel, "kv1/"+rel)
+		secrets = append(secrets, "secret/data/"+rel)
+		if first, _, _ := strings.Cut(rel, "/"); first == "team-b" || first == "payments" {
+			secrets = append(secrets, "kv1/"+rel)
+		}
 	}
+	tree := listCorpus(secrets, projects)
 
-	creates := 0
+	creates, conventionCreates, crossMountRefusals := 0, 0, 0
 	for _, cfg := range configs {
 		m, err := NewPathMapper(projects, envs, mounts, cfg)
 		if err != nil {
 			t.Fatalf("NewPathMapper(%v): %v", cfg, err)
 		}
+		m.SetKVTree(tree)
 		router := newScopeRouter(t, projects, envs, cfg)
 		for _, path := range policyPaths {
 			match := vaultGlob(path)
 			for _, caps := range capSets {
 				items := BuildPolicyItems([]healthscan.Policy{{Name: "p", Blocks: []healthscan.PolicyPathBlock{{Path: path, Capabilities: caps}}}}, m)
 				for _, it := range items {
+					if it.Category == CategoryCrossMountScope {
+						crossMountRefusals++
+					}
 					if it.Outcome != Create {
 						continue
 					}
 					creates++
+					if it.CrossMountEvidence != nil {
+						conventionCreates++
+					}
 					if slices.Contains(it.ProposedPermissions, "secrets.read") && !slices.Contains(caps, "read") {
 						t.Fatalf("config %v: %s %v -> secrets.read without a read capability", cfg, path, caps)
 					}
 					for _, s := range secrets {
-						p, e, routed := router.route(s, mountOf(path))
+						p, e, routed := router.route(s)
 						if !routed || p != it.ProposedProjectID || (it.ProposedEnvironmentID != 0 && e != it.ProposedEnvironmentID) {
 							continue
 						}
@@ -100,9 +114,37 @@ func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 		}
 	}
 	// A guard whose population is empty passes vacuously: the corpus must exercise real Creates.
-	if creates < 20 {
-		t.Fatalf("only %d Create items across the corpus — the guard is not exercising the mapper", creates)
+	if creates < 20 || conventionCreates == 0 || crossMountRefusals == 0 {
+		t.Fatalf("%d Creates (%d by the default convention), %d cross-mount refusals — the guard is not exercising the mapper", creates, conventionCreates, crossMountRefusals)
 	}
+}
+
+// listCorpus is the KV tree listing plan-access would read for the corpus: per mount, the root
+// keys naming a project and the keys directly under each.
+func listCorpus(secrets []string, projects []ProjectRef) map[string]KVMountListing {
+	tree := map[string]KVMountListing{"secret/": {RootListed: true}, "kv1/": {RootListed: true}}
+	for _, s := range secrets {
+		mount, rel := "kv1/", strings.TrimPrefix(s, "kv1/")
+		if after, ok := strings.CutPrefix(s, "secret/data/"); ok {
+			mount, rel = "secret/", after
+		}
+		parts := strings.Split(rel, "/")
+		if !slices.ContainsFunc(projects, func(p ProjectRef) bool { return p.Name == parts[0] }) {
+			continue
+		}
+		l := tree[mount]
+		if l.Projects == nil {
+			l.Projects = map[string]KVProjectListing{}
+		}
+		p := l.Projects[parts[0]]
+		p.Listed = true
+		if len(parts) > 1 && !slices.Contains(p.Envs, parts[1]) {
+			p.Envs = append(p.Envs, parts[1])
+		}
+		l.Projects[parts[0]] = p
+		tree[mount] = l
+	}
+	return tree
 }
 
 func segmentCombos(segs []string, maxDepth int) []string {
@@ -175,21 +217,13 @@ func newScopeRouter(t *testing.T, projects []ProjectRef, envs map[int][]Environm
 	return r
 }
 
-func mountOf(path string) string {
-	mount, _, _ := strings.Cut(path, "/")
-	return mount
-}
-
-// route places secret in a scope. Default-convention routing applies only on policyMount (see
-// the guard's doc comment); --path-map routing applies on every mount.
-func (r scopeRouter) route(secret, policyMount string) (project, env int, ok bool) {
+// route places secret in a scope: the longest --path-map prefix, else the default convention on
+// whichever mount the secret is on.
+func (r scopeRouter) route(secret string) (project, env int, ok bool) {
 	for _, ov := range r.overrides {
 		if strings.HasPrefix(secret, strings.TrimSuffix(ov.prefix, "/")+"/") {
 			return ov.projectID, ov.environmentID, true
 		}
-	}
-	if mountOf(secret) != policyMount {
-		return 0, 0, false
 	}
 	var rel string
 	switch {

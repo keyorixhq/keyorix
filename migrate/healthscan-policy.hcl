@@ -91,6 +91,12 @@ path "+/config" {
 path "+/metadata/*" {
   capabilities = ["list", "read"]
 }
+# KV v1 mounts have no metadata/: the stanza above does not let plan-access/apply-access list
+# them, so every default-convention policy whose project/environment a v1 mount could hold is
+# reported unmappable (cross-mount-scope, fail closed) and the run warns "could not list". To
+# check a KV v1 mount, add a stanza granting "list" on <mount>/* (for a mount kv1/: kv1/*).
+# "list" returns key names only, never values. No example stanza is written out here: the
+# keyorix-migrate policy parser does not skip comments, so it would read one as granted.
 
 # checkTLSListener (item j) — usually sudo/root-only in a locked-down policy; expect this one to
 # show up as "not checked" often, which is fine.
