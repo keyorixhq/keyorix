@@ -60,9 +60,9 @@ func postSAMLResponse(t *testing.T, acsURL, samlResponse string) *http.Request {
 	return r
 }
 
-// captureLog redirects the standard logger (ParseResponse's server-side detail) for
+// captureLogDuring redirects the standard logger (ParseResponse's server-side detail) for
 // the duration of fn and returns what was written.
-func captureLog(t *testing.T, fn func()) string {
+func captureLogDuring(t *testing.T, fn func()) string {
 	t.Helper()
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
@@ -93,7 +93,7 @@ func TestParseResponse_TraversalLimit(t *testing.T) {
 	t.Run("one over the limit is refused cleanly", func(t *testing.T) {
 		resp := signedResponseWithElements(t, fx, idpEntityID, p, maxResponseElements+1)
 		var err error
-		logged := captureLog(t, func() {
+		logged := captureLogDuring(t, func() {
 			require.NotPanics(t, func() { _, err = p.ParseResponse(postSAMLResponse(t, acsURL, resp), nil) })
 		})
 		require.ErrorIs(t, err, errInvalidSAMLResponse)
@@ -105,7 +105,7 @@ func TestParseResponse_TraversalLimit(t *testing.T) {
 		deep := `<samlp:Response xmlns:samlp="urn:oasis:names:tc:SAML:2.0:protocol">` +
 			strings.Repeat("<a>", 200000) + strings.Repeat("</a>", 200000) + `</samlp:Response>`
 		var err error
-		logged := captureLog(t, func() {
+		logged := captureLogDuring(t, func() {
 			require.NotPanics(t, func() {
 				_, err = p.ParseResponse(postSAMLResponse(t, acsURL, base64.StdEncoding.EncodeToString([]byte(deep))), nil)
 			})
