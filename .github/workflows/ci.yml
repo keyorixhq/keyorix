@@ -861,13 +861,24 @@ jobs:
           fi
           ./actionlint
 
-  # Fast compile gate (~30s). Catches redeclarations, type errors, and build
-  # failures before the expensive test-suite/static-analysis jobs start -- those
-  # declare `needs: [preflight]`. Cheaper jobs (lint, licenses, fuzz-targets,
-  # operator, gitleaks, helm-*, openapi-lint) run their own independent
-  # compile/analysis and so run fully in parallel with preflight instead of
-  # waiting on it -- on a broken build they each fail on their own terms
-  # instead of via the shared gate, but nothing waits an extra ~30s to start.
+  # Compile gate and `go vet ./...`: UTF-8 check, go mod verify, go build, go
+  # vet. Not a required context itself; build-and-test fails unless it
+  # succeeded, so it is required through that aggregator.
+  #
+  # test-suite does NOT wait for it any more (CI-VETGATE-1, 2026-10-25). The
+  # job takes ~4-6 min, of which go vet is ~3.5 min (merge-queue run
+  # 40124088586: go vet 214 s of a 254 s job), and every test leg started
+  # only after it, 19% of a merge-queue round (CI-PARETO-1). The legs now
+  # start right after changes+select, like lint, and this job runs beside
+  # them. On a broken build each leg fails at its own `go test` compile.
+  # go vet stays here: golangci-lint's govet (lint job) is not the same
+  # check (its default analyzer set differs from go vet's and it drops
+  # findings in generated files), see the CI-VETGATE-1 PR.
+  #
+  # test-quick-root/test-quick-cli, static-analysis, exclusion-freshness
+  # and assert-leg-completeness still declare `needs: [preflight]`. Cheaper
+  # jobs (lint, licenses, fuzz-targets, operator, gitleaks, helm-*,
+  # openapi-lint) run their own compile/analysis in parallel with it.
   preflight:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
@@ -898,11 +909,14 @@ jobs:
       - name: go mod verify
         run: go mod verify
 
-      - name: go vet
-        run: go vet ./...
-
+      # go build before go vet: a compile error turns this job red in about a
+      # minute instead of after the full vet pass, and vet reuses the build
+      # cache this step fills.
       - name: go build
         run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
 
   # Quick-tier feedback for a pull_request push: `go test -short`, no -race,
   # SQLite only, on just the packages the PR's diff can plausibly affect
@@ -1024,11 +1038,12 @@ jobs:
   # aggregates both legs' results and does the coverage-floor check, keeping
   # that exact job name for branch protection's required status check.
   test-suite:
-    needs: [preflight, changes, select]
-    # A custom `if:` replaces the implicit "only run if needs succeeded"
-    # default, so preflight's success must be checked explicitly here too --
-    # otherwise a docs_only-unrelated broken build would no longer be
-    # fast-failed by preflight before this (expensive) job starts.
+    # Not gated on preflight (CI-VETGATE-1, 2026-10-25): waiting for its
+    # go vet delayed every leg by ~4-6 min. A broken build now fails in each
+    # leg's own `go test` compile instead of in preflight, and build-and-test
+    # still requires preflight=success (its gate step), so nothing that was
+    # required before is optional now. See the preflight job's comment.
+    needs: [changes, select]
     #
     # CI quick-tier split: this 18-shard -race matrix no longer runs on every
     # pull_request push -- it runs on merge_group (the merge queue proves the
@@ -1043,7 +1058,7 @@ jobs:
     # needs.select.result: on merge_group the `select` job decides which legs
     # run (each leg's first step below); if it did not succeed, test-suite is
     # skipped and build-and-test fails closed on that.
-    if: needs.preflight.result == 'success' && needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     strategy:
       # Merge queue: one red leg already fails the round (build-and-test needs
       # test-suite=success), so stop the other legs instead of letting them hold
@@ -1701,7 +1716,7 @@ jobs:
       # | pull_request                              | present        | test-suite                        |
       # | merge_group / push / workflow_dispatch / schedule | n/a     | test-suite                        |
       #
-      # static-analysis is required in every row. Fail CLOSED: the tier that
+      # preflight and static-analysis are required in every row. Fail CLOSED: the tier that
       # SHOULD have run reporting anything other than 'success' -- including
       # 'skipped' -- is a failure here, not a silent pass. A required check
       # that never runs is indistinguishable from one still pending, and
@@ -1745,6 +1760,14 @@ jobs:
             is_full_tier=true
           fi
           echo "full_tier=$is_full_tier" >> "$GITHUB_OUTPUT"
+
+          # preflight (go build + go vet) is required in every row. test-suite
+          # no longer needs it (CI-VETGATE-1), so a red preflight would no
+          # longer show up here as test-suite=skipped; check it directly.
+          if [ "${{ needs.preflight.result }}" != "success" ]; then
+            echo "::error::preflight=${{ needs.preflight.result }} (go build / go vet)"
+            exit 1
+          fi
 
           if [ "${{ needs.static-analysis.result }}" != "success" ]; then
             echo "::error::static-analysis=${{ needs.static-analysis.result }}"
