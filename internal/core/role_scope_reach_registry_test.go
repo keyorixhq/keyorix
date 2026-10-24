@@ -14,7 +14,8 @@ package core
 //
 //	KEYORIX_UPDATE_ROLE_SCOPE_REACH=1 go test ./internal/core -run TestRoleScopeReachingMethodsFileIsCurrent
 //
-// What it recognises: in every non-test file of package core, a function or
+// What it recognises: in every non-test file of the core family (internal/core
+// and the packages extracted from it, srcpath.CoreFamilyGoFiles), a function or
 // method F "calls" G when F's body contains a call `G(...)` or `X.G(...)` for
 // any X. That is name-based and over-approximates (a storage method sharing a
 // core method's name links them), which can only ADD methods to the set: a
@@ -33,6 +34,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 const roleScopeReachFile = "testdata/role_scope_reaching_methods.txt"
@@ -41,22 +44,15 @@ const roleScopeReachFile = "testdata/role_scope_reaching_methods.txt"
 var roleScopeRefusalRoots = []string{"validateRoleScope", "requireScopeValidForRoleModel"}
 
 // deriveRoleScopeReachingMethods returns the sorted exported KeyorixCore
-// methods from which a root is reachable.
-func deriveRoleScopeReachingMethods(t *testing.T, dir string) []string {
+// methods from which a root is reachable, over the given non-test .go files
+// (the core family's, from srcpath.CoreFamilyGoFiles).
+func deriveRoleScopeReachingMethods(t *testing.T, paths []string) []string {
 	t.Helper()
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
 	callers := map[string]map[string]bool{} // callee -> callers
 	coreMethods := map[string]bool{}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+	for _, path := range paths {
+		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -127,7 +123,13 @@ func isKeyorixCoreReceiver(fd *ast.FuncDecl) bool {
 }
 
 func TestRoleScopeReachingMethodsFileIsCurrent(t *testing.T) {
-	got := deriveRoleScopeReachingMethods(t, ".")
+	// The whole core family (ADR-121 R5): a method moved out of internal/core
+	// stays in the set.
+	paths, err := srcpath.CoreFamilyGoFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := deriveRoleScopeReachingMethods(t, paths)
 	// Population tripwire: the grant entry points themselves must be found, or
 	// the derivation is broken (an empty set would pass every transport guard).
 	for _, must := range []string{"AssignUserRole", "AssignRoleToGroup", "AssignMachineRole", "AddProjectMember", "SetUserRoles"} {
@@ -151,5 +153,24 @@ func TestRoleScopeReachingMethodsFileIsCurrent(t *testing.T) {
 			"Regenerate with KEYORIX_UPDATE_ROLE_SCOPE_REACH=1 go test ./internal/core -run %s, then make every "+
 			"transport handler calling a new method map the refusal (the transport guards will name them).",
 			roleScopeReachFile, t.Name())
+	}
+}
+
+// TestRoleScopeReachFollowsCoreFamily: an exported method in a package added
+// to the core family (a file moved out of internal/core, ADR-121 R5) that
+// reaches a refusal root is derived like one in internal/core.
+func TestRoleScopeReachFollowsCoreFamily(t *testing.T) {
+	dir := t.TempDir()
+	src := "package leaf\nfunc (c *KeyorixCore) MovedGrant(ctx context.Context) error {\n\treturn c.validateRoleScope(ctx)\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "leaf.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srcpath.AddCoreFamilyDirForTesting(t, dir)
+	paths, err := srcpath.CoreFamilyGoFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := deriveRoleScopeReachingMethods(t, paths); !slices.Contains(got, "MovedGrant") {
+		t.Fatalf("a refusal-reaching method in a core family dir outside internal/core was not derived: %v", got)
 	}
 }
