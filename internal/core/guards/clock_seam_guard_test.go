@@ -40,9 +40,15 @@ import (
 
 // clockSeamGuardedFuncs is the set of function/method names this guard treats
 // as the test-only clock seam.
+//
+// StorageForTesting is ADR-116's storage seam for tests moved out of
+// internal/core (decision 2): the raw storage handle behind every
+// authorization check, for _test.go callers only. It is listed before the
+// method exists so the first production caller fails here.
 var clockSeamGuardedFuncs = map[string]bool{
 	"SetClockForTesting": true,
 	"setClock":           true,
+	"StorageForTesting":  true,
 }
 
 // clockSeamGuardSkipDirs mirrors the skip list used by this campaign's other
@@ -164,6 +170,12 @@ func TestClockSeamNeverCalledOutsideItsOwnDefinition(t *testing.T) {
 	}
 	lines := make([]string, 0, len(sites))
 	for _, s := range sites {
+		if s.fn == "StorageForTesting" {
+			lines = append(lines, s.relPath+":"+strconv.Itoa(s.line)+" calls StorageForTesting"+
+				" outside its own definition -- this is a test-only storage seam (ADR-116 decision 2); "+
+				"a production call site gets the raw storage handle and bypasses every authorization check in core")
+			continue
+		}
 		lines = append(lines, s.relPath+":"+strconv.Itoa(s.line)+" calls "+s.fn+
 			" outside its own definition -- this is a test/fuzz-only clock seam; "+
 			"a production call site can swap the clock governing every session/PAT/"+
@@ -172,4 +184,19 @@ func TestClockSeamNeverCalledOutsideItsOwnDefinition(t *testing.T) {
 	}
 	sort.Strings(lines)
 	t.Fatalf("clock-seam guard violated:\n%s", strings.Join(lines, "\n"))
+}
+
+// TestClockSeamScanCatchesStorageSeamCall: the guard recognises a production
+// call to StorageForTesting (ADR-116) and exempts the method's own definition.
+func TestClockSeamScanCatchesStorageSeamCall(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "leaf.go")
+	src := "package core\n" +
+		"func (c *KeyorixCore) StorageForTesting() Storage { return c.storage }\n" +
+		"func (c *KeyorixCore) handler() { _ = c.StorageForTesting() }\n"
+	require.NoError(t, os.WriteFile(path, []byte(src), 0o600))
+	sites, err := scanClockSeamFile(token.NewFileSet(), path)
+	require.NoError(t, err)
+	require.Len(t, sites, 1, "one production call, the definition exempt: %v", sites)
+	require.Equal(t, "StorageForTesting", sites[0].fn)
+	require.Equal(t, 3, sites[0].line)
 }
