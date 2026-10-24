@@ -28,15 +28,11 @@
       "environment_id": 11
     }
   ],
-  "grants": [
+  "grants": [],
+  "unmappable": [
     {
-      "permissions": [
-        "secrets.read"
-      ],
-      "project_id": 1,
-      "environment_id": 0,
-      "source_ref": "policy:team-a-browse path:secret/metadata/team-a/*"
+      "source_ref": "policy:team-a-browse path:secret/metadata/team-a/*",
+      "category": "metadata-only"
     }
-  ],
-  "unmappable": []
+  ]
 }
