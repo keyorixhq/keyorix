@@ -84,6 +84,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # docs/guard-rollout-contract.md rule 2: a guard listed in docs/guard-rollout.d
+  # is report-only on pull_request and merge_group runs and blocking on pushes to
+  # main/release and on the nightly schedule (internal/guardrules.Rollout).
+  KEYORIX_GUARD_ROLLOUT: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'enforce' || 'report-only' }}
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
   # the tools that gate our security checks are themselves a supply-chain
   # surface. govulncheck deliberately floats — Google x/ tool, vuln DB is
@@ -1553,12 +1557,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # docs/guard-rollout-contract.md rule 1: a date check never runs on a PR or
+      # in the merge queue (one calendar day would fail every entry). The nightly
+      # schedule enforces it here, and .github/workflows/guard-nightly.yml warns
+      # 7 days ahead through scripts/guard-expiry-report.sh.
       - name: Check CI exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           source scripts/ci-test-legs.sh
           check_exclusion_freshness
 
       - name: Check coverage-floor exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           source scripts/ci-test-legs.sh
           check_coverage_floor_exclusion_freshness
