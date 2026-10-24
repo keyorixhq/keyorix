@@ -65,7 +65,8 @@ deploy/dockerfile_go_toolchain_test.go	**/Dockerfile*,go.mod,!**	every Dockerfil
 deploy/hardening/init_secrets_test.go	scripts/selfhost/init-secrets.sh	runs init-secrets.sh
 deploy/shipped_environment_test.go	scripts/demo/up.sh	demo up.sh environment
 scripts/ci/codeql_gate_test.go	.github/workflows/codeql.yml,scripts/ci/codeql-gate.sh	the CodeQL queue gate and its workflow
-scripts/ci/codeql_web_gate_test.go	.github/workflows/codeql.yml,!web/**	codeql.yml's filter step; web/ paths are fake changed-file inputs
+scripts/ci/codeql_web_gate_test.go	.github/workflows/codeql.yml,!web/**,!README.md,!docs/**/*.md,!scripts/ci/codeql-gate.sh,!scripts/ci/select-affected.py	codeql.yml's filter step; web/, docs, README and script paths are fake changed-file inputs in its tables
+scripts/ci/codeql_gate_realdata_test.go	scripts/ci/codeql-gate.sh,scripts/ci/testdata/codeql/**,!demo/app.js	the gate script against recorded SARIF in testdata/codeql; demo/app.js is a finding location inside the recorded data, not a file read
 scripts/ci/global_guards_test.go	scripts/ci/global-guards.txt,!scripts/**	every listed guard package exists
 scripts/ci/select_affected_test.go	scripts/ci/select-affected.py,scripts/ci-test-legs.sh,scripts/ci-test-quick.py,!**	the selection script; other paths are fake changed-file inputs
 scripts/demo/demo_scripts_test.go	scripts/demo/**/*.sh	demo shell scripts
@@ -121,3 +122,11 @@ server/http/share_secret_isgroup_guard_test.go	!operator/**	skipSecretACLDir ski
 internal/securefiles/securefiles_s21_test.go	!internal/**	t.TempDir() fixtures only
 server/secret_file_relative_echo_test.go	!**	Go walk skips nested modules; also reads server/entrypoint.sh, which no skip covers
 migrate/internal/accessplan/smt_model_export_test.go	docs/formal/smt/cases/**/*.json	RD-SMT-FIX-1 (#3658): TestSMTModels_MatchAccessplanOnRealPolicies reads the SMT case input/model JSON under docs/formal/smt/cases
+configs/template_keys_read_test.go	configs/dev.yaml,configs/test.yaml,!operator/**,!web/**,!demo/**,!**/*.yaml	reads configs/dev.yaml and test.yaml and every non-test .go file of the root module; skips operator/, web/ and cli/, so other yaml and operator Go are not read
+internal/config/lock_loss_metrics_test.go	!operator/**/*.go	walks internal/ and server/ only; operator/ Go is not read
+internal/core/guards/named_source_files_guard_test.go	!operator/**/*.go	reads _test.go files under internal/core and its family dirs; operator/ is not walked
+internal/core/guards/secret_ownership_guard_test.go	!internal/core/**/*.md	reads only the core family's non-test .go files; the Markdown under internal/core is not read
+internal/core/guards/test_only_packages_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for imports of test-only packages; operator/ included
+internal/docsdrift/gitattributes_union_test.go	.gitattributes,docs/atomicity-exempt.tsv,docs/besteffort-exempt.tsv,docs/child-parent-liveness-exempt.tsv,docs/full-row-write-exempt.tsv,docs/state-map/class-overrides.tsv	merge=union attribute against the five ledgers it lists
+migrate/internal/accessplan/implied_test.go	scripts/vault-migration-testbed/seed.sh	checks the HCL stanza literals against scripts/vault-migration-testbed/seed.sh
+server/pq_transport_guard_test.go	operator/**/*.go,!**/*.md	repo-root walk over every non-Markdown, non-test file; reads operator/ Go, skips Markdown
