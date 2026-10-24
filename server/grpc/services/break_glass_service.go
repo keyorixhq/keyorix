@@ -153,6 +153,8 @@ func breakGlassError(err error) error {
 		return status.Error(codes.NotFound, "break-glass activation not found") // GRPC-005: was msg — leaked storage error details
 	case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 		return status.Error(codes.InvalidArgument, "invalid request") // GRPC-005: was msg — leaked minimum justification length
+	case errors.Is(err, storage.ErrBreakGlassAlreadyActive):
+		return status.Error(codes.AlreadyExists, "you already have an active break-glass grant on this project; revoke it before activating again")
 	case errors.Is(err, core.ErrBreakGlassDisabled):
 		// Same code and text as before; the typed reason rides in the status details
 		// (google.rpc.ErrorInfo), so a client need not match the text.
