@@ -381,6 +381,22 @@ describe('useUpdateProjectMemberRole', () => {
         expect(mockProjects.updateMemberRole).toHaveBeenCalledWith(3, 5, 'project_admin');
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: PROJECT_KEYS.members(3) });
     });
+
+    it('re-reads the members after a partial apply (503: other roles removed, new one not granted)', async () => {
+        mockProjects.updateMemberRole!.mockRejectedValueOnce(
+            Object.assign(new Error('partial'), { response: { status: 503 } })
+        );
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useUpdateProjectMemberRole(3), { wrapper });
+
+        act(() => {
+            result.current.mutate({ userId: 5, role: 'project_admin' });
+        });
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: PROJECT_KEYS.members(3) });
+    });
 });
 
 describe('useRemoveProjectMember', () => {

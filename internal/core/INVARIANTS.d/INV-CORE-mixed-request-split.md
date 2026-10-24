@@ -18,7 +18,15 @@
   removals alone, then the description and the additions, decided on the permission set read in
   each transaction), `UpdateSharePermission` (a lower permission + a later or cleared expiry, or
   the reverse: the narrower value of each part, then the requested share, decided on
-  `LockShareRecordForUpdate`; MERGE-FIX-3482K, ask 3482-mixed-update-role-share (a)). If commit 2 fails, commit 1 stays and the call returns `*PartialMutationError`
+  `LockShareRecordForUpdate`; MERGE-FIX-3482K, ask 3482-mixed-update-role-share (a)), `SetUserRoles`
+  and `SetProjectMemberRole` (`replaceUserRoleSet`, role_set_replace.go, #3488: the removals in one
+  transaction under the last-admin / project-admin guard, which also judges the additions'
+  separation-of-duties check on the set it leaves, then the additions in one transaction under
+  `sodGrantLockKey`, each re-reading the role set in its own transaction; nothing is ever re-granted to
+  compensate. One exception, ask atomic-owed-1-admin-swap: a `SetProjectMemberRole` swap of the
+  project's only administrator to another roles.assign role, whose removals alone would strand the
+  project (INV last-admin), is ONE fail-closed transaction and changes nothing during an audit outage).
+  If commit 2 fails, commit 1 stays and the call returns `*PartialMutationError`
   (`errors.Is` `ErrMutationPartiallyApplied`; it unwraps to the cause), which the transports
   answer with HTTP 503 (error `MutationPartiallyApplied`, `details` {code
   `mutation_partially_applied`, revocation_applied true, remainder_applied false, applied,
@@ -33,7 +41,10 @@
   gap: a violation, never accepted as complete (Andrei 2026-10-20).
   Why: a mixed request used to fail closed as a whole, so an audit outage rolled its revocation
   back (REVIEW-3482 F1); owing the whole call instead could commit a widening with no row.
-  Guard: `internal/core` `TestMixedRequestSplit_NarrowingNeverBlockedRemainderFailsClosed` (11 mixed requests
+  Guard: `internal/core` `TestSetUserRoles_AuditOutage_NeverLosesARole`,
+  `TestSetProjectMemberRole_AuditOutage_NeverStrandsOrLies`, `TestSetUserRoles_RefusedAdditionChangesNothing`
+  (role.assigned refused or total outage, SQLite and PostgreSQL, read the role set),
+  `TestMixedRequestSplit_NarrowingNeverBlockedRemainderFailsClosed` (11 mixed requests
   x success / audit outage + backfill + retry / commit-2 append error, effect-then-error, panic /
   crash after commit 1 / owed record refused / record AND append refused, SQLite and PostgreSQL;
   every case reads the database), `TestMixedRequestSplit_RetryAfterPartialIsIdempotent`,

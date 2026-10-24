@@ -26,7 +26,7 @@ The stack is three containers:
 ## 2. Quick start
 
 ```sh
-git clone https://github.com/keyorixhq/keyorix.git
+git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git   # a release tag: main can be ahead of the published images
 cd keyorix
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh     # generates ./secrets/* and records KEYORIX_SECRETS_GID in .env
@@ -265,12 +265,13 @@ unwraps the backed-up DEK).
 this stack is configured for):
 
 ```sh
-docker compose exec backend ./keyorix-server admin backup --output /tmp/backup.tar.gz
-docker compose cp backend:/tmp/backup.tar.gz ./keyorix-backup-$(date +%F).tar.gz
+docker compose exec -T backend ./keyorix-server admin backup --output /tmp/backup.tar.gz
+# /tmp in the container is a tmpfs, which `docker compose cp` cannot read: stream the file out instead
+(umask 077; docker compose exec -T backend cat /tmp/backup.tar.gz > ./keyorix-backup-$(date +%F).tar.gz)
 ```
 
 > **Version note.** The live (beside-the-server) Postgres backup below is not in
-> the published images before `0.96.0` (`docker-compose.yml` pins `0.96.0`): there the same
+> the published images before `0.96.0` (the shipped `docker-compose.yml` pins a newer image): there the same
 > command fails with `failed to acquire the encryption key lock (another process
 > is using it)`. With those older images (a stack still pinned to them) stop `backend` first and use
 > `docker compose run --rm -v "$PWD/backups:/out" backend ./keyorix-server admin backup --output /out/keyorix-backup.tar.gz`
@@ -319,8 +320,8 @@ must not be group- or world-readable.
 
 ```sh
 docker compose stop backend            # (no-op on a freshly wiped host)
-sudo chown 1001 ./keyorix-backup-YYYY-MM-DD.tar.gz
 chmod 600 ./keyorix-backup-YYYY-MM-DD.tar.gz
+sudo chown 1001 ./keyorix-backup-YYYY-MM-DD.tar.gz   # after chmod: once it is owned by 1001 you can no longer chmod it
 docker compose run --rm -v "$PWD/keyorix-backup-YYYY-MM-DD.tar.gz:/tmp/backup.tar.gz:ro" \
   backend ./keyorix-server admin restore --input /tmp/backup.tar.gz
 docker compose up -d
@@ -454,19 +455,17 @@ TOTP anti-replay state *is* carried over: a user who logged in on SQLite is refu
 same code on PostgreSQL within its 30-second step.
 
 **If the restore is interrupted** (`kill -9`, power loss, the database going away): the
-restore cannot be resumed, but it restarts cleanly. The row load is one transaction, so
-the target never holds a partial set of rows (checked by killing it while migrating and
-while loading: no schema, or a schema with 0 rows). What it leaves behind are the key
-files it installed (`keys/dek.key`, `keys/kek.salt`) and, after the migration step, the
-empty schema, so a plain re-run is refused. Either:
-
-- re-run with `--overwrite-existing` (the refusal message suggests it; the key files are
-  replaced and the previous ones kept as `*.pre-restore-<timestamp>`); or
-- start over: delete the key files the restore installed, drop and recreate the empty
-  database, re-run.
-
-Use the second for anything other than a restore you just interrupted: on a database that
-holds other data, `--overwrite-existing` neither empties it nor is it a merge.
+row load is one transaction, so the target never holds a partial set of rows, and the key
+files are installed only after that transaction commits. A restore killed in between leaves
+`.keyorix-restore-journal.json` next to the first key file; the server refuses to start
+until `keyorix-server admin restore --recover` finishes the restore (data committed) or
+undoes it (not committed); if it cannot vouch for a staged key file it refuses and changes
+nothing. Killed before that journal exists, it leaves only `*.restoring-*` files (removed by
+the next restore or `--recover`) and, after the migration step, the empty schema, so a plain re-run is
+refused: re-run with `--overwrite-existing`, which empties the target's tables inside the
+load transaction. What each failure point leaves, and the recovery, are in
+[operator/restore-failure-modes.md](operator/restore-failure-modes.md). (Releases up to
+v0.96.x installed the key files before the load; see the warning earlier in this section.)
 
 **Rollback.** The SQLite source is not modified by the restore (checked byte for byte,
 including after killed restores), so rolling back before you cut over is to keep running
@@ -546,12 +545,17 @@ what it needs, what the replicas share, and the order to upgrade them in.
   replica on a shared volume refuses to start, or runs unprotected where the
   filesystem does not enforce flock across nodes. Design and key-file inventory:
   [multi-replica-keys.md](multi-replica-keys.md).
-- **The same key set on every replica**: `dek_path`, and `salt_path` or the KMS/TPM
-  wrapped KEK, with the same master password or KEK source. Either share one
-  ReadWriteMany volume (the first replica generates the keys, the others wait and
-  load them), or mount identical read-only copies, for example one Kubernetes
-  Secret. A replica that finds no DEK while the database already holds secrets
-  refuses to start and does not generate a second one.
+- **The same key set on every replica, read-only**: `dek_path`, and `salt_path` or the
+  KMS wrapped KEK, with the same master password or KEK source. In Kubernetes this is
+  the Helm chart's **Secret mode**, the supported HA mode: `server.keysSecret` names a
+  Secret holding `data.key` and `kek.salt`, which you create once with
+  `keyorix-server admin encryption key-secret generate` before installing; every
+  replica mounts it read-only and none generates keys. The chart refuses
+  `server.replicas > 1` without it, and with a ReadWriteMany keys volume. Procedure,
+  rotation and crash recovery: [multi-replica-keys.md, "Secret
+  mode"](multi-replica-keys.md#secret-mode-helm-serverkeyssecret). A replica that finds
+  no DEK while the database already holds secrets refuses to start and does not
+  generate a second one.
 - **Identical configuration** on every replica, `storage.database.single_writer`
   off, and `security.auth_rate_limit_fallback.replicas` set to the replica count.
   Enforce login rate limits at the load balancer as well; the in-memory limits are
@@ -566,10 +570,19 @@ what it needs, what the replicas share, and the order to upgrade them in.
 **Key operations.** A DEK or KEK rotation, `migrate-provider`, and `admin restore`
 all need **every replica stopped**. The admin command takes the presence lock
 exclusively and is refused while any replica runs. With `key_dir_lock: database`,
-`--force` cannot override that. Run the command once (a Kubernetes Job on the
-keys volume), update read-only key copies if you use them, then start the
-replicas again. A live `admin backup` (Postgres, no `--exclusive`) runs next to
-the replicas.
+`--force` cannot override that. In Secret mode the command runs in a writable
+workspace on durable storage (`key-secret unpack` of the current Secret), its result
+becomes a **new** key Secret (`key-secret export`), and a `helm upgrade` pointing
+`server.keysSecret.name` at it brings the replicas back; a pod that starts with the
+old Secret is refused by the DEK epoch. A live `admin backup` (Postgres, no
+`--exclusive`) runs next to the replicas.
+
+**Backups: keys apart from data.** Back up the key Secret (the manifest
+`key-secret generate`/`export` wrote) **separately** from the database backups: a
+different store with different access, and the master password in a third place.
+Neither backup opens a secret alone. A database backup needs the key Secret whose
+`keyorix.io/dek-fingerprint` annotation equals its `dek.epoch` row, so keep each key
+Secret manifest as long as you keep database backups taken under it.
 
 **Upgrade order**
 
@@ -600,9 +613,9 @@ the replicas.
 Tested natively: a v0.96.1 and a current server against one PostgreSQL database,
 with concurrent writes, cross-version reads, a restart of the old one, audit purge
 and verification, and a DEK rotation (`scripts/e2e/mixed_version_test.go`).
-**Pending live verification:** the same on Kubernetes (two replicas on a
-ReadWriteMany keys volume, kind), `scripts/k8s-e2e/multi-replica.sh`, waiting for
-the e2e VM.
+**Pending live verification:** the same on Kubernetes (two replicas in Secret
+mode, kind, with a DEK rotation through a new key Secret),
+`scripts/k8s-e2e/multi-replica-secret.sh`, waiting for the e2e VM.
 
 ## 7. TLS
 

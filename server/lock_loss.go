@@ -15,13 +15,13 @@ import (
 const (
 	lostPresenceLock    = "the server-presence lock"
 	lostSoleWriterLock  = "the single_writer holder lock"
-	lostLockShutdownMsg = "ERROR: %s was lost (its database connection died); shutting down so %s cannot run beside this server"
+	lostLockShutdownMsg = "ERROR: %s was lost (its database connection died, or its SQLite lock file was deleted or replaced and taken by another process); shutting down so %s cannot run beside this server"
 )
 
 // awaitShutdown blocks until a shutdown signal arrives or one of the
 // process-wide locks is found lost, and returns which lock was lost ("" for a
-// signal). A nil channel never fires (no such lock: SQLite, single_writer
-// off). The caller then shuts down gracefully, and exits 1 when a lock was
+// signal). A nil channel never fires (no such lock: remote storage,
+// single_writer off). The caller then shuts down gracefully, and exits 1 when a lock was
 // lost so the supervisor restarts the process, which takes the lock again or
 // refuses to start while its holder runs.
 func awaitShutdown(sig <-chan os.Signal, presenceLost, soleWriterLost <-chan struct{}) (lost string) {

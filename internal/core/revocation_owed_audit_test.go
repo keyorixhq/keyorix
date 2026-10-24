@@ -525,6 +525,38 @@ func TestRevocationAudit_EffectCommitsAndRowIsOwedNeverLost(t *testing.T) {
 				require.Equal(t, expected, w.auditTotal()-auditBefore)
 				require.Equal(t, pendingBefore, w.pendingTotal())
 			})
+			// RD-TLA-OWED-FIX-1 (TLC trace docs/formal/owed-audit/pendingfault_silent.cfg):
+			// the record cannot be written in the change's transaction (collect-only
+			// fallback) AND the process dies at the post-commit append. The rows were held
+			// only in memory until after the append, so the crash lost them with no record
+			// and no log. They are now queued late right after the commit, before the append.
+			t.Run(k.name+"/pending-record-error+crash-at-audit", func(t *testing.T) {
+				require.Positive(t, expected, "the success case must run first")
+				state := k.prepare(w)
+				before, auditBefore, pendingBefore := w.effectFP(), w.auditTotal(), w.pendingTotal()
+				w.fs.Arm(&faultstorage.FaultSpec{Method: "CreatePendingAuditEvent", NthCall: 1, Kind: faultstorage.KindError, Err: errors.New("injected pending-record failure")})
+				w.crash.Store(true)
+				returned, err := runCrashing(func() error { return k.mutate(w, w.crashCore, state) })
+				armed := w.crash.Swap(false)
+				fired := w.fs.Fired()
+				w.fs.Arm(nil)
+				require.True(t, fired, "%s never recorded its owed row", k.name)
+				require.False(t, armed, "%s never reached an audit append", k.name)
+				require.False(t, returned, "precondition: the goroutine must have died at the append (returned err=%v)", err)
+				afterEffect := w.effectFP()
+				require.NotEqual(t, before, afterEffect, "%s: the revocation committed before the append, so it must have taken effect", k.name)
+				rows, pending := w.auditTotal()-auditBefore, w.pendingTotal()-pendingBefore
+				require.Equal(t, expected, rows+pending,
+					"%s: record refused, then a crash at the append lost an owed row (rows=%d pending=%d)", k.name, rows, pending)
+				require.Positive(t, pending)
+
+				written, berr := w.c.BackfillPendingAuditEvents(ctx)
+				require.NoError(t, berr)
+				require.EqualValues(t, pending, written)
+				require.Equal(t, expected, w.auditTotal()-auditBefore, "%s: the backfill must complete the trail exactly once", k.name)
+				require.Equal(t, pendingBefore, w.pendingTotal())
+				require.Equal(t, afterEffect, w.effectFP(), "the backfill writes audit rows only")
+			})
 			for _, fk := range []faultstorage.FaultKind{faultstorage.KindError, faultstorage.KindPanic} {
 				t.Run(k.name+"/pending-record-"+fk.String(), func(t *testing.T) {
 					require.Positive(t, expected, "the success case must run first")

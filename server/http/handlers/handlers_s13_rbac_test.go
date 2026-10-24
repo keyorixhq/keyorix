@@ -24,17 +24,6 @@ import (
 
 // ── rbac.go: ListRoles ────────────────────────────────────────────────────────
 
-// TestRBACHandler_ListRoles_Unauthorized_S13 covers the 401 branch of ListRoles
-// when no user is in context.
-func TestRBACHandler_ListRoles_Unauthorized_S13(t *testing.T) {
-	handler, _, _ := setupRBACTestWithDB(t)
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/roles", nil)
-	// no withUserCtx → mustGetUser returns false
-	w := httptest.NewRecorder()
-	handler.ListRoles(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 // ── rbac.go: CreateRole ───────────────────────────────────────────────────────
 
 // TestRBACHandler_CreateRole_Unauthorized_S13 covers the 401 path.

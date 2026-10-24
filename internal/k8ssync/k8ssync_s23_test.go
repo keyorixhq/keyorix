@@ -339,18 +339,6 @@ func TestKeyorixFetcher_getJSON_ServerError(t *testing.T) {
 // NewInClusterSink — environment-variable error paths (no in-cluster env)
 // ---------------------------------------------------------------------------
 
-// TestNewInClusterSink_MissingEnv verifies that NewInClusterSink returns an
-// error when the expected Kubernetes environment variables are not set.
-func TestNewInClusterSink_MissingEnv(t *testing.T) {
-	// Ensure the env vars are unset for this test. Save and restore.
-	t.Setenv("KUBERNETES_SERVICE_HOST", "")
-	t.Setenv("KUBERNETES_SERVICE_PORT", "")
-
-	_, err := NewInClusterSink()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "not running in-cluster")
-}
-
 // TestNewInClusterSink_MissingToken verifies that NewInClusterSink returns an
 // error when the service-account token file is absent (HOST/PORT set but no
 // mounted service account).

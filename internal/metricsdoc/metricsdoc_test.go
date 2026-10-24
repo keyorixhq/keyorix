@@ -98,6 +98,8 @@ var endpointOverrides = map[string]string{
 	"keyorix_audit_verify_state_rejected":                 epScheduler,
 	"keyorix_audit_owed_pending":                          epScheduler,
 	"keyorix_audit_owed_failures_total":                   epScheduler,
+	"keyorix_audit_owed_oldest_pending_age_seconds":       epScheduler,
+	"keyorix_audit_owed_metric_scrape_errors_total":       epScheduler,
 	"keyorix_audit_checkpoint_truncation_refused_total":   epScheduler,
 
 	// Posture and tamper signals (an anonymous reader must not learn that encryption is
@@ -130,6 +132,8 @@ var postureMetricsMustBeProtected = []string{
 	"keyorix_audit_verify_state_rejected",
 	"keyorix_audit_owed_pending",
 	"keyorix_audit_owed_failures_total",
+	"keyorix_audit_owed_oldest_pending_age_seconds",
+	"keyorix_audit_owed_metric_scrape_errors_total",
 	"keyorix_audit_checkpoint_truncation_refused_total",
 }
 
