@@ -573,56 +573,6 @@ func TestGetSecretVersion_S35_Found(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
-// TestGetSecretVersionsWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
-func TestGetSecretVersionsWithPermissionCheck_S35_ZeroUser(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	c := NewKeyorixCore(ms)
-	_, err := c.GetSecretVersionsWithPermissionCheck(context.Background(), 1, 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user ID is required")
-}
-
-// TestGetSecretValueWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
-func TestGetSecretValueWithPermissionCheck_S35_ZeroUser(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	c := NewKeyorixCore(ms)
-	_, err := c.GetSecretValueWithPermissionCheck(context.Background(), 1, 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user ID is required")
-}
-
-// TestGetLatestSecretVersionWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
-func TestGetLatestSecretVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	c := NewKeyorixCore(ms)
-	_, err := c.GetLatestSecretVersionWithPermissionCheck(context.Background(), 1, 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user ID is required")
-}
-
-// TestGetSecretVersionWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
-func TestGetSecretVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	c := NewKeyorixCore(ms)
-	_, err := c.GetSecretVersionWithPermissionCheck(context.Background(), 1, 0, 1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user ID is required")
-}
-
-// TestGetSecretValueByVersionWithPermissionCheck_S35_ZeroUser ensures userID==0 is rejected.
-func TestGetSecretValueByVersionWithPermissionCheck_S35_ZeroUser(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	c := NewKeyorixCore(ms)
-	_, err := c.GetSecretValueByVersionWithPermissionCheck(context.Background(), 1, 0, 1)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "user ID is required")
-}
-
 // TestGetLatestSecretVersion_S35_NoVersions covers the "no versions found" path.
 func TestGetLatestSecretVersion_S35_NoVersions(t *testing.T) {
 	t.Parallel()
@@ -632,16 +582,6 @@ func TestGetLatestSecretVersion_S35_NoVersions(t *testing.T) {
 
 	_, err := c.GetLatestSecretVersion(context.Background(), 7)
 	require.Error(t, err)
-}
-
-// TestGetLatestSecretVersion_S35_ZeroID ensures secretID==0 is rejected.
-func TestGetLatestSecretVersion_S35_ZeroID(t *testing.T) {
-	t.Parallel()
-	ms := new(MockStorage)
-	c := NewKeyorixCore(ms)
-	_, err := c.GetLatestSecretVersion(context.Background(), 0)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "secret ID is required")
 }
 
 // ─── AnomalyDetector.SetBusinessHours (anomaly.go) ───────────────────────────

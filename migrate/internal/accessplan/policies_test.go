@@ -24,9 +24,19 @@ func block(path string, caps ...string) healthscan.PolicyPathBlock {
 	return healthscan.PolicyPathBlock{Path: path, Capabilities: caps}
 }
 
+// An exact secret path is NOT an exact grant: a Keyorix grant covers the whole environment, so
+// "secret/data/team-a/prod/db" would have read every secret in team-a/prod (this test asserted
+// that widening as correct until RD-SMT-SPIKE-1 found it). Only the environment glob maps.
 func TestBuildPolicyItems_ExactReadGrant(t *testing.T) {
-	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{
+	narrow := BuildPolicyItems([]healthscan.Policy{{Name: "team-a-db-ro", Blocks: []healthscan.PolicyPathBlock{
 		block("secret/data/team-a/prod/db", "read", "list"),
+	}}}, testPolicyMapper(t))
+	if len(narrow) != 1 || narrow[0].Outcome != Unmappable || narrow[0].Category != CategoryNarrowerThanScope {
+		t.Fatalf("items = %+v, want one Unmappable/%s item for an exact secret path", narrow, CategoryNarrowerThanScope)
+	}
+
+	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{
+		block("secret/data/team-a/prod/*", "read", "list"),
 	}}}
 	items := BuildPolicyItems(policies, testPolicyMapper(t))
 	if len(items) != 1 {
@@ -77,8 +87,8 @@ func TestBuildPolicyItems_DenyOverlapPushesAllowToUnmappable(t *testing.T) {
 
 func TestBuildPolicyItems_NonOverlappingDenyDoesNotAffectAllow(t *testing.T) {
 	policies := []healthscan.Policy{{Name: "scoped", Blocks: []healthscan.PolicyPathBlock{
-		block("secret/data/team-a/prod/db", "read"),
-		block("secret/data/team-a/prod/unrelated-secret", "deny"),
+		block("secret/data/team-a/prod/*", "read"),
+		block("secret/data/team-b/prod/unrelated-secret", "deny"),
 	}}}
 	items := BuildPolicyItems(policies, testPolicyMapper(t))
 	if len(items) != 1 || items[0].Outcome != Create {
@@ -98,11 +108,11 @@ func TestBuildPolicyItems_UnresolvedScopeIsUnmappable(t *testing.T) {
 
 func TestBuildPolicyItems_SameCapabilitySetReusesOneRoleName(t *testing.T) {
 	policies := []healthscan.Policy{{Name: "p", Blocks: []healthscan.PolicyPathBlock{
-		block("secret/data/team-a/prod/a", "read"),
-		block("secret/data/team-a/prod/b", "read"),
+		block("secret/data/team-a/prod/*", "read"),
+		block("secret/data/team-a/*", "read", "list"),
 	}}}
 	items := BuildPolicyItems(policies, testPolicyMapper(t))
-	if len(items) != 2 || items[0].ProposedName != items[1].ProposedName {
+	if len(items) != 2 || items[0].Outcome != Create || items[1].Outcome != Create || items[0].ProposedName != items[1].ProposedName {
 		t.Fatalf("items = %+v, want both to propose the same deterministic role name", items)
 	}
 }

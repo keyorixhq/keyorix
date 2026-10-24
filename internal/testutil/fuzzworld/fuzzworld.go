@@ -126,18 +126,6 @@ func Bootstrap(tb testing.TB, db *gorm.DB) {
 	}
 }
 
-// Migrate AutoMigrates each model into w, one at a time so a failure names
-// the offending model and backend. For test-only models on top of
-// Bootstrap's production schema; never a substitute for it.
-func (w *World) Migrate(tb testing.TB, models []any) {
-	tb.Helper()
-	for _, m := range models {
-		if e := w.DB.AutoMigrate(m); e != nil {
-			tb.Fatalf("migrate %T (%s): %v", m, w.Backend, e)
-		}
-	}
-}
-
 // Worlds returns the SQLite world (always, opened on sqliteDSN with
 // sqliteMaxOpenConns — see OpenSQLite) plus the PostgreSQL world (when
 // KEYORIX_TEST_PG_DSN is set), each with the full production schema (see

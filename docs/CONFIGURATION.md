@@ -81,7 +81,12 @@ Rules (all enforced at startup; the server refuses to start rather than guess):
 - **File missing, unreadable, empty, not a regular file, or larger than 1 MiB:**
   error. The server does not fall back to `X` or to a value in `keyorix.yaml`.
 - **Nothing is logged:** errors and warnings name the variable and the path, never
-  the value or the file contents.
+  the value or the file contents. A relative path (`KEYORIX_TOKEN_FILE=./token`)
+  works, but errors do not show it, because it may be the secret itself (someone
+  who set `X_FILE` to the value instead of `X`):
+  `KEYORIX_DB_PASSWORD_FILE (a relative path, not shown: it may be the secret itself): cannot open secret file: no such file or directory`.
+  An absolute path is shown. The server, the CLI, `keyorix-k8s-sync` and the
+  container entrypoint all behave this way.
 - **File permissions -- key material is refused, other secrets follow the
   file-permission policy.** The rule is the one the KEK file and
   `--passphrase-file` already follow: `0600` or `0400`. One exception exists for
@@ -421,7 +426,12 @@ With `dsn:` instead of fields, put the CA in the connection string
 `verify-full`/`verify-ca`. `ssl_root_cert` together with `dsn` is refused,
 because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
-encrypted nor verified.
+encrypted nor verified. So is a CA file with `ssl_mode: allow` or `prefer`
+(or a `dsn` with `sslrootcert=<file>` whose effective sslmode is
+disable/allow/prefer, including a dsn with no `sslmode`): the driver loads the
+CA but never checks the server's certificate against it, and may fall back to
+plaintext. `sslrootcert=system` with allow/prefer is accepted, because the
+driver then runs `verify-full`.
 
 **`ssl_mode` together with `dsn`.** The dsn is used as-is, so `ssl_mode` used
 to be silently ignored next to it: `ssl_mode: verify-full` with a dsn saying
@@ -480,8 +490,10 @@ is not refused.
 
 The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
-`system`). `admin validate --posture` prints one informational line saying
-what is encrypted and what is verified against which CA.
+`system`), or mounts `externalDatabase.caSecret` for you. `admin validate
+--posture` prints one informational line saying what is encrypted and what is
+verified against which CA. A worked example with a private CA, including a
+wrong-CA check: [operator/postgres-tls.md](operator/postgres-tls.md).
 
 ### PostgreSQL DSN forms
 
@@ -747,7 +759,8 @@ storage:
   reconstruct; with it, the reconstructed KEK is verified against a real HMAC-SHA256
   commitment computed at split time. `KEYORIX_MASTER_PASSWORD` is **not** required.
   Move an existing install onto it with `keyorix-server admin encryption migrate-provider
-  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`. ⚠️ Losing
+  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`
+  (the commitment is required there: the migration refuses without it). ⚠️ Losing
   more than N-K shares makes the KEK — and all data — permanently unrecoverable;
   store and back up shares separately.
 - **`tpm`**: the KEK is **sealed to the host TPM 2.0** (`tpm_device`, default
@@ -2001,9 +2014,9 @@ permanently unreadable the moment you enable this.
 
 When enabled, reading a "restricted" secret's **value** (not its metadata —
 `GetSecret`/listing are unaffected) requires an approved, **secret-scoped**
-access request: `keyorix request secret-access --secret-id <id> --user
-<email>` to request it, `keyorix request review --id <id> --action approve
---by <admin-email>` to approve it (an administrator at the secret's project).
+access request: `keyorix request secret-access --secret-id <id> --reason
+<why>` to request it, `keyorix request review --id <id> --action approve` to
+approve it (an administrator at the secret's project).
 This reuses the same `AccessRequest` model/flow as `dual_control` above
 (ADR-024), narrowed with a `SecretID` rather than granting a role. A read whose
 acting principal cannot be identified as a specific user — a machine/service

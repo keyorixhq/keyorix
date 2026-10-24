@@ -232,6 +232,10 @@ together (table `pending_audit_events`). If the audit log then refuses the row:
 - the `audit_owed_backfill` job (every minute, one replica at a time) writes the
   row, exactly once, as soon as the audit log accepts writes again. The row is
   dated when it is written, and its description says when the suspension happened.
+- `keyorix_audit_owed_oldest_pending_age_seconds` (authenticated scheduler-metrics
+  endpoint) is the age of the oldest owed row, so a row that is stuck rather than
+  delayed is visible: the shipped alerts warn above 1 hour and go critical above
+  24 hours (`deploy/observability/`, `docs/operator/break-glass-runbook.md`).
 
 A suspend that also clears synced copies is different: it is refused (nothing
 changes) when its audit row cannot be written. See `docs/k8s-operator.md`.

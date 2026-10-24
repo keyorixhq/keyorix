@@ -270,6 +270,30 @@ by design — this is for "run this one package now, in parallel," not a
 replacement for widening `PACKAGES` in `run-mutation.sh` if the intent is
 to cover it on an ongoing weekly basis.
 
+## Security packages: `saml` and `secretenv`
+
+`internal/saml` and `internal/secretenv` are in `PACKAGES` because they guard login and
+key-material decisions. `PACKAGES` lines are `<package>|<label>[|<timeout-coefficient>]`;
+the third field is passed to gremlins as `--timeout-coefficient`.
+
+`saml` needs it. gremlins derives each mutant's timeout from the coverage-gathering run,
+and the saml tests run in a fraction of a second while rebuilding the package against
+crewjam/saml takes about a second, so with the default timeout most mutants came back
+`TIMED OUT`. `summarize.py` counts only `KILLED` and `LIVED`, so such a run reports a
+meaningless efficacy instead of a failure. A `TIMED OUT` count that is a large share of
+a package's mutants means the timeout is too tight, not that the tests are strong: raise the
+coefficient for that package (40 for saml) rather than reading the efficacy.
+
+Survivor counts when the packages were added: `saml` 4 before the tests in
+`provider_validation_properties_test.go`, 2 after; `secretenv` 0 before and after (its
+not-covered mutants were the case expressions of `lookup`'s switch and an untested
+`OpenRegularNamed`/`ReadRegularFile`). The 2 remaining `saml` survivors are equivalent
+(`provider.go` `err == io.EOF` in the epilogue check returns nil on both branches; the
+Subject/Conditions counters swap under negation and are then compared with the same
+number). The not-covered `saml` mutants are in `samltest` (test support code with no tests
+of its own) and in `case` expressions of `strictAssertionShape`, which Go's coverage profile
+cannot attribute to a block.
+
 ## Design notes
 
 - Read-only against the repo: unlike the fuzzing box (which pushes corpus
@@ -285,3 +309,22 @@ to cover it on an ongoing weekly basis.
   LIVED count naturally fluctuates a little as normal feature work adds
   covered-but-not-yet-fully-asserted code; only a real drop is worth an
   issue.
+
+## Manual baselines (packages outside the weekly run)
+
+`internal/crypto` is not in `PACKAGES`; it is checked by hand before a release
+(`docs/releases/RELEASE-CHECKLIST.md`, section 0) with
+`gremlins unleash --workers 2 ./internal/crypto` (gremlins v0.6.0). Efficacy is
+`killed / (killed + lived)`; timed-out and not-covered mutants are outside it.
+
+| Date | Package | Killed | Lived | Not covered | Timed out | Test efficacy |
+|---|---|---|---|---|---|---|
+| 2026-10-23, before #3612 | `internal/crypto` | 201 | 27 | 19 | 2 | 88.16% |
+| 2026-10-23, after #3612 | `internal/crypto` | 237 | 3 | 8 | 1 | 98.75% |
+
+The `internal/crypto` run covers the root package and `gcpkms`, `awskms` and
+`azurekms`. The leftover mutants after #3612 (3 lived, all equivalent; 1 timed
+out on an infinite loop; 8 not covered because a const declaration or a `case`
+expression has no coverage block, or because the branch needs a TTY) are listed
+with their reasons in `internal/crypto/mutation_equivalents_test.go`. A mutant
+that appears in a run and is not on that list is a new survivor.

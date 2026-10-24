@@ -1,6 +1,6 @@
 # Project soft-delete and restore: what happens to each child
 
-`DELETE /api/v1/projects/{id}` (`keyorix project delete`, gRPC `ProjectService.DeleteProject`)
+`DELETE /api/v1/projects/{id}` (gRPC `ProjectService.DeleteProject`)
 soft-deletes a project. `POST /api/v1/projects/{id}/restore` brings it back until the retention
 window ends. After that, the purge job (`PurgeDeletedProjectsBefore`) hard-deletes the project
 and its children. The table below lists, for every kind of row that belongs to a project, what

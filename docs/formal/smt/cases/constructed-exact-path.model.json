@@ -1,0 +1,38 @@
+{
+  "case": "constructed-exact-path",
+  "description": "CONSTRUCTED (not from a seeded Vault): one exact secret path under the default \u003cmount\u003e/\u003cproject\u003e/\u003cenvironment\u003e/ convention; mirrors TestBuildPolicyItems_ExactReadGrant.",
+  "constructed": true,
+  "sources": [
+    "inline#payments-db-only"
+  ],
+  "kv_mounts": [
+    {
+      "path": "secret/",
+      "kv_version": 2
+    }
+  ],
+  "vault_rules": [
+    {
+      "policy": "payments-db-only",
+      "path": "secret/data/payments/prod/db-password",
+      "capabilities": [
+        "read"
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "mount": "secret/",
+      "path_prefix": "payments/prod/",
+      "project_id": 1,
+      "environment_id": 11
+    }
+  ],
+  "grants": [],
+  "unmappable": [
+    {
+      "source_ref": "policy:payments-db-only path:secret/data/payments/prod/db-password",
+      "category": "path-narrower-than-scope"
+    }
+  ]
+}
