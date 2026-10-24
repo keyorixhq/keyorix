@@ -360,6 +360,15 @@ func (c *KeyorixCore) applyAuditStateToReport(r *AuditVerifyReport, st *auditVer
 	}
 
 	switch {
+	case st.Discontinuity != nil:
+		// First, and with its own reason: nothing else in the state can be
+		// trusted to describe what happened before it.
+		r.Status = AuditVerifyStatusBroken
+		if r.Reason == "" {
+			r.Reason = auditDiscontinuityText(st.Discontinuity)
+		} else {
+			r.Reason = auditDiscontinuityText(st.Discontinuity) + "; also: " + r.Reason
+		}
 	case tailBroken:
 		r.Status = AuditVerifyStatusBroken
 	case st.Failure != nil:
@@ -498,10 +507,13 @@ func (c *KeyorixCore) WriteAuditCheckpointIncremental(ctx context.Context) (*mod
 	var newCP *models.AuditCheckpoint
 	var failed *auditVerifyFailure
 	var rejected *auditVerifyRejection
+	var saved *auditVerifyState
 	err := c.storage.WithAuditCheckpointLock(ctx, func(ctx context.Context) error {
 		// An untrusted state row is replaced by one that records the rejection
 		// (not_proven until a later full verification, plus an audit event); the
-		// tail check stands on the signed checkpoint alone.
+		// tail check stands on the signed checkpoint alone. A row that cannot be
+		// continued is replaced by one carrying the sticky discontinuity; the
+		// checkpoint write goes on, so rows from now on stay certified.
 		st, rej, err := c.loadAuditVerifyStateForWrite(ctx)
 		if err != nil {
 			return fmt.Errorf("failed to load audit verification state: %w", err)
@@ -509,15 +521,20 @@ func (c *KeyorixCore) WriteAuditCheckpointIncremental(ctx context.Context) (*mod
 		rejected = rej
 		cp, ferr, werr := c.writeIncrementalCheckpointLocked(ctx, st)
 		newCP = cp
-		if ferr != nil {
-			failed = ferr
-		}
-		if serr := c.saveAuditVerifyState(ctx, st); serr != nil && werr == nil {
-			werr = fmt.Errorf("failed to save audit verification state: %w", serr)
+		if serr := c.saveAuditVerifyState(ctx, st); serr != nil {
+			if werr == nil {
+				werr = fmt.Errorf("failed to save audit verification state: %w", serr)
+			}
+		} else {
+			// The failure event names st's generation: append it only once that
+			// generation is stored, or every later load reads it as a foreign
+			// failure (a false, sticky discontinuity). An unsaved failure is
+			// detected again by the next tick, since the chain stays broken.
+			saved, failed = st, ferr
 		}
 		return werr
 	})
-	c.reportAuditVerifyStateEvents(ctx, rejected, failed)
+	c.reportAuditVerifyStateEvents(ctx, saved, rejected, failed)
 	if err != nil {
 		return nil, false, err
 	}
@@ -835,6 +852,15 @@ func (c *KeyorixCore) runAuditFullVerification(parent context.Context, id string
 		if err != nil {
 			job.State, job.Error = AuditVerifyJobFailed, clientSafeJobError(err)
 			return nil
+		}
+		if d := st.Discontinuity; d != nil {
+			// The walk proves only the rows that are left; it cannot restore the
+			// continuity, so the job reports broken like every other view.
+			rep.Status, rep.Valid = AuditVerifyStatusBroken, false
+			rep.StateReason = auditDiscontinuityText(d)
+			if rep.Reason == "" {
+				rep.Reason = rep.StateReason
+			}
 		}
 		job.State, job.Result = AuditVerifyJobSucceeded, rep
 		st.LastFull = &auditFullResult{StartedAt: startedAt, CompletedAt: finished, ThroughID: v.HeadID,

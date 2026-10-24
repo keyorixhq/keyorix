@@ -51,10 +51,14 @@ be recovered if lost -- losing it just means running 'rotate' again. The
 OLD key stops verifying the instant this command completes; there is no
 grace window.
 
---recipient <age1... key | path to an ssh-ed25519 public key file> makes
-this print the key ONLY age-encrypted to that recipient -- the plaintext
-key is never written to the terminal at all in this mode. Decrypt with:
-age -d -i <identity file> <output>. --output <file> writes the encrypted
+--recipient <age1pq1... hybrid key | age1... key | path to an ssh-ed25519
+public key file> makes this print the key ONLY age-encrypted to that
+recipient -- the plaintext key is never written to the terminal at all in
+this mode. Decrypt with: age -d -i <identity file> <output>. Prefer a
+hybrid post-quantum recipient (age1pq1..., from 'age-keygen -pq'): a
+classical recipient still works but prints a warning, because an
+age-encrypted recovery key harvested today opens to a future quantum
+attacker. --output <file> writes the encrypted
 result to that file (mode 0600, refuses to overwrite an existing file)
 instead of stdout; --output requires --recipient (this command never
 writes the PLAINTEXT key to a file). --output's path is checked (and
@@ -66,7 +70,7 @@ key valid instead of burning a rotation you never received.`,
 
 func init() {
 	rotateRecoveryKeyCmd.Flags().StringVar(&rotateRecoveryKeyRecipient, "recipient", "",
-		`Encrypt the printed key to this age1... recipient, or to the ssh-ed25519 public key in this file, instead of printing it in plaintext`)
+		`Encrypt the printed key to this age1pq1... (hybrid, post-quantum) or age1... recipient, or to the ssh-ed25519 public key in this file, instead of printing it in plaintext`)
 	rotateRecoveryKeyCmd.Flags().StringVar(&rotateRecoveryKeyOutput, "output", "",
 		`Write the --recipient-encrypted key to this file (0600, refuses to overwrite) instead of stdout; requires --recipient`)
 	recoveryKeyCmd.AddCommand(rotateRecoveryKeyCmd)
@@ -88,6 +92,7 @@ func runRotateRecoveryKey(cmd *cobra.Command, args []string) error {
 		if rerr != nil {
 			return fmt.Errorf("--recipient: %w", rerr)
 		}
+		warnIfClassicalRecoveryKeyRecipient(cmd.ErrOrStderr(), recipient)
 	}
 
 	// Reserve --output BEFORE rotating too, for the same reason: an --output

@@ -44,7 +44,7 @@ func TestPostgresQuoting_DifferentialNaive(t *testing.T) {
 		if got, want := quoteIdentifier(s), naiveDoubleDelim(s, '"'); got != want {
 			t.Fatalf("quoteIdentifier(%q) = %q, naive reimplementation = %q", s, got, want)
 		}
-		if got, want := quoteLiteral(s), naiveDoubleDelim(s, '\''); got != want {
+		if got, want := quoteLiteral(s), "E"+naiveDoubleDelim(strings.ReplaceAll(s, `\`, `\\`), '\''); got != want {
 			t.Fatalf("quoteLiteral(%q) = %q, naive reimplementation = %q", s, got, want)
 		}
 	}

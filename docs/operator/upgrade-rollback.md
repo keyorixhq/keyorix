@@ -135,6 +135,14 @@ docker compose up -d
 This path does not exist across a schema-floor change: v0.97 → v0.96.x is refused at
 start (§1). Use 4B there.
 
+With incremental audit verification on, rolling the binary back to a release older than
+the audit verification state discontinuity (see the changelog) and upgrading again leaves
+`keyorix audit verify` at `BROKEN` with `audit verification state discontinuity (before a
+recorded break)`. The older binary re-signs the verification state without the fields
+that place it against the audit chain. That alarm is sticky and has no accept command yet
+([audit-chain-break-runbook.md](audit-chain-break-runbook.md)). If you need a clean
+verification status, use 4B.
+
 ### 4B. Restore the pre-upgrade backup
 
 Everything written after the backup is lost. That includes revocations: an account
