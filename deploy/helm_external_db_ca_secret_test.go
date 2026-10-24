@@ -226,6 +226,27 @@ func TestHelmExternalDatabaseCASecret_RefusedShapes(t *testing.T) {
 				"externalDatabase.caSecret.name=pg-ca"),
 			"externalDatabase.caSecret needs externalDatabase.sslMode verify-full",
 		},
+		// PG-SSL-ROOT-CERT-1: what the server refuses for a CA the driver would ignore.
+		"sslRootCert file with sslMode prefer": {
+			append(append([]string{}, externalDBSets...), "externalDatabase.sslMode=prefer",
+				"externalDatabase.sslRootCert=/etc/pg/ca.pem"),
+			"externalDatabase.sslRootCert needs externalDatabase.sslMode verify-full",
+		},
+		"sslRootCert file with sslMode allow": {
+			append(append([]string{}, externalDBSets...), "externalDatabase.sslMode=allow",
+				"externalDatabase.sslRootCert=/etc/pg/ca.pem"),
+			"externalDatabase.sslRootCert needs externalDatabase.sslMode verify-full",
+		},
+		"sslRootCert file with sslMode disable": {
+			append(append([]string{}, externalDBSets...), "externalDatabase.sslMode=disable",
+				"externalDatabase.sslRootCert=/etc/pg/ca.pem"),
+			"externalDatabase.sslRootCert needs externalDatabase.sslMode verify-full",
+		},
+		"sslRootCert system with sslMode disable": {
+			append(append([]string{}, externalDBSets...), "externalDatabase.sslMode=disable",
+				"externalDatabase.sslRootCert=system"),
+			"externalDatabase.sslRootCert needs externalDatabase.sslMode verify-full",
+		},
 		"caSecret with an empty key": {
 			append(append([]string{}, externalDBSets...), "externalDatabase.sslMode=verify-full",
 				"externalDatabase.caSecret.name=pg-ca", "externalDatabase.caSecret.key="),
@@ -272,6 +293,21 @@ func TestHelmExternalDatabaseCASecret_AbsentRendersNothingNew(t *testing.T) {
 	}
 	if cfg.Storage.Database.SSLRootCert != config.SSLRootCertSystem {
 		t.Errorf("sslRootCert=system must still render as ssl_root_cert: system, got %q", cfg.Storage.Database.SSLRootCert)
+	}
+}
+
+// The controls for the PG-SSL-ROOT-CERT-1 refusals: shapes where the driver
+// does check the CA still render (system upgrades prefer to verify-full; a CA
+// file makes require verify the chain).
+func TestHelmExternalDatabaseSSLRootCert_CheckedShapesRender(t *testing.T) {
+	for _, extra := range [][]string{
+		{"externalDatabase.sslMode=prefer", "externalDatabase.sslRootCert=system"},
+		{"externalDatabase.sslMode=require", "externalDatabase.sslRootCert=/etc/pg/ca.pem"},
+		{"externalDatabase.sslMode=verify-ca", "externalDatabase.sslRootCert=/etc/pg/ca.pem"},
+	} {
+		if out, err := helmTemplateRaw(t, append(append([]string{}, externalDBSets...), extra...)...); err != nil {
+			t.Errorf("helm template %v: %v\n%s", extra, err, out)
+		}
 	}
 }
 

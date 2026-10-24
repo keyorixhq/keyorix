@@ -81,7 +81,12 @@ Rules (all enforced at startup; the server refuses to start rather than guess):
 - **File missing, unreadable, empty, not a regular file, or larger than 1 MiB:**
   error. The server does not fall back to `X` or to a value in `keyorix.yaml`.
 - **Nothing is logged:** errors and warnings name the variable and the path, never
-  the value or the file contents.
+  the value or the file contents. A relative path (`KEYORIX_TOKEN_FILE=./token`)
+  works, but errors do not show it, because it may be the secret itself (someone
+  who set `X_FILE` to the value instead of `X`):
+  `KEYORIX_DB_PASSWORD_FILE (a relative path, not shown: it may be the secret itself): cannot open secret file: no such file or directory`.
+  An absolute path is shown. The server, the CLI, `keyorix-k8s-sync` and the
+  container entrypoint all behave this way.
 - **File permissions -- key material is refused, other secrets follow the
   file-permission policy.** The rule is the one the KEK file and
   `--passphrase-file` already follow: `0600` or `0400`. One exception exists for
@@ -421,7 +426,12 @@ With `dsn:` instead of fields, put the CA in the connection string
 `verify-full`/`verify-ca`. `ssl_root_cert` together with `dsn` is refused,
 because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
-encrypted nor verified.
+encrypted nor verified. So is a CA file with `ssl_mode: allow` or `prefer`
+(or a `dsn` with `sslrootcert=<file>` whose effective sslmode is
+disable/allow/prefer, including a dsn with no `sslmode`): the driver loads the
+CA but never checks the server's certificate against it, and may fall back to
+plaintext. `sslrootcert=system` with allow/prefer is accepted, because the
+driver then runs `verify-full`.
 
 **`ssl_mode` together with `dsn`.** The dsn is used as-is, so `ssl_mode` used
 to be silently ignored next to it: `ssl_mode: verify-full` with a dsn saying
@@ -448,8 +458,10 @@ is not refused.
 
 The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
-`system`). `admin validate --posture` prints one informational line saying
-what is encrypted and what is verified against which CA.
+`system`), or mounts `externalDatabase.caSecret` for you. `admin validate
+--posture` prints one informational line saying what is encrypted and what is
+verified against which CA. A worked example with a private CA, including a
+wrong-CA check: [operator/postgres-tls.md](operator/postgres-tls.md).
 
 ### PostgreSQL DSN forms
 
@@ -1649,10 +1661,10 @@ evidence_delivery:
 When **encryption is enabled**, each exported pack is **signed**: a detached
 `<file>.json.sig` is written next to it (and the webhook delivery carries the
 signature in the `X-Keyorix-Evidence-Signature` header). The signature is an HMAC
-keyed by a DEK-derived key the database/DBA does not hold, so an archived pack's
+keyed by a KEK-derived key (`deriveEvidenceSignKey`) the database/DBA does not hold, so an archived pack's
 authenticity is provable later — verify with `keyorix compliance verify --file
 <pack>` (it asks the server, which recomputes the HMAC; a signature made under a
-pre-rotation DEK is reported as unverifiable rather than tampered).
+pre-KEK-rotation key is reported as unverifiable rather than tampered).
 
 ### Who "the project's admins" are (all project-level alerts)
 
@@ -1714,7 +1726,8 @@ checkpoint with an HMAC keyed by a KEK-derived key (`deriveAuditCheckpointKey`, 
 `keyorix audit verify` (and `GET /audit/verify`) then enforce the live chain
 against the latest checkpoint. Single-replica-gated (ADR-039).
 
-**Requires encryption enabled** — the signing key is derived from the DEK, so with
+**Requires encryption enabled** — the signing key is derived from the KEK (not the
+DEK, so a DEK rotation does not change it; a KEK rotation does), so with
 encryption off the scheduler logs a warning and does nothing.
 
 ```yaml
@@ -1968,9 +1981,9 @@ permanently unreadable the moment you enable this.
 
 When enabled, reading a "restricted" secret's **value** (not its metadata —
 `GetSecret`/listing are unaffected) requires an approved, **secret-scoped**
-access request: `keyorix request secret-access --secret-id <id> --user
-<email>` to request it, `keyorix request review --id <id> --action approve
---by <admin-email>` to approve it (an administrator at the secret's project).
+access request: `keyorix request secret-access --secret-id <id> --reason
+<why>` to request it, `keyorix request review --id <id> --action approve` to
+approve it (an administrator at the secret's project).
 This reuses the same `AccessRequest` model/flow as `dual_control` above
 (ADR-024), narrowed with a `SecretID` rather than granting a role. A read whose
 acting principal cannot be identified as a specific user — a machine/service
