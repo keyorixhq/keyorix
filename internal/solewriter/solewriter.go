@@ -272,7 +272,6 @@ func Start(ctx context.Context, cfg *config.Config, opts Options) (*Guard, error
 	// Every connection opened from here on reports its statements to the
 	// tracker (tracker.go), so in-process writes invalidate synchronously.
 	tr := NewTracker()
-	activeTracker.Store(tr)
 	config.SetSoleWriterQueryTracer(tr)
 	g := &Guard{opts: opts, nonce: nonce, bootID: bootID, state: StateSettling, reason: "starting", tracker: tr,
 		stop: make(chan struct{}), done: make(chan struct{}), lost: make(chan struct{})}

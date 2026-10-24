@@ -1,0 +1,38 @@
+{
+  "case": "constructed-metadata-list-only",
+  "description": "CONSTRUCTED (not from a seeded Vault): a browse-only KV v2 policy (list on metadata/), the usual Vault UI pattern, under the default convention.",
+  "constructed": true,
+  "policy_sources": [],
+  "inline_policies": {
+    "team-a-browse": "path \"secret/metadata/team-a/*\" { capabilities = [\"list\"] }"
+  },
+  "kv_mounts": [
+    {
+      "Path": "secret/",
+      "KVVersion": 2
+    }
+  ],
+  "projects": [
+    {
+      "ID": 1,
+      "Name": "team-a"
+    }
+  ],
+  "environments": {
+    "1": [
+      {
+        "ID": 11,
+        "Name": "prod"
+      }
+    ]
+  },
+  "path_map": [],
+  "imports": [
+    {
+      "mount": "secret/",
+      "path_prefix": "team-a/prod/",
+      "project_id": 1,
+      "environment_id": 11
+    }
+  ]
+}
