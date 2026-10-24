@@ -29,6 +29,9 @@ const (
 	EventSCIMUserProvisioned   = "scim.user_provisioned"
 	EventSCIMUserUpdated       = "scim.user_updated"
 	EventSCIMUserDeprovisioned = "scim.user_deprovisioned"
+	// EventSCIMFirstLoginCompleted is written when a SCIM-provisioned account's
+	// first IdP sign-in moves it out of pending_first_login (#3655).
+	EventSCIMFirstLoginCompleted = "scim.first_login_completed"
 )
 
 var scimNonAlphanum = regexp.MustCompile(`[^a-z0-9]`)

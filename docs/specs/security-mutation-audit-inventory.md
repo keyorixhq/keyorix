@@ -135,6 +135,7 @@ from core, as before, so there are no duplicates.
 | **User restore** | `RestoreUser` | `user.restored` | after commit | in tx |
 | **OTP reissue** (the credential half) | `ReissueOneTimePassword` | `user.one_time_password_reissued` | after commit | in tx, after the owed narrowing commit ("Mixed requests") |
 | **SCIM user provision** | `ProvisionSCIMUser` | `scim.user_provisioned` | after commit | in tx |
+| **SCIM first IdP login** (pending_first_login -> active, restricted to access granted) | `completeIdPFirstLogin` (CompleteSSO / CompleteSAML) | `scim.first_login_completed` | after commit | in tx |
 | **SCIM user update** (anything but deactivating an active user without an email change: includes active=false on an inactive user and active=false with an email change) | `UpdateSCIMUser` | `scim.user_updated` | after commit | in tx |
 | **SCIM group provision / replace / patch** (adds a member or renames) | `ProvisionSCIMGroup`, `ReplaceSCIMGroup`, `PatchSCIMGroup` | `scim.group_provisioned` / `scim.group_updated` | after commit; rename a separate commit | in tx; the rename moved into the membership transaction |
 | **Invitation create** (project, global, with or without link) | `InviteToProject[WithLink]`, `InviteGlobal[WithLink]` | `invitation.created` | after commit | in tx (the setup-link variants: in the invitation + token transaction) |
