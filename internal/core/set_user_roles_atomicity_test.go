@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -28,16 +29,19 @@ func failOnceAssignRoleForRoleStorage(inner storage.Storage, failRoleID uint, ar
 
 // WithTransaction keeps the fault on the transaction-scoped handle: a grant is
 // written through tx since AUDIT-TX-2 (it commits with its audit row).
-// TestSetUserRoles_PartialApplyFailureRevertsToOriginalSet is the red-proof
-// for Session O's O3 SetUserRoles finding (a NEW finding, not in the
-// coordinator's preliminary list): unlike AssignUserRole/RemoveUserRole's
-// single-grant choke points, this is a full role-set replacement made of
-// several of them with no underlying transaction available. Before this fix,
-// a failure partway through returned immediately with NO compensation --
-// completed removes stayed removed even though the operation as a whole
-// failed. This asserts the compensating revert restores the ORIGINAL role
-// set exactly, not some arbitrary in-between state.
-func TestSetUserRoles_PartialApplyFailureRevertsToOriginalSet(t *testing.T) {
+// TestSetUserRoles_AdditionFailureLeavesExactlyTheRemovalsAndSaysSo started as the
+// red-proof for Session O's O3 SetUserRoles finding: a failure partway through a
+// role-set replacement returned with NO compensation and NO way for the caller to
+// tell which changes had landed. O3's answer was a compensating revert (re-grant the
+// removed roles); #3488 found that revert fails closed on the same audit outage that
+// failed the grant, losing the role while saying "nothing was changed". Since #3488
+// the replacement is a split mixed request (role_set_replace.go): the removals are
+// one transaction, the additions another, and a failure of the additions leaves
+// EXACTLY the removals applied and says so (PartialMutationError) -- never an
+// arbitrary in-between state, never a silent one. The removal-side counterpart (a
+// failed removal leaves the original set) is
+// TestSetUserRoles_AuditOutage_NeverLosesARole/narrowing-fails-midway.
+func TestSetUserRoles_AdditionFailureLeavesExactlyTheRemovalsAndSaysSo(t *testing.T) {
 	t.Parallel()
 	c, st := newBootstrappedCore(t)
 	ctx := context.Background()
@@ -66,9 +70,19 @@ func TestSetUserRoles_PartialApplyFailureRevertsToOriginalSet(t *testing.T) {
 	err = c.SetUserRoles(ctx, actor, u.ID, []uint{viewer.ID, admin.ID}, scope, false)
 	require.Error(t, err)
 	require.False(t, armed, "the injected fault must actually have fired")
+	pe, ok := AsPartialMutationError(err)
+	require.True(t, ok, "the call must say the removals applied and the additions did not: %v", err)
+	assert.Contains(t, pe.Applied, fmt.Sprint(developer.ID))
+	assert.Contains(t, pe.NotApplied, fmt.Sprint(admin.ID))
 
 	got, gerr := st.GetUserRoleIDsExact(ctx, u.ID, scope)
 	require.NoError(t, gerr)
-	assert.ElementsMatch(t, []uint{viewer.ID, developer.ID}, got,
-		"a failed partial apply must revert to the EXACT original role set -- developer must be restored, admin must not be present")
+	assert.ElementsMatch(t, []uint{viewer.ID}, got,
+		"a failed addition must leave EXACTLY the removals applied -- developer removed, admin not present, viewer kept")
+
+	// A retry of the same request completes it.
+	require.NoError(t, c.SetUserRoles(ctx, actor, u.ID, []uint{viewer.ID, admin.ID}, scope, false))
+	got, gerr = st.GetUserRoleIDsExact(ctx, u.ID, scope)
+	require.NoError(t, gerr)
+	assert.ElementsMatch(t, []uint{viewer.ID, admin.ID}, got)
 }

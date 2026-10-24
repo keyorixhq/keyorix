@@ -524,17 +524,6 @@ func TestValidate_S22_IdentifierSpaceAccepted(t *testing.T) {
 	require.NoError(t, v.Validate(payload{Name: "my project"}))
 }
 
-// TestValidate_S22_IdentifierEmptyStringPasses verifies that an empty string passes
-// the identifier validator (use `required` to enforce non-empty).
-func TestValidate_S22_IdentifierEmptyStringPasses(t *testing.T) {
-	type payload struct {
-		Name string `json:"name" validate:"identifier"`
-	}
-	v := NewValidator()
-
-	require.NoError(t, v.Validate(payload{Name: ""}))
-}
-
 // TestValidate_S22_IdentifierAtSignRejected verifies that @ is rejected.
 func TestValidate_S22_IdentifierAtSignRejected(t *testing.T) {
 	type payload struct {

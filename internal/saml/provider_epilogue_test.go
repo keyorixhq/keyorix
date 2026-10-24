@@ -13,6 +13,8 @@ package saml
 // base64 regardless of length, every run.
 
 import (
+	"crypto/rsa"
+	"crypto/x509"
 	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
@@ -39,6 +41,15 @@ func buildSignedResponseB64(t *testing.T) (p *Provider, acsURL string, validB64 
 // is non-nil, it is applied to the unsigned Assertion element, which is then signed with
 // the trusted IdP key -- a validly signed assertion of any shape the test needs.
 func buildSignedResponseB64WithAssertion(t *testing.T, mutate func(assertion *etree.Element)) (p *Provider, acsURL string, validB64 string) {
+	t.Helper()
+	p, acsURL, validB64, _, _ = buildSignedResponseWithKey(t, mutate)
+	return p, acsURL, validB64
+}
+
+// buildSignedResponseWithKey is buildSignedResponseB64WithAssertion that also returns the
+// trusted IdP signing key and certificate, so a test can edit the Response envelope and
+// sign it again (the IdP signs the Response as well as the Assertion).
+func buildSignedResponseWithKey(t *testing.T, mutate func(assertion *etree.Element)) (p *Provider, acsURL string, validB64 string, idpKey *rsa.PrivateKey, idpCert *x509.Certificate) {
 	t.Helper()
 	const idpEntityID = "https://idp.example/entity"
 	const spEntityID = "https://keyorix.internal/saml/corp/metadata"
@@ -105,7 +116,7 @@ func buildSignedResponseB64WithAssertion(t *testing.T, mutate func(assertion *et
 	}
 	form, err := idpReq.PostBinding()
 	require.NoError(t, err)
-	return p, acsURL, form.SAMLResponse
+	return p, acsURL, form.SAMLResponse, idpKey, idpCert
 }
 
 func submitSAMLResponse(t *testing.T, p *Provider, acsURL, samlResponseB64 string) (*AssertionInfo, error) {

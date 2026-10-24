@@ -45,13 +45,25 @@ export MUTATION_STATE_DIR
 
 mkdir -p "$MUTATION_STATE_DIR"
 
-# Packages to mutation-test, one per line: "<go-package-path>|<label>". Widen
-# this deliberately, one package at a time, as each is brought into good
+# Packages to mutation-test, one per line: "<go-package-path>|<label>[|<timeout-coefficient>]".
+# The optional third field is passed to gremlins as --timeout-coefficient. gremlins sizes its
+# per-mutant timeout from the time of the coverage-gathering run, and for a package whose tests
+# are fast but whose per-mutant build is not (internal/saml: ~0.3 s of tests, ~1 s to rebuild
+# against crewjam/saml) the default timeout expires on most mutants; they come back TIMED OUT,
+# which summarize.py counts as neither killed nor lived, so the report shows no usable result.
+# Leave it empty for packages that do not need it: a larger coefficient also makes a genuinely
+# hanging mutant take that much longer to time out.
+#
+# Widen this deliberately, one package at a time, as each is brought into good
 # shape -- see .github's retired mutation-testing.yml (superseded by this
-# script) for the reasoning on why this starts scoped to two packages
+# script) for the reasoning on why this starts scoped to few packages
 # instead of the whole repo.
 PACKAGES="internal/core|core
-internal/storage/store|storage-store"
+internal/storage/store|storage-store
+# internal/saml: efficacy 97.70% (85 killed, 2 equivalent survivors), 21 not covered; needs the timeout coefficient (see above)
+internal/saml|saml|40
+# internal/secretenv: efficacy 100% (31 killed), 4 not covered (switch case expressions, pinned by a truth table)
+internal/secretenv|secretenv"
 
 cd "$KEYORIX_REPO"
 
@@ -60,9 +72,13 @@ git fetch origin main --quiet
 git checkout main --quiet
 git reset --hard origin/main --quiet
 
-while IFS='|' read -r pkg label; do
+while IFS='|' read -r pkg label timeout_coef; do
   [[ -z "$pkg" ]] && continue
   case "$pkg" in \#*) continue ;; *) ;; esac
+  timeout_args=()
+  if [[ -n "${timeout_coef:-}" ]]; then
+    timeout_args=(--timeout-coefficient "$timeout_coef")
+  fi
 
   echo "=== $(date -u +%FT%TZ) mutation-testing ./$pkg ($label) ==="
   result_json="$MUTATION_STATE_DIR/last-$label.json"
@@ -80,7 +96,7 @@ while IFS='|' read -r pkg label; do
   fi
 
   set +e
-  gremlins unleash --workers "$MUTATION_WORKERS" -o "$result_json_tmp" "./$pkg" \
+  gremlins unleash --workers "$MUTATION_WORKERS" ${timeout_args[@]+"${timeout_args[@]}"} -o "$result_json_tmp" "./$pkg" \
     >"$MUTATION_STATE_DIR/last-$label.log" 2>&1
   status=$?
   set -e
