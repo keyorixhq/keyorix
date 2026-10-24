@@ -447,8 +447,9 @@ func parseWebhookURLLiteral(raw string) (*url.URL, error) {
 // time) directly testable end-to-end.
 var channelLookupIPAddr netutil.Resolver = netutil.DefaultResolver
 
-// isChannelDisallowedIP reports whether ip is a private, link-local, or loopback
-// address — all of which are forbidden as outbound webhook destinations (SSRF guard).
+// isChannelDisallowedIP reports whether ip is a private, link-local, loopback or
+// unspecified ("this network") address — all of which are forbidden as outbound
+// webhook destinations (SSRF guard).
 //
 // Checked both directly AND against ip's embedded IPv4 (netutil.EmbeddedIPv4),
 // mirroring netutil's own matchesCIDRsWithEmbedded "direct match OR embedded
@@ -475,6 +476,18 @@ func isChannelDisallowedIP(ip net.IP) bool {
 	return false
 }
 
+// isChannelDisallowedIPDirect also refuses the unspecified address (0.0.0.0,
+// ::) and the rest of 0.0.0.0/8 ("this network", RFC 1122): Go's net.Dial
+// treats a literal unspecified host as the local system, and Linux routes a
+// connect() to 0.0.0.0 to loopback, so without this a URL host of 0.0.0.0 (or
+// a name resolving to it at dial time) reached the Keyorix host's own loopback
+// services despite IsLoopback. Same range netutil.IsPrivateOrLinkLocal refuses.
 func isChannelDisallowedIPDirect(ip net.IP) bool {
+	if ip.IsUnspecified() {
+		return true
+	}
+	if v4 := ip.To4(); v4 != nil && v4[0] == 0 {
+		return true
+	}
 	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 }

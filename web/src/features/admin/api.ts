@@ -396,7 +396,9 @@ export const useUpdateUserRoles = () => {
     return useMutation({
         mutationFn: ({ userId, roleIds }: { userId: number; roleIds: number[] }) =>
             adminApi.updateUserRoles(userId, roleIds),
-        onSuccess: (_data, { userId }) => {
+        // onSettled, not onSuccess: a 503 MutationPartiallyApplied means the removals
+        // were applied and the additions were not, so the cached role list is stale too.
+        onSettled: (_data, _error, { userId }) => {
             queryClient.invalidateQueries({ queryKey: ['user-roles', userId] });
             queryClient.invalidateQueries({ queryKey: ['admin-users'] });
         },

@@ -227,16 +227,6 @@ func Scan(root string, opts Options) (*Result, error) {
 	return res, nil
 }
 
-// DistinctPairs counts the (function, callee) pairs among hits -- the unit an
-// exemption answers for, and so the unit a minimum-count floor is stated in.
-func DistinctPairs(hits []Hit) int {
-	seen := map[Key]bool{}
-	for _, h := range hits {
-		seen[Key{Func: h.Func, Callee: h.Callee}] = true
-	}
-	return len(seen)
-}
-
 func parsePackageFiles(fset *token.FileSet, root string) (map[string]*ast.File, error) {
 	entries, err := os.ReadDir(root)
 	if err != nil {

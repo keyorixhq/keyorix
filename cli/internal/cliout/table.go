@@ -17,8 +17,7 @@ import (
 // Matches the old CLI's tabwriter convention (0, 0, 2, ' ', 0) so migrated
 // commands keep byte-for-byte identical column spacing.
 type Table struct {
-	w    *tabwriter.Writer
-	rows int
+	w *tabwriter.Writer
 }
 
 // NewTable returns a Table writing to out, with header as the first row.
@@ -40,26 +39,11 @@ func (t *Table) Row(fields ...any) {
 		strs[i] = fmt.Sprint(f)
 	}
 	fmt.Fprintln(t.w, strings.Join(strs, "\t")) //nolint:errcheck
-	t.rows++
 }
 
 // Flush writes the accumulated table to the underlying writer.
 func (t *Table) Flush() error {
 	return t.w.Flush()
-}
-
-// Empty reports whether no rows were added (only the header exists).
-func (t *Table) Empty() bool {
-	return t.rows == 0
-}
-
-// OrNever renders s, or "never" when s is empty -- the convention every ported
-// pat/machine list command already uses for an absent optional timestamp.
-func OrNever(s string) string {
-	if s == "" {
-		return "never"
-	}
-	return s
 }
 
 // CSVSafe prefixes a single quote to any value beginning with =, +, -, @, TAB, or CR so
@@ -76,14 +60,6 @@ func CSVSafe(s string) string {
 	switch s[0] {
 	case '=', '+', '-', '@', '\t', '\r':
 		return "'" + s
-	}
-	return s
-}
-
-// OrDash renders s, or "-" when s is empty.
-func OrDash(s string) string {
-	if s == "" {
-		return "-"
 	}
 	return s
 }

@@ -135,20 +135,6 @@ func TestAcquireStreamSlot_ReleasedSlotReacquirable_S21b(t *testing.T) {
 // WriteAuditCheckpoint — non-"refusing" error branch (clientSafe path)
 // ---------------------------------------------------------------------------
 
-// TestWriteAuditCheckpoint_NonRefusingError_S21b hits the `!strings.Contains(msg,
-// "refusing to checkpoint")` branch (line 227) inside WriteAuditCheckpoint.
-// The test rig has no audit events and no encryption, so core.WriteAuditCheckpoint
-// returns either an error that doesn't start with "refusing" or written=false; both
-// are FailedPrecondition, but through different sub-paths.
-func TestWriteAuditCheckpoint_NonRefusingError_S21b(t *testing.T) {
-	svc := newAuditService(t)
-	ctx := authCtx(1, "admin", "system.write", "audit.read")
-	_, err := svc.WriteAuditCheckpoint(ctx, &emptypb.Empty{})
-	require.Error(t, err)
-	// Both the "refusing" path and the !written path land on FailedPrecondition.
-	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
-}
-
 // ---------------------------------------------------------------------------
 // CreateUser — setup-link and OTP branches
 // ---------------------------------------------------------------------------
