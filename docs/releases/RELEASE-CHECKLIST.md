@@ -13,6 +13,17 @@ example `v0.96.1`) throughout.
       are re-checked against `git log PREV..origin/main --first-parent` (a PR merged
       after the draft was written is not in it).
 - [ ] `main` is green: `gh run list --branch main --limit 5`.
+- [ ] Mutation check on the security packages (about 4 minutes on a laptop; the
+      weekly mutation run is stopped as of 2026-10-23 and would only cover
+      `internal/core` and `internal/storage/store`):
+      `GOMAXPROCS=2 gremlins unleash --workers 2 ./internal/crypto` and the same for
+      `./internal/keyfiles`. Test efficacy must not be lower than the last recorded
+      value (2026-10-23: crypto 98.8% after #3612, keyfiles 100%; the three
+      remaining crypto survivors are equivalent mutants listed in
+      `internal/crypto/mutation_equivalents_test.go`).
+      Add `./internal/secretenv` and `./internal/saml` once their mutants are
+      reachable (today most are not covered). Record the new numbers here when they
+      change.
 - [ ] If the release is meant to ship linux/arm (armv7): the Makefile `release`
       target and `_sbom-generate` have the targets (they did not at v0.97.0 prep;
       `make release` builds linux/darwin × amd64/arm64 only), `install.sh` maps

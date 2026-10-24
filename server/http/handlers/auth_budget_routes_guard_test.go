@@ -397,13 +397,13 @@ func TestEveryAuthBudget_HoldsWithItsStorageDown(t *testing.T) {
 			drive, ok := budgetRouteRequests[method]
 			require.True(t, ok, "%s is budgeted but has no request in budgetRouteRequests: add one so the sweep covers it", key)
 
-			cdb := openLoginBudgetDB(t, fmt.Sprintf("file:kxbudgetsweepctl%d?mode=memory&cache=shared", i))
+			cdb := openLoginBudgetMemDB(t, fmt.Sprintf("kxbudgetsweepctl%d_", i))
 			cc := core.NewKeyorixCore(store.NewLocalStorage(cdb))
 			spendBudget(cc, cls.budget)
 			control := drive(t, NewAuthHandler(cc, false))
 			require.Equal(t, http.StatusTooManyRequests, control.Code, "control: the healthy %s budget must refuse once spent: %s", cls.budget, control.Body.String())
 
-			pdb := openLoginBudgetDB(t, fmt.Sprintf("file:kxbudgetsweepprobe%d?mode=memory&cache=shared", i))
+			pdb := openLoginBudgetMemDB(t, fmt.Sprintf("kxbudgetsweepprobe%d_", i))
 			pc := core.NewKeyorixCore(loginAttemptsDownStore{store.NewLocalStorage(pdb)})
 			spendBudget(pc, cls.budget)
 			probe := drive(t, NewAuthHandler(pc, false))

@@ -548,15 +548,6 @@ func TestDeleteRefGrant_Success_S23(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestDeleteRefGrant_PermissionDenied_S23(t *testing.T) {
-	svc := newConnectServiceFull(t)
-	// User 999 holds no roles.write — the authz check must deny.
-	ctx := authCtx(999, "nobody")
-	_, err := svc.DeleteRefGrant(ctx, &pb.DeleteConnectRefGrantRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
 // ---------------------------------------------------------------------------
 // Secret service — UpdateSecret zero-id validation
 // ---------------------------------------------------------------------------

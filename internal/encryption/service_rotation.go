@@ -9,6 +9,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -58,6 +60,14 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 	// migration ordering.
 	if err := db.AutoMigrate(&models.SystemMetadata{}); err != nil {
 		return nil, fmt.Errorf("ensure rotation redo-marker table: %w", err)
+	}
+
+	// A redo marker left by an earlier, completed rotation (its rename happened,
+	// the marker delete did not) must be gone before this rotation stages its
+	// pending DEK: if this rotation crashed before its commit, recovery would
+	// otherwise promote the uncommitted DEK.
+	if err := s.clearCompletedRotationMarker(db); err != nil {
+		return nil, fmt.Errorf("clear the redo marker of an earlier DEK rotation: %w", err)
 	}
 
 	var sweepResult *SweepResult
@@ -434,7 +444,19 @@ func (s *Service) RecoverInterruptedRotation(db *gorm.DB) error {
 		return fmt.Errorf("read DEK-rotation redo marker: %w", err)
 	}
 
-	// Marker present ⇒ the sweep committed under a new DEK. Finish the promotion.
+	// Marker present ⇒ the sweep committed under a new DEK. On PostgreSQL several
+	// key directories can serve one database (key_dir_lock: database, a key
+	// Secret per replica, a key copy per host), and the pending DEK lives only in
+	// the directory the rotation ran in. A directory without it must leave the
+	// marker for that one: clearing it here made the rotating directory's next
+	// recovery discard its pending file, the only copy of the DEK the rows are
+	// under. This directory's server then starts only if its DEK is the
+	// database's current one (DEK epoch), and clears the marker once it is
+	// (clearCompletedRotationMarker).
+	if !s.hasPendingDEK() && dekEpochApplies(db) {
+		log.Printf("[WARN] a DEK rotation committed (new key version %s) but its new DEK is not in this key directory (no %s.pending): leaving the rotation's redo marker for the key directory that holds it. Finish the rotation there (run the admin command again in that directory) and distribute the new key set before starting this server", m.Value, s.keyManager.dekPath)
+		return nil
+	}
 	if err := s.keyManager.PromotePendingDEK(); err != nil {
 		return fmt.Errorf("recover interrupted DEK rotation (promote): %w", err)
 	}
@@ -442,6 +464,44 @@ func (s *Service) RecoverInterruptedRotation(db *gorm.DB) error {
 		return fmt.Errorf("recover interrupted DEK rotation (clear marker): %w", err)
 	}
 	log.Printf("recovered interrupted DEK rotation: promoted pending DEK to active (new key version %s)", m.Value)
+	return nil
+}
+
+// hasPendingDEK reports whether this key directory holds dek.key.pending.
+func (s *Service) hasPendingDEK() bool {
+	_, err := os.Lstat(filepath.Join(s.keyManager.baseDir, s.keyManager.dekPath+".pending"))
+	return err == nil
+}
+
+// clearCompletedRotationMarker removes a DEK-rotation redo marker whose
+// rotation has completed: this key directory holds no pending DEK and, on
+// PostgreSQL, the database's DEK epoch is this service's own DEK, so the rows
+// are under the DEK this directory already has. The epoch comparison is part of
+// the DELETE, so a marker is never removed for a rotation whose new DEK is
+// elsewhere. On SQLite (one key directory) RecoverInterruptedRotation already
+// settled the marker. Must run after Initialize.
+func (s *Service) clearCompletedRotationMarker(db *gorm.DB) error {
+	if !dekEpochApplies(db) || s.hasPendingDEK() {
+		return nil
+	}
+	s.mu.RLock()
+	if !s.initialized {
+		s.mu.RUnlock()
+		return fmt.Errorf("encryption service not initialized")
+	}
+	own, err := s.encryptionService.Fingerprint()
+	s.mu.RUnlock()
+	if err != nil {
+		return err
+	}
+	res := db.Where("key = ? AND EXISTS (SELECT 1 FROM system_metadata e WHERE e.key = ? AND e.value = ?)",
+		dekRotationPromotePendingKey, dekEpochKey, own).Delete(&models.SystemMetadata{})
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected > 0 {
+		log.Printf("cleared the redo marker of a completed DEK rotation (this key directory holds the database's current DEK)")
+	}
 	return nil
 }
 

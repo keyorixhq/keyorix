@@ -12,6 +12,8 @@ package encryptionops
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,9 +81,18 @@ func TargetEncryptionConfig(cur *config.EncryptionConfig, opts MigrateOpts) (con
 		if len(opts.ToShareFiles)+len(opts.ToShareEnv) < 2 {
 			return tgt, fmt.Errorf("--to-type shamir requires at least 2 shares via --to-shamir-share-files/--to-shamir-share-env (the threshold)")
 		}
+		// The commitment is required here (REVIEW-ENCRYPTIONOPS-1 F5): without it,
+		// whoever holds threshold-1 genuine shares can forge one more that makes the
+		// reconstructed KEK any value they choose (#429), and the DEK would be
+		// wrapped under it. A migration is a new binding, so unlike a running
+		// install's pre-#429 split there is nothing to stay compatible with.
+		commitment := strings.TrimSpace(opts.ToShareCommitment)
+		if c, err := hex.DecodeString(commitment); err != nil || len(c) != sha256.Size {
+			return tgt, fmt.Errorf("--to-shamir-commitment is required for --to-type shamir and must be the %d-hex-character value `shamir-split` printed for these shares: without it, a holder of threshold-1 shares can forge a share that sets the KEK (#429)", 2*sha256.Size)
+		}
 		kp.ShamirShareFiles = opts.ToShareFiles
 		kp.ShamirShareEnv = opts.ToShareEnv
-		kp.ShamirCommitment = opts.ToShareCommitment
+		kp.ShamirCommitment = commitment
 	case "tpm":
 		if opts.ToWrappedKeyPath == "" {
 			return tgt, fmt.Errorf("--to-wrapped-key-path is required for --to-type tpm (where the sealed KEK blob lives)")
