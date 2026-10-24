@@ -255,6 +255,7 @@ func (w *faultWorld) rebuildTransport(tb tbLite) {
 // runs don't exhaust Postgres's max_connections.
 func openWorldDBTB(tb tbLite) (*gorm.DB, string) {
 	tb.Helper()
+	trackWorldDB(tb) // world_db_budget_test.go: SQLSTATE 53300
 	dsn := os.Getenv(pgDSNEnv)
 	if dsn == "" {
 		db, err := gorm.Open(sqlite.Open(uniqueMemDSN()), &gorm.Config{})
