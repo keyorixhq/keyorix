@@ -9,8 +9,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -18,13 +16,8 @@ import (
 )
 
 func TestSecretActionAllowlist_OnlyTheShareTermReachesTheRawShareLookup(t *testing.T) {
-	files, err := filepath.Glob("../*.go")
-	require.NoError(t, err)
 	callers := map[string]bool{}
-	for _, file := range files {
-		if strings.HasSuffix(file, "_test.go") {
-			continue
-		}
+	for _, file := range coreFamilySources(t) {
 		src, rerr := os.ReadFile(file) // #nosec G304 -- this package's own source files
 		require.NoError(t, rerr)
 		f, perr := parser.ParseFile(token.NewFileSet(), file, src, 0)

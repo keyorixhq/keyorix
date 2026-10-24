@@ -1,0 +1,4 @@
+# rotation: rotation policies, planner, executor, calendar, dry-run, bulk rotate
+# One glob per line, matched against the file name (README.md).
+rotation_*.go
+bulk_rotate.go

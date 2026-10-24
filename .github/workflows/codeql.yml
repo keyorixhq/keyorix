@@ -20,6 +20,16 @@ on:
   # branch is now analysed the moment it enters the queue. The upload of a
   # merge_group analysis produces GitHub's "Code scanning results / CodeQL"
   # check on the merge group, not on the PR.
+  #
+  # PR-time gate (CODEQL-PR-GATE-1, 2026-10-23): on pull_request ONLY
+  # "Analyze (server)" runs, and only when the PR changes non-test Go of the
+  # root module (or go.mod/go.sum, the query pack, this file or the gate
+  # script). It analyses with upload: never and runs the same gate as the queue
+  # (scripts/ci/codeql-gate.sh against main's open and dismissed alerts), so a
+  # PR with a new high finding fails its own required check and never enters a
+  # merge group. Before this, the first place such a finding showed up was a
+  # queue round, which also failed every PR behind it (#3543/#3623, 23 Oct).
+  # Operator, JS/TS and the CodeQL summary stay skipped on pull_request.
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -46,9 +56,9 @@ permissions:
 # current code, making the concurrent scheduled one redundant.
 concurrency:
   group: codeql-${{ github.event.pull_request.number || github.run_id }}
-  # Only the (no-op) pull_request runs are ever superseded; merge_group, push
-  # and schedule runs each get their own group (run_id) and are never
-  # cancelled.
+  # Only pull_request runs are ever superseded (a newer push to the PR makes
+  # the older analysis moot); merge_group, push and schedule runs each get
+  # their own group (run_id) and are never cancelled.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -74,9 +84,9 @@ jobs:
   # that never triggers at all (paths-ignore) produces no check-run and
   # would leave those two stuck pending forever on a docs-only PR.
   changes:
-    # Skipped on pull_request (see the trigger comment above): every job
-    # below needs this one, so the whole workflow costs no runner on a PR.
-    if: github.event_name != 'pull_request'
+    # Runs on pull_request too since CODEQL-PR-GATE-1: there it only decides
+    # whether the PR-time gate (Analyze (server)) runs; operator_go_changed
+    # and web_changed are always false on a PR.
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -100,6 +110,10 @@ jobs:
       # (any *.go, go.mod, go.sum, go.work* outside operator/), or the custom
       # query pack, or this file. Always true for push/schedule/dispatch, so
       # main keeps its full scan, and whenever the diff could not be read.
+      # pull_request: true only for NON-TEST Go of the root module (not
+      # cli/, migrate/, devtools/: separate modules the server leg never
+      # builds), go.mod/go.sum/go.work*, the query pack, this file or the gate
+      # script; also true whenever the PR's file list could not be read.
       root_go_changed: ${{ steps.filter.outputs.root_go_changed }}
       # Same, for the separate operator/ module.
       operator_go_changed: ${{ steps.filter.outputs.operator_go_changed }}
@@ -117,8 +131,9 @@ jobs:
           REPO: ${{ github.repository }}
           MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [ "$EVENT_NAME" != "merge_group" ]; then
+          if [ "$EVENT_NAME" != "merge_group" ] && [ "$EVENT_NAME" != "pull_request" ]; then
             {
               echo "docs_only=false"
               echo "go_unaffected=false"
@@ -129,15 +144,23 @@ jobs:
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          # The whole group diff (main's tip .. the group commit, every PR in
-          # the group). Fail-safe, same as ci.yml: at the compare API's
-          # 300-file cap or on any API error `changed` is empty, and an empty
-          # list analyses everything.
-          changed=$(gh api "repos/$REPO/compare/$MG_BASE_SHA...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
-          if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge 300 ]; then
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # The PR's own files. At the files API's 3000-file cap or on any
+            # API error `changed` is empty, which analyses (fail-safe).
+            changed=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files?per_page=100" --jq '.[].filename') || changed=""
+            cap=3000
+          else
+            # The whole group diff (main's tip .. the group commit, every PR in
+            # the group). Fail-safe, same as ci.yml: at the compare API's
+            # 300-file cap or on any API error `changed` is empty, and an empty
+            # list analyses everything.
+            changed=$(gh api "repos/$REPO/compare/$MG_BASE_SHA...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+            cap=300
+          fi
+          if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge "$cap" ]; then
             changed=""
           fi
-          echo "Changed files (merge group):"
+          echo "Changed files ($EVENT_NAME):"
           echo "$changed"
           if [ -z "$changed" ] || echo "$changed" | grep -vE '(\.md$|^docs/)' > /dev/null; then
             echo "docs_only=false" >> "$GITHUB_OUTPUT"
@@ -147,7 +170,10 @@ jobs:
           # codeql.yml itself defines this gating logic -- a change to it
           # must always run the full analysis regardless of what else it
           # matches below, so it's checked first and short-circuits to false.
-          if echo "$changed" | grep -qx '\.github/workflows/codeql\.yml'; then
+          # Same for the gate script (CODEQL-PR-GATE-1): it lives under
+          # scripts/, which the allowlist below treats as Go-free, so a
+          # gate-only change used to skip the very job that runs the gate.
+          if echo "$changed" | grep -qxE '\.github/workflows/codeql\.yml|scripts/ci/codeql-gate\.sh'; then
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
           elif [ -z "$changed" ] || echo "$changed" | grep -vE '^(scripts/|\.semgrep/|demo/|integrations/|\.github/workflows/|\.gitignore$|\.gitattributes$|LICENSE$|COPYRIGHT$)' > /dev/null; then
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
@@ -162,6 +188,19 @@ jobs:
           # An empty file list (API hiccup) fails safe to "changed".
           always='^(\.github/workflows/codeql\.yml|\.github/codeql/|scripts/ci/codeql-gate\.sh)'
           gofile='(\.go$|(^|/)go\.(mod|sum|work|work\.sum)$)'
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            # PR-time gate: the root-module analysis only, and only for
+            # non-test Go of the root module. Test-only diffs and the separate
+            # cli/, migrate/, devtools/*, operator/ modules do not run it.
+            if [ -z "$changed" ] || echo "$changed" | grep -qE "$always" || echo "$changed" | grep -vE '^(operator|cli|migrate|devtools)/' | grep -vE '_test\.go$' | grep -qE "$gofile"; then
+              echo "root_go_changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "root_go_changed=false" >> "$GITHUB_OUTPUT"
+            fi
+            echo "operator_go_changed=false" >> "$GITHUB_OUTPUT"
+            echo "web_changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ -z "$changed" ] || echo "$changed" | grep -qE "$always" || echo "$changed" | grep -vE '^operator/' | grep -qE "$gofile"; then
             echo "root_go_changed=true" >> "$GITHUB_OUTPUT"
           else
@@ -231,18 +270,30 @@ jobs:
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:go-server
-          # merge_group: analyse but do NOT upload (see the gate step below).
+          # merge_group and pull_request: analyse but do NOT upload (see the
+          # gate step below).
           output: ${{ runner.temp }}/codeql-sarif
-          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
-          upload-database: ${{ github.event_name != 'merge_group' }}
+          upload: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 'never' || 'always' }}
+          upload-database: ${{ github.event_name != 'merge_group' && github.event_name != 'pull_request' }}
 
-      - name: Gate on high-severity results (merge queue)
-        if: github.event_name == 'merge_group'
+      - name: Gate on high-severity results (merge queue and PR)
+        if: github.event_name == 'merge_group' || github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SARIF_DIR: ${{ runner.temp }}/codeql-sarif
         run: scripts/ci/codeql-gate.sh "$SARIF_DIR"
+
+      # The SARIF the gate read, kept for diagnosis (nothing is uploaded to
+      # code scanning on these events). Runs when the gate failed too.
+      - name: Keep the SARIF as an artifact
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'pull_request')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-server
+          path: ${{ runner.temp }}/codeql-sarif
+          if-no-files-found: warn
+          retention-days: 14
 
   # The operator is a separate Go module (controller-runtime/client-go kept
   # out of the root go.work) — same reasoning as ci.yml's dedicated
@@ -286,18 +337,30 @@ jobs:
         uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:go-operator
-          # merge_group: analyse but do NOT upload (see the gate step below).
+          # merge_group and pull_request: analyse but do NOT upload (see the
+          # gate step below).
           output: ${{ runner.temp }}/codeql-sarif
-          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
-          upload-database: ${{ github.event_name != 'merge_group' }}
+          upload: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 'never' || 'always' }}
+          upload-database: ${{ github.event_name != 'merge_group' && github.event_name != 'pull_request' }}
 
-      - name: Gate on high-severity results (merge queue)
-        if: github.event_name == 'merge_group'
+      - name: Gate on high-severity results (merge queue and PR)
+        if: github.event_name == 'merge_group' || github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SARIF_DIR: ${{ runner.temp }}/codeql-sarif
         run: scripts/ci/codeql-gate.sh "$SARIF_DIR"
+
+      # The SARIF the gate read, kept for diagnosis (nothing is uploaded to
+      # code scanning on these events). Runs when the gate failed too.
+      - name: Keep the SARIF as an artifact
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'pull_request')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-operator
+          path: ${{ runner.temp }}/codeql-sarif
+          if-no-files-found: warn
+          retention-days: 14
 
   # web/ (ADR-070) is JavaScript/TypeScript, not Go -- a separate job rather
   # than a third matrix entry above, since the Go entries' init/build/analyze
@@ -339,18 +402,30 @@ jobs:
       - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           category: /language:javascript-typescript
-          # merge_group: analyse but do NOT upload (see the gate step below).
+          # merge_group and pull_request: analyse but do NOT upload (see the
+          # gate step below).
           output: ${{ runner.temp }}/codeql-sarif
-          upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}
-          upload-database: ${{ github.event_name != 'merge_group' }}
+          upload: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 'never' || 'always' }}
+          upload-database: ${{ github.event_name != 'merge_group' && github.event_name != 'pull_request' }}
 
-      - name: Gate on high-severity results (merge queue)
-        if: github.event_name == 'merge_group'
+      - name: Gate on high-severity results (merge queue and PR)
+        if: github.event_name == 'merge_group' || github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           SARIF_DIR: ${{ runner.temp }}/codeql-sarif
         run: scripts/ci/codeql-gate.sh "$SARIF_DIR"
+
+      # The SARIF the gate read, kept for diagnosis (nothing is uploaded to
+      # code scanning on these events). Runs when the gate failed too.
+      - name: Keep the SARIF as an artifact
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'pull_request')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-javascript-typescript
+          path: ${{ runner.temp }}/codeql-sarif
+          if-no-files-found: warn
+          retention-days: 14
 
   # Fan-in convenience job giving a single "CodeQL" status for the whole
   # workflow at a glance. NOT currently a required status check itself

@@ -1,0 +1,7 @@
+# sharing: sharing, share authz, ACLs, group sharing
+# One glob per line, matched against the file name (README.md).
+sharing*.go
+share_*.go
+group_sharing.go
+secret_acl.go
+secret_listing_sharing.go

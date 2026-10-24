@@ -129,10 +129,14 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 	var items []Item
 	var allows []namedStanza
 	var denyPaths []string
+	var granting []healthscan.PolicyPathBlock // every non-deny stanza, for impliedAccess.
 
 	for _, pol := range policies {
 		for _, b := range pol.Blocks {
 			ref := stanzaRef(pol.Name, b.Path)
+			if !containsCapability(b.Capabilities, "deny") {
+				granting = append(granting, b)
+			}
 			switch {
 			case containsCapability(b.Capabilities, "sudo"):
 				items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref,
@@ -178,10 +182,15 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 		}
 		res, category, reason, ok := mapper.Resolve(as.block.Path)
 		if !ok {
-			items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref, Category: category, Reason: reason})
+			items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref, Category: category, Reason: reason,
+				SourcePolicy: as.policyName, CrossMountEvidence: res.CrossMountEvidence})
 			continue
 		}
 		name := roleName(as.perms)
+		var implied []string
+		if slices.Contains(as.perms, "secrets.read") {
+			implied = impliedAccess(as.block.Path, mapper, granting, denyPaths)
+		}
 		items = append(items, Item{
 			Kind: KindRole, Outcome: Create, SourceRef: ref,
 			ProposedName:          name,
@@ -189,6 +198,9 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 			ProposedEnvironmentID: res.EnvironmentID,
 			ProposedPermissions:   as.perms,
 			ProvenanceKey:         plan.SourceID("role", name, fmt.Sprint(res.ProjectID), fmt.Sprint(res.EnvironmentID)),
+			SourcePolicy:          as.policyName,
+			ImpliedAccess:         implied,
+			CrossMountEvidence:    res.CrossMountEvidence,
 		})
 	}
 	return items

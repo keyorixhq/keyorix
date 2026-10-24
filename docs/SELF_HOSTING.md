@@ -268,7 +268,14 @@ this stack is configured for):
 docker compose exec -T backend ./keyorix-server admin backup --output /tmp/backup.tar.gz
 # /tmp in the container is a tmpfs, which `docker compose cp` cannot read: stream the file out instead
 (umask 077; docker compose exec -T backend cat /tmp/backup.tar.gz > ./keyorix-backup-$(date +%F).tar.gz)
+docker compose exec -T backend rm /tmp/backup.tar.gz
 ```
+
+The archive is streamed out with `exec ... cat`. `docker compose cp` cannot do this:
+`/tmp` in the `backend` service is a tmpfs, which `docker cp` does not see (`Could not
+find the file /tmp/backup.tar.gz in container`). That tmpfs is capped at 64 MiB
+(`size=64m`); raise it for a larger archive. Verified on the e2e VM with the 0.96.1
+images ([operator/upgrade-rollback.md](operator/upgrade-rollback.md)).
 
 > **Version note.** The live (beside-the-server) Postgres backup below is not in
 > the published images before `0.96.0` (the shipped `docker-compose.yml` pins a newer image): there the same
@@ -339,10 +346,28 @@ proceed past that check, and what it then does depends on the backend: on SQLite
 the existing database file and key files are moved aside
 (`*.pre-restore-<timestamp>`); on PostgreSQL only the key files are, and the rows
 are loaded into the tables that already exist, so over a database that holds data
-the restore fails on a duplicate key and leaves the database unchanged (the key
-files have been replaced by then). To restore over a used PostgreSQL database,
-drop and recreate the database first, then restore without the flag. A restore you
-interrupted yourself is the exception, see "If the restore is interrupted" below.
+the restore fails on a duplicate key (`duplicate key value violates unique constraint
+"permissions_pkey"`) and leaves the rows unchanged. **By then the key files have
+already been replaced by the archive's**: if the DEK was rotated after that backup,
+the running install can no longer decrypt (reproduced: MFA logins fail with HTTP 503).
+Move the newest `dek.key.pre-restore-*` and `kek.salt.pre-restore-*` back over
+`dek.key` and `kek.salt` to recover. To restore over a used PostgreSQL database, empty
+it first and then restore with `--overwrite-existing`, which the existing key files
+still need:
+
+```sh
+docker compose stop backend
+docker compose exec -T postgres psql -U keyorix -d keyorix \
+  -c 'DROP SCHEMA public CASCADE; CREATE SCHEMA public;'
+docker compose run --rm -v "$PWD/keyorix-backup-YYYY-MM-DD.tar.gz:/tmp/backup.tar.gz:ro" \
+  backend ./keyorix-server admin restore --input /tmp/backup.tar.gz --overwrite-existing
+docker compose up -d
+```
+
+On the same host, restoring an older backup also needs `--allow-rollback` (see
+"Version-skipping upgrades" below); [operator/upgrade-rollback.md](operator/upgrade-rollback.md)
+§4B is this procedure as a verified rollback. A restore you interrupted yourself is the
+exception, see "If the restore is interrupted" below.
 
 **Recovery point (RPO).** The recovery point is the backup itself: a restore
 brings back exactly what the archive's snapshot held (on PostgreSQL the instant the
@@ -366,8 +391,10 @@ target decrypts every secret, keeps MFA logins, shares and machine tokens workin
 verifies the audit chain against an off-host anchor, does not contain what was
 written after the backup, and that a tampered archive, a populated target and a
 stale backup are all refused. See [operator/drill-backup-restore.md](operator/drill-backup-restore.md).
-The `docker compose` commands above are the same operations in containers; that
-variant of the drill is pending a run on the e2e VM.
+The `docker compose` commands above are the same operations in containers. On the
+e2e VM with the published images, the live backup and its copy-out ran, the DEK
+rotation ran, and so did the in-place restore into an emptied database. The
+fresh-volume restore after `down -v` has not been re-run in containers.
 
 **Manual `pg_dump`/`psql`** is still a reasonable choice if you already have
 a Postgres backup pipeline built around it and don't need the archive's
@@ -427,7 +454,11 @@ every step below on a seeded instance):
 5. On the new host (or the same one): copy `keyorix.yaml`, `certs/` and the secrets
    files, **not** `keys/`; set `storage.type: postgres` and the `database` block
    (host, port, name, user, `ssl_mode`; the password via `KEYORIX_DB_PASSWORD`). Use the
-   **same** `KEYORIX_MASTER_PASSWORD`.
+   **same** `KEYORIX_MASTER_PASSWORD`. Keep `storage.encryption.dek_path` and
+   `salt_path` exactly as they were. Restore refuses an archive whose key paths
+   differ (`restore refuses a mismatched key-file set`), so a binary install's
+   archive (`keys/...`) does not restore unchanged into the Compose stack
+   (`/app/keys/...`).
 6. `keyorix-server admin restore --input migrate.tar.gz`. It installs the key files,
    migrates the empty database, loads every table in one transaction, resynchronises
    the sequences and verifies the audit chain; the last line must read
@@ -455,19 +486,17 @@ TOTP anti-replay state *is* carried over: a user who logged in on SQLite is refu
 same code on PostgreSQL within its 30-second step.
 
 **If the restore is interrupted** (`kill -9`, power loss, the database going away): the
-restore cannot be resumed, but it restarts cleanly. The row load is one transaction, so
-the target never holds a partial set of rows (checked by killing it while migrating and
-while loading: no schema, or a schema with 0 rows). What it leaves behind are the key
-files it installed (`keys/dek.key`, `keys/kek.salt`) and, after the migration step, the
-empty schema, so a plain re-run is refused. Either:
-
-- re-run with `--overwrite-existing` (the refusal message suggests it; the key files are
-  replaced and the previous ones kept as `*.pre-restore-<timestamp>`); or
-- start over: delete the key files the restore installed, drop and recreate the empty
-  database, re-run.
-
-Use the second for anything other than a restore you just interrupted: on a database that
-holds other data, `--overwrite-existing` neither empties it nor is it a merge.
+row load is one transaction, so the target never holds a partial set of rows, and the key
+files are installed only after that transaction commits. A restore killed in between leaves
+`.keyorix-restore-journal.json` next to the first key file; the server refuses to start
+until `keyorix-server admin restore --recover` finishes the restore (data committed) or
+undoes it (not committed); if it cannot vouch for a staged key file it refuses and changes
+nothing. Killed before that journal exists, it leaves only `*.restoring-*` files (removed by
+the next restore or `--recover`) and, after the migration step, the empty schema, so a plain re-run is
+refused: re-run with `--overwrite-existing`, which empties the target's tables inside the
+load transaction. What each failure point leaves, and the recovery, are in
+[operator/restore-failure-modes.md](operator/restore-failure-modes.md). (Releases up to
+v0.96.x installed the key files before the load; see the warning earlier in this section.)
 
 **Rollback.** The SQLite source is not modified by the restore (checked byte for byte,
 including after killed restores), so rolling back before you cut over is to keep running
@@ -525,12 +554,33 @@ and `caddy:2-alpine` follow their major version, so `docker compose pull` also f
 newest patch release of those; to hold either at an exact version, edit its tag in
 `docker-compose.yml` (a PostgreSQL major upgrade is a dump and restore, not a tag change).
 
-Schema migrations run automatically on boot and are additive. **Back up first**
-(section 5, mind its version note). See [UPGRADING.md](UPGRADING.md) for what
-changes on upgrade. In particular, an upgraded deployment whose config never set
-`security.require_mfa` gets a grace period before MFA is enforced: it ends at the first
-administrator MFA enrolment or 30 days after the first start on the new release, whichever
-comes first ([details](UPGRADING.md#mfa-after-an-upgrade-the-grace-period-and-its-banner)).
+Schema migrations run automatically on boot, are additive and are idempotent: they
+run again on every start without changing anything.
+
+**Back up first, concretely:**
+
+1. Take the live backup and stream it out (section 5).
+2. Copy it off the host and record its `sha256sum`.
+3. Make sure the master password is stored off this host too.
+4. Run `admin verify-audit` with `backend` stopped
+   (`docker compose run --rm --no-deps backend ./keyorix-server admin verify-audit`)
+   and check that it says `VALID`.
+
+**Rolling back** depends on the schema floor. Between releases that share it (all of
+v0.96.x), setting the pins back and `up -d` is enough, and data written meanwhile is
+kept. Across a floor change (v0.96.x → v0.97.0), the old release refuses to start on
+the upgraded database, and the only way back is restoring the pre-upgrade backup.
+
+[operator/upgrade-rollback.md](operator/upgrade-rollback.md) is the step-by-step
+runbook, verified on 0.96.1 → 0.96.3 with the published images (SQLite and
+PostgreSQL). It covers the version/schema matrix, timings and what not to do. v0.96.2
+images were never published; go from 0.96.1 to 0.96.3. See
+[UPGRADING.md](UPGRADING.md) for what changes on upgrade. In particular, from this
+release on, an upgraded deployment whose config never set `security.require_mfa` gets a
+grace period before MFA is enforced. It ends at the first administrator MFA enrolment
+or 30 days after the first start on the new release, whichever comes first
+([details](UPGRADING.md#mfa-after-an-upgrade-the-grace-period-and-its-banner)). An
+upgrade within v0.96.x logs no grace line: 0.96.1 → 0.96.3 kept MFA enforced.
 
 ### Running more than one replica
 

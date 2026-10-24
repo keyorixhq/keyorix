@@ -1,0 +1,2 @@
+# kind	dir	reason (README.md)
+testonly	internal/core/storage/storagetest	ADR-121 decision 2: the shared storage test kit

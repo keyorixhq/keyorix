@@ -17,12 +17,20 @@ func QuoteIdentifier(s string) string {
 	return `"` + strings.ReplaceAll(s, `"`, `""`) + `"`
 }
 
-// QuoteLiteral renders s as a single-quoted PostgreSQL string literal (internal quotes
-// doubled). Relies on standard_conforming_strings (the default), so backslashes are
-// literal. See QuoteIdentifier's comment above: this is layer TWO of defense in depth
-// alongside core.validateRotationRef.
+// QuoteLiteral renders s as a PostgreSQL escape-string constant, E'...', with internal
+// backslashes and single quotes doubled. The E prefix makes backslash an escape
+// character whatever standard_conforming_strings says, so the output decodes to s on
+// every server. A plain '...' literal with only quotes doubled is safe only while
+// standard_conforming_strings is on: with it off (a server, database or role setting)
+// `\'` closes the string, and PostgresExecutor.Rotate sends this literal over the simple
+// query protocol, which runs every ;-separated statement. The value can be
+// caller-supplied (on-demand rotation), so this must not depend on server settings
+// (TestQuoteLiteral_SafeWithStandardConformingStringsOff). See QuoteIdentifier's comment
+// above: this is layer TWO of defense in depth alongside core.validateRotationRef.
 func QuoteLiteral(s string) string {
-	return `'` + strings.ReplaceAll(s, `'`, `''`) + `'`
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `'`, `''`)
+	return `E'` + s + `'`
 }
 
 // QuoteMySQLString renders s as a single-quoted MySQL string literal with internal
@@ -40,11 +48,14 @@ func QuoteMySQLString(s string) string {
 	return "'" + s + "'"
 }
 
-// isAlnumByte reports whether b is an ASCII letter or digit. Anything else — '_', '-',
-// '.', '/', ':', a quote, a space — counts as an explicit boundary between identifier
-// segments for PrefixAllowed below.
+// isAlnumByte reports whether b is an ASCII letter or digit, or any non-ASCII byte. Any
+// other ASCII byte — '_', '-', '.', '/', ':', a quote, a space — counts as an explicit
+// boundary between identifier segments for PrefixAllowed below. A non-ASCII byte is
+// never a boundary: it is part of a multi-byte UTF-8 character, usually a letter (é, 日),
+// and "myapp" must not admit "myappé" any more than "myapp2"
+// (TestPrefixAllowed_NonASCIIIsNotABoundary).
 func isAlnumByte(b byte) bool {
-	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9')
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b >= 0x80
 }
 
 // PrefixAllowed reports whether ref is permitted by an allowed-refs prefix allowlist: an

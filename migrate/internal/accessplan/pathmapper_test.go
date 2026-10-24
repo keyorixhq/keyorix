@@ -14,6 +14,8 @@ func testMapper(t *testing.T, overrides ...string) *PathMapper {
 	if err != nil {
 		t.Fatalf("NewPathMapper: %v", err)
 	}
+	// Both mounts listed and empty at the project/environment levels: no cross-mount sharing.
+	m.SetKVTree(map[string]KVMountListing{"secret/": {RootListed: true}, "kv1/": {RootListed: true}})
 	return m
 }
 

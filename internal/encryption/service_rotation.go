@@ -314,6 +314,12 @@ func (s *Service) UpgradeAuthAAD(db *gorm.DB) (*SweepResult, error) {
 // file is modified. The server must be stopped (exclusive key lock must not
 // be held by another process) before running this command.
 func (s *Service) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error {
+	return s.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, nil)
+}
+
+// RotateKEKPassphraseWithPrepare is RotateKEKPassphrase with an
+// AuditKeyChangePrepare callback run before any key file is written.
+func (s *Service) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase string, prepare AuditKeyChangePrepare) error {
 	s.mu.RLock()
 	if !s.initialized {
 		s.mu.RUnlock()
@@ -331,7 +337,7 @@ func (s *Service) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.keyManager.RotateKEKPassphrase(oldPassphrase, newPassphrase)
+	return s.keyManager.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, prepare)
 }
 
 // RewrapDEKWithProvider re-wraps the in-memory DEK with a KEK from newProvider and
@@ -342,6 +348,12 @@ func (s *Service) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error
 // then verify the new provider unwraps the DEK before discarding the previous
 // wrapped-DEK backup.
 func (s *Service) RewrapDEKWithProvider(newProvider crypto.KeyProvider) error {
+	return s.RewrapDEKWithProviderPrepare(newProvider, nil)
+}
+
+// RewrapDEKWithProviderPrepare is RewrapDEKWithProvider with an
+// AuditKeyChangePrepare callback run before the new wrapped DEK is written.
+func (s *Service) RewrapDEKWithProviderPrepare(newProvider crypto.KeyProvider, prepare AuditKeyChangePrepare) error {
 	s.mu.RLock()
 	if !s.initialized {
 		s.mu.RUnlock()
@@ -360,7 +372,7 @@ func (s *Service) RewrapDEKWithProvider(newProvider crypto.KeyProvider) error {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.keyManager.RewrapDEK(newProvider)
+	return s.keyManager.RewrapDEKWithPrepare(newProvider, prepare)
 }
 
 // ValidateKeyFiles validates encryption key files exist with correct

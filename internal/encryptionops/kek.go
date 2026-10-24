@@ -72,10 +72,19 @@ func RotateKEKWithConfig(cfg *config.Config, confirm bool, oldSrc, newSrc crypto
 	defer service.Shutdown()
 	closeGormDB(db)
 
+	// The audit checkpoint key is KEK-derived, so it changes too: the audit
+	// verification state is carried over under both keys (prepared before the
+	// key files are written, completed after they commit).
+	audit, err := openAuditKeyChange(cfg, service)
+	if err != nil {
+		return err
+	}
+
 	fmt.Println("Rotating KEK — re-wrapping DEK under new passphrase...")
-	if err := service.RotateKEKPassphrase(oldPassphrase, newPassphrase); err != nil {
+	if err := service.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, audit.prepare); err != nil {
 		return fmt.Errorf("KEK rotation failed: %w", err)
 	}
+	audit.complete(service)
 
 	// EvidenceSignKey/AuditCheckpointKey return fresh copies of the raw 32-byte
 	// HMAC key material (KeyManager.GetEvidenceSignKey/GetAuditCheckpointKey) —
@@ -99,8 +108,10 @@ func RotateKEKWithConfig(cfg *config.Config, confirm bool, oldSrc, newSrc crypto
 	fmt.Println()
 	fmt.Println("Update the master passphrase in your deployment configuration to the new value before restarting the server.")
 	fmt.Println()
-	fmt.Println("Note: evidence packs and audit checkpoints signed before this rotation will")
-	fmt.Println("report as 'superseded key version' (not tampered) under `compliance verify`.")
+	fmt.Println("Note: evidence packs signed before this rotation will report as 'superseded")
+	fmt.Println("key version' (not tampered) under `compliance verify`. Audit checkpoints signed")
+	fmt.Println("before it stay verifiable with the previous checkpoint key; export the new one")
+	fmt.Println("with `admin audit export-checkpoint-key`.")
 	warnLeftoverMigrateBackups(cfg, baseDir)
 	return nil
 }

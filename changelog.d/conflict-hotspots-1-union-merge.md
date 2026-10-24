@@ -1,0 +1,2 @@
+### Internal
+- **Merge conflicts: `merge=union` for five append-only exemption ledgers, plus a hotspot ranking.** `docs/atomicity-exempt.tsv`, `besteffort-exempt.tsv`, `full-row-write-exempt.tsv`, `child-parent-liveness-exempt.tsv` and `docs/state-map/class-overrides.tsv` keep both sides' rows when git merges concurrent appends locally; `TestGitattributesUnionLedgers` proves it. GitHub's own merge ignores merge attributes. See `docs/CONFLICT-HOTSPOTS.md`.

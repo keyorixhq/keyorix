@@ -288,7 +288,14 @@ func doctorTLS(ctx context.Context, rep *doctorReport, serverURL, caFile string,
 			"if the server uses a private CA, trust it with `keyorix config set ca_file <ca.pem>` (or --ca-file); otherwise fix the certificate on the server (name, expiry, intermediate certificates)")
 		return
 	}
-	detail := fmt.Sprintf("chain verifies against %s (%s)%s", tr.TrustSource, tr.TLSVersion, chain)
+	version := tr.TLSVersion
+	if tr.KeyExchange != "" {
+		version += ", key exchange " + tr.KeyExchange
+		if !tr.PostQuantumKeyExchange {
+			version += " (not post-quantum)"
+		}
+	}
+	detail := fmt.Sprintf("chain verifies against %s (%s)%s", tr.TrustSource, version, chain)
 	if len(tr.Chain) > 0 {
 		left := tr.Chain[0].NotAfter.Sub(doctorNow())
 		days := int(left.Hours() / 24)

@@ -38,7 +38,7 @@ func TestPostgres_RotateBuildsAlterRole(t *testing.T) {
 	fake := &fakePG{}
 	require.NoError(t, pgWith(fake, "app_").Rotate(context.Background(), "app_svc", "n3wp4ss"))
 	assert.True(t, fake.called)
-	assert.Equal(t, `ALTER ROLE "app_svc" WITH PASSWORD 'n3wp4ss'`, fake.sql)
+	assert.Equal(t, `ALTER ROLE "app_svc" WITH PASSWORD E'n3wp4ss'`, fake.sql)
 }
 
 // A crafted role name / password cannot break out of the statement: identifiers double
@@ -47,7 +47,7 @@ func TestPostgres_RotateEscapesInjection(t *testing.T) {
 	fake := &fakePG{}
 	err := pgWith(fake, `ro"le`).Rotate(context.Background(), `ro"le`, `pa'ss`)
 	require.NoError(t, err)
-	assert.Equal(t, `ALTER ROLE "ro""le" WITH PASSWORD 'pa''ss'`, fake.sql)
+	assert.Equal(t, `ALTER ROLE "ro""le" WITH PASSWORD E'pa''ss'`, fake.sql)
 }
 
 // Fail-closed: a backend with no allowed_refs refuses to rotate (it never reaches the
