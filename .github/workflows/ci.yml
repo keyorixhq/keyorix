@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, 'release/**']
+    branches: [main, 'release/**', 'ci-failfast-1/dryrun']
   pull_request:
     # `labeled` added (on top of the implicit opened/synchronize/reopened
     # default) so adding the ci:full label actually fires a new run -- a
@@ -1051,7 +1051,7 @@ jobs:
       # once instead of after the slowest leg (CI-FAILFAST-1, measured in the PR).
       # Every other event keeps running all legs, so a PR or nightly run still
       # shows every failing leg at once.
-      fail-fast: ${{ github.event_name == 'merge_group' }}
+      fail-fast: ${{ (github.event_name == 'merge_group' || github.ref == 'refs/heads/ci-failfast-1/dryrun') }}
       matrix:
         include:
           # root was a single ~1160s leg (measured 2026-08-03) -- slower than
@@ -1362,6 +1362,9 @@ jobs:
     env:
       KEYORIX_TEST_PG_DSN: "host=localhost port=5432 dbname=keyorix user=keyorix sslmode=disable password=keyorix123"
     steps:
+      - name: DRYRUN deliberate test-leg failure (CI-FAILFAST-1 probe, throwaway branch only)
+        if: github.ref == 'refs/heads/ci-failfast-1/dryrun' && matrix.leg == 'handlers-2'
+        run: echo 'deliberate failure to prove matrix fail-fast'; exit 1
       # Merge-queue selection (CI-SELECT-1): a leg none of whose packages the
       # group can affect skips every step below and still reports success, so
       # the required build-and-test context sees a green matrix. Outside a
@@ -1849,6 +1852,9 @@ jobs:
     permissions:
       contents: read
     steps:
+      - name: DRYRUN deliberate e2e-smoke failure (CI-FAILFAST-1 probe, throwaway branch only)
+        if: github.ref == 'refs/heads/ci-failfast-1/dryrun'
+        run: echo 'deliberate failure at ~7 min to prove the run cancel'; sleep 400; exit 1
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -3610,7 +3616,7 @@ jobs:
   # gating on repo-guards (or adr-numbers) would delay every green round.
   failfast-preflight:
     needs: [preflight]
-    if: failure() && github.event_name == 'merge_group'
+    if: failure() && (github.event_name == 'merge_group' || github.ref == 'refs/heads/ci-failfast-1/dryrun')
     permissions:
       contents: read
       actions: write
@@ -3620,7 +3626,7 @@ jobs:
 
   failfast-static-analysis:
     needs: [static-analysis]
-    if: failure() && github.event_name == 'merge_group'
+    if: failure() && (github.event_name == 'merge_group' || github.ref == 'refs/heads/ci-failfast-1/dryrun')
     permissions:
       contents: read
       actions: write
@@ -3630,7 +3636,7 @@ jobs:
 
   failfast-repo-guards:
     needs: [repo-guards]
-    if: failure() && github.event_name == 'merge_group'
+    if: failure() && (github.event_name == 'merge_group' || github.ref == 'refs/heads/ci-failfast-1/dryrun')
     permissions:
       contents: read
       actions: write
@@ -3640,7 +3646,7 @@ jobs:
 
   failfast-e2e-smoke:
     needs: [e2e-smoke]
-    if: failure() && github.event_name == 'merge_group'
+    if: failure() && (github.event_name == 'merge_group' || github.ref == 'refs/heads/ci-failfast-1/dryrun')
     permissions:
       contents: read
       actions: write
@@ -3650,7 +3656,7 @@ jobs:
 
   failfast-web-e2e-real-smoke:
     needs: [web-e2e-real-smoke]
-    if: failure() && github.event_name == 'merge_group'
+    if: failure() && (github.event_name == 'merge_group' || github.ref == 'refs/heads/ci-failfast-1/dryrun')
     permissions:
       contents: read
       actions: write
