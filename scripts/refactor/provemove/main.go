@@ -329,7 +329,7 @@ var (
 
 func setOf(s string) map[string]bool {
 	m := map[string]bool{}
-	for _, w := range strings.Fields(s) {
+	for w := range strings.FieldsSeq(s) {
 		m[w] = true
 	}
 	return m
