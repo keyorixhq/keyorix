@@ -40,7 +40,7 @@ exactly N days before the lookup counts.
   audit log.
 - **Compliance controls and digest.** The `dormant-access` control detail and the
   digest line read "N dormant role grant(s) (no use in the last 90 days)".
-- **CLI.** `keyorix accessreview` still prints `never` for an entry without
+- **CLI.** `keyorix access-review` still prints `never` for an entry without
   `last_used_at`; read it as "none in the last `activity_window_days` days" (the API
   response it reads carries the window). The CLI wording is not changed here and is a
   follow-up.

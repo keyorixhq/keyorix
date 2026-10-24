@@ -1981,9 +1981,9 @@ permanently unreadable the moment you enable this.
 
 When enabled, reading a "restricted" secret's **value** (not its metadata —
 `GetSecret`/listing are unaffected) requires an approved, **secret-scoped**
-access request: `keyorix request secret-access --secret-id <id> --user
-<email>` to request it, `keyorix request review --id <id> --action approve
---by <admin-email>` to approve it (an administrator at the secret's project).
+access request: `keyorix request secret-access --secret-id <id> --reason
+<why>` to request it, `keyorix request review --id <id> --action approve` to
+approve it (an administrator at the secret's project).
 This reuses the same `AccessRequest` model/flow as `dual_control` above
 (ADR-024), narrowed with a `SecretID` rather than granting a role. A read whose
 acting principal cannot be identified as a specific user — a machine/service
