@@ -106,7 +106,15 @@ func clusterViolations(files []string, clusters map[string][]string) []string {
 	}
 	for c, pats := range clusters {
 		for _, p := range pats {
-			if !used[c+"/"+p] {
+			switch {
+			case used[c+"/"+p]:
+			case c == kernelCluster:
+				// Removing the line is what makes an accidental kernel move pass
+				// (PR #3695 re-review, N4), so the message does not suggest it first.
+				msgs = append(msgs, fmt.Sprintf("CLUSTERS.d/kernel.txt: kernel file %q is missing from internal/core. "+
+					"Kernel files do not leave internal/core (ADR-121 decision 1; moving one needs its own ADR): restore it. "+
+					"Only if it was deleted or merged into another kernel file on purpose, remove the line", p))
+			default:
 				msgs = append(msgs, fmt.Sprintf("CLUSTERS.d/%s.txt: %q matches no file in internal/core: remove the stale line", c, p))
 			}
 		}
@@ -172,6 +180,14 @@ func TestClusterViolations_SelfTest(t *testing.T) {
 	})
 	if len(msgs) != 1 || !strings.Contains(msgs[0], `reports.txt: "dashboard.go" matches no file`) {
 		t.Fatalf("a stale pattern must be red: %v", msgs)
+	}
+
+	msgs = clusterViolations([]string{"service.go", "secret_access_list.go", "dashboard.go", "share_authz.go"}, map[string][]string{
+		kernelCluster: {"service.go", "auth.go"}, "reports": {"secret_access_*.go", "dashboard.go"}, "sharing": {"share_*.go"},
+	})
+	if len(msgs) != 1 || !strings.Contains(msgs[0], `kernel file "auth.go" is missing`) || !strings.Contains(msgs[0], "ADR-121 decision 1") ||
+		strings.Contains(msgs[0], "remove the stale line") {
+		t.Fatalf("a kernel file gone from internal/core must cite decision 1, not ask for the line's removal: %v", msgs)
 	}
 
 	dir := t.TempDir()

@@ -3,6 +3,7 @@ package ports
 import (
 	"fmt"
 	"maps"
+	"path"
 	"slices"
 	"strings"
 	"testing"
@@ -24,7 +25,9 @@ import (
 // coreProductionKeyorixDeps is the exact set of keyorix packages in
 // `go list -deps ./internal/core` (internal/core itself excluded). A PR that adds
 // or removes a keyorix import anywhere in core's production closure edits this
-// list, so the change is reviewed (R2). An extraction PR adds its leaf here.
+// list, so the change is reviewed (R2). An extraction PR adds its leaf here
+// and registers it in internal/testutil/srcpath/corefamily.d
+// (TestCoreDepsAfterSplitAreRegisteredLeavesGuard).
 var coreProductionKeyorixDeps = []string{
 	"internal/besteffort",
 	"internal/core/certparse",
@@ -44,6 +47,54 @@ var coreProductionKeyorixDeps = []string{
 	"internal/storage/models",
 	"pkg/licenseverify",
 	"pkg/trust",
+}
+
+// coreDepsBeforeSplit is coreProductionKeyorixDeps as it stood when ADR-121
+// was accepted, frozen: none of these packages ever held internal/core code.
+// A keyorix package that enters core's closure later is either a leaf
+// extracted from core, which must be registered `extracted` in corefamily.d so
+// R1 and every R5 source guard scan it, or a package that never held core
+// code, which is added here in a reviewed PR that says why. PR #3695
+// re-review N4: following R2's message alone let a kernel file leave core
+// for a leaf no source guard scanned.
+var coreDepsBeforeSplit = []string{
+	"internal/besteffort",
+	"internal/core/certparse",
+	"internal/core/dsn",
+	"internal/core/ports",
+	"internal/core/rules",
+	"internal/core/storage",
+	"internal/csvsafe",
+	"internal/i18n",
+	"internal/identity",
+	"internal/logging",
+	"internal/netutil",
+	"internal/protectedmetrics",
+	"internal/secretenv",
+	"internal/secrettemplate",
+	"internal/securefiles",
+	"internal/storage/models",
+	"pkg/licenseverify",
+	"pkg/trust",
+}
+
+// unregisteredCoreDeps returns one message per keyorix package in graph
+// (minus root) that is neither in before nor inside a registered extracted dir
+// (the dir itself or a package under it, such as <leaf>/internal/x).
+func unregisteredCoreDeps(graph map[string][]string, root string, before, extracted []string) []string {
+	extra, _ := keyorixDepsDiff(graph, root, before)
+	var msgs []string
+	for _, dep := range extra {
+		if slices.ContainsFunc(extracted, func(dir string) bool { return dep == dir || strings.HasPrefix(dep, dir+"/") }) {
+			continue
+		}
+		msgs = append(msgs, fmt.Sprintf("%s entered internal/core's production closure after the ADR-121 split began and is not "+
+			"a registered core-family leaf. If it was extracted from internal/core, add "+
+			"internal/testutil/srcpath/corefamily.d/%s.tsv (kind `extracted`, ADR-121 R1/R5) so the core-family source guards scan it; "+
+			"kernel files never move (ADR-121 decision 1). If it never held core code, add it to coreDepsBeforeSplit with the reason",
+			dep, path.Base(dep)))
+	}
+	return msgs
 }
 
 // importsCoreViolations returns one message per family package whose
@@ -79,10 +130,11 @@ func keyorixDepsDiff(graph map[string][]string, root string, want []string) (ext
 	return extra, missing
 }
 
-// TestCoreFamilyNeverImportsCore is R1: no registered extracted package has
-// internal/core in its production closure. With no package registered yet it
-// checks nothing and says so.
-func TestCoreFamilyNeverImportsCore(t *testing.T) {
+// TestCoreFamilyNeverImportsCoreGuard is R1: no registered extracted package
+// has internal/core in its production closure. With no package registered yet
+// it checks nothing and says so. (The Guard suffix puts it in
+// scripts/ci/run-guards.sh, so it runs on every merge-queue run.)
+func TestCoreFamilyNeverImportsCoreGuard(t *testing.T) {
 	dirs := srcpath.CoreFamilyExtractedDirs()
 	if len(dirs) == 0 {
 		t.Log("no package registered in the core family yet (internal/testutil/srcpath/corefamily.d): nothing to check")
@@ -96,10 +148,10 @@ func TestCoreFamilyNeverImportsCore(t *testing.T) {
 	}
 }
 
-// TestCoreKeyorixDepsMatchAllowlist is R2: the keyorix packages in core's
+// TestCoreKeyorixDepsMatchAllowlistGuard is R2: the keyorix packages in core's
 // production closure are exactly coreProductionKeyorixDeps, and no test-only
 // package is among them.
-func TestCoreKeyorixDepsMatchAllowlist(t *testing.T) {
+func TestCoreKeyorixDepsMatchAllowlistGuard(t *testing.T) {
 	graph := coreClosure(t)
 	for _, p := range srcpath.CoreTestOnlyDirs {
 		if chain := chainTo(graph, coreImportPath, keyorixPrefix+p); chain != nil {
@@ -110,11 +162,22 @@ func TestCoreKeyorixDepsMatchAllowlist(t *testing.T) {
 	for _, e := range extra {
 		chain := chainTo(graph, coreImportPath, keyorixPrefix+e)
 		t.Errorf("new keyorix package in internal/core's production closure: %s (chain: %s). "+
-			"If the import is intended, add it to coreProductionKeyorixDeps in this PR (ADR-121 R2); "+
+			"If the import is intended, add it to coreProductionKeyorixDeps in this PR (ADR-121 R2). "+
+			"If it is a leaf extracted from internal/core, also register it as `extracted` in "+
+			"internal/testutil/srcpath/corefamily.d/<leaf>.tsv, or the core-family source guards (R5) stop scanning the moved code; "+
 			"an extracted leaf's internals belong under <leaf>/internal/", e, strings.Join(chain, " -> "))
 	}
 	for _, m := range missing {
 		t.Errorf("%s is listed in coreProductionKeyorixDeps but internal/core no longer depends on it: remove it from the list", m)
+	}
+}
+
+// TestCoreDepsAfterSplitAreRegisteredLeavesGuard: every keyorix package that
+// entered core's production closure after coreDepsBeforeSplit was frozen is a
+// registered extracted leaf (or a package under one).
+func TestCoreDepsAfterSplitAreRegisteredLeavesGuard(t *testing.T) {
+	for _, msg := range unregisteredCoreDeps(coreClosure(t), coreImportPath, coreDepsBeforeSplit, srcpath.CoreFamilyExtractedDirs()) {
+		t.Error(msg)
 	}
 }
 
@@ -155,5 +218,19 @@ func TestCoreFamilyDeps_SelfTest(t *testing.T) {
 	extra, missing = keyorixDepsDiff(graph, coreImportPath, []string{"internal/anomaly", "internal/core/rules"})
 	if len(extra)+len(missing) != 0 {
 		t.Errorf("exact list must be green: extra=%v missing=%v", extra, missing)
+	}
+
+	// A new dep of core that is not a registered leaf is red, with the registry file named.
+	sub := keyorixPrefix + "internal/anomaly/internal/score"
+	graph = map[string][]string{coreImportPath: {rules, leaf, sub}, rules: nil, leaf: nil, sub: nil}
+	msgs = unregisteredCoreDeps(graph, coreImportPath, []string{"internal/core/rules"}, nil)
+	if len(msgs) != 2 || !strings.Contains(msgs[0], "corefamily.d/anomaly.tsv") {
+		t.Fatalf("an unregistered new dep and its subpackage must be red, naming corefamily.d/<leaf>.tsv: %v", msgs)
+	}
+	if msgs := unregisteredCoreDeps(graph, coreImportPath, []string{"internal/core/rules"}, []string{"internal/anomaly"}); len(msgs) != 0 {
+		t.Errorf("a registered leaf and the packages under it are green: %v", msgs)
+	}
+	if msgs := unregisteredCoreDeps(graph, coreImportPath, []string{"internal/core/rules"}, []string{"internal/anom"}); len(msgs) != 2 {
+		t.Errorf("a registered dir is matched by path element, not string prefix: %v", msgs)
 	}
 }
