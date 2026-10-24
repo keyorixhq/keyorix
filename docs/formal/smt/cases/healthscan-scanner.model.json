@@ -1,0 +1,257 @@
+{
+  "case": "healthscan-scanner",
+  "description": "The least-privilege policy keyorix-migrate ships for 'vault scan' (sys/*, auth/*, +/metadata/*).",
+  "constructed": false,
+  "sources": [
+    "migrate/healthscan-policy.hcl#keyorix-healthscan"
+  ],
+  "kv_mounts": [
+    {
+      "path": "secret/",
+      "kv_version": 2
+    },
+    {
+      "path": "team-b/",
+      "kv_version": 2
+    },
+    {
+      "path": "kv1-legacy/",
+      "kv_version": 1
+    }
+  ],
+  "vault_rules": [
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/health",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/license/status",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/seal-status",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/leader",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/storage/raft/configuration",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/storage/raft/autopilot/state",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/audit",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "auth/token/accessors",
+      "capabilities": [
+        "list"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/auth",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "auth/+/role",
+      "capabilities": [
+        "list"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "auth/+/role/+",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/policies/acl",
+      "capabilities": [
+        "list"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/policies/acl/+",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/mounts",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/leases/lookup/+",
+      "capabilities": [
+        "list"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "+/config",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "+/metadata/*",
+      "capabilities": [
+        "list",
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/config/state/sanitized",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/namespaces",
+      "capabilities": [
+        "list"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "sys/storage/raft/snapshot-auto/config",
+      "capabilities": [
+        "list",
+        "read"
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "mount": "secret/",
+      "path_prefix": "",
+      "project_id": 1,
+      "environment_id": 11
+    }
+  ],
+  "grants": [],
+  "unmappable": [
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/health",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/license/status",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/seal-status",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/leader",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/storage/raft/configuration",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/storage/raft/autopilot/state",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/audit",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:auth/token/accessors",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/auth",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:auth/+/role",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:auth/+/role/+",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/policies/acl",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/policies/acl/+",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/mounts",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/leases/lookup/+",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:+/config",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:+/metadata/*",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/config/state/sanitized",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/namespaces",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:sys/storage/raft/snapshot-auto/config",
+      "category": "mount-management"
+    }
+  ]
+}
