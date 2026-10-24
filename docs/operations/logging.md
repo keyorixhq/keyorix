@@ -26,7 +26,8 @@ Lines about an HTTP request (the access log, panics, and core's audit-write fail
 
 | Field | Meaning |
 |---|---|
-| `request_id` | the request's correlation id (see below) |
+| `request_id` | the request's correlation id, minted by the server (see below) |
+| `client_request_id` | the caller's own `X-Request-ID`, cleaned; only when one was sent |
 | `principal_type` | `anonymous`, `user` or `machine_identity`: who the request authenticated as |
 | `route` | the matched route pattern, e.g. `/api/v1/secrets/{id}`, or `unmatched`. Never the raw path |
 
@@ -39,21 +40,29 @@ Level for the many pre-existing plain log lines is taken from their prefix: `PAN
 
 ## Request ids
 
-- A request's `X-Request-ID` header is used as its id when present. It is cleaned first: printable
-  ASCII only, at most 128 characters. Otherwise the server mints a random id.
-- The id is returned in the response's `X-Request-ID` header, so "what was the id of the failing
-  call" can be answered from the client side and grepped here.
+- The server mints every request's id (24 hex characters). A caller's `X-Request-ID` is not
+  adopted: it is cleaned (printable ASCII only, at most 128 characters) and logged as
+  `client_request_id` next to our `request_id`, so a reverse proxy's own id still finds the
+  line.
+- The server's id is returned in the response's `X-Request-ID` header, so "what was the id of
+  the failing call" can be answered from the client side and grepped here.
 - The id travels from the HTTP edge through the request context into core, so a core log line for
   that request (for example a failed audit write) carries it. Audit writes that continue after the
   request has finished keep the same id.
 - gRPC requests do not carry a request id yet.
 
-### Not yet: the id on the audit row
+### The id on the audit row
 
-The `audit_events` row does not store the request id. Its fields are covered by the tamper-evident
-hash chain, and adding a column to a hashed record, or adding an unhashed one next to it, changes
-what the chain proves. That is a product decision, so it is deliberately not done here. Until then,
-correlate an audit event with its request by time, actor and `ip_address`.
+Every audit row an HTTP request writes stores the server's id in `audit_events.request_id`
+(NULL for scheduler jobs, startup events, gRPC calls and rows written by a replica older than
+schema epoch 6). Join an audit row with its log lines on it.
+
+The column is **outside the tamper-evident hash chain** and is **advisory**: anyone with write
+access to the database can change it, and audit verification will not notice. After joining on
+`request_id`, confirm the match on the hash-covered fields (the log line's principal and route
+against the audit row's actor, event type and time). The SIEM forwarder's copy of each event
+(`request_id` in its payload) is the off-box record of the value at write time. Design:
+`docs/specs/audit-request-id.md`.
 
 ## Secrets in logs
 

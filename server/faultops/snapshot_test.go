@@ -143,6 +143,9 @@ var presenceOnlyFields = map[string]string{
 // OTHER models still produces a different canonicalRow() output -- i.e. the
 // oracle can still see it.
 var typeScopedPresenceOnlyFields = map[string]map[string]string{
+	"AuditEvent": {
+		"RequestID": "server-minted random id of the HTTP request that wrote the row (AUDIT-REQUEST-ID-1, middleware.LogContext) -- the reference and fault worlds never mint the same one. Presence still compared: a request-written row (set) versus a scheduler/startup row (NULL) stays distinguishable. Table-scoped because AccessRequestApproval.RequestID is a deterministic foreign key that must stay byte-compared (TestCanonicalRow_AccessRequestApprovalRequestIDStillCompared).",
+	},
 	"LoginAttempt": {
 		"ReservationKey": "generateSecureToken()-random reservation identifier minted by core.ReserveLoginAttempt per request (#2956 follow-up, models.go LoginAttempt.ReservationKey) — the reference and fault worlds never mint the same one, so without this every reserved LoginAttempt row differs byte-for-byte. Presence still compared: a reservation row versus a plain RecordLoginAttempt row (nil key) stays distinguishable.",
 	},
