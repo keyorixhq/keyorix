@@ -1,0 +1,1 @@
+internal/cryptoinventory	none	-	new in RD-CBOM-1: read-only crypto inventory, CycloneDX 1.6 CBOM export and quantum-risk score (R&D prototype); reads configuration and certificates, makes no auth, storage or key decisions; unit-tested in inventory_test.go, cbom_test.go and risk_test.go	pending
