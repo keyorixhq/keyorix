@@ -39,3 +39,25 @@ KEYORIX_K8S_E2E_ONLY=j6 KEYORIX_K8S_E2E_CLUSTER=my-cluster ./scripts/k8s-e2e/run
 Other knobs: `KEYORIX_K8S_E2E_CLUSTER` (kind cluster name),
 `KEYORIX_K8S_E2E_KEEP_CLUSTER=0` (delete the cluster on exit),
 `KEYORIX_K8S_E2E_IMAGE_TAG`.
+
+## multi-replica-secret.sh: two replicas in Secret mode
+
+Separate from `run.sh`: `scripts/k8s-e2e/multi-replica-secret.sh` installs the chart
+with `server.replicas=2` in Secret mode (`server.keysSecret`,
+docs/multi-replica-keys.md) on its own kind cluster (`ha-secret-keys-1-kmrs`):
+
+- the key Secret comes from `keyorix-server admin encryption key-secret generate`
+  (immutable), the auth Secret from `--from-file`; both replicas Ready, no keys PVC,
+  `key_dir_lock: database`, the pod's key directory read-only, the database's
+  `dek.epoch` equal to the Secret's fingerprint;
+- a secret written through one pod reads back through the other;
+- a DEK rotation in a workspace (`key-secret unpack`, scale to 0,
+  `admin encryption rotate`, `key-secret export` as a new Secret): a pod on the old
+  Secret is refused (DEK epoch), `helm upgrade` to the new one brings both back and
+  the secret still reads;
+- a rolling restart, then `admin verify-audit` with the checkpoint key: VALID.
+
+Key material stays in a 0700 work directory and is never printed. Knobs:
+`KEYORIX_KMRS_CLUSTER`, `KEYORIX_KMRS_KEEP_CLUSTER=1`, `KEYORIX_KMRS_IMAGE_TAG`.
+It replaces `multi-replica.sh` (two replicas on a ReadWriteMany keys volume), which
+the chart now refuses.

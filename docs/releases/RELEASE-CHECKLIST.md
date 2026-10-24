@@ -17,8 +17,14 @@ example `v0.96.1`) throughout.
       weekly mutation run is stopped as of 2026-10-23 and would only cover
       `internal/core` and `internal/storage/store`):
       `GOMAXPROCS=2 gremlins unleash --workers 2 ./internal/crypto` and the same for
-      `./internal/keyfiles`. Test efficacy must not be lower than the last recorded
-      value (2026-10-23: crypto 88.2%, keyfiles 100%; the crypto survivors are #3612).
+      `./internal/keyfiles`, `./internal/securefiles`, `./internal/recoverykey` and
+      `./internal/evidencesink` (use `--workers 1` for securefiles: its RLIMIT tests
+      are process-wide). Test efficacy must not be lower than the last recorded
+      value (2026-10-23: crypto 98.8% after #3612, keyfiles 100%, securefiles 98.3%,
+      recoverykey 82.4%, evidencesink 100%; the three remaining crypto survivors are
+      equivalent mutants listed in `internal/crypto/mutation_equivalents_test.go`, the
+      rest are listed as equivalent in the MUTANT-SEC-1 commits and `run-mutation.sh`
+      holds the floors).
       Add `./internal/secretenv` and `./internal/saml` once their mutants are
       reachable (today most are not covered). Record the new numbers here when they
       change.

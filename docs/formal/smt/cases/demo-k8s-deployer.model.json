@@ -1,0 +1,45 @@
+{
+  "case": "demo-k8s-deployer",
+  "description": "Migration demo Kubernetes role deployer (token_policies=mobile-readwrite).",
+  "constructed": false,
+  "sources": [
+    "scripts/demo/vault-migration-demo.sh#mobile-readwrite"
+  ],
+  "kv_mounts": [
+    {
+      "path": "secret/",
+      "kv_version": 2
+    },
+    {
+      "path": "kv1-legacy/",
+      "kv_version": 1
+    }
+  ],
+  "vault_rules": [
+    {
+      "policy": "mobile-readwrite",
+      "path": "secret/data/mobile-app/*",
+      "capabilities": [
+        "read",
+        "list",
+        "create",
+        "update"
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "mount": "secret/",
+      "path_prefix": "",
+      "project_id": 1,
+      "environment_id": 11
+    }
+  ],
+  "grants": [],
+  "unmappable": [
+    {
+      "source_ref": "policy:mobile-readwrite path:secret/data/mobile-app/*",
+      "category": "path-narrower-than-scope"
+    }
+  ]
+}

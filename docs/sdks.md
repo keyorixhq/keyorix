@@ -13,6 +13,35 @@ declares `0.3.0`; see that repo's `COMPATIBILITY.md` for the exact server
 commit each version was last verified against, and each SDK's own
 `CHANGELOG.md` for what changed.
 
+## Installing
+
+**The PyPI, npm and Maven Central packages are not published yet.**
+`pip install keyorix`, `npm install @keyorixhq/sdk` and the
+`com.keyorix:keyorix-sdk` Maven dependency do not resolve today. Only the Go
+module is installable from a registry:
+
+```bash
+go get github.com/keyorixhq/keyorix-sdks/go
+```
+
+**Node.js, from source** (run and verified; the package loads and exports
+`Client` and `login`):
+
+```bash
+git clone https://github.com/keyorixhq/keyorix-sdks.git
+npm pack ./keyorix-sdks/node
+npm install ./keyorixhq-sdk-0.3.0.tgz
+```
+
+npm cannot install a subdirectory of a git repository directly, hence the
+`npm pack` step.
+
+**Python and Java, from source:** not verified yet. The Python package builds
+with `setuptools` (`python/pyproject.toml`) and the Java one with Maven
+(`java/pom.xml`), but no install command for either has been run end to end,
+so none is given here. See the `README.md` in the `python/` and `java/`
+directories of the `keyorix-sdks` clone.
+
 ## Authentication
 
 All three token types the server issues present identically over the wire
