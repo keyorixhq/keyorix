@@ -101,9 +101,8 @@ func (e *PostgresExecutor) Rotate(ctx context.Context, ref, newValue string) err
 // defense against a role name reaching this backend through any future write path.
 func quoteIdentifier(s string) string { return quote.QuoteIdentifier(s) }
 
-// quoteLiteral renders s as a single-quoted PostgreSQL string literal (internal quotes
-// doubled). Relies on standard_conforming_strings (the default), so backslashes are
-// literal. Thin wrapper over quote.QuoteLiteral — see quoteIdentifier's comment above:
+// quoteLiteral renders s as a PostgreSQL E'...' string constant (internal backslashes
+// and quotes doubled), safe whatever standard_conforming_strings is set to. Thin wrapper over quote.QuoteLiteral — see quoteIdentifier's comment above:
 // this is layer TWO of defense in depth alongside core.validateRotationRef.
 func quoteLiteral(s string) string { return quote.QuoteLiteral(s) }
 

@@ -480,7 +480,7 @@ func TestPostgres_S23_RotateMultipleDoubleQuotesInRole(t *testing.T) {
 	// Role: ro"le"name — two embedded double-quotes.
 	err := e.Rotate(context.Background(), `ro"le"name`, "pw")
 	require.NoError(t, err)
-	assert.Equal(t, `ALTER ROLE "ro""le""name" WITH PASSWORD 'pw'`, fake.sql)
+	assert.Equal(t, `ALTER ROLE "ro""le""name" WITH PASSWORD E'pw'`, fake.sql)
 }
 
 // ---------------------------------------------------------------------------
