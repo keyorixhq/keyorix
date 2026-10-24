@@ -9,6 +9,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -66,11 +67,13 @@ func TestConcurrency_GroupRoleGrant_CrossReplicaPostgres_SoDBypass(t *testing.T)
 	require.NoError(t, err)
 	roleA, err := setupCore.Storage().CreateRole(ctx, roleAName, "grants roles.assign")
 	require.NoError(t, err)
+	require.NoError(t, setupCore.Storage().SetRoleAssignableScope(ctx, roleA.ID, models.RoleAssignableAny)) // granted at Scope{} below (#3546)
 	require.NoError(t, setupCore.AssignPermissionToRole(ctx, 0, roleA.ID, rolesAssignID, false))
 	roleBName, err := identity.NewFoldedName("sod-group-race-role-b")
 	require.NoError(t, err)
 	roleB, err := setupCore.Storage().CreateRole(ctx, roleBName, "grants secrets.delete")
 	require.NoError(t, err)
+	require.NoError(t, setupCore.Storage().SetRoleAssignableScope(ctx, roleB.ID, models.RoleAssignableAny))
 	require.NoError(t, setupCore.AssignPermissionToRole(ctx, 0, roleB.ID, secretsDeleteID, false))
 
 	_, err = setupCore.CreateSoDPolicy(ctx, bootRes.User.ID, "group-race-policy", "roles.assign + secrets.delete is toxic", "roles.assign", "secrets.delete")
@@ -196,6 +199,7 @@ func TestConcurrency_TwoGroupGrants_SharedMember_NoDeadlock(t *testing.T) {
 	require.NoError(t, err)
 	role, err := setupCore.Storage().CreateRole(ctx, roleName, "grants secrets.read")
 	require.NoError(t, err)
+	require.NoError(t, setupCore.Storage().SetRoleAssignableScope(ctx, role.ID, models.RoleAssignableAny)) // granted at Scope{} below (#3546)
 	require.NoError(t, setupCore.AssignPermissionToRole(ctx, 0, role.ID, secretsReadID, false))
 
 	// Two users, M1 (the shared member) and M2/M3. Group1 = {M1, M2}, sorted
