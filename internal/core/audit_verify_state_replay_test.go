@@ -100,11 +100,14 @@ func TestIncrementalVerify_RolledBackStateWithinProcessRejected(t *testing.T) {
 
 	putAuditVerifyState(t, c, before)
 	r := incrVerify(t, c)
-	assert.NotEqual(t, AuditVerifyStatusValid, r.Status, "a rolled-back state must not hide the failure")
-	assert.Contains(t, r.StateReason, "older than generation")
+	// The chain records the failure after the put-back row was saved: a sticky
+	// discontinuity (AUDIT-VERIFY-STATE-1), stricter than the generation check.
+	assert.Equal(t, AuditVerifyStatusBroken, r.Status, "a rolled-back state must not hide the failure")
+	assert.Contains(t, r.Reason, "verification state discontinuity (before a recorded break)")
 }
 
-// A deleted state row is not a fresh start for a process that already read one.
+// A deleted state row is not a fresh start for a process that already read one:
+// a sticky discontinuity, reported in the chain by the next writer.
 func TestIncrementalVerify_DeletedStateRowReported(t *testing.T) {
 	t.Parallel()
 	c, db, clk := newIncrementalTestCore(t, 7)
@@ -114,11 +117,13 @@ func TestIncrementalVerify_DeletedStateRowReported(t *testing.T) {
 	require.NoError(t, db.Where("key = ?", auditVerifyStateKey).Delete(&models.SystemMetadata{}).Error)
 
 	r := incrVerify(t, c)
-	assert.Equal(t, AuditVerifyStatusNotProven, r.Status)
-	assert.Contains(t, r.StateReason, "missing although this server already read")
+	assert.Equal(t, AuditVerifyStatusBroken, r.Status)
+	assert.Contains(t, r.Reason, "verification state discontinuity (deleted)")
+	assert.Contains(t, r.Reason, "missing although this server already read")
 	clk.advance()
 	tickOK(t, c)
-	assert.Equal(t, int64(1), countEvents(t, db, stateRejectedEvent))
+	assert.Equal(t, int64(1), countEvents(t, db, auditVerifyStateDiscontinuityEvent))
+	assert.Equal(t, AuditVerifyStatusBroken, incrVerify(t, c).Status)
 }
 
 // F1, the attack itself: a row below the checkpoint head is edited after the
@@ -237,9 +242,10 @@ func TestIncrementalVerify_FailureSurvivesFullWalkFallback(t *testing.T) {
 	assert.Equal(t, AuditVerifyStatusBroken, p.Status)
 }
 
-// F2: a corrupted state row is reported (an in-chain event, not_proven with
-// the reason) rather than re-signed as a fresh state, until a full verification
-// that started after the rejection completes.
+// F2: a corrupted state row is reported (an in-chain event, broken with the
+// discontinuity reason) rather than re-signed as a fresh state. Since
+// AUDIT-VERIFY-STATE-1 it is sticky: a completed cycle does not clear it, and
+// it is reported once, not on every tick.
 func TestIncrementalVerify_CorruptedStateRowReportedNotResigned(t *testing.T) {
 	t.Parallel()
 	c, db, clk := newIncrementalTestCore(t, 2)
@@ -252,13 +258,13 @@ func TestIncrementalVerify_CorruptedStateRowReportedNotResigned(t *testing.T) {
 
 	clk.advance()
 	tickOK(t, c)
-	assert.Equal(t, int64(1), countEvents(t, db, stateRejectedEvent))
+	assert.Equal(t, int64(1), countEvents(t, db, auditVerifyStateDiscontinuityEvent))
 	r := incrVerify(t, c)
-	assert.Equal(t, AuditVerifyStatusNotProven, r.Status)
-	assert.Contains(t, r.NotProvenReason, "was rejected")
+	assert.Equal(t, AuditVerifyStatusBroken, r.Status)
+	assert.Contains(t, r.Reason, "verification state discontinuity (garbled)")
 	p, err := c.AuditVerificationStatus(context.Background())
 	require.NoError(t, err)
-	assert.Equal(t, AuditVerifyStatusNotProven, p.Status)
+	assert.Equal(t, AuditVerifyStatusBroken, p.Status)
 
 	completed := false
 	for range 3 {
@@ -269,8 +275,9 @@ func TestIncrementalVerify_CorruptedStateRowReportedNotResigned(t *testing.T) {
 		}
 	}
 	require.True(t, completed)
-	assert.Equal(t, AuditVerifyStatusValid, incrVerify(t, c).Status, "a cycle started after the rejection clears it")
-	assert.Equal(t, int64(1), countEvents(t, db, stateRejectedEvent))
+	assert.Equal(t, AuditVerifyStatusBroken, incrVerify(t, c).Status, "a completed cycle does not clear a discontinuity")
+	assert.Equal(t, int64(1), countEvents(t, db, auditVerifyStateDiscontinuityEvent))
+	assert.Zero(t, countEvents(t, db, stateRejectedEvent))
 }
 
 // With every checkpoint row deleted, the write path checks the tail from the

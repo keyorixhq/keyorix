@@ -351,7 +351,7 @@ func TestAuditInsertRowsPerStatement_CoversAFullFlusherBatch(t *testing.T) {
 // succeeds, one just over it fails. And the chunk size stays below it.
 func TestAuditInsertRowsPerStatement_SQLiteVariableLimitIsReal(t *testing.T) {
 	ls := multiRowSQLiteStore(t)
-	const boundColumns = 16 // every audit_events column except the zero id GORM leaves out
+	const boundColumns = 17 // every audit_events column except the zero id GORM leaves out (request_id is the 17th)
 	rowsAtLimit := auditInsertMaxBindVars / boundColumns
 
 	mk := func(n int) []*models.AuditEvent {
