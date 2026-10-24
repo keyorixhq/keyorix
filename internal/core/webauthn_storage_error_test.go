@@ -363,7 +363,7 @@ func TestLoadWebAuthnUser_SkipsUnreadableCredentialBlob(t *testing.T) {
 	wu, err := c.loadWebAuthnUser(context.Background(), 1)
 	require.NoError(t, err)
 	require.Len(t, wu.creds, 1, "only the readable credential should load")
-	assert.Equal(t, []byte("cred-good"), wu.creds[0].ID)
+	assert.Equal(t, []byte("cred-good"), credOf(t, wu.creds[0]).ID)
 }
 
 // A credential flagged Disabled (#212 clone detection) must never be offered
@@ -382,5 +382,5 @@ func TestLoadWebAuthnUser_SkipsDisabledCredential(t *testing.T) {
 	wu, err := c.loadWebAuthnUser(context.Background(), 1)
 	require.NoError(t, err)
 	require.Len(t, wu.creds, 1)
-	assert.Equal(t, []byte("cred-active"), wu.creds[0].ID)
+	assert.Equal(t, []byte("cred-active"), credOf(t, wu.creds[0]).ID)
 }

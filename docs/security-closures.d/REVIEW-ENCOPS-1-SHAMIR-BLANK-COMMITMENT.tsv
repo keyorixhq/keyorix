@@ -1,0 +1,1 @@
+REVIEW-ENCOPS-1-SHAMIR-BLANK-COMMITMENT	./internal/crypto	TestShamirKeyProvider_BlankCommitmentWarnsLikeUnset	default-ci	pending-merge	-	A whitespace-only shamir_commitment skipped the commitment check without the #429 warning and the insecure-settings registry reported the check as on; blank now counts as unset.

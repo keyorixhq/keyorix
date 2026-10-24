@@ -1,7 +1,12 @@
 package cmd
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -144,5 +149,82 @@ func TestHelpExamples_EveryLeafHasAValidExample(t *testing.T) {
 	sort.Strings(stale)
 	for _, key := range stale {
 		t.Errorf("helpExamples has an entry for %q, which is not a command", key)
+	}
+}
+
+// builtinRoleNamesFromServerSource returns the keys of builtinRoleNames in
+// internal/core/auth_bootstrap.go, the single source of truth for the roles that
+// ship with the product. The CLI module must not import internal/core (see
+// cli/internal/depguard), so the names are read from the source file with
+// go/parser instead of copied into the CLI, where the copy would rot.
+func builtinRoleNamesFromServerSource(t *testing.T) map[string]bool {
+	t.Helper()
+	path := filepath.Join("..", "..", "internal", "core", "auth_bootstrap.go")
+	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	if err != nil {
+		t.Fatalf("cannot parse %s for the built-in role names: %v", path, err)
+	}
+	names := map[string]bool{}
+	ast.Inspect(file, func(n ast.Node) bool {
+		spec, ok := n.(*ast.ValueSpec)
+		if !ok || len(spec.Names) != 1 || spec.Names[0].Name != "builtinRoleNames" || len(spec.Values) != 1 {
+			return true
+		}
+		lit, ok := spec.Values[0].(*ast.CompositeLit)
+		if !ok {
+			return true
+		}
+		for _, el := range lit.Elts {
+			kv, ok := el.(*ast.KeyValueExpr)
+			if !ok {
+				continue
+			}
+			if b, ok := kv.Key.(*ast.BasicLit); ok && b.Kind == token.STRING {
+				if name, err := strconv.Unquote(b.Value); err == nil {
+					names[name] = true
+				}
+			}
+		}
+		return false
+	})
+	if !names["project_developer"] || !names["system_admin"] {
+		t.Fatalf("builtinRoleNames not found in %s (got %d names): the guard would be vacuous", path, len(names))
+	}
+	return names
+}
+
+// TestHelpExamples_RoleValuesAreBuiltinRoles: a help example whose --role value is
+// not a real role fails the first time a user pastes it ("role \"developer\" not
+// found"). Every --role value in every command's Example must be a built-in role
+// name. A role the example's own text creates first is not supported here on
+// purpose: examples should run as written against a fresh install.
+func TestHelpExamples_RoleValuesAreBuiltinRoles(t *testing.T) {
+	applyHelpExamples()
+	builtin := builtinRoleNamesFromServerSource(t)
+
+	checked := 0
+	for _, c := range leafCommands(rootCmd) {
+		for line := range strings.SplitSeq(c.Example, "\n") {
+			words := splitExampleLine(strings.TrimSpace(line))
+			for i, w := range words {
+				var role string
+				switch {
+				case w == "--role" && i+1 < len(words):
+					role = words[i+1]
+				case strings.HasPrefix(w, "--role="):
+					role = strings.TrimPrefix(w, "--role=")
+				default:
+					continue
+				}
+				checked++
+				if !builtin[role] {
+					t.Errorf("%q example uses --role %s, which is not a built-in role (internal/core/auth_bootstrap.go builtinRoleNames): %q",
+						commandKey(c), role, strings.TrimSpace(line))
+				}
+			}
+		}
+	}
+	if checked < 8 {
+		t.Fatalf("only %d --role examples found; the walk is broken (the CLI has at least 8)", checked)
 	}
 }

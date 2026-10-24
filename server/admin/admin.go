@@ -237,6 +237,7 @@ var runningInContainer = func() bool {
 // See internal/serverguard's package doc for the underlying detection
 // mechanism and its limits.
 func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
+	lockBypass = ""
 	// Before the lock, as the server does (server/main.go): behind an undeclared
 	// transaction-mode pooler the session advisory lock would stay on a server
 	// connection the pooler shares, and a refusal afterwards cannot release it.
@@ -270,6 +271,7 @@ func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
 				return nil, fmt.Errorf("a Keyorix server running with storage.database.single_writer holds this database (backend pid %d); --force cannot override it. Stop the server first (emergency SQL: %s)", pid, solewriter.EmergencySQL)
 			}
 			fmt.Printf("WARNING: could not acquire this database's exclusive lock (%v) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.\n", err)
+			lockBypass = err.Error()
 			return nil, nil
 		}
 		// #2362: AcquireExclusive fails the same way whether a server genuinely holds the
@@ -286,6 +288,7 @@ func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
 		}
 		return nil, fmt.Errorf("cannot connect to the database to check for a running server: %v — admin commands must not run concurrently with a server, but this could not be verified; pass --force if you are certain this is safe", err)
 	}
+	stopOnLostDatabaseLock(lock)
 	return lock, nil
 }
 
@@ -306,6 +309,22 @@ func withUsableStorage(cfg *config.Config, fn func(store corestorage.Storage) er
 	return fn(st)
 }
 
+// lockBypass is the failed lock attempt's error when --force let this command
+// run without the exclusive database lock (acquireDatabaseLock), "" otherwise.
+var lockBypass string
+
+// withLockBypassNote appends to an audit description that the command ran
+// under --force without the exclusive database lock, so the audit chain tells a
+// forced, unguarded run from a guarded one (the WARNING went to stdout only).
+// Every audit event an admin command writes goes through it.
+func withLockBypassNote(description string) string {
+	if lockBypass == "" {
+		return description
+	}
+	return description + " -- run with --force WITHOUT the exclusive database lock (" + lockBypass +
+		"): a live server or another admin command may have used this database at the same time"
+}
+
 // recordAdminAction writes an audit-chain event for a state-changing admin
 // command and prints what it did (both parts of the task-2 requirement).
 // Best-effort on the audit write: if the database isn't usable yet (e.g.
@@ -320,7 +339,7 @@ func recordAdminAction(cfg *config.Config, eventType, description string, succes
 		ok := success
 		return st.LogAuditEvent(context.Background(), &models.AuditEvent{
 			EventType:   eventType,
-			Description: description,
+			Description: withLockBypassNote(description),
 			Success:     &ok,
 			ActorType:   adminActorType,
 			EventTime:   time.Now(),

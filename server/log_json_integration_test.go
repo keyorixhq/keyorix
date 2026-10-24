@@ -6,9 +6,11 @@ package main
 // It checks the three things an operator relies on:
 //  1. Shape: after start-up every log line is one JSON object with ts, level, msg,
 //     and every access-log line also carries request_id, principal_type and route.
-//  2. Correlation: the X-Request-ID the client sent (or the server minted and echoed)
-//     is the request_id on that request's log line; principal_type reflects who
-//     authenticated.
+//  2. Correlation: the server mints every request id and echoes it in X-Request-ID;
+//     it is the request_id on that request's log line, and a caller's own X-Request-ID
+//     is only client_request_id; principal_type reflects who authenticated. The
+//     audit rows a request writes carry the server's id, never the caller's
+//     (AUDIT-REQUEST-ID-1, docs/specs/audit-request-id.md).
 //  3. Secrecy (the guard): canary credentials and a canary secret VALUE pushed through
 //     bootstrap, login (right and wrong password), secret create, a bad bearer token
 //     and a bad PAT never appear anywhere in the server's output.
@@ -21,10 +23,19 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
+
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 )
+
+// serverRequestIDPattern is the shape of a server-minted request id.
+var serverRequestIDPattern = regexp.MustCompile(`^[0-9a-f]{24}$`)
 
 // injectServerLogFormat adds `log: {format: json}` under the generated config's top
 // level `server:` key, the way an operator would edit the file.
@@ -159,8 +170,9 @@ func TestJSONLogs_ShapeCorrelationAndNoSecrets(t *testing.T) {
 	if code != http.StatusUnauthorized {
 		t.Fatalf("wrong-password login = %d, want 401", code)
 	}
-	if got := hdr.Get("X-Request-ID"); got != wrongLoginID {
-		t.Errorf("response X-Request-ID = %q, want the caller's %q echoed", got, wrongLoginID)
+	wrongLoginServerID := hdr.Get("X-Request-ID")
+	if wrongLoginServerID == wrongLoginID || !serverRequestIDPattern.MatchString(wrongLoginServerID) {
+		t.Errorf("response X-Request-ID = %q, want a server-minted id, not the caller's %q", wrongLoginServerID, wrongLoginID)
 	}
 
 	code, _, login := doJSON(t, http.MethodPost, base+"/auth/login", "", "",
@@ -181,10 +193,14 @@ func TestJSONLogs_ShapeCorrelationAndNoSecrets(t *testing.T) {
 		envID = list[0].(map[string]any)["id"]
 	}
 	const secretReqID = "obs1-create-secret-002"
-	code, _, _ = doJSON(t, http.MethodPost, base+"/api/v1/secrets", token, secretReqID,
+	code, hdr, _ = doJSON(t, http.MethodPost, base+"/api/v1/secrets", token, secretReqID,
 		fmt.Sprintf(`{"name":"obs1-secret","value":%q,"type":"password","project_id":%v,"environment_id":%v}`, secretValue, pid, envID))
 	if code != http.StatusCreated && code != http.StatusOK {
 		t.Fatalf("secret create = %d", code)
+	}
+	secretServerID := hdr.Get("X-Request-ID")
+	if !serverRequestIDPattern.MatchString(secretServerID) {
+		t.Fatalf("secret create X-Request-ID = %q, want a server-minted id", secretServerID)
 	}
 
 	// Bad credentials on authenticated routes.
@@ -254,9 +270,12 @@ func TestJSONLogs_ShapeCorrelationAndNoSecrets(t *testing.T) {
 	}
 
 	// --- 2. correlation ----------------------------------------------------------------
-	wrong := access[wrongLoginID]
+	wrong := access[wrongLoginServerID]
 	if wrong == nil {
-		t.Fatalf("no access-log record for the caller's request id %q", wrongLoginID)
+		t.Fatalf("no access-log record for the server's request id %q", wrongLoginServerID)
+	}
+	if wrong["client_request_id"] != wrongLoginID {
+		t.Errorf("failed login client_request_id = %v, want the caller's %q", wrong["client_request_id"], wrongLoginID)
 	}
 	if wrong["principal_type"] != "anonymous" {
 		t.Errorf("failed login principal_type = %v, want anonymous", wrong["principal_type"])
@@ -264,9 +283,12 @@ func TestJSONLogs_ShapeCorrelationAndNoSecrets(t *testing.T) {
 	if wrong["status"].(float64) != http.StatusUnauthorized {
 		t.Errorf("failed login status = %v", wrong["status"])
 	}
-	create := access[secretReqID]
+	create := access[secretServerID]
 	if create == nil {
-		t.Fatalf("no access-log record for %q", secretReqID)
+		t.Fatalf("no access-log record for %q", secretServerID)
+	}
+	if create["client_request_id"] != secretReqID {
+		t.Errorf("secret create client_request_id = %v, want the caller's %q", create["client_request_id"], secretReqID)
 	}
 	if create["principal_type"] != "user" {
 		t.Errorf("secret create principal_type = %v, want user", create["principal_type"])
@@ -274,15 +296,13 @@ func TestJSONLogs_ShapeCorrelationAndNoSecrets(t *testing.T) {
 	if route, _ := create["route"].(string); route != "/api/v1/secrets" {
 		t.Errorf("secret create route = %q, want the chi pattern /api/v1/secrets", route)
 	}
-	var minted int
 	for id := range access {
-		if !strings.HasPrefix(id, "obs1-") {
-			minted++
+		if !serverRequestIDPattern.MatchString(id) {
+			t.Errorf("access-log request_id %q is not server-minted", id)
 		}
 	}
-	if minted == 0 {
-		t.Error("requests without an X-Request-ID must get a server-minted id")
-	}
+
+	requireAuditRowsCarryServerRequestID(t, filepath.Join(dir, "keyorix.db"), secretServerID)
 
 	// A line from core carries the same id: the bad bearer's audit/auth failure logging
 	// is not guaranteed, so assert the weaker, always-true property that no record
@@ -293,6 +313,42 @@ func TestJSONLogs_ShapeCorrelationAndNoSecrets(t *testing.T) {
 				t.Errorf("record carries request_id %q that no request produced: %v", id, m)
 			}
 		}
+	}
+}
+
+// requireAuditRowsCarryServerRequestID reads the stopped server's audit_events and
+// checks that the authenticated secret create wrote at least one audit row stamped
+// with the server's request id, and that no row anywhere carries a caller-chosen id.
+func requireAuditRowsCarryServerRequestID(t *testing.T, dbPath, serverID string) {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(dbPath), &gorm.Config{Logger: logger.Discard})
+	if err != nil {
+		t.Fatalf("open %s: %v", dbPath, err)
+	}
+	if sqlDB, dbErr := db.DB(); dbErr == nil {
+		defer sqlDB.Close() //nolint:errcheck
+	}
+	var rows []struct {
+		EventType string
+		RequestID *string
+	}
+	if err := db.Raw("SELECT event_type, request_id FROM audit_events ORDER BY id").Scan(&rows).Error; err != nil {
+		t.Fatalf("read audit_events: %v", err)
+	}
+	stamped := 0
+	for _, r := range rows {
+		if r.RequestID == nil {
+			continue
+		}
+		if !serverRequestIDPattern.MatchString(*r.RequestID) {
+			t.Errorf("audit row %s has request_id %q, not a server-minted id", r.EventType, *r.RequestID)
+		}
+		if *r.RequestID == serverID {
+			stamped++
+		}
+	}
+	if stamped == 0 {
+		t.Errorf("no audit row carries the secret create's server request id %q; rows: %+v", serverID, rows)
 	}
 }
 

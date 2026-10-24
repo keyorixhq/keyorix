@@ -21,7 +21,9 @@
 #
 # Usage: scripts/demo/vault-migration-demo.sh
 # Env overrides: BACKEND=vault|openbao (default vault), KEEP=1 (skip cleanup, for
-# inspecting the containers/binaries/server logs afterward).
+# inspecting the containers/binaries/server logs afterward), VAULT_BIN=/path/to/vault-or-bao
+# (run that binary's dev server natively instead of a container, for hosts without Docker;
+# VAULT_PORT picks its port, default 18200).
 set -euo pipefail
 
 BACKEND="${BACKEND:-vault}"
@@ -32,6 +34,7 @@ BIN="${WORKDIR}/bin"
 mkdir -p "$BIN"
 
 VAULT_NAME=""
+VAULT_PID=""
 SERVER_PID=""
 
 # Secrets never go on a command line (argv is visible in ps / CI logs): tokens and
@@ -49,6 +52,7 @@ cleanup() {
     return
   fi
   [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null || true
+  [[ -n "$VAULT_PID" ]] && kill "$VAULT_PID" 2>/dev/null || true
   [[ -n "$VAULT_NAME" ]] && docker stop "$VAULT_NAME" >/dev/null 2>&1 || true
   rm -rf "$WORKDIR"
 }
@@ -72,16 +76,32 @@ case "$BACKEND" in
   *) echo "BACKEND must be vault or openbao, got: $BACKEND" >&2; exit 1 ;;
 esac
 VAULT_ROOT_TOKEN="demo-root-token"
-VAULT_NAME="mig3-demo-${BACKEND}-$$"
 VAULT_ENV_FILE="${WORKDIR}/vault.env"
-printf '%s=%s\n%s=%s\n' "$ROOT_TOKEN_VAR" "$VAULT_ROOT_TOKEN" "$LISTEN_VAR" "0.0.0.0:8200" >"$VAULT_ENV_FILE"
-docker run -d --rm --name "$VAULT_NAME" --cap-add=IPC_LOCK -p 127.0.0.1:0:8200 \
-  --env-file "$VAULT_ENV_FILE" \
-  "$IMAGE" >/dev/null
-VAULT_HOST_PORT="$(docker port "$VAULT_NAME" 8200/tcp | grep 127.0.0.1 | head -1 | cut -d: -f2)"
+if [[ -n "${VAULT_BIN:-}" ]]; then
+  # Native dev server: the root token goes by environment variable (never argv), and
+  # HOME is the workdir so dev mode's ~/.vault-token never overwrites the operator's own.
+  VAULT_HOST_PORT="${VAULT_PORT:-18200}"
+  (
+    export "${ROOT_TOKEN_VAR}=${VAULT_ROOT_TOKEN}"
+    HOME="$WORKDIR" exec "$VAULT_BIN" server -dev -dev-listen-address="127.0.0.1:${VAULT_HOST_PORT}"
+  ) >"${WORKDIR}/vault.log" 2>&1 &
+  VAULT_PID=$!
+  note "${BACKEND} dev server: ${VAULT_BIN} (pid ${VAULT_PID}, log ${WORKDIR}/vault.log)"
+else
+  VAULT_NAME="mig3-demo-${BACKEND}-$$"
+  printf '%s=%s\n%s=%s\n' "$ROOT_TOKEN_VAR" "$VAULT_ROOT_TOKEN" "$LISTEN_VAR" "0.0.0.0:8200" >"$VAULT_ENV_FILE"
+  docker run -d --rm --name "$VAULT_NAME" --cap-add=IPC_LOCK -p 127.0.0.1:0:8200 \
+    --env-file "$VAULT_ENV_FILE" \
+    "$IMAGE" >/dev/null
+  VAULT_HOST_PORT="$(docker port "$VAULT_NAME" 8200/tcp | grep 127.0.0.1 | head -1 | cut -d: -f2)"
+fi
 VAULT_ADDR="http://127.0.0.1:${VAULT_HOST_PORT}"
 for _ in $(seq 1 30); do curl -sf "${VAULT_ADDR}/v1/sys/health" >/dev/null 2>&1 && break; sleep 1; done
-curl -sf "${VAULT_ADDR}/v1/sys/health" >/dev/null 2>&1 || { echo "${BACKEND} never became healthy" >&2; docker logs "$VAULT_NAME"; exit 1; }
+curl -sf "${VAULT_ADDR}/v1/sys/health" >/dev/null 2>&1 || {
+  echo "${BACKEND} never became healthy" >&2
+  if [[ -n "$VAULT_PID" ]]; then cat "${WORKDIR}/vault.log" >&2; else docker logs "$VAULT_NAME"; fi
+  exit 1
+}
 ok "${BACKEND} healthy at ${VAULT_ADDR}"
 
 VAULT_ROOT_HDR="${WORKDIR}/vault-root.hdr"
@@ -118,6 +138,12 @@ vreq PUT "sys/policies/acl/payments-deny-db" \
 vreq POST "sys/auth/approle" '{"type":"approle"}' >/dev/null
 vreq POST "auth/approle/role/ci-payments-reader" '{"token_policies":"payments-readonly"}' >/dev/null
 vreq POST "auth/approle/role/finance-batch-job" '{"token_policies":"payments-readonly,payments-deny-db"}' >/dev/null
+# An audit identity whose policy covers exactly what --path-map below maps to one
+# Keyorix environment (all of secret/data/), so it migrates to a Create and gives step 6
+# a real grant to check. ci-payments-reader's narrower payments/* is reported, not widened.
+vreq PUT "sys/policies/acl/all-secrets-readonly" \
+  '{"policy":"path \"secret/data/*\" { capabilities = [\"read\"] }"}' >/dev/null
+vreq POST "auth/approle/role/ci-audit-reader" '{"token_policies":"all-secrets-readonly"}' >/dev/null
 
 # Userpass: a human-shaped account (never migrated as a credential, by design — ADR-114).
 vreq POST "sys/auth/userpass" '{"type":"userpass"}' >/dev/null
@@ -131,7 +157,7 @@ vreq POST "auth/kubernetes/role/deployer" \
 
 # A plain token bound to a policy (never a root token for ordinary use).
 vreq POST "auth/token/create" '{"policies":["payments-readonly"],"display_name":"demo-batch-job"}' >/dev/null
-ok "seeded ${BACKEND}: 4 secrets, 3 policies (incl. 1 deny), 2 AppRole roles + userpass + Kubernetes auth, 1 token"
+ok "seeded ${BACKEND}: 4 secrets, 4 policies (incl. 1 deny), 3 AppRole roles + userpass + Kubernetes auth, 1 token"
 
 # ── 2. Bootstrap a fresh Keyorix (SQLite, same sequence as docs/demo/GOLDEN-PATH.md) ─
 # admin init/encryption/migrate and the server itself all resolve storage paths
@@ -235,40 +261,98 @@ kmigrate vault apply-access --vault-addr "$VAULT_ADDR" \
 ok "machine credentials written to ${CREDS_OUT} (0600, never printed)"
 
 # ── 7. Access-equivalence check: Keyorix must never grant MORE than Vault did ────
+# For every AppRole identity apply-access migrated, and every secret value this run
+# imported (found by walking Vault, named exactly as the importer names it), the
+# identity's REAL Keyorix read (its migrated kx_machine_ credential against
+# /api/v1/secrets/value) must be refused wherever Vault's own sys/capabilities-self
+# refuses the source path. The check fails, rather than passing, when it has nothing to
+# compare: no imported name found in Keyorix, no migrated identity, or no Keyorix read
+# allowed at all (each would make a PASS meaningless).
 log "Step 6/6 — access-equivalence check (ADR-114's governing rule, proved against THIS run)"
-ROLE_ID="$(vreq GET "auth/approle/role/ci-payments-reader/role-id" | jq -r '.data.role_id')"
-SECRET_ID="$(vreq POST "auth/approle/role/ci-payments-reader/secret-id" '{}' | jq -r '.data.secret_id')"
-MIGRATOR_TOKEN="$(printf '{"role_id":"%s","secret_id":"%s"}' "$ROLE_ID" "$SECRET_ID" \
-  | curl -sf -X POST --data-binary @- "${VAULT_ADDR}/v1/auth/approle/login" | jq -r '.auth.client_token')"
-MIGRATOR_HDR="${WORKDIR}/migrator.hdr"
-printf 'X-Vault-Token: %s\n' "$MIGRATOR_TOKEN" >"$MIGRATOR_HDR"
+KX="http://localhost:${KEYORIX_PORT}"
+PROJECT_NAME="from-vault"
+ENVIRONMENT_NAME="production"
 
-keyorix_names="$(curl -sf "${AUTH[@]}" "http://localhost:${KEYORIX_PORT}/api/v1/secrets?project_id=${PROJECT_ID}&environment_id=${ENVIRONMENT_ID}" | jq -r '.data.secrets[].name')"
+# migrate/cmd/names.go sanitizeSecretName.
+sanitize_name() {
+  local s="$1"
+  s="${s//\//-}"; s="${s//\\/-}"; s="${s// /-}"; s="${s//:/-}"
+  while [[ "$s" == *--* ]]; do s="${s//--/-}"; done
+  s="${s#-}"; s="${s%-}"
+  printf '%s' "$s"
+}
+# migrate/cmd/vault.go runVault: a leaf whose only field is "value" keeps its path name,
+# every other field becomes "<path>-<field>". CHECKS holds "<leaf>|<keyorix name>".
+CHECKS=()
+walk_secret_mount() {
+  local prefix="$1" k f fields
+  for k in $(vreq GET "secret/metadata/${prefix}?list=true" | jq -r '.data.keys[]'); do
+    if [[ "$k" == */ ]]; then walk_secret_mount "${prefix}${k}"; continue; fi
+    fields="$(vreq GET "secret/data/${prefix}${k}" | jq -r '.data.data | keys[]')"
+    if [[ "$fields" == "value" ]]; then
+      CHECKS+=("${prefix}${k}|$(sanitize_name "${prefix}${k}")")
+    else
+      for f in $fields; do CHECKS+=("${prefix}${k}|$(sanitize_name "${prefix}${k}-${f}")"); done
+    fi
+  done
+}
+walk_secret_mount ""
 
 extra_access=0
-for leaf in payments/stripe payments/db mobile-app/firebase; do
-  allowed="$(curl -sf -H "@${MIGRATOR_HDR}" -X POST "${VAULT_ADDR}/v1/sys/capabilities-self" \
-    -d "{\"paths\":[\"secret/data/${leaf}\"]}" | jq -r '.capabilities[]?' | grep -c '^read$' || true)"
-  secret_name="$(basename "$leaf")"
-  in_keyorix="$(echo "$keyorix_names" | grep -c "^${secret_name}$" || true)"
-  if [[ "$in_keyorix" -gt 0 && "$allowed" -eq 0 ]]; then
-    echo "  VIOLATION: Keyorix secret \"${secret_name}\" is readable by the migrated identity, but Vault's own sys/capabilities-self denies ${leaf}" >&2
+for c in "${CHECKS[@]}"; do
+  name="${c#*|}"
+  if ! curl -sf "${AUTH[@]}" "${KX}/api/v1/secrets/by-name?name=${name}&project_id=${PROJECT_ID}&environment_id=${ENVIRONMENT_ID}" >/dev/null; then
+    echo "  HARNESS: imported secret \"${name}\" (from ${c%%|*}) is not in Keyorix — the name mapping is wrong, so this check would compare nothing" >&2
     extra_access=1
   fi
 done
-# Negative control: a path never granted to this role must still be denied, proving
-# the check discriminates rather than passing vacuously.
-denied_check="$(curl -sf -H "@${MIGRATOR_HDR}" -X POST "${VAULT_ADDR}/v1/sys/capabilities-self" \
-  -d '{"paths":["kv1-legacy/legacy/smtp"]}' | jq -r '.capabilities[]?' | grep -c '^read$' || true)"
-if [[ "$denied_check" -gt 0 ]]; then
-  echo "  negative control FAILED: ci-payments-reader should not read kv1-legacy/legacy/smtp" >&2
+note "${#CHECKS[@]} imported secret value(s) to check: $(printf '%s ' "${CHECKS[@]#*|}")"
+
+checked_ids=0
+keyorix_reads=0
+while IFS=$'\t' read -r mname mtype mcred; do
+  [[ "$mtype" == "service" && "$mname" == vault-approle-* ]] || continue
+  role="${mname#vault-approle-}"
+  role_id="$(vreq GET "auth/approle/role/${role}/role-id" | jq -r '.data.role_id')"
+  secret_id="$(vreq POST "auth/approle/role/${role}/secret-id" '{}' | jq -r '.data.secret_id')"
+  vault_token="$(printf '{"role_id":"%s","secret_id":"%s"}' "$role_id" "$secret_id" \
+    | curl -sf -X POST --data-binary @- "${VAULT_ADDR}/v1/auth/approle/login" | jq -r '.auth.client_token')"
+  vault_hdr="${WORKDIR}/vault-${role}.hdr"
+  printf 'X-Vault-Token: %s\n' "$vault_token" >"$vault_hdr"
+  kx_hdr="${WORKDIR}/kx-${role}.hdr"
+  printf 'Authorization: Bearer %s\n' "$mcred" >"$kx_hdr"
+  checked_ids=$((checked_ids + 1))
+  for c in "${CHECKS[@]}"; do
+    leaf="${c%%|*}"; name="${c#*|}"
+    vault_read="$(printf '{"paths":["secret/data/%s"]}' "$leaf" | curl -sf -H "@${vault_hdr}" -X POST --data-binary @- \
+      "${VAULT_ADDR}/v1/sys/capabilities-self" | jq -r '.capabilities[]?' | grep -c '^read$' || true)"
+    kx_status="$(curl -s -o /dev/null -w '%{http_code}' -H "@${kx_hdr}" "${KX}/api/v1/secrets/value?ref=${PROJECT_NAME}/${ENVIRONMENT_NAME}/${name}")"
+    [[ "$kx_status" == 200 ]] && keyorix_reads=$((keyorix_reads + 1))
+    note "${role}: ${name} — Keyorix HTTP ${kx_status}, Vault read on secret/data/${leaf}: $([[ "$vault_read" -gt 0 ]] && echo allowed || echo denied)"
+    if [[ "$kx_status" == 200 && "$vault_read" -eq 0 ]]; then
+      echo "  VIOLATION: migrated identity ${mname} reads Keyorix secret \"${name}\", but Vault's own sys/capabilities-self denies ${role} read on secret/data/${leaf}" >&2
+      extra_access=1
+    fi
+  done
+  # Negative control: a path never granted to this role must still be denied by Vault,
+  # proving the Vault side of the comparison discriminates.
+  denied_check="$(printf '{"paths":["kv1-legacy/legacy/smtp"]}' | curl -sf -H "@${vault_hdr}" -X POST --data-binary @- \
+    "${VAULT_ADDR}/v1/sys/capabilities-self" | jq -r '.capabilities[]?' | grep -c '^read$' || true)"
+  if [[ "$denied_check" -gt 0 ]]; then
+    echo "  negative control FAILED: ${role} should not read kv1-legacy/legacy/smtp" >&2
+    extra_access=1
+  fi
+done <"$CREDS_OUT"
+
+if [[ "$checked_ids" -eq 0 || "$keyorix_reads" -eq 0 || "${#CHECKS[@]}" -eq 0 ]]; then
+  echo "  HARNESS: nothing real was compared (${checked_ids} migrated identities, ${keyorix_reads} Keyorix reads allowed, ${#CHECKS[@]} imported secrets) — a PASS here would be vacuous" >&2
   extra_access=1
 fi
 
 if [[ "$extra_access" -eq 0 ]]; then
-  ok "PASS — Keyorix's migrated grant never exceeds what Vault's own capabilities-self reports, and the negative control is correctly denied"
+  ok "PASS — ${checked_ids} migrated identities, ${keyorix_reads} allowed Keyorix reads, none of them beyond what Vault's own capabilities-self allows; negative control denied"
 else
-  echo "FAIL — see VIOLATION lines above" >&2
+  echo "FAIL — see VIOLATION / HARNESS lines above" >&2
 fi
 
 # ── 8. One-page customer report ───────────────────────────────────────────────────
@@ -302,3 +386,6 @@ EOF
 if [[ "${KEEP:-}" != "1" ]]; then
   note "Set KEEP=1 to leave the server/Vault/binaries running afterward for a closer look."
 fi
+
+# A failed access-equivalence check fails the demo (exit 1), so CI and humans cannot miss it.
+[[ "$extra_access" -eq 0 ]] || exit 1

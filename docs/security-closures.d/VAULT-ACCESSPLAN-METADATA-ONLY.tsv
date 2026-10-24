@@ -1,0 +1,1 @@
+VAULT-ACCESSPLAN-METADATA-ONLY	./migrate/internal/accessplan	TestScopeWidening_MetadataPathIsNotSecretsRead	default-ci	pending	-	a KV v2 metadata/ stanza is Unmappable (metadata-only), never secrets.read; list-only stanzas likewise (TestScopeWidening_ListOnlyIsNotSecretsRead). RD-SMT-SPIKE-1 finding.

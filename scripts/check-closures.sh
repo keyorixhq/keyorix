@@ -428,6 +428,15 @@ SELF-TEST-3D	./internal/core	TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN	
         'SELF-TEST-26	./operator/api	TestX	default-ci	deadbeef	-	calibration row' \
         ""
 
+    # migrate-module cases: a ./migrate/... row runs `go test` inside migrate/ (own go.mod).
+    run_case "migrate-module row whose test passes" "accept" \
+        'SELF-TEST-27	./migrate/internal/accessplan	TestCheckClosuresSelfTestFixture_MigrateModulePasses	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "migrate-module row, test does not exist" "reject" \
+        'SELF-TEST-28	./migrate/internal/accessplan	TestThisNameDoesNotExistAnywhere	default-ci	deadbeef	-	calibration row' \
+        ""
+
     # The fragment-shape validator lives in the generator; run its own self-test.
     echo; "$REPO_ROOT/scripts/gen-security-closures-tsv.sh" --self-test || selffail=1
 

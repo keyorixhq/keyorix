@@ -42,7 +42,7 @@ A release binary is the release's own behaviour: this page tracks `main`, so a
 command below can be newer than the release. For example `keyorix mfa enroll`
 does not exist in v0.95.3, and the v0.96.3 CLI has no `KEYORIX_PASSWORD_FILE`, `KEYORIX_MFA_CODE`,
 `KEYORIX_MFA_CODE_FILE` or `keyorix doctor` (only `main` does): with a release CLI, type the password
-and the code at the prompts, or in a script pipe the password on stdin and pass `--mfa-code <code>`. <!-- docs-secrets:allow -->
+and the code at the prompts, or in a script pipe the password on stdin and pass the one-time code with the `--mfa-code` flag (it is visible in the process list, so prefer the prompt for interactive use).
 `keyorix-server --version` (or `keyorix-server admin version`)
 prints the version, commit, build date and Go version. The server itself has no
 `--config` flag (it reads `KEYORIX_CONFIG_PATH`, else `./keyorix.yaml`; only the
@@ -245,8 +245,17 @@ For Postgres instead of SQLite, `docker compose up -d postgres` starts one, and
 Stores the session token (and server URL) at the CLI's one credential-file
 location: `~/.config/keyorix/credentials.yaml` on Linux,
 `~/Library/Application Support/keyorix/credentials.yaml` on macOS (`keyorix login
---help` and `keyorix config --help` name it too). Every command below reads it from
-there; none of them take `--server` again.
+--help` and `keyorix config --help` name it too, and `keyorix status` prints the path
+it reads). Every command below reads it from there; none of them take `--server` again.
+
+The file is **per operating-system user**: its server URL, token and `ca_file` are shared
+by every Keyorix install you run as that user, and a second `keyorix login` or
+`keyorix config set ca_file` on the same account replaces the first. To keep two installs
+apart (a restore rehearsal, a test instance), give the second one its own config
+directory: on Linux set `XDG_CONFIG_HOME=<dir>` for every `keyorix` command of that
+install (the file is then `<dir>/keyorix/credentials.yaml`); macOS ignores
+`XDG_CONFIG_HOME`, so use a separate `HOME` there. `KEYORIX_SERVER` and
+`KEYORIX_TOKEN_FILE` override the stored server and token without touching the file.
 
 With no terminal (a script, CI), `login` reads `KEYORIX_PASSWORD` or the file named
 by `KEYORIX_PASSWORD_FILE` (a 0600 file; on `main`, not in the v0.96.3 release).
@@ -255,7 +264,7 @@ by `KEYORIX_PASSWORD_FILE` (a 0600 file; on `main`, not in the v0.96.3 release).
 (only when the account has MFA on). A script should not pipe both on stdin (the second
 line is lost); set `KEYORIX_PASSWORD_FILE` and `KEYORIX_MFA_CODE` (or
 `KEYORIX_MFA_CODE_FILE`) instead (on `main`; a release CLI takes the password on stdin
-and `--mfa-code <code>`). `keyorix mfa activate` asks in the opposite order: <!-- docs-secrets:allow -->
+and the `--mfa-code` flag). `keyorix mfa activate` asks in the opposite order:
 **code first, then the account password** (`KEYORIX_MFA_CODE` and
 `KEYORIX_PASSWORD[_FILE]` work there too).
 

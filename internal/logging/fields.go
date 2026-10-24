@@ -14,8 +14,10 @@
 // the handler passes it, so core log lines carry the request_id too. Audit writes
 // that must outlive the request copy the holder (core.DetachedAuditContext).
 //
-// What this does not do: persist the request id on the audit_events row. That row's
-// fields are covered by the tamper-evident hash chain; see docs/operations/logging.md.
+// The id is minted by the server (SetServerRequestID). A caller's own X-Request-ID is
+// kept apart as ClientRequestID. Only a server-minted id reaches the audit_events row
+// (ServerRequestID), where it is stored outside the hash chain as an advisory
+// correlation field; see docs/specs/audit-request-id.md.
 package logging
 
 import (
@@ -38,9 +40,12 @@ const maxRequestIDLen = 128
 
 // Fields is a snapshot of the request-scoped log fields.
 type Fields struct {
-	RequestID     string
-	PrincipalType string
-	Route         string
+	RequestID string
+	// ClientRequestID is the caller's own X-Request-ID, sanitised. Logged for the
+	// caller's correlation only; it is never the request's id and never audited.
+	ClientRequestID string
+	PrincipalType   string
+	Route           string
 }
 
 // Holder carries a request's log fields. It is shared by pointer through the context
@@ -49,6 +54,9 @@ type Fields struct {
 type Holder struct {
 	mu sync.Mutex
 	f  Fields
+	// minted is true while f.RequestID was set by SetServerRequestID. Any other
+	// setter clears it, so ServerRequestID can never return an externally supplied id.
+	minted bool
 }
 
 type holderKey struct{}
@@ -97,9 +105,10 @@ func (h *Holder) Snapshot() Fields {
 	return h.f
 }
 
-// SetRequestID records the request id after sanitising it: control characters are
-// dropped, characters outside printable ASCII are replaced, and the length is capped.
-// An id that sanitises to nothing is ignored.
+// SetRequestID records an externally supplied request id after sanitising it: control
+// characters are dropped, characters outside printable ASCII are replaced, and the
+// length is capped. An id that sanitises to nothing is ignored. The id is not
+// server-minted, so ServerRequestID ignores it.
 func (h *Holder) SetRequestID(id string) {
 	id = SanitizeID(id)
 	if id == "" {
@@ -107,7 +116,49 @@ func (h *Holder) SetRequestID(id string) {
 	}
 	h.mu.Lock()
 	h.f.RequestID = id
+	h.minted = false
 	h.mu.Unlock()
+}
+
+// SetServerRequestID records an id the server minted itself. It is the only setter
+// whose value ServerRequestID returns.
+func (h *Holder) SetServerRequestID(id string) {
+	id = SanitizeID(id)
+	if id == "" {
+		return
+	}
+	h.mu.Lock()
+	h.f.RequestID = id
+	h.minted = true
+	h.mu.Unlock()
+}
+
+// SetClientRequestID records the caller's own X-Request-ID (sanitised) as a separate
+// log field. An id that sanitises to nothing is ignored.
+func (h *Holder) SetClientRequestID(id string) {
+	id = SanitizeID(id)
+	if id == "" {
+		return
+	}
+	h.mu.Lock()
+	h.f.ClientRequestID = id
+	h.mu.Unlock()
+}
+
+// ServerRequestID returns the context's request id when the server minted it, and ""
+// otherwise (no holder, or an id that came from outside). The audit writer stores
+// only this value.
+func ServerRequestID(ctx context.Context) string {
+	h := HolderFrom(ctx)
+	if h == nil {
+		return ""
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.minted {
+		return ""
+	}
+	return h.f.RequestID
 }
 
 // SetPrincipalType records which kind of principal the request authenticated as. A

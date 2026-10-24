@@ -146,6 +146,8 @@ storage:
     # ssl_root_cert: /etc/keyorix/pg-ca.pem  # CA that signed the database's certificate;
     #   REQUIRED with verify-full (the server refuses to start without it), or "system"
     #   for the OS CA store. A relative path is relative to this file's directory.
+    #   Refused with ssl_mode disable/allow/prefer (the CA would never be checked).
+    #   Walk-through: docs/operator/postgres-tls.md
 
     # Connection pool. Leave max_open_conns unset to get the measured default for
     # your storage.type: 8 for SQLite, 25 for Postgres (#2631; docs/CONFIGURATION.md
@@ -173,17 +175,6 @@ storage:
     # passphrase -- omitted here to keep the default behaviour unchanged.
     dek_path: "keys/dek.key"
     salt_path: "keys/kek.salt"
-
-secrets:
-  chunking:
-    # Enable chunking large secrets into smaller parts
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 10
-
-  limits:
-    # Maximum number of secrets per user
-    max_secrets_per_user: 1000
 
 security:
   # Check file permission safety on startup
