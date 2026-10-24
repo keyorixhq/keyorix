@@ -28,8 +28,10 @@ as ["create", "update", "list"]). This command re-reads Vault and Keyorix, works
 releases would have created that the current rules refuse, and lists the ones a migrated
 machine identity still holds. It changes nothing in Vault or Keyorix.
 
-Pass the SAME --vault-*, --server/--token, --k8s-issuer and --path-map flags the original
-apply-access run used: the grants it created depend on them.
+Pass the SAME --vault-*, --server, --k8s-issuer and --path-map flags the original
+apply-access run used: the grants it created depend on them. The --token must see every
+Keyorix project (secrets.read at the global scope, not a project-restricted PAT): a
+narrower token lists only some projects, and grants into the others cannot be audited.
 
   keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
     --server https://keyorix.example.com --token-file ./pat.txt \
@@ -38,7 +40,8 @@ apply-access run used: the grants it created depend on them.
 Each finding names the machine identity, role, scope and Vault stanza, why the grant is wider,
 and the API call that revokes exactly that grant. Exits 1 when it finds any, and also when the
 audit is incomplete: a Vault input it needs (sys/mounts, the policy list, a policy, an auth
-role) could not be read, so grants from it could not be checked. Exits 0 only for a complete
+role) could not be read, or the Keyorix token cannot see every project, so some grants could
+not be checked. Exits 0 only for a complete
 audit with no findings. --json prints {"complete", "warnings", "findings"} on stdout instead.`,
 	SilenceUsage: true,
 	// main prints the returned error once; findings are an expected outcome, not a crash.
@@ -68,7 +71,8 @@ func init() {
 }
 
 // auditReport is audit-access's --json document. Complete is false when any input could not be
-// read (the warnings say which); a note such as unaudited Kubernetes roles is a warning that
+// read in full, including a Keyorix project list narrowed by the token's visibility (the
+// warnings say which); a note such as unaudited Kubernetes roles is a warning that
 // leaves it true.
 type auditReport struct {
 	Complete bool           `json:"complete"`
@@ -143,10 +147,21 @@ func runAuditAccess(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	// The project listing holds only the projects this token may read. A legacy grant into a
+	// project it cannot see resolves to nothing and would be dropped without a trace, so the
+	// audit is complete only for a token that sees every project.
+	seesAll, err := reader.SeesEveryProject(ctx)
+	if err != nil {
+		return err
+	}
 	// An unreadable input hides grants: the audit is incomplete. An unlistable KV path only
 	// makes the stanzas it could affect findings (cross-mount-scope), so it is a warning.
 	incomplete := len(unreadable)
 	var warnings []string
+	if !seesAll {
+		incomplete++
+		warnings = append(warnings, "the Keyorix token cannot see every project (GET /api/v1/projects?include_deleted=true answered 403: it lacks secrets.read at the global scope, or is a project-restricted PAT) — grants into the projects it cannot see cannot be audited; use an unrestricted admin token")
+	}
 	for _, w := range unreadable {
 		warnings = append(warnings, w+" — grants from it cannot be audited")
 	}
@@ -221,8 +236,8 @@ func runAuditAccess(cmd *cobra.Command, _ []string) error {
 		_, _ = fmt.Fprintf(stderr, "audit-access: done — %d migrated grant(s) wider than their Vault policy. Revoke each with the call shown, then re-run plan-access (it now reports these stanzas for review instead of widening them).\n", len(findings))
 	}
 	if incomplete > 0 {
-		_, _ = fmt.Fprintf(stderr, "audit-access: INCOMPLETE — %d Vault input(s) could not be read (see the warnings above), so grants from them were not checked. Grant this token the healthscan-policy.hcl stanzas and re-run.\n", incomplete)
-		return fmt.Errorf("audit incomplete: %d Vault input(s) could not be read; %d migrated grant(s) found wider than their source Vault policy among the rest", incomplete, len(findings))
+		_, _ = fmt.Fprintf(stderr, "audit-access: INCOMPLETE — %d input(s) could not be read in full (see the warnings above), so grants from them were not checked. Give the Vault token the healthscan-policy.hcl stanzas, use a Keyorix token that sees every project, and re-run.\n", incomplete)
+		return fmt.Errorf("audit incomplete: %d input(s) could not be read in full; %d migrated grant(s) found wider than their source Vault policy among the rest", incomplete, len(findings))
 	}
 	return fmt.Errorf("%d migrated grant(s) are wider than their source Vault policy", len(findings))
 }

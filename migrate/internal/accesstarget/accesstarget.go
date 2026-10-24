@@ -54,7 +54,8 @@ func New(api *apiclient.ClientWithResponses) *Client {
 	return &Client{api: api}
 }
 
-// ListProjects returns every project, for PathMapper construction.
+// ListProjects returns every project the token may read, for PathMapper construction. That is
+// every project only when SeesEveryProject is true.
 func (c *Client) ListProjects(ctx context.Context) ([]accessplan.ProjectRef, error) {
 	resp, err := c.api.ListProjectsWithResponse(ctx, nil)
 	if err != nil {
@@ -71,6 +72,29 @@ func (c *Client) ListProjects(ctx context.Context) ([]accessplan.ProjectRef, err
 		out = append(out, accessplan.ProjectRef{ID: *p.Id, Name: *p.Name})
 	}
 	return out, nil
+}
+
+// SeesEveryProject reports whether ListProjects returns every project for this token, not
+// only the ones it may read. GET /api/v1/projects lists just the projects the caller holds
+// secrets.read on, but its include_deleted=true form answers 403 unless the caller holds
+// secrets.read at the GLOBAL scope (a project-restricted PAT never does), which is exactly
+// the condition under which the default listing is unfiltered. Both behaviours shipped in the
+// same server change; servers before it refused the listing itself without the global grant.
+// A status other than 200 or 403 is an error: the answer is unknown, never "yes".
+func (c *Client) SeesEveryProject(ctx context.Context) (bool, error) {
+	includeDeleted := apiclient.ListProjectsParamsIncludeDeleted("true")
+	resp, err := c.api.ListProjectsWithResponse(ctx, &apiclient.ListProjectsParams{IncludeDeleted: &includeDeleted})
+	if err != nil {
+		return false, fmt.Errorf("check project visibility: %w", err)
+	}
+	switch resp.StatusCode() {
+	case http.StatusOK:
+		return true, nil
+	case http.StatusForbidden:
+		return false, nil
+	default:
+		return false, apiErr("check project visibility", resp.StatusCode(), resp.Body)
+	}
 }
 
 // ListEnvironments returns every environment under projectID, for PathMapper construction.

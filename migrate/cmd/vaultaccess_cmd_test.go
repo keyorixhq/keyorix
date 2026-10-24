@@ -76,9 +76,15 @@ func (f *fakeAccessVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // fakeAccessKeyorix serves the Keyorix reads (project team-a=1 with environment prod=11, no
 // roles, no machine identities) and records every other request as a write, answering 500.
+// With teamB it also holds project team-b=2 (environment prod=21), where machine identity
+// vault-approle-ci=5 holds role vault-migrated-read-write=7. With narrow the token
+// lacks global secrets.read, as the real server filters it (server/http/handlers/catalog.go
+// ListProjects): the listing holds team-a only and the include_deleted=true form answers 403.
 type fakeAccessKeyorix struct {
 	mu     sync.Mutex
 	writes []string
+	teamB  bool
+	narrow bool
 }
 
 func (f *fakeAccessKeyorix) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -92,11 +98,38 @@ func (f *fakeAccessKeyorix) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	switch r.URL.Path {
 	case "/api/v1/projects":
+		if f.narrow && r.URL.Query().Get("include_deleted") == "true" {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":"Forbidden","message":"Insufficient permissions"}`)
+			return
+		}
+		if f.teamB && !f.narrow {
+			_, _ = io.WriteString(w, `{"data":{"projects":[{"id":1,"name":"team-a"},{"id":2,"name":"team-b"}]}}`)
+			return
+		}
 		_, _ = io.WriteString(w, `{"data":{"projects":[{"id":1,"name":"team-a"}]}}`)
 	case "/api/v1/projects/1/environments":
 		_, _ = io.WriteString(w, `{"data":{"environments":[{"id":11,"name":"prod"}]}}`)
+	case "/api/v1/projects/2/environments":
+		if !f.teamB || f.narrow {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{"environments":[{"id":21,"name":"prod"}]}}`)
+	case "/api/v1/projects/2/machine-identities":
+		if !f.teamB || f.narrow {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{"machine_identities":[{"id":5,"name":"vault-approle-ci"}]}}`)
 	case "/api/v1/projects/1/machine-identities":
 		_, _ = io.WriteString(w, `{"data":{"machine_identities":[]}}`)
+	case "/api/v1/projects/2/machine-identities/5/roles":
+		if !f.teamB || f.narrow {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		_, _ = io.WriteString(w, `{"data":{"roles":[{"id":7,"name":"vault-migrated-read-write"}]}}`)
 	default:
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = io.WriteString(w, `{"error":"not found"}`)
@@ -153,8 +186,10 @@ func writeReviewedPlan(t *testing.T, vaultURL, keyorixURL, path string) {
 // apply-access re-lists the KV tree and refuses, before SelectForApply/Apply run and before
 // --credentials-out is opened, when the tree behind a reviewed default-convention grant changed
 // since plan-access (here: kv1/team-a/prod/ appeared). The control run without drift shows the
-// same harness does see writes and the credentials file, so the zero-writes assertion is not
-// vacuous (REVIEW-3671-DEEP-1 finding 3).
+// same harness does see writes and the credentials file (REVIEW-3671-DEEP-1 finding 3). In this
+// fixture the drifted item no longer maps, so SelectForApply would drop it even without the
+// refusal: only the err/"nothing was applied" assertion proves refuseCrossMountDrift is wired
+// (REREVIEW-3671-2 N2); the zero-writes and no-credentials assertions hold either way.
 func TestRunApplyAccess_CrossMountDriftWritesNothing(t *testing.T) {
 	for _, drift := range []bool{true, false} {
 		vault := &fakeAccessVault{}
@@ -205,9 +240,14 @@ type auditOutput struct {
 
 func runAuditJSON(t *testing.T, vault *fakeAccessVault) (stdout, stderr string, err error) {
 	t.Helper()
+	return runAuditJSONWith(t, vault, &fakeAccessKeyorix{})
+}
+
+func runAuditJSONWith(t *testing.T, vault *fakeAccessVault, keyorix *fakeAccessKeyorix) (stdout, stderr string, err error) {
+	t.Helper()
 	vsrv := httptest.NewServer(vault)
 	defer vsrv.Close()
-	ksrv := httptest.NewServer(&fakeAccessKeyorix{})
+	ksrv := httptest.NewServer(keyorix)
 	defer ksrv.Close()
 	useAccessFlags(t, vsrv.URL, ksrv.URL)
 	aaJSON = true
@@ -275,5 +315,42 @@ func TestRunAuditAccess_KubernetesRolesWithoutIssuerWarns(t *testing.T) {
 	}
 	if out := decodeAudit(t, stdout); !strings.Contains(strings.Join(out.Warnings, "\n"), "--k8s-issuer") || !strings.Contains(stderr, "--k8s-issuer") {
 		t.Fatalf("--json warnings=%v stderr=%q, want a note that Kubernetes roles were not audited without --k8s-issuer", out.Warnings, stderr)
+	}
+}
+
+// teamBWriteListVault adds a v0.96-widened stanza into team-b ("list" in a write stanza, which
+// v0.96 migrated as secrets.read) to the fake Vault's AppRole role ci.
+func teamBWriteListVault() *fakeAccessVault {
+	return &fakeAccessVault{extra: map[string]string{
+		"LIST /v1/sys/policies/acl":           `{"data":{"keys":["team-a-prod-ro","team-b-prod-rw"]}}`,
+		"/v1/sys/policies/acl/team-b-prod-rw": `{"data":{"name":"team-b-prod-rw","policy":"path \"secret/data/team-b/prod/*\" { capabilities = [\"create\", \"update\", \"list\"] }"}}`,
+		"/v1/auth/approle/role/ci":            `{"data":{"token_policies":["team-a-prod-ro","team-b-prod-rw"]}}`,
+		"LIST /v1/secret/metadata":            `{"data":{"keys":["team-a/","team-b/"]}}`,
+		"LIST /v1/secret/metadata/team-b":     `{"data":{"keys":["prod/"]}}`,
+	}}
+}
+
+// GET /api/v1/projects lists only the projects the token may read. A legacy grant into a
+// project the token cannot see resolves to nothing, so with a narrow token audit-access must
+// not report a complete, clean audit: it exits non-zero, --json says complete=false, and the
+// warning says the token cannot see every project (REREVIEW-3671-2 finding N1). The control
+// run with a token that sees every project finds the grant the narrow token hides.
+func TestRunAuditAccess_TokenThatCannotSeeEveryProjectIsIncomplete(t *testing.T) {
+	stdout, stderr, err := runAuditJSONWith(t, teamBWriteListVault(), &fakeAccessKeyorix{teamB: true})
+	out := decodeAudit(t, stdout)
+	if err == nil || strings.Contains(err.Error(), "incomplete") || out.Complete == nil || !*out.Complete || len(out.Findings) != 1 || out.Findings[0]["project_id"] != float64(2) {
+		t.Fatalf("token sees every project: err=%v --json=%+v stderr=%q, want a complete audit with one finding on project 2 (exit non-zero for the finding)", err, out, stderr)
+	}
+
+	stdout, stderr, err = runAuditJSONWith(t, teamBWriteListVault(), &fakeAccessKeyorix{teamB: true, narrow: true})
+	if err == nil || !strings.Contains(err.Error(), "incomplete") {
+		t.Fatalf("err=%v, want a non-nil 'incomplete' error for a token that cannot see every project", err)
+	}
+	out = decodeAudit(t, stdout)
+	if out.Complete == nil || *out.Complete || !strings.Contains(strings.Join(out.Warnings, "\n"), "cannot see every project") {
+		t.Fatalf("--json = %+v, want complete=false and a warning that the token cannot see every project", out)
+	}
+	if !strings.Contains(stderr, "INCOMPLETE") || strings.Contains(stderr, "no migrated grant is wider") {
+		t.Fatalf("stderr does not report the audit INCOMPLETE:\n%s", stderr)
 	}
 }

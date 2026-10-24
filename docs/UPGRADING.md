@@ -1098,7 +1098,8 @@ of a `--path-map` prefix) was granted on the whole environment, and `list` was m
 stanzas that list (`["create", "update", "list"]`, `["delete", "list"]`), whose identity
 could then read every secret value in its environment (`list-as-read`). Upgrading `keyorix-migrate` does not change
 grants that already exist. With the new `keyorix-migrate`, run (read-only, same flags as the
-original `apply-access`):
+original `apply-access`; the Keyorix token must see every project, i.e. hold `secrets.read`
+at the global scope and not be a project-restricted PAT):
 
 ```sh
 keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
@@ -1109,8 +1110,10 @@ keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
 It lists each grant that is wider than its Vault policy, why, and the API call that revokes
 exactly that grant. It exits 1 when it finds any, and also when the audit is incomplete
 because a Vault input (`sys/mounts`, the policy list, a policy, an auth role list or role)
-could not be read: grant the token the `healthscan-policy.hcl` stanzas and re-run until it
-exits 0. `--json` prints `{"complete", "warnings", "findings"}`. Kubernetes roles are audited
+could not be read, or because the Keyorix token cannot see every project (the project list
+holds only the projects a token may read, so grants into the others would be missed): grant the
+Vault token the `healthscan-policy.hcl` stanzas, use a Keyorix token with global `secrets.read`,
+and re-run until it exits 0. `--json` prints `{"complete", "warnings", "findings"}`. Kubernetes roles are audited
 only with `--k8s-issuer` (it warns when they exist and the flag is missing). Revoke the
 findings, then re-run `plan-access`: the narrow stanzas are now reported for review instead
 of widened.
