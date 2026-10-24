@@ -1591,7 +1591,7 @@ Usage: \fBkeyorix invite send [flags]\fR
 Examples:
 .PP
 .nf
-keyorix invite send \-\-project payments \-\-email bob@example.com \-\-role developer
+keyorix invite send \-\-project payments \-\-email bob@example.com \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -1878,7 +1878,7 @@ Usage: \fBkeyorix machine grant\-role <name|id> [flags]\fR
 Examples:
 .PP
 .nf
-keyorix machine grant\-role ci\-deployer \-\-project payments \-\-role developer
+keyorix machine grant\-role ci\-deployer \-\-project payments \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -1975,7 +1975,7 @@ Usage: \fBkeyorix machine revoke\-role <name|id> [flags]\fR
 Examples:
 .PP
 .nf
-keyorix machine revoke\-role ci\-deployer \-\-project payments \-\-role developer
+keyorix machine revoke\-role ci\-deployer \-\-project payments \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -2616,7 +2616,7 @@ Usage: \fBkeyorix rbac assign\-role [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac assign\-role \-\-user alice@example.com \-\-role developer \-\-project payments
+keyorix rbac assign\-role \-\-user alice@example.com \-\-role project_developer \-\-project payments
 # Time\-bound grant
 keyorix rbac assign\-role \-\-user alice@example.com \-\-role admin \-\-project payments \-\-ttl 4h
 .fi
@@ -2651,7 +2651,7 @@ Usage: \fBkeyorix rbac assign\-role\-to\-group [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac assign\-role\-to\-group \-\-group platform\-team \-\-role developer \-\-project payments
+keyorix rbac assign\-role\-to\-group \-\-group platform\-team \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2833,7 +2833,7 @@ Usage: \fBkeyorix rbac remove\-role [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac remove\-role \-\-user alice@example.com \-\-role developer \-\-project payments
+keyorix rbac remove\-role \-\-user alice@example.com \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2861,7 +2861,7 @@ Usage: \fBkeyorix rbac remove\-role\-from\-group [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac remove\-role\-from\-group \-\-group platform\-team \-\-role developer \-\-project payments
+keyorix rbac remove\-role\-from\-group \-\-group platform\-team \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2893,7 +2893,7 @@ Usage: \fBkeyorix request access [flags]\fR
 Examples:
 .PP
 .nf
-keyorix request access \-\-project payments \-\-role developer \-\-reason "on\-call this week"
+keyorix request access \-\-project payments \-\-role project_developer \-\-reason "on\-call this week"
 .fi
 .PP
 Flags:
@@ -4998,6 +4998,8 @@ keyorix sod violations
 Show the configured server, login state, and version\-skew check
 .PP
 status is the remote\-only successor to the old CLI's "status" command (docs/cli\-split\-inventory.md §2.7): it has no local/embedded branch to fall back to (ADR\-108 Decision A removes local mode entirely). Unlike the old command, it actually parses GET /health's response body instead of discarding it, and reports the GET /api/v1/version skew check.
+.PP
+status also prints the credential file it reads: keyorix/credentials.yaml under the OS user config directory (~/.config on Linux, ~/Library/Application Support on macOS). The file is per OS user, so two installs on one account share it. On Linux, XDG_CONFIG_HOME moves it (a separate login, ca_file and token per value); macOS ignores XDG_CONFIG_HOME, so use a different HOME there.
 .PP
 Usage: \fBkeyorix status\fR
 .PP

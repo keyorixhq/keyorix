@@ -22,8 +22,9 @@
 // Not listed, on purpose: revocations (role/group/permission/share/ACL/token
 // removal, session and PAT revoke, user suspend/delete, break-glass revoke) keep
 // their best-effort post-commit audit (Andrei 2026-10-14: a revocation is never
-// blocked by the audit log), and SetUserRoles (PUT /users/{id}/roles) is a
-// compensated sequence of single grants and removals, each audited on its own.
+// blocked by the audit log), and SetUserRoles (PUT /users/{id}/roles) is a split
+// mixed request (#3488: the removals owed, then the additions fail closed), covered
+// by owed_audit_split_ops_test.go.
 // Role and share UPDATES go either way and are classified per call (REVIEW-2
 // on #3367): the catalog's role-update ops save the role's existing permission
 // set (neutral, so they commit), and are covered by direction in

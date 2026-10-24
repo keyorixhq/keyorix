@@ -113,13 +113,9 @@ including role-derived access (see above).
 4. Shared secrets will show a sharing indicator (👥 icon)
 
 #### CLI Interface
-```bash
-# List available sharing commands
-keyorix share --help
-
-# View your current shares
-keyorix shares list
-```
+All sharing commands are under `keyorix share` (`create`, `list`, `update`, `revoke`,
+`self-remove`, `shared-secrets`, `group-shares`); see the
+[CLI reference](cli-reference.md#keyorix-share).
 
 #### API Interface
 See the [API Documentation](SECRET_SHARING_API.md) for programmatic access.
@@ -138,15 +134,6 @@ See the [API Documentation](SECRET_SHARING_API.md) for programmatic access.
    sharing, the dialog says so instead of listing anyone.
 4. **Set Permission**: Choose "Read" or "Write" permission
 5. **Confirm**: Click "Share Secret" to complete
-
-#### Via CLI
-```bash
-# Share a secret with read permission
-keyorix secret share --id 123 --recipient john.doe --permission read
-
-# Share a secret with write permission
-keyorix secret share --id 123 --recipient jane.smith --permission write
-```
 
 #### Via API
 ```bash
@@ -194,34 +181,18 @@ curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
 3. Choose recipients and permissions
 4. Confirm the bulk share operation
 
-#### Batch Sharing (CLI)
-```bash
-# Share multiple secrets with the same user
-for secret_id in 123 456 789; do
-  keyorix secret share --id $secret_id --recipient john.doe --permission read
-done
-```
-
 ## Managing Permissions
 
 ### Viewing Current Shares
 
 #### List Shares for a Secret
 ```bash
-# CLI
-keyorix secret shares --id 123
-
-# API
 curl -X GET "https://api.keyorix.com/api/v1/secrets/123/shares" \
   -H "Authorization: Bearer your-token"
 ```
 
 #### List All Your Shares
 ```bash
-# CLI
-keyorix shares list
-
-# API
 curl -X GET "https://api.keyorix.com/api/v1/shares" \
   -H "Authorization: Bearer your-token"
 ```
@@ -230,40 +201,18 @@ curl -X GET "https://api.keyorix.com/api/v1/shares" \
 
 #### Upgrade Permission (Read → Write)
 ```bash
-# CLI
-keyorix shares update --id 456 --permission write
-
-# API
 curl -X PUT "https://api.keyorix.com/api/v1/shares/456" \
   -H "Authorization: Bearer your-token" \
   -H "Content-Type: application/json" \
   -d '{"permission": "write"}'
 ```
 
-#### Downgrade Permission (Write → Read)
-```bash
-# CLI
-keyorix shares update --id 456 --permission read
-```
-
 ### Revoking Access
 
 #### Remove Specific User Access
 ```bash
-# CLI
-keyorix shares revoke --id 456
-
-# API
 curl -X DELETE "https://api.keyorix.com/api/v1/shares/456" \
   -H "Authorization: Bearer your-token"
-```
-
-#### Remove All Shares for a Secret
-```bash
-# Get all shares for the secret
-keyorix secret shares --id 123 --format json | \
-  jq -r '.shares[].id' | \
-  xargs -I {} keyorix shares revoke --id {}
 ```
 
 ## Group Sharing
@@ -284,12 +233,6 @@ Groups allow you to share secrets with multiple users at once. When you share wi
 4. Set the permission level
 5. Confirm the share
 
-#### Via CLI
-```bash
-# Share with a group
-keyorix secret share --id 123 --group developers --permission read
-```
-
 #### Via API
 ```bash
 curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
@@ -306,18 +249,9 @@ curl -X POST "https://api.keyorix.com/api/v1/secrets/123/share" \
 
 #### List Group Shares
 ```bash
-# CLI - filter for group shares only
-keyorix shares list --groups-only
-
-# API - filter response for group shares
+# filter the response for group shares
 curl -X GET "https://api.keyorix.com/api/v1/shares?recipient_type=group" \
   -H "Authorization: Bearer your-token"
-```
-
-#### Update Group Permissions
-```bash
-# Update permission for entire group
-keyorix shares update --id 456 --permission write
 ```
 
 ### Group Membership Changes
@@ -337,18 +271,6 @@ When group membership changes:
 - Use the "Shared with me" filter to see only shared secrets
 - Owner information is displayed for each shared secret
 
-#### CLI Interface
-```bash
-# List all secrets shared with you
-keyorix shared-secrets list
-
-# Filter by permission level
-keyorix shared-secrets list --permission write
-
-# Filter by owner
-keyorix shared-secrets list --owner admin
-```
-
 ### Working with Shared Secrets
 
 #### Viewing Shared Secret Details
@@ -356,8 +278,6 @@ keyorix shared-secrets list --owner admin
 # Get secret information
 keyorix secret get --id 123
 
-# View secret value (if you have read permission)
-keyorix secret value --id 123
 
 # View secret versions
 keyorix secret versions --id 123
@@ -395,12 +315,6 @@ Sometimes you may want to remove yourself from a shared secret:
 2. Click "Remove Access" or "Leave Share"
 3. Confirm the action
 
-#### Via CLI
-```bash
-# Remove yourself from a specific secret
-keyorix secret self-remove --id 123
-```
-
 #### Via API
 ```bash
 curl -X DELETE "https://api.keyorix.com/api/v1/secrets/123/self-share" \
@@ -431,21 +345,12 @@ Configure notifications for:
 - Regularly review and audit who has access
 - Remove access when no longer needed
 
-#### 2. Regular Access Reviews
-```bash
-# Monthly review of all your shares
-keyorix shares list --format table
-
-# Check specific high-value secrets
-keyorix secret shares --id 123
-```
-
-#### 3. Monitor Access Patterns
+#### 2. Monitor Access Patterns
 - Review audit logs regularly
 - Watch for unusual access patterns
 - Set up alerts for sensitive secrets
 
-#### 4. Use Groups Wisely
+#### 3. Use Groups Wisely
 - Share with groups rather than individual users when possible
 - Keep group membership up to date
 - Use descriptive group names
@@ -469,21 +374,7 @@ keyorix secret shares --id 123
 
 ### General Security
 
-#### 1. Audit Trail Monitoring
-```bash
-# View recent sharing activities
-keyorix audit logs --type sharing --recent
-
-# Check access to specific secrets
-keyorix audit logs --secret-id 123
-```
-
-#### 2. Encryption Verification
-- All shared secrets maintain end-to-end encryption
-- Keys are never shared in plaintext
-- Revoked users cannot decrypt previously shared secrets
-
-#### 3. Network Security
+#### Network Security
 - Always use HTTPS for web access
 - Use secure networks when accessing shared secrets
 - Consider VPN for sensitive operations
@@ -574,12 +465,6 @@ A: Your permission level is displayed in the secret details and in the shared se
 
 ### Security Questions
 
-**Q: Are shared secrets encrypted?**
-A: Yes, all secrets maintain end-to-end encryption even when shared. Each recipient gets their own encrypted copy.
-
-**Q: Can Keyorix staff see my shared secrets?**
-A: No, Keyorix uses end-to-end encryption. Staff cannot see secret contents, only metadata like sharing relationships.
-
 **Q: What happens if someone's account is compromised?**
 A: Immediately revoke all shares with that user and report the incident. Change any secrets they had access to.
 
@@ -590,9 +475,6 @@ A: Yes, audit logs show all access attempts and successful accesses to your shar
 
 **Q: Can I automate sharing through the API?**
 A: Yes, the full sharing functionality is available through the REST API. See the API documentation for details.
-
-**Q: Do shared secrets count against my storage quota?**
-A: Secrets count against the owner's quota, not the recipients' quotas.
 
 **Q: Can I share secrets across different environments?**
 A: Yes, sharing works across all environments within the same Keyorix instance.
