@@ -889,6 +889,24 @@ an admin operation is running against this database; retry when it finishes
 **Cause.** A server start collided with a running `admin` command (backup, restore,
 rotation). **Fix.** Wait for the command to finish, then start. **In place:** yes.
 
+### The SQLite server lock file cannot be locked or watched — from code
+
+```
+lock server lock file "<datadir>/keyorix.db.server.lock": operation not supported: the filesystem holding it does not support file locks (flock), so a server and an admin command cannot exclude each other; put the SQLite database on a local filesystem, or use storage.type: postgres
+```
+
+**Match:** `the filesystem holding it does not support file locks`
+`the filesystem reports no inode numbers`
+`between opening and locking it`
+
+**Cause.** The SQLite database (and its `.server.lock` beside it) is on a filesystem
+without `flock` support or without inode numbers (some network and FUSE mounts), or a
+process keeps deleting or replacing `.server.lock`. The server and every `admin` command
+refuse rather than run without the server/admin exclusion. **Fix.** Move the database to a
+local filesystem, or use PostgreSQL; never delete `.server.lock`
+([j7-troubleshooting.md](j7-troubleshooting.md#an-admin-command-while-the-server-is-still-running)).
+**In place:** no.
+
 ---
 
 ## Admin commands

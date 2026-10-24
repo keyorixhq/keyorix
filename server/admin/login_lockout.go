@@ -169,7 +169,7 @@ func failedClear(ctx context.Context, store corestorage.Storage, description str
 func logLoginLockoutAudit(ctx context.Context, store corestorage.Storage, eventType, description string, success bool, target *models.User) error {
 	ev := &models.AuditEvent{
 		EventType:   eventType,
-		Description: description,
+		Description: withLockBypassNote(description),
 		Success:     &success,
 		ActorType:   adminActorType,
 		EventTime:   time.Now(),

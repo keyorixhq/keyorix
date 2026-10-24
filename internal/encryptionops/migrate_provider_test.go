@@ -55,7 +55,13 @@ func TestTargetEncryptionConfig_ShamirType_RequiresAtLeastTwoShares(t *testing.T
 	if _, err := TargetEncryptionConfig(baseEncConfig(), MigrateOpts{ToType: "shamir", ToShareFiles: []string{"a"}}); err == nil {
 		t.Fatal("expected refusal with only 1 share source")
 	}
-	if _, err := TargetEncryptionConfig(baseEncConfig(), MigrateOpts{ToType: "shamir", ToShareFiles: []string{"a", "b"}}); err != nil {
+	// A commitment is required too (REVIEW-ENCRYPTIONOPS-1 F5); see
+	// TestTargetEncryptionConfig_Shamir_CommitmentMustBe32HexBytes.
+	commitment := strings.Repeat("ab", 32)
+	if _, err := TargetEncryptionConfig(baseEncConfig(), MigrateOpts{ToType: "shamir", ToShareFiles: []string{"a"}, ToShareCommitment: commitment}); err == nil {
+		t.Fatal("expected refusal with only 1 share source, even with a commitment")
+	}
+	if _, err := TargetEncryptionConfig(baseEncConfig(), MigrateOpts{ToType: "shamir", ToShareFiles: []string{"a", "b"}, ToShareCommitment: commitment}); err != nil {
 		t.Fatalf("expected success with 2 share sources: %v", err)
 	}
 }
