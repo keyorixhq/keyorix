@@ -1,0 +1,13 @@
+js/empty-password-in-configuration-file	deploy/testdata/helm-values-0.95.3.yaml
+go/clear-text-logging	server/admin/recover_admin.go
+go/weak-sensitive-data-hashing	internal/storage/store/local_auth.go
+go/clear-text-logging	server/admin/recover_admin.go
+go/incorrect-integer-conversion	server/grpc/services/conversions.go
+go/incorrect-integer-conversion	server/grpc/services/conversions.go
+go/weak-sensitive-data-hashing	internal/storage/store/local_audit_chain.go
+go/keyorix-ssrf-unvalidated-outbound-request	internal/storage/remote/client.go
+go/keyorix-ssrf-unvalidated-outbound-request	internal/connect/vault.go
+js/empty-password-in-configuration-file	deploy/helm/keyorix/values.yaml
+js/clear-text-logging	demo/app.js
+go/clear-text-logging	internal/cli/common/common.go
+go/weak-sensitive-data-hashing	internal/storage/store/local_audit_chain.go

@@ -28,15 +28,11 @@
       "environment_id": 11
     }
   ],
-  "grants": [
+  "grants": [],
+  "unmappable": [
     {
-      "permissions": [
-        "secrets.read"
-      ],
-      "project_id": 1,
-      "environment_id": 11,
-      "source_ref": "policy:payments-db-only path:secret/data/payments/prod/db-password"
+      "source_ref": "policy:payments-db-only path:secret/data/payments/prod/db-password",
+      "category": "path-narrower-than-scope"
     }
-  ],
-  "unmappable": []
+  ]
 }
