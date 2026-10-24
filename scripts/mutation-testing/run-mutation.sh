@@ -45,7 +45,8 @@ export MUTATION_STATE_DIR
 
 mkdir -p "$MUTATION_STATE_DIR"
 
-# Packages to mutation-test, one per line: "<go-package-path>|<label>[|<timeout-coefficient>]".
+# Packages to mutation-test, one per line:
+# "<go-package-path>|<label>[|<timeout-coefficient>[|<min-efficacy-pct>]]".
 # The optional third field is passed to gremlins as --timeout-coefficient. gremlins sizes its
 # per-mutant timeout from the time of the coverage-gathering run, and for a package whose tests
 # are fast but whose per-mutant build is not (internal/saml: ~0.3 s of tests, ~1 s to rebuild
@@ -58,8 +59,19 @@ mkdir -p "$MUTATION_STATE_DIR"
 # shape -- see .github's retired mutation-testing.yml (superseded by this
 # script) for the reasoning on why this starts scoped to few packages
 # instead of the whole repo.
+#
+# The optional fourth field is an absolute floor, measured when the package was
+# brought in (MUTANT-SEC-1, gremlins --workers 1; leave the third field empty
+# when no timeout coefficient is needed). Falling below it fails the run at the
+# end, in addition to the relative-regression notice from notify-summary.sh.
+# The remaining survivors in these packages are equivalent mutants (see the item
+# commits), so the floor is the measured value, not 100.
 PACKAGES="internal/core|core
 internal/storage/store|storage-store
+internal/keyfiles|keyfiles||93.55
+internal/securefiles|securefiles||98.31
+internal/recoverykey|recoverykey||82.35
+internal/evidencesink|evidencesink||100
 # internal/saml: efficacy 97.70% (85 killed, 2 equivalent survivors), 21 not covered; needs the timeout coefficient (see above)
 internal/saml|saml|40
 # internal/secretenv: efficacy 100% (31 killed), 4 not covered (switch case expressions, pinned by a truth table)
@@ -72,7 +84,9 @@ git fetch origin main --quiet
 git checkout main --quiet
 git reset --hard origin/main --quiet
 
-while IFS='|' read -r pkg label timeout_coef; do
+below_floor=0
+
+while IFS='|' read -r pkg label timeout_coef min_efficacy; do
   [[ -z "$pkg" ]] && continue
   case "$pkg" in \#*) continue ;; *) ;; esac
   timeout_args=()
@@ -110,6 +124,16 @@ while IFS='|' read -r pkg label timeout_coef; do
   python3 "$SCRIPT_DIR/summarize.py" "$label" >"$summary_json"
 
   "$SCRIPT_DIR/notify-summary.sh" "$label" "$summary_json" "${summary_json_prev:-}"
+
+  if [[ -n "${min_efficacy:-}" ]]; then
+    if ! python3 -c 'import json, sys
+eff = json.load(open(sys.argv[1])).get("test_efficacy_pct")
+sys.exit(0 if eff is not None and eff >= float(sys.argv[2]) else 1)' "$summary_json" "$min_efficacy"; then
+      echo "=== $(date -u +%FT%TZ) $label is below its efficacy floor ${min_efficacy}% -- see $summary_json ===" >&2
+      below_floor=1
+    fi
+  fi
 done <<<"$PACKAGES"
 
 echo "=== $(date -u +%FT%TZ) mutation-testing run complete ==="
+exit "$below_floor"

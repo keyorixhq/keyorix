@@ -1839,7 +1839,7 @@ Invite an email address to a project with an intended role (admin-driven, ADR-02
 **Examples:**
 
 ```sh
-keyorix invite send --project payments --email bob@example.com --role developer
+keyorix invite send --project payments --email bob@example.com --role project_developer
 ```
 
 **Flags:**
@@ -2200,7 +2200,7 @@ Grant a machine identity a role at its project's scope, so tokens it issues can 
 **Examples:**
 
 ```sh
-keyorix machine grant-role ci-deployer --project payments --role developer
+keyorix machine grant-role ci-deployer --project payments --role project_developer
 ```
 
 **Flags:**
@@ -2302,7 +2302,7 @@ Revoke a previously granted project-scoped role (distinct from `machine revoke`,
 **Examples:**
 
 ```sh
-keyorix machine revoke-role ci-deployer --project payments --role developer
+keyorix machine revoke-role ci-deployer --project payments --role project_developer
 ```
 
 **Flags:**
@@ -3105,7 +3105,7 @@ contractor access. Example: --ttl 4h grants the role for four hours.
 **Examples:**
 
 ```sh
-keyorix rbac assign-role --user alice@example.com --role developer --project payments
+keyorix rbac assign-role --user alice@example.com --role project_developer --project payments
 # Time-bound grant
 keyorix rbac assign-role --user alice@example.com --role admin --project payments --ttl 4h
 ```
@@ -3137,7 +3137,7 @@ With --ttl, the grant is time-bound (just-in-time access).
 **Examples:**
 
 ```sh
-keyorix rbac assign-role-to-group --group platform-team --role developer --project payments
+keyorix rbac assign-role-to-group --group platform-team --role project_developer --project payments
 ```
 
 **Flags:**
@@ -3324,7 +3324,7 @@ the project (--project must also be supplied).
 **Examples:**
 
 ```sh
-keyorix rbac remove-role --user alice@example.com --role developer --project payments
+keyorix rbac remove-role --user alice@example.com --role project_developer --project payments
 ```
 
 **Flags:**
@@ -3351,7 +3351,7 @@ the project (--project must also be supplied).
 **Examples:**
 
 ```sh
-keyorix rbac remove-role-from-group --group platform-team --role developer --project payments
+keyorix rbac remove-role-from-group --group platform-team --role project_developer --project payments
 ```
 
 **Flags:**
@@ -3393,7 +3393,7 @@ Create a pending access request for the caller to a project, optionally suggesti
 **Examples:**
 
 ```sh
-keyorix request access --project payments --role developer --reason "on-call this week"
+keyorix request access --project payments --role project_developer --reason "on-call this week"
 ```
 
 **Flags:**
@@ -5967,7 +5967,6 @@ keyorix user create --username bob --email bob@example.com --setup-link
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (unused in this REST-only CLI -- kept for flag compatibility; the session behind your bearer token is always the acting admin) |
 | `--display-name` | `string` | — | Display name (defaults to username) |
 | `--email` | `string` | — | Email (required) |
 | `--one-time-password` | — | — | Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login |
