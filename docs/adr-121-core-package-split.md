@@ -3,7 +3,7 @@
 **Status:** Accepted (direction signed off by Andrei on 2026-10-24; drafted by CORE-SPLIT-DESIGN-1, 2026-10-20).
 **Related:** ADR-109 (core depends on interfaces), ADR-112 (secure-by-default baseline: unchanged by this ADR),
 CORE-DECOUPLE plan (third-party libraries), WIRING-SPLIT-1 (shared wiring files).
-**Evidence:** the measurement report `reports/SESSION-CORE-SPLIT-DESIGN-1.md` (Keyorix planning notes).
+**Evidence:** the measurement report `archive/2026-10/SESSION-CORE-SPLIT-DESIGN-1.md` (Keyorix planning notes).
 Numbers are kept out of this ADR on purpose; each implementing PR pastes its own before/after.
 
 ## Context
@@ -73,7 +73,8 @@ The checks and where they live are listed in `internal/core/INVARIANTS.d/INV-COR
 
 One extraction per PR, mechanical only (move, qualifier rewrite, aliases), CORE lane only, opened in a quiet window
 after every open PR touching the moved files has merged. Each PR carries the move script, a `provemove` proof
-(`scripts/refactor/provemove`: normalised declarations equal before/after), equal test-name sets, an unchanged
+(`scripts/refactor/provemove`: normalised declarations equal before/after; a leaf extraction runs it with
+`-alias <leaf>=core`, so core's aliases are checked against the moved declarations), equal test-name sets, an unchanged
 exported API or production dependency closure as applicable, and green guards. Conflicts are resolved by re-running
 the move script on fresh main. Rollback is a revert PR proven the same way.
 

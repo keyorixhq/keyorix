@@ -7,7 +7,7 @@
 // Usage:
 //
 //	provemove -base <tree> -head <tree> -dirs internal/core,internal/core/coretests \
-//	    [-strip core] [-pkgmap coretests=core] [-rename oldName=NewName,...]
+//	    [-strip core] [-pkgmap coretests=core] [-rename oldName=NewName,...] [-alias leaf=core]
 //
 // -base and -head are two checkouts (for example `git worktree`-free copies made
 // with `git archive <sha> | tar -x -C dir`). -dirs lists the directories,
@@ -21,12 +21,17 @@
 // in " [...]" when the file is a _test.go file or carries a GOOS/GOARCH
 // file-name suffix ("x|func:TestA [test]", "x|func:F [linux amd64]"): a test
 // moved into a non-test file stops running, and a suffix is a build constraint,
-// so either reports MISSING and ADDED. Its body is printed with go/printer and
+// so either reports MISSING and ADDED. A file whose name starts with "_" or "."
+// is ignored by go build and go test, so its declarations are keyed
+// " [ignored]" and a move into or out of one reports MISSING and ADDED too. Its body is printed with go/printer and
 // compared as a token stream without comments, so formatting, alignment and
 // comments never count, except the declaration's //go: directives (its doc
 // comment's //go:embed, //go:noinline ..., and a //go:linkname anywhere in the
 // file that names it) and the file's //go:build / +build lines, which are part
-// of the body.
+// of the body. A const spec's body is its value as the compiler sees it: a spec
+// with no expression of its own repeats the type and expressions of the
+// previous spec of its group, and a spec whose expressions use iota also
+// records its index in the group, so reordering a const group is CHANGED.
 //
 //   - -pkgmap new=old renames a package for the key (coretests=core: a test moved
 //     to package coretests compares against its old self in package core).
@@ -34,10 +39,26 @@
 //     test that now says core.NewKeyorixCore equals its old NewKeyorixCore.
 //   - -rename old=new renames an identifier in the BASE tree before comparing (an
 //     unexported name the move had to export).
+//   - -alias leaf=core proves a leaf extraction (ADR-121 decision 3): package
+//     leaf is keyed as core (like -pkgmap), and a declaration of package core
+//     of the form `type X = leaf.X`, `var X = leaf.X` or `const X = leaf.X`
+//     (one name, same name, no type) is an alias, not a declaration. An alias
+//     is compared only by its target: the target must be a declaration read
+//     from package leaf, of kind type (type alias), const (const) or func or
+//     var (var), in a file of the same class. Each alias new in head prints
+//     "ALIAS in head: <key> = leaf.X" and is not a difference; the moved
+//     declaration itself is compared against its base self like any other, so
+//     a change of its body is still CHANGED. An alias whose target is not such
+//     a declaration prints "UNRESOLVED alias in <tree>: ..." (a difference), and
+//     an alias of base that is gone from head prints "MISSING in head: <key>
+//     (alias)". Any other alias shape (a generic alias, a renamed target, a
+//     typed var) is an ordinary declaration and so a difference.
 //
-// Output: "PURE MOVE: N declarations identical" (exit 0), or one line per
+// Output: "PURE MOVE: N declarations identical" (exit 0, followed by ", K
+// alias(es) to moved declarations" when -alias found any), or one line per
 // difference, "CHANGED body: <key>", "MISSING in head: <key>", "ADDED in head:
-// <key>" (exit 1). Exit 2 is a usage or parse error.
+// <key>", "UNRESOLVED alias in ...: <key> = <target>" (exit 1). ALIAS lines
+// come first in both cases. Exit 2 is a usage or parse error.
 //
 // It fails (exit 2) when no declaration was read at all, or when a -dirs entry
 // exists in neither tree (a typo would otherwise prove nothing).
@@ -63,6 +84,7 @@ import (
 	"go/token"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -74,11 +96,28 @@ type options struct {
 	strip      map[string]bool
 	pkgmap     map[string]string
 	rename     map[string]string
+	alias      map[string]string // leaf package -> package it was extracted from
 }
 
 // decls maps a declaration key to its normalised bodies (several for a
 // repeated name such as init).
 type decls map[string][]string
+
+// declTree is one side's declarations, the keys read from an -alias leaf package,
+// and the aliases (key -> alias) found in it.
+type declTree struct {
+	decls    decls
+	fromLeaf map[string]bool
+	aliases  map[string]alias
+}
+
+// alias is `<kind> X = leaf.X` in the package leaf was extracted from.
+type alias struct {
+	leaf, name, class string
+	kinds             []string // the kinds the target may have
+}
+
+func (a alias) String() string { return a.leaf + "." + a.name }
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -91,16 +130,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	_, _ = fmt.Fprintf(stderr, "provemove: reading %d dir(s) in %s and %s\n", len(opts.dirs), opts.base, opts.head)
-	base, err := collect(opts.base, opts.dirs, opts, true)
+	baseTree, err := collect(opts.base, opts.dirs, opts, true)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "provemove: base:", err)
 		return 2
 	}
-	head, err := collect(opts.head, opts.dirs, opts, false)
+	headTree, err := collect(opts.head, opts.dirs, opts, false)
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "provemove: head:", err)
 		return 2
 	}
+	base, head := baseTree.decls, headTree.decls
 	if len(base) == 0 && len(head) == 0 {
 		_, _ = fmt.Fprintf(stderr, "provemove: no declarations read from -dirs %s in either tree: check the paths\n", strings.Join(opts.dirs, ","))
 		return 2
@@ -112,7 +152,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	diffs, n := compare(base, head)
+	aliasLines, aliasDiffs := compareAliases(baseTree, headTree)
+	diffs = append(diffs, aliasDiffs...)
+	slices.Sort(diffs)
+	for _, l := range aliasLines {
+		_, _ = fmt.Fprintln(stdout, l)
+	}
 	if len(diffs) == 0 {
+		if len(aliasLines) > 0 {
+			_, _ = fmt.Fprintf(stdout, "PURE MOVE: %d declarations identical, %d alias(es) to moved declarations\n", n, len(aliasLines))
+			return 0
+		}
 		_, _ = fmt.Fprintf(stdout, "PURE MOVE: %d declarations identical\n", n)
 		return 0
 	}
@@ -129,9 +179,10 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	base := fs.String("base", "", "base tree (before the move)")
 	head := fs.String("head", "", "head tree (after the move)")
 	dirs := fs.String("dirs", "", "comma-separated directories, relative to both trees")
-	strip := fs.String("strip", "", "comma-separated package qualifiers to strip in head (core: core.X -> X)")
+	strip := fs.String("strip", "", "comma-separated package qualifiers to strip in both trees (core: core.X -> X)")
 	pkgmap := fs.String("pkgmap", "", "comma-separated new=old package names for the key (coretests=core)")
 	rename := fs.String("rename", "", "comma-separated old=new identifier renames applied to base")
+	aliasFlag := fs.String("alias", "", "comma-separated leaf=core: leaf was extracted from core, and core's `X = leaf.X` declarations are aliases")
 	if err := fs.Parse(args); err != nil {
 		return options{}, err
 	}
@@ -149,6 +200,17 @@ func parseFlags(args []string, stderr io.Writer) (options, error) {
 	}
 	if opts.rename, err = splitPairs(*rename, "-rename"); err != nil {
 		return options{}, err
+	}
+	if opts.alias, err = splitPairs(*aliasFlag, "-alias"); err != nil {
+		return options{}, err
+	}
+	for leaf, from := range opts.alias {
+		if m, ok := opts.pkgmap[leaf]; ok && m != from {
+			return options{}, fmt.Errorf("-alias %s=%s contradicts -pkgmap %s=%s", leaf, from, leaf, m)
+		}
+		if _, ok := opts.alias[from]; ok {
+			return options{}, fmt.Errorf("-alias: %s is both a leaf and the package a leaf was extracted from", from)
+		}
 	}
 	return opts, nil
 }
@@ -183,8 +245,9 @@ func isDir(root, dir string) bool {
 // collect reads every .go file directly in each dir of root. A dir missing from
 // one tree (a new package, or one the move emptied) is skipped here; run fails
 // on a dir missing from both.
-func collect(root string, dirs []string, opts options, isBase bool) (decls, error) {
+func collect(root string, dirs []string, opts options, isBase bool) (declTree, error) {
 	out := decls{}
+	res := declTree{decls: out, fromLeaf: map[string]bool{}, aliases: map[string]alias{}}
 	fset := token.NewFileSet()
 	for _, dir := range dirs {
 		abs := filepath.Join(root, filepath.FromSlash(dir))
@@ -193,7 +256,7 @@ func collect(root string, dirs []string, opts options, isBase bool) (decls, erro
 			continue
 		}
 		if err != nil {
-			return nil, err
+			return declTree{}, err
 		}
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
@@ -201,10 +264,13 @@ func collect(root string, dirs []string, opts options, isBase bool) (decls, erro
 			}
 			f, err := parser.ParseFile(fset, filepath.Join(abs, e.Name()), nil, parser.SkipObjectResolution|parser.ParseComments)
 			if err != nil {
-				return nil, err
+				return declTree{}, err
 			}
 			pkg := f.Name.Name
-			if mapped, ok := opts.pkgmap[pkg]; ok {
+			_, isLeaf := opts.alias[pkg]
+			if mapped, ok := opts.alias[pkg]; ok {
+				pkg = mapped
+			} else if mapped, ok := opts.pkgmap[pkg]; ok {
 				pkg = mapped
 			}
 			if isBase {
@@ -213,16 +279,92 @@ func collect(root string, dirs []string, opts options, isBase bool) (decls, erro
 			class := fileClass(e.Name())
 			build := buildLines(f)
 			linknames := linknameDirectives(f)
+			leaves := aliasQualifiers(f, opts.alias)
 			for _, d := range f.Decls {
 				for key, b := range declBodies(fset, d) {
 					k := pkg + "|" + key + class
+					if b.alias != nil && leaves[b.alias.leaf] && len(build) == 0 && len(b.directives) == 0 && len(linknames[b.name]) == 0 {
+						if _, dup := res.aliases[k]; !dup {
+							b.alias.class = class
+							res.aliases[k] = *b.alias
+							continue
+						}
+					}
 					dirs := slices.Concat(build, b.directives, linknames[b.name])
 					out[k] = append(out[k], strings.Join(dirs, "")+normalise(b.text, opts.strip))
+					if isLeaf {
+						res.fromLeaf[k] = true
+					}
 				}
 			}
 		}
 	}
-	return out, nil
+	return res, nil
+}
+
+// aliasQualifiers returns the -alias leaf names that f, a file of a package
+// some leaf was extracted from, imports under their own name (an import whose
+// last path element is the leaf, without a local name, or named the leaf).
+func aliasQualifiers(f *ast.File, aliases map[string]string) map[string]bool {
+	out := map[string]bool{}
+	for leaf, from := range aliases {
+		if f.Name.Name != from {
+			continue
+		}
+		for _, imp := range f.Imports {
+			p := strings.Trim(imp.Path.Value, "`\"")
+			if (imp.Name == nil && path.Base(p) == leaf) || (imp.Name != nil && imp.Name.Name == leaf) {
+				out[leaf] = true
+			}
+		}
+	}
+	return out
+}
+
+// compareAliases returns the ALIAS lines for aliases new in head and the
+// differences: an alias whose target is not a declaration read from its leaf
+// (either tree), a base alias gone from head, and an alias whose target
+// changed.
+func compareAliases(base, head declTree) (lines, diffs []string) {
+	for _, side := range []struct {
+		name string
+		t    declTree
+	}{{"base", base}, {"head", head}} {
+		for k, a := range side.t.aliases {
+			if !resolves(side.t, k, a) {
+				diffs = append(diffs, fmt.Sprintf("UNRESOLVED alias in %s: %s = %s (no %s %s read from package %s)",
+					side.name, k, a, strings.Join(a.kinds, "/"), a.name, a.leaf))
+			}
+		}
+	}
+	for k, a := range head.aliases {
+		if _, ok := base.aliases[k]; !ok && resolves(head, k, a) {
+			lines = append(lines, "ALIAS in head: "+k+" = "+a.String())
+		}
+	}
+	for k, a := range base.aliases {
+		h, ok := head.aliases[k]
+		switch {
+		case !ok:
+			diffs = append(diffs, "MISSING in head: "+k+" (alias)")
+		case h.String() != a.String() || h.class != a.class:
+			diffs = append(diffs, "CHANGED body: "+k+" (alias of "+a.String()+" in base, of "+h.String()+" in head)")
+		}
+	}
+	slices.Sort(lines)
+	return lines, diffs
+}
+
+// resolves reports whether alias a (key k) names a declaration of t read from
+// its leaf package, of an allowed kind, in a file of the alias's class.
+func resolves(t declTree, k string, a alias) bool {
+	pkg, _, _ := strings.Cut(k, "|")
+	for _, kind := range a.kinds {
+		if target := pkg + "|" + kind + ":" + a.name + a.class; t.fromLeaf[target] {
+			return true
+		}
+	}
+	return false
 }
 
 // body is one declaration's printed text, its name (for //go:linkname) and the
@@ -231,6 +373,7 @@ type body struct {
 	name       string
 	text       string
 	directives []string
+	alias      *alias // set for `<kind> X = q.X` (q not yet checked against -alias)
 }
 
 // declBodies returns key -> body for one top-level declaration (a GenDecl
@@ -251,24 +394,76 @@ func declBodies(fset *token.FileSet, d ast.Decl) map[string]body {
 			return res
 		}
 		declDirs := directives(d.Doc)
-		for _, spec := range d.Specs {
+		// The previous const spec's type and expressions, which a spec with no
+		// expression of its own repeats.
+		var prevType ast.Expr
+		var prevValues []ast.Expr
+		for i, spec := range d.Specs {
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
 				dirs := slices.Concat(declDirs, directives(s.Doc))
 				s.Doc, s.Comment = nil, nil
-				res["type:"+s.Name.Name] = body{name: s.Name.Name, text: render(fset, &ast.GenDecl{Tok: token.TYPE, Specs: []ast.Spec{s}}), directives: dirs}
+				b := body{name: s.Name.Name, text: render(fset, &ast.GenDecl{Tok: token.TYPE, Specs: []ast.Spec{s}}), directives: dirs}
+				if s.Assign.IsValid() && s.TypeParams == nil {
+					b.alias = aliasOf(s.Name.Name, s.Type, "type")
+				}
+				res["type:"+s.Name.Name] = b
 			case *ast.ValueSpec:
 				dirs := slices.Concat(declDirs, directives(s.Doc))
 				s.Doc, s.Comment = nil, nil
+				var aliasTarget *alias
+				if len(s.Names) == 1 && len(s.Values) == 1 && s.Type == nil {
+					kinds := map[token.Token]string{token.VAR: "func var", token.CONST: "const"}[d.Tok]
+					aliasTarget = aliasOf(s.Names[0].Name, s.Values[0], kinds)
+				}
+				prefix := ""
+				if d.Tok == token.CONST {
+					if len(s.Values) > 0 {
+						prevType, prevValues = s.Type, s.Values
+					} else {
+						s = &ast.ValueSpec{Names: s.Names, Type: prevType, Values: prevValues}
+					}
+					if usesIota(s.Values) {
+						prefix = fmt.Sprintf("iota %d\n", i)
+					}
+				}
 				// Each name of "var a, b = 1, 2" keeps the whole spec as its body.
-				text := render(fset, &ast.GenDecl{Tok: d.Tok, Specs: []ast.Spec{s}})
+				text := prefix + render(fset, &ast.GenDecl{Tok: d.Tok, Specs: []ast.Spec{s}})
 				for _, n := range s.Names {
-					res[strings.ToLower(d.Tok.String())+":"+n.Name] = body{name: n.Name, text: text, directives: dirs}
+					res[strings.ToLower(d.Tok.String())+":"+n.Name] = body{name: n.Name, text: text, directives: dirs, alias: aliasTarget}
 				}
 			}
 		}
 	}
 	return res
+}
+
+// aliasOf returns the alias for `name = q.name` (e is q.name, q an
+// identifier), else nil. kinds is the space-separated kinds its target may have.
+func aliasOf(name string, e ast.Expr, kinds string) *alias {
+	sel, ok := e.(*ast.SelectorExpr)
+	if !ok || sel.Sel.Name != name {
+		return nil
+	}
+	q, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	return &alias{leaf: q.Name, name: name, kinds: strings.Fields(kinds)}
+}
+
+// usesIota reports whether any expression mentions the identifier iota.
+func usesIota(exprs []ast.Expr) bool {
+	found := false
+	for _, e := range exprs {
+		ast.Inspect(e, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == "iota" {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
 }
 
 // directives returns the //go: lines of a doc comment, one "directive ...\n"
@@ -335,11 +530,15 @@ func setOf(s string) map[string]bool {
 	return m
 }
 
-// fileClass returns the key suffix for a file name: "" for a plain non-test
-// file, else " [test]", " [linux]", " [test linux amd64]" ... It follows
+// fileClass returns the key suffix for a file name: " [ignored]" for a name
+// go/build ignores (leading "_" or "."), "" for a plain non-test file, else
+// " [test]", " [linux]", " [test linux amd64]" ... It follows
 // go/build's goodOSArchFile: the part after the first "_", minus a trailing
 // _test, ends in _GOOS_GOARCH, _GOOS or _GOARCH.
 func fileClass(name string) string {
+	if strings.HasPrefix(name, "_") || strings.HasPrefix(name, ".") {
+		return " [ignored]"
+	}
 	name = strings.TrimSuffix(name, ".go")
 	var tags []string
 	if strings.HasSuffix(name, "_test") {
