@@ -36,6 +36,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	grpcserver "github.com/keyorixhq/keyorix/server/grpc"
 	httpserver "github.com/keyorixhq/keyorix/server/http"
 	"google.golang.org/grpc"
@@ -234,7 +235,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 	if err != nil {
 		t.Fatalf("webauthn.New: %v", err)
 	}
-	testCore.SetWebAuthn(rp)
+	testCore.SetWebAuthn(webauthnrp.Wrap(rp))
 
 	if err := wireSSOProviders(testCore); err != nil {
 		t.Fatalf("wireSSOProviders: %v", err)

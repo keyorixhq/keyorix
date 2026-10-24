@@ -19,6 +19,7 @@ import (
 	gowebauthn "github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -43,7 +44,7 @@ func TestFinishWebAuthnRegistration_GetUserFail(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(5)).Return(nil, errors.New("user not found"))
 	c := NewKeyorixCore(ms)
-	c.SetWebAuthn(newTestWebAuthnRP(t))
+	c.SetWebAuthn(webauthnrp.Wrap(newTestWebAuthnRP(t)))
 	_, err := c.FinishWebAuthnRegistration(context.Background(), 5, "token", "mykey", "password", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "user not found")
@@ -73,7 +74,7 @@ func TestBeginWebAuthnRegistration_GetUserFail(t *testing.T) {
 	ms := new(MockStorage)
 	ms.On("GetUser", mock.Anything, uint(7)).Return(nil, errors.New("not found"))
 	c := NewKeyorixCore(ms)
-	c.SetWebAuthn(newTestWebAuthnRP(t))
+	c.SetWebAuthn(webauthnrp.Wrap(newTestWebAuthnRP(t)))
 	_, _, err := c.BeginWebAuthnRegistration(context.Background(), 7)
 	require.Error(t, err)
 }
