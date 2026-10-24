@@ -6,7 +6,10 @@
   key version or claiming another one), claiming rows past the chain head or a certified
   head row that is missing or rewritten (a signed retention purge excepted), or saved
   before a verification failure or discontinuity the chain records (an empty-chain row,
-  audit head 0, included: every row this binary saves is `placed`), or carrying no audit
+  audit head 0, included: every row this binary saves is `placed`; a row that carries a
+  failure of its own included: above its audit head only the failure event naming the
+  generation that recorded the row's failure is tolerated, any other, older, newer or
+  without a generation, is a break the row never saw), or carrying no audit
   head at all (signed or re-signed by an older binary) while the chain holds the marker or
   a discontinuity event, becomes a sticky
   `auditVerifyDiscontinuity`: status `broken` on every view (incremental, posture, full
@@ -22,10 +25,19 @@
   verification (no state row); an older-binary row put back while retention has purged
   every marker and discontinuity event is only rejected (not_proven), as before. A
   mixed-version rolling upgrade where an older replica saves the state reads as this
-  discontinuity: stop older replicas before upgrading. Why: AUDIT-VERIFY-STATE-1, the residual risk of #3547.
+  discontinuity: stop older replicas before upgrading (a binary rollback and re-upgrade
+  too). A save's generation stays above every generation a failure event names, so a
+  lost row cannot make generations restart and collide. Fail-closed false positive: a
+  failure event is appended after the lock is released, so if a full verification that
+  started after the recording save clears that failure (or records another) before the
+  append lands, the saved row reads as a discontinuity. Why: AUDIT-VERIFY-STATE-1, the residual risk of #3547.
   Guard: `TestAuditVerifyStateFailClosed_*` (`internal/core`, SQLite and PostgreSQL:
   `_RowDeleted`, `_RowDeletedWithLaunder`, `_RowDeletedMidRun`, `_RowGarbled`,
   `_RowFromOtherKeyEpoch`, `_RowPastChainHead`, `_RowBeforeKnownBreak`,
   `_LegacyRowBeforeKnownBreak`, `_OlderReplicaDropsDiscontinuity`,
   `_EmptyChainRowBeforeKnownBreak`, `_HonestFirstStart`,
-  `_HonestUpgradeFromLegacyRow`).
+  `_HonestUpgradeFromLegacyRow`, `_OlderFailureRowBeforeNewerFailure`,
+  `_OlderFailureRowSavedAfterItsEvent`, `_RecordingRowAfterRestart`,
+  `_ClearedFailureAtEventHead`, `_GenerationsOutliveLostRow`,
+  `_UnplacedRowDiscontinuityEventOnly`), `TestAuditVerifyEvidence_ForeignFailure`,
+  `TestAuditFailureEventGen`.

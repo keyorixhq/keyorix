@@ -47,7 +47,8 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   a key change does not yet carry the state over. A `before a recorded break` discontinuity
   also appears when a replica running a version from before this check saves the state during
   a rolling upgrade (it drops the fields that place the row against the chain): stop older
-  replicas before upgrading. There is no command to accept it yet
+  replicas before upgrading. A binary rollback to such a version (upgrade-rollback.md §4A)
+  followed by a re-upgrade has the same effect. There is no command to accept it yet
   (`docs/design-audit-reseal-options.md`).
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.

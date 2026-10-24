@@ -31,6 +31,9 @@
 // system.audit_verification_state_discontinuity event. No verification clears
 // it. A deleted row is told from an honest first start by the in-chain
 // system.audit_verification_state_initialized marker every state keeps alive.
+// Each failure event names the generation that recorded it, so a row that
+// carries some failure still predates a break when any other failure event
+// lies above its audit head.
 // A row without an audit head (signed by an older binary) cannot be placed
 // against the chain: once that marker or a discontinuity exists it can only be
 // an older row put back, and is a discontinuity too (auditVerifyStateUnplaced).
@@ -272,10 +275,9 @@ type auditVerifyEvidence struct {
 }
 
 // noteFailure adds one failure event. The result does not depend on the order
-// events are added in or on repeats (the scan re-reads a window). Events that
-// name no generation never count as recorded by the same one.
+// events are added in or on repeats (the scan re-reads a window).
 func (ev *auditVerifyEvidence) noteFailure(id uint, gen uint64) {
-	other := gen == 0 || gen != ev.failureGen
+	other := gen != ev.failureGen
 	switch {
 	case id > ev.failure:
 		if other {
@@ -289,7 +291,8 @@ func (ev *auditVerifyEvidence) noteFailure(id uint, gen uint64) {
 }
 
 // foreignFailure is the newest failure event id that state generation own did
-// not record (own 0: any failure event), 0 when there is none.
+// not record (own 0: any failure event, so an event naming no generation is
+// never a row's own), 0 when there is none.
 func (ev auditVerifyEvidence) foreignFailure(own uint64) uint {
 	if own != 0 && ev.failureGen == own {
 		return ev.failureOther

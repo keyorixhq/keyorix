@@ -153,6 +153,7 @@ func TestAuditVerifyStateFailClosed_HonestUpgradeFromLegacyRow(t *testing.T) {
 		s, _, why := c.decodeAuditVerifyState(fcStateValue(t, e.db))
 		require.NotNil(t, s, why)
 		assert.Greater(t, s.Gen, uint64(4), "the upgraded server continued the generation")
-		assert.Positive(t, s.AuditHead, "rows this binary saves are placed against the chain")
+		assert.True(t, s.Placed, "rows this binary saves are placed against the chain")
+		assert.Positive(t, s.AuditHead)
 	})
 }
