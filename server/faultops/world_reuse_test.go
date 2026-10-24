@@ -41,6 +41,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	grpcserver "github.com/keyorixhq/keyorix/server/grpc"
 	httpserver "github.com/keyorixhq/keyorix/server/http"
 	"google.golang.org/grpc"
@@ -166,7 +167,7 @@ func newWorldCore(tb tbLite, faulty *faultstorage.FaultyStorage) *core.KeyorixCo
 	if err != nil {
 		tb.Fatalf("webauthn.New: %v", err)
 	}
-	testCore.SetWebAuthn(rp)
+	testCore.SetWebAuthn(webauthnrp.Wrap(rp))
 
 	if err := wireSSOProviders(testCore); err != nil {
 		tb.Fatalf("wireSSOProviders: %v", err)
