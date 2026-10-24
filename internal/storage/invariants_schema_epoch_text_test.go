@@ -4,7 +4,7 @@ package storage
 //
 // INV-STORAGE-02 in INVARIANTS.md quotes the current schema epoch and compatibility
 // floor ("now epoch E, floor F"). It said "now 3 ... floor stays 2" long after the code
-// had moved to epoch 5 and floor 3, because the number lived only in prose. This test
+// had moved to epoch 6 and floor 3, because the number lived only in prose. This test
 // reads the number out of the prose and compares it with currentSchemaEpoch and
 // minCompatibleSchemaEpoch, so the sentence cannot go stale again: a bump of either
 // constant fails here until INVARIANTS.md is updated in the same change.

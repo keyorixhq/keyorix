@@ -47,7 +47,6 @@ secret_value_policy.enabled
 secret_value_policy.extra_denylist
 secret_value_policy.min_length
 secret_value_policy.reject_common
-secrets.limits.max_secret_size
 server.grpc.allowed_origins
 server.grpc.domain
 server.grpc.metrics_token

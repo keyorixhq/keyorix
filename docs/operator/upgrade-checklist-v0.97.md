@@ -139,7 +139,7 @@ page; CI does not run it yet). The Kubernetes version, with Helm and several pod
    against each replica.
 
 In a rolling upgrade from v0.96.x, an old replica that restarts reports `database declares a
-minimum compatible schema epoch of 3 (database schema epoch 5)` and stays down until the rollout
+minimum compatible schema epoch of 3 (database schema epoch 6)` and stays down until the rollout
 replaces it (UPGRADING §6q). That is expected, not a fault.
 
 ## 3. Rollback limits
@@ -151,9 +151,9 @@ replaces it (UPGRADING §6q). That is expected, not a fault.
   deliberate override is `--allow-rollback`, which is logged to the audit trail.
 - **Everything written after the upgrade is lost by a restore:** secrets, audit rows, sessions,
   tokens. Decide how long you can afford that before you start, and keep the post-checks fast.
-- **Schema epoch.** The schema epoch is 5 and the compatibility floor is 3 (UPGRADING §6q), so a
+- **Schema epoch.** The schema epoch is 6 and the compatibility floor is 3 (UPGRADING §6q), so a
   v0.96.x binary (epoch 2) **refuses to start** on a database this release has migrated:
-  `database declares a minimum compatible schema epoch of 3 (database schema epoch 5)`. It must not
+  `database declares a minimum compatible schema epoch of 3 (database schema epoch 6)`. It must not
   be run on one: v0.97.0 writes a v2 audit retention anchor (#3258) and a `suspend_clear_synced_copies`
   marker (#3215) that v0.96.x mishandles (a purge loses the purged-event count for good; a plain
   suspend can empty the synced Kubernetes copies). The floor is recorded in the database and is never

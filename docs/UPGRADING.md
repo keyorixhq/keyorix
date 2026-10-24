@@ -624,10 +624,10 @@ Details: [recertification-activity-window.md](recertification-activity-window.md
 ## 6q. Compatibility floor 3: v0.96.x cannot run against an upgraded database
 
 This release raises the schema compatibility floor to 3 (ADR-101); its schema epoch
-is 5 (epochs 4 and 5 are additive and leave the floor at 3, see 6o.1).
+is 6 (epochs 4, 5 and 6 are additive and leave the floor at 3, see 6o.1).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
-epoch of 3 (database schema epoch 5)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
+epoch of 3 (database schema epoch 6)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
 database:
 
 - **The v2 audit retention anchor (#3258).** v0.96.x reads it as malformed, so its
@@ -1232,30 +1232,40 @@ What to check:
 The step-by-step version, with the commands verified on 0.96.1 → 0.96.3 (Docker
 Compose, SQLite and PostgreSQL), is [operator/upgrade-rollback.md](operator/upgrade-rollback.md).
 
-1. Stop the new version.
-2. Restore the backup you took in step 1, using a binary matching the
-   version that backup came from (an `admin restore` binary can read
-   older-format archives, but restoring into a *newer* schema than the
-   backup's own binary understands is not the supported direction — restore
-   with the matching or a newer binary, then let migrations run forward
-   again, not backward). **Expect `admin restore` to refuse this by
-   default** with a message about the archive being behind the host's own
-   audit high-water mark — that's the intended rollback-protection
-   behavior, not a malfunction, for exactly this scenario (the target has
-   moved on since the backup). Pass `--allow-rollback` to proceed; it
-   prints a loud warning and records the override to the audit trail.
-3. `admin verify-audit` after restore, on whichever binary you rolled back
-   to, to confirm the audit chain is intact.
-4. If the new version's database has already advanced the recorded schema
-   epoch (ADR-097), a straight downgrade of the *binary* while keeping the
-   already-migrated database is refused at startup by design (`database
-   schema epoch N is newer than this binary's schema epoch M`, or, from v0.97.0
-   on, `database declares a minimum compatible schema epoch of 3 (database
-   schema epoch 5)`; see 6q) — this is why step 2 restores data from before the
-   failed upgrade rather than attempting to run the new binary's data on the
-   old binary. **For v0.97.0, rollback is a restore**: a v0.96.x binary never
-   starts again on a database a v0.97 server has started against, and nothing
-   lowers the recorded floor.
+**First decide which rollback is possible.** A server refuses to start when the
+database records a compatibility floor above its own schema epoch (ADR-101).
+
+- **Same floor (e.g. within v0.96.x, all epoch 2): put the old binary or image back.**
+  Stop the new version, put back the old binary (or set the Compose pins back), and
+  start. Data written on the new version is kept. Checked for 0.96.3 → 0.96.1: the old
+  release read and wrote the upgraded data, and `admin verify-audit` stayed VALID with
+  both binaries.
+- **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
+  binary refuses with `database declares a minimum compatible schema epoch of 3 (database
+  schema epoch 6)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
+  v0.96.x binary never starts again on a database a v0.97 server has started against. A database written by a binary with a newer epoch but
+  without a recorded floor is refused with `database schema epoch N is newer than this
+  binary's schema epoch M` (ADR-097).
+
+Restoring the backup you took in step 1:
+
+1. Stop the new version and put back the old binary or image. Restore with that old
+   binary, the version the backup came from. `admin restore` refuses an archive
+   whose schema epoch is newer than its own.
+2. Restoring over the upgraded install on the same host needs `--allow-rollback`.
+   Without it, restore refuses with a message about the archive being behind the
+   host's own audit high-water mark. That refusal is the intended rollback protection:
+   the restore un-revokes anything revoked after the backup. With the flag it prints a
+   loud warning and records the override to the audit trail.
+3. SQLite: `admin restore ... --overwrite-existing --allow-rollback` moves the existing
+   database and key files aside (`*.pre-restore-<timestamp>`). **PostgreSQL: empty the
+   database first** (`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`, or drop and
+   recreate the database), then restore with the same two flags.
+   `--overwrite-existing` does not empty a PostgreSQL database: over existing rows the
+   restore fails on a duplicate key *after* it has already replaced the key files
+   (SELF_HOSTING.md §5).
+4. Run `admin verify-audit` after the restore, with the binary you rolled back to, and
+   check that the chain is intact.
 
 ## 8. See also
 

@@ -827,6 +827,17 @@ secrets:
     max_secret_size: 65536   # bytes per value on create/update/rotate; default 64 KiB, max 1 MiB
 ```
 
+**Deprecated, never read.** These keys still parse but no code uses them, so setting
+one changes nothing; the server only prints a start-up warning. Remove them from your
+config. They are deleted after one minor release.
+
+| Key | What it did | Default | What to do |
+|---|---|---|---|
+| `secrets.chunking.enabled` | (never implemented) | `false` | Remove it. |
+| `secrets.chunking.max_chunk_size_kb` | (never implemented) | `0` | Remove it. |
+| `secrets.chunking.max_chunks_per_secret` | (never implemented) | `0` | Remove it. |
+| `secrets.limits.max_secrets_per_user` | (never enforced) | `0` | Remove it. To cap value size use `secrets.limits.max_secret_size`. |
+
 ## security
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
