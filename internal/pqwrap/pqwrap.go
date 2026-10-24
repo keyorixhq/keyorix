@@ -329,7 +329,7 @@ func (e *Envelope) Marshal() []byte {
 	out := e.header()
 	out = append(out, e.X25519Ephemeral...)
 	out = append(out, e.MLKEMCiphertext...)
-	out = binary.BigEndian.AppendUint16(out, uint16(len(e.Sealed)))
+	out = binary.BigEndian.AppendUint16(out, uint16(len(e.Sealed))) // #nosec G115 -- Wrap bounds the key to MaxKeySize, so len(Sealed) <= aeadOverhead+MaxKeySize (92); ParseEnvelope rejects anything longer
 	return append(out, e.Sealed...)
 }
 
@@ -442,7 +442,7 @@ func seal(pub *PublicKey, p Purpose, context, key []byte, enc encapsulation, new
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("pqwrap: AEAD: %w", err)
 	}
-	e.Sealed = a.Seal(nil, nil, key, aad(header, context))
+	e.Sealed = a.Seal(nil, nil, key, aad(header, context)) // #nosec G407 -- the nil nonce is deliberate: newAEAD supplies the nonce (Wrap passes randomNonceGCM, which draws a fresh one and prepends it; only the known-answer vectors fix it)
 	return e.Marshal(), ssX, th, wk, nil
 }
 
