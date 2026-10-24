@@ -26,4 +26,9 @@
   Not covered: recursive `filepath.WalkDir` guards rooted at `internal/core` (they see subpackages of
   core but not a leaf extracted to `internal/<leaf>`: the first such extraction re-points them), guards
   outside `internal/core` and `internal/core/guards`, test-only imports of core by a family package,
-  and build-tagged variants other than the default tags.
+  build-tagged variants other than the default tags, a walker that drops files after calling the
+  shared lister (R5 proves the lister's output, not each walker's use of it), and directory listings
+  `TestNoAdHocCoreDirListing` does not recognise (`filepath.Walk`/`WalkDir`, `fs.WalkDir`, `go list`,
+  a hard-coded file list). The family registry is data, not Go literals, so that
+  `scripts/ci/select-affected.py` does not re-test every srcpath importer on each core change
+  (`internal/testutil/srcpath/corefamily.d/README.md`).

@@ -30,8 +30,10 @@ import (
 // files, not repository files. A literal is resolved,
 // in order, as a path relative to the repository root, relative to the test
 // file's directory, and (bare names only) as a file in the test file's own
-// directory, in a core family directory (srcpath.CoreFamilyDirs) or in
-// namedFileSearchDirs. A literal that resolves nowhere must be on
+// directory, in internal/core itself or in namedFileSearchDirs. Not in an
+// extracted core family package: the guards key a moved file as
+// internal/<leaf>/foo.go (srcpath.CoreFamilyRel), so a bare "foo.go" left
+// behind after the move must go red here (PR #3695 review, F12). A literal that resolves nowhere must be on
 // namedFileAllowlist with the reason it is intentionally absent.
 //
 // What this does not check: names assembled at run time (filepath.Join of
@@ -41,7 +43,7 @@ import (
 var namedFileScanRoots = []string{"internal/core", "server/http", "internal/statemap"}
 
 // namedFileSearchDirs: where bare names are looked up besides the test file's
-// own directory and the core family. Beyond the handler dirs these are the
+// own directory and internal/core. Beyond the handler dirs these are the
 // packages core guards name by file (storage implementations, the generated
 // fault wrapper, rotation backends).
 var namedFileSearchDirs = []string{
@@ -209,7 +211,7 @@ func namedFileViolations(repo string, refs []namedFileRef, searchDirs []string, 
 }
 
 func namedFileSearchPath(repo string) []string {
-	dirs := slices.Clone(srcpath.CoreFamilyDirs())
+	dirs := []string{filepath.Join(repo, filepath.FromSlash(srcpath.CoreDir))}
 	for _, d := range namedFileSearchDirs {
 		dirs = append(dirs, filepath.Join(repo, filepath.FromSlash(d)))
 	}
@@ -264,5 +266,26 @@ func TestNamedFileViolations_SelfTest(t *testing.T) {
 	msgs = namedFileViolations(repo, refs, search, allow)
 	if len(msgs) != 1 || !strings.Contains(msgs[0], "g_test.go:gone.go is not needed") {
 		t.Fatalf("an allowlisted name is green and an unused entry is red: %v", msgs)
+	}
+}
+
+// TestNamedFileSearchPath_SkipsExtractedLeaves (F12): a bare name that exists
+// only in a package extracted from core does not resolve, so a guard still
+// naming "foo.go" after foo.go moved to internal/<leaf> goes red.
+func TestNamedFileSearchPath_SkipsExtractedLeaves(t *testing.T) {
+	repo := t.TempDir()
+	writeTree(t, repo, map[string]string{
+		"internal/core/stays.go":         "package core\n",
+		"internal/leaf/moved.go":         "package leaf\n",
+		"internal/core/guards/g_test.go": "package guards\nvar keys = []string{\"stays.go:Fn\", \"moved.go:Fn\"}\n",
+	})
+	srcpath.AddCoreFamilyDirForTesting(t, filepath.Join(repo, "internal", "leaf"))
+	refs, err := namedFileRefs(repo, []string{"internal/core"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs := namedFileViolations(repo, refs, namedFileSearchPath(repo), nil)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], `names "moved.go"`) {
+		t.Fatalf("only the name of the file moved to the leaf must be red: %v", msgs)
 	}
 }
