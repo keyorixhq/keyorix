@@ -12,3 +12,6 @@
 
 ### Added
 - `assignable_scope` on roles: in `GET`/`POST`/`PUT /api/v1/roles` (and gRPC `Role`, `CreateRoleRequest`, `UpdateRoleRequest`), and a *Can be granted* field in the web UI's role create/edit forms. The group *Manage Roles* modal now uses the role's scope to tell you to pick (or clear) a project before sending.
+
+### Fixed
+- `DELETE /api/v1/groups/{id}/roles/{roleId}` for a grant the group does not hold at that scope answers 404 "Role not assigned to group" (as `DELETE /api/v1/user-roles` does), not 500.
