@@ -31,6 +31,12 @@
 // system.audit_verification_state_discontinuity event. No verification clears
 // it. A deleted row is told from an honest first start by the in-chain
 // system.audit_verification_state_initialized marker every state keeps alive.
+// Each failure event names the generation that recorded it, so a row that
+// carries some failure still predates a break when any other failure event
+// lies above its audit head.
+// A row without an audit head (signed by an older binary) cannot be placed
+// against the chain: once that marker or a discontinuity exists it can only be
+// an older row put back, and is a discontinuity too (auditVerifyStateUnplaced).
 package core
 
 import (
@@ -42,6 +48,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -214,10 +222,14 @@ type auditVerifyState struct {
 	// Gen is strictly increasing across saves; Bind is the trail at save time.
 	Gen  uint64             `json:"gen"`
 	Bind auditVerifyBinding `json:"bind"`
-	// AuditHead is the highest audit event id at save time (0 on rows saved
-	// before it existed): a row may not claim rows past the head, nor predate a
-	// break event after it while lacking that break.
+	// AuditHead is the highest audit event id at save time: a row may not claim
+	// rows past the head, nor predate a break event after it while lacking that
+	// break. Placed is set on every row this binary saves, so AuditHead 0 on a
+	// placed row means the chain was empty, never "unknown". An unplaced row was
+	// signed by a binary from before AUDIT-VERIFY-STATE-1 (or re-signed by one,
+	// which drops these fields and Discontinuity): see auditVerifyStateUnplaced.
 	AuditHead     uint                      `json:"audit_head,omitempty"`
+	Placed        bool                      `json:"placed,omitempty"`
 	Pin           *auditVerifyPin           `json:"pin,omitempty"`
 	Rejected      *auditVerifyRejection     `json:"rejected,omitempty"`
 	Discontinuity *auditVerifyDiscontinuity `json:"discontinuity,omitempty"`
@@ -256,9 +268,66 @@ func (s *auditVerifyState) claimedThrough() uint {
 }
 
 // auditVerifyEvidence is what the chain says about state rows: the newest id of
-// each event type above (0 = none seen) and the head id.
+// each event type above (0 = none seen) and the head id. A failure event names
+// the state generation whose save recorded it (auditFailureEventGen, 0 = none:
+// an older binary's text); failureGen is that of the newest failure event,
+// failureOther the newest failure event another generation recorded, and
+// maxFailureGen the highest generation any failure event names.
 type auditVerifyEvidence struct {
 	head, marker, failure, discontinuity, keyTransition uint
+	failureGen                                          uint64
+	failureOther                                        uint
+	maxFailureGen                                       uint64
+}
+
+// noteFailure adds one failure event. The result does not depend on the order
+// events are added in or on repeats (the scan re-reads a window).
+func (ev *auditVerifyEvidence) noteFailure(id uint, gen uint64) {
+	other := gen != ev.failureGen
+	switch {
+	case id > ev.failure:
+		if other {
+			ev.failureOther = ev.failure
+		}
+		ev.failure, ev.failureGen = id, gen
+	case id < ev.failure && other:
+		ev.failureOther = max(ev.failureOther, id)
+	}
+	ev.maxFailureGen = max(ev.maxFailureGen, gen)
+}
+
+// foreignFailure is the newest failure event id that state generation own did
+// not record (own 0: any failure event, so an event naming no generation is
+// never a row's own), 0 when there is none.
+func (ev auditVerifyEvidence) foreignFailure(own uint64) uint {
+	if own != 0 && ev.failureGen == own {
+		return ev.failureOther
+	}
+	return ev.failure
+}
+
+// auditFailureEventText is the description of the failure event for f. It names
+// the generation of the save that recorded f, so the load can tell a row's own
+// failure event (appended after that save, so above its audit head) from a
+// failure the row never saw.
+func auditFailureEventText(f *auditVerifyFailure) string {
+	return fmt.Sprintf("audit chain verification failed (%s, state generation %d): %s", f.Source, f.Gen, f.Reason)
+}
+
+var auditFailureEventGenRE = regexp.MustCompile(`^audit chain verification failed \([a-z-]+, state generation ([1-9][0-9]{0,17})\): `)
+
+// auditFailureEventGen is the generation a failure event's description names
+// (auditFailureEventText), or 0 when it names none.
+func auditFailureEventGen(description string) uint64 {
+	m := auditFailureEventGenRE.FindStringSubmatch(description)
+	if m == nil {
+		return 0
+	}
+	gen, err := strconv.ParseUint(m[1], 10, 64)
+	if err != nil {
+		return 0
+	}
+	return gen
 }
 
 // auditVerifyEvidenceIndex caches auditVerifyEvidence per process, so each scan
@@ -302,7 +371,7 @@ func (c *KeyorixCore) scanAuditVerifyEvidence(ctx context.Context) (auditVerifyE
 			case auditVerifyStateMarkerEvent:
 				idx.ev.marker = max(idx.ev.marker, e.ID)
 			case auditChainVerificationFailedEvent:
-				idx.ev.failure = max(idx.ev.failure, e.ID)
+				idx.ev.noteFailure(e.ID, auditFailureEventGen(e.Description))
 			case auditVerifyStateDiscontinuityEvent:
 				idx.ev.discontinuity = max(idx.ev.discontinuity, e.ID)
 			case auditKeyTransitionEvent:
@@ -465,17 +534,26 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 			return c.discontinuedAuditVerifyState(s, auditDiscKeyTransition, why), "", nil
 		}
 	}
-	// Rows saved before AuditHead existed (s.AuditHead == 0) cannot be placed
-	// against the chain; the replay checks below still apply to them.
-	if s.AuditHead > 0 {
+	if s.Placed {
+		// AuditHead is exact, 0 included (saved on an empty chain). A failure
+		// event above it was appended after the save. Only the row's own
+		// failure may be among them (its event follows the recording save);
+		// any other, older or newer than the row's failure, is a break the row
+		// never saw. Carrying some failure is not enough.
+		var own uint64
+		if s.Failure != nil {
+			own = s.Failure.Gen
+		}
 		switch {
-		case s.Failure == nil && ev.failure > s.AuditHead:
+		case ev.foreignFailure(own) > s.AuditHead:
 			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak,
-				fmt.Sprintf("the persisted verification state was saved at audit event #%d without the verification failure recorded at audit event #%d (an older row put back to erase it)", s.AuditHead, ev.failure)), "", nil
+				fmt.Sprintf("the persisted verification state was saved at audit event #%d without the verification failure recorded at audit event #%d (an older row put back to erase it)", s.AuditHead, ev.foreignFailure(own))), "", nil
 		case s.Discontinuity == nil && ev.discontinuity > s.AuditHead:
 			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak,
 				fmt.Sprintf("the persisted verification state was saved at audit event #%d without the discontinuity recorded at audit event #%d (an older row put back to erase it)", s.AuditHead, ev.discontinuity)), "", nil
 		}
+	} else if why := auditVerifyStateUnplaced(ev); why != "" {
+		return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak, why), "", nil
 	}
 	untrusted := func(why string) (*auditVerifyState, string, error) {
 		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job, KeyEpoch: s.KeyEpoch},
@@ -490,6 +568,22 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	}
 	c.bumpAuditVerifyGen(s.Gen)
 	return s, "", nil
+}
+
+// auditVerifyStateUnplaced judges an authentic row without Placed, which this
+// binary never writes. Only the binary from before AUDIT-VERIFY-STATE-1 signs
+// such rows, and it never appends the in-chain marker or a discontinuity: once
+// either exists, a row saved by this binary has been placed, so an unplaced row
+// is an older row put back, or an older replica's re-sign that dropped a
+// discontinuity (a mixed-version rolling upgrade). Both erase evidence, so both
+// are a discontinuity. Without either event (an honest upgrade, the first load
+// after it) the row is continued; the replay checks still apply. A failure
+// event alone cannot place it: the older binary appends those too.
+func auditVerifyStateUnplaced(ev auditVerifyEvidence) string {
+	if id := max(ev.marker, ev.discontinuity); id > 0 {
+		return fmt.Sprintf("the persisted verification state carries no audit head (signed by, or re-signed by, a server version from before audit event #%d recorded that the current state format is in use): an older row put back, or an older replica that dropped its fields", id)
+	}
+	return ""
 }
 
 // auditCheckpointTrailUnauthenticated describes a latest checkpoint or
@@ -621,6 +715,15 @@ func (c *KeyorixCore) signedAuditVerifyPin(ctx context.Context) (*auditVerifyPin
 	return &pin, nil
 }
 
+// auditVerifyFailureGenFloor is the highest generation a failure event the
+// last evidence scan read names.
+func (c *KeyorixCore) auditVerifyFailureGenFloor() uint64 {
+	idx := &c.auditVerifyEvidence
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	return idx.ev.maxFailureGen
+}
+
 // loadAuditVerifyStateForWrite is loadAuditVerifyState for a writer holding
 // WithAuditCheckpointLock. An untrusted row is not silently replaced: the
 // returned state records the rejection (non-nil rejected, which the caller
@@ -631,7 +734,11 @@ func (c *KeyorixCore) loadAuditVerifyStateForWrite(ctx context.Context) (st *aud
 	if err != nil {
 		return nil, nil, err
 	}
-	st.Gen = max(st.Gen, c.auditVerifyGenSeen.Load()) + 1
+	// Above every generation a failure event names too: after a row was lost
+	// (deleted or garbled) and the process restarted, generations would start
+	// over and a new failure could reuse an old one's, which the load would
+	// then take for a row's own.
+	st.Gen = max(st.Gen, c.auditVerifyGenSeen.Load(), c.auditVerifyFailureGenFloor()) + 1
 	if reason != "" {
 		st.Rejected = &auditVerifyRejection{At: c.now(), Gen: st.Gen, Reason: reason}
 		rejected = st.Rejected
@@ -670,6 +777,7 @@ func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyS
 	st.KID = c.auditCkptKeyVersion
 	st.Bind = bind
 	st.AuditHead = head
+	st.Placed = true
 	payload, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -743,8 +851,8 @@ func (c *KeyorixCore) reportAuditVerifyStateEvents(ctx context.Context, st *audi
 			"audit verification state rejected and restarted: "+rejected.Reason)
 	}
 	if failed != nil {
-		c.writeAuditEventFailedFull(ctx, "system.audit_chain_verification_failed", nil, nil, nil, "",
-			"audit chain verification failed ("+failed.Source+"): "+failed.Reason)
+		c.writeAuditEventFailedFull(ctx, auditChainVerificationFailedEvent, nil, nil, nil, "",
+			auditFailureEventText(failed))
 	}
 }
 

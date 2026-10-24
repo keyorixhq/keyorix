@@ -47,7 +47,7 @@ func TestDisableClonedWebAuthnCredential_Invariant_ExactlyOneAuditEventWithCorre
 
 		actorCtx := WithMachineActor(WithActorType(context.Background(), ActorTypeMachine), invariantTestMachineID)
 		cred := &webauthn.Credential{ID: credID, Authenticator: webauthn.Authenticator{CloneWarning: true}}
-		err := c.rejectIfCloned(actorCtx, 1, cred, "203.0.113.9")
+		err := c.rejectIfCloned(actorCtx, 1, verifiedFrom(cred), "203.0.113.9")
 		require.Error(t, err, "a regressed signature counter must still refuse the authentication")
 
 		var reloaded models.WebAuthnCredential

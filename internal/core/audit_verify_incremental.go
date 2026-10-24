@@ -521,15 +521,16 @@ func (c *KeyorixCore) WriteAuditCheckpointIncremental(ctx context.Context) (*mod
 		rejected = rej
 		cp, ferr, werr := c.writeIncrementalCheckpointLocked(ctx, st)
 		newCP = cp
-		if ferr != nil {
-			failed = ferr
-		}
 		if serr := c.saveAuditVerifyState(ctx, st); serr != nil {
 			if werr == nil {
 				werr = fmt.Errorf("failed to save audit verification state: %w", serr)
 			}
 		} else {
-			saved = st
+			// The failure event names st's generation: append it only once that
+			// generation is stored, or every later load reads it as a foreign
+			// failure (a false, sticky discontinuity). An unsaved failure is
+			// detected again by the next tick, since the chain stays broken.
+			saved, failed = st, ferr
 		}
 		return werr
 	})

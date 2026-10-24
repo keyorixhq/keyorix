@@ -47,6 +47,10 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   (`docs/design-audit-key-transition.md`), so an honest key change does not produce one.
   `key transition` means the transition record is missing, forged or for another epoch, and
   `other key epoch` means a key change that did not carry the state over (an older binary).
+  A `before a recorded break` discontinuity also appears when a replica running a version
+  from before this check saves the state during a rolling upgrade (it drops the fields that
+  place the row against the chain): stop older replicas before upgrading. A binary rollback
+  to such a version (upgrade-rollback.md §4A) followed by a re-upgrade has the same effect.
   There is no command to accept a discontinuity yet (`docs/design-audit-reseal-options.md`).
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.

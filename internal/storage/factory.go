@@ -33,7 +33,7 @@ const (
 // column encodes). NOT bumped for pure comment/refactor changes that don't
 // touch what gets written to the database. Every bump must also decide
 // minCompatibleSchemaEpoch below (ADR-101).
-const currentSchemaEpoch = 5
+const currentSchemaEpoch = 6
 
 // schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
 // key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
@@ -96,6 +96,11 @@ const schemaEpochMetadataKey = "schema_epoch"
 // its backfill still writes the owed rows of an epoch-5 degraded activation exactly
 // once. The only cost is that it does not mark that activation settled, so
 // verify-audit keeps reporting it as owed: loud, never silent.
+//
+// Epoch 6 (audit_events.request_id, AUDIT-REQUEST-ID-1) leaves it at 3: an epoch-5
+// replica never reads the column (QueryFields) and inserts without it, so its rows
+// have NULL, which means "no request id" -- exactly what such a row has. The column
+// is outside the hash chain, so verification is unaffected either way.
 const minCompatibleSchemaEpoch = 3
 
 // schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's
@@ -1321,6 +1326,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 		if !columnExists(db, "audit_events", "entry_hash") {
 			if err := exec("ALTER TABLE audit_events ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
+		// Epoch 6 (AUDIT-REQUEST-ID-1): advisory request id, outside the hash chain.
+		// Nullable with no default, so Postgres changes only the catalog (no rewrite).
+		if !columnExists(db, "audit_events", "request_id") {
+			if err := exec("ALTER TABLE audit_events ADD COLUMN request_id TEXT"); err != nil {
 				return err
 			}
 		}
