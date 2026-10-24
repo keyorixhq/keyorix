@@ -27,7 +27,10 @@
   mixed-version rolling upgrade where an older replica saves the state reads as this
   discontinuity: stop older replicas before upgrading (a binary rollback and re-upgrade
   too). A save's generation stays above every generation a failure event names, so a
-  lost row cannot make generations restart and collide. Fail-closed false positive: a
+  lost row cannot make generations restart and collide. A failure event is appended
+  only after the save that records its generation succeeds (a failed save appends
+  none, and the next tick records the still-broken chain), so a transient save error
+  is not a discontinuity. Fail-closed false positive: a
   failure event is appended after the lock is released, so if a full verification that
   started after the recording save clears that failure (or records another) before the
   append lands, the saved row reads as a discontinuity. Why: AUDIT-VERIFY-STATE-1, the residual risk of #3547.
@@ -39,5 +42,5 @@
   `_HonestUpgradeFromLegacyRow`, `_OlderFailureRowBeforeNewerFailure`,
   `_OlderFailureRowSavedAfterItsEvent`, `_RecordingRowAfterRestart`,
   `_ClearedFailureAtEventHead`, `_GenerationsOutliveLostRow`,
-  `_UnplacedRowDiscontinuityEventOnly`), `TestAuditVerifyEvidence_ForeignFailure`,
+  `_UnplacedRowDiscontinuityEventOnly`, `_SaveFailureDuringBreak`), `TestAuditVerifyEvidence_ForeignFailure`,
   `TestAuditFailureEventGen`.
