@@ -67,6 +67,7 @@ var boundedLabels = map[string]string{
 	"op":        "closed set: encrypt, decrypt",
 	"provider":  "KEK provider type normalised to the 9 known provider names plus `other` (encryption.providerLabel)",
 	"reason":    "closed enum documented in the metric help (unreachable/timeout/server_error)",
+	"lock":      "closed set of advisory-lock kinds (config.lockLossKinds plus `other`), listed in the metric help",
 }
 
 // forbiddenLabelTokens: if any `_`-separated token of a label name is in this set the

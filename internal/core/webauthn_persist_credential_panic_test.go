@@ -50,6 +50,6 @@ func TestPersistUpdatedCredential_PanicDoesNotEscape(t *testing.T) {
 	c.storage = panicOnAdvanceWebAuthnCredentialCounterStorage(c.storage)
 
 	assert.NotPanics(t, func() {
-		c.persistUpdatedCredential(ctx, 1, &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{SignCount: 1}})
+		c.persistUpdatedCredential(ctx, 1, verifiedFrom(&webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{SignCount: 1}}))
 	}, "a panic in the best-effort signature-counter advance must not escape persistUpdatedCredential")
 }

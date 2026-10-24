@@ -1,4 +1,4 @@
-# schema of a fresh sqlite install at currentSchemaEpoch 6; see schema_epoch_snapshot_test.go
+# schema of a fresh sqlite install at currentSchemaEpoch 7; see schema_epoch_snapshot_test.go
 column access_request_approvals.approver_id INTEGER notnull=1 default=<none> pk=0
 column access_request_approvals.approver_machine_identity_id INTEGER notnull=1 default=0 pk=0
 column access_request_approvals.created_at DATETIME notnull=0 default=<none> pk=0
@@ -142,6 +142,7 @@ column audit_events.ip_address TEXT notnull=0 default=<none> pk=0
 column audit_events.machine_identity_id INTEGER notnull=0 default=<none> pk=0
 column audit_events.prev_hash TEXT notnull=0 default=<none> pk=0
 column audit_events.project_id INTEGER notnull=0 default=<none> pk=0
+column audit_events.request_id TEXT notnull=0 default=<none> pk=0
 column audit_events.secret_node_id INTEGER notnull=0 default=<none> pk=0
 column audit_events.success NUMERIC notnull=0 default=true pk=0
 column audit_events.user_id INTEGER notnull=0 default=<none> pk=0

@@ -21,7 +21,7 @@ func TestRoleAssignableScopeBackfill_Postgres(t *testing.T) {
 		db := pgRawOpen(t, pgIsolatedDatabaseDSN(t, pgTestDSN(t)))
 		f := &DefaultStorageFactory{}
 		require.NoError(t, f.migrateDatabase(db))
-		seedPreEpoch6Roles(t, db)
+		seedPreEpoch7Roles(t, db)
 
 		require.NoError(t, f.migrateDatabase(db))
 		got := roleAssignableScopes(t, db)
@@ -39,7 +39,7 @@ func TestRoleAssignableScopeBackfill_Postgres(t *testing.T) {
 		db := pgRawOpen(t, pgIsolatedDatabaseDSN(t, pgTestDSN(t)))
 		f := &DefaultStorageFactory{}
 		require.NoError(t, f.migrateDatabase(db))
-		seedPreEpoch6Roles(t, db)
+		seedPreEpoch7Roles(t, db)
 		require.NoError(t, db.Exec(`CREATE FUNCTION fail_role_backfill() RETURNS trigger AS $$
 			BEGIN RAISE EXCEPTION 'injected backfill failure'; END $$ LANGUAGE plpgsql`).Error)
 		require.NoError(t, db.Exec(`CREATE TRIGGER fail_role_backfill BEFORE UPDATE ON roles

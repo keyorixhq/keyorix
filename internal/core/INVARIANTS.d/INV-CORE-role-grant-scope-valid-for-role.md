@@ -5,7 +5,7 @@
   environment scope always names its own project's environment (`{0, X}` and `{P, env of Q}`
   are refused). The role's stored scope decides (`models.EffectiveRoleAssignableScope`), never
   its name; built-in scopes come from one table (`models.BuiltinRoleAssignableScopes`), read by
-  first-boot seeding and the one-time epoch-6 backfill (existing custom roles = `any`).
+  first-boot seeding and the one-time epoch-7 backfill (existing custom roles = `any`).
   Enforced in core at every storage grant write (`requireScopeValidForRole`,
   `role_scope_guard.go`), so every transport is covered; every handler/RPC that calls a core
   method able to return the refusal maps `ErrRoleScopeInvalid` to HTTP 400 / gRPC

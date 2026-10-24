@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/logging"
@@ -108,8 +107,8 @@ type KeyorixCore struct {
 	// to a private or link-local address. Set via SetDynamicAllowPrivateTargets.
 	dynamicAllowPrivateTargets bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
-	// Set from config at startup via SetWebAuthn.
-	webauthnRP *webauthn.WebAuthn
+	// Set from config at startup via SetWebAuthn (internal/webauthnrp).
+	webauthnRP ports.WebAuthnRelyingParty
 	// auditHighWaterWitnessPath is where advanceAuditHighWater (audit_checkpoint.go)
 	// mirrors the signed audit high-water mark it just persisted to
 	// system_metadata (design-b3-backup-v2.md §6.3's rollback-protection witness
@@ -1127,9 +1126,10 @@ func (c *KeyorixCore) defaultTrustRegistry() (*trust.KeyRegistry, error) {
 	return trust.DefaultRegistry()
 }
 
-// SetWebAuthn wires the WebAuthn relying party (ADR-036). The server calls this
-// at startup when the install configures a webauthn block. nil disables passkeys.
-func (c *KeyorixCore) SetWebAuthn(rp *webauthn.WebAuthn) {
+// SetWebAuthn wires the WebAuthn relying party (ADR-036; internal/webauthnrp).
+// The server calls this at startup when the install configures a webauthn
+// block. nil disables passkeys.
+func (c *KeyorixCore) SetWebAuthn(rp ports.WebAuthnRelyingParty) {
 	c.webauthnRP = rp
 }
 

@@ -1097,10 +1097,10 @@ before upgrading the CLI:
   "an internal error occurred". Behaviour is unchanged: the target is still refused unless a
   server operator sets that option.
 
-## 6w. Roles carry an assignable scope (schema epoch 6, #3546)
+## 6w. Roles carry an assignable scope (schema epoch 7, #3546)
 
-The first boot adds `roles.assignable_scope` (schema epoch 6; the compatibility floor stays
-3, so an epoch-5 replica keeps running during a rolling upgrade) and sets it once:
+The first boot adds `roles.assignable_scope` (schema epoch 7; the compatibility floor stays
+3, so an epoch-6 replica keeps running during a rolling upgrade) and sets it once:
 `project_*` roles `project`, `system_*` and `alert_operator` `global`, the legacy
 `admin`/`editor`/`viewer`/`auditor`/`super_admin` roles and **every existing custom role
 `any`** (nothing that worked before breaks). Roles created after the upgrade default to

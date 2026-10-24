@@ -11,10 +11,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// seedPreEpoch6Roles turns a migrated database back into the pre-epoch-6
+// seedPreEpoch7Roles turns a migrated database back into the pre-epoch-7
 // shape (no roles.assignable_scope) holding every built-in role plus one custom
-// role, the way an install upgraded from epoch 5 looks.
-func seedPreEpoch6Roles(t *testing.T, db *gorm.DB) {
+// role, the way an install upgraded from epoch 6 looks.
+func seedPreEpoch7Roles(t *testing.T, db *gorm.DB) {
 	t.Helper()
 	require.NoError(t, db.Exec(`ALTER TABLE roles DROP COLUMN assignable_scope`).Error)
 	require.False(t, columnExists(db, "roles", "assignable_scope"))
@@ -39,7 +39,7 @@ func roleAssignableScopes(t *testing.T, db *gorm.DB) map[string]string {
 	return out
 }
 
-// TestRoleAssignableScopeBackfill_UpgradeIsOnceAndIdempotent pins the epoch-6
+// TestRoleAssignableScopeBackfill_UpgradeIsOnceAndIdempotent pins the epoch-7
 // migration (GROUP-ROLE-SCOPE-1 Phase 2, #3546): an existing custom role
 // becomes any (nothing that worked breaks), each built-in its fixed scope, a
 // new role defaults to project, and a second and third boot change nothing:
@@ -49,7 +49,7 @@ func TestRoleAssignableScopeBackfill_UpgradeIsOnceAndIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	f := &DefaultStorageFactory{}
 	require.NoError(t, f.migrateDatabase(db))
-	seedPreEpoch6Roles(t, db)
+	seedPreEpoch7Roles(t, db)
 
 	require.NoError(t, f.migrateDatabase(db), "upgrade boot")
 	got := roleAssignableScopes(t, db)
@@ -79,7 +79,7 @@ func TestRoleAssignableScopeBackfill_FailureLeavesNoColumn(t *testing.T) {
 	require.NoError(t, err)
 	f := &DefaultStorageFactory{}
 	require.NoError(t, f.migrateDatabase(db))
-	seedPreEpoch6Roles(t, db)
+	seedPreEpoch7Roles(t, db)
 	require.NoError(t, db.Exec(`CREATE TRIGGER fail_role_backfill BEFORE UPDATE ON roles BEGIN SELECT RAISE(ABORT, 'injected backfill failure'); END`).Error)
 
 	require.Error(t, f.migrateDatabase(db), "a failed backfill must fail the boot")
