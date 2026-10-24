@@ -174,6 +174,8 @@ func TestCodeQLGateDismissedAlerts(t *testing.T) {
 
 // The workflow must analyse without uploading in the merge queue and gate on
 // the SARIF it wrote: this is what makes the "ref not found" failure impossible.
+// pull_request (the PR-time gate, CODEQL-PR-GATE-1) does the same, and both
+// keep the SARIF as an artifact.
 func TestCodeQLMergeGroupDoesNotUpload(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "codeql.yml"))
 	if err != nil {
@@ -181,8 +183,10 @@ func TestCodeQLMergeGroupDoesNotUpload(t *testing.T) {
 	}
 	s := string(raw)
 	for _, want := range []string{
-		"upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}",
-		"upload-database: ${{ github.event_name != 'merge_group' }}",
+		"upload: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 'never' || 'always' }}",
+		"upload-database: ${{ github.event_name != 'merge_group' && github.event_name != 'pull_request' }}",
+		"if: github.event_name == 'merge_group' || github.event_name == 'pull_request'\n",
+		"if: always() && (github.event_name == 'merge_group' || github.event_name == 'pull_request')\n        uses: actions/upload-artifact@",
 	} {
 		if got := strings.Count(s, want); got != 3 {
 			t.Errorf("%q appears %d times, want once per analyze job (3)", want, got)
