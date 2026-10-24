@@ -35,16 +35,11 @@
       "environment_id": 11
     }
   ],
-  "grants": [
+  "grants": [],
+  "unmappable": [
     {
-      "permissions": [
-        "secrets.read",
-        "secrets.write"
-      ],
-      "project_id": 1,
-      "environment_id": 11,
-      "source_ref": "policy:mobile-readwrite path:secret/data/mobile-app/*"
+      "source_ref": "policy:mobile-readwrite path:secret/data/mobile-app/*",
+      "category": "path-narrower-than-scope"
     }
-  ],
-  "unmappable": []
+  ]
 }
