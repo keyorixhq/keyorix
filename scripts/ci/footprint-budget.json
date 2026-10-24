@@ -1,0 +1,8 @@
+{
+  "_about": "Limits for scripts/ci/footprint-check.sh (EDGE-LOWMEM-1). server_bytes and cli_bytes: release build (CGO_ENABLED=0 -trimpath -ldflags '-s -w'), limit = value measured on 2026-10-22 + 10%. idle_rss_kib: peak RSS of the secure-baseline SQLite server after 30 s idle, MAX of 3 runs, limit = measured + 25%; null = no baseline measured on that platform yet (the check skips it with a message, or fails under --require-rss). Refresh with `scripts/ci/footprint-check.sh --print`. These are tripwires for accidental growth, not targets: when growth is intended, raise the limit in the PR that causes it and say why.",
+  "platforms": {
+    "darwin/arm64": {"server_bytes": 78914231, "cli_bytes": 12241383, "idle_rss_kib": 73440},
+    "linux/amd64": {"server_bytes": 83894448, "cli_bytes": 12931248, "idle_rss_kib": null},
+    "linux/arm64": {"server_bytes": 76487242, "cli_bytes": 11967050, "idle_rss_kib": null}
+  }
+}
