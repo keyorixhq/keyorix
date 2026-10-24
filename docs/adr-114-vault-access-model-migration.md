@@ -138,10 +138,14 @@ routinely spans many projects and environments by glob. The convention:
   mount held (`cross_mount_evidence` in the JSON plan). `apply-access` lists
   the tree again when it re-derives the plan and applies **nothing** if any
   stanza's evidence differs from the reviewed plan's, in either direction, or
-  if the reviewed plan has none (written before this check): no
-  plan-to-apply window in which another mount's paths can appear unreviewed.
-  Not covered: secrets written to the other mount after `apply-access`, and
-  `--path-map` scopes (the override declares the scope's content).
+  if the reviewed plan has none (written before this check), so a change
+  between `plan-access` and `apply-access` is never applied unreviewed.
+  Residual: `apply-access`'s own window between that LIST and its writes
+  (seconds; a path another mount gains in it is not seen), the same as for
+  any secret written to the other mount after `apply-access`. Neither is
+  re-checked, and `audit-access` sees only the tree at the time it runs.
+  Not covered either: `--path-map` scopes (the override declares the scope's
+  content).
 - **Override**: `--path-map <vault-prefix>=<projectID>:<environmentID>`
   (repeatable), required whenever the Vault tree doesn't follow the
   convention, or the operator wants a different target than the name match
