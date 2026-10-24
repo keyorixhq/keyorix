@@ -1,15 +1,10 @@
-# THROWAWAY (CI-CACHE-SPIKE-1): measures whether a seeded -race -cover Go build
-# cache shortens the test-suite legs' compile phase. Lives only on the
-# ci-cache-spike-1/* branch; never merged.
-#
-# seed:  replays every distinct test-suite leg command (exact flags) at three
-#        commits (this one, ~6 h and ~24 h older main) into an empty GOCACHE
-#        and saves it; plus a "deps" seed: third-party + std only, -race.
-# cold:  four legs exactly as test-suite sets them up today (setup-go's go.sum
-#        cache only), compile+link only (-exec /usr/bin/true, no test runs).
-# warm:  the same four legs with a seed restored on top of setup-go's cache.
-# Every measurement prints one "SPIKE|" line (wall, action-graph hits/misses,
-# compile seconds split repo / third-party / std, cache size).
+# THROWAWAY (CI-CACHE-SPIKE-1), run 3: validates the production wiring on this
+# branch (entries are branch-scoped, invisible to main and the queue).
+# seed:       go-race-cache.yml's steps verbatim (minus its main-only if:).
+# seed-again: the same steps once more; must find today's key and skip.
+# leg:        ci.yml test-suite's setup-go + "Restore -race -cover build cache"
+#             step verbatim, then compile+link the leg (-exec true) and print
+#             a SPIKE| line (hit rate from the action graph).
 name: CI cache spike (throwaway)
 
 on:
@@ -18,70 +13,90 @@ on:
 
 permissions: {}
 
-env:
-  GO_VERSION: '1.27.3'
-
 jobs:
   seed:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - variant: same
-            ref: ${{ github.sha }}
-            mode: all
-          - variant: old6
-            ref: 8610063c95e6d8c31a96ea3b7c47b692c8606ba6
-            mode: all
-          - variant: old24
-            ref: aebda13e69961d2b23aa61045cf4b6761c9bb16a
-            mode: all
-          - variant: deps
-            ref: ${{ github.sha }}
-            mode: deps
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ matrix.ref }}
-      # The spike's own scripts come from this branch's commit, not the seed ref.
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          path: spike
-          sparse-checkout: scripts/ci/spike
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: go mod download
-        run: go mod download
-      - name: Seed (${{ matrix.mode }}, -race -cover, empty GOCACHE)
-        run: bash spike/scripts/ci/spike/measure.sh seed-${{ matrix.variant }} ${{ matrix.mode }}
-      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/go-build
-          key: ci-cache-spike-1-v2-${{ matrix.variant }}-${{ github.run_id }}
-
-  cold:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        leg: [core-2, faultops-3, server-2, root-4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: Compile ${{ matrix.leg }} (cold, as today)
-        run: bash scripts/ci/spike/measure.sh cold ${{ matrix.leg }}
+          go-version: '1.27.3'
+          cache: false
+      - name: Cache key for today
+        id: key
+        env:
+          GO_VERSION: ${{ steps.setup-go.outputs.go-version }}
+          GO_SUM: ${{ hashFiles('go.sum') }}
+        run: |
+          key="go-race-cover-v1-${RUNNER_OS}-go${GO_VERSION}-${GO_SUM}-$(date -u +%Y%m%d)"
+          echo "Cache key: $key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Look up today's entry
+        id: lookup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+      - name: Already seeded today
+        if: steps.lookup.outputs.cache-hit == 'true'
+        run: echo "Today's -race -cover cache (${{ steps.key.outputs.key }}) already exists; nothing to do."
+      - name: Download modules
+        if: steps.lookup.outputs.cache-hit != 'true'
+        run: go mod download
+      - name: Compile every test-suite leg (-race -cover, no tests run)
+        if: steps.lookup.outputs.cache-hit != 'true'
+        run: scripts/ci/seed-race-cache.sh
+      - name: Save
+        if: steps.lookup.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ${{ steps.key.outputs.key }}
 
-  warm:
+  seed-again:
+    needs: seed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Cache key for today
+        id: key
+        env:
+          GO_VERSION: ${{ steps.setup-go.outputs.go-version }}
+          GO_SUM: ${{ hashFiles('go.sum') }}
+        run: |
+          key="go-race-cover-v1-${RUNNER_OS}-go${GO_VERSION}-${GO_SUM}-$(date -u +%Y%m%d)"
+          echo "Cache key: $key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+      - name: Look up today's entry
+        id: lookup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+      - name: Already seeded today
+        if: steps.lookup.outputs.cache-hit == 'true'
+        run: echo "Today's -race -cover cache (${{ steps.key.outputs.key }}) already exists; nothing to do."
+      - name: Must have skipped
+        if: steps.lookup.outputs.cache-hit != 'true'
+        run: |
+          echo "::error::seed-again did not find the entry the seed job just saved"
+          exit 1
+
+  leg:
     needs: seed
     runs-on: ubuntu-latest
     permissions:
@@ -89,19 +104,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        leg: [core-2, faultops-3, server-2, root-4]
-        variant: [same, old6, old24, deps]
+        leg: [core-2, server-2, root-4]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Set up Go
+        id: setup-go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: ${{ env.GO_VERSION }}
-      - name: Restore race cache (${{ matrix.variant }})
+          go-version: '1.27.3'
+      - name: Restore -race -cover build cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/go-build
-          key: ci-cache-spike-1-v2-${{ matrix.variant }}-${{ github.run_id }}
-          fail-on-cache-miss: true
-      - name: Compile ${{ matrix.leg }} (warm ${{ matrix.variant }})
-        run: bash scripts/ci/spike/measure.sh warm-${{ matrix.variant }} ${{ matrix.leg }}
+          key: go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-restore-only
+          restore-keys: |
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-
+      - name: Compile ${{ matrix.leg }} (production restore)
+        run: bash scripts/ci/spike/measure.sh warm-prod ${{ matrix.leg }}

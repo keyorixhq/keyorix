@@ -1391,10 +1391,29 @@ jobs:
         if: steps.leg.outputs.run == 'true'
 
       - name: Set up Go
+        id: setup-go
         if: steps.leg.outputs.run == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.3'
+
+      # The -race -cover build cache go-race-cache.yml seeds from main once a
+      # day (setup-go's go.sum cache above holds no -race object: 0 of ~1,000
+      # build actions hit, CI-CACHE-SPIKE-1). Restored on top of setup-go's,
+      # newest entry first; the key never matches exactly, only the prefixes
+      # do. Restore only, never saved here (only main writes it). A miss or a
+      # cache-service error just means a cold compile, as before; a stale
+      # entry cannot change what is tested, since GOCACHE is content-addressed
+      # and -coverprofile disables test-result caching.
+      - name: Restore -race -cover build cache
+        if: steps.leg.outputs.run == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-restore-only
+          restore-keys: |
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-
 
       - name: go test (${{ matrix.leg }})
         if: steps.leg.outputs.run == 'true'
