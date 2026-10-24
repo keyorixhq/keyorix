@@ -39,12 +39,13 @@ const (
 )
 
 var (
-	verifyAuditDBPath      string
-	verifyAuditPGDSN       string
-	verifyAuditKeyFile     string
-	verifyAuditAnchorFile  string
-	verifyAuditTSARootFile string
-	verifyAuditJSON        bool
+	verifyAuditDBPath       string
+	verifyAuditPGDSN        string
+	verifyAuditKeyFile      string
+	verifyAuditPrevKeyFiles []string
+	verifyAuditAnchorFile   string
+	verifyAuditTSARootFile  string
+	verifyAuditJSON         bool
 )
 
 var verifyAuditCmd = &cobra.Command{
@@ -115,6 +116,8 @@ func init() {
 		"Verify this Postgres DSN directly, instead of the configured database")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditKeyFile, "checkpoint-key-file", "",
 		"Path to the derived audit-checkpoint signing key (hex or base64) -- enables checkpoint/high-water/truncation checks")
+	verifyAuditCmd.Flags().StringArrayVar(&verifyAuditPrevKeyFiles, "previous-checkpoint-key-file", nil,
+		"Path to a checkpoint signing key of an earlier key epoch (before a rotate-kek / migrate-provider); repeatable -- checks the old-key signature of each key transition record")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditAnchorFile, "anchor", "",
 		"Path to a JSON checkpoint snapshot held externally (e.g. an 'export-checkpoint' export) -- cross-checks the live chain against a copy this host does not control. Defaults to audit.offline_anchor_path from config when not passed")
 	verifyAuditCmd.Flags().StringVar(&verifyAuditTSARootFile, "tsa-roots", "",
@@ -214,6 +217,13 @@ func buildVerifyAuditOptions(cs configLoadState) (auditverify.Options, string, e
 			return opts, "", fmt.Errorf("--checkpoint-key-file: %w", err)
 		}
 		opts.CheckpointKey = key
+	}
+	for _, path := range verifyAuditPrevKeyFiles {
+		key, err := readCheckpointKeyFile(path)
+		if err != nil {
+			return opts, "", fmt.Errorf("--previous-checkpoint-key-file: %w", err)
+		}
+		opts.PreviousCheckpointKeys = append(opts.PreviousCheckpointKeys, key)
 	}
 
 	anchorPath, anchorSource, err := resolveOfflineAnchor(cs)
@@ -407,6 +417,11 @@ func printVerifyAuditReport(r *auditverify.Result) {
 			r.Checkpoint.KeyVersion, r.Checkpoint.ChainedEventsCertified)
 	default:
 		fmt.Println("  present but UNAUTHENTICATED -- no --checkpoint-key-file was supplied, or it did not verify")
+	}
+
+	if kt := r.KeyTransition; kt.Present {
+		fmt.Printf("\nKey transitions: %d recorded, current epoch authenticated: %v, old-key signatures checked: %d\n",
+			kt.Records, kt.Authenticated, kt.OldKeyVerified)
 	}
 
 	fmt.Println("\nRetention gap:")
