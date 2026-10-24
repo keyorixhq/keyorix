@@ -727,7 +727,8 @@ storage:
   reconstruct; with it, the reconstructed KEK is verified against a real HMAC-SHA256
   commitment computed at split time. `KEYORIX_MASTER_PASSWORD` is **not** required.
   Move an existing install onto it with `keyorix-server admin encryption migrate-provider
-  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`. ⚠️ Losing
+  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`
+  (the commitment is required there: the migration refuses without it). ⚠️ Losing
   more than N-K shares makes the KEK — and all data — permanently unrecoverable;
   store and back up shares separately.
 - **`tpm`**: the KEK is **sealed to the host TPM 2.0** (`tpm_device`, default
