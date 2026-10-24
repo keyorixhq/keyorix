@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,9 +65,7 @@ func (f *fakeAccessVault) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		bodies["LIST /v1/kv1"] = `{"data":{"keys":["team-a/"]}}`
 		bodies["LIST /v1/kv1/team-a"] = `{"data":{"keys":["prod/"]}}`
 	}
-	for k, v := range f.extra {
-		bodies[k] = v
-	}
+	maps.Copy(bodies, f.extra)
 	body, ok := bodies[key]
 	if !ok {
 		w.WriteHeader(http.StatusNotFound)
