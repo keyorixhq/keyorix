@@ -3,6 +3,10 @@ package ci_test
 import (
 	"bufio"
 	"encoding/json"
+	"go/parser"
+	"go/scanner"
+	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -96,6 +100,44 @@ func TestSelectAffected_FullTriggersRunEverything(t *testing.T) {
 				t.Errorf("%s changed: gate %s closed in a full run", f, g)
 			}
 		}
+	}
+}
+
+// A _test.go file under internal/testutil/ is compiled into its own package's
+// test binary only (nothing imports a _test.go): it selects that package like
+// any other test seed. The non-test helpers next to it stay FULL.
+func TestSelectAffected_TestutilTestFileIsATestSeed(t *testing.T) {
+	const guard = "internal/testutil/sqlitetest/shared_cache_literal_guard_test.go"
+	const pkg = "github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
+	s := changed(t, guard)
+	if s.Mode != "selected" {
+		t.Fatalf("%s changed: mode=%q (%s), want selected", guard, s.Mode, s.Reason)
+	}
+	if _, ok := s.Seeds[pkg]; !ok {
+		t.Errorf("seeds=%v, want %s among them", s.Seeds, pkg)
+	}
+	// Rule 3 may add packages whose tests name the file by path, but every
+	// seed is a test seed: no importer of the helper package is selected.
+	for p, why := range s.Seeds {
+		if !strings.HasPrefix(why, "test file ") && !strings.HasPrefix(why, "its tests name ") {
+			t.Errorf("seed %s: %q, want a test seed", p, why)
+		}
+	}
+	if got := legNames(s); !slices.Equal(got, []string{"root-2", "root-4"}) {
+		t.Errorf("legs=%v, want [root-2 root-4]: a testutil _test.go must not select the helper's importers", got)
+	}
+	for _, f := range []string{
+		"internal/testutil/fuzzworld/fuzzworld.go",
+		"internal/testutil/sqlitetest/sqlitetest.go",
+		"internal/testutil/sqlitetest/testdata/x.txt",
+	} {
+		if s := changed(t, leafTest, f); s.Mode != "full" {
+			t.Errorf("%s changed: mode=%q, want full (non-test testutil file)", f, s.Mode)
+		}
+	}
+	// scripts/ci/ has no such exemption.
+	if s := changed(t, "scripts/ci/select_affected_test.go"); s.Mode != "full" {
+		t.Errorf("scripts/ci test file: mode=%q, want full", s.Mode)
 	}
 }
 
@@ -228,4 +270,103 @@ func TestSelectAffected_GithubOutputIsOneLinePerKey(t *testing.T) {
 	if raw, _ := os.ReadFile(out); strings.Contains(string(raw), "\r") {
 		t.Errorf("GITHUB_OUTPUT contains a CR: %q", raw)
 	}
+}
+
+// go_literals decides which string literals count as "named paths" for rule 3.
+// It must never drop a literal the Go lexer sees outside a comment or an
+// import path (that would let a reader of a changed file go unselected), so
+// compare it with go/scanner over every Go file of the module.
+func TestSelectAffected_LiteralScannerAgreesWithGoScanner(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []string
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", ".scratch", "testdata", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".go") {
+			rel, _ := filepath.Rel(root, path)
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) < 500 {
+		t.Fatalf("only %d Go files found under %s", len(files), root)
+	}
+	compared := 0
+	for start := 0; start < len(files); start += 150 {
+		batch := files[start:min(start+150, len(files))]
+		cmd := exec.Command("python3", append([]string{"scripts/ci/select-affected.py", "--literals"}, batch...)...)
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("--literals: %v", err)
+		}
+		var got map[string][]string
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range batch {
+			want, ok := goScannerLiterals(t, filepath.Join(root, f))
+			if !ok {
+				continue
+			}
+			compared++
+			if !slices.Equal(got[f], want) {
+				t.Errorf("%s: scanner literals differ from go/scanner\n got  %q\n want %q", f, got[f], want)
+			}
+		}
+	}
+	if compared < 500 {
+		t.Fatalf("compared only %d files", compared)
+	}
+}
+
+// goScannerLiterals lists the string literals of a file in source order,
+// without import paths, as the text between the quotes. ok is false for a
+// file that does not parse (nothing to compare against).
+func goScannerLiterals(t *testing.T, path string) (lits []string, ok bool) {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, src, parser.ImportsOnly)
+	if err != nil {
+		return nil, false
+	}
+	imports := map[int]bool{}
+	for _, imp := range f.Imports {
+		imports[fset.Position(imp.Path.Pos()).Offset] = true
+	}
+	file := token.NewFileSet().AddFile(path, -1, len(src))
+	var sc scanner.Scanner
+	bad := false
+	sc.Init(file, src, func(token.Position, string) { bad = true }, 0)
+	for {
+		pos, tok, lit := sc.Scan()
+		if tok == token.EOF {
+			break
+		}
+		if tok == token.STRING && !imports[file.Offset(pos)] {
+			lits = append(lits, lit[1:len(lit)-1])
+		}
+	}
+	return lits, !bad
 }
