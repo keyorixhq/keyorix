@@ -1,0 +1,249 @@
+{
+  "runs": [
+    {
+      "automationDetails": {
+        "id": "/language:javascript-typescript/"
+      },
+      "results": [
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "process.env"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "index": 0,
+                            "uri": "demo/app.js"
+                          },
+                          "region": {
+                            "endColumn": 28,
+                            "endLine": 6,
+                            "startColumn": 17,
+                            "startLine": 6
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "db_user"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "index": 0,
+                            "uri": "demo/app.js"
+                          },
+                          "region": {
+                            "endColumn": 48,
+                            "endLine": 13,
+                            "startColumn": 41,
+                            "startLine": 13
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "correlationGuid": "37f7ccbb-e7c3-4489-ad03-1fa868c2a1c3",
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "demo/app.js"
+                },
+                "region": {
+                  "endColumn": 48,
+                  "endLine": 13,
+                  "startColumn": 41,
+                  "startLine": 13
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "This logs sensitive data returned by [process environment](1) as clear text."
+          },
+          "relatedLocations": [
+            {
+              "id": 1,
+              "message": {
+                "text": "process environment"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "demo/app.js"
+                },
+                "region": {
+                  "endColumn": 28,
+                  "endLine": 6,
+                  "startColumn": 17,
+                  "startLine": 6
+                }
+              }
+            },
+            {
+              "message": {},
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "demo/app.js"
+                },
+                "region": {
+                  "endColumn": 28,
+                  "endLine": 6,
+                  "startColumn": 17,
+                  "startLine": 6
+                }
+              }
+            }
+          ],
+          "rule": {
+            "id": "js/clear-text-logging",
+            "index": 19,
+            "toolComponent": {
+              "index": 0
+            }
+          },
+          "ruleId": "js/clear-text-logging"
+        },
+        {
+          "correlationGuid": "363414a4-0478-4ffd-80d8-74e5e48305ef",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 1,
+                  "uri": "deploy/testdata/helm-values-0.95.3.yaml"
+                },
+                "region": {
+                  "endColumn": 17,
+                  "endLine": 157,
+                  "startColumn": 15,
+                  "startLine": 157
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "Empty password in configuration file."
+          },
+          "rule": {
+            "id": "js/empty-password-in-configuration-file",
+            "index": 42,
+            "toolComponent": {
+              "index": 0
+            }
+          },
+          "ruleId": "js/empty-password-in-configuration-file"
+        },
+        {
+          "correlationGuid": "dfe7e239-c813-44bd-97f7-d249d5533c19",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 2,
+                  "uri": "web/e2e/real/sharing-page-names.spec.ts"
+                },
+                "region": {
+                  "endColumn": 35,
+                  "endLine": 82,
+                  "startColumn": 13,
+                  "startLine": 82
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "This write to property 'fillStyle' is useless, since [another property write](1) always overrides it."
+          },
+          "relatedLocations": [
+            {
+              "id": 1,
+              "message": {
+                "text": "another property write"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "web/e2e/real/sharing-page-names.spec.ts"
+                },
+                "region": {
+                  "endColumn": 32,
+                  "endLine": 83,
+                  "startColumn": 13,
+                  "startLine": 83
+                }
+              }
+            }
+          ],
+          "rule": {
+            "id": "js/useless-assignment-to-property",
+            "index": 181,
+            "toolComponent": {
+              "index": 0
+            }
+          },
+          "ruleId": "js/useless-assignment-to-property"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "semanticVersion": "2.27.3"
+        },
+        "extensions": [
+          {
+            "name": "codeql/javascript-queries",
+            "rules": [
+              {
+                "id": "js/clear-text-logging",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "js/empty-password-in-configuration-file",
+                "properties": {
+                  "precision": "medium",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "js/useless-assignment-to-property",
+                "properties": {
+                  "precision": "high"
+                }
+              }
+            ]
+          },
+          {
+            "name": "codeql/javascript-all",
+            "rules": []
+          },
+          {
+            "name": "codeql/threat-models",
+            "rules": []
+          }
+        ]
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

@@ -35,17 +35,17 @@ func TestWebAuthn_BeginCeremoniesRequireUserVerification(t *testing.T) {
 	require.NoError(t, err)
 	loginAssertion, _, err := c.BeginWebAuthnLogin(ctx, ch)
 	require.NoError(t, err)
-	assert.Equal(t, protocol.VerificationRequired, loginAssertion.Response.UserVerification,
+	assert.Equal(t, protocol.VerificationRequired, assertionOpts(t, loginAssertion).UserVerification,
 		"2FA login must request user verification")
 
 	pwlAssertion, _, err := c.BeginWebAuthnPasswordlessLogin(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, protocol.VerificationRequired, pwlAssertion.Response.UserVerification,
+	assert.Equal(t, protocol.VerificationRequired, assertionOpts(t, pwlAssertion).UserVerification,
 		"passwordless login must request user verification")
 
 	reauthAssertion, _, err := c.BeginWebAuthnReauth(ctx, 1)
 	require.NoError(t, err)
-	assert.Equal(t, protocol.VerificationRequired, reauthAssertion.Response.UserVerification,
+	assert.Equal(t, protocol.VerificationRequired, assertionOpts(t, reauthAssertion).UserVerification,
 		"step-up reauth must request user verification")
 }
 
@@ -67,13 +67,13 @@ func TestWebAuthn_LoginCeremonyOffersOnlyOwnCredentials(t *testing.T) {
 	wu, err := c.loadWebAuthnUser(ctx, 1)
 	require.NoError(t, err)
 	require.Len(t, wu.creds, 1, "user 1 must load exactly their own credential")
-	assert.Equal(t, []byte("cred-A"), wu.creds[0].ID, "user 1 must not see another user's credential")
+	assert.Equal(t, []byte("cred-A"), credOf(t, wu.creds[0]).ID, "user 1 must not see another user's credential")
 
 	ch, err := c.CreateMFAChallenge(ctx, 1)
 	require.NoError(t, err)
 	assertion, _, err := c.BeginWebAuthnLogin(ctx, ch)
 	require.NoError(t, err)
-	require.Len(t, assertion.Response.AllowedCredentials, 1, "only user 1's own passkey may be offered")
-	assert.Equal(t, []byte("cred-A"), []byte(assertion.Response.AllowedCredentials[0].CredentialID),
+	require.Len(t, assertionOpts(t, assertion).AllowedCredentials, 1, "only user 1's own passkey may be offered")
+	assert.Equal(t, []byte("cred-A"), []byte(assertionOpts(t, assertion).AllowedCredentials[0].CredentialID),
 		"a credential belonging to another user must never appear in this user's allowCredentials")
 }

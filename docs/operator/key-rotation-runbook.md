@@ -11,8 +11,8 @@ mistakes that cost data. Every command below was checked against the cobra defin
 | You need to... | Run | What changes | What does not |
 |---|---|---|---|
 | Replace the key that encrypts the data (suspected DEK exposure, policy) | `admin encryption rotate` | A new DEK; every DEK-encrypted row is re-encrypted in **one** transaction (secret versions, API tokens and clients, password resets, MFA secrets, dynamic-secret configs and leases, notification channels). | The master passphrase. |
-| Change the master passphrase (departure, exposure, policy) | `admin encryption rotate-kek` | The wrapped DEK, under a KEK derived from the new passphrase and a fresh salt. The evidence-signing and audit-checkpoint keys change with it. | No database row; the DEK value. |
-| Move the KEK to another provider (password, file, env, exec, shamir, tpm, aws-kms, gcp-kms, azure-kms) | `admin encryption migrate-provider --to-type ... --confirm` | The DEK wrapping only; the previous wrapped DEK is kept as `<dek_path>.migrate-backup.*`. | Secret values. |
+| Change the master passphrase (departure, exposure, policy) | `admin encryption rotate-kek` | The wrapped DEK, under a KEK derived from the new passphrase and a fresh salt. The evidence-signing and audit-checkpoint keys change with it. | No database row; the DEK value. The database must still be reachable: it is read to finish an interrupted DEK rotation first. |
+| Move the KEK to another provider (password, file, env, exec, shamir, tpm, aws-kms, gcp-kms, azure-kms) | `admin encryption migrate-provider --to-type ... --confirm` | The DEK wrapping only; the previous wrapped DEK is kept as `<dek_path>.migrate-backup.*`. | Secret values. Like `rotate-kek`, it needs the database reachable. |
 | Replace the lost-admin recovery key | `admin recovery-key rotate` | The recovery verifier; the old key stops working at once. See [j5-lost-admin.md](j5-lost-admin.md). | Not an encryption key. |
 
 Rotating the DEK does not change the audit-checkpoint key (it is KEK-derived); rotating the KEK

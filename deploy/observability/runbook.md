@@ -79,6 +79,42 @@ needs a manual record of that suspension by an operator. A row logged as undecod
 pending and visible: keep it, do not delete rows from `pending_audit_events` by hand, and
 escalate.
 
+## KeyorixAuditOwedOldestPendingWarn
+
+**Means.** The oldest owed audit row (see KeyorixAuditOwedPending) has been waiting more than
+1 hour. The backfill runs every minute, so a row this old is not merely delayed: the backfill is
+not running, or the audit log is still refusing the row. The gauge is
+`keyorix_audit_owed_oldest_pending_age_seconds`, cluster-wide, from the `keyorix-protected` job.
+**Check.** Same as KeyorixAuditOwedPending: `GET /api/v1/system/info` for the pending count,
+`Audit backfill` and `SECURITY:` lines in the server log, KeyorixAuditWriteFailures. Also check
+that the `audit_owed_backfill` job is running (`keyorix_scheduler_last_success_timestamp_seconds`,
+KeyorixSchedulerFailing): a replica set whose scheduler is down never drains the queue. The row's `last_error` in
+`pending_audit_events` (read-only) says why the last attempt failed.
+**Do.** As KeyorixAuditOwedPending. Do not delete or edit rows in `pending_audit_events`.
+
+## KeyorixAuditOwedOldestPendingCritical
+
+**Means.** The oldest owed audit row has waited more than 24 hours: the audit record of a
+revocation or break-glass activation is a day late and nothing is bringing it in.
+**Check.** As KeyorixAuditOwedOldestPendingWarn. Then check for a row that cannot be written at
+all: an `undecodable` or repeating `last_error` in the log, and the attempts count.
+**Do.** Treat it as an open audit gap: escalate to your incident process, fix the cause, let the
+backfill write the row, and note the late record in your incident log. The row, once written,
+says when it really happened. A row that cannot be written needs a manual record by an operator.
+
+## KeyorixAuditOwedMetricUnreadable
+
+**Means.** For 15 minutes at least one replica could not read `pending_audit_events` when it was
+scraped (database unreachable, or the read ran past 3 seconds). The count and age gauges answer
+NaN in that case (never 0), so KeyorixAuditOwedPending and the two age alerts cannot fire: you
+are blind to the owed-audit queue, and during an audit outage that is exactly when it matters.
+**Check.** Database health and connectivity from the replica (KeyorixDown,
+KeyorixDBPoolSaturated), the server log for the failing read, and
+`keyorix_audit_owed_metric_scrape_errors_total` per instance to see which replica.
+**Do.** Restore database access. Once the metric reads again, the owed-audit alerts evaluate
+the real queue; check them straight away, an outage long enough to fire this one may have left
+rows owed.
+
 ## KeyorixAuditChainBreakRecorded
 
 **Means.** A verification detected a break in the tamper-evident audit chain. This is a possible

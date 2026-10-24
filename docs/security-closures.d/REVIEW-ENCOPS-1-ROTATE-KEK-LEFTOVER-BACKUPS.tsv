@@ -1,0 +1,1 @@
+REVIEW-ENCOPS-1-ROTATE-KEK-LEFTOVER-BACKUPS	./internal/encryptionops	TestRotateKEKWithConfig_NamesLeftoverMigrateBackups	default-ci	pending-merge	-	rotate-kek left <dek_path>.migrate-backup.* files (the DEK wrapped under an older KEK, so the old passphrase still unwraps it) without a word; it now lists them and points at migrate-provider cleanup.

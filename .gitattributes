@@ -8,3 +8,21 @@ server/proto/pb/*.pb.go linguist-generated=true
 # regenerating. merge=ours only takes effect where `git config merge.ours.driver true`
 # is set; GitHub's own merge/merge-queue ignores merge drivers.
 internal/faultstorage/faulty_storage_generated.go linguist-generated=true merge=ours
+
+# Append-only exemption/override ledgers (CONFLICT-HOTSPOTS-1). Rows are independent,
+# one per line, and order carries no meaning, so two PRs that each append a row
+# conflict on git's default 3-way merge although both rows are wanted. merge=union
+# keeps both sides' lines instead of writing conflict markers. If both sides add the
+# same key, the merged file holds it twice and the ledger's own guard test sees it. Union
+# only applies to merges git runs itself (merge main into a branch, a coordinator
+# merge pass); GitHub's server-side merge and merge queue ignore merge attributes.
+# TestGitattributesUnionLedgers (internal/docsdrift) proves each path keeps both lines.
+# Not listed on purpose: the dual-read ledgers (adr-conformance-enforced, review-coverage,
+# check-then-act-lock-exempt), whose new rows go in their <name>.d/ fragment directory;
+# generated or sorted files (docs/state-map/entrypoints.tsv, stores.tsv,
+# config_surface_leaves.txt); and prose docs. See docs/CONFLICT-HOTSPOTS.md.
+docs/atomicity-exempt.tsv merge=union
+docs/besteffort-exempt.tsv merge=union
+docs/full-row-write-exempt.tsv merge=union
+docs/child-parent-liveness-exempt.tsv merge=union
+docs/state-map/class-overrides.tsv merge=union

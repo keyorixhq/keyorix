@@ -116,12 +116,12 @@ func TestHelmServerHA_DefaultIsSingleInstance(t *testing.T) {
 	}
 }
 
-// replicas > 1 on a shared keys volume is the HA topology: rolling updates, a
+// replicas > 1 in Secret mode is the HA topology: rolling updates, a
 // PodDisruptionBudget, node and zone spread, the replica count handed to the
 // auth rate-limit fallback, and still PostgreSQL (SQLite cannot be rendered).
 func TestHelmServerHA_MultipleReplicas(t *testing.T) {
 	requireHelm(t)
-	docs := haDocs(t, "server.replicas=3", "server.keysPersistence.accessMode=ReadWriteMany")
+	docs := haDocs(t, append(keysSecretSets, "server.replicas=3")...)
 	dep := findDoc(docs, "Deployment", "server")
 	if got := nested(dep, "spec", "replicas"); got != 3 {
 		t.Errorf("replicas = %v, want 3", got)
@@ -165,10 +165,10 @@ func TestHelmServerHA_MultipleReplicas(t *testing.T) {
 
 func TestHelmServerHA_OverridesAreHonoured(t *testing.T) {
 	requireHelm(t)
-	docs := haDocs(t, "server.replicas=2", "server.keysPersistence.accessMode=ReadWriteMany",
+	docs := haDocs(t, append(keysSecretSets, "server.replicas=2",
 		"server.podDisruptionBudget.minAvailable=null", "server.podDisruptionBudget.maxUnavailable=1",
 		"server.topologySpreadConstraints[0].maxSkew=2", "server.topologySpreadConstraints[0].topologyKey=rack",
-		"server.topologySpreadConstraints[0].whenUnsatisfiable=DoNotSchedule")
+		"server.topologySpreadConstraints[0].whenUnsatisfiable=DoNotSchedule")...)
 	pdb := findDoc(docs, "PodDisruptionBudget", "server")
 	if nested(pdb, "spec", "minAvailable") != nil || nested(pdb, "spec", "maxUnavailable") != 1 {
 		t.Errorf("PDB spec = %v, want maxUnavailable 1 only", pdb["spec"])
@@ -178,7 +178,7 @@ func TestHelmServerHA_OverridesAreHonoured(t *testing.T) {
 	if len(spread) != 1 || nested(spread[0].(map[string]any), "topologyKey") != "rack" {
 		t.Errorf("topologySpreadConstraints = %v, want exactly the user's rack constraint", spread)
 	}
-	docs = haDocs(t, "server.replicas=2", "server.keysPersistence.accessMode=ReadWriteMany", "server.podDisruptionBudget.enabled=false")
+	docs = haDocs(t, append(keysSecretSets, "server.replicas=2", "server.podDisruptionBudget.enabled=false")...)
 	if findDoc(docs, "PodDisruptionBudget", "server") != nil {
 		t.Error("podDisruptionBudget.enabled=false must not render a PDB")
 	}
@@ -200,9 +200,11 @@ func TestHelmServerHA_RefusesUnsafeCombinations(t *testing.T) {
 		sets []string
 		want string
 	}{
-		{"replicas with single_writer", []string{"server.replicas=2", "server.singleWriter=true", "server.keysPersistence.accessMode=ReadWriteMany"}, "single-writer"},
-		{"replicas on a ReadWriteOnce keys volume", []string{"server.replicas=2"}, "ReadWriteMany"},
-		{"replicas without a keys volume", []string{"server.replicas=2", "server.keysPersistence.enabled=false"}, "ReadWriteMany"},
+		{"replicas with single_writer", append(keysSecretSets, "server.replicas=2", "server.singleWriter=true"), "single-writer"},
+		{"replicas on a ReadWriteOnce keys volume", []string{"server.replicas=2"}, "needs Secret mode"},
+		{"replicas on a ReadWriteMany keys volume", []string{"server.replicas=2", "server.keysPersistence.accessMode=ReadWriteMany"}, "ReadWriteMany keys volume: a shared writable keys volume is not a supported HA mode"},
+		{"replicas on a ReadWriteMany keys volume, Secret named", []string{"server.replicas=2", "server.keysPersistence.accessMode=ReadWriteMany", "server.keysSecret.enabled=true", "server.keysSecret.name=k"}, "ReadWriteMany keys volume"},
+		{"replicas without a keys volume", []string{"server.replicas=2", "server.keysPersistence.enabled=false"}, "needs Secret mode"},
 		{"zero replicas", []string{"server.replicas=0"}, "at least 1"},
 		{"single_writer with a transaction pooler", []string{"server.singleWriter=true", "externalDatabase.pooler=pgbouncer-transaction"}, "pgbouncer-transaction"},
 	} {

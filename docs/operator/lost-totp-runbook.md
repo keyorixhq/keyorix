@@ -72,7 +72,7 @@ minutes in which to set a new password and enrol a new factor
 If no recovery key was ever generated, the command stops and tells you to run
 `keyorix-server admin recovery-key rotate` first. On an install that has no key yet, `rotate`
 generates the first one and prints it once (`--recipient` / `--output` have it age-encrypted
-instead of printed). Mind the terminal scrollback, and note that this makes the host plus the
+instead of printed; prefer a hybrid `age1pq1...` recipient, see [j5-lost-admin.md](j5-lost-admin.md)). Mind the terminal scrollback, and note that this makes the host plus the
 master passphrase enough to recover an admin: that is the existing trust model.
 
 `security.recover_admin.insecure_keyless_admin_recovery` skips the key. It exists for labs and demos;

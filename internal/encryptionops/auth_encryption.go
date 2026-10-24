@@ -13,6 +13,31 @@ import (
 	"gorm.io/gorm"
 )
 
+// requireAuthEncryptionEnabled refuses an auth-encryption command that encrypts,
+// decrypts or vouches for encrypted rows while storage.encryption.enabled is
+// false. AuthEncryption passes bytes through unchanged when encryption is
+// disabled, so migrate wrote plaintext into encrypted_token and reported it
+// migrated, validate "decrypted" that plaintext and reported every check passed,
+// and enable --force reported success while nothing was enabled
+// (REVIEW-ENCRYPTIONOPS-1 F1).
+func requireAuthEncryptionEnabled(cfg *config.Config, what string) error {
+	if cfg.Storage.Encryption.Enabled {
+		return nil
+	}
+	return fmt.Errorf("encryption is disabled in configuration (storage.encryption.enabled: false): auth-encryption %s has no key to work with. Set storage.encryption.enabled: true and run `admin encryption init` first", what)
+}
+
+// authPassphrase resolves the master passphrase for an auth-encryption command
+// and returns MasterPassphrase's error instead of discarding it: a refused or
+// unreadable source used to surface only as "master passphrase must not be
+// empty" (REVIEW-ENCRYPTIONOPS-1 F2).
+func authPassphrase(cfg *config.Config, passSrc crypto.PassphraseSource) (string, error) {
+	if !cfg.Storage.Encryption.Enabled {
+		return "", nil
+	}
+	return MasterPassphrase(cfg, passSrc)
+}
+
 func openDatabase(cfg *config.Config) (*gorm.DB, error) {
 	// Honor cfg.Storage.Type via the storage package instead of hardwiring SQLite
 	// (ADR-049). OpenGormDB does not migrate — these auth-encryption operations
@@ -77,7 +102,10 @@ func AuthStatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) e
 	if cfg.Storage.Encryption.Enabled && !authEnc.WrappedDEKExists() {
 		return missingKeysError(cfg, ".")
 	}
-	passphrase, _ := MasterPassphrase(cfg, passSrc)
+	passphrase, err := authPassphrase(cfg, passSrc)
+	if err != nil {
+		return err
+	}
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
@@ -114,9 +142,16 @@ func AuthStatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) e
 
 // EnableAuthEncryptionWithConfig is the testable core of `encryption
 // auth-encryption enable`.
+//
+// --force re-runs the full path when the keys already exist; it cannot enable
+// encryption that the configuration disables (F1).
 func EnableAuthEncryptionWithConfig(cfg *config.Config, force bool, passSrc crypto.PassphraseSource) error {
-	if !cfg.Storage.Encryption.Enabled && !force {
-		return fmt.Errorf("encryption is disabled in configuration. Enable it in config or use --force flag")
+	if err := requireAuthEncryptionEnabled(cfg, "enable"); err != nil {
+		return err
+	}
+	passphrase, err := authPassphrase(cfg, passSrc)
+	if err != nil {
+		return err
 	}
 	db, err := openDatabase(cfg)
 	if err != nil {
@@ -127,8 +162,7 @@ func EnableAuthEncryptionWithConfig(cfg *config.Config, force bool, passSrc cryp
 	// AuthEncryption is never initialized, so IsInitialized() here could never be
 	// true. Initialize (which verifies the passphrase against the existing DEK) and
 	// the lock still run; only the final message differs.
-	alreadyEnabled := cfg.Storage.Encryption.Enabled && authEnc.WrappedDEKExists() && !force
-	passphrase, _ := MasterPassphrase(cfg, passSrc)
+	alreadyEnabled := authEnc.WrappedDEKExists() && !force
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}
@@ -179,11 +213,17 @@ func RotateAuthEncryptionWithConfig(cfg *config.Config, confirm bool, passSrc cr
 	if !confirm {
 		return fmt.Errorf("key rotation requires --confirm flag. This operation will re-encrypt all authentication data")
 	}
+	if err := requireAuthEncryptionEnabled(cfg, "rotate"); err != nil {
+		return err
+	}
+	passphrase, err := authPassphrase(cfg, passSrc)
+	if err != nil {
+		return err
+	}
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
-	passphrase, _ := MasterPassphrase(cfg, passSrc)
 	authEnc, err := openAuthKeyWriter(cfg, db, passphrase, "rotate")
 	if err != nil {
 		return err
@@ -202,6 +242,13 @@ func RotateAuthEncryptionWithConfig(cfg *config.Config, confirm bool, passSrc cr
 // MigrateAuthDataWithConfig is the testable core of `encryption
 // auth-encryption migrate`.
 func MigrateAuthDataWithConfig(cfg *config.Config, dryRun bool, passSrc crypto.PassphraseSource) error {
+	if err := requireAuthEncryptionEnabled(cfg, "migrate"); err != nil {
+		return err
+	}
+	passphrase, err := authPassphrase(cfg, passSrc)
+	if err != nil {
+		return err
+	}
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
@@ -210,7 +257,6 @@ func MigrateAuthDataWithConfig(cfg *config.Config, dryRun bool, passSrc crypto.P
 	// upgrade-aad: exclusive, after crash recovery, so it never writes under a
 	// DEK an interrupted rotation has already retired (#292/G62 took only the
 	// shared lock).
-	passphrase, _ := MasterPassphrase(cfg, passSrc)
 	authEnc, err := openAuthKeyWriter(cfg, db, passphrase, "migrate authentication data")
 	if err != nil {
 		return err
@@ -276,15 +322,21 @@ func MigratePasswordResetTokens(db *gorm.DB, authEnc *encryption.AuthEncryption,
 // ValidateAuthEncryptionWithConfig is the testable core of `encryption
 // auth-encryption validate`. Read-only.
 func ValidateAuthEncryptionWithConfig(cfg *config.Config, verbose bool, passSrc crypto.PassphraseSource) error {
+	if err := requireAuthEncryptionEnabled(cfg, "validate"); err != nil {
+		return err
+	}
+	passphrase, err := authPassphrase(cfg, passSrc)
+	if err != nil {
+		return err
+	}
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
-	if cfg.Storage.Encryption.Enabled && !authEnc.WrappedDEKExists() {
+	if !authEnc.WrappedDEKExists() {
 		return missingKeysError(cfg, ".")
 	}
-	passphrase, _ := MasterPassphrase(cfg, passSrc)
 	if err := authEnc.Initialize(passphrase); err != nil {
 		return fmt.Errorf("failed to initialize auth encryption: %w", err)
 	}

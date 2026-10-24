@@ -1767,6 +1767,10 @@ type Storage interface {
 	ClaimPendingAuditEvent(ctx context.Context, id uint) (claimed bool, err error)
 	RecordPendingAuditEventFailure(ctx context.Context, id uint, reason string) error
 	CountPendingAuditEvents(ctx context.Context) (int64, error)
+	// OldestPendingAuditEventAt is the created_at of the oldest owed audit event; found
+	// is false when none is pending. A plain read on the created_at index (no lock, no
+	// scan), cheap enough to run on every metrics scrape.
+	OldestPendingAuditEventAt(ctx context.Context) (at time.Time, found bool, err error)
 	// GetRecoveryKeyRecord returns the local admin recovery key's verifier
 	// record (docs/design-b2-recover-admin.md §2); found is false on an
 	// install that predates this feature or has never generated one.
