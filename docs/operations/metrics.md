@@ -43,6 +43,7 @@ Served at: server `GET /metrics` (unauthenticated; keep inside your perimeter)
 | `keyorix_single_writer_last_poll_age_seconds` | gauge | - | Seconds since the guard's last successful epoch poll; approaching the lease length means the guard is about to leave authoritative. |
 | `keyorix_single_writer_state` | gauge | `state` | single_writer guard state, one series per state (settling\|authoritative\|confirming) with value 1 for the current one. Only authoritative lets caches skip confirming reads; confirming means the lease lapsed or polls are failing. |
 | `keyorix_tls_certificate_not_after_timestamp_seconds` | gauge | `listener` | Unix time at which the TLS certificate served by a listener (http\|grpc) expires. Alert on this minus time() before it reaches zero; a renewed file is picked up by new handshakes within about 30 seconds. |
+| `keyorix_tls_handshakes_total` | counter | `listener`, `group` | Completed TLS handshakes by listener (http\|grpc) and the key-exchange group negotiated (X25519MLKEM768 is the post-quantum hybrid; X25519/P-256/... are classical; none = no ECDHE group, e.g. a TLS 1.2 RSA key exchange). Counts a connection when its handshake finishes; a resumed session counts again. |
 
 ## Server: authenticated-only (`/api/v1/admin/scheduler-metrics`)
 
@@ -88,6 +89,7 @@ Every label used above and why its values are bounded. Secret names, paths, user
 | `budget` | name of a built-in auth rate-limit budget (fixed set in internal/core) |
 | `channel` | notification channel type (webhook/email/slack/... fixed set) |
 | `check` | closed set: tail, full (audit verification kinds) |
+| `group` | closed set: TLS key-exchange group mapped by tlsmetrics.GroupName (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384, P-521, none, other) |
 | `limiter` | closed set of rate limiters (ratelimitmetrics.Limiter: principal, token_auth_failure, grpc_principal, grpc_token_auth_failure) |
 | `listener` | closed set: http, grpc (tlsmetrics.HTTP / tlsmetrics.GRPC) |
 | `lock` | closed set of advisory-lock kinds (config.lockLossKinds plus `other`), listed in the metric help |

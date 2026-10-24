@@ -64,6 +64,7 @@ var boundedLabels = map[string]string{
 	"limiter":   "closed set of rate limiters (ratelimitmetrics.Limiter: principal, token_auth_failure, grpc_principal, grpc_token_auth_failure)",
 	"check":     "closed set: tail, full (audit verification kinds)",
 	"listener":  "closed set: http, grpc (tlsmetrics.HTTP / tlsmetrics.GRPC)",
+	"group":     "closed set: TLS key-exchange group mapped by tlsmetrics.GroupName (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384, P-521, none, other)",
 	"op":        "closed set: encrypt, decrypt",
 	"provider":  "KEK provider type normalised to the 9 known provider names plus `other` (encryption.providerLabel)",
 	"reason":    "closed enum documented in the metric help (unreachable/timeout/server_error)",
