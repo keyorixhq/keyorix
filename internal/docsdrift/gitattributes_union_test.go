@@ -67,7 +67,7 @@ func appendRow(t *testing.T, path, line string) {
 // mergeTwoAppends builds a temp repo whose only attributes are attrs, commits base for
 // rel, appends rowA on one branch and rowB on another, merges, and returns the merge
 // error and the merged file.
-func mergeTwoAppends(t *testing.T, attrs, rel string, base []byte, rowA, rowB string) (error, string) {
+func mergeTwoAppends(t *testing.T, attrs, rel string, base []byte, rowA, rowB string) (string, error) {
 	t.Helper()
 	dir := t.TempDir()
 	mustGit(t, dir, "init", "-q")
@@ -95,7 +95,7 @@ func mergeTwoAppends(t *testing.T, attrs, rel string, base []byte, rowA, rowB st
 	if rerr != nil {
 		t.Fatal(rerr)
 	}
-	return err, string(merged)
+	return string(merged), err
 }
 
 func TestGitattributesUnionLedgers(t *testing.T) {
@@ -109,7 +109,7 @@ func TestGitattributesUnionLedgers(t *testing.T) {
 	}
 
 	declared := map[string]bool{}
-	for _, ln := range strings.Split(string(attrs), "\n") {
+	for ln := range strings.SplitSeq(string(attrs), "\n") {
 		f := strings.Fields(ln)
 		if len(f) < 2 || strings.HasPrefix(f[0], "#") {
 			continue
@@ -143,7 +143,7 @@ func TestGitattributesUnionLedgers(t *testing.T) {
 			}
 			rowA := "UNION-TEST-ROW-A\tx\tfrom branch a"
 			rowB := "UNION-TEST-ROW-B\tx\tfrom branch b"
-			mergeErr, merged := mergeTwoAppends(t, string(attrs), rel, base, rowA, rowB)
+			merged, mergeErr := mergeTwoAppends(t, string(attrs), rel, base, rowA, rowB)
 			if mergeErr != nil {
 				t.Fatalf("concurrent appends to %s conflicted: %v\n%s", rel, mergeErr, merged[max(0, len(merged)-600):])
 			}
@@ -162,7 +162,7 @@ func TestGitattributesUnionLedgers(t *testing.T) {
 	}
 
 	t.Run("control without the attribute conflicts", func(t *testing.T) {
-		mergeErr, _ := mergeTwoAppends(t, "# no merge attributes\n", "docs/plain.tsv", []byte("# header\n"),
+		_, mergeErr := mergeTwoAppends(t, "# no merge attributes\n", "docs/plain.tsv", []byte("# header\n"),
 			"UNION-TEST-ROW-A\tx", "UNION-TEST-ROW-B\tx")
 		if mergeErr == nil {
 			t.Fatal("two appends at the same spot merged cleanly without merge=union: the test would pass vacuously")
