@@ -229,13 +229,28 @@ func ComputeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 // forcing a stored hash." See the `write` closure below.
 func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 	h := sha256.New()
-	var lenBuf [8]byte
-	write := func(s string) {
-		binary.BigEndian.PutUint64(lenBuf[:], uint64(len(s)))
-		h.Write(lenBuf[:])
-		// codeql[go/weak-sensitive-data-hashing]
-		h.Write([]byte(s))
-	}
+	// codeql[go/weak-sensitive-data-hashing]
+	h.Write(appendAuditHashField(nil, prevHash))
+	// codeql[go/weak-sensitive-data-hashing]
+	h.Write(auditEntryHashSuffix(e))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// appendAuditHashField appends one field of the entry-hash encoding to b: its
+// big-endian uint64 byte length, then its bytes.
+func appendAuditHashField(b []byte, s string) []byte {
+	b = binary.BigEndian.AppendUint64(b, uint64(len(s)))
+	return append(b, s...)
+}
+
+// auditEntryHashSuffix is the entry-hash encoding of e's fields, everything
+// computeAuditEntryHash hashes after prevHash. The hash is SHA256 of
+// appendAuditHashField(prevHash) followed by this suffix, so a writer that
+// learns prevHash only later (the linked flight, which links the batch inside
+// PostgreSQL: local_audit_chain_linked_flight.go) hashes exactly the same bytes.
+func auditEntryHashSuffix(e *models.AuditEvent) []byte {
+	b := make([]byte, 0, 256)
+	write := func(s string) { b = appendAuditHashField(b, s) }
 	uptr := func(p *uint) string {
 		if p == nil {
 			return ""
@@ -249,7 +264,6 @@ func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 		return strconv.FormatBool(*p)
 	}
 
-	write(prevHash)
 	write(e.EventType)
 	write(uptr(e.UserID))
 	write(uptr(e.SecretNodeID))
@@ -263,7 +277,7 @@ func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 	write(uptr(e.ActingAs))
 	write(strconv.FormatBool(e.Impersonation))
 	write(e.ActorType)
-	return hex.EncodeToString(h.Sum(nil))
+	return b
 }
 
 // normalizeAuditEventForHash applies the two GORM-default round-trip fixes
@@ -911,7 +925,10 @@ func (ls *LocalStorage) finishAuditBatch(held *auditBatchPipeline, batch []*audi
 	// Every caller is already waiting on its own item's done channel and gets the
 	// same error it would have got from a leaf, just without the ~511 extra gate
 	// waits and the corrupted flush metrics.
-	if isBatchGlobalContentionErr(err) {
+	// So is a linked batch that committed with an entry_hash the Go encoding
+	// does not reproduce: its rows are in the table, and a retry would append
+	// them a second time (local_audit_chain_linked_flight.go).
+	if isBatchGlobalContentionErr(err) || errors.Is(err, errAuditLinkedHashMismatch) {
 		errs := make([]error, len(batch))
 		for i := range errs {
 			errs[i] = err

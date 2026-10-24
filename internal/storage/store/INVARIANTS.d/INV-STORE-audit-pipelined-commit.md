@@ -1,6 +1,7 @@
 - **INV-STORE-audit-pipelined-commit** On Postgres the audit flusher's transaction
   (`commitBatchAttemptPipelined`) runs the same statements in the same order as the GORM
-  transaction (`commitBatchAttemptTx`), in two pipelined flights: BEGIN, the fast-mode
+  transaction (`commitBatchAttemptTx`), in two pipelined flights when a batch whose head the
+  flusher does not know cannot go as a linked flight (`INV-STORE-audit-linked-flight`): BEGIN, the fast-mode
   `SET LOCAL` (only when enabled), `pg_advisory_xact_lock(KEYAUDIT)`, the id-DESC head read
   and the event-id allocation; then the INSERTs (GORM's own SQL), the events INSERT in one
   statement with the head and link checks (`auditInsertCheckSQL`: the head is still the row

@@ -580,6 +580,15 @@ func TestChildParentLiveness_PendingRowsNotExpired(t *testing.T) {
 	}
 }
 
+// rawInsertAuditOnly lists the files allowed one raw INSERT, each into the
+// audit_events table only (resolved by auditEventsTable): every parent
+// reference of AuditEvent is "-" in childParentRefs (audit rows outlive their
+// subject), so the sweep has nothing to check there. The guard below still
+// requires that the file resolves the audit table and has exactly one INSERT.
+var rawInsertAuditOnly = map[string]string{
+	"local_audit_chain_linked_flight.go": "the linked flight rebuilds GORM's audit_events INSERT (PERF-MULTINODE-1)",
+}
+
 // TestChildParentLiveness_NoRawSQLInserts: the sweep only sees GORM calls.
 func TestChildParentLiveness_NoRawSQLInserts(t *testing.T) {
 	files, err := filepath.Glob("*.go")
@@ -591,6 +600,14 @@ func TestChildParentLiveness_NoRawSQLInserts(t *testing.T) {
 		b, err := os.ReadFile(p)
 		require.NoError(t, err)
 		up := strings.ToUpper(string(b))
+		if _, ok := rawInsertAuditOnly[p]; ok {
+			require.Equalf(t, 1, strings.Count(up, "INSERT INTO %S"), "%s: the audit-only allowance covers one INSERT into the resolved audit table", p)
+			require.Containsf(t, string(b), "ls.auditEventsTable(ctx)", "%s: the audit-only allowance needs the table from auditEventsTable", p)
+			for _, other := range []string{"INSERT INTO \\\"", "INSERT INTO `", "INSERT INTO SECRET", "INSERT INTO MACHINE"} {
+				require.NotContainsf(t, up, other, "%s: the audit-only allowance covers the audit table only", p)
+			}
+			continue
+		}
 		require.NotContainsf(t, up, "\"INSERT INTO", "%s issues a raw INSERT the liveness registry cannot see — extend the guard first", p)
 		require.NotContainsf(t, up, "`INSERT INTO", "%s issues a raw INSERT the liveness registry cannot see — extend the guard first", p)
 	}

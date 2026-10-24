@@ -178,10 +178,58 @@ part of this change.
 
 Each node has its own flusher and its own cache. A node's pipelined batch whose predicted head
 was overtaken by another node's batch fails its check (the checks are what stops a fork here:
-on one node the send order alone already does) and is retried in two flights, and the
-miss disarms that node's cache with the `need` doubling, so nodes that keep appending in turn
-settle on serial two-flight commits, as today. KEYAUDIT is cluster-wide, so the chain stays
-one linear sequence across nodes.
+on one node the send order alone already does) and is retried, and the miss disarms that
+node's cache with the `need` doubling, so nodes that keep appending in turn settle on commits
+that re-read the head under the lock. KEYAUDIT is cluster-wide, so the chain stays one linear
+sequence across nodes.
+
+#### The linked flight (PERF-MULTINODE-1)
+
+Re-reading the head used to mean two flights: BEGIN, the lock and the head read; then, after
+the client hashed the batch onto that head, the INSERTs and COMMIT. KEYAUDIT was held across the
+client round trip in between, and with two or more nodes every batch of every node took that
+path, all of them queueing on the one lock.
+
+A batch the flusher cannot chain client-side now goes as one flight in which PostgreSQL does
+the one step that needs the head. The entry hash is SHA256 of the length-prefixed `prev_hash`
+followed by the encoding of the row's own fields (`auditEntryHashSuffix`), so the client
+computes every row's suffix without knowing the head, and one statement, run after the lock
+statement, reads the id-DESC head in its snapshot, computes each row's `prev_hash` and
+`entry_hash` with `sha256()` in a recursive CTE (row 1 onto the head, genesis when the table
+is empty or the head is an unchained legacy row; row i+1 onto row i), inserts GORM's VALUES
+in batch order, and raises unless the stored rows link in id order above the head. The access
+log INSERT and COMMIT follow in the same flight.
+
+- The head is still read, and the batch still hashed and inserted, under the lock (ADR-029).
+  The field encoding stays in Go, in one function shared with `computeAuditEntryHash` and
+  `VerifyAuditChain`; SQL only hashes a 64-character hex string followed by those bytes. The
+  database computing a hash adds nothing to what a DB-level attacker can already do (ADR-029:
+  the hash is unkeyed; forgery resistance comes from the signed checkpoints).
+- After COMMIT the server recomputes every stored hash in Go. A mismatch (an encoding drift
+  between Go and SQL; the two are pinned against each other by `TestLinkedFlight_PostgresHashesMatchGo`)
+  fails every read of that batch without a retry (the rows are already stored, and a retry
+  would append them again), logs a SECURITY line and turns linked flights off for the process.
+  `verify-audit` reports the row.
+- Values keep GORM's bind variables, cast to the column types read once from the catalog on
+  the flusher's own connection (a variable in a VALUES list under a SELECT has no column to
+  take its type from). An empty value stays an empty string.
+- A batch that cannot be linked (too large for one INSERT, an unexpected statement shape) and
+  a linked attempt that provably wrote nothing take two flights, as before.
+- What it costs the database: the linked statement does a little more per row than the
+  insert-with-check (a SHA256 and a recursive step), and the two-flight path's separate head
+  read, id allocation and second flight go away. A single node with an armed cache never takes
+  this path, so its statements are unchanged.
+
+Considered and not done:
+
+- A head row (a one-row table holding the current head) instead of the advisory lock: it is
+  the same serialisation point, costs a row update and its WAL per batch, and still leaves the
+  client unable to hash before it has read it.
+- Per-node chains merged by a later step: changes what one chain proves across nodes and what
+  `verify-audit` checks (ADR-029); rejected.
+- Pipelining (two batches in flight) without `single_writer`: a pending head is no longer
+  needed for a linked batch, but on the standard profile smaller and more numerous
+  transactions measured slower (above); unchanged.
 
 ### SQLite
 

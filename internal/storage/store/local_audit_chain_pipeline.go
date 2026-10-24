@@ -112,16 +112,31 @@ func (ls *LocalStorage) commitBatchTwoFlights(ctx context.Context, batch []*audi
 	return ls.commitBatchTwoFlightsUnder(ctx, epoch, batch)
 }
 
+// It goes as one linked flight when the batch can (PostgreSQL links it onto
+// the head it reads under the lock: local_audit_chain_linked_flight.go), and
+// in two flights when it cannot or when that flight provably wrote nothing.
+//
+// The two-flight attempt after a linked one that failed runs on a connection
+// taken afresh: withAuditPipelineConn rolls the failed transaction back first
+// (it still holds KEYAUDIT), as for a one-flight miss.
 func (ls *LocalStorage) commitBatchTwoFlightsUnder(ctx context.Context, epoch uint64, batch []*auditBatchItem) error {
-	return ls.withAuditPipelineConn(ctx, func(pc *pgx.Conn) error {
-		read, last, err := ls.runAuditPipeline(ctx, pc, batch)
-		if err != nil {
-			ls.auditHead.failed()
-			return err
-		}
-		ls.auditHead.committedTwoFlights(epoch, read, last)
-		return nil
+	var read, last auditChainHead
+	err := ls.withAuditPipelineConn(ctx, func(pc *pgx.Conn) (err error) {
+		read, last, err = ls.runAuditLinked(ctx, pc, batch)
+		return err
 	})
+	if errors.Is(err, errAuditLinkedUnavailable) || errors.Is(err, errAuditOneFlightRolledBack) {
+		err = ls.withAuditPipelineConn(ctx, func(pc *pgx.Conn) (err error) {
+			read, last, err = ls.runAuditPipeline(ctx, pc, batch)
+			return err
+		})
+	}
+	if err != nil {
+		ls.auditHead.failed()
+		return err
+	}
+	ls.auditHead.committedTwoFlights(epoch, read, last)
+	return nil
 }
 
 // withAuditPipelineConn runs fn on a pgx connection of its own from the pool.
