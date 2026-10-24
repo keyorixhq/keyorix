@@ -1,0 +1,373 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "semanticVersion": "2.27.3",
+          "rules": [
+            {
+              "id": "go/clear-text-logging",
+              "properties": {
+                "precision": "high",
+                "security-severity": "7.5"
+              }
+            }
+          ]
+        },
+        "extensions": [
+          {
+            "name": "codeql/go-queries",
+            "semanticVersion": "1.6.13+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c"
+          },
+          {
+            "name": "codeql/go-all",
+            "semanticVersion": "8.0.1+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c"
+          },
+          {
+            "name": "codeql/threat-models",
+            "semanticVersion": "1.1.0+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c"
+          }
+        ]
+      },
+      "automationDetails": {
+        "id": "/language:go-server/"
+      },
+      "results": [
+        {
+          "ruleId": "go/clear-text-logging",
+          "ruleIndex": 0,
+          "rule": {
+            "id": "go/clear-text-logging",
+            "index": 0
+          },
+          "message": {
+            "text": "[Sensitive data returned by an access to oneTimePassword](1) flows to a logging call."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server/admin/recover_admin.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 0
+                },
+                "region": {
+                  "startLine": 141,
+                  "startColumn": 23,
+                  "endColumn": 46
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "d6dbb5b57de81897:1",
+            "primaryLocationStartColumnFingerprint": "21"
+          },
+          "relatedLocations": [
+            {
+              "id": 1,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server/admin/recover_admin.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 0
+                },
+                "region": {
+                  "startLine": 141,
+                  "startColumn": 23,
+                  "endColumn": 46
+                }
+              },
+              "message": {
+                "text": "Sensitive data returned by an access to oneTimePassword"
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "go/clear-text-logging",
+          "ruleIndex": 0,
+          "rule": {
+            "id": "go/clear-text-logging",
+            "index": 0
+          },
+          "message": {
+            "text": "[Sensitive data returned by an access to passwordPolicyError](1) flows to a logging call."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "internal/core/session_undelivered.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 1
+                },
+                "region": {
+                  "startLine": 60,
+                  "startColumn": 147,
+                  "endColumn": 155
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "e34730df337aecce:1",
+            "primaryLocationStartColumnFingerprint": "143"
+          },
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "internal/core/account.go",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 2
+                          },
+                          "region": {
+                            "startLine": 425,
+                            "startColumn": 29,
+                            "endColumn": 157
+                          }
+                        },
+                        "message": {
+                          "text": "struct literal"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "internal/core/account.go",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 2
+                          },
+                          "region": {
+                            "startLine": 425,
+                            "startColumn": 9,
+                            "endColumn": 158
+                          }
+                        },
+                        "message": {
+                          "text": "struct literal"
+                        }
+                      },
+                      "taxa": [
+                        {
+                          "id": "Config",
+                          "properties": {
+                            "CodeQL/DataflowRole": "step"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "internal/core/session_undelivered.go",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 1
+                          },
+                          "region": {
+                            "startLine": 60,
+                            "startColumn": 147,
+                            "endColumn": 155
+                          }
+                        },
+                        "message": {
+                          "text": "writeErr"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "relatedLocations": [
+            {
+              "id": 1,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "internal/core/account.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 2
+                },
+                "region": {
+                  "startLine": 425,
+                  "startColumn": 29,
+                  "endColumn": 157
+                }
+              },
+              "message": {
+                "text": "Sensitive data returned by an access to passwordPolicyError"
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "internal/core/account.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 2
+                },
+                "region": {
+                  "startLine": 425,
+                  "startColumn": 29,
+                  "endColumn": 157
+                }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "go/clear-text-logging",
+          "ruleIndex": 0,
+          "rule": {
+            "id": "go/clear-text-logging",
+            "index": 0
+          },
+          "message": {
+            "text": "[Sensitive data returned by an access to passwordPolicyError](1) flows to a logging call."
+          },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "server/http/handlers/auth.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 4
+                },
+                "region": {
+                  "startLine": 879,
+                  "startColumn": 67,
+                  "endColumn": 70
+                }
+              }
+            }
+          ],
+          "partialFingerprints": {
+            "primaryLocationLineHash": "2774c201eb9591c6:1",
+            "primaryLocationStartColumnFingerprint": "64"
+          },
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "internal/core/account.go",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 2
+                          },
+                          "region": {
+                            "startLine": 425,
+                            "startColumn": 29,
+                            "endColumn": 157
+                          }
+                        },
+                        "message": {
+                          "text": "struct literal"
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "internal/core/account.go",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 2
+                          },
+                          "region": {
+                            "startLine": 425,
+                            "startColumn": 9,
+                            "endColumn": 158
+                          }
+                        },
+                        "message": {
+                          "text": "struct literal"
+                        }
+                      },
+                      "taxa": [
+                        {
+                          "id": "Config",
+                          "properties": {
+                            "CodeQL/DataflowRole": "step"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "location": {
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "uri": "server/http/handlers/auth.go",
+                            "uriBaseId": "%SRCROOT%",
+                            "index": 4
+                          },
+                          "region": {
+                            "startLine": 879,
+                            "startColumn": 67,
+                            "endColumn": 70
+                          }
+                        },
+                        "message": {
+                          "text": "err"
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "relatedLocations": [
+            {
+              "id": 1,
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "internal/core/account.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 2
+                },
+                "region": {
+                  "startLine": 425,
+                  "startColumn": 29,
+                  "endColumn": 157
+                }
+              },
+              "message": {
+                "text": "Sensitive data returned by an access to passwordPolicyError"
+              }
+            },
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "uri": "internal/core/account.go",
+                  "uriBaseId": "%SRCROOT%",
+                  "index": 2
+                },
+                "region": {
+                  "startLine": 425,
+                  "startColumn": 29,
+                  "endColumn": 157
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

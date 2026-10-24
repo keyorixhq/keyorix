@@ -19,12 +19,22 @@ func testMapper(t *testing.T, overrides ...string) *PathMapper {
 
 func TestPathMapper_ExactProjectAndEnvironment(t *testing.T) {
 	m := testMapper(t)
-	res, _, _, ok := m.Resolve("secret/data/team-a/prod/db-password")
+	res, _, _, ok := m.Resolve("secret/data/team-a/prod/*")
 	if !ok {
 		t.Fatal("expected ok")
 	}
 	if res.ProjectID != 1 || res.EnvironmentID != 11 {
 		t.Fatalf("res = %+v, want project 1 / env 11", res)
+	}
+}
+
+// An exact secret path names one secret; resolving it to its environment would grant every
+// secret there (RD-SMT-SPIKE-1 finding).
+func TestPathMapper_ExactSecretPath_NarrowerThanScope(t *testing.T) {
+	m := testMapper(t)
+	_, category, reason, ok := m.Resolve("secret/data/team-a/prod/db-password")
+	if ok || category != CategoryNarrowerThanScope || reason == "" {
+		t.Fatalf("ok=%v category=%q reason=%q, want Unmappable/%s with a reason", ok, category, reason, CategoryNarrowerThanScope)
 	}
 }
 
@@ -87,7 +97,7 @@ func TestPathMapper_OutsideAnyKVMount_MountManagement(t *testing.T) {
 
 func TestPathMapper_KVv1Mount_NoInfixStripped(t *testing.T) {
 	m := testMapper(t)
-	res, _, _, ok := m.Resolve("kv1/team-b/prod/x")
+	res, _, _, ok := m.Resolve("kv1/team-b/prod/*")
 	if !ok {
 		t.Fatal("expected ok")
 	}
@@ -98,19 +108,23 @@ func TestPathMapper_KVv1Mount_NoInfixStripped(t *testing.T) {
 
 func TestPathMapper_Override_LongestPrefixWins(t *testing.T) {
 	m := testMapper(t, "secret/data/team-a=2:20", "secret/data/team-a/dev=1:10")
-	res, _, _, ok := m.Resolve("secret/data/team-a/dev/x")
+	res, _, _, ok := m.Resolve("secret/data/team-a/dev/*")
 	if !ok {
 		t.Fatal("expected ok")
 	}
 	if res.ProjectID != 1 || res.EnvironmentID != 10 {
 		t.Fatalf("res = %+v, want the longer, more specific override (project 1 / env 10) to win", res)
 	}
-	res2, _, _, ok := m.Resolve("secret/data/team-a/staging/x")
+	res2, _, _, ok := m.Resolve("secret/data/team-a/*")
 	if !ok {
 		t.Fatal("expected ok via the shorter override")
 	}
 	if res2.ProjectID != 2 || res2.EnvironmentID != 20 {
 		t.Fatalf("res2 = %+v, want the shorter override (project 2 / env 20)", res2)
+	}
+	// staging/* matches the shorter override by prefix but covers only part of it.
+	if _, category, _, ok := m.Resolve("secret/data/team-a/staging/*"); ok || category != CategoryNarrowerThanScope {
+		t.Fatalf("ok=%v category=%q, want Unmappable/%s: team-a/staging/* is part of the team-a override", ok, category, CategoryNarrowerThanScope)
 	}
 }
 
