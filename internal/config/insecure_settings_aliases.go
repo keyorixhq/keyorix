@@ -86,6 +86,16 @@ var ignoredSettingPaths = []string{
 	"secrets.limits.max_secrets_per_user",
 }
 
+// DeprecatedSettingAliasPaths returns every (old, new) dotted-path pair Load
+// still rewrites, so docs guards can derive the list from code.
+func DeprecatedSettingAliasPaths() [][2]string {
+	out := make([][2]string, 0, len(deprecatedSettingAliases))
+	for _, a := range deprecatedSettingAliases {
+		out = append(out, [2]string{a.OldPath, a.NewPath})
+	}
+	return out
+}
+
 // mapGet returns the key and value nodes for key in mapping node m, or
 // (nil, nil) if m isn't a mapping or has no such key.
 func mapGet(m *yaml.Node, key string) (*yaml.Node, *yaml.Node) {

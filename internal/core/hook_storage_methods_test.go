@@ -31,6 +31,7 @@ type storeHooks struct {
 	ConsumeMFARecoveryCode                    func(next storage.Storage, ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error)
 	ConsumeWebAuthnSession                    func(next storage.Storage, ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error)
 	CountPendingAuditEvents                   func(next storage.Storage, ctx context.Context) (int64, error)
+	OldestPendingAuditEventAt                 func(next storage.Storage, ctx context.Context) (time.Time, bool, error)
 	CountRecentLoginAttempts                  func(next storage.Storage, ctx context.Context, ip string, since time.Time) (int64, error)
 	CountWebAuthnCredentials                  func(next storage.Storage, ctx context.Context, userID uint) (int64, error)
 	CreateAccessRequestApproval               func(next storage.Storage, ctx context.Context, a *models.AccessRequestApproval) error
@@ -238,6 +239,13 @@ func (hs *hookStore) CountPendingAuditEvents(ctx context.Context) (int64, error)
 		return hk(hs.Storage, ctx)
 	}
 	return hs.Storage.CountPendingAuditEvents(ctx)
+}
+
+func (hs *hookStore) OldestPendingAuditEventAt(ctx context.Context) (time.Time, bool, error) {
+	if hk := hs.h.OldestPendingAuditEventAt; hk != nil {
+		return hk(hs.Storage, ctx)
+	}
+	return hs.Storage.OldestPendingAuditEventAt(ctx)
 }
 
 func (hs *hookStore) CountRecentLoginAttempts(ctx context.Context, ip string, since time.Time) (int64, error) {

@@ -44,7 +44,9 @@ func runGate(t *testing.T, sarifs map[string]string, baseline string) (string, e
 		t.Fatal(err)
 	}
 	cmd := exec.Command("bash", "codeql-gate.sh", dir) //nolint:gosec // this repo's own script
-	cmd.Env = append(os.Environ(), "GATE_BASELINE_TSV="+base)
+	// GITHUB_STEP_SUMMARY is cleared so a CI run of these tests never writes
+	// into the real job summary.
+	cmd.Env = append(os.Environ(), "GATE_BASELINE_TSV="+base, "GITHUB_STEP_SUMMARY=")
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -89,8 +91,8 @@ func TestCodeQLGate(t *testing.T) {
 // runGateAPI runs the gate through the alerts API path with a fake `gh` that
 // serves one TSV per alert state (the real call passes --jq, so the fake prints
 // the already-filtered "ruleId<TAB>path" lines). failState, when set, makes the
-// call for that state exit non-zero.
-func runGateAPI(t *testing.T, sarifs map[string]string, byState map[string]string, failState string) (string, error) {
+// call for that state exit non-zero. extraEnv is appended last (it wins).
+func runGateAPI(t *testing.T, sarifs map[string]string, byState map[string]string, failState string, extraEnv ...string) (string, error) {
 	t.Helper()
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("jq not installed")
@@ -120,7 +122,8 @@ if [ -f "$f" ]; then cat "$f"; fi
 	cmd.Env = append(os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"REPO=owner/name", "FAKE_GH_DIR="+bin, "FAKE_GH_FAIL_STATE="+failState,
-		"GATE_RETRY_SLEEP=0")
+		"GATE_RETRY_SLEEP=0", "GITHUB_STEP_SUMMARY=")
+	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -171,6 +174,8 @@ func TestCodeQLGateDismissedAlerts(t *testing.T) {
 
 // The workflow must analyse without uploading in the merge queue and gate on
 // the SARIF it wrote: this is what makes the "ref not found" failure impossible.
+// pull_request (the PR-time gate, CODEQL-PR-GATE-1) does the same, and both
+// keep the SARIF as an artifact.
 func TestCodeQLMergeGroupDoesNotUpload(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "codeql.yml"))
 	if err != nil {
@@ -178,8 +183,10 @@ func TestCodeQLMergeGroupDoesNotUpload(t *testing.T) {
 	}
 	s := string(raw)
 	for _, want := range []string{
-		"upload: ${{ github.event_name == 'merge_group' && 'never' || 'always' }}",
-		"upload-database: ${{ github.event_name != 'merge_group' }}",
+		"upload: ${{ (github.event_name == 'merge_group' || github.event_name == 'pull_request') && 'never' || 'always' }}",
+		"upload-database: ${{ github.event_name != 'merge_group' && github.event_name != 'pull_request' }}",
+		"if: github.event_name == 'merge_group' || github.event_name == 'pull_request'\n",
+		"if: always() && (github.event_name == 'merge_group' || github.event_name == 'pull_request')\n        uses: actions/upload-artifact@",
 	} {
 		if got := strings.Count(s, want); got != 3 {
 			t.Errorf("%q appears %d times, want once per analyze job (3)", want, got)

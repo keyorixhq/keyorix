@@ -466,11 +466,16 @@ func (c *KeyorixCore) targetHasGlobalAdminRole(ctx context.Context, targetID uin
 // scopedRoleIDs returns the de-duplicated set of role IDs that apply to userID
 // at the target scope, unioning direct assignments and group-inherited roles.
 func (c *KeyorixCore) scopedRoleIDs(ctx context.Context, userID uint, scope Scope) ([]uint, error) {
-	direct, err := c.storage.GetUserRoleIDsAt(ctx, userID, scope)
+	return scopedRoleIDsOn(ctx, c.storage, userID, scope)
+}
+
+// scopedRoleIDsOn is scopedRoleIDs read through st.
+func scopedRoleIDsOn(ctx context.Context, st storage.Storage, userID uint, scope Scope) ([]uint, error) {
+	direct, err := st.GetUserRoleIDsAt(ctx, userID, scope)
 	if err != nil {
 		return nil, err
 	}
-	viaGroups, err := c.storage.GetUserGroupRoleIDsAt(ctx, userID, scope)
+	viaGroups, err := st.GetUserGroupRoleIDsAt(ctx, userID, scope)
 	if err != nil {
 		return nil, err
 	}

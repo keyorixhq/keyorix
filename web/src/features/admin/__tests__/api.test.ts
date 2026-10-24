@@ -771,6 +771,21 @@ describe('useUpdateUserRoles', () => {
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['user-roles', 9] });
         expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['admin-users'] });
     });
+
+    it('re-reads the roles after a partial apply (503: removals applied, additions not)', async () => {
+        admin.updateUserRoles.mockRejectedValueOnce(Object.assign(new Error('partial'), { response: { status: 503 } }));
+        const { wrapper, queryClient } = createWrapper();
+        const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
+        const { result } = renderHook(() => useUpdateUserRoles(), { wrapper });
+
+        act(() => {
+            result.current.mutate({ userId: 9, roleIds: [1, 2] });
+        });
+        await waitFor(() => expect(result.current.isError).toBe(true));
+
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['user-roles', 9] });
+        expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['admin-users'] });
+    });
 });
 
 describe('useImpersonateUser', () => {

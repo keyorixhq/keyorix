@@ -18,19 +18,33 @@
   are counted). A refused append is loud (`SECURITY:` log, `audit_owed_failures`, the pending
   count in `GET /api/v1/system/info`) and the record stays for `BackfillPendingAuditEvents`. If the
   record itself cannot be written the change still commits (the closure runs again with a
-  collect-only target) and the row is attempted directly. A crash between the commit and the append
-  loses nothing: the record committed with the effect.
-  The "pending-record write fails too" case (`CreatePendingAuditEvent` refused): the revocation still
-  succeeds, the failure is a loud `SECURITY:` log, and the audit row is attempted directly after the
-  commit, so the final state equals an unfaulted run (the audit row is written once, nothing is
-  queued). When that direct write fails as well (or is not attempted because an earlier row of the
-  same transaction was refused), the row is recorded as a pending row after the commit
-  (`queueOwedAuditLate`, SUPERFAN-1022 note 1), so the backfill writes it, after a restart too
-  (`TestOwedAudit_RecordAndAppendRefused_RowsSurviveARestart`). The only real loss is when that late
-  record fails too: it is logged as `NOT queued for backfill (record it by hand)` and is an
-  audit-trail GAP, not an outcome by design; the fuzz oracle does not accept it (it reads as
-  "neither an audit row nor a pending row"). The late record is not claimed against an earlier
-  attempt, so an append that committed but reported an error can be written twice (a duplicate,
+  collect-only target; each owed row is named in a `SECURITY:` line before that commit) and the
+  records are written in a transaction of their own right after the commit, before the auth-cache
+  eviction and any append wait (`queueOwedRowsLate`, RD-TLA-OWED-FIX-1); the rows are then appended
+  and claimed as usual. A crash between the commit and the append loses nothing whenever a record
+  of the row committed, with the effect or in that late transaction. It can lose a row only on the
+  paths where no record could be written with or after the effect, which the code cannot close
+  because the record and the effect cannot commit together there: (i) the process dies after the
+  collect-only commit and before the late record commits; (ii) the pending table refuses the late
+  record too and the process dies before the direct append; (iii) the event cannot be built at all
+  (a panic in the collect-only run, already logged as NOT queued). In (i) and (ii) the row was named
+  in the `SECURITY: owed audit event ... commits without its pending record` line written before
+  the commit, so the loss is loud, never silent. TLA+:
+  `docs/formal/owed-audit/` `pendingfault_fixed.cfg` (`LossOnlyWhereUnrecordable`, `NoSilentLoss`
+  pass) and the pre-fix shape as seeded bug `late_after_wait` (`pendingfault_silent.cfg`,
+  `bug_late_after_wait.cfg` must fail).
+  The "pending-record write fails too" case (`CreatePendingAuditEvent` refused once): the revocation
+  still succeeds, the failure is a loud `SECURITY:` log, the late record is written right after the
+  commit and the row appended and claimed, so the final state equals an unfaulted run (the audit row
+  is written once, nothing is left queued). When the append fails (or is not attempted because an
+  earlier row of the same transaction was refused), that record stays pending, so the backfill
+  writes it, after a restart too (`TestOwedAudit_RecordAndAppendRefused_RowsSurviveARestart`). If
+  the pending table still refuses the late record, the row is appended directly and, when that
+  fails, queued late once more (`queueOwedAuditLate`, SUPERFAN-1022 note 1). The only real loss
+  without a crash is when that fails too: it is logged as `NOT queued for backfill (record it by
+  hand)` and is an audit-trail GAP, not an outcome by design; the fuzz oracle does not accept it (it
+  reads as "neither an audit row nor a pending row"). A late record whose commit acknowledgement is
+  lost is not claimed against the later attempts, so its row can be written twice (a duplicate,
   never a loss). Direction-dependent operations choose the
   rule from the change itself (`auditedByDirection`: account state into a blocked state and machine
   suspend/revoke are revocations, back to active is a grant that fails closed).
@@ -40,7 +54,11 @@
   success / append error / effect-then-error / panic / crash at the append / pending-record error
   / pending-record panic, SQLite always, PostgreSQL pg-gated; the backfill completes the trail
   exactly once and the chain verifies), `TestUpdateUser_DeactivateAuditInOwnTransaction_NoSQLiteDeadlock`,
-  `TestUpdateUser_DeactivateAuditRefused_RowIsOwedAndBackfilled`; `server/faultops`
+  `TestUpdateUser_DeactivateAuditRefused_RowIsOwedAndBackfilled`; the record refused AND a crash at
+  the append (35 kinds, `.../pending-record-error+crash-at-audit` in the test above, red before
+  RD-TLA-OWED-FIX-1) and `TestOwedAudit_CollectOnlyCommitThenCrash_RowsQueuedBeforeTheAppend` (rows
+  queued before the append; with the pending table refusing everything, every row named before the
+  commit); `server/faultops`
   `TestAuditTx3Revocation_AuditFailureDoesNotBlockAndRowIsOwed` (35 REST/gRPC ops over the
   router, request still succeeds, rows + pending equals an unfaulted run); the fuzz oracle's
   owed-audit rule `server/faultops` `owed_audit_oracle_test.go` (oracle (a) accepts a success whose
@@ -59,3 +77,5 @@
   (`POST /users/{id}/revoke-sessions` of a user with no session); there the proof is the exact payload
   match plus the `internal/core` test above. The both-writes-fail gap needs two faults and is not
   reachable by the one-fault fuzzer; it is calibrated by hand (`TestOwedAuditOracle_Calibration`, i2).
+  The faultops harness has no kill point, so the record-refused-plus-crash case is driven only in
+  `internal/core` (same faultstorage, SQLite always, PostgreSQL pg-gated).

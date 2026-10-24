@@ -398,8 +398,3 @@ func stripLeadingComments(s string) string {
 		}
 	}
 }
-
-var activeTracker atomic.Pointer[Tracker]
-
-// ActiveTracker is the process's tracker, or nil when single_writer is off.
-func ActiveTracker() *Tracker { return activeTracker.Load() }
