@@ -41,6 +41,8 @@ project_visibility.go
 rate_limit.go
 recover_admin_alert.go
 reissue_otp.go
+role_scope_guard.go
+role_set_replace.go
 rules_compat.go
 secret_description.go
 secret_listing_query.go
