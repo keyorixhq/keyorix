@@ -24,9 +24,12 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // storageGrantWriters are every storage.Storage method that writes a user,
@@ -67,7 +70,13 @@ var roleScopeExemptGrantWriters = map[string]string{
 const minRoleScopeGrantWriteFuncs = 10
 
 func TestEveryRoleGrantWriteChecksRoleScope(t *testing.T) {
-	writers, checked := scanRoleGrantWrites(t, ".")
+	// The whole core family (ADR-121 R5): a grant writer moved out of
+	// internal/core stays covered.
+	paths, err := srcpath.CoreFamilyGoFiles()
+	if err != nil {
+		t.Fatal(err)
+	}
+	writers, checked := scanRoleGrantWrites(t, paths)
 	if len(writers) < minRoleScopeGrantWriteFuncs {
 		t.Fatalf("found only %d function(s) writing a role grant (want >= %d): the scan is probably broken: %v",
 			len(writers), minRoleScopeGrantWriteFuncs, writers)
@@ -123,7 +132,7 @@ func (c *KeyorixCore) entryPointCaller(ctx context.Context) error {
 	if err := os.WriteFile(filepath.Join(dir, "synthetic.go"), []byte(src), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	writers, checked := scanRoleGrantWrites(t, dir)
+	writers, checked := scanRoleGrantWrites(t, []string{filepath.Join(dir, "synthetic.go")})
 	if strings.Join(writers, ",") != "guarded,unguarded" {
 		t.Fatalf("writers = %v, want [guarded unguarded]", writers)
 	}
@@ -132,26 +141,39 @@ func (c *KeyorixCore) entryPointCaller(ctx context.Context) error {
 	}
 }
 
-// scanRoleGrantWrites parses every non-test .go file in dir and returns the
-// sorted names of functions containing a storage grant write, and which
-// functions call a role-scope check.
-func scanRoleGrantWrites(t *testing.T, dir string) (writers []string, checked map[string]bool) {
-	t.Helper()
-	entries, err := os.ReadDir(dir)
+// TestRoleScopeRegistryScanFollowsCoreFamily: a grant writer in a package
+// added to the core family (a file moved out of internal/core, ADR-121 R5) is
+// scanned like one in internal/core.
+func TestRoleScopeRegistryScanFollowsCoreFamily(t *testing.T) {
+	dir := t.TempDir()
+	src := "package leaf\nfunc (c *KeyorixCore) movedUnguardedWriter(ctx context.Context) error {\n\treturn c.storage.AssignRole(ctx, 1, 2, Scope{})\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "leaf.go"), []byte(src), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	srcpath.AddCoreFamilyDirForTesting(t, dir)
+	paths, err := srcpath.CoreFamilyGoFiles()
 	if err != nil {
 		t.Fatal(err)
 	}
+	writers, checked := scanRoleGrantWrites(t, paths)
+	if !slices.Contains(writers, "movedUnguardedWriter") || checked["movedUnguardedWriter"] {
+		t.Fatalf("a grant writer in a core family dir outside internal/core was not scanned: writers=%v", writers)
+	}
+}
+
+// scanRoleGrantWrites parses the given non-test .go files (the core family's,
+// from srcpath.CoreFamilyGoFiles) and returns the sorted names of functions
+// containing a storage grant write, and which functions call a role-scope
+// check.
+func scanRoleGrantWrites(t *testing.T, paths []string) (writers []string, checked map[string]bool) {
+	t.Helper()
 	fset := token.NewFileSet()
 	checked = map[string]bool{}
 	seen := map[string]bool{}
-	for _, e := range entries {
-		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, n), nil, 0)
+	for _, path := range paths {
+		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			t.Fatalf("parse %s: %v", n, err)
+			t.Fatalf("parse %s: %v", path, err)
 		}
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)
