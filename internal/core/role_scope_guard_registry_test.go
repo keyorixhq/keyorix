@@ -70,7 +70,7 @@ var roleScopeExemptGrantWriters = map[string]string{
 const minRoleScopeGrantWriteFuncs = 10
 
 func TestEveryRoleGrantWriteChecksRoleScope(t *testing.T) {
-	// The whole core family (ADR-116 R5): a grant writer moved out of
+	// The whole core family (ADR-121 R5): a grant writer moved out of
 	// internal/core stays covered.
 	paths, err := srcpath.CoreFamilyGoFiles()
 	if err != nil {
@@ -142,7 +142,7 @@ func (c *KeyorixCore) entryPointCaller(ctx context.Context) error {
 }
 
 // TestRoleScopeRegistryScanFollowsCoreFamily: a grant writer in a package
-// added to the core family (a file moved out of internal/core, ADR-116 R5) is
+// added to the core family (a file moved out of internal/core, ADR-121 R5) is
 // scanned like one in internal/core.
 func TestRoleScopeRegistryScanFollowsCoreFamily(t *testing.T) {
 	dir := t.TempDir()

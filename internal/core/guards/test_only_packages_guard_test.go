@@ -14,7 +14,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-// R3 of ADR-116 (INV-CORE-package-boundaries): the test-only packages
+// R3 of ADR-121 (INV-CORE-package-boundaries): the test-only packages
 // (srcpath.CoreTestOnlyDirs: internal/core/coretests, the storagetest kit) are
 // imported from _test.go files only. A production import would link test
 // doubles into a shipped binary and, for core, put them in its closure.
@@ -57,7 +57,7 @@ func testOnlyImportViolations(root string, testOnly []string) ([]string, int, er
 			p, _ := strconv.Unquote(imp.Path.Value)
 			if banned[p] {
 				rel, _ := filepath.Rel(root, path)
-				msgs = append(msgs, fmt.Sprintf("%s (a production file) imports %s, which is test-only (ADR-116 R3): "+
+				msgs = append(msgs, fmt.Sprintf("%s (a production file) imports %s, which is test-only (ADR-121 R3): "+
 					"import it from a _test.go file", filepath.ToSlash(rel), p))
 			}
 		}

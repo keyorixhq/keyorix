@@ -1,6 +1,6 @@
 ### Documentation
 
-- ADR-116 (Accepted): how `internal/core` is split — tests move first, the kernel stays, production code leaves only as pure leaves (`docs/adr-116-core-package-split.md`).
+- ADR-121 (Accepted): how `internal/core` is split — tests move first, the kernel stays, production code leaves only as pure leaves (`docs/adr-121-core-package-split.md`).
 
 ### Internal
 

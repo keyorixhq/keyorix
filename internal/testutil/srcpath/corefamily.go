@@ -14,7 +14,7 @@ import (
 	"testing"
 )
 
-// The core family (ADR-116) is internal/core plus every package extracted from
+// The core family (ADR-121) is internal/core plus every package extracted from
 // it. Source-scanning guards that look at "every core file" must look at the
 // whole family, otherwise a file moved out of internal/core silently drops out
 // of the guard (R5). The extracted-package registry is also the list R1 checks
@@ -51,7 +51,7 @@ var coreFamily = mustLoadCoreFamily(coreFamilyData, "corefamily.d")
 // corefamily.d). Treat it as a constant.
 var CoreDir = coreFamily.core
 
-// CoreTestOnlyDirs are the packages ADR-116 creates for tests only
+// CoreTestOnlyDirs are the packages ADR-121 creates for tests only
 // (decision 2): no production file may import them (R3, internal/core/guards)
 // and internal/core's production closure must not contain them (R2,
 // internal/core/ports). Repository-relative, sorted; they need not exist yet.

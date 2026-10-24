@@ -1,4 +1,4 @@
-# ADR-116: Splitting `internal/core`: tests first, the kernel stays, leaves only where they pay
+# ADR-121: Splitting `internal/core`: tests first, the kernel stays, leaves only where they pay
 
 **Status:** Accepted (direction signed off by Andrei on 2026-10-24; drafted by CORE-SPLIT-DESIGN-1, 2026-10-20).
 **Related:** ADR-109 (core depends on interfaces), ADR-112 (secure-by-default baseline: unchanged by this ADR),

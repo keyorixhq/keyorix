@@ -175,7 +175,7 @@ type beScan struct {
 }
 
 // beScanCore scans the core family (internal/core and the packages extracted
-// from it, ADR-116 R5), keyed by srcpath.CoreFamilyRel.
+// from it, ADR-121 R5), keyed by srcpath.CoreFamilyRel.
 func beScanCore(t *testing.T) *beScan {
 	t.Helper()
 	paths, err := srcpath.CoreFamilyGoFiles()

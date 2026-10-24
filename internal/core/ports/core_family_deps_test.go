@@ -10,7 +10,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-// R1 and R2 of ADR-116 (docs/adr-116-core-package-split.md,
+// R1 and R2 of ADR-121 (docs/adr-121-core-package-split.md,
 // INV-CORE-package-boundaries). Same `go list -deps` mechanism as
 // heavy_deps_guard_test.go, production closures only (default build tags,
 // test files excluded).
@@ -53,7 +53,7 @@ func importsCoreViolations(graph map[string][]string, family []string) []string 
 	for _, pkg := range family {
 		if chain := chainTo(graph, pkg, coreImportPath); chain != nil {
 			msgs = append(msgs, fmt.Sprintf("%s was extracted from internal/core (core family) but imports it: %s. "+
-				"An extracted package must not import internal/core (ADR-116 R1); depend on internal/core/ports or a leaf instead",
+				"An extracted package must not import internal/core (ADR-121 R1); depend on internal/core/ports or a leaf instead",
 				pkg, strings.Join(chain, " -> ")))
 		}
 	}
@@ -103,14 +103,14 @@ func TestCoreKeyorixDepsMatchAllowlist(t *testing.T) {
 	graph := coreClosure(t)
 	for _, p := range srcpath.CoreTestOnlyDirs {
 		if chain := chainTo(graph, coreImportPath, keyorixPrefix+p); chain != nil {
-			t.Errorf("%s is test-only (ADR-116) but is in internal/core's production closure: %s", p, strings.Join(chain, " -> "))
+			t.Errorf("%s is test-only (ADR-121) but is in internal/core's production closure: %s", p, strings.Join(chain, " -> "))
 		}
 	}
 	extra, missing := keyorixDepsDiff(graph, coreImportPath, coreProductionKeyorixDeps)
 	for _, e := range extra {
 		chain := chainTo(graph, coreImportPath, keyorixPrefix+e)
 		t.Errorf("new keyorix package in internal/core's production closure: %s (chain: %s). "+
-			"If the import is intended, add it to coreProductionKeyorixDeps in this PR (ADR-116 R2); "+
+			"If the import is intended, add it to coreProductionKeyorixDeps in this PR (ADR-121 R2); "+
 			"an extracted leaf's internals belong under <leaf>/internal/", e, strings.Join(chain, " -> "))
 	}
 	for _, m := range missing {

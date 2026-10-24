@@ -1,5 +1,5 @@
 # kernel: identity, authentication, authorization, secrets core, sessions, setup, service wiring and the shared
-# kernel seam. ADR-116: the kernel is not split. Exact file names only (no globs), so a new kernel file is a
+# kernel seam. ADR-121: the kernel is not split. Exact file names only (no globs), so a new kernel file is a
 # reviewed one-line addition here. One name per line (README.md).
 account.go
 account_sessions.go

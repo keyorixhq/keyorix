@@ -105,7 +105,7 @@ type atomicityHit struct {
 }
 
 // scanAtomicityHits walks every non-test, non-generated *.go file of the core
-// family (internal/core and the packages extracted from it, ADR-116; not other
+// family (internal/core and the packages extracted from it, ADR-121; not other
 // subpackages — storage/, ports/, rules/ have their own concerns) for funcs on *KeyorixCore or *AnomalyDetector with 2+
 // storage-write or core-to-core-write calls outside WithTransaction.
 func scanAtomicityHits(t *testing.T, files []string) []atomicityHit {

@@ -18,7 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-// R6 of ADR-116 (INV-CORE-package-boundaries): a guard that names a source file
+// R6 of ADR-121 (INV-CORE-package-boundaries): a guard that names a source file
 // by a string literal ("secrets.go", "internal/core/sso.go", or the file part of a
 // "secrets.go:Func" allowlist key) goes vacuous when that file moves: the scan
 // that looked for it finds nothing and the allowlist row it keys no longer
@@ -198,7 +198,7 @@ func namedFileViolations(repo string, refs []namedFileRef, searchDirs []string, 
 			continue
 		}
 		msgs = append(msgs, fmt.Sprintf("%s names %q, which does not exist (moved or renamed?). Point the guard at the "+
-			"file's new place, or add %q to namedFileAllowlist with the reason it is intentionally absent (ADR-116 R6)",
+			"file's new place, or add %q to namedFileAllowlist with the reason it is intentionally absent (ADR-121 R6)",
 			ref.testFile, ref.name, ref.key()))
 	}
 	for _, k := range slices.Sorted(maps.Keys(allow)) {

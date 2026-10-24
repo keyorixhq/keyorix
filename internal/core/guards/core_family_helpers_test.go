@@ -9,7 +9,7 @@ import (
 )
 
 // coreFamilySources is how a guard in this package lists "every core source
-// file" (ADR-116 R5): the non-test .go files of internal/core plus every
+// file" (ADR-121 R5): the non-test .go files of internal/core plus every
 // package extracted from it (srcpath.CoreFamilyGoFiles), as absolute paths.
 // Use srcpath.CoreFamilyRel for the "file.go" keys allowlists use.
 // TestNoAdHocCoreDirListing fails on a guard that lists internal/core itself.

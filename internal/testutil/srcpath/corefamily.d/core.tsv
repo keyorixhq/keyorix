@@ -1,2 +1,2 @@
 # kind	dir	reason (README.md)
-core	internal/core	the package ADR-116 splits
+core	internal/core	the package ADR-121 splits

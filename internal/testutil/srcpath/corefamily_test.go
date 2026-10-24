@@ -79,7 +79,7 @@ func TestCoreFamilyGoFiles_SeesEveryFamilyDir(t *testing.T) {
 }
 
 // TestCoreFamilyRegistry_Rows pins the committed rows: the core row is
-// internal/core and the test-only packages are the two ADR-116 creates. The
+// internal/core and the test-only packages are the two ADR-121 creates. The
 // literals live here, in a _test.go file, on purpose (corefamily.d/README.md).
 func TestCoreFamilyRegistry_Rows(t *testing.T) {
 	if CoreDir != "internal/core" {

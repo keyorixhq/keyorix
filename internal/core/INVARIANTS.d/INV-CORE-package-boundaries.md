@@ -1,4 +1,4 @@
-- **INV-CORE-package-boundaries** The package boundaries of the `internal/core` split (ADR-116)
+- **INV-CORE-package-boundaries** The package boundaries of the `internal/core` split (ADR-121)
   hold, and no source-scanning guard over core goes blind when a file moves:
   (R1) no package extracted from core (the core family, registered one
   `internal/testutil/srcpath/corefamily.d/<leaf>.tsv` row per package) imports `internal/core`;

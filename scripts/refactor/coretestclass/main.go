@@ -1,6 +1,6 @@
 // Command coretestclass classifies the in-package test files of a Go package
 // (default ./internal/core) as black-box or white-box, the analysis behind
-// CORE-SPLIT-DESIGN-1 section 3.7 and the move waves of ADR-116.
+// CORE-SPLIT-DESIGN-1 section 3.7 and the move waves of ADR-121.
 //
 // A test file is black-box when every package-level object, field and method of
 // the package it uses is exported, or is declared in another test file that is
@@ -8,7 +8,7 @@
 // treat as reachable (the design's "if c.storage/c.now were reachable" row:
 // -relax storage,now).
 //
-// wave = black-box minus the files that must stay in the package (ADR-116
+// wave = black-box minus the files that must stay in the package (ADR-121
 // decision 2): fuzz targets, testdata readers, Postgres-gated files, init()
 // registries, source scanners (go/parser), and files declaring a test named by
 // a ledger row (docs/security-closures.d, docs/adr-conformance-enforced*,

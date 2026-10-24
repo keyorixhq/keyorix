@@ -15,7 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-// R5 of ADR-116 (INV-CORE-package-boundaries), the vacuity guard for moves: a
+// R5 of ADR-121 (INV-CORE-package-boundaries), the vacuity guard for moves: a
 // guard that lists internal/core's files itself (os.ReadDir(".."), Glob("*.go"))
 // silently stops seeing a file the day it moves to an extracted package, and
 // stays green. Guards in internal/core and internal/core/guards therefore list
@@ -106,7 +106,7 @@ func dirListingViolations(sites map[string]int, allow map[string]string) []strin
 	for _, k := range slices.Sorted(maps.Keys(sites)) {
 		if _, ok := allow[k]; !ok {
 			msgs = append(msgs, fmt.Sprintf("%s lists a directory itself (%d call(s)). If it lists internal/core's sources, use "+
-				"coreFamilySources(t) / srcpath.CoreFamilyGoFiles so a file moved out of core stays covered (ADR-116 R5); "+
+				"coreFamilySources(t) / srcpath.CoreFamilyGoFiles so a file moved out of core stays covered (ADR-121 R5); "+
 				"otherwise add it to dirListingAllowlist with the reason", k, sites[k]))
 		}
 	}

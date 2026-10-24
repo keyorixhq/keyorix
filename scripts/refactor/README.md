@@ -1,6 +1,6 @@
 # scripts/refactor: proof and measurement tools for the internal/core split
 
-ADR-116 (`docs/adr-116-core-package-split.md`) asks every extraction PR for a proof
+ADR-121 (`docs/adr-121-core-package-split.md`) asks every extraction PR for a proof
 bundle. These are the tools; their output goes in the PR body.
 
 | Tool | What it answers |

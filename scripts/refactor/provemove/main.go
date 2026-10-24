@@ -1,7 +1,7 @@
 // Command provemove proves that a refactor only MOVED Go declarations: every
 // top-level declaration in the given directories of the base tree exists in
 // the head tree with an identical normalised body, and nothing was added.
-// ADR-116 (docs/adr-116-core-package-split.md) requires its output in every
+// ADR-121 (docs/adr-121-core-package-split.md) requires its output in every
 // extraction PR.
 //
 // Usage:

@@ -1,4 +1,4 @@
-# srcpath core family registry (ADR-116)
+# srcpath core family registry (ADR-121)
 
 One file per directory of the core family, one row per file:
 
@@ -11,7 +11,7 @@ Tab-separated; `#` starts a comment line. `dir` is repository-relative, slash-se
 | kind | meaning | rows |
 |---|---|---|
 | `core` | the package being split | exactly one (`core.tsv`) |
-| `testonly` | a package created for tests only (ADR-116 decision 2): R2 and R3 | one per package |
+| `testonly` | a package created for tests only (ADR-121 decision 2): R2 and R3 | one per package |
 | `extracted` | a package extracted from internal/core: R1, and every core-family guard (R5) scans it | one per extraction |
 
 An extraction PR adds one file, `<leaf>.tsv`, with `extracted`, the package dir and the PR or brief

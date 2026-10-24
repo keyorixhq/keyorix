@@ -12,13 +12,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-// R4 of ADR-116 (INV-CORE-package-boundaries): every non-test .go file directly
+// R4 of ADR-121 (INV-CORE-package-boundaries): every non-test .go file directly
 // in internal/core belongs to exactly one cluster of internal/core/CLUSTERS.d.
 // The ownership map is what later extraction briefs and CI leg selection read;
 // a file in no cluster or in two is an ownership question nobody answered.
 //
 // What this does not check: subpackages of internal/core (each is its own
-// package) and test files (tests are not clustered; ADR-116 moves them by
+// package) and test files (tests are not clustered; ADR-121 moves them by
 // black-box analysis, not by cluster).
 
 const kernelCluster = "kernel"
@@ -97,7 +97,7 @@ func clusterViolations(files []string, clusters map[string][]string) []string {
 		switch len(owners) {
 		case 0:
 			msgs = append(msgs, fmt.Sprintf("internal/core/%s is in no cluster: add it to internal/core/CLUSTERS.d/%s.txt "+
-				"(nearest by name) or to the cluster it belongs to (ADR-116 R4)", f, nearestCluster(f, clusters)))
+				"(nearest by name) or to the cluster it belongs to (ADR-121 R4)", f, nearestCluster(f, clusters)))
 		case 1:
 		default:
 			msgs = append(msgs, fmt.Sprintf("internal/core/%s is in %d clusters (%s): narrow the patterns so it has one owner",

@@ -41,7 +41,7 @@ import (
 // clockSeamGuardedFuncs is the set of function/method names this guard treats
 // as the test-only clock seam.
 //
-// StorageForTesting is ADR-116's storage seam for tests moved out of
+// StorageForTesting is ADR-121's storage seam for tests moved out of
 // internal/core (decision 2): the raw storage handle behind every
 // authorization check, for _test.go callers only. It is listed before the
 // method exists so the first production caller fails here.
@@ -172,7 +172,7 @@ func TestClockSeamNeverCalledOutsideItsOwnDefinition(t *testing.T) {
 	for _, s := range sites {
 		if s.fn == "StorageForTesting" {
 			lines = append(lines, s.relPath+":"+strconv.Itoa(s.line)+" calls StorageForTesting"+
-				" outside its own definition -- this is a test-only storage seam (ADR-116 decision 2); "+
+				" outside its own definition -- this is a test-only storage seam (ADR-121 decision 2); "+
 				"a production call site gets the raw storage handle and bypasses every authorization check in core")
 			continue
 		}
@@ -187,7 +187,7 @@ func TestClockSeamNeverCalledOutsideItsOwnDefinition(t *testing.T) {
 }
 
 // TestClockSeamScanCatchesStorageSeamCall: the guard recognises a production
-// call to StorageForTesting (ADR-116) and exempts the method's own definition.
+// call to StorageForTesting (ADR-121) and exempts the method's own definition.
 func TestClockSeamScanCatchesStorageSeamCall(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "leaf.go")
 	src := "package core\n" +

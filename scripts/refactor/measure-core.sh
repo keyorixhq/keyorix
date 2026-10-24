@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# measure-core.sh — the before/after numbers an ADR-116 extraction PR pastes:
+# measure-core.sh — the before/after numbers an ADR-121 extraction PR pastes:
 #   1. the build-cache archive sizes of CORE-SPLIT-DESIGN-1 section 3.2
 #      (go list -test -export; compiles the listed packages' tests first);
 #   2. the test-side counts of section 3.7 (scripts/refactor/coretestclass):
