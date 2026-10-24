@@ -1,0 +1,2 @@
+### Internal
+- WIRING-SPLIT-1: `server/main.go`, `internal/config/config.go` and `internal/storage/factory.go` keep only ordered lists (background jobs, core wiring steps, boot refusals, config validators, storage backends); each job, wiring step, config section and storage backend lives in its own file, so a feature is a new file plus one list line (CONTRIBUTING.md). No behaviour change; `TestWiringHotFiles_StayThin` keeps the central files thin.

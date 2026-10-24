@@ -146,15 +146,6 @@ func TestImpersonationEnd_NotImpersonation_S22(t *testing.T) {
 
 // ── audit_anomaly.go ──────────────────────────────────────────────────────────
 
-// TestListAnomalyAlerts_NoCoreService_S22 verifies the 500 nil-guard when no
-// core service is in the context.
-func TestListAnomalyAlerts_NoCoreService_S22(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/anomalies", nil)
-	w := httptest.NewRecorder()
-	ListAnomalyAlerts(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // TestListAnomalyAlerts_AcknowledgedParam_S22 verifies the ?acknowledged=true
 // query branch returns 500 (no core service) rather than misrouting.
 func TestListAnomalyAlerts_AcknowledgedParam_S22(t *testing.T) {

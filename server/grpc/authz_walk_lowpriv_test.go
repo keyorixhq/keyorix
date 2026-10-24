@@ -108,8 +108,6 @@ var walkLowPrivAllowed = map[string]map[string]walkAllowance{
 	},
 }
 
-func (a walkAllowance) String() string { return a.reason }
-
 type walkPersona struct {
 	name  string
 	token string

@@ -80,6 +80,23 @@ This is exactly right — every `admin` subcommand (`init`, `migrate`, `backup`,
 `encryption rotate`, ...) needs the database to itself. Stop the server, or confirm you
 really mean to run alongside it and pass `--force`.
 
+`keyorix.db.server.lock` is never a stale lock file: the lock on it is an `flock` that
+ends when its holder process exits. **Do not delete it.** Deleting it does not release
+the lock; the running server keeps it on the deleted file. Within 5 seconds the server
+notices, re-creates the file and takes the lock again, logging
+`serverguard: WARNING: <path>/keyorix.db.server.lock was deleted or replaced while this server held it`.
+If an admin command created the new file and took it first, the server stops instead
+(`serverguard presence lock: ... an admin command now holds the new file exclusively, so the lock is lost`,
+then `ERROR: the server-presence lock was lost ...`, exit status 1) rather than serve beside
+it; your supervisor restarts it, and it refuses to start until the admin command
+finishes. An admin command that starts and finishes inside those 5 seconds still ran
+beside the server. A run with `--force` without the lock is recorded as such in its
+audit event.
+
+On a filesystem without `flock` support or without inode numbers (some network and FUSE
+mounts), the server and every admin command refuse to start with an error saying so: put
+the SQLite database on a local filesystem, or use PostgreSQL.
+
 ## Expired TLS certificate
 
 **Known gap:** the server does not check its own certificate's expiry at startup — it

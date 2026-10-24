@@ -94,6 +94,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"restoreEnvironment":                 reasonSchemaNotYetWritten, // post /api/v1/projects/{projectId}/environments/{id}/restore
 	"restoreProject":                     reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/restore
 	"restoreUser":                        reasonSchemaNotYetWritten, // post /api/v1/users/{id}/restore
+	"reviewBreakGlass":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass/{activationId}/review
 	"revokeBreakGlass":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass/{activationId}/revoke
 	"revokeMachineToken":                 reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}
 	"revokeProjectAccessReview":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/revoke

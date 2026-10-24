@@ -52,6 +52,12 @@ const (
 	CategoryWildcardIdentity    UnmappableCategory = "wildcard-identity"
 	CategoryUnresolvedPathScope UnmappableCategory = "unresolved-path-scope"
 	CategoryMountManagement     UnmappableCategory = "mount-management"
+	// CategoryNarrowerThanScope: the policy path covers only part of the Vault subtree mapped to
+	// the resolved project/environment, so a scope-wide grant would be wider than Vault.
+	CategoryNarrowerThanScope UnmappableCategory = "path-narrower-than-scope"
+	// CategoryMetadataOnly: the stanza grants key listing or KV v2 metadata, never values;
+	// secrets.read would expose values.
+	CategoryMetadataOnly UnmappableCategory = "metadata-only"
 )
 
 // Item is one proposed (or rejected) Keyorix object, with everything a human reviewer or
