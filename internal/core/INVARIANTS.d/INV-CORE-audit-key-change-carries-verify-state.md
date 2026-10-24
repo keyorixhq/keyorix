@@ -5,7 +5,9 @@
   verifies the chain, saves the state (a failed walk becomes a sticky failure) and appends
   an `audit_key_transitions` record (both key versions, the certified head, the digests of
   the stored state, high-water mark, retention anchor and latest checkpoint, `seq`/`prev`)
-  MACed by the old key and, over that MAC, by the new one.
+  MACed by the old key and, over that MAC, by the new one. The record names an artifact's
+  digest only when the artifact authenticates under the old key, and the state save and the
+  record share one lock section, so completion never re-signs a forged value.
   `CompleteAuditKeyTransition` runs with the new key, in the command after the commit and
   at every server start. It re-signs the anchor and the high-water mark, appends one
   `system.audit_key_transition` event and writes a fresh checkpoint (only when the chain
@@ -23,6 +25,7 @@
   `_RecordMissing`, `_RecordForged`, `_RecordForWrongEpoch`,
   `_ForgedPendingRecordNotCompleted`, `_StateChangedAfterPrepareFailsClosed`,
   `_KillAfterPrepare`, `_KillAfterKeyCommit`, `_KillInsideComplete`, `_CompleteIdempotent`,
-  `_TwoRotations`) and `TestRotateKEK_CarriesAuditStateOver`,
+  `_TwoRotations`, `_ForgedAnchorNotLaundered`, `_ForgedHighWaterNotLaundered`,
+  `_StateForgedDuringPrepareNotCarried`) and `TestRotateKEK_CarriesAuditStateOver`,
   `TestMigrateProvider_CarriesAuditStateOver` (`internal/encryptionops`, the real
   commands).

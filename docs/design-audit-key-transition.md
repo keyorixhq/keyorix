@@ -45,6 +45,15 @@ In `P`:
 
 - `state`, `high_water` and `anchor` are SHA-256 digests of the stored values.
 - `checkpoint` is the SHA-256 of the latest checkpoint's canonical bytes plus its signature.
+- Each digest is filled in only when its artifact authenticates under the old key (and names
+  the old key version; the state must also be the row prepare just saved). Anything else gets
+  an empty digest and is not carried over. Completion re-signs what the record names, so a
+  forged anchor or high-water mark named here (a DB-write actor's value with the old key
+  version label and a junk signature) would come out authentic under the new key. Not
+  carried, it reads under the new key as it did under the old one: an ignored anchor, a
+  tampered high-water mark, a discontinuity for the state.
+- The state save and the record are written in one lock section, so no other writer replaces
+  the state row between them.
 - `prev` is the digest of the previous record (`sha256(P)`).
 
 The record is stored as:
