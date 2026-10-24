@@ -3,6 +3,10 @@ package ci_test
 import (
 	"bufio"
 	"encoding/json"
+	"go/parser"
+	"go/scanner"
+	"go/token"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -266,4 +270,103 @@ func TestSelectAffected_GithubOutputIsOneLinePerKey(t *testing.T) {
 	if raw, _ := os.ReadFile(out); strings.Contains(string(raw), "\r") {
 		t.Errorf("GITHUB_OUTPUT contains a CR: %q", raw)
 	}
+}
+
+// go_literals decides which string literals count as "named paths" for rule 3.
+// It must never drop a literal the Go lexer sees outside a comment or an
+// import path (that would let a reader of a changed file go unselected), so
+// compare it with go/scanner over every Go file of the module.
+func TestSelectAffected_LiteralScannerAgreesWithGoScanner(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 not on PATH")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []string
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			switch d.Name() {
+			case ".git", "node_modules", ".scratch", "testdata", "vendor":
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if strings.HasSuffix(path, ".go") {
+			rel, _ := filepath.Rel(root, path)
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) < 500 {
+		t.Fatalf("only %d Go files found under %s", len(files), root)
+	}
+	compared := 0
+	for start := 0; start < len(files); start += 150 {
+		batch := files[start:min(start+150, len(files))]
+		cmd := exec.Command("python3", append([]string{"scripts/ci/select-affected.py", "--literals"}, batch...)...)
+		cmd.Dir = root
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("--literals: %v", err)
+		}
+		var got map[string][]string
+		if err := json.Unmarshal(out, &got); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range batch {
+			want, ok := goScannerLiterals(t, filepath.Join(root, f))
+			if !ok {
+				continue
+			}
+			compared++
+			if !slices.Equal(got[f], want) {
+				t.Errorf("%s: scanner literals differ from go/scanner\n got  %q\n want %q", f, got[f], want)
+			}
+		}
+	}
+	if compared < 500 {
+		t.Fatalf("compared only %d files", compared)
+	}
+}
+
+// goScannerLiterals lists the string literals of a file in source order,
+// without import paths, as the text between the quotes. ok is false for a
+// file that does not parse (nothing to compare against).
+func goScannerLiterals(t *testing.T, path string) (lits []string, ok bool) {
+	t.Helper()
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, src, parser.ImportsOnly)
+	if err != nil {
+		return nil, false
+	}
+	imports := map[int]bool{}
+	for _, imp := range f.Imports {
+		imports[fset.Position(imp.Path.Pos()).Offset] = true
+	}
+	file := token.NewFileSet().AddFile(path, -1, len(src))
+	var sc scanner.Scanner
+	bad := false
+	sc.Init(file, src, func(token.Position, string) { bad = true }, 0)
+	for {
+		pos, tok, lit := sc.Scan()
+		if tok == token.EOF {
+			break
+		}
+		if tok == token.STRING && !imports[file.Offset(pos)] {
+			lits = append(lits, lit[1:len(lit)-1])
+		}
+	}
+	return lits, !bad
 }
