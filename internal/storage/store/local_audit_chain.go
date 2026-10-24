@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/logging"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
@@ -263,6 +264,9 @@ func computeAuditEntryHash(e *models.AuditEvent, prevHash string) string {
 	write(uptr(e.ActingAs))
 	write(strconv.FormatBool(e.Impersonation))
 	write(e.ActorType)
+	// MachineIdentityID and RequestID are deliberately not hashed. RequestID is an
+	// advisory correlation field outside the chain (docs/specs/audit-request-id.md
+	// §5); TestAuditEntryHash_IgnoresRequestID pins that.
 	return hex.EncodeToString(h.Sum(nil))
 }
 
@@ -298,6 +302,19 @@ func normalizeAuditEventForHash(event *models.AuditEvent) {
 	}
 }
 
+// stampAuditRequestID sets event.RequestID to the request id the server minted for
+// ctx's request, or nil when there is none, replacing whatever the caller set: the
+// value is never chosen by a writer and never a client-supplied header. Every audit
+// append passes through logAuditEvent, so this is the one place the column is
+// written (docs/specs/audit-request-id.md §3). It is not a hash input
+// (computeAuditEntryHash), so stamping it before or after hashing is equivalent.
+func stampAuditRequestID(ctx context.Context, event *models.AuditEvent) {
+	event.RequestID = nil
+	if id := logging.ServerRequestID(ctx); id != "" {
+		event.RequestID = &id
+	}
+}
+
 // LogAuditEvent appends an audit event, linking it into the tamper-evidence
 // hash chain (ADR-029). See logAuditEventBatched/logAuditEventDirect for which
 // path actually runs.
@@ -317,6 +334,7 @@ func (ls *LocalStorage) LogAuditEventWithAccessLog(ctx context.Context, event *m
 func (ls *LocalStorage) logAuditEvent(ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) (err error) {
 	start := time.Now()
 	defer func() { observeAuditWrite(start, err) }()
+	stampAuditRequestID(ctx, event)
 	normalizeAuditEventForHash(event)
 	// ls.auditFlusher is nil on a transaction-scoped LocalStorage (see
 	// WithTransaction/RemoveGlobalAdminRoleGuarded's clone construction) --

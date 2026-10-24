@@ -90,12 +90,16 @@ func FuzzPostgresQuoting(f *testing.F) {
 		// wrapping-strip check or leave a stray '"' after un-doubling that
 		// wouldn't match the original s).
 
-		litGot, ok := decodePGQuoted(litQuoted, '\'')
-		if !ok {
-			t.Fatalf("QuoteLiteral(%q) = %q is not delimiter-wrapped", s, litQuoted)
-		}
-		if litGot != s {
-			t.Fatalf("round-trip mismatch: QuoteLiteral(%q) = %q, decoded back to %q", s, litQuoted, litGot)
+		// QuoteLiteral emits an E'' constant; decode it with the server-model lexer
+		// (review_leaves_test.go) under both standard_conforming_strings settings.
+		for _, scs := range []bool{true, false} {
+			litGot, rest, ok := lexPGStringLiteral(litQuoted, scs)
+			if !ok || rest != "" {
+				t.Fatalf("QuoteLiteral(%q) = %q is not one complete string constant (scs=%v, rest %q)", s, litQuoted, scs, rest)
+			}
+			if litGot != s {
+				t.Fatalf("round-trip mismatch: QuoteLiteral(%q) = %q, decoded back to %q (scs=%v)", s, litQuoted, litGot, scs)
+			}
 		}
 	})
 }

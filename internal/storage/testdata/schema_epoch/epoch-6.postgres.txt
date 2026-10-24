@@ -1,4 +1,4 @@
-# schema of a fresh postgres install at currentSchemaEpoch 5; see schema_epoch_snapshot_test.go
+# schema of a fresh postgres install at currentSchemaEpoch 6; see schema_epoch_snapshot_test.go
 column access_request_approvals.approver_id bigint nullable=NO default=<none>
 column access_request_approvals.approver_machine_identity_id bigint nullable=NO default=0
 column access_request_approvals.created_at timestamp with time zone nullable=YES default=<none>
@@ -142,6 +142,7 @@ column audit_events.ip_address text nullable=YES default=<none>
 column audit_events.machine_identity_id bigint nullable=YES default=<none>
 column audit_events.prev_hash text nullable=YES default=<none>
 column audit_events.project_id bigint nullable=YES default=<none>
+column audit_events.request_id text nullable=YES default=<none>
 column audit_events.secret_node_id bigint nullable=YES default=<none>
 column audit_events.success boolean nullable=YES default=true
 column audit_events.user_id bigint nullable=YES default=<none>

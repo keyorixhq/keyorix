@@ -321,7 +321,7 @@ func createGRPCTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		return nil, fmt.Errorf("failed to load gRPC TLS certificate: %w", err)
 	}
 
-	tlsConfig := &tls.Config{GetCertificate: tlsmetrics.Wrap(tlsmetrics.GRPC, reloader.GetCertificate), MinVersion: tls.VersionTLS12} // raised to TLS 1.3 by applyTLSHardening in strict mode
+	tlsConfig := &tls.Config{GetCertificate: tlsmetrics.Wrap(tlsmetrics.GRPC, reloader.GetCertificate), VerifyConnection: tlsmetrics.ObserveHandshake(tlsmetrics.GRPC), MinVersion: tls.VersionTLS12} // raised to TLS 1.3 by applyTLSHardening in strict mode
 	if err := applyTLSHardening(tlsConfig, cfg.Server.GRPC.TLS, cfg.Server.GRPC.TLSMode); err != nil {
 		return nil, err
 	}

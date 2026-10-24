@@ -181,3 +181,104 @@ func TestReserveRecoveryKeyOutputFile_RefusesToOverwrite(t *testing.T) {
 		t.Fatalf("existing file content was overwritten: got %q", got)
 	}
 }
+
+// --- hybrid (post-quantum) recipients and the classical-recipient warning ---
+
+func TestParseRecoveryKeyRecipient_HybridRoundTrip(t *testing.T) {
+	id, err := age.GenerateHybridIdentity()
+	if err != nil {
+		t.Fatalf("generate hybrid identity: %v", err)
+	}
+	spec := id.Recipient().String()
+	if !strings.HasPrefix(spec, "age1pq1") {
+		t.Fatalf("test premise: hybrid recipient should start with age1pq1, got %.12s...", spec)
+	}
+	r, err := parseRecoveryKeyRecipient(spec)
+	if err != nil {
+		t.Fatalf("parseRecoveryKeyRecipient(hybrid): %v", err)
+	}
+	encrypted, err := encryptRecoveryKeyForRecipient("hybrid-raw-key", r)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	if got := decryptArmored(t, encrypted, id); got != "hybrid-raw-key" {
+		t.Fatalf("round trip mismatch: got %q", got)
+	}
+}
+
+func TestParseRecoveryKeyRecipient_MalformedHybridRefused(t *testing.T) {
+	id, err := age.GenerateHybridIdentity()
+	if err != nil {
+		t.Fatalf("generate hybrid identity: %v", err)
+	}
+	valid := id.Recipient().String()
+	for name, spec := range map[string]string{
+		"garbage":   "age1pq1notavalidrecipient",
+		"truncated": valid[:len(valid)-8],
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, perr := parseRecoveryKeyRecipient(spec)
+			if perr == nil || r != nil {
+				t.Fatalf("expected a refusal for %q, got recipient=%v err=%v", name, r, perr)
+			}
+			if !strings.Contains(perr.Error(), "hybrid") {
+				t.Fatalf("error should say it was parsed as a hybrid recipient, got: %v", perr)
+			}
+		})
+	}
+}
+
+func TestWarnIfClassicalRecoveryKeyRecipient(t *testing.T) {
+	hybrid, err := age.GenerateHybridIdentity()
+	if err != nil {
+		t.Fatalf("generate hybrid identity: %v", err)
+	}
+	x25519, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatalf("generate x25519 identity: %v", err)
+	}
+	line, _ := newTestSSHEd25519Recipient(t)
+	sshPath := filepath.Join(t.TempDir(), "id_ed25519.pub")
+	if err := os.WriteFile(sshPath, []byte(line+"\n"), 0o600); err != nil {
+		t.Fatalf("write pub key file: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		spec     string
+		wantWarn bool
+	}{
+		{"hybrid", hybrid.Recipient().String(), false},
+		{"x25519", x25519.Recipient().String(), true},
+		{"ssh-ed25519", sshPath, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := parseRecoveryKeyRecipient(tc.spec)
+			if err != nil {
+				t.Fatalf("parse: %v", err)
+			}
+			var buf bytes.Buffer
+			warnIfClassicalRecoveryKeyRecipient(&buf, r)
+			out := buf.String()
+			if !tc.wantWarn {
+				if out != "" {
+					t.Fatalf("hybrid recipient must not warn, got: %q", out)
+				}
+				return
+			}
+			if n := strings.Count(out, "WARNING"); n != 1 {
+				t.Fatalf("expected exactly one warning, got %d: %q", n, out)
+			}
+			for _, want := range []string{"quantum", "age1pq"} {
+				if !strings.Contains(out, want) {
+					t.Fatalf("warning should mention %q, got: %q", want, out)
+				}
+			}
+			// No key material: neither the recipient string nor the key file's content.
+			if strings.Contains(out, tc.spec) || strings.Contains(out, line) {
+				t.Fatalf("warning leaked recipient material: %q", out)
+			}
+		})
+	}
+}
