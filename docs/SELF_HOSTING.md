@@ -547,12 +547,17 @@ what it needs, what the replicas share, and the order to upgrade them in.
   replica on a shared volume refuses to start, or runs unprotected where the
   filesystem does not enforce flock across nodes. Design and key-file inventory:
   [multi-replica-keys.md](multi-replica-keys.md).
-- **The same key set on every replica**: `dek_path`, and `salt_path` or the KMS/TPM
-  wrapped KEK, with the same master password or KEK source. Either share one
-  ReadWriteMany volume (the first replica generates the keys, the others wait and
-  load them), or mount identical read-only copies, for example one Kubernetes
-  Secret. A replica that finds no DEK while the database already holds secrets
-  refuses to start and does not generate a second one.
+- **The same key set on every replica, read-only**: `dek_path`, and `salt_path` or the
+  KMS wrapped KEK, with the same master password or KEK source. In Kubernetes this is
+  the Helm chart's **Secret mode**, the supported HA mode: `server.keysSecret` names a
+  Secret holding `data.key` and `kek.salt`, which you create once with
+  `keyorix-server admin encryption key-secret generate` before installing; every
+  replica mounts it read-only and none generates keys. The chart refuses
+  `server.replicas > 1` without it, and with a ReadWriteMany keys volume. Procedure,
+  rotation and crash recovery: [multi-replica-keys.md, "Secret
+  mode"](multi-replica-keys.md#secret-mode-helm-serverkeyssecret). A replica that finds
+  no DEK while the database already holds secrets refuses to start and does not
+  generate a second one.
 - **Identical configuration** on every replica, `storage.database.single_writer`
   off, and `security.auth_rate_limit_fallback.replicas` set to the replica count.
   Enforce login rate limits at the load balancer as well; the in-memory limits are
@@ -567,10 +572,19 @@ what it needs, what the replicas share, and the order to upgrade them in.
 **Key operations.** A DEK or KEK rotation, `migrate-provider`, and `admin restore`
 all need **every replica stopped**. The admin command takes the presence lock
 exclusively and is refused while any replica runs. With `key_dir_lock: database`,
-`--force` cannot override that. Run the command once (a Kubernetes Job on the
-keys volume), update read-only key copies if you use them, then start the
-replicas again. A live `admin backup` (Postgres, no `--exclusive`) runs next to
-the replicas.
+`--force` cannot override that. In Secret mode the command runs in a writable
+workspace on durable storage (`key-secret unpack` of the current Secret), its result
+becomes a **new** key Secret (`key-secret export`), and a `helm upgrade` pointing
+`server.keysSecret.name` at it brings the replicas back; a pod that starts with the
+old Secret is refused by the DEK epoch. A live `admin backup` (Postgres, no
+`--exclusive`) runs next to the replicas.
+
+**Backups: keys apart from data.** Back up the key Secret (the manifest
+`key-secret generate`/`export` wrote) **separately** from the database backups: a
+different store with different access, and the master password in a third place.
+Neither backup opens a secret alone. A database backup needs the key Secret whose
+`keyorix.io/dek-fingerprint` annotation equals its `dek.epoch` row, so keep each key
+Secret manifest as long as you keep database backups taken under it.
 
 **Upgrade order**
 
@@ -601,9 +615,9 @@ the replicas.
 Tested natively: a v0.96.1 and a current server against one PostgreSQL database,
 with concurrent writes, cross-version reads, a restart of the old one, audit purge
 and verification, and a DEK rotation (`scripts/e2e/mixed_version_test.go`).
-**Pending live verification:** the same on Kubernetes (two replicas on a
-ReadWriteMany keys volume, kind), `scripts/k8s-e2e/multi-replica.sh`, waiting for
-the e2e VM.
+**Pending live verification:** the same on Kubernetes (two replicas in Secret
+mode, kind, with a DEK rotation through a new key Secret),
+`scripts/k8s-e2e/multi-replica-secret.sh`, waiting for the e2e VM.
 
 ## 7. TLS
 

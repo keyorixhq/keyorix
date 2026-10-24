@@ -217,10 +217,17 @@ replace each `CHANGE-ME`.
 - **Single server instance (default):** `server.replicas: 1` with Recreate rollouts
   — the server owns a ReadWriteOnce keys volume and a per-instance KEK.
 - **More than one server replica (ADR-039 HA):** `server.replicas: N` renders only
-  when it can work, and the render fails otherwise: the keys volume must be
-  persistent and `ReadWriteMany` (every replica reads the same wrapped DEK and KEK
-  salt), and `server.singleWriter` must be false (single-writer mode allows exactly
-  one server). Use an external PostgreSQL (the bundled one is a single pod); the chart
+  when it can work, and the render fails otherwise. The keys must come from a key
+  Secret (**Secret mode**: `server.keysSecret.enabled=true`,
+  `server.keysSecret.name`, `server.keysPersistence.enabled=false`): an init
+  container copies `data.key` and `kek.salt` into a memory volume the server mounts
+  read-only, and the server runs with `key_dir_lock: database`, so no replica
+  generates keys. Create the Secret before installing, with
+  `keyorix-server admin encryption key-secret generate --name <Secret> --out <file>`
+  and `kubectl create -f <file>`; the chart never sees key material. A ReadWriteMany
+  keys volume is refused for N > 1. `server.singleWriter` must be false
+  (single-writer mode allows exactly one server). Rotation and recovery:
+  [docs/multi-replica-keys.md](../../../docs/multi-replica-keys.md#secret-mode-helm-serverkeyssecret). Use an external PostgreSQL (the bundled one is a single pod); the chart
   renders PostgreSQL only, so SQLite cannot be combined with replicas. With N > 1 the
   chart adds a PodDisruptionBudget (`server.podDisruptionBudget`), node/zone
   `topologySpreadConstraints` (`server.topologySpreadConstraints` to override),
@@ -228,8 +235,10 @@ replace each `CHANGE-ME`.
   rolling upgrade across a schema-epoch bump can briefly crash-loop an old replica
   (ADR-039, ADR-101). The web Deployment spreads the same way when
   `web.replicas > 1`. Not covered by a live multi-replica test in this chart.
-- **Backups:** back up both the database and the `*-server-keys` PVC. You need
-  both (plus the master password) to recover.
+- **Backups:** back up both the database and the keys: the `*-server-keys` PVC, or
+  in Secret mode the key Secret's manifest. Keep the keys **apart** from the
+  database backups (another store, other access) and the master password in a
+  third place: you need all three to recover, and none opens a secret alone.
 - **TLS:** terminate at the ingress (`ingress.tls` + cert-manager annotations).
 - **Secure baseline (`secureBaseline.enabled=true`):** Helm generates a
   `<fullname>-secure-baseline` Secret (e.g. `kx-keyorix-secure-baseline`) on first install, kept across upgrades:
