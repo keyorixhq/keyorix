@@ -22,8 +22,7 @@ func replaceURLDBName(base, newName string) string {
 		//
 		// A *url.Error quotes the whole raw URL, password included, so only
 		// its inner error (which describes the problem, not the input) is shown.
-		var ue *url.Error
-		if errors.As(err, &ue) {
+		if ue, ok := errors.AsType[*url.Error](err); ok {
 			err = ue.Err
 		}
 		panic(fmt.Sprintf("pgdsn: cannot parse URL DSN: %v", err))
