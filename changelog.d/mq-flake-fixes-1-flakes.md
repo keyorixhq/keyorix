@@ -1,0 +1,2 @@
+### Testing
+- **Journeys wait for the server's SQLite write lock (#3683).** The customer journeys that edit the live server's database (a trigger that makes the audit log refuse rows) ran `sqlite3` with its default busy timeout of 0, so a statement that met the server's own write failed at once with "database is locked". Every journey now runs `sqlite3` through one helper that waits as long as the server's own connections do (10 s), and `TestJourneysRunSQLiteOnlyThroughHelper` keeps a bare `sqlite3` out of the journeys.
