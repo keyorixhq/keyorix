@@ -1,0 +1,2 @@
+### Added
+- **Hybrid post-quantum recipients for `admin recovery-key rotate --recipient`.** The command now accepts hybrid age recipients (`age1pq1...`, ML-KEM-768 + X25519). A classical recipient (`age1...` X25519 or `ssh-ed25519`) still works but prints one stderr warning that an age-encrypted recovery key harvested today opens to a future quantum attacker and names the hybrid alternative. A malformed recipient is refused before the old key is rotated. Documented in `docs/operator/j5-lost-admin.md`.

@@ -45,14 +45,26 @@ var (
 		Name: "keyorix_audit_checkpoint_truncation_refused_total",
 		Help: "Checkpoint writes refused because the signed audit verification state, still authentic under the current key, proves the chain was truncated (a relabelled key_version cannot re-baseline it). Page on any increase.",
 	})
+
+	auditVerifyStateDiscontinuityRecorded = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "keyorix_audit_verify_state_discontinuity",
+		Help: "1 while a sticky audit verification state discontinuity is recorded: the persisted state was deleted, garbled, signed under another key epoch, claimed rows past the chain head or predated a recorded break, so continuity with earlier verifications is lost. No verification clears it; keyorix_audit_verify_failure_recorded is 1 too. NaN until this process has read the state. Page on 1.",
+	})
+
+	auditVerifyStateDiscontinuities = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "keyorix_audit_verify_state_discontinuities_total",
+		Help: "Audit verification state discontinuities this process detected and recorded (each also appends a system.audit_verification_state_discontinuity event). Page on any increase.",
+	})
 )
 
 func init() {
-	protectedmetrics.MustRegister(auditVerifyLastSuccess, auditVerifyFailureRecorded, auditVerifyStateRejected, auditCheckpointTruncationRefused)
+	protectedmetrics.MustRegister(auditVerifyLastSuccess, auditVerifyFailureRecorded, auditVerifyStateRejected, auditCheckpointTruncationRefused,
+		auditVerifyStateDiscontinuityRecorded, auditVerifyStateDiscontinuities)
 	// Unknown until this process has read the persisted state, never a false 0: a
 	// restarted server must not report "no break recorded" before it has looked.
 	auditVerifyFailureRecorded.Set(math.NaN())
 	auditVerifyStateRejected.Set(math.NaN())
+	auditVerifyStateDiscontinuityRecorded.Set(math.NaN())
 }
 
 // PublishAuditVerifyState reads the persisted verification state once and publishes
@@ -94,22 +106,24 @@ func (c *KeyorixCore) observeAuditVerifyState(st *auditVerifyState) {
 	if st.LastFull != nil && st.LastFull.Valid {
 		auditVerifyLastSuccess.WithLabelValues(auditVerifyCheckFull).Set(float64(st.LastFull.CompletedAt.Unix()))
 	}
-	boolGauge(auditVerifyFailureRecorded, st.Failure != nil)
+	boolGauge(auditVerifyFailureRecorded, st.Failure != nil || st.Discontinuity != nil)
 	boolGauge(auditVerifyStateRejected, st.Rejected != nil)
+	boolGauge(auditVerifyStateDiscontinuityRecorded, st.Discontinuity != nil)
 }
 
 // observeAuditVerifyStateUntrusted marks a load that found the persisted row
-// untrusted. It only raises the flags: the rejected flag always, and the failure
-// flag when the untrusted row still carries a sticky failure, which
+// untrusted (rejected) or not continuable (a discontinuity). It only raises the
+// flags: the rejected flag for a rejection, the failure and discontinuity flags
+// when the returned state carries a sticky failure or discontinuity, which
 // loadAuditVerifyStateUnobserved keeps. A later trusted save/load of a newer
-// generation lowers them.
+// generation lowers them (a discontinuity is carried into every later save).
 //
 // Raising takes the same lock as observeAuditVerifyState and moves the published
 // generation past everything this process has seen (st.Gen, and the generation
 // floor, since a malformed or rolled-back row reports a low or zero Gen). Otherwise
 // a status reader that loaded generation N before this load could still publish N
 // afterwards, lower the flags again and mask the tamper page.
-func (c *KeyorixCore) observeAuditVerifyStateUntrusted(st *auditVerifyState) {
+func (c *KeyorixCore) observeAuditVerifyStateUntrusted(st *auditVerifyState, rejected bool) {
 	c.auditVerifyPubMu.Lock()
 	defer c.auditVerifyPubMu.Unlock()
 	next := c.auditVerifyGenSeen.Load() + 1
@@ -117,8 +131,13 @@ func (c *KeyorixCore) observeAuditVerifyStateUntrusted(st *auditVerifyState) {
 		next = max(next, st.Gen+1)
 	}
 	c.auditVerifyGenPublished = max(c.auditVerifyGenPublished, next)
-	auditVerifyStateRejected.Set(1)
-	if st != nil && st.Failure != nil {
+	if rejected {
+		auditVerifyStateRejected.Set(1)
+	}
+	if st != nil && (st.Failure != nil || st.Discontinuity != nil) {
 		auditVerifyFailureRecorded.Set(1)
+	}
+	if st != nil && st.Discontinuity != nil {
+		auditVerifyStateDiscontinuityRecorded.Set(1)
 	}
 }

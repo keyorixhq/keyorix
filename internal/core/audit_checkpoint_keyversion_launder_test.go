@@ -30,9 +30,10 @@ import (
 )
 
 // launderCertify builds the pre-attack state through the scheduler path:
-// 6 events and a tick (checkpoint #1 via the full walk), then 4 more and a
-// tick (checkpoint #2 via the tail check). Checkpoint #2, the high-water mark
-// and the signed verification state all certify 10 events with head id 10.
+// 6 events and a tick (checkpoint #1 via the full walk; the first state save
+// then appends the in-chain state marker, id 7), then 4 more and a tick
+// (checkpoint #2 via the tail check). Checkpoint #2, the high-water mark and
+// the signed verification state all certify 11 events with head id 11.
 func launderCertify(t *testing.T, c *KeyorixCore, clk *incrClock) {
 	t.Helper()
 	ctx := context.Background()
@@ -44,7 +45,7 @@ func launderCertify(t *testing.T, c *KeyorixCore, clk *incrClock) {
 	res, err := c.RunAuditVerificationTick(ctx)
 	require.NoError(t, err)
 	require.True(t, res.Written)
-	require.Equal(t, int64(10), res.Checkpoint.ChainedEvents)
+	require.Equal(t, int64(11), res.Checkpoint.ChainedEvents)
 }
 
 // relabelHighWater rewrites the key_version field of the stored high-water
@@ -167,10 +168,10 @@ func TestAuditCheckpointLaunder_RefusedAfterCountRecovers(t *testing.T) {
 	launderCertify(t, c, clk)
 	launderAttack(t, db)
 	c2 := restartCore(t, c.storage.(*store.LocalStorage), clk, false)
-	logIncrEvents(t, c2, clk, 8) // 12 live events > 10 certified
+	logIncrEvents(t, c2, clk, 8) // 12 live events > 11 certified
 	_, _, err := c2.WriteAuditCheckpoint(context.Background())
 	require.ErrorIs(t, err, ErrAuditCheckpointRefused)
-	assert.Contains(t, err.Error(), "#10")
+	assert.Contains(t, err.Error(), "#11")
 }
 
 // Variant through the tail-check write path: the actor deletes checkpoint #2
@@ -226,6 +227,11 @@ func TestAuditCheckpointLaunder_IncrementalPathRefuses_Postgres(t *testing.T) {
 // incremental path), and the trail must verify afterwards. Simulated with
 // SetAuditCheckpointKey, as TestAuditCheckpoint_RotationRebaselines does: the
 // server wires the new KEK-derived key at startup.
+//
+// The incremental status no longer reads valid afterwards (AUDIT-VERIFY-STATE-1):
+// a state row from another key epoch is indistinguishable from a relabelled one
+// until key changes carry the state over, so it is a sticky discontinuity
+// (docs/design-audit-reseal-options.md).
 func TestAuditCheckpointLaunder_KeyRotationStillRebaselines(t *testing.T) {
 	t.Parallel()
 	rotated := func(t *testing.T, s *store.LocalStorage, clk *incrClock, incremental bool) *KeyorixCore {
@@ -243,7 +249,7 @@ func TestAuditCheckpointLaunder_KeyRotationStillRebaselines(t *testing.T) {
 		require.NoError(t, err, "a key change must still re-baseline")
 		require.True(t, written)
 		assert.Equal(t, "v2", cp.KeyVersion)
-		assert.Equal(t, int64(10), cp.ChainedEvents)
+		assert.Equal(t, int64(11), cp.ChainedEvents)
 		v, err := c2.VerifyAuditChain(ctx)
 		require.NoError(t, err)
 		assert.True(t, v.Valid, v.Reason)
@@ -268,7 +274,9 @@ func TestAuditCheckpointLaunder_KeyRotationStillRebaselines(t *testing.T) {
 			require.NoError(t, err)
 			require.True(t, res.Written)
 		}
-		assert.Equal(t, AuditVerifyStatusValid, incrVerify(t, c2).Status)
+		r := incrVerify(t, c2)
+		assert.Equal(t, AuditVerifyStatusBroken, r.Status)
+		assert.Contains(t, r.Reason, "verification state discontinuity (other key epoch)")
 		v, err := c2.VerifyAuditChain(ctx)
 		require.NoError(t, err)
 		assert.True(t, v.Valid, v.Reason)
@@ -297,6 +305,6 @@ func TestAuditCheckpointLaunder_PinSurvivesUntrustedSave(t *testing.T) {
 	pin, err := c2.signedAuditVerifyPin(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, pin)
-	assert.Equal(t, int64(10), pin.Events)
-	assert.Equal(t, uint(10), pin.HeadID, "the head pin survives a save from an untrusted load")
+	assert.Equal(t, int64(11), pin.Events)
+	assert.Equal(t, uint(11), pin.HeadID, "the head pin survives a save from an untrusted load")
 }

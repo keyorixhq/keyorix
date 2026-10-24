@@ -1,0 +1,1 @@
+internal/webauthnrp	none	-	PR #3635 (CORE-DECOUPLE-WEBAUTHN-1): new WebAuthn relying-party port implementation extracted from internal/core; no package-specific adversarial pass yet; coverage by webauthnrp_test.go and specvectors_test.go; review to be scheduled	pending

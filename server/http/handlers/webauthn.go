@@ -38,7 +38,7 @@ func (h *AuthHandler) BeginWebAuthnRegistration(w http.ResponseWriter, r *http.R
 		return
 	}
 	sendSuccess(w, map[string]any{
-		"publicKey":        creation.Response,
+		"publicKey":        creation,
 		"webauthn_session": sessionToken,
 	}, "Create a passkey, then finish registration.")
 }
@@ -184,7 +184,7 @@ func (h *AuthHandler) BeginWebAuthnReauth(w http.ResponseWriter, r *http.Request
 		return
 	}
 	sendSuccess(w, map[string]any{
-		"publicKey":        assertion.Response,
+		"publicKey":        assertion,
 		"webauthn_session": sessionToken,
 	}, "Complete the passkey assertion to re-authenticate.")
 }
@@ -254,7 +254,7 @@ func (h *AuthHandler) BeginWebAuthnLogin(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	sendSuccess(w, map[string]any{
-		"publicKey":        assertion.Response,
+		"publicKey":        assertion,
 		"webauthn_session": sessionToken,
 	}, "Complete the passkey assertion.")
 }
@@ -408,7 +408,7 @@ func (h *AuthHandler) BeginWebAuthnPasswordlessLogin(w http.ResponseWriter, r *h
 		return
 	}
 	sendSuccess(w, map[string]any{
-		"publicKey":        assertion.Response,
+		"publicKey":        assertion,
 		"webauthn_session": sessionToken,
 	}, "Complete the passkey assertion to sign in.")
 }

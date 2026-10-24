@@ -15,6 +15,7 @@ Served at: server `GET /metrics` (unauthenticated; keep inside your perimeter)
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `keyorix_account_state_unrecognized_total` | counter | - | Count of AccountLoginBlocked calls against a blank or unrecognized users.account_state value, failed closed. |
+| `keyorix_advisory_lock_lost_total` | counter | `lock` | PostgreSQL advisory locks found lost while held (their connection died), by lock: presence, admin_exclusive, single_writer, key_init, named, scheduler, bootstrap, audit_checkpoint, audit_index_build, other. |
 | `keyorix_audit_flusher_batch_size` | summary | - | Number of audit-chain entries committed per batch flush. |
 | `keyorix_audit_flusher_flushes_total` | counter | - | Audit-chain batch-commit flushes (one per transaction/fsync, covering 1-N queued entries each). |
 | `keyorix_audit_flusher_pipelined_batches_total` | counter | - | Audit-chain batches sent while the previous batch was still in flight (pipelined commits). |
@@ -43,6 +44,7 @@ Served at: server `GET /metrics` (unauthenticated; keep inside your perimeter)
 | `keyorix_single_writer_last_poll_age_seconds` | gauge | - | Seconds since the guard's last successful epoch poll; approaching the lease length means the guard is about to leave authoritative. |
 | `keyorix_single_writer_state` | gauge | `state` | single_writer guard state, one series per state (settling\|authoritative\|confirming) with value 1 for the current one. Only authoritative lets caches skip confirming reads; confirming means the lease lapsed or polls are failing. |
 | `keyorix_tls_certificate_not_after_timestamp_seconds` | gauge | `listener` | Unix time at which the TLS certificate served by a listener (http\|grpc) expires. Alert on this minus time() before it reaches zero; a renewed file is picked up by new handshakes within about 30 seconds. |
+| `keyorix_tls_handshakes_total` | counter | `listener`, `group` | Completed TLS handshakes by listener (http\|grpc) and the key-exchange group negotiated (X25519MLKEM768 is the post-quantum hybrid; X25519/P-256/... are classical; none = no ECDHE group, e.g. a TLS 1.2 RSA key exchange). Counts a connection when its handshake finishes; a resumed session counts again. |
 
 ## Server: authenticated-only (`/api/v1/admin/scheduler-metrics`)
 
@@ -57,6 +59,8 @@ Served at: server `GET /api/v1/admin/scheduler-metrics` (needs `system.write`; N
 | `keyorix_audit_owed_pending` | gauge | - | Number of owed audit rows (every owed revocation, not only suspend and degraded break-glass) not yet backfilled (the audit log refused the write after the action took effect). 0 is normal; NaN means the count could not be read. Cluster-wide; alert when above 0 for 10 minutes. |
 | `keyorix_audit_verify_failure_recorded` | gauge | - | 1 while a sticky audit-chain verification failure (a detected break) is recorded; it clears only after a passing full verification. NaN until this process has read the state. Page on 1. |
 | `keyorix_audit_verify_last_success_timestamp_seconds` | gauge | `check` | Unix time of the last audit-chain verification that passed, by check (tail = latest-checkpoint tail check; full = complete rolling or background re-walk). Absent until one has passed. |
+| `keyorix_audit_verify_state_discontinuities_total` | counter | - | Audit verification state discontinuities this process detected and recorded (each also appends a system.audit_verification_state_discontinuity event). Page on any increase. |
+| `keyorix_audit_verify_state_discontinuity` | gauge | - | 1 while a sticky audit verification state discontinuity is recorded: the persisted state was deleted, garbled, signed under another key epoch, claimed rows past the chain head or predated a recorded break, so continuity with earlier verifications is lost. No verification clears it; keyorix_audit_verify_failure_recorded is 1 too. NaN until this process has read the state. Page on 1. |
 | `keyorix_audit_verify_state_rejected` | gauge | - | 1 while the persisted verification state was found untrusted (bad signature, replayed or rolled back) and the status is therefore not_proven; it clears after a passing full verification. NaN until this process has read the state. |
 | `keyorix_audit_write_failures_total` | counter | - | Audit event appends that returned an error to the caller (the audited mutation may already have committed). |
 | `keyorix_auth_budget_rejections_total` | counter | `budget` | Authentication budget checks that answered limited (login, password reset, SSO begin, account lockout), by budget. A rising rate is brute-force pressure or a misbehaving client. |
@@ -88,8 +92,10 @@ Every label used above and why its values are bounded. Secret names, paths, user
 | `budget` | name of a built-in auth rate-limit budget (fixed set in internal/core) |
 | `channel` | notification channel type (webhook/email/slack/... fixed set) |
 | `check` | closed set: tail, full (audit verification kinds) |
+| `group` | closed set: TLS key-exchange group mapped by tlsmetrics.GroupName (X25519MLKEM768, SecP256r1MLKEM768, SecP384r1MLKEM1024, X25519, P-256, P-384, P-521, none, other) |
 | `limiter` | closed set of rate limiters (ratelimitmetrics.Limiter: principal, token_auth_failure, grpc_principal, grpc_token_auth_failure) |
 | `listener` | closed set: http, grpc (tlsmetrics.HTTP / tlsmetrics.GRPC) |
+| `lock` | closed set of advisory-lock kinds (config.lockLossKinds plus `other`), listed in the metric help |
 | `method` | HTTP method collapsed to the 9 RFC verbs plus `other` (middleware.normalizeMethod) |
 | `op` | closed set: encrypt, decrypt |
 | `outcome` | closed enum documented in the metric help (success/failure/skipped, delivered/failed/dropped, ...) |
