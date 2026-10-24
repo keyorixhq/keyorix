@@ -179,6 +179,29 @@ func (c *Client) MachineHasRoleGrant(ctx context.Context, projectID int, machine
 	return false, nil
 }
 
+// MachineRoleGrant reports whether machineName (within projectID) holds roleName, with both
+// ids for a revoke call. The API lists a machine's roles by name only, without the
+// environment of each grant, so found=true says the role is held somewhere in the project.
+func (c *Client) MachineRoleGrant(ctx context.Context, projectID int, machineName, roleName string) (machineID, roleID int, found bool, err error) {
+	m, ok, err := c.findMachineIdentity(ctx, projectID, machineName)
+	if err != nil || !ok || m.Id == nil {
+		return 0, 0, false, err
+	}
+	resp, err := c.api.ListMachineRolesWithResponse(ctx, projectID, *m.Id)
+	if err != nil {
+		return 0, 0, false, fmt.Errorf("list roles for machine identity %q: %w", machineName, err)
+	}
+	if resp.JSON200 == nil || resp.JSON200.Data == nil || resp.JSON200.Data.Roles == nil {
+		return 0, 0, false, apiErr("list machine roles", resp.StatusCode(), resp.Body)
+	}
+	for _, r := range *resp.JSON200.Data.Roles {
+		if r.Name != nil && *r.Name == roleName && r.Id != nil {
+			return *m.Id, *r.Id, true, nil
+		}
+	}
+	return *m.Id, 0, false, nil
+}
+
 // MachineHasOIDCBinding implements accessplan.KeyorixReader.
 func (c *Client) MachineHasOIDCBinding(ctx context.Context, projectID int, machineName, issuer, subject string) (bool, error) {
 	m, found, err := c.findMachineIdentity(ctx, projectID, machineName)
