@@ -212,7 +212,10 @@ func TestChangePassword(t *testing.T) {
 
 		err := c.ChangePassword(ctx, 1, "oldpassword", reused, "current-token")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "reuse a recent password")
+		// Generic wording, and a history hit: it is charged like a wrong current
+		// password (change_password_policy_refusal_test.go).
+		require.ErrorIs(t, err, ErrPasswordReused)
+		assert.Contains(t, err.Error(), "this password cannot be used")
 		ms.AssertNotCalled(t, "SetPasswordHash", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 
@@ -227,7 +230,9 @@ func TestChangePassword(t *testing.T) {
 
 		err := c.ChangePassword(ctx, 1, cur, cur, "current-token")
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "reuse a recent password")
+		require.ErrorIs(t, err, ErrPasswordPolicy)
+		require.NotErrorIs(t, err, ErrPasswordReused, "the caller already knows the current password: free")
+		assert.Contains(t, err.Error(), "must differ from the current password")
 		ms.AssertNotCalled(t, "SetPasswordHash", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	})
 

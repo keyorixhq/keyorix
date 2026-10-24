@@ -1,0 +1,657 @@
+{
+  "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+  "runs": [
+    {
+      "automationDetails": {
+        "id": "/language:go-server/"
+      },
+      "results": [
+        {
+          "correlationGuid": "8f9ff4a6-a065-4741-ae1d-c892aa9b8d6f",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "internal/core/alert_escalation.go"
+                },
+                "region": {
+                  "endColumn": 33,
+                  "endLine": 286,
+                  "startColumn": 27,
+                  "startLine": 286
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "This outbound HTTP request is unsafe: its destination (URL/host/DSN/endpoint field) is never passed to a recognised SSRF-guard validation call anywhere in this codebase."
+          },
+          "partialFingerprints": {
+            "primaryLocationLineHash": "a086975ea908c5b1:1"
+          },
+          "rule": {
+            "id": "go/keyorix-ssrf-unvalidated-outbound-request",
+            "index": 1,
+            "toolComponent": {
+              "index": 0
+            }
+          },
+          "ruleId": "go/keyorix-ssrf-unvalidated-outbound-request"
+        },
+        {
+          "correlationGuid": "4e9f3c52-c2d3-406c-a86e-02a107cab57d",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 1,
+                  "uri": "scripts/metrics/surfacewalk/startup.go"
+                },
+                "region": {
+                  "endColumn": 29,
+                  "endLine": 57,
+                  "startColumn": 26,
+                  "startLine": 57
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "This outbound HTTP request is unsafe: its destination (URL/host/DSN/endpoint field) is never passed to a recognised SSRF-guard validation call anywhere in this codebase."
+          },
+          "partialFingerprints": {
+            "primaryLocationLineHash": "454cb13b8fa0aa15:1"
+          },
+          "rule": {
+            "id": "go/keyorix-ssrf-unvalidated-outbound-request",
+            "index": 1,
+            "toolComponent": {
+              "index": 0
+            }
+          },
+          "ruleId": "go/keyorix-ssrf-unvalidated-outbound-request"
+        },
+        {
+          "correlationGuid": "0d52d310-64f5-4246-a7ef-c56cd76e7177",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 1,
+                  "uri": "scripts/metrics/surfacewalk/startup.go"
+                },
+                "region": {
+                  "endColumn": 47,
+                  "endLine": 59,
+                  "startColumn": 31,
+                  "startLine": 59
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "This outbound HTTP request is unsafe: its destination (URL/host/DSN/endpoint field) is never passed to a recognised SSRF-guard validation call anywhere in this codebase."
+          },
+          "partialFingerprints": {
+            "primaryLocationLineHash": "edaa12371613972f:1"
+          },
+          "rule": {
+            "id": "go/keyorix-ssrf-unvalidated-outbound-request",
+            "index": 1,
+            "toolComponent": {
+              "index": 0
+            }
+          },
+          "ruleId": "go/keyorix-ssrf-unvalidated-outbound-request"
+        },
+        {
+          "correlationGuid": "2808463c-380e-4e36-921e-b0e3bf66872a",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 1,
+                  "uri": "scripts/metrics/surfacewalk/startup.go"
+                },
+                "region": {
+                  "endColumn": 40,
+                  "endLine": 63,
+                  "startColumn": 25,
+                  "startLine": 63
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "This outbound HTTP request is unsafe: its destination (URL/host/DSN/endpoint field) is never passed to a recognised SSRF-guard validation call anywhere in this codebase."
+          },
+          "partialFingerprints": {
+            "primaryLocationLineHash": "1b0289102e5977f:1"
+          },
+          "rule": {
+            "id": "go/keyorix-ssrf-unvalidated-outbound-request",
+            "index": 1,
+            "toolComponent": {
+              "index": 0
+            }
+          },
+          "ruleId": "go/keyorix-ssrf-unvalidated-outbound-request"
+        },
+        {
+          "correlationGuid": "a2a2b9ee-df09-4662-8f69-2f963eade1ed",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 1,
+                  "uri": "scripts/metrics/surfacewalk/startup.go"
+                },
+                "region": {
+                  "endColumn": 112,
+                  "endLine": 50,
+                  "startColumn": 88,
+                  "startLine": 50
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "InsecureSkipVerify should not be used in production code."
+          },
+          "partialFingerprints": {
+            "primaryLocationLineHash": "964cb52e79c974a0:1"
+          },
+          "rule": {
+            "id": "go/disabled-certificate-check",
+            "index": 7,
+            "toolComponent": {
+              "index": 3
+            }
+          },
+          "ruleId": "go/disabled-certificate-check"
+        },
+        {
+          "correlationGuid": "7503a6a3-d8c1-415b-af0c-1bd3d5be6861",
+          "level": "error",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 2,
+                  "uri": "server/admin/recover_admin.go"
+                },
+                "region": {
+                  "endColumn": 46,
+                  "endLine": 141,
+                  "startColumn": 23,
+                  "startLine": 141
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[Sensitive data returned by an access to oneTimePassword](1) flows to a logging call."
+          },
+          "partialFingerprints": {
+            "primaryLocationLineHash": "d6dbb5b57de81897:1"
+          },
+          "relatedLocations": [
+            {
+              "id": 1,
+              "message": {
+                "text": "Sensitive data returned by an access to oneTimePassword"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "server/admin/recover_admin.go"
+                },
+                "region": {
+                  "endColumn": 46,
+                  "endLine": 141,
+                  "startColumn": 23,
+                  "startLine": 141
+                }
+              }
+            }
+          ],
+          "rule": {
+            "id": "go/clear-text-logging",
+            "index": 2,
+            "toolComponent": {
+              "index": 3
+            }
+          },
+          "ruleId": "go/clear-text-logging"
+        },
+        {
+          "codeFlows": [
+            {
+              "threadFlows": [
+                {
+                  "locations": [
+                    {
+                      "location": {
+                        "message": {
+                          "text": "EventPasswordChangePATRevokeFailed"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "index": 4,
+                            "uri": "internal/core/account.go"
+                          },
+                          "region": {
+                            "endColumn": 66,
+                            "endLine": 456,
+                            "startColumn": 32,
+                            "startLine": 456
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "SSA def(eventType)"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "index": 5,
+                            "uri": "internal/core/audit.go"
+                          },
+                          "region": {
+                            "endColumn": 75,
+                            "endLine": 428,
+                            "startColumn": 66,
+                            "startLine": 428
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "location": {
+                        "message": {
+                          "text": "type conversion"
+                        },
+                        "physicalLocation": {
+                          "artifactLocation": {
+                            "index": 3,
+                            "uri": "internal/storage/store/local_audit_chain.go"
+                          },
+                          "region": {
+                            "endColumn": 20,
+                            "endLine": 237,
+                            "startColumn": 11,
+                            "startLine": 237
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "correlationGuid": "f0d34119-6e79-4893-919a-9afa56e7c62b",
+          "level": "warning",
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 3,
+                  "uri": "internal/storage/store/local_audit_chain.go"
+                },
+                "region": {
+                  "endColumn": 20,
+                  "endLine": 237,
+                  "startColumn": 11,
+                  "startLine": 237
+                }
+              }
+            }
+          ],
+          "message": {
+            "text": "[Sensitive data (password)](1) is used in a hashing algorithm (SHA256) that is insecure for password hashing, since it is not a computationally expensive hash function.\n[Sensitive data (password)](2) is used in a hashing algorithm (SHA256) that is insecure for password hashing, since it is not a computationally expensive hash function."
+          },
+          "partialFingerprints": {
+            "primaryLocationLineHash": "d288e258585a03d2:1"
+          },
+          "relatedLocations": [
+            {
+              "id": 1,
+              "message": {
+                "text": "Sensitive data (password)"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "internal/core/account.go"
+                },
+                "region": {
+                  "endColumn": 66,
+                  "endLine": 456,
+                  "startColumn": 32,
+                  "startLine": 456
+                }
+              }
+            },
+            {
+              "id": 2,
+              "message": {
+                "text": "Sensitive data (password)"
+              },
+              "physicalLocation": {
+                "artifactLocation": {
+                  "index": 0,
+                  "uri": "internal/core/account_state.go"
+                },
+                "region": {
+                  "endColumn": 77,
+                  "endLine": 241,
+                  "startColumn": 49,
+                  "startLine": 241
+                }
+              }
+            }
+          ],
+          "rule": {
+            "id": "go/weak-sensitive-data-hashing",
+            "index": 31,
+            "toolComponent": {
+              "index": 3
+            }
+          },
+          "ruleId": "go/weak-sensitive-data-hashing"
+        }
+      ],
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "semanticVersion": "2.27.3"
+        },
+        "extensions": [
+          {
+            "name": "keyorixhq/go-custom-queries",
+            "rules": [
+              {
+                "id": "go/keyorix-path-based-permission-change-toctou",
+                "properties": {}
+              },
+              {
+                "id": "go/keyorix-ssrf-unvalidated-outbound-request",
+                "properties": {}
+              },
+              {
+                "id": "go/keyorix-state-toctou-missing-cas",
+                "properties": {}
+              },
+              {
+                "id": "go/keyorix-unbounded-decoder-read",
+                "properties": {}
+              }
+            ],
+            "semanticVersion": "0.1.0+1a43c2dec9571c556e92c99f8a6f1bd521d7dd99"
+          },
+          {
+            "name": "codeql/go-all",
+            "rules": [],
+            "semanticVersion": "8.0.1+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c"
+          },
+          {
+            "name": "codeql/threat-models",
+            "rules": [],
+            "semanticVersion": "1.1.0+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c"
+          },
+          {
+            "name": "codeql/go-queries",
+            "rules": [
+              {
+                "id": "go/allocation-size-overflow",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "8.1"
+                }
+              },
+              {
+                "id": "go/bad-redirect-check",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "6.1"
+                }
+              },
+              {
+                "id": "go/clear-text-logging",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/command-injection",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "9.8"
+                }
+              },
+              {
+                "id": "go/constant-oauth2-state",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "8.8"
+                }
+              },
+              {
+                "id": "go/cookie-httponly-not-set",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "5"
+                }
+              },
+              {
+                "id": "go/cookie-secure-not-set",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "4"
+                }
+              },
+              {
+                "id": "go/disabled-certificate-check",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/email-injection",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "9.8"
+                }
+              },
+              {
+                "id": "go/html-template-escaping-bypass-xss",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/incomplete-hostname-regexp",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/incomplete-url-scheme-check",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/incorrect-integer-conversion",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "8.1"
+                }
+              },
+              {
+                "id": "go/insecure-hostkeycallback",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "8.2"
+                }
+              },
+              {
+                "id": "go/insecure-randomness",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/insecure-tls",
+                "properties": {
+                  "precision": "very-high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/missing-jwt-signature-check",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/path-injection",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/reflected-xss",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/regex/missing-regexp-anchor",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/request-forgery",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "9.1"
+                }
+              },
+              {
+                "id": "go/sql-injection",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "8.8"
+                }
+              },
+              {
+                "id": "go/stack-trace-exposure",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "5.4"
+                }
+              },
+              {
+                "id": "go/summary/lines-of-code",
+                "properties": {}
+              },
+              {
+                "id": "go/suspicious-character-in-regex",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.8"
+                }
+              },
+              {
+                "id": "go/uncontrolled-allocation-size",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/unsafe-quoting",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "9.3"
+                }
+              },
+              {
+                "id": "go/unsafe-unzip-symlink",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/unvalidated-url-redirection",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "6.1"
+                }
+              },
+              {
+                "id": "go/weak-crypto-key",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/weak-cryptographic-algorithm",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/weak-sensitive-data-hashing",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              },
+              {
+                "id": "go/xml/xpath-injection",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "9.8"
+                }
+              },
+              {
+                "id": "go/zipslip",
+                "properties": {
+                  "precision": "high",
+                  "security-severity": "7.5"
+                }
+              }
+            ],
+            "semanticVersion": "1.6.13+a1575b98a8cc19bcfa7bb6cb41be688cb3dae65c"
+          }
+        ]
+      }
+    }
+  ],
+  "version": "2.1.0"
+}

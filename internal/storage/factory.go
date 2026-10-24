@@ -1,15 +1,10 @@
 package storage
 
 import (
-	"context"
-	"database/sql"
 	"errors"
 	"fmt"
-	"log"
-	"os"
-	"path/filepath"
+	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -38,7 +33,7 @@ const (
 // column encodes). NOT bumped for pure comment/refactor changes that don't
 // touch what gets written to the database. Every bump must also decide
 // minCompatibleSchemaEpoch below (ADR-101).
-const currentSchemaEpoch = 5
+const currentSchemaEpoch = 6
 
 // schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
 // key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
@@ -101,6 +96,11 @@ const schemaEpochMetadataKey = "schema_epoch"
 // its backfill still writes the owed rows of an epoch-5 degraded activation exactly
 // once. The only cost is that it does not mark that activation settled, so
 // verify-audit keeps reporting it as owed: loud, never silent.
+//
+// Epoch 6 (audit_events.request_id, AUDIT-REQUEST-ID-1) leaves it at 3: an epoch-5
+// replica never reads the column (QueryFields) and inserts without it, so its rows
+// have NULL, which means "no request id" -- exactly what such a row has. The column
+// is outside the hash chain, so verification is unaffected either way.
 const minCompatibleSchemaEpoch = 3
 
 // schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's
@@ -299,106 +299,6 @@ func effectiveMaxOpenConns(db *gorm.DB, dbCfg *config.DatabaseConfig) int {
 // attributed 5.28% of total server CPU time to PBKDF2/SCRAM connection
 // handshakes alone.
 
-// sqliteBusyTimeoutMillis is how long a SQLite connection waits for a lock held by
-// another connection before returning SQLITE_BUSY (#465). SQLite's own default is 0
-// (fail immediately), which surfaces as spurious write failures under the concurrent
-// goroutines/HTTP handlers this server routinely runs against a single local SQLite
-// file. 10s matches the value the storage package's own file-backed-SQLite
-// concurrency tests already use (see internal/storage/store/concurrency_*_test.go),
-// which is a real, empirically-exercised value for this exact workload rather than an
-// invented one.
-const sqliteBusyTimeoutMillis = 10000
-
-// sqliteDSN builds the gorm-sqlite (modernc.org/sqlite, ADR-048) DSN for a local SQLite database
-// file, appending the DSN-level pragmas needed for correctness/robustness on the
-// default local-storage backend:
-//
-//   - _foreign_keys=1 (#436): SQLite defaults foreign-key CONSTRAINT enforcement to
-//     OFF per-connection unless explicitly enabled. This is table-stakes hygiene
-//     regardless of which constraints exist today: any FOREIGN KEY declared on this
-//     connection (now or in a future migration/model change) is silently
-//     unenforced without it, so a raw DELETE/UPDATE that bypasses the application's
-//     own cascade logic could orphan dependent rows with zero DB-level backstop and
-//     no visible error. See factory_sqlite_pragma_test.go for the scope note on
-//     what this codebase's GORM-generated schema currently declares.
-//
-//   - _busy_timeout=<ms> (#465): see sqliteBusyTimeoutMillis above.
-//
-//   - _journal_mode=WAL (#465): the default rollback-journal mode blocks readers
-//     during a write and vice versa, increasing SQLITE_BUSY frequency under
-//     concurrent access; WAL lets readers proceed concurrently with a writer.
-//
-//   - _txlock=immediate: SQLite's default BEGIN is DEFERRED — a transaction that
-//     reads first and writes second (e.g. AssignRole's existing-grant check
-//     before its Create) only requests the write lock at that first write
-//     statement, mid-transaction. If another connection committed a write after
-//     this transaction's read snapshot was taken, that lock request returns
-//     SQLITE_BUSY immediately: the busy handler backing _busy_timeout is NEVER
-//     invoked for a lock upgrade (only for an initial lock acquisition, so two
-//     transactions each waiting to upgrade the other's read lock can't
-//     deadlock in the handler) — so a spuriously-failed read-then-write
-//     transaction is possible even with a generous busy_timeout configured.
-//     BEGIN IMMEDIATE claims the write lock upfront, when _busy_timeout's
-//     retry loop is actually consulted, converting that failure mode into an
-//     ordinary bounded wait. Root-caused via TestSessionCacheChokepoint_
-//     CoversEveryVulnerableCallSite flaking on PR #1996's branch (CI runs
-//     35871480798, 35840030029: "grant victim ...: database is locked (5)
-//     (SQLITE_BUSY)" from AssignUserRole) despite _busy_timeout already
-//     being set.
-//
-//   - _synchronous=FULL (SESSION-PERF, 2026-10-02): without this, `synchronous`
-//     is never touched by this DSN and falls through to the driver/library
-//     default — which modernc.org/sqlite v1.59.0 leaves unset when the DSN
-//     omits it, so it resolves to SQLite's own compiled-in default of FULL (2)
-//     (confirmed empirically: a connection opened with the DSN as it stood
-//     before this change reports `PRAGMA synchronous` = 2). So this change does
-//     NOT alter runtime behaviour — FULL was already in effect. What it fixes
-//     is that the guarantee was implicit and unasserted: nothing stopped a
-//     future dependency bump, or someone "optimizing" this DSN, from silently
-//     weakening it to NORMAL. FULL, not NORMAL, is required here specifically
-//     because this database carries the audit hash-chain
-//     (internal/storage/store/local_audit_chain.go): in WAL mode, NORMAL only
-//     fsyncs at checkpoint boundaries, not on every COMMIT — a transaction can
-//     report success to the audit-chain writer while its WAL frame is still
-//     only in the OS page cache, surviving an application crash but NOT an OS
-//     crash or power loss before the next checkpoint. FULL fsyncs the WAL on
-//     every commit, so "the audit entry was written" and "the audit entry
-//     survives a host crash" stay the same claim. See
-//     factory_sqlite_pragma_test.go for the test asserting this, and
-//     docs/g80-remediation-notes.md's SESSION-PERF entry for the measured
-//     before/after (no throughput delta, as expected, since the pragma value
-//     is unchanged — this closes an unasserted-guarantee gap, not a bug).
-//
-//     NOT RELAXABLE BY CONFIGURATION. storage.database.audit_durability's
-//     standard level (ADR-112 Amendments 1 and 3) is PostgreSQL-ONLY and
-//     config validation REFUSES TO START a SQLite backend set to it
-//     (internal/config's auditDurabilityStandardSQLiteUnsupportedError), so this
-//     DSN has no NORMAL branch at all and never had one in a shipped build.
-//     Two reasons it is not offered here, both measured or structural:
-//     `synchronous` is a PER-CONNECTION property set once per DSN and the pool
-//     is shared by every query, so NORMAL would relax commit durability for
-//     the WHOLE database — a power loss could undo a just-committed secret
-//     rotation or revocation, not merely lose audit entries; and the measured
-//     p99 got WORSE under concurrency anyway (328.8->518.0ms at c=10,
-//     703.7->919.0ms at c=50 on pve01), so it was not even a clean latency
-//     win. Postgres's own path confines the equivalent change to the audit
-//     transaction alone (SET LOCAL synchronous_commit, see
-//     internal/storage/store/local_audit_chain.go), which is why it IS offered
-//     there.
-//
-// Postgres has no equivalent opt-out (FK enforcement is always on) and no analogous
-// pragmas, so this is intentionally SQLite-only — never applied to the Postgres
-// connection path.
-func sqliteDSN(dbPath string) string {
-	sep := "?"
-	if strings.Contains(dbPath, "?") {
-		// The operator already supplied their own DSN query parameters (e.g. a
-		// custom path with embedded pragmas) — append rather than clobber them.
-		sep = "&"
-	}
-	return fmt.Sprintf("%s%s_foreign_keys=1&_busy_timeout=%d&_journal_mode=WAL&_txlock=immediate&_synchronous=FULL", dbPath, sep, sqliteBusyTimeoutMillis)
-}
-
 // gormConfig returns the *gorm.Config shared by every gorm.Open call in this
 // package. GORM's zero-value Config leaves its default Warn-level logger active,
 // which interpolates bound query-parameter VALUES into the logged SQL statement
@@ -430,18 +330,27 @@ func NewStorageFactory() StorageFactory {
 	return &DefaultStorageFactory{}
 }
 
+// storageBackend is one storage.type implementation: the storage.type values
+// that select it and its constructor.
+type storageBackend struct {
+	names  []string
+	create func(f *DefaultStorageFactory, cfg *config.Config) (storage.Storage, error)
+}
+
+// storageBackends is every backend CreateStorage can select, in match order (the
+// names are disjoint, so the order only fixes where a lookup stops). A new
+// backend is one factory_<backend>.go file declaring its storageBackend plus one
+// line here.
+var storageBackends = []storageBackend{postgresBackend, localBackend}
+
 // CreateStorage creates a storage instance based on the configuration
 func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Storage, error) {
+	for _, b := range storageBackends {
+		if slices.Contains(b.names, cfg.Storage.Type) {
+			return b.create(f, cfg)
+		}
+	}
 	switch cfg.Storage.Type {
-	case "postgres", "postgresql":
-		return f.createPostgresStorage(cfg)
-	// #1640: "sqlite" is an accepted alias for "local" (the shipped
-	// configs/keyorix.yaml.tpl documents "sqlite" as the value to set,
-	// matching the "postgres"/"postgresql" dual-spelling precedent above --
-	// operators write the storage engine's name, not this codebase's
-	// internal term for it).
-	case "local", "sqlite":
-		return f.createLocalStorage(cfg)
 	case "":
 		// #G-blank-storage-default: a blank storage.type must never silently
 		// fall through to local SQLite storage -- this is the same "blank/
@@ -479,323 +388,6 @@ func (f *DefaultStorageFactory) CreateStorage(cfg *config.Config) (storage.Stora
 	}
 }
 
-// secureLocalStoragePerm is the mode the SQLite database and its -wal/-shm sidecars must
-// never exceed: owner read/write only. See prepareLocalStorageFile / tightenSidecarPerms
-// and #1647.
-const secureLocalStoragePerm = 0o600
-
-// localStorageDBFile strips DSN query parameters from dbPath and reports whether the
-// result names a real on-disk file at all — false for an in-memory database ("file:
-// name?mode=memory[&cache=shared]" or ":memory:", both used throughout this package's own
-// test suite, per acquireSQLiteMigrationLock's identical check). Neither #1647 concern
-// (an insecure inherited mode, a mode left over from before this fix) applies to a
-// database that was never written to disk.
-func localStorageDBFile(dbPath string) (path string, isRealFile bool) {
-	base := dbPath
-	if idx := strings.IndexByte(base, '?'); idx != -1 {
-		base = base[:idx]
-	}
-	if base == "" || base == ":memory:" || strings.Contains(dbPath, "mode=memory") {
-		return "", false
-	}
-	return base, true
-}
-
-// prepareLocalStorageFile ensures dbPath's parent directory exists at a safe mode and, if
-// the database file does not already exist, pre-creates it at secureLocalStoragePerm
-// BEFORE gorm.Open ever touches it. modernc.org/sqlite's VFS creates a file it opens with
-// mode 0, which becomes SQLITE_DEFAULT_FILE_PERMISSIONS (0644) masked by the process's
-// (possibly lax) inherited umask -- main()'s explicit syscall.Umask(0o077) closes that for
-// every NEW file this process creates, but this pre-creation is a second, independent
-// layer: it means the database is born at 0600 even if that startup umask call is ever
-// missing, skipped, or reverted by something later in the process (#1647).
-//
-// If the file already exists from before this fix shipped, its mode is left untouched
-// here -- see tightenExistingLocalStorageFiles, which runs after Open and decides whether
-// to correct it, since that decision needs the file to exist first.
-func prepareLocalStorageFile(dbPath string) error {
-	path, isRealFile := localStorageDBFile(dbPath)
-	if !isRealFile {
-		return nil
-	}
-	dir := filepath.Dir(path)
-	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			return fmt.Errorf("failed to create database directory %q: %w", dir, err)
-		}
-	}
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, secureLocalStoragePerm) // #nosec G304 -- operator-configured storage.database.path, the same value gorm.Open uses immediately after
-	if err != nil {
-		if os.IsExist(err) {
-			return nil // pre-existing file — tightenExistingLocalStorageFiles handles it after Open
-		}
-		return fmt.Errorf("failed to pre-create database file %q: %w", path, err)
-	}
-	return f.Close()
-}
-
-// tightenExistingLocalStorageFiles corrects the mode of dbPath and its -wal/-shm sidecars
-// if any is more permissive than secureLocalStoragePerm — the case of a database created
-// before this fix shipped, which keeps whatever mode it was originally given (#1647). This
-// runs on every local-storage open (server boot AND every CLI invocation, since both share
-// this one factory function) rather than as an opt-in check: unlike most security
-// hardening, tightening a file's mode to 0600 can never break the owning process's own
-// access to it, so there is no operational reason to make correction conditional or to
-// refuse to start over it — only to make sure it is never SILENT. Each correction is
-// logged loudly so an operator relying on some other process (backup tooling running as a
-// different user, for instance) to read the file finds out immediately, not by that other
-// process mysteriously losing access.
-func tightenExistingLocalStorageFiles(dbPath string) {
-	dbPath, isRealFile := localStorageDBFile(dbPath)
-	if !isRealFile {
-		return
-	}
-	for _, suffix := range []string{"", "-wal", "-shm"} {
-		path := dbPath + suffix
-		info, err := os.Stat(path)
-		if err != nil {
-			continue // doesn't exist (yet, or ever, e.g. no -shm outside WAL mode) — nothing to tighten
-		}
-		if info.Mode().Perm() == secureLocalStoragePerm {
-			continue
-		}
-		oldMode := info.Mode().Perm()
-		if err := os.Chmod(path, secureLocalStoragePerm); err != nil {
-			log.Printf("SECURITY: failed to tighten permissions on %s (mode %04o, expected %04o): %v", path, oldMode, secureLocalStoragePerm, err)
-			continue
-		}
-		log.Printf("SECURITY: corrected %s permissions from %04o to %04o (see #1647 -- this file predates an explicit-mode fix and previously relied on the inherited process umask)", path, oldMode, secureLocalStoragePerm)
-	}
-}
-
-// createLocalStorage creates a SQLite-backed local storage instance
-func (f *DefaultStorageFactory) createLocalStorage(cfg *config.Config) (storage.Storage, error) {
-	dbPath := cfg.Storage.Database.Path
-	if dbPath == "" {
-		dbPath = "./secrets.db"
-	}
-
-	// #1636: log which file is actually about to be opened, and whether it
-	// already existed, BEFORE anything below creates it -- both
-	// prepareLocalStorageFile's O_CREATE pre-create (#1647) and gorm.Open's
-	// implicit create-if-missing make that distinction unrecoverable. This
-	// stat must stay ahead of prepareLocalStorageFile: #1652 originally landed
-	// that call above it, so every missing path was reported as "opening
-	// existing" and the warning below never fired (#2504; guarded by
-	// TestCreateLocalStorage_MissingPath_LogsNewEmptyDatabase). dbPath itself
-	// is deliberately left untouched here (still cwd-relative if configured
-	// that way, still fed as-is into sqliteDSN/withMigrationLock below) --
-	// this is diagnostics only, not a fix for the underlying resolution
-	// defect (tracked separately). Best-effort: filepath.Abs only fails if
-	// os.Getwd() fails, which would already be a more fundamental problem
-	// than this log line; never block startup on it.
-	//
-	// The existence question is asked through localStorageDBFile, not
-	// os.Stat(dbPath) directly: database.path may legitimately carry a DSN
-	// query suffix ("file:secrets.db?_busy_timeout=...", see
-	// TestCreateLocalStorage_S27_ExistingDSNQueryString), which os.Stat can
-	// never resolve, so the raw-path form reported EVERY such configuration as
-	// "no database found" even when the file was right there. Same helper
-	// acquireSQLiteMigrationLock and prepareLocalStorageFile already use, and
-	// it also answers "is there a file to pre-exist at all" for the in-memory
-	// shapes below.
-	statPath, isRealFile := localStorageDBFile(dbPath)
-	logDbPath := statPath
-	if logDbPath == "" {
-		logDbPath = dbPath
-	}
-	if abs, aerr := filepath.Abs(logDbPath); aerr == nil && isRealFile {
-		logDbPath = abs
-	}
-	dbFileExists := false
-	if isRealFile {
-		if _, statErr := os.Stat(statPath); statErr == nil {
-			dbFileExists = true
-		}
-	}
-	switch {
-	case !isRealFile:
-		log.Printf("storage: opening in-memory SQLite database (configured: %q)", cfg.Storage.Database.Path)
-	case dbFileExists:
-		log.Printf("storage: opening existing SQLite database at %s (configured: %q)", logDbPath, cfg.Storage.Database.Path)
-	default:
-		log.Printf("storage: no database found at %s (configured: %q) -- a NEW, EMPTY database will be created here", logDbPath, cfg.Storage.Database.Path)
-	}
-
-	// INV-STORAGE-22 / ADR-095 Task 3 (#2504): refuse rather than vivify, when
-	// the operator has asked for that. An absolute path is not enough on its
-	// own -- it stops two processes diverging onto two files, but a single
-	// mistyped path (or a volume mount that silently failed to attach) still
-	// produces a fresh, empty, healthy-looking store, with the real data still
-	// sitting untouched where it was meant to be read from. Opt-in because
-	// nothing in the supported first-boot paths creates the file beforehand;
-	// see DatabaseConfig.RequireExistingPath's own doc comment for why the
-	// default is NOT flipped here. In-memory DSNs are exempt by construction
-	// (nothing to pre-exist) rather than by a carve-out.
-	if cfg.Storage.Database.RequireExistingPath && isRealFile && !dbFileExists {
-		return nil, fmt.Errorf("no database found at %s (configured database.path: %q) and database.require_existing_path is set: "+
-			"run 'keyorix-server admin init' to create one deliberately, or verify database.path and the working directory "+
-			"-- refusing to create a new, empty database in its place (INV-STORAGE-22, ADR-095 Task 3)",
-			logDbPath, cfg.Storage.Database.Path)
-	}
-
-	if err := prepareLocalStorageFile(dbPath); err != nil {
-		return nil, err
-	}
-
-	// Hold migrationMu across gorm.Open too, not just the migration that follows
-	// (#465 follow-up). gorm.Open eagerly establishes a physical connection and
-	// applies the SQLite DSN pragmas, including the journal_mode=WAL switch added
-	// above — and unlike ordinary write-lock contention, that mode switch does NOT
-	// participate in SQLite's busy-timeout retry loop: on a fresh (not-yet-WAL)
-	// database file it can fail immediately with "database is locked" instead of
-	// waiting, if another connection races to switch modes at the same instant.
-	// migrationMu's own doc comment describes exactly this scenario in production —
-	// startHTTPServer and startGRPCServer both call CreateStorage as separate
-	// in-process goroutines when both are enabled — so this is a real deployment
-	// race, not just a test artifact (empirically reproduced standalone against the
-	// mattn/go-sqlite3 driver directly, ~1-in-5 under concurrent fresh-file opens).
-	// Serializing here is driver-agnostic protection either way (ADR-048 swapped
-	// the driver to modernc.org/sqlite; this lock is kept regardless of outcome).
-	// Serializing Open ensures only one goroutine ever performs the actual mode
-	// switch; every later Open against an already-WAL file is a same-mode pragma
-	// no-op that always succeeds immediately, regardless of other open connections.
-	migrationMu.Lock()
-	db, err := openSQLiteGorm(sqliteDSN(dbPath))
-	migrationMu.Unlock()
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to database: %w", err)
-	}
-	// The WAL pragma above (in sqliteDSN) creates -wal/-shm during Open, and a
-	// pre-existing database from before this fix shipped keeps whatever mode it
-	// originally had — tighten both cases here, after the file(s) are known to exist.
-	tightenExistingLocalStorageFiles(dbPath)
-
-	if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
-		return nil, err
-	}
-	if sqlDB, dbErr := db.DB(); dbErr == nil {
-		registerPoolMetrics(poolRequest, sqlDB)
-	}
-
-	if err := withMigrationLock(db, false, dbPath, f.migrateSQLite); err != nil {
-		return nil, migrateError(err)
-	}
-
-	ls := store.NewLocalStorage(db)
-	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
-	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
-	// No SetAuditSkipDurableSync here, deliberately: audit_durability standard
-	// is PostgreSQL-only and config validation refuses to start a SQLite
-	// backend set to it (SQLite is strict only), so there is nothing to propagate --
-	// and leaving the zero value (false, durable) means a config that somehow
-	// bypassed validation still gets durable commits rather than a half-
-	// applied weak mode.
-	return ls, nil
-}
-
-// createPostgresStorage creates a PostgreSQL-backed local storage instance
-func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (_ storage.Storage, err error) {
-	db, err := openPostgresGorm(&cfg.Storage.Database, gormConfig())
-	if err != nil {
-		return nil, err
-	}
-	// Every pool opened here is closed again if the factory fails, so a failed
-	// start leaks no Postgres connections. On success LocalStorage.Close owns them.
-	var opened []*sql.DB
-	if sqlDB, dbErr := db.DB(); dbErr == nil {
-		opened = append(opened, sqlDB)
-	}
-	defer func() {
-		if err != nil {
-			for _, p := range opened {
-				_ = p.Close()
-			}
-		}
-	}()
-
-	if err := applyPoolSettings(db, &cfg.Storage.Database); err != nil {
-		return nil, err
-	}
-	warnPostgresPoolHeadroom(db, &cfg.Storage.Database)
-	if msg := config.PoolerStartupParamWarning(&cfg.Storage.Database); msg != "" {
-		log.Print(msg)
-	}
-	if err := refuseUndeclaredTransactionPooler(&cfg.Storage.Database); err != nil {
-		return nil, err
-	}
-	if err := refuseNonOriginReplicationRole(db); err != nil {
-		return nil, err
-	}
-
-	if err := withMigrationLockPooled(db, true, cfg.Storage.Database.TransactionPooling(), "", f.migratePostgres); err != nil {
-		return nil, migrateError(err)
-	}
-
-	schedulerLockDB, _, err := openPostgresSQLDB(&cfg.Storage.Database)
-	if err != nil {
-		return nil, err
-	}
-	opened = append(opened, schedulerLockDB)
-	applyLockPoolSettings(schedulerLockDB, SchedulerLockPoolSize, &cfg.Storage.Database)
-	namedLockDB, _, err := openPostgresSQLDB(&cfg.Storage.Database)
-	if err != nil {
-		return nil, err
-	}
-	opened = append(opened, namedLockDB)
-	applyLockPoolSettings(namedLockDB, NamedLockPoolSize, &cfg.Storage.Database)
-	if len(opened) > 0 {
-		registerPoolMetrics(poolRequest, opened[0])
-	}
-	registerPoolMetrics(poolSchedulerLock, schedulerLockDB)
-	registerPoolMetrics(poolNamedLock, namedLockDB)
-
-	nativeReads, err := openPostgresNativeReadPool(&cfg.Storage.Database, nativeReadPoolSize(effectiveMaxOpenConns(db, &cfg.Storage.Database), cfg.Storage.Database.NativeReadPoolMax))
-	if err != nil {
-		return nil, err
-	}
-
-	ls := store.NewLocalStorage(db)
-	ls.SetAuditFlusherLingerWindow(cfg.Storage.Database.GetAuditFlusherLingerWindow())
-	ls.SetSoftDeleteRetentionDays(cfg.SoftDelete.GetRetentionDays())
-	ls.SetSchedulerLockDB(schedulerLockDB)
-	ls.SetNamedLockDB(namedLockDB)
-	ls.SetNativeReadPool(nativeReads)
-	ls.SetTransactionPooling(cfg.Storage.Database.TransactionPooling())
-	// ADR-112 Amendment 3: the effective audit_durability level, read through
-	// the same function the start-up line, posture report and API use, so the
-	// level reported cannot differ from the level run. Standard -- the
-	// PostgreSQL default -- skips only the audit commit's wait for the disk sync.
-	ls.SetAuditSkipDurableSync(cfg.Storage.Database.EffectiveAuditDurability(cfg.Storage.Type).Level == config.AuditDurabilityStandard)
-	ensureAuditListIndexesPostgres(ls, db, func() (*sql.DB, error) {
-		bdb, _, err := openPostgresSQLDB(&cfg.Storage.Database)
-		return bdb, err
-	})
-	return ls, nil
-}
-
-// migrateSQLite is migrateDatabase plus the audit list indexes, inside the
-// same SQLite migration lock and transaction (docs/specs/audit-list-keyset.md
-// §4). They are created after migrateDatabase because a fresh install creates
-// audit_events only in its final AutoMigrate step.
-func (f *DefaultStorageFactory) migrateSQLite(db *gorm.DB) error {
-	if err := f.migrateDatabase(db); err != nil {
-		return err
-	}
-	if err := store.EnsureAuditListIndexesSQLite(db, log.Printf); err != nil {
-		return err
-	}
-	return runAfterMigrateHook(db)
-}
-
-// migratePostgres is migrateDatabase plus the test-only after-migrate hook.
-func (f *DefaultStorageFactory) migratePostgres(db *gorm.DB) error {
-	if err := f.migrateDatabase(db); err != nil {
-		return err
-	}
-	return runAfterMigrateHook(db)
-}
-
 // afterMigrateHook is nil in every build except `-tags nplus1`
 // (factory_nplus1_hook.go), where it adds one extra column to every table so the
 // suites can prove the current binary tolerates a schema one release ahead
@@ -807,73 +399,6 @@ func runAfterMigrateHook(db *gorm.DB) error {
 		return nil
 	}
 	return afterMigrateHook(db)
-}
-
-// auditIndexSyncBuildMaxRows is the audit_events size (row estimate) below
-// which the Postgres audit index build runs before the server serves: a fresh
-// install or a small table builds in about a second. A larger table is built in
-// the background (store.LocalStorage.StartAuditListIndexBuild). A var so tests
-// can move the threshold.
-var auditIndexSyncBuildMaxRows int64 = 200_000
-
-// auditIndexSyncBuildTimeout bounds that synchronous build. CREATE INDEX
-// CONCURRENTLY waits for every transaction already writing to the table, so one
-// idle-in-transaction session elsewhere could otherwise hold the server's start
-// forever. Past the timeout the build is cancelled (leaving an INVALID index)
-// and continues in the background, which drops and rebuilds it.
-var auditIndexSyncBuildTimeout = 30 * time.Second
-
-// ensureAuditListIndexesPostgres brings the audit list indexes up to date after
-// the migration transaction has committed: CREATE INDEX CONCURRENTLY never runs
-// inside a transaction, and never blocks audit writes. Nothing here is fatal:
-// a missing index costs speed, not correctness, and the next start retries.
-// openBuildDB opens the dedicated pool a background build runs on.
-func ensureAuditListIndexesPostgres(ls *store.LocalStorage, db *gorm.DB, openBuildDB func() (*sql.DB, error)) {
-	ctx := context.Background()
-	sqlDB, err := db.DB()
-	if err != nil {
-		log.Printf("audit index build: skipped: %v", err)
-		return
-	}
-	pending, err := store.AuditListIndexesPendingPostgres(ctx, sqlDB)
-	if err != nil {
-		log.Printf("audit index build: skipped, catalog check failed: %v", err)
-		return
-	}
-	if !pending {
-		return
-	}
-	rows, err := store.AuditEventsRowEstimate(ctx, db)
-	if err != nil {
-		log.Printf("audit index build: skipped, row estimate failed: %v", err)
-		return
-	}
-	if rows < auditIndexSyncBuildMaxRows {
-		sctx, cancel := context.WithTimeout(ctx, auditIndexSyncBuildTimeout)
-		err := store.BuildAuditListIndexesPostgres(sctx, sqlDB, ls.TransactionPooling(), log.Printf)
-		timedOut := sctx.Err() != nil
-		cancel()
-		switch {
-		case err == nil:
-			return
-		case errors.Is(err, store.ErrAuditIndexBuildLockHeld):
-			log.Printf("audit index build: another process is building the audit indexes")
-			return
-		case !timedOut:
-			log.Printf("audit index build: failed, retried at the next start: %v", err)
-			return
-		}
-		log.Printf("audit index build: not finished within %s (a long-running transaction on audit_events?); continuing in the background", auditIndexSyncBuildTimeout)
-	} else {
-		log.Printf("audit index build: audit_events has ~%d rows; building in the background while the server serves", rows)
-	}
-	bdb, err := openBuildDB()
-	if err != nil {
-		log.Printf("audit index build: skipped, cannot open a build connection: %v", err)
-		return
-	}
-	bdb.SetMaxOpenConns(2) // the build lock's connection and the DDL's
-	ls.StartAuditListIndexBuild(bdb, log.Printf)
 }
 
 // applyPoolSettings configures the connection pool on the underlying *sql.DB
@@ -904,112 +429,6 @@ func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
 	}
 	return nil
 }
-
-// SchedulerLockPoolSize caps the separate Postgres pool that holds scheduler
-// advisory-lock sessions (store.LocalStorage.SetSchedulerLockDB). A scheduler job
-// pins one lock session for its whole run while its own queries use the request
-// pool; with both on one pool, enough jobs ticking at once (about 20 start
-// together at boot) pinned every connection and each waited for one more, a
-// permanent hang (POOL-HANG-1, Detected-by: PERF-6). On its own pool a job
-// waiting for a lock session holds nothing, so nothing can deadlock; jobs beyond
-// this cap queue for a session and run a little later. It is not configurable:
-// the request pool is the knob operators size, and this one only bounds how many
-// jobs run their lock-held section at the same time.
-const SchedulerLockPoolSize = 4
-
-// NamedLockPoolSize caps the separate Postgres pool that holds WithNamedLock's
-// advisory-lock sessions (store.LocalStorage.SetNamedLockDB). A holder pins one
-// lock session for its critical section while fn's queries use the request
-// pool; with both on one pool, as many distinct keys held at once as the pool
-// had connections hung the server for good (NAMEDLOCK-POOL-1, the same
-// hold-and-wait as POOL-HANG-1). It is a pool of its own, not the scheduler
-// lock pool, because scheduler jobs take named locks inside their own
-// lock-held section. It bounds how many distinct keys one process holds at
-// once; callers beyond it queue for a session holding no connection. Not
-// configurable, like SchedulerLockPoolSize.
-const NamedLockPoolSize = 8
-
-// NativeReadPoolMaxSize caps the pgxpool the hottest read-path statements run
-// on (store.LocalStorage.SetNativeReadPool): the machine credential lookup,
-// with or without the folded node read, and the node-stamp read. Each request
-// runs at most two of them, each one short statement, so a few connections
-// carry them at any request rate the request pool can feed. Never more than the
-// request pool's own cap (nativeReadPoolSize), so an operator who sizes
-// max_open_conns small keeps a small footprint. This is the default;
-// storage.database.native_read_pool_max raises or lowers it (the lock pools are
-// not configurable).
-const NativeReadPoolMaxSize = config.DefaultNativeReadPoolMax
-
-// nativeReadPoolSize is the native read pool's cap for a request pool of maxOpen
-// and a configured native_read_pool_max (0: NativeReadPoolMaxSize).
-func nativeReadPoolSize(maxOpen, configured int) int {
-	if configured <= 0 {
-		configured = NativeReadPoolMaxSize
-	}
-	return min(maxOpen, configured)
-}
-
-// lockPoolMaxIdleTime closes lock sessions left idle, so the lock pools do not
-// keep Postgres backends open between scheduler intervals or bursts of writes.
-const lockPoolMaxIdleTime = time.Minute
-
-// applyLockPoolSettings sizes a lock pool and applies the operator's connection
-// lifetime to it, like applyPoolSettings for the request pool.
-func applyLockPoolSettings(lockDB *sql.DB, size int, dbCfg *config.DatabaseConfig) {
-	lockDB.SetMaxOpenConns(size)
-	lockDB.SetMaxIdleConns(size)
-	lockDB.SetConnMaxIdleTime(lockPoolMaxIdleTime)
-	if dbCfg.ConnMaxLifetimeMinutes > 0 {
-		lockDB.SetConnMaxLifetime(time.Duration(dbCfg.ConnMaxLifetimeMinutes) * time.Minute)
-	}
-}
-
-// warnPostgresPoolHeadroom logs a startup warning when this process's pool alone
-// can exceed the Postgres server's usable connection slots (max_connections minus
-// superuser_reserved_connections). Past that point requests fail with SQLSTATE
-// 53300 "sorry, too many clients already" instead of queueing in the pool, measured
-// at max_open_conns 100 against a default max_connections of 100 (#2631). It is a
-// warning, not a refusal: the server's limit can be raised later without a restart
-// of this process, and a lookup failure must never block boot. It cannot see other
-// replicas' pools, and the message says so.
-func warnPostgresPoolHeadroom(db *gorm.DB, dbCfg *config.DatabaseConfig) {
-	var maxConn, reserved int
-	if err := db.Raw("SELECT current_setting('max_connections')::int").Scan(&maxConn).Error; err != nil {
-		return
-	}
-	if err := db.Raw("SELECT current_setting('superuser_reserved_connections')::int").Scan(&reserved).Error; err != nil {
-		return
-	}
-	if msg := postgresPoolHeadroomWarning(effectiveMaxOpenConns(db, dbCfg), dbCfg.NativeReadPoolMax, maxConn, reserved); msg != "" {
-		log.Print(msg)
-	}
-}
-
-// postgresPoolHeadroomWarning is warnPostgresPoolHeadroom's decision, separated so
-// it is testable without a server. Empty means no warning.
-// The process opens maxOpen plus extraPoolsSize(maxOpen, nativeReadPoolMax) connections at most.
-func postgresPoolHeadroomWarning(maxOpen, nativeReadPoolMax, maxConnections, reserved int) string {
-	usable := maxConnections - reserved
-	extra := extraPoolsSize(maxOpen, nativeReadPoolMax)
-	if maxConnections <= 0 || maxOpen+extra <= usable {
-		return ""
-	}
-	return fmt.Sprintf("WARNING: storage.database.max_open_conns is %d, plus %d for the lock and native read pools, but the "+
-		"Postgres server allows only %d non-superuser connections (max_connections=%d minus "+
-		"superuser_reserved_connections=%d). Under load, requests past that fail with SQLSTATE 53300 \"too many "+
-		"clients\" instead of queueing. Lower max_open_conns so that (replicas x (max_open_conns + %d)) stays "+
-		"below %d, or raise max_connections.",
-		maxOpen, extra, usable, maxConnections, reserved, extra, usable)
-}
-
-// extraPoolsSize is the most connections the pools beside the request pool open
-// together: the scheduler and named lock pools and the native read pool.
-func extraPoolsSize(maxOpen, nativeReadPoolMax int) int {
-	return lockPoolsSize + nativeReadPoolSize(maxOpen, nativeReadPoolMax)
-}
-
-// lockPoolsSize is the most connections the scheduler and named lock pools open together.
-const lockPoolsSize = SchedulerLockPoolSize + NamedLockPoolSize
 
 // columnExists reports whether table already has column, branching on the
 // dialect like indexExists below: information_schema on Postgres, but SQLite
@@ -1907,6 +1326,13 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 		if !columnExists(db, "audit_events", "entry_hash") {
 			if err := exec("ALTER TABLE audit_events ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''"); err != nil {
+				return err
+			}
+		}
+		// Epoch 6 (AUDIT-REQUEST-ID-1): advisory request id, outside the hash chain.
+		// Nullable with no default, so Postgres changes only the catalog (no rewrite).
+		if !columnExists(db, "audit_events", "request_id") {
+			if err := exec("ALTER TABLE audit_events ADD COLUMN request_id TEXT"); err != nil {
 				return err
 			}
 		}

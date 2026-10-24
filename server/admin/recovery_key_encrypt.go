@@ -30,6 +30,15 @@ import (
 // explicitly rather than silently accepted, keeping the supported input
 // shape narrow and exactly what's documented.
 func parseRecoveryKeyRecipient(spec string) (age.Recipient, error) {
+	// Hybrid ML-KEM-768 + X25519 recipients ("age1pq1...") also start with
+	// "age1", so they must be matched before the classical X25519 branch.
+	if strings.HasPrefix(spec, "age1pq1") {
+		r, err := age.ParseHybridRecipient(spec)
+		if err != nil {
+			return nil, fmt.Errorf("invalid hybrid age recipient (age1pq1...): %w", err)
+		}
+		return r, nil
+	}
 	if strings.HasPrefix(spec, "age1") {
 		r, err := age.ParseX25519Recipient(spec)
 		if err != nil {
@@ -53,6 +62,19 @@ func parseRecoveryKeyRecipient(spec string) (age.Recipient, error) {
 		return nil, fmt.Errorf("build age recipient from %q: %w", spec, err)
 	}
 	return r, nil
+}
+
+// warnIfClassicalRecoveryKeyRecipient writes a one-time warning to w when
+// recipient is not a hybrid (post-quantum) age recipient. It warns rather
+// than refuses: classical recipients stay supported. The text names no
+// recipient or key material.
+func warnIfClassicalRecoveryKeyRecipient(w io.Writer, recipient age.Recipient) {
+	if _, ok := recipient.(*age.HybridRecipient); ok {
+		return
+	}
+	_, _ = fmt.Fprintln(w, "WARNING: this --recipient is a classical (X25519 / ssh-ed25519) key, which is not quantum-resistant: "+
+		"an age-encrypted recovery key harvested today can be opened by a future quantum attacker. "+
+		"Prefer a hybrid post-quantum recipient (age1pq1..., from `age-keygen -pq`).")
 }
 
 // encryptRecoveryKeyForRecipient ASCII-armors rawKey encrypted to recipient

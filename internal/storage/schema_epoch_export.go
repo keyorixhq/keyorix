@@ -10,17 +10,6 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// CheckSchemaEpoch exposes checkSchemaEpoch (ADR-097) for `keyorix-server
-// admin diagnose`, which needs to report migration state WITHOUT applying
-// any migration (OpenGormDB's own doc comment: raw open, no schema changes
-// as a side effect). It is exactly the read-only comparison
-// migrateDatabase itself runs first, before touching anything -- reusing it
-// here keeps that comparison defined in exactly one place rather than
-// duplicating the read logic in the admin package.
-func CheckSchemaEpoch(db *gorm.DB) error {
-	return checkSchemaEpoch(db)
-}
-
 // InspectMigrationState reports, read-only, whether db's schema is up to
 // date with this binary (upToDate) and a human-readable detail. It is the
 // read-only counterpart to migrateDatabase for `keyorix-server admin

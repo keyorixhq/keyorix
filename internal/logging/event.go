@@ -38,6 +38,7 @@ func Line(ctx context.Context, level, msg string, kv ...any) string {
 	b.WriteByte(' ')
 	b.WriteString(Redact(msg))
 	writeKV(&b, "request_id", f.RequestID)
+	writeKV(&b, "client_request_id", f.ClientRequestID)
 	writeKV(&b, "principal_type", f.PrincipalType)
 	writeKV(&b, "route", f.Route)
 	for i := 0; i+1 < len(kv); i += 2 {
@@ -51,7 +52,7 @@ func Line(ctx context.Context, level, msg string, kv ...any) string {
 }
 
 var reserved = map[string]bool{
-	"ts": true, "level": true, "msg": true, "request_id": true, "principal_type": true, "route": true,
+	"ts": true, "level": true, "msg": true, "request_id": true, "client_request_id": true, "principal_type": true, "route": true,
 }
 
 func writeKV(b *strings.Builder, k, v string) {
@@ -90,6 +91,9 @@ func eventJSON(level, msg string, f Fields, kv []any) string {
 	put("msg", msg, false)
 	if f.RequestID != "" {
 		put("request_id", f.RequestID, false)
+	}
+	if f.ClientRequestID != "" {
+		put("client_request_id", f.ClientRequestID, false)
 	}
 	if f.PrincipalType != "" {
 		put("principal_type", f.PrincipalType, false)

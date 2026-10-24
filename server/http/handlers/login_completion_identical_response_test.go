@@ -30,11 +30,11 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -45,8 +45,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
-	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
 )
 
 // NoneES256 login spec vector, verbatim from go-webauthn's test suite (RPID
@@ -109,25 +109,14 @@ func newWebAuthnCompletionEnv(t *testing.T) (*AuthHandler, *faultstorage.FaultyS
 func newWebAuthnCompletionEnvOver(t *testing.T, wrap func(corestorage.Storage) corestorage.Storage) (*AuthHandler, *faultstorage.FaultyStorage, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}))
-	// A NAMED shared-cache in-memory DB, not a bare ":memory:": gorm pools
-	// connections, and a bare ":memory:" gives every new connection its own
-	// empty database -- which shows up under full-package load as
-	// "no such table: sessions" partway through a test.
-	dsn := fmt.Sprintf("file:kxwacompletion%d?mode=memory&cache=shared&_timeout=30000", wcDBCounter.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	// sqlitetest.Open gives a NAMED in-memory DB (a bare ":memory:" gives every
+	// pooled connection its own empty database: "no such table: sessions") with
+	// the pool capped to one connection.
+	db := sqlitetest.Open(t, "kxwacompletion")
 	require.NoError(t, db.AutoMigrate(&models.User{}, &models.Session{}, &models.AuditEvent{},
 		&models.MFAChallenge{}, &models.WebAuthnCredential{}, &models.WebAuthnSession{}, &models.Notification{},
 		&models.LoginAttempt{}, &models.MFAStepupToken{}, &models.MFAStepUpGrant{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{}))
-	// One connection per in-memory DB: a shared-cache SQLite database serves
-	// concurrent connections with SQLITE_LOCKED ("database table is locked"),
-	// which busy_timeout does not retry. These tests need no concurrency, so
-	// capping the pool keeps them from adding contention to a package that
-	// already runs a lot of SQLite in parallel.
-	if sqlDB, derr := db.DB(); derr == nil {
-		sqlDB.SetMaxOpenConns(1)
-	}
 	require.NoError(t, db.Create(&models.User{
 		ID: 1, Username: "alice", UsernameFolded: "alice", Email: "a@b.com", EmailFolded: "a@b.com",
 		IsActive: true, AccountState: "active",
@@ -146,7 +135,7 @@ func newWebAuthnCompletionEnvOver(t *testing.T, wrap func(corestorage.Storage) c
 		RPID: "example.org", RPDisplayName: "Keyorix", RPOrigins: []string{"https://example.org"},
 	})
 	require.NoError(t, err)
-	c.SetWebAuthn(rp)
+	c.SetWebAuthn(webauthnrp.Wrap(rp))
 
 	// The spec vector's credential, with the Flags its authenticatorData
 	// actually asserts (a mismatch is its own rejection).
@@ -372,17 +361,10 @@ func observeSetupHTTP(t *testing.T, _ *gorm.DB, w *httptest.ResponseRecorder) ht
 	return httpObservation{status: w.Code, body: w.Body.String(), headers: w.Result().Header.Clone()}
 }
 
-var (
-	wcDBCounter           atomic.Int64
-	setupConsumeDBCounter atomic.Int64
-)
-
 func newSetupConsumeCompletionEnv(t *testing.T) (*AuthHandler, *faultstorage.FaultyStorage, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"}}))
-	dsn := fmt.Sprintf("file:kxsetupconsume%d?mode=memory&cache=shared&_timeout=30000", setupConsumeDBCounter.Add(1))
-	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{})
-	require.NoError(t, err)
+	db := sqlitetest.Open(t, "kxsetupconsume")
 	require.NoError(t, db.AutoMigrate(
 		&models.User{}, &models.Session{}, &models.AuditEvent{}, &models.SetupToken{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.UserRole{},
@@ -391,14 +373,6 @@ func newSetupConsumeCompletionEnv(t *testing.T) (*AuthHandler, *faultstorage.Fau
 		// AUTH-2 item 1: the consume revokes PATs inside its transaction.
 		&models.PersonalAccessToken{},
 	))
-	// One connection per in-memory DB: a shared-cache SQLite database serves
-	// concurrent connections with SQLITE_LOCKED ("database table is locked"),
-	// which busy_timeout does not retry. These tests need no concurrency, so
-	// capping the pool keeps them from adding contention to a package that
-	// already runs a lot of SQLite in parallel.
-	if sqlDB, derr := db.DB(); derr == nil {
-		sqlDB.SetMaxOpenConns(1)
-	}
 	fs := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
 	c := core.NewKeyorixCore(fs)
 	return NewAuthHandler(c, false), fs, db

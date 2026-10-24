@@ -1648,6 +1648,16 @@ type AuditEvent struct {
 	// (machine_identity_id, event_time), see store.AuditListIndexes.
 	MachineIdentityID *uint
 
+	// RequestID is the server-minted id of the HTTP request that wrote the row
+	// (logging.ServerRequestID), for joining an audit row with that request's log
+	// lines. NULL when there was no request (scheduler, startup, gRPC) or the row was
+	// written by an epoch-5 replica. LogAuditEvent sets it from the context and
+	// overwrites whatever the caller put here. It is NOT covered by the hash chain:
+	// anyone with database write access can change it undetected, so it is an
+	// advisory correlation hint, never evidence (docs/specs/audit-request-id.md §5).
+	// Deliberately not indexed (§4).
+	RequestID *string
+
 	// Tamper-evidence hash chain (ADR-029). PrevHash is the EntryHash of the
 	// immediately preceding chained event (a fixed genesis constant for the
 	// first chained event); EntryHash is SHA256(canonical(fields) ‖ PrevHash).
