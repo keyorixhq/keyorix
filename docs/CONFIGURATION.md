@@ -426,7 +426,12 @@ With `dsn:` instead of fields, put the CA in the connection string
 `verify-full`/`verify-ca`. `ssl_root_cert` together with `dsn` is refused,
 because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
-encrypted nor verified.
+encrypted nor verified. So is a CA file with `ssl_mode: allow` or `prefer`
+(or a `dsn` with `sslrootcert=<file>` whose effective sslmode is
+disable/allow/prefer, including a dsn with no `sslmode`): the driver loads the
+CA but never checks the server's certificate against it, and may fall back to
+plaintext. `sslrootcert=system` with allow/prefer is accepted, because the
+driver then runs `verify-full`.
 
 **`ssl_mode` together with `dsn`.** The dsn is used as-is, so `ssl_mode` used
 to be silently ignored next to it: `ssl_mode: verify-full` with a dsn saying
@@ -453,8 +458,10 @@ is not refused.
 
 The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
-`system`). `admin validate --posture` prints one informational line saying
-what is encrypted and what is verified against which CA.
+`system`), or mounts `externalDatabase.caSecret` for you. `admin validate
+--posture` prints one informational line saying what is encrypted and what is
+verified against which CA. A worked example with a private CA, including a
+wrong-CA check: [operator/postgres-tls.md](operator/postgres-tls.md).
 
 ### PostgreSQL DSN forms
 
