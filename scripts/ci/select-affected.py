@@ -22,7 +22,8 @@ Rule (same shape as test-quick's scripts/ci-test-quick.py and sbin/kaffected,
 made more conservative because this one gates main):
 
 1. FULL when any changed path is: a go.mod/go.sum/go.work/go.work.sum of any
-   module; internal/testutil/**; .github/workflows/ci.yml; scripts/ci/** (this
+   module; internal/testutil/** except _test.go files (those are test seeds,
+   rule 4); .github/workflows/ci.yml; scripts/ci/** (this
    script and the guard runner); scripts/ci-test-legs.sh or
    scripts/ci-test-quick.py (leg definitions); a generated-code input (*.proto,
    buf*.yaml, a generator program directory named gen or *gen, or a .go file
@@ -122,13 +123,20 @@ def changed_files(base, head):
     return sorted({line.strip() for line in out.splitlines() if line.strip()})
 
 
+def is_testutil_test_file(f):
+    """A _test.go file under internal/testutil/ compiles into its own package's
+    test binary only (nothing imports a _test.go), so it is a test seed like
+    any other _test.go (rule 4), not a shared-helper change."""
+    return f.startswith("internal/testutil/") and f.endswith("_test.go")
+
+
 def full_reason(changed, base, head):
     for f in changed:
         if os.path.basename(f) in FULL_BASENAMES:
             return f"{f} changed (dependency graph)"
         if f in FULL_EXACT:
             return f"{f} changed (CI selection/leg definition or generated-code input)"
-        if f.startswith(FULL_PREFIXES):
+        if f.startswith(FULL_PREFIXES) and not is_testutil_test_file(f):
             return f"{f} changed (shared test helpers or CI scripts)"
         if f.endswith(".proto"):
             return f"{f} changed (generated-code input)"

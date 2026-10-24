@@ -99,6 +99,44 @@ func TestSelectAffected_FullTriggersRunEverything(t *testing.T) {
 	}
 }
 
+// A _test.go file under internal/testutil/ is compiled into its own package's
+// test binary only (nothing imports a _test.go): it selects that package like
+// any other test seed. The non-test helpers next to it stay FULL.
+func TestSelectAffected_TestutilTestFileIsATestSeed(t *testing.T) {
+	const guard = "internal/testutil/sqlitetest/shared_cache_literal_guard_test.go"
+	const pkg = "github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
+	s := changed(t, guard)
+	if s.Mode != "selected" {
+		t.Fatalf("%s changed: mode=%q (%s), want selected", guard, s.Mode, s.Reason)
+	}
+	if _, ok := s.Seeds[pkg]; !ok {
+		t.Errorf("seeds=%v, want %s among them", s.Seeds, pkg)
+	}
+	// Rule 3 may add packages whose tests name the file by path, but every
+	// seed is a test seed: no importer of the helper package is selected.
+	for p, why := range s.Seeds {
+		if !strings.HasPrefix(why, "test file ") && !strings.HasPrefix(why, "its tests name ") {
+			t.Errorf("seed %s: %q, want a test seed", p, why)
+		}
+	}
+	if got := legNames(s); !slices.Equal(got, []string{"root-2", "root-4"}) {
+		t.Errorf("legs=%v, want [root-2 root-4]: a testutil _test.go must not select the helper's importers", got)
+	}
+	for _, f := range []string{
+		"internal/testutil/fuzzworld/fuzzworld.go",
+		"internal/testutil/sqlitetest/sqlitetest.go",
+		"internal/testutil/sqlitetest/testdata/x.txt",
+	} {
+		if s := changed(t, leafTest, f); s.Mode != "full" {
+			t.Errorf("%s changed: mode=%q, want full (non-test testutil file)", f, s.Mode)
+		}
+	}
+	// scripts/ci/ has no such exemption.
+	if s := changed(t, "scripts/ci/select_affected_test.go"); s.Mode != "full" {
+		t.Errorf("scripts/ci test file: mode=%q, want full", s.Mode)
+	}
+}
+
 func TestSelectAffected_GitFailureFallsBackToFull(t *testing.T) {
 	s := runSelect(t, "--base", "0000000000000000000000000000000000000000", "--head", "HEAD")
 	if s.Mode != "full" {
