@@ -22,8 +22,9 @@ var auditAccessCmd = &cobra.Command{
 	Short: "List migrated Keyorix grants that are wider than their source Vault policy (read-only)",
 	Long: `keyorix-migrate v0.96.0 to v0.96.3 could migrate a narrow Vault policy to a grant on a whole
 Keyorix project/environment: a policy path narrower than the scope it resolved to (an exact
-secret, a sub-folder, part of a --path-map prefix), or a list-only / KV v2 metadata/ stanza
-migrated as secrets.read. This command re-reads Vault and Keyorix, works out which grants those
+secret, a sub-folder, part of a --path-map prefix), or a stanza's "list" migrated as
+secrets.read (list-only and KV v2 metadata/ stanzas, and write stanzas that also list, such
+as ["create", "update", "list"]). This command re-reads Vault and Keyorix, works out which grants those
 releases would have created that the current rules refuse, and lists the ones a migrated
 machine identity still holds. It changes nothing in Vault or Keyorix.
 
@@ -35,8 +36,10 @@ apply-access run used: the grants it created depend on them.
     --k8s-issuer https://k8s.example.com --path-map secret/data=2:6
 
 Each finding names the machine identity, role, scope and Vault stanza, why the grant is wider,
-and the API call that revokes exactly that grant. Exits 1 when it finds any, 0 when none.
---json prints the findings as JSON on stdout instead.`,
+and the API call that revokes exactly that grant. Exits 1 when it finds any, and also when the
+audit is incomplete: a Vault input it needs (sys/mounts, the policy list, a policy, an auth
+role) could not be read, so grants from it could not be checked. Exits 0 only for a complete
+audit with no findings. --json prints {"complete", "warnings", "findings"} on stdout instead.`,
 	SilenceUsage: true,
 	// main prints the returned error once; findings are an expected outcome, not a crash.
 	SilenceErrors: true,
@@ -62,6 +65,15 @@ func init() {
 	f.StringArrayVar(&paPathMap, "path-map", nil, "the --path-map values the original apply-access run used (repeatable)")
 	f.BoolVar(&aaJSON, "json", false, "print the findings as JSON on stdout")
 	vaultCmd.AddCommand(auditAccessCmd)
+}
+
+// auditReport is audit-access's --json document. Complete is false when any input could not be
+// read (the warnings say which); a note such as unaudited Kubernetes roles is a warning that
+// leaves it true.
+type auditReport struct {
+	Complete bool           `json:"complete"`
+	Warnings []string       `json:"warnings"`
+	Findings []auditFinding `json:"findings"`
 }
 
 // auditFinding is one widened grant checked against Keyorix, as printed by --json.
@@ -127,12 +139,25 @@ func runAuditAccess(cmd *cobra.Command, _ []string) error {
 	}
 
 	_, _ = fmt.Fprintln(stderr, "audit-access: reading Vault policies/auth roles and Keyorix projects (read-only)...")
-	in, mapper, warnings, err := readAccessInputs(ctx, vc, reader, paPathMap)
+	in, mapper, unreadable, treeWarnings, err := readAccessInputs(ctx, vc, reader, paPathMap)
 	if err != nil {
 		return err
 	}
+	// An unreadable input hides grants: the audit is incomplete. An unlistable KV path only
+	// makes the stanzas it could affect findings (cross-mount-scope), so it is a warning.
+	incomplete := len(unreadable)
+	var warnings []string
+	for _, w := range unreadable {
+		warnings = append(warnings, w+" — grants from it cannot be audited")
+	}
+	warnings = append(warnings, treeWarnings...)
 	for _, w := range warnings {
-		_, _ = fmt.Fprintln(stderr, "WARNING:", w, "— grants from it cannot be audited")
+		_, _ = fmt.Fprintln(stderr, "WARNING:", w)
+	}
+	if paK8sIssuer == "" && len(in.KubernetesRoles) > 0 {
+		w := fmt.Sprintf("%d Kubernetes auth role(s) not audited: v0.96.x created Kubernetes identities only with --k8s-issuer; if the original apply-access run used it, re-run with the same --k8s-issuer", len(in.KubernetesRoles))
+		warnings = append(warnings, w)
+		_, _ = fmt.Fprintln(stderr, "WARNING:", w)
 	}
 	candidates := accessplan.AuditWidenedGrants(in, mapper, paK8sIssuer)
 	_, _ = fmt.Fprintf(stderr, "audit-access: %d grant(s) v0.96.x would have created wider than Vault; checking which exist in Keyorix...\n", len(candidates))
@@ -161,12 +186,16 @@ func runAuditAccess(cmd *cobra.Command, _ []string) error {
 
 	out := cmd.OutOrStdout()
 	if aaJSON {
-		if findings == nil {
-			findings = []auditFinding{}
+		report := auditReport{Complete: incomplete == 0, Warnings: warnings, Findings: findings}
+		if report.Warnings == nil {
+			report.Warnings = []string{}
+		}
+		if report.Findings == nil {
+			report.Findings = []auditFinding{}
 		}
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(findings); err != nil {
+		if err := enc.Encode(report); err != nil {
 			return err
 		}
 	} else {
@@ -184,10 +213,16 @@ func runAuditAccess(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	if len(findings) == 0 {
+	switch {
+	case len(findings) == 0 && incomplete == 0:
 		_, _ = fmt.Fprintln(stderr, "audit-access: done — no migrated grant is wider than its Vault policy.")
 		return nil
+	case len(findings) > 0:
+		_, _ = fmt.Fprintf(stderr, "audit-access: done — %d migrated grant(s) wider than their Vault policy. Revoke each with the call shown, then re-run plan-access (it now reports these stanzas for review instead of widening them).\n", len(findings))
 	}
-	_, _ = fmt.Fprintf(stderr, "audit-access: done — %d migrated grant(s) wider than their Vault policy. Revoke each with the call shown, then re-run plan-access (it now reports these stanzas for review instead of widening them).\n", len(findings))
+	if incomplete > 0 {
+		_, _ = fmt.Fprintf(stderr, "audit-access: INCOMPLETE — %d Vault input(s) could not be read (see the warnings above), so grants from them were not checked. Grant this token the healthscan-policy.hcl stanzas and re-run.\n", incomplete)
+		return fmt.Errorf("audit incomplete: %d Vault input(s) could not be read; %d migrated grant(s) found wider than their source Vault policy among the rest", incomplete, len(findings))
+	}
 	return fmt.Errorf("%d migrated grant(s) are wider than their source Vault policy", len(findings))
 }

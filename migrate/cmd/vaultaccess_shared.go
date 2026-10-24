@@ -18,10 +18,11 @@ import (
 // trusting what a --plan file says — this function is what makes that re-derivation exact and
 // not a second, drifting implementation.
 func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *accesstarget.Client, k8sIssuer string, pathMapOverrides []string) (accessplan.Plan, []string, error) {
-	in, mapper, warnings, err := readAccessInputs(ctx, vc, reader, pathMapOverrides)
+	in, mapper, unreadable, treeWarnings, err := readAccessInputs(ctx, vc, reader, pathMapOverrides)
 	if err != nil {
 		return accessplan.Plan{}, nil, err
 	}
+	warnings := append(unreadable, treeWarnings...)
 
 	built := accessplan.Build(in, mapper, k8sIssuer)
 
@@ -34,8 +35,10 @@ func buildFreshAccessPlan(ctx context.Context, vc *healthscan.Client, reader *ac
 
 // readAccessInputs reads every Vault policy/auth-method surface ADR-114 maps and every Keyorix
 // project/environment, and builds the PathMapper: the shared input of plan-access,
-// apply-access and audit-access.
-func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *accesstarget.Client, pathMapOverrides []string) (accessplan.BuildInput, *accessplan.PathMapper, []string, error) {
+// apply-access and audit-access. unreadable names each Vault input Vault refused (treated as
+// empty, so whatever it holds is missing from the result); treeWarnings names each KV listing
+// Vault refused (the mapper then fails closed on the scopes it could hold, see listKVScopeTree).
+func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *accesstarget.Client, pathMapOverrides []string) (in accessplan.BuildInput, mapper *accessplan.PathMapper, unreadable, treeWarnings []string, err error) {
 	var warnings []string
 	warn := func(what string) {
 		warnings = append(warnings, "could not read "+what+" (permission denied) — treated as empty; see healthscan-policy.hcl for the policy stanza that would allow it")
@@ -43,7 +46,7 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 
 	kvMountsRaw, status, err := healthscan.ListKVMounts(ctx, vc)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list KV mounts: %w", err)
+		return accessplan.BuildInput{}, nil, nil, nil, fmt.Errorf("list KV mounts: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/mounts")
@@ -55,7 +58,7 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 
 	policies, unreadablePolicies, status, err := healthscan.ListPolicies(ctx, vc)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list policies: %w", err)
+		return accessplan.BuildInput{}, nil, nil, nil, fmt.Errorf("list policies: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/policies/acl")
@@ -66,7 +69,7 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 
 	appRoles, unreadableApproles, _, status, err := healthscan.ListAppRoleRoleConfigs(ctx, vc)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list AppRole roles: %w", err)
+		return accessplan.BuildInput{}, nil, nil, nil, fmt.Errorf("list AppRole roles: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/auth (AppRole roles)")
@@ -77,7 +80,7 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 
 	k8sRoles, unreadableK8s, _, status, err := healthscan.ListKubernetesAuthRoleConfigs(ctx, vc)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list Kubernetes auth roles: %w", err)
+		return accessplan.BuildInput{}, nil, nil, nil, fmt.Errorf("list Kubernetes auth roles: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/auth (Kubernetes auth roles)")
@@ -88,7 +91,7 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 
 	userpassUsers, unreadableUserpass, _, status, err := healthscan.ListUserpassUsers(ctx, vc)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list userpass users: %w", err)
+		return accessplan.BuildInput{}, nil, nil, nil, fmt.Errorf("list userpass users: %w", err)
 	}
 	if status == healthscan.StatusForbidden {
 		warn("sys/auth (userpass users)")
@@ -99,7 +102,7 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 
 	projectsRaw, err := reader.ListProjects(ctx)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list Keyorix projects: %w", err)
+		return accessplan.BuildInput{}, nil, nil, nil, fmt.Errorf("list Keyorix projects: %w", err)
 	}
 	projects := make([]accessplan.ProjectRef, 0, len(projectsRaw))
 	environments := make(map[int][]accessplan.EnvironmentRef, len(projectsRaw))
@@ -107,25 +110,24 @@ func readAccessInputs(ctx context.Context, vc *healthscan.Client, reader *access
 		projects = append(projects, p)
 		envs, err := reader.ListEnvironments(ctx, p.ID)
 		if err != nil {
-			return accessplan.BuildInput{}, nil, nil, fmt.Errorf("list environments for project %q: %w", p.Name, err)
+			return accessplan.BuildInput{}, nil, nil, nil, fmt.Errorf("list environments for project %q: %w", p.Name, err)
 		}
 		environments[p.ID] = envs
 	}
 
-	mapper, err := accessplan.NewPathMapper(projects, environments, kvMounts, pathMapOverrides)
+	mapper, err = accessplan.NewPathMapper(projects, environments, kvMounts, pathMapOverrides)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, err
+		return accessplan.BuildInput{}, nil, nil, nil, err
 	}
 	tree, treeWarnings, err := listKVScopeTree(ctx, vc, kvMountsRaw, projects)
 	if err != nil {
-		return accessplan.BuildInput{}, nil, nil, err
+		return accessplan.BuildInput{}, nil, nil, nil, err
 	}
-	warnings = append(warnings, treeWarnings...)
 	mapper.SetKVTree(tree)
 
 	return accessplan.BuildInput{
 		Policies: policies, AppRoles: appRoles, KubernetesRoles: k8sRoles, UserpassUsers: userpassUsers,
-	}, mapper, warnings, nil
+	}, mapper, warnings, treeWarnings, nil
 }
 
 // listKVScopeTree lists, on every KV mount, the root and each root directory named like a
