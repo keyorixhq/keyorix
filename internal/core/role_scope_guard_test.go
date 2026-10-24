@@ -410,3 +410,32 @@ func bootstrapCoreOn(t *testing.T, db *gorm.DB) *KeyorixCore {
 	require.NoError(t, err)
 	return c
 }
+
+// TestInviteMember_InstallWideRoleIsRefusedAtInviteTime is REVIEW-3585-DEEP-1
+// F3: in allowlist mode InviteMember parked an `invited` membership holding an
+// install-wide role, which could never activate (the activation grant refuses
+// it). Now refused up front in every mode, with no membership and no grant.
+func TestInviteMember_InstallWideRoleIsRefusedAtInviteTime(t *testing.T) {
+	for _, mode := range []string{ValidationModeAllowlist, ValidationModeOpen} {
+		t.Run(mode, func(t *testing.T) {
+			c, _ := newBootstrappedCore(t)
+			ctx := context.Background()
+			w := newRoleScopeWorld(t, c)
+			c.SetMembershipValidationMode(mode)
+			before := w.grantRows(t)
+
+			_, err := c.InviteMember(ctx, w.p1, w.userID, "system_admin", w.adminID, 0, false)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrRoleScopeInvalid), "want a role-scope refusal, got: %v", err)
+			ms, err := c.storage.ListProjectMemberships(ctx, w.p1)
+			require.NoError(t, err)
+			require.Empty(t, ms, "a refused invite must write no membership")
+			require.ElementsMatch(t, before, w.grantRows(t), "a refused invite must write no grant row")
+
+			// Positive control: a project role is invited.
+			m, err := c.InviteMember(ctx, w.p1, w.userID, "project_viewer", w.adminID, 0, false)
+			require.NoError(t, err)
+			require.Equal(t, w.userID, m.UserID)
+		})
+	}
+}
