@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 // TestCoreFamilyGoFiles_SeesEveryFamilyDir is the coverage half of R5 for the
@@ -77,34 +78,63 @@ func TestCoreFamilyGoFiles_SeesEveryFamilyDir(t *testing.T) {
 	}
 }
 
-func TestRegisterCoreFamilyDir_RejectsBadEntries(t *testing.T) {
-	saved := coreFamilyExtracted
-	coreFamilyExtracted = map[string]string{}
-	t.Cleanup(func() { coreFamilyExtracted = saved })
+// TestCoreFamilyRegistry_Rows pins the committed rows: the core row is
+// internal/core and the test-only packages are the two ADR-116 creates. The
+// literals live here, in a _test.go file, on purpose (corefamily.d/README.md).
+func TestCoreFamilyRegistry_Rows(t *testing.T) {
+	if CoreDir != "internal/core" {
+		t.Errorf("CoreDir = %q, want internal/core", CoreDir)
+	}
+	if want := []string{"internal/core/coretests", "internal/core/storage/storagetest"}; !slices.Equal(CoreTestOnlyDirs, want) {
+		t.Errorf("CoreTestOnlyDirs = %v, want %v", CoreTestOnlyDirs, want)
+	}
+	for _, rel := range CoreFamilyExtractedDirs() {
+		if !strings.HasPrefix(rel, "internal/") {
+			t.Errorf("extracted dir %s is outside internal/", rel)
+		}
+	}
+}
 
-	registerCoreFamilyDir("internal/anomaly", "pilot")
-	if got := CoreFamilyExtractedDirs(); !slices.Equal(got, []string{"internal/anomaly"}) {
-		t.Fatalf("CoreFamilyExtractedDirs = %v", got)
+func TestLoadCoreFamily_RejectsBadEntries(t *testing.T) {
+	const core = "core\tinternal/core\tthe package\n"
+	good := fstest.MapFS{
+		"d/core.tsv":    {Data: []byte("# kind\tdir\treason\n" + core)},
+		"d/anomaly.tsv": {Data: []byte("extracted\tinternal/anomaly\tpilot\n")},
+		"d/kit.tsv":     {Data: []byte("testonly\tinternal/core/coretests\tdecision 2\n")},
+		"d/README.md":   {Data: []byte("not a row\n")},
 	}
-	if dirs := CoreFamilyDirs(); dirs[1] != filepath.Join(RepoRoot(), "internal", "anomaly") {
-		t.Fatalf("a registered dir must follow internal/core in CoreFamilyDirs: %v", dirs)
+	reg, err := loadCoreFamily(good, "d")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, bad := range []struct{ rel, reason string }{
-		{"internal/anomaly", "again"},  // duplicate
-		{CoreDir, "core itself"},       // not an extraction
-		{"/abs/dir", "absolute"},       // not repository-relative
-		{"internal/x/../y", "unclean"}, // not clean
-		{"../outside", "outside"},      // escapes the repo
-		{"internal/z", ""},             // no reason
+	if reg.core != "internal/core" || reg.extracted["internal/anomaly"] != "pilot" || !slices.Equal(reg.testOnly, []string{"internal/core/coretests"}) {
+		t.Fatalf("loadCoreFamily = %+v", reg)
+	}
+
+	for name, files := range map[string]map[string]string{
+		"empty dir":         {},
+		"no core row":       {"a.tsv": "extracted\tinternal/a\tx\n"},
+		"two core rows":     {"a.tsv": core, "b.tsv": "core\tinternal/b\tx\n"},
+		"two rows one file": {"a.tsv": core + "extracted\tinternal/b\tx\n"},
+		"no rows":           {"a.tsv": core, "b.tsv": "# only a comment\n"},
+		"duplicate dir":     {"a.tsv": core, "b.tsv": "extracted\tinternal/core\tagain\n"},
+		"duplicate leaf":    {"a.tsv": core, "b.tsv": "extracted\tinternal/x\t1\n", "c.tsv": "testonly\tinternal/x\t2\n"},
+		"no reason":         {"a.tsv": core, "b.tsv": "extracted\tinternal/x\t\n"},
+		"two fields":        {"a.tsv": core, "b.tsv": "extracted\tinternal/x\n"},
+		"four fields":       {"a.tsv": core, "b.tsv": "extracted\tinternal/x\ty\tz\n"},
+		"unknown kind":      {"a.tsv": core, "b.tsv": "moved\tinternal/x\ty\n"},
+		"absolute":          {"a.tsv": core, "b.tsv": "extracted\t/abs/dir\ty\n"},
+		"unclean":           {"a.tsv": core, "b.tsv": "extracted\tinternal/x/../y\ty\n"},
+		"outside":           {"a.tsv": core, "b.tsv": "extracted\t../outside\ty\n"},
+		"backslash":         {"a.tsv": core, "b.tsv": "extracted\tinternal\\\\x\ty\n"},
 	} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Errorf("registerCoreFamilyDir(%q, %q) must panic", bad.rel, bad.reason)
-				}
-			}()
-			registerCoreFamilyDir(bad.rel, bad.reason)
-		}()
+		fsys := fstest.MapFS{"d/README.md": {Data: []byte("x")}}
+		for f, body := range files {
+			fsys["d/"+f] = &fstest.MapFile{Data: []byte(body)}
+		}
+		if _, err := loadCoreFamily(fsys, "d"); err == nil {
+			t.Errorf("%s: loadCoreFamily must fail", name)
+		}
 	}
 }
 

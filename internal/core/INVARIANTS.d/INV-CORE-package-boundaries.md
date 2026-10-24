@@ -1,7 +1,7 @@
 - **INV-CORE-package-boundaries** The package boundaries of the `internal/core` split (ADR-116)
   hold, and no source-scanning guard over core goes blind when a file moves:
   (R1) no package extracted from core (the core family, registered one
-  `internal/testutil/srcpath/corefamily_<leaf>.go` file per package) imports `internal/core`;
+  `internal/testutil/srcpath/corefamily.d/<leaf>.tsv` row per package) imports `internal/core`;
   (R2) the keyorix packages in core's production closure are exactly the reviewed list, and none of
   the test-only packages (`srcpath.CoreTestOnlyDirs`: `internal/core/coretests`,
   `internal/core/storage/storagetest`) is among them;

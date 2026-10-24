@@ -46,7 +46,7 @@ A file- and symbol-level dependency analysis shows:
 The checks and where they live are listed in `internal/core/INVARIANTS.d/INV-CORE-package-boundaries.md`.
 
 - R1: no extracted package imports `internal/core` (go list). Extracted packages are registered in the core family
-  (`internal/testutil/srcpath`, one `corefamily_<leaf>.go` file per package).
+  (`internal/testutil/srcpath`, one `corefamily.d/<leaf>.tsv` data row per package).
 - R2: core's production closure of keyorix packages equals an exact allowlist; leaf internals live under
   `<leaf>/internal/` so the compiler refuses core importing them.
 - R3: no production file imports `storagetest` or `coretests`.

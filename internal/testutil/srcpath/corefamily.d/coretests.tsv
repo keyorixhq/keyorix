@@ -1,0 +1,2 @@
+# kind	dir	reason (README.md)
+testonly	internal/core/coretests	ADR-116 decision 2: black-box tests of internal/core moved out of the package

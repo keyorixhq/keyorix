@@ -1,8 +1,12 @@
 package srcpath
 
 import (
+	"bufio"
+	"embed"
 	"fmt"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -16,27 +20,113 @@ import (
 // of the guard (R5). The extracted-package registry is also the list R1 checks
 // (internal/core/ports: no family member imports internal/core).
 //
-// coreFamilyExtracted is declared EMPTY on purpose. Each extraction PR adds one
-// file, corefamily_<leaf>.go in this package, whose init() calls
-// registerCoreFamilyDir (CLAUDE.md, "Test registry tables": one file per entry).
-// It is a plain map in a non-test file because both internal/core/ports and the
-// guards in internal/core and internal/core/guards read it.
+// The registry is DATA, not Go: one row per file in corefamily.d (README.md
+// there). An extraction PR adds one file, corefamily.d/<leaf>.tsv, with kind
+// extracted (CLAUDE.md, "Test registry tables": one file per entry). It is data
+// so that no Go string literal in this package's non-test code names a core
+// directory: scripts/ci/select-affected.py rule 3 would otherwise make srcpath a
+// CODE seed for every internal/core change and re-test every package whose
+// tests import srcpath (PR #3695 review, F5). Keep it that way: do not write a
+// core-family path as a literal (or a quoted path in a comment, which the
+// selector's literal scan also reads) in a non-test file of this package.
 //
 // Registering a dir OUTSIDE internal/core also needs a look at the WalkDir
 // guards rooted at internal/core: they recurse, so they see subpackages of
 // internal/core, but not internal/<leaf>.
-var coreFamilyExtracted = map[string]string{}
 
-// CoreDir is internal/core, relative to the repository root.
-const CoreDir = "internal/core"
+//go:embed corefamily.d/*.tsv
+var coreFamilyData embed.FS
+
+// coreFamilyRegistry is the parsed corefamily.d: the core dir, the test-only
+// dirs and the extracted dirs (dir -> reason), all repository-relative.
+type coreFamilyRegistry struct {
+	core      string
+	testOnly  []string
+	extracted map[string]string
+}
+
+var coreFamily = mustLoadCoreFamily(coreFamilyData, "corefamily.d")
+
+// CoreDir is internal/core, relative to the repository root (the core row of
+// corefamily.d). Treat it as a constant.
+var CoreDir = coreFamily.core
 
 // CoreTestOnlyDirs are the packages ADR-116 creates for tests only
 // (decision 2): no production file may import them (R3, internal/core/guards)
 // and internal/core's production closure must not contain them (R2,
-// internal/core/ports). Repository-relative; they need not exist yet.
-var CoreTestOnlyDirs = []string{
-	"internal/core/coretests",
-	"internal/core/storage/storagetest",
+// internal/core/ports). Repository-relative, sorted; they need not exist yet.
+// The testonly rows of corefamily.d.
+var CoreTestOnlyDirs = slices.Clone(coreFamily.testOnly)
+
+func mustLoadCoreFamily(fsys fs.FS, dir string) coreFamilyRegistry {
+	reg, err := loadCoreFamily(fsys, dir)
+	if err != nil {
+		panic("srcpath: " + err.Error())
+	}
+	return reg
+}
+
+// loadCoreFamily parses every *.tsv in dir: exactly one row per file, three
+// tab-separated fields (kind, dir, reason), a clean repository-relative dir,
+// no dir twice, exactly one core row, and every other dir distinct from it.
+func loadCoreFamily(fsys fs.FS, dir string) (coreFamilyRegistry, error) {
+	reg := coreFamilyRegistry{extracted: map[string]string{}}
+	names, err := fs.Glob(fsys, path.Join(dir, "*.tsv"))
+	if err != nil {
+		return reg, err
+	}
+	if len(names) == 0 {
+		return reg, fmt.Errorf("core family registry %s is empty", dir)
+	}
+	seen := map[string]string{}
+	for _, name := range names {
+		b, err := fs.ReadFile(fsys, name)
+		if err != nil {
+			return reg, err
+		}
+		var rows [][]string
+		sc := bufio.NewScanner(strings.NewReader(string(b)))
+		for sc.Scan() {
+			line := strings.TrimRight(sc.Text(), "\r")
+			if strings.TrimSpace(line) == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			rows = append(rows, strings.Split(line, "\t"))
+		}
+		if len(rows) != 1 {
+			return reg, fmt.Errorf("%s: want exactly one row, got %d", name, len(rows))
+		}
+		row := rows[0]
+		if len(row) != 3 || row[2] == "" {
+			return reg, fmt.Errorf("%s: want kind<TAB>dir<TAB>reason, got %q", name, strings.Join(row, "|"))
+		}
+		kind, rel, reason := row[0], row[1], row[2]
+		if rel == "" || filepath.IsAbs(rel) || path.Clean(rel) != rel || strings.HasPrefix(rel, "..") || strings.Contains(rel, "\\") {
+			return reg, fmt.Errorf("%s: dir %q must be a clean, slash-separated repository-relative path", name, rel)
+		}
+		if prev, dup := seen[rel]; dup {
+			return reg, fmt.Errorf("%s: dir %s is also registered by %s", name, rel, prev)
+		}
+		seen[rel] = name
+		switch kind {
+		case "core":
+			if reg.core != "" {
+				return reg, fmt.Errorf("%s: a second core row (%s)", name, rel)
+			}
+			reg.core = rel
+		case "testonly":
+			reg.testOnly = append(reg.testOnly, rel)
+		case "extracted":
+			reg.extracted[rel] = reason
+		default:
+			return reg, fmt.Errorf("%s: unknown kind %q (core, testonly or extracted)", name, kind)
+		}
+	}
+	if reg.core == "" {
+		return reg, fmt.Errorf("core family registry %s has no core row", dir)
+	}
+	slices.Sort(reg.testOnly)
+	return reg, nil
 }
 
 var (
@@ -44,27 +134,11 @@ var (
 	coreFamilyExtra []string // absolute dirs added by AddCoreFamilyDirForTesting
 )
 
-// registerCoreFamilyDir adds one extracted package directory (repository-relative,
-// slash-separated) with the PR or brief that extracted it. It panics on a
-// duplicate, on internal/core itself and on a path that is not clean and relative.
-func registerCoreFamilyDir(rel, reason string) {
-	if rel == "" || reason == "" {
-		panic("srcpath: registerCoreFamilyDir needs a dir and a reason")
-	}
-	if rel == CoreDir || filepath.IsAbs(rel) || filepath.ToSlash(filepath.Clean(rel)) != rel || strings.HasPrefix(rel, "..") {
-		panic(fmt.Sprintf("srcpath: core family dir %q must be a clean repository-relative path other than %s", rel, CoreDir))
-	}
-	if prev, dup := coreFamilyExtracted[rel]; dup {
-		panic(fmt.Sprintf("srcpath: core family dir %q registered twice (%q and %q)", rel, prev, reason))
-	}
-	coreFamilyExtracted[rel] = reason
-}
-
 // CoreFamilyExtractedDirs returns the registered extracted package directories,
 // repository-relative and sorted. internal/core itself is not in the list.
 func CoreFamilyExtractedDirs() []string {
-	dirs := make([]string, 0, len(coreFamilyExtracted))
-	for rel := range coreFamilyExtracted {
+	dirs := make([]string, 0, len(coreFamily.extracted))
+	for rel := range coreFamily.extracted {
 		dirs = append(dirs, rel)
 	}
 	slices.Sort(dirs)

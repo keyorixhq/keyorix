@@ -16,7 +16,7 @@ import (
 // test files excluded).
 //
 // The core family registry (which packages were extracted from internal/core)
-// lives in internal/testutil/srcpath (one corefamily_<leaf>.go file per package)
+// lives in internal/testutil/srcpath (one corefamily.d/<leaf>.tsv row per package)
 // because the source-scanning guards in internal/core and internal/core/guards
 // read it too; a registry declared in this package's test files would be
 // invisible to them.
@@ -85,7 +85,7 @@ func keyorixDepsDiff(graph map[string][]string, root string, want []string) (ext
 func TestCoreFamilyNeverImportsCore(t *testing.T) {
 	dirs := srcpath.CoreFamilyExtractedDirs()
 	if len(dirs) == 0 {
-		t.Log("no package registered in the core family yet (internal/testutil/srcpath/corefamily_*.go): nothing to check")
+		t.Log("no package registered in the core family yet (internal/testutil/srcpath/corefamily.d): nothing to check")
 		return
 	}
 	for _, rel := range dirs {
