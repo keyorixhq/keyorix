@@ -44,7 +44,10 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   keeps checkpointing new rows. `--full` does not clear it. Treat it like a truncation
   (sections 2, 5, 6): compare against an external anchor, a backup or the high-water witness
   file. A `rotate-kek` or `migrate-provider` currently also produces `other key epoch`, because
-  a key change does not yet carry the state over. There is no command to accept it yet
+  a key change does not yet carry the state over. A `before a recorded break` discontinuity
+  also appears when a replica running a version from before this check saves the state during
+  a rolling upgrade (it drops the fields that place the row against the chain): stop older
+  replicas before upgrading. There is no command to accept it yet
   (`docs/design-audit-reseal-options.md`).
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.

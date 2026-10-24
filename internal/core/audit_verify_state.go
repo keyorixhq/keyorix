@@ -31,6 +31,9 @@
 // system.audit_verification_state_discontinuity event. No verification clears
 // it. A deleted row is told from an honest first start by the in-chain
 // system.audit_verification_state_initialized marker every state keeps alive.
+// A row without an audit head (signed by an older binary) cannot be placed
+// against the chain: once that marker or a discontinuity exists it can only be
+// an older row put back, and is a discontinuity too (auditVerifyStateUnplaced).
 package core
 
 import (
@@ -211,10 +214,14 @@ type auditVerifyState struct {
 	// Gen is strictly increasing across saves; Bind is the trail at save time.
 	Gen  uint64             `json:"gen"`
 	Bind auditVerifyBinding `json:"bind"`
-	// AuditHead is the highest audit event id at save time (0 on rows saved
-	// before it existed): a row may not claim rows past the head, nor predate a
-	// break event after it while lacking that break.
+	// AuditHead is the highest audit event id at save time: a row may not claim
+	// rows past the head, nor predate a break event after it while lacking that
+	// break. Placed is set on every row this binary saves, so AuditHead 0 on a
+	// placed row means the chain was empty, never "unknown". An unplaced row was
+	// signed by a binary from before AUDIT-VERIFY-STATE-1 (or re-signed by one,
+	// which drops these fields and Discontinuity): see auditVerifyStateUnplaced.
 	AuditHead     uint                      `json:"audit_head,omitempty"`
+	Placed        bool                      `json:"placed,omitempty"`
 	Pin           *auditVerifyPin           `json:"pin,omitempty"`
 	Rejected      *auditVerifyRejection     `json:"rejected,omitempty"`
 	Discontinuity *auditVerifyDiscontinuity `json:"discontinuity,omitempty"`
@@ -449,9 +456,8 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 			return c.discontinuedAuditVerifyState(s, kind, why), "", nil
 		}
 	}
-	// Rows saved before AuditHead existed (s.AuditHead == 0) cannot be placed
-	// against the chain; the replay checks below still apply to them.
-	if s.AuditHead > 0 {
+	if s.Placed {
+		// AuditHead is exact, 0 included (saved on an empty chain).
 		switch {
 		case s.Failure == nil && ev.failure > s.AuditHead:
 			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak,
@@ -460,6 +466,8 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 			return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak,
 				fmt.Sprintf("the persisted verification state was saved at audit event #%d without the discontinuity recorded at audit event #%d (an older row put back to erase it)", s.AuditHead, ev.discontinuity)), "", nil
 		}
+	} else if why := auditVerifyStateUnplaced(ev); why != "" {
+		return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak, why), "", nil
 	}
 	untrusted := func(why string) (*auditVerifyState, string, error) {
 		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job},
@@ -474,6 +482,22 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	}
 	c.bumpAuditVerifyGen(s.Gen)
 	return s, "", nil
+}
+
+// auditVerifyStateUnplaced judges an authentic row without Placed, which this
+// binary never writes. Only the binary from before AUDIT-VERIFY-STATE-1 signs
+// such rows, and it never appends the in-chain marker or a discontinuity: once
+// either exists, a row saved by this binary has been placed, so an unplaced row
+// is an older row put back, or an older replica's re-sign that dropped a
+// discontinuity (a mixed-version rolling upgrade). Both erase evidence, so both
+// are a discontinuity. Without either event (an honest upgrade, the first load
+// after it) the row is continued; the replay checks still apply. A failure
+// event alone cannot place it: the older binary appends those too.
+func auditVerifyStateUnplaced(ev auditVerifyEvidence) string {
+	if id := max(ev.marker, ev.discontinuity); id > 0 {
+		return fmt.Sprintf("the persisted verification state carries no audit head (signed by, or re-signed by, a server version from before audit event #%d recorded that the current state format is in use): an older row put back, or an older replica that dropped its fields", id)
+	}
+	return ""
 }
 
 // auditCheckpointTrailUnauthenticated describes a latest checkpoint or
@@ -654,6 +678,7 @@ func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyS
 	st.KID = c.auditCkptKeyVersion
 	st.Bind = bind
 	st.AuditHead = head
+	st.Placed = true
 	payload, err := json.Marshal(st)
 	if err != nil {
 		return err
