@@ -1097,6 +1097,52 @@ before upgrading the CLI:
   "an internal error occurred". Behaviour is unchanged: the target is still refused unless a
   server operator sets that option.
 
+## 6w. SECURITY: audit Vault access migrated with keyorix-migrate v0.96.0–v0.96.3
+
+If you ran `keyorix-migrate vault apply-access` with v0.96.0, v0.96.1, v0.96.2 or v0.96.3,
+some migrated machine identities may hold grants wider than their Vault policy: a policy
+path narrower than the project/environment it was mapped to (one secret, a sub-folder, part
+of a `--path-map` prefix) was granted on the whole environment, and `list` was mapped to
+`secrets.read` in every stanza: `list`-only and KV v2 `metadata/` stanzas, and also write
+stanzas that list (`["create", "update", "list"]`, `["delete", "list"]`), whose identity
+could then read every secret value in its environment (`list-as-read`). Upgrading `keyorix-migrate` does not change
+grants that already exist. With the new `keyorix-migrate`, run (read-only, same flags as the
+original `apply-access`; the Keyorix token must see every project, i.e. hold `secrets.read`
+at the global scope and not be a project-restricted PAT):
+
+```sh
+keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
+  --server https://keyorix.example.com --token-file ./pat.txt \
+  --k8s-issuer https://k8s.example.com --path-map <the same --path-map values>
+```
+
+It lists each grant that is wider than its Vault policy, why, and the API call that revokes
+exactly that grant. It exits 1 when it finds any, and also when the audit is incomplete
+because a Vault input (`sys/mounts`, the policy list, a policy, an auth role list or role)
+could not be read, or because the Keyorix token cannot see every project (the project list
+holds only the projects a token may read, so grants into the others would be missed): grant the
+Vault token the `healthscan-policy.hcl` stanzas, use a Keyorix token with global `secrets.read`,
+and re-run until it exits 0. `--json` prints `{"complete", "warnings", "findings"}`. Kubernetes roles are audited
+only with `--k8s-issuer` (it warns when they exist and the flag is missing). Revoke the
+findings, then re-run `plan-access`: the narrow stanzas are now reported for review instead
+of widened.
+
+Two more shapes, both in every release that shipped `plan-access`:
+
+- **Cross-mount scopes** (`cross-mount-scope`): under the default convention a policy on one KV
+  mount (`secret/data/team-a/prod/*`) was granted on `team-a/prod` even when another KV mount
+  also holds `team-a/prod/` paths that land there. `audit-access` now lists every KV mount
+  (names only) and reports such grants. It sees today's Vault tree: a mount emptied since the
+  migration is not reported, and a mount it cannot list counts as holding paths (reported).
+  A `plan-access` file written before this release is refused by `apply-access`: re-run
+  `plan-access`.
+- **`secrets.read` implies listing** (known residual, not revocable by an upgrade): a migrated
+  `secrets.read` grant also lists secret names and reads version metadata in its scope, which
+  a Vault policy with `read` on `data/` but no `list`/`read` on `metadata/` did not allow.
+  Never values. `plan-access` now names every such policy ("Access added beyond Vault" in the
+  report, `implied_access` in the JSON); if names must stay hidden for one of them, revoke its
+  grant and grant the secrets by hand.
+
 ## 7. Rollback
 
 The step-by-step version, with the commands verified on 0.96.1 → 0.96.3 (Docker
