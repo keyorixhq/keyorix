@@ -317,13 +317,17 @@ func (c *KeyorixCore) PrepareAuditKeyTransition(ctx context.Context, newKey []by
 			return fmt.Errorf("audit key transition: save the verification state: %w", err)
 		}
 		rejected = rej
+		var f *auditVerifyFailure
 		if !v.Valid {
-			failed = recordAuditVerifyFailure(st, c.now(), auditKeyTransitionSource, v.FirstBrokenID, "before key change: "+v.Reason)
+			f = recordAuditVerifyFailure(st, c.now(), auditKeyTransitionSource, v.FirstBrokenID, "before key change: "+v.Reason)
 		}
 		if err := c.saveAuditVerifyState(ctx, st); err != nil {
 			return fmt.Errorf("audit key transition: save the verification state: %w", err)
 		}
-		saved = st
+		// The failure event names st's generation: report it only once that
+		// generation is stored (as WriteAuditCheckpointIncremental does). A
+		// retried prepare walks the same broken chain and records it then.
+		saved, failed = st, f
 		if err := c.aktHook(aktStepPrepareState); err != nil {
 			return err
 		}
