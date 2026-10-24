@@ -115,10 +115,10 @@ Not searched (so not in the list):
 | R | database_tls.go:87 | `is not a valid sslmode` |
 | R | database_tls.go:286 | `cannot be combined with storage.database.dsn` |
 | C | database_tls.go:144 | `when dsn is set` (ssl_mode vs dsn disagree) |
-| C | database_tls.go:304 | `ssl_root_cert is set but storage.database.ssl_mode is disable` |
+| C | database_tls.go:305, 319, 345 | `ssl_root_cert is set but storage.database.ssl_mode is` disable/allow/prefer, `storage.database.dsn sets sslrootcert but its effective sslmode is` |
 | C | database_tls.go:193-233 | CA file: not a regular file, `writable by group or others, refusing to trust it`, larger than limit, `contains a private key`, no PEM certificate |
-| C | database_tls.go:340, 345 | `selects a PostgreSQL connection service` (dsn / `PGSERVICE`) |
-| C | database_tls.go:454-603 | connection string syntax errors (`malformed`, `unterminated`, `forbidden NUL byte`) |
+| C | database_tls.go:368, 373 | `selects a PostgreSQL connection service` (dsn / `PGSERVICE`) |
+| C | database_tls.go:482-631 | connection string syntax errors (`malformed`, `unterminated`, `forbidden NUL byte`) |
 | C | postgres_dsn.go:69, 289 | `dsn already contains a password`, `the PostgreSQL driver's connection settings differ from what the TLS` |
 
 ### Database and storage

@@ -1,0 +1,3 @@
+### Security
+
+- `keyorix-migrate vault plan-access` / `apply-access` no longer turn a narrow Vault policy into a wider Keyorix grant. A policy path that covers only part of the Vault subtree mapped to a project/environment (an exact secret path, a deeper subtree, part of a `--path-map` prefix, or one of two `--path-map` entries into the same scope) is now Unmappable (`path-narrower-than-scope`) instead of a scope-wide grant, and KV v2 `metadata/` stanzas and `list`-only stanzas are Unmappable (`metadata-only`) instead of `secrets.read`. Shipped in v0.96.0–v0.96.3: installs that ran `apply-access` with those releases should check their migrated grants (see the release notes for the audit command). Found by the RD-SMT-SPIKE-1 SMT check.

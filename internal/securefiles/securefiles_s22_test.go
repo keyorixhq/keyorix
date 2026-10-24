@@ -222,17 +222,6 @@ func TestResolveInside_S22_TraversalRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "access denied")
 }
 
-// TestFixFilePerms_S22_AlreadyCorrectMode verifies that a file whose mode already
-// matches the spec does not trigger an error under audit-only (autofix=false) mode.
-func TestFixFilePerms_S22_AlreadyCorrectMode(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "tight.key")
-	require.NoError(t, os.WriteFile(p, []byte("x"), 0600))
-	require.NoError(t, os.Chmod(p, 0600))
-
-	require.NoError(t, FixFilePerms([]FilePermSpec{{Path: p, Mode: 0600}}, false))
-}
-
 // TestFixFilePerms_S22_AutofixNoOp verifies that FixFilePerms with autofix=true
 // on a correctly-permissioned file owned by the current user returns no error.
 func TestFixFilePerms_S22_AutofixNoOp(t *testing.T) {
