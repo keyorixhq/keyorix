@@ -6,7 +6,9 @@
 # affect (scripts/ci/select-affected.py). A guard that scans the whole tree can
 # be broken by a change to a package it does not import, so selection must never
 # decide whether a guard runs. ci.yml's repo-guards job runs this script on every
-# selected merge-queue run; a full run gets the same tests through test-suite.
+# selected merge-queue run (a full run gets the same tests through test-suite)
+# and on every pull_request against refs/pull/N/merge, so a guard failure is
+# found on the PR before it can cost a queue round (MQ-ROUNDS-1).
 #
 # What runs (the same two sets as the coordinator's preflight, widened from its
 # fixed package list to the whole root module):
