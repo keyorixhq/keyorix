@@ -8,7 +8,11 @@
 #   - each pattern, in any letter case, fails in a commit message (head, a
 #     commit in the middle of the range, a merge commit), in the PR title and
 #     in the PR body;
+#   - the exact lines the Claude Code harness appends (co-author trailer,
+#     session trailer, the bracketed and the plain footer, the bare link) fail;
 #   - near misses (another co-author, the word Claude alone) pass;
+#   - a PR body with CRLF or CR-only line breaks fails on the right line and
+#     no carriage return reaches the output;
 #   - a commit ADDING the real rule text (CLAUDE.md, web/CLAUDE.md,
 #     docs/adr-081-github-flow-branching.md) under a clean message passes,
 #     while the same text used as a message fails (so the files really carry
@@ -70,6 +74,13 @@ samples=(
   'Generated with [Claude Code](https://example.invalid)'
   'see https://Claude.AI/code for details'
   'Co-Authored-By: Someone <NoReply@Anthropic.com>'
+  'Generated with Claude Code'
+  'see https://Claude.com/claude-code'
+  # The exact lines the Claude Code harness appends.
+  'Co-Authored-By: Claude <noreply@anthropic.com>'
+  'Claude-Session: https://claude.ai/code/session_x'
+  '🤖 Generated with [Claude Code](https://claude.com/claude-code)'
+  '🤖 Generated with Claude Code'
 )
 near_misses=(
   'Co-Authored-By: Jane Doe <jane@example.invalid>'
@@ -77,6 +88,8 @@ near_misses=(
   'generated with go generate'
   'anthropic.com/news was cited in a doc'
   'Signed-off-by: Tester <tester@example.invalid>'
+  'generated with the openapi code generator'
+  'claude.com is a domain, claude-code a word'
 )
 
 new_repo() {
@@ -144,6 +157,32 @@ else
   bad "hit output not labelled as expected:"$'\n'"$out"
 fi
 
+# A PR body as GitHub sends it, with CRLF line endings, ending with the footer
+# the harness appends: it fails, the hit names the right line, and no carriage
+# return reaches the output.
+crlf_body=$'## Summary\r\n- fix the thing\r\n\r\n## Test plan\r\n- [x] tests pass\r\n\r\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\r\n'
+expect 1 "CRLF body with the footer" env PR_BODY="$crlf_body" bash "$script"
+out=$(env PR_BODY="$crlf_body" bash "$script" 2>&1 || true)
+case "$out" in
+  *$'\r'*) bad "carriage return in the hit output:"$'\n'"$out" ;;
+  *) ok ;;
+esac
+if printf '%s\n' "$out" | grep -q '^  PR body, line 7:🤖 Generated with \[Claude Code\](https://claude.com/claude-code)$'; then
+  ok
+else
+  bad "CRLF hit not reported as line 7 without the CR:"$'\n'"$out"
+fi
+expect 1 "CRLF body with the plain footer" env PR_BODY=$'## Summary\r\nok\r\n\r\n🤖 Generated with Claude Code\r\n' bash "$script"
+cr_body=$'## Summary\rok\rCo-Authored-By: Claude <noreply@anthropic.com>\r'
+expect 1 "CR-only line breaks" env PR_BODY="$cr_body" bash "$script"
+out=$(env PR_BODY="$cr_body" bash "$script" 2>&1 || true)
+if printf '%s\n' "$out" | grep -q '^  PR body, line 3:Co-Authored-By: Claude <noreply@anthropic.com>$' && [ "${out%%$'\r'*}" = "$out" ]; then
+  ok
+else
+  bad "CR-only hit not reported as line 3 without the CR:"$'\n'"$out"
+fi
+expect 0 "clean CRLF body" env PR_BODY=$'## Summary\r\n- fix\r\n\r\nSession: X\r\n' bash "$script"
+
 # --- the rule text in the repo is file content, not a message -------------------
 rule_files=(CLAUDE.md web/CLAUDE.md docs/adr-081-github-flow-branching.md)
 d="$tmp/rules"
@@ -182,7 +221,7 @@ u="$tmp/unrelated"
 new_repo "$u"
 git -C "$r" fetch -q "$u" main:unrelated
 expect 2 "no merge base" in_repo bash "$script" "$base..unrelated"
-if [ "$(bash "$script" --patterns | grep -c .)" -eq 5 ]; then ok; else bad "--patterns does not list 5 patterns"; fi
+if [ "$(bash "$script" --patterns | grep -c .)" -eq 6 ]; then ok; else bad "--patterns does not list 6 patterns"; fi
 
 # --- the commit-msg hook in a real commit ---------------------------------------
 h="$tmp/hooked"

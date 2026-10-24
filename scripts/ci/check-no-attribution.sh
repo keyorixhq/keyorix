@@ -36,8 +36,9 @@ set -euo pipefail
 PATTERNS=(
   'co-authored-by:[[:space:]]*claude'
   'claude-session'
-  'generated with \[claude'
+  'generated[[:space:]]+with[[:space:]]*\[?claude'
   'claude\.ai/code'
+  'claude\.com/claude-code'
   'noreply@anthropic\.com'
 )
 
@@ -57,10 +58,14 @@ found=0
 # this shell, never as a pipeline stage, so `found` survives (a `| check` would
 # set it in a subshell and pass every hit). The matched line is printed after a
 # label, so a line of untrusted PR text can never start an output line (a
-# GitHub Actions workflow command must).
+# GitHub Actions workflow command must). Carriage returns become line breaks
+# first (a PR body edited on github.com has CRLF line endings), so no CR is
+# printed and a CR-only line break still splits lines.
 check() {
-  local label=$1 hits
-  hits=$(printf '%s\n' "$2" | grep -inE "${grep_args[@]}" || true)
+  local label=$1 text hits
+  text=${2//$'\r\n'/$'\n'}
+  text=${text//$'\r'/$'\n'}
+  hits=$(printf '%s\n' "$text" | grep -inE "${grep_args[@]}" || true)
   [ -n "$hits" ] || return 0
   found=1
   while IFS= read -r hit; do
