@@ -271,6 +271,11 @@ func roleScopeEntryPoints(w *roleScopeWorld) map[string]func(ctx context.Context
 			_, err := c.InviteGlobal(ctx, "ivan@example.com", "", []ProjectAssignment{{ProjectID: w.p1, Role: "system_admin"}}, w.adminID, 0)
 			return err
 		},
+		"CreateUserWithAssignments install-wide role in a project assignment": func(ctx context.Context) error {
+			_, err := c.CreateUserWithAssignments(ctx, &CreateUserRequest{Username: "frank", Email: "frank@example.com", DisplayName: "Frank", Password: "Correct-Horse-Battery-9"},
+				"", []ProjectAssignment{{ProjectID: w.p1, Role: "system_admin"}}, w.adminID, false)
+			return err
+		},
 		"AssignRoleToGroup new custom role (project by default) globally": func(ctx context.Context) error {
 			return c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customProject.ID, Scope{}, false)
 		},
@@ -294,6 +299,8 @@ func runRoleScopeEntryPoints(t *testing.T, c *KeyorixCore) {
 	require.Error(t, err, "no JIT user may be created behind a refused default_role")
 	_, err = c.storage.GetUserByEmail(ctx, "bob@example.com")
 	require.Error(t, err, "no user may be created behind a refused system role")
+	_, err = c.storage.GetUserByEmail(ctx, "frank@example.com")
+	require.Error(t, err, "no user may be created behind a refused project assignment")
 	grants, err := c.ListRoleGrantsOutsideAssignableScope(ctx)
 	require.NoError(t, err)
 	require.Empty(t, grants)

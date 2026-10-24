@@ -149,3 +149,45 @@ func TestAddProjectMemberHTTP_InstallWideRoleIs400(t *testing.T) {
 	require.Contains(t, body, "install-wide")
 	require.Empty(t, w.userGrants(t, 3))
 }
+
+// TestCreateUserHTTP_InstallWideRoleInAProjectAssignmentIsRefused is
+// REVIEW-3585-DEEP-1 F2: POST /users wrote {system_admin @ project 2} because
+// CreateUserWithAssignments skipped the scope check on its project assignments.
+// Refused now, and neither the user nor any grant is written.
+func TestCreateUserHTTP_InstallWideRoleInAProjectAssignmentIsRefused(t *testing.T) {
+	w := newRoleScopeHTTPWorld(t)
+	// The default system role, so the request reaches its project assignments.
+	require.NoError(t, w.db.Create(&models.Role{ID: 12, Name: "system_viewer", NameFolded: "system_viewer"}).Error)
+	users := func() int64 {
+		var n int64
+		require.NoError(t, w.db.Model(&models.User{}).Count(&n).Error)
+		return n
+	}
+	before := users()
+
+	status, body := w.post(t, "/api/v1/users",
+		`{"username":"frank","email":"frank@test.com","display_name":"Frank","password":"Correct-Horse-Battery-9","project_assignments":[{"project_id":2,"role":"system_admin"}]}`)
+	require.Equal(t, http.StatusBadRequest, status, body)
+	require.Contains(t, body, "role system_admin is install-wide")
+	require.Equal(t, before, users(), "no user may be created behind a refused assignment")
+	var grants int64
+	require.NoError(t, w.db.Model(&models.UserRole{}).Where("role_id = ?", 11).Count(&grants).Error)
+	require.Zero(t, grants, "no system_admin grant may be written")
+
+	// Positive control: a project role in the same assignment is created.
+	status, body = w.post(t, "/api/v1/users",
+		`{"username":"frank","email":"frank@test.com","display_name":"Frank","password":"Correct-Horse-Battery-9","project_assignments":[{"project_id":2,"role":"project_developer"}]}`)
+	require.Equal(t, http.StatusCreated, status, body)
+	var frank models.User
+	require.NoError(t, w.db.Where("username = ?", "frank").First(&frank).Error)
+	require.Equal(t, []models.UserRole{{UserID: frank.ID, RoleID: 10, ProjectID: 2}, {UserID: frank.ID, RoleID: 12}},
+		stripUserRoleIDs(w.userGrants(t, frank.ID)))
+}
+
+func stripUserRoleIDs(in []models.UserRole) []models.UserRole {
+	out := make([]models.UserRole, 0, len(in))
+	for _, g := range in {
+		out = append(out, models.UserRole{UserID: g.UserID, RoleID: g.RoleID, ProjectID: g.ProjectID, EnvironmentID: g.EnvironmentID})
+	}
+	return out
+}

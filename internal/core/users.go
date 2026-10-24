@@ -439,6 +439,11 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 	if err != nil {
 		return storage.RoleGrant{}, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
 	}
+	// #3546: an install-wide role never lands at one project, the same check
+	// AssignUserRole and the InviteGlobal assignments apply.
+	if err := c.requireScopeValidForRoleModel(ctx, r, Scope{ProjectID: a.ProjectID}); err != nil {
+		return storage.RoleGrant{}, err
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, r.ID, Scope{ProjectID: a.ProjectID}, actorIsMachine); err != nil {
 		return storage.RoleGrant{}, err
 	}

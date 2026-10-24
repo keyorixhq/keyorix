@@ -26,4 +26,8 @@
   **Not covered**: a grant write outside internal/core is not scanned (transports reach storage
   only through core, see the registry test's header); the reaching-method derivation is
   name-based (it can over-include, never under-include, a method reached by a direct or method
-  call; a call through a stored func value is not followed).
+  call; a call through a stored func value is not followed). The AST scan works per function: a
+  function that calls the check once is satisfied for every grant it writes, so a second grant
+  path in the same function needs an entry-point case (REVIEW-3585-DEEP-1 F2:
+  `CreateUserWithAssignments` checked its system role but not its project assignments; now
+  covered by the "CreateUserWithAssignments install-wide role in a project assignment" case).
