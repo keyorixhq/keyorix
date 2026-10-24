@@ -44,6 +44,15 @@ func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, 
 // SetProjectMemberRole replaces the user's role(s) at the project scope with
 // roleName, adding the member if they had none. See AddProjectMember for actorID
 // semantics.
+//
+// It is a role-set replacement (role_set_replace.go, #3488): the member's other
+// project roles are removed first, in one transaction, their rows owed, then
+// roleName is granted fail closed; if the grant fails after the removals, the error
+// is a *PartialMutationError. A demotion that would leave the project with no
+// roles.assign holder is refused (#236), under projectAdminGuardLockKey (#1646). An
+// admin-to-admin swap of the project's only administrator, whose removals alone
+// would strand the project, is applied as ONE fail-closed transaction instead: it
+// changes nothing during an audit outage rather than leave the project ungoverned.
 func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
 	role, err := c.storage.GetRoleByName(ctx, roleName)
 	if err != nil {
@@ -62,59 +71,18 @@ func (c *KeyorixCore) SetProjectMemberRole(ctx context.Context, actorID, project
 			return err
 		}
 	}
-	// Refuse a demotion that would leave the project with no roles.assign holder
-	// (#236): after this call the user's only project-scope role is roleName, so
-	// check whether THAT role still carries roles.assign before touching anything.
-	// #1646: the guard's read and the role changes below must be serialized across
-	// every replica of an HA deployment, not just within this process —
-	// projectAdminGuardMu (an in-process sync.Mutex) alone let two independent
-	// replicas each observe "another admin survives" and both proceed, jointly
-	// stripping the project of every roles.assign holder. WithNamedLock's
-	// Postgres advisory lock, keyed per project, closes that; see its doc
-	// comment in internal/core/storage/interface.go.
-	var settles []func() // owed rows of the removals; appended after the lock is released
-	err = c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(projectID), func(ctx context.Context) error {
-		if err := c.guardLastProjectAdmin(ctx, projectID, userID, existing, []uint{role.ID}); err != nil {
-			return err
-		}
-		hasTarget := false
-		for _, rid := range existing {
-			if rid == role.ID {
-				hasTarget = true
-				continue
-			}
-			// removeUserRoleUnguarded, not RemoveUserRole: the guardLastProjectAdmin
-			// call above already validated the FULL before/after transition
-			// (existing -> []uint{role.ID}) atomically under this call's own
-			// WithNamedLock. RemoveUserRole's own project-scope guard can only see
-			// this one role's removal in isolation -- blind to the AssignUserRole
-			// below that's about to restore admin coverage -- and would falsely
-			// refuse swapping the project's sole administrator directly from one
-			// admin-tier role to another (see removeUserRoleUnguarded's doc).
-			settle, rerr := c.removeUserRoleUnguarded(ctx, actorID, userID, rid, scope)
-			if rerr != nil {
-				return rerr
-			}
-			settles = append(settles, settle)
-		}
-		if hasTarget {
-			// The user already held exactly roleName at this scope (no other
-			// project-scoped role to remove above, so removeUserRoleUnguarded's
-			// own LogRoleRemoved never fired either) -- a complete no-op that
-			// would otherwise leave zero trail this call was made (F5,
-			// audit-completeness campaign). AssignUserRole/removeUserRoleUnguarded
-			// already cover every branch that actually changes a role grant.
-			c.writeAuditEvent(ctx, "project_member.role_confirmed_unchanged", actorPtr(actorID), nil,
-				fmt.Sprintf("project %d member %d already held role %q; no change made", projectID, userID, roleName))
-			return nil
-		}
-		return c.AssignUserRole(ctx, actorID, userID, role.ID, scope, actorIsMachine)
-	})
-	// Each settle exists only for a removal that committed, even if a later step failed.
-	for _, settle := range settles {
-		settle()
+	if slices.Equal(existing, []uint{role.ID}) {
+		// The user already held exactly roleName at this scope: a complete no-op
+		// that would otherwise leave zero trail this call was made (F5,
+		// audit-completeness campaign).
+		c.writeAuditEvent(ctx, "project_member.role_confirmed_unchanged", actorPtr(actorID), nil,
+			fmt.Sprintf("project %d member %d already held role %q; no change made", projectID, userID, roleName))
+		return nil
 	}
-	return err
+	return c.replaceUserRoleSet(ctx, roleSetReplace{
+		actorID: actorID, userID: userID, scope: scope, actorIsMachine: actorIsMachine,
+		want: []uint{role.ID}, atomicAdminSwap: true,
+	})
 }
 
 // projectAdminGuardLockKey is the WithNamedLock key for guardLastProjectAdmin's
