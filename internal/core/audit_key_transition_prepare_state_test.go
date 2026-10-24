@@ -46,6 +46,42 @@ func TestAuditKeyTransition_StateForgedDuringPrepareNotCarried(t *testing.T) {
 	})
 }
 
+// An older state row, authentic under the old key, is put back after prepare
+// saved a newer one and before the record names it (a DB writer replaying a
+// row from before a recorded failure). Its HMAC is valid, so only the
+// generation check stops it: the record must not name it, completion does not
+// carry it over, and the state reads as a discontinuity under the new key
+// (review of #3648 at 13b481af, L1).
+func TestAuditKeyTransition_OlderAuthenticStateDuringPrepareNotCarried(t *testing.T) {
+	fcRun(t, func(t *testing.T, e *fcEnv) {
+		ctx := context.Background()
+		fcCertify(t, e)
+		older := fcStateValue(t, e.db)
+		fcTick(t, e, e.c)
+		require.NotEqual(t, older, fcStateValue(t, e.db), "precondition: a newer state row was saved")
+		s, _, _ := e.c.decodeAuditVerifyState(older)
+		require.NotNil(t, s, "precondition: the older row authenticates under the old key")
+		e.c.auditKeyTransitionHook = func(step string) error {
+			if step == aktStepPrepareState {
+				fcSetStateValue(t, e.db, older)
+			}
+			return nil
+		}
+		require.NoError(t, e.c.PrepareAuditKeyTransition(ctx, aktNewKey, "v2"))
+		recs, err := parseAuditKeyTransitions(aktTransitionsValue(t, e.db))
+		require.NoError(t, err)
+		require.Len(t, recs, 1)
+		assert.NotEqual(t, auditDigest(older), recs[0].State, "the record names an older (replayed) authentic state row")
+
+		c2 := e.restart()
+		c2.SetAuditCheckpointKey(aktNewKey, "v2")
+		_, _ = c2.CompleteAuditKeyTransition(ctx)
+		c2.SeedAuditWatermark(ctx)
+		fcTick(t, e, c2)
+		assertDiscontinuity(t, e, c2, auditDiscOtherEpoch)
+	})
+}
+
 // aktForgeStateRow rewrites a state row's payload without the key: the pin is
 // dropped and the signature is junk; the key version label stays v1.
 func aktForgeStateRow(t *testing.T, val string) string {
