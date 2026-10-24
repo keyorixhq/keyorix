@@ -103,13 +103,32 @@ type ScopeResolution struct {
 	EnvironmentID int // 0 = global-within-project.
 }
 
-// Resolve maps a raw Vault ACL policy path (e.g. "secret/data/team-a/prod/db-password", or
+// Resolve maps a raw Vault ACL policy path (e.g. "secret/data/team-a/prod/*", or
 // "secret/data/team-a/*") to a Keyorix scope. ok=false means the path is Unmappable —
 // category/reason explain why, for the caller to attach to the resulting Item.
+//
+// A Keyorix grant covers its whole (project, environment), so a path resolves only when it
+// covers the whole Vault subtree mapped to that scope: a trailing-glob path whose literal part
+// is the override prefix (or a prefix of it), or "<project>/*" / "<project>/<env>/*" under the
+// default convention. Anything narrower (an exact secret path, a deeper subtree, part of an
+// override, one of two overrides into the same scope) is CategoryNarrowerThanScope, and a KV v2
+// metadata/ path is CategoryMetadataOnly: granting the scope there would let the migrated
+// principal read secret values Vault never let it read.
 func (m *PathMapper) Resolve(rawPolicyPath string) (res ScopeResolution, category UnmappableCategory, reason string, ok bool) {
+	if m.isKVMetadataPath(rawPolicyPath) {
+		return ScopeResolution{}, CategoryMetadataOnly, fmt.Sprintf("%q is a KV v2 metadata/ path: it grants key listing and version metadata, never secret values, and Keyorix has no permission that narrow — secrets.read would expose every value in the scope", rawPolicyPath), false
+	}
+
 	for _, ov := range m.overrides {
 		if strings.HasPrefix(rawPolicyPath, ov.prefix) {
-			return ScopeResolution{ProjectID: ov.projectID, EnvironmentID: ov.environmentID}, "", "", true
+			res := ScopeResolution{ProjectID: ov.projectID, EnvironmentID: ov.environmentID}
+			if !globCovers(rawPolicyPath, dirPrefix(ov.prefix)) {
+				return ScopeResolution{}, CategoryNarrowerThanScope, fmt.Sprintf("%q covers only part of --path-map %q (project %d / environment %d): a grant on that scope would also reach every other secret in it, which this policy never allowed — import that Vault subtree into its own environment and map it with --path-map %q=<projectID>:<environmentID>, or grant manually", rawPolicyPath, ov.prefix, ov.projectID, ov.environmentID, strings.TrimSuffix(rawPolicyPath, "*")), false
+			}
+			if reason := m.sharedScopeReason(rawPolicyPath, res); reason != "" {
+				return ScopeResolution{}, CategoryNarrowerThanScope, reason, false
+			}
+			return res, "", "", true
 		}
 	}
 
@@ -127,25 +146,84 @@ func (m *PathMapper) Resolve(rawPolicyPath string) (res ScopeResolution, categor
 	if !found {
 		return ScopeResolution{}, CategoryUnresolvedPathScope, fmt.Sprintf("%q: no Keyorix project named %q", rawPolicyPath, segments[0]), false
 	}
+	// Only "<project>/*" and "<project>/<env>/*" cover a whole scope. An exact path ("team-a/prod",
+	// "team-a/prod/db") or a deeper glob ("team-a/prod/db/*") names part of it.
+	scopeGlob := strings.HasSuffix(rest, "/*") && len(segments) <= 2 && !strings.ContainsAny(strings.TrimSuffix(rest, "/*"), "*+")
 	if len(segments) == 1 {
+		if !scopeGlob {
+			return ScopeResolution{}, CategoryNarrowerThanScope, fmt.Sprintf("%q is narrower than project %q: only %q/%s/* covers the whole project", rawPolicyPath, project.Name, mount, project.Name), false
+		}
 		// A literal project segment followed only by a trailing wildcard (e.g. "team-a/*")
 		// provably covers every environment under the project, present and future — the one
 		// case ADR-114 names explicitly as a legitimate use of the env=0 sentinel, not a
 		// fallback for "couldn't resolve the environment."
-		return ScopeResolution{ProjectID: project.ID, EnvironmentID: 0}, "", "", true
+		return m.defaultScope(rawPolicyPath, ScopeResolution{ProjectID: project.ID, EnvironmentID: 0})
 	}
 	env, found := m.envsByProjectID[project.ID][segments[1]]
 	if !found {
 		return ScopeResolution{}, CategoryUnresolvedPathScope, fmt.Sprintf("%q: no Keyorix environment named %q in project %q", rawPolicyPath, segments[1], project.Name), false
 	}
-	return ScopeResolution{ProjectID: project.ID, EnvironmentID: env.ID}, "", "", true
+	if !scopeGlob {
+		return ScopeResolution{}, CategoryNarrowerThanScope, fmt.Sprintf("%q is narrower than environment %q of project %q: a Keyorix grant covers every secret in the environment, and only a policy on the whole environment path (\"<mount>/%s/%s/*\") can be migrated to one — grant the individual secrets manually", rawPolicyPath, env.Name, project.Name, project.Name, env.Name), false
+	}
+	return m.defaultScope(rawPolicyPath, ScopeResolution{ProjectID: project.ID, EnvironmentID: env.ID})
 }
 
-// stripMountAndKVInfix finds the KV mount rawPolicyPath falls under (longest-path match, so a
-// mount path that is itself a prefix of another mount's path never wins incorrectly) and
-// returns the mount-relative remainder with KV v2's fixed "data/"/"metadata/" routing segment
-// removed. ok=false means rawPolicyPath is not under any known KV mount at all.
-func (m *PathMapper) stripMountAndKVInfix(rawPolicyPath string) (mount, rest string, ok bool) {
+// defaultScope returns a default-convention resolution unless an override also routes other
+// Vault paths into the same scope (see sharedScopeReason).
+func (m *PathMapper) defaultScope(rawPolicyPath string, res ScopeResolution) (ScopeResolution, UnmappableCategory, string, bool) {
+	if reason := m.sharedScopeReason(rawPolicyPath, res); reason != "" {
+		return ScopeResolution{}, CategoryNarrowerThanScope, reason, false
+	}
+	return res, "", "", true
+}
+
+// sharedScopeReason reports why res cannot be granted for rawPolicyPath when a --path-map
+// entry that the policy does not cover maps into an overlapping scope: the grant would also
+// reach that override's secrets. "" means no such override exists.
+func (m *PathMapper) sharedScopeReason(rawPolicyPath string, res ScopeResolution) string {
+	for _, ov := range m.overrides {
+		if ov.projectID != res.ProjectID {
+			continue
+		}
+		if ov.environmentID != res.EnvironmentID && ov.environmentID != 0 && res.EnvironmentID != 0 {
+			continue
+		}
+		if globCovers(rawPolicyPath, dirPrefix(ov.prefix)) {
+			continue
+		}
+		return fmt.Sprintf("%q resolves to project %d / environment %d, but --path-map %q also maps other Vault paths into that scope: a grant there would reach those secrets too, which this policy never allowed — map each Vault subtree to its own environment, or grant manually", rawPolicyPath, res.ProjectID, res.EnvironmentID, ov.prefix)
+	}
+	return ""
+}
+
+// dirPrefix treats a --path-map prefix as a directory: "secret/data" and "secret/data/" both
+// mean everything under "secret/data/".
+func dirPrefix(prefix string) string {
+	return strings.TrimSuffix(prefix, "/") + "/"
+}
+
+// globCovers reports whether Vault policy path policyPath matches every path under dir: only a
+// trailing-glob path whose literal part is a prefix of dir does. An exact path never covers a
+// directory.
+func globCovers(policyPath, dir string) bool {
+	literal, wildcard := wildcardSplit(policyPath)
+	return wildcard && !strings.ContainsAny(literal, "*+") && strings.HasPrefix(dir, literal)
+}
+
+// isKVMetadataPath reports whether rawPolicyPath is under a KV v2 mount's metadata/ segment.
+func (m *PathMapper) isKVMetadataPath(rawPolicyPath string) bool {
+	km, ok := m.kvMountFor(rawPolicyPath)
+	if !ok || km.KVVersion != 2 {
+		return false
+	}
+	rest := strings.TrimPrefix(rawPolicyPath, km.Path)
+	return rest == "metadata" || strings.HasPrefix(rest, "metadata/")
+}
+
+// kvMountFor finds the KV mount rawPolicyPath falls under (longest-path match, so a mount path
+// that is itself a prefix of another mount's path never wins incorrectly).
+func (m *PathMapper) kvMountFor(rawPolicyPath string) (KVMountInfo, bool) {
 	var best KVMountInfo
 	bestLen := -1
 	for _, km := range m.kvMounts {
@@ -153,7 +231,15 @@ func (m *PathMapper) stripMountAndKVInfix(rawPolicyPath string) (mount, rest str
 			best, bestLen = km, len(km.Path)
 		}
 	}
-	if bestLen < 0 {
+	return best, bestLen >= 0
+}
+
+// stripMountAndKVInfix finds the KV mount rawPolicyPath falls under (kvMountFor) and returns
+// the mount-relative remainder with KV v2's fixed "data/"/"metadata/" routing segment removed.
+// ok=false means rawPolicyPath is not under any known KV mount at all.
+func (m *PathMapper) stripMountAndKVInfix(rawPolicyPath string) (mount, rest string, ok bool) {
+	best, found := m.kvMountFor(rawPolicyPath)
+	if !found {
 		return "", "", false
 	}
 	rest = strings.TrimPrefix(rawPolicyPath, best.Path)

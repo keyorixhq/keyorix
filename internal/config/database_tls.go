@@ -265,8 +265,10 @@ func missingRootCertError(modeField, mode, fix string) error {
 //   - ssl_mode verify-full/verify-ca with no ssl_root_cert: refused.
 //   - ssl_root_cert naming a missing, unreadable, empty, key-bearing or
 //     group/world-writable file: refused (never a fallback to system roots).
-//   - ssl_root_cert with ssl_mode disable: refused (the operator believes the
-//     connection is verified; it is not even encrypted).
+//   - ssl_root_cert with ssl_mode disable, or a CA file with allow/prefer
+//     (in the fields or the dsn): refused (the operator believes the
+//     connection is verified; pgx never checks the CA and may not even
+//     encrypt). See rootCertIgnoredError.
 //   - ssl_root_cert together with dsn: refused (the dsn is used as-is, so the
 //     key would be silently ignored); put sslrootcert inside the dsn instead.
 //   - a dsn whose sslmode (or PGSSLMODE, when the dsn has none) is
@@ -300,9 +302,9 @@ func ValidateDatabaseTLS(d *DatabaseConfig) error {
 			}
 			return nil
 		}
-		if t.written == "disable" {
-			return fmt.Errorf("storage.database.ssl_root_cert is set but storage.database.ssl_mode is disable, " +
-				"so the connection is neither encrypted nor verified; set ssl_mode to verify-full (or remove ssl_root_cert)")
+		if err := rootCertIgnoredError("storage.database.ssl_root_cert is set but storage.database.ssl_mode",
+			"set ssl_mode to verify-full (or remove ssl_root_cert)", t); err != nil {
+			return err
 		}
 		return checkRootCert("storage.database.ssl_root_cert", t.rootCert)
 	}
@@ -314,7 +316,33 @@ func ValidateDatabaseTLS(d *DatabaseConfig) error {
 		}
 		return nil
 	}
+	if err := rootCertIgnoredError("storage.database.dsn sets sslrootcert but its effective sslmode",
+		"put sslmode=verify-full in the dsn (or remove sslrootcert)", t); err != nil {
+		return err
+	}
 	return checkRootCert("sslrootcert in storage.database.dsn", t.rootCert)
+}
+
+// rootCertIgnoredError refuses a CA file that the connection would never check
+// the server against (PG-SSL-ROOT-CERT-1): with sslmode disable there is no TLS
+// at all, and with allow or prefer pgx loads the CA but skips verification
+// (InsecureSkipVerify) and may still fall back to plaintext. The operator
+// named a CA because they believe the database is authenticated; it is not.
+// allow/prefer with sslrootcert=system is not refused: pgx upgrades every
+// sslmode to verify-full for it, so the CA is used (t.mode is then
+// verify-full). disable is refused even then, as it always was: the config
+// says "no TLS" and "verify" at once. require is not refused: pgx, like libpq,
+// verifies the chain (verify-ca) when a CA file is given, and
+// DatabaseTLSPosture says so.
+func rootCertIgnoredError(prefix, fix string, t databaseTLS) error {
+	if !sslModeMayBePlaintext(t.written) || (t.written != "disable" && t.rootCert == SSLRootCertSystem) {
+		return nil
+	}
+	why := "so the connection is neither encrypted nor verified"
+	if t.written != "disable" {
+		why = "so the driver never checks the database server's certificate against the CA and may fall back to an unencrypted connection"
+	}
+	return fmt.Errorf("%s is %s, %s -- refusing to start; %s", prefix, t.written, why, fix)
 }
 
 // refuseConnectionService refuses a PostgreSQL connection that would take

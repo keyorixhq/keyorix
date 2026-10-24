@@ -334,7 +334,8 @@ cannot also apply. Put `sslrootcert=` in the dsn, or drop the dsn for the field 
 | `contains a private key` | the CA file holds a private key; name the certificate only |
 | `selects a PostgreSQL connection service` | `service=`/`servicefile=` in the dsn, or `PGSERVICE` set: the service file could override TLS settings; remove it |
 | `storage.database.dsn already contains a password and` | a password in the dsn and in the separate password setting or variable the message names; keep one |
-| `ssl_root_cert is set but storage.database.ssl_mode is disable` | a CA with TLS off; set a verify mode or remove the CA |
+| `ssl_root_cert is set but storage.database.ssl_mode` | a CA with `ssl_mode` disable, or a CA file with allow/prefer: the driver never checks the certificate against it; set `ssl_mode: verify-full` or remove the CA |
+| `storage.database.dsn sets sslrootcert but its effective sslmode` | the same in a dsn (no `sslmode` in the dsn means prefer); put `sslmode=verify-full` in the dsn or remove `sslrootcert` |
 | `when dsn is set it is used as-is and ssl_mode is ignored` | `ssl_mode` is set beside a dsn that has no or a different `sslmode`; put `sslmode=` in the dsn, or remove `ssl_mode` |
 | `the PostgreSQL driver's connection settings differ from what the TLS check validated` | the driver would read the TLS settings differently from Keyorix's own check (the message says what: for example the host name would not be verified); write `sslmode` and `sslrootcert` plainly in `storage.database` (or the dsn) |
 
@@ -607,7 +608,7 @@ failed to initialize core service: failed to initialize encryption: ... aws-kms 
 **Cause.** `insecure_allow_kms_context_fallback` (aws-kms, gcp-kms) lets a wrapped KEK that
 has no `kms_encryption_context` binding yet still open while you migrate it. The stored
 KEK now opens *with* its context, so the migration
-(`keyorix encryption migrate-provider --to-kms-encryption-context=...`) is done and the flag
+(`keyorix-server admin encryption migrate-provider --to-kms-encryption-context=...`) is done and the flag
 only keeps the weaker path open: a blob someone planted under the shared KMS key with no
 context would still unwrap. Since #3398 the server refuses instead of running with it.
 **Fix.** Remove `insecure_allow_kms_context_fallback` from `storage.encryption.key_provider`
@@ -887,6 +888,24 @@ an admin operation is running against this database; retry when it finishes
 
 **Cause.** A server start collided with a running `admin` command (backup, restore,
 rotation). **Fix.** Wait for the command to finish, then start. **In place:** yes.
+
+### The SQLite server lock file cannot be locked or watched — from code
+
+```
+lock server lock file "<datadir>/keyorix.db.server.lock": operation not supported: the filesystem holding it does not support file locks (flock), so a server and an admin command cannot exclude each other; put the SQLite database on a local filesystem, or use storage.type: postgres
+```
+
+**Match:** `the filesystem holding it does not support file locks`
+`the filesystem reports no inode numbers`
+`between opening and locking it`
+
+**Cause.** The SQLite database (and its `.server.lock` beside it) is on a filesystem
+without `flock` support or without inode numbers (some network and FUSE mounts), or a
+process keeps deleting or replacing `.server.lock`. The server and every `admin` command
+refuse rather than run without the server/admin exclusion. **Fix.** Move the database to a
+local filesystem, or use PostgreSQL; never delete `.server.lock`
+([j7-troubleshooting.md](j7-troubleshooting.md#an-admin-command-while-the-server-is-still-running)).
+**In place:** no.
 
 ---
 

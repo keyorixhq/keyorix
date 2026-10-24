@@ -19,11 +19,13 @@ the repo root, and the checker runs `go test` in the module that owns it
 - `./cli/internal/apiclient`, `./cli/cmd`, ... — the `cli` module (its own `go.mod`),
   run inside `cli/` with `GOWORK=off`. Keep the `./cli/` prefix: the path is relative
   to the repo root, not to `cli/`.
+- `./migrate/internal/accessplan`, ... — the `migrate` module, run the same way inside
+  `migrate/`.
 
 Anything else fails `gen-security-closures-tsv.sh --check` and `check-closures.sh`
 instead of being skipped: a bare path (`internal/core`, which Go resolves inside
 GOROOT), a wildcard or `..` segment, a directory that does not exist, or a package in
-a module the checker has no runner for (`operator/`, `migrate/`, `devtools/*`; add
+a module the checker has no runner for (`operator/`, `devtools/*`; add
 the module to `CLOSURE_KNOWN_MODULES` together with a `--self-test` case).
 
 ## Adding a closure
