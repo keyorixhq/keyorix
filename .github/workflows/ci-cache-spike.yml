@@ -1,0 +1,101 @@
+# THROWAWAY (CI-CACHE-SPIKE-1): measures whether a seeded -race -cover Go build
+# cache shortens the test-suite legs' compile phase. Lives only on the
+# ci-cache-spike-1/* branch; never merged.
+#
+# seed:  compiles every test-suite leg's packages with the legs' exact flags at
+#        three commits (this one, ~6 h and ~24 h older main) into an empty
+#        GOCACHE and saves it.
+# cold:  four legs exactly as test-suite sets them up today (setup-go's go.sum
+#        cache only), compile+link only (-exec /usr/bin/true, no test runs).
+# warm:  the same four legs with a seed restored on top of setup-go's cache.
+# Every measurement prints one "SPIKE|" line (wall, action-graph hits/misses,
+# compile seconds split repo / third-party / std, cache size).
+name: CI cache spike (throwaway)
+
+on:
+  push:
+    branches: ['ci-cache-spike-1/**']
+
+permissions: {}
+
+env:
+  GO_VERSION: '1.27.3'
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: same
+            ref: ${{ github.sha }}
+          - variant: old6
+            ref: 8610063c95e6d8c31a96ea3b7c47b692c8606ba6
+          - variant: old24
+            ref: aebda13e69961d2b23aa61045cf4b6761c9bb16a
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.ref }}
+      # The spike's own scripts come from this branch's commit, not the seed ref.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: spike
+          sparse-checkout: scripts/ci/spike
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: go mod download
+        run: go mod download
+      - name: Seed (all legs, -race -cover, empty GOCACHE)
+        run: bash spike/scripts/ci/spike/measure.sh seed-${{ matrix.variant }} all
+      - uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ci-cache-spike-1-v1-${{ matrix.variant }}-${{ github.run_id }}
+
+  cold:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [core-2, faultops-3, server-2, root-4]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Compile ${{ matrix.leg }} (cold, as today)
+        run: bash scripts/ci/spike/measure.sh cold ${{ matrix.leg }}
+
+  warm:
+    needs: seed
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: [core-2, faultops-3, server-2, root-4]
+        variant: [same, old6, old24]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+      - name: Restore race cache (${{ matrix.variant }})
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ci-cache-spike-1-v1-${{ matrix.variant }}-${{ github.run_id }}
+          fail-on-cache-miss: true
+      - name: Compile ${{ matrix.leg }} (warm ${{ matrix.variant }})
+        run: bash scripts/ci/spike/measure.sh warm-${{ matrix.variant }} ${{ matrix.leg }}
