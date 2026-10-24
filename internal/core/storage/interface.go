@@ -1543,6 +1543,8 @@ type Storage interface {
 	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
 	// AssignRoleWithExpiry.
 	AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope Scope, expiresAt time.Time) error
+	// RemoveRoleFromGroup returns ErrRoleNotAssigned (wrapped) if the group
+	// holds no such grant at scope.
 	RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 	// DeleteExpiredRoleGrants removes user/group role grants whose ExpiresAt is at
 	// or before `before`, returning the removed grants so the caller can audit each

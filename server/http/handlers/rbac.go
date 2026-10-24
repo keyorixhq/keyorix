@@ -22,6 +22,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -859,7 +860,9 @@ func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request
 
 	if err := h.coreService.RemoveRoleFromGroup(r.Context(), userCtx.UserID, groupID, roleID, scope); err != nil {
 		log.Printf("Error removing role from group: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrRoleNotAssigned) {
+			sendError(w, "NotFound", "Role not assigned to group", http.StatusNotFound, nil)
+		} else if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to remove role from group", http.StatusInternalServerError, nil)
