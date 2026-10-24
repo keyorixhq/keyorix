@@ -1093,8 +1093,10 @@ before upgrading the CLI:
 If you ran `keyorix-migrate vault apply-access` with v0.96.0, v0.96.1, v0.96.2 or v0.96.3,
 some migrated machine identities may hold grants wider than their Vault policy: a policy
 path narrower than the project/environment it was mapped to (one secret, a sub-folder, part
-of a `--path-map` prefix) was granted on the whole environment, and `list`-only or KV v2
-`metadata/` stanzas were granted `secrets.read`. Upgrading `keyorix-migrate` does not change
+of a `--path-map` prefix) was granted on the whole environment, and `list` was mapped to
+`secrets.read` in every stanza: `list`-only and KV v2 `metadata/` stanzas, and also write
+stanzas that list (`["create", "update", "list"]`, `["delete", "list"]`), whose identity
+could then read every secret value in its environment (`list-as-read`). Upgrading `keyorix-migrate` does not change
 grants that already exist. With the new `keyorix-migrate`, run (read-only, same flags as the
 original `apply-access`):
 
@@ -1105,8 +1107,13 @@ keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
 ```
 
 It lists each grant that is wider than its Vault policy, why, and the API call that revokes
-exactly that grant (exit 1 when it finds any). Revoke them, then re-run `plan-access`: the
-narrow stanzas are now reported for review instead of widened.
+exactly that grant. It exits 1 when it finds any, and also when the audit is incomplete
+because a Vault input (`sys/mounts`, the policy list, a policy, an auth role list or role)
+could not be read: grant the token the `healthscan-policy.hcl` stanzas and re-run until it
+exits 0. `--json` prints `{"complete", "warnings", "findings"}`. Kubernetes roles are audited
+only with `--k8s-issuer` (it warns when they exist and the flag is missing). Revoke the
+findings, then re-run `plan-access`: the narrow stanzas are now reported for review instead
+of widened.
 
 Two more shapes, both in every release that shipped `plan-access`:
 

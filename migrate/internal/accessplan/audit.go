@@ -72,6 +72,11 @@ func AuditWidenedGrants(in BuildInput, mapper *PathMapper, k8sIssuer string) []W
 	return out
 }
 
+// CategoryListAsRead is set only on a WidenedGrant, never on a plan Item: the stanza still maps
+// to a Create today, but v0.96.x also mapped its "list" capability to secrets.read, so the
+// legacy grant holds secrets.read (every value in the scope) that the stanza never allowed.
+const CategoryListAsRead UnmappableCategory = "list-as-read"
+
 type grantKey struct {
 	role    string
 	project int
@@ -82,18 +87,18 @@ func widenedFor(machine string, policies []healthscan.Policy, mapper *PathMapper
 	current := BuildPolicyItems(policies, mapper)
 	granted := map[grantKey]bool{}
 	grantedRoleInProject := map[grantKey]bool{}
-	refused := map[string]Item{}
+	bySource := map[string][]Item{}
 	for _, it := range current {
-		switch it.Outcome {
-		case Create:
+		bySource[it.SourceRef] = append(bySource[it.SourceRef], it)
+		if it.Outcome == Create {
 			granted[grantKey{role: it.ProposedName, project: it.ProposedProjectID, env: it.ProposedEnvironmentID}] = true
 			grantedRoleInProject[grantKey{role: it.ProposedName, project: it.ProposedProjectID}] = true
-		case Unmappable:
-			if it.Category == CategoryNarrowerThanScope || it.Category == CategoryMetadataOnly || it.Category == CategoryCrossMountScope {
-				refused[it.SourceRef] = it
-			}
 		}
 	}
+	// Every legacy grant the current rules do not also make (same role, so the same permissions,
+	// at the same scope) is wider than what the current rules allow for its stanza: refused
+	// today, or mapped today with fewer permissions (CategoryListAsRead). A stanza both rule
+	// sets refuse (sudo, templated, deny overlap, unresolvable path) yields no legacy grant.
 	var out []WidenedGrant
 	seen := map[grantKey]bool{}
 	for _, g := range legacyV096Grants(policies, mapper) {
@@ -101,19 +106,33 @@ func widenedFor(machine string, policies []healthscan.Policy, mapper *PathMapper
 		if granted[k] || seen[k] {
 			continue
 		}
-		why, ok := refused[g.sourceRef]
-		if !ok {
-			continue // refused today for an unrelated reason the old rules shared.
-		}
 		seen[k] = true
+		category, reason := whyWider(g, bySource[g.sourceRef])
 		out = append(out, WidenedGrant{
 			MachineName: machine, ProjectID: g.project, EnvironmentID: g.env,
 			RoleName: g.role, Permissions: g.perms, SourceRef: g.sourceRef,
-			Category: why.Category, Reason: why.Reason,
+			Category: category, Reason: reason,
 			AlsoGrantedByCurrentRules: grantedRoleInProject[grantKey{role: g.role, project: g.project}],
 		})
 	}
 	return out
+}
+
+// whyWider says why a legacy grant is wider than what the current rules make of its stanza:
+// the refusal when the stanza is Unmappable today, otherwise the permissions it maps to today.
+func whyWider(g legacyGrant, current []Item) (UnmappableCategory, string) {
+	for _, it := range current {
+		if it.Outcome == Unmappable {
+			return it.Category, it.Reason
+		}
+	}
+	for _, it := range current {
+		if it.Outcome == Create {
+			return CategoryListAsRead, fmt.Sprintf("v0.96.x mapped this stanza's \"list\" to secrets.read, which reads every secret value in the scope; the stanza allows only %s (role %s on project %d / environment %d)",
+				strings.Join(it.ProposedPermissions, ","), it.ProposedName, it.ProposedProjectID, it.ProposedEnvironmentID)
+		}
+	}
+	return CategoryListAsRead, fmt.Sprintf("the current rules grant nothing for this stanza, but v0.96.x granted %s", strings.Join(g.perms, ","))
 }
 
 type legacyGrant struct {
