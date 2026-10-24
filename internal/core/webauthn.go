@@ -3,6 +3,11 @@
 // where a WebAuthn assertion (instead of, or in addition to, TOTP) completes the
 // pre-auth challenge minted by the password step. The in-flight ceremony state
 // (challenge etc.) is persisted single-use and hashed at rest, like MFAChallenge.
+//
+// The relying party itself (attestation/assertion cryptography, the ceremony
+// options, the library's JSON) is behind ports.WebAuthnRelyingParty, implemented
+// by internal/webauthnrp (CORE-DECOUPLE-WEBAUTHN-1). Every decision about what a
+// ceremony result means stays here.
 package core
 
 import (
@@ -16,9 +21,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/go-webauthn/webauthn/protocol"
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/besteffort"
+	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -117,11 +121,11 @@ const EventWebAuthnCloneDetected = "webauthn.clone_detected" // #nosec G101 -- a
 // the affected account owner alongside EventWebAuthnCloneDetected.
 const NotificationWebAuthnCloneDetected = EventWebAuthnCloneDetected
 
-// webauthnUser adapts a Keyorix user + its stored credentials to the
-// webauthn.User interface the library expects.
+// webauthnUser is a Keyorix user + its usable stored credentials, decoded by the
+// relying party.
 type webauthnUser struct {
 	user  *models.User
-	creds []webauthn.Credential
+	creds []ports.WebAuthnCredential
 }
 
 // WebAuthnID is the stable user handle (8-byte big-endian user ID). It must not
@@ -131,9 +135,17 @@ func (u *webauthnUser) WebAuthnID() []byte {
 	binary.BigEndian.PutUint64(b, uint64(u.user.ID))
 	return b
 }
-func (u *webauthnUser) WebAuthnName() string                       { return u.user.Username }
-func (u *webauthnUser) WebAuthnDisplayName() string                { return u.user.Username }
-func (u *webauthnUser) WebAuthnCredentials() []webauthn.Credential { return u.creds }
+
+// rpUser is the user as the relying party sees it: name and display name are
+// the username, credentials are the usable ones loadWebAuthnUser kept.
+func (u *webauthnUser) rpUser() ports.WebAuthnUser {
+	return ports.WebAuthnUser{
+		ID:          u.WebAuthnID(),
+		Name:        u.user.Username,
+		DisplayName: u.user.Username,
+		Credentials: u.creds,
+	}
+}
 
 func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webauthnUser, error) {
 	user, err := c.storage.GetUser(ctx, userID)
@@ -149,7 +161,7 @@ func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webau
 	if err != nil {
 		return nil, err
 	}
-	creds := make([]webauthn.Credential, 0, len(rows))
+	creds := make([]ports.WebAuthnCredential, 0, len(rows))
 	for _, r := range rows {
 		if r.Disabled {
 			// Flagged by clone-detection (#212, signature-counter regression) —
@@ -158,8 +170,13 @@ func (c *KeyorixCore) loadWebAuthnUser(ctx context.Context, userID uint) (*webau
 			// passkey using the genuine physical authenticator.
 			continue
 		}
-		var cred webauthn.Credential
-		if err := json.Unmarshal(r.CredentialBlob, &cred); err != nil {
+		if c.webauthnRP == nil {
+			// Every ceremony checks for a relying party first; this only keeps a
+			// missed check from panicking.
+			return nil, ErrWebAuthnDisabled
+		}
+		cred, err := c.webauthnRP.DecodeCredential(r.CredentialBlob)
+		if err != nil {
 			continue // skip an unreadable row rather than fail the whole ceremony
 		}
 		creds = append(creds, cred)
@@ -176,9 +193,11 @@ type webauthnUserLoadError struct{ cause error }
 func (e *webauthnUserLoadError) Error() string { return "user not found" }
 func (e *webauthnUserLoadError) Unwrap() error { return e.cause }
 
-// storeWebAuthnSession persists the ceremony SessionData under the hash of an
-// opaque token (returned to the caller), single-use and short-lived.
-func (c *KeyorixCore) storeWebAuthnSession(ctx context.Context, userID uint, purpose string, sd *webauthn.SessionData) (string, error) {
+// storeWebAuthnSession persists the ceremony state under the hash of an opaque
+// token (returned to the caller), single-use and short-lived. sd is the
+// relying party's ports.WebAuthnSession (the library's SessionData); it is
+// stored as its JSON, so the row bytes are what the library struct marshals to.
+func (c *KeyorixCore) storeWebAuthnSession(ctx context.Context, userID uint, purpose string, sd any) (string, error) {
 	return c.storeWebAuthnSessionHoldingLoginSlot(ctx, userID, purpose, sd, nil)
 }
 
@@ -186,7 +205,7 @@ func (c *KeyorixCore) storeWebAuthnSession(ctx context.Context, userID uint, pur
 // Begin that reserved a per-IP login-budget slot and keeps it: the slot id is
 // stored on the ceremony row, and only the Finish that consumes the row and
 // delivers a session hands it back (#2936 review).
-func (c *KeyorixCore) storeWebAuthnSessionHoldingLoginSlot(ctx context.Context, userID uint, purpose string, sd *webauthn.SessionData, slotID *uint) (string, error) {
+func (c *KeyorixCore) storeWebAuthnSessionHoldingLoginSlot(ctx context.Context, userID uint, purpose string, sd any, slotID *uint) (string, error) {
 	data, err := json.Marshal(sd)
 	if err != nil {
 		return "", err
@@ -210,9 +229,9 @@ func (c *KeyorixCore) storeWebAuthnSessionHoldingLoginSlot(ctx context.Context, 
 }
 
 // BeginWebAuthnRegistration starts enrolment of a new passkey for the caller. It
-// returns the CredentialCreation options (for navigator.credentials.create) and
-// an opaque session token to echo back at FinishWebAuthnRegistration.
-func (c *KeyorixCore) BeginWebAuthnRegistration(ctx context.Context, userID uint) (*protocol.CredentialCreation, string, error) {
+// returns the publicKey creation options (JSON, for navigator.credentials.create)
+// and an opaque session token to echo back at FinishWebAuthnRegistration.
+func (c *KeyorixCore) BeginWebAuthnRegistration(ctx context.Context, userID uint) (json.RawMessage, string, error) {
 	if c.webauthnRP == nil {
 		return nil, "", ErrWebAuthnDisabled
 	}
@@ -220,19 +239,11 @@ func (c *KeyorixCore) BeginWebAuthnRegistration(ctx context.Context, userID uint
 	if err != nil {
 		return nil, "", err
 	}
-	// Exclude already-registered authenticators so the user can't double-register one.
-	exclusions := make([]protocol.CredentialDescriptor, 0, len(wu.creds))
-	for i := range wu.creds {
-		exclusions = append(exclusions, wu.creds[i].Descriptor())
-	}
-	// Request a discoverable (resident) credential so the passkey can also be used
-	// for passwordless login (ADR-036 addendum). "preferred" is backward-compatible:
-	// authenticators that can't store a resident key still register for the
-	// second-factor flow.
-	creation, sd, err := c.webauthnRP.BeginRegistration(wu,
-		webauthn.WithExclusions(exclusions),
-		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementPreferred),
-	)
+	// The relying party excludes the already-registered authenticators (so the
+	// user can't double-register one) and requests a discoverable (resident)
+	// credential, "preferred", so the passkey can also be used for passwordless
+	// login (ADR-036 addendum). See internal/webauthnrp.
+	creation, sd, err := c.webauthnRP.BeginRegistration(wu.rpUser())
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to begin registration: %w", err)
 	}
@@ -251,7 +262,10 @@ func (c *KeyorixCore) BeginWebAuthnRegistration(ctx context.Context, userID uint
 // account, so — unlike BeginWebAuthnRegistration, which only opens a ceremony with
 // no effect on stored credentials — it must not be reachable by a bearer token
 // alone (a stolen session or a scoped, MFA-policy-exempt PAT per ADR-042).
-func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uint, sessionToken, name, codeOrPassword string, parsed *protocol.ParsedCredentialCreationData) (*models.WebAuthnCredential, error) {
+//
+// parsed is the transport's already-parsed attestation (a
+// *protocol.ParsedCredentialCreationData from the HTTP handler).
+func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uint, sessionToken, name, codeOrPassword string, parsed ports.WebAuthnParsed) (*models.WebAuthnCredential, error) {
 	if c.webauthnRP == nil {
 		return nil, ErrWebAuthnDisabled
 	}
@@ -269,20 +283,20 @@ func (c *KeyorixCore) FinishWebAuthnRegistration(ctx context.Context, userID uin
 	if sess.Purpose != "register" || sess.UserID != userID {
 		return nil, fmt.Errorf("registration session mismatch")
 	}
-	var sd webauthn.SessionData
-	if err := json.Unmarshal(sess.Data, &sd); err != nil {
+	sd, err := c.webauthnRP.DecodeSession(sess.Data)
+	if err != nil {
 		return nil, err
 	}
 	wu, err := c.loadWebAuthnUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	cred, err := c.webauthnRP.CreateCredential(wu, sd, parsed)
+	cred, err := c.webauthnRP.FinishRegistration(wu.rpUser(), sd, parsed)
 	if err != nil {
 		c.auditWebAuthnFailed(ctx, userID, "register")
 		return nil, fmt.Errorf("failed to verify attestation: %w", err)
 	}
-	blob, err := json.Marshal(cred)
+	blob, err := json.Marshal(cred.Credential)
 	if err != nil {
 		return nil, err
 	}
@@ -388,7 +402,7 @@ const webauthnReauthSessionPurpose = "reauth"
 // this operates directly on an authenticated userID — there is no pre-login
 // MFA challenge to resolve the user from, since the caller is already logged
 // in and merely proving they still hold the second factor right now.
-func (c *KeyorixCore) BeginWebAuthnReauth(ctx context.Context, userID uint) (*protocol.CredentialAssertion, string, error) {
+func (c *KeyorixCore) BeginWebAuthnReauth(ctx context.Context, userID uint) (json.RawMessage, string, error) {
 	if c.webauthnRP == nil {
 		return nil, "", ErrWebAuthnDisabled
 	}
@@ -402,12 +416,10 @@ func (c *KeyorixCore) BeginWebAuthnReauth(ctx context.Context, userID uint) (*pr
 	if err := c.checkWebAuthnAccountGates(wu); err != nil {
 		return nil, "", err
 	}
-	// WAUN-001: require user-verification, matching BeginWebAuthnLogin — a
-	// stolen/found hardware key must not satisfy re-authentication without the
-	// user's own PIN/biometric.
-	assertion, sd, err := c.webauthnRP.BeginLogin(wu,
-		webauthn.WithUserVerification(protocol.VerificationRequired),
-	)
+	// WAUN-001: the relying party requires user-verification, matching
+	// BeginWebAuthnLogin — a stolen/found hardware key must not satisfy
+	// re-authentication without the user's own PIN/biometric.
+	assertion, sd, err := c.webauthnRP.BeginLogin(wu.rpUser())
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to begin reauth: %w", err)
 	}
@@ -436,7 +448,7 @@ func (c *KeyorixCore) BeginWebAuthnReauth(ctx context.Context, userID uint) (*pr
 // account-security-factor change; this function only proves the second factor,
 // mirroring how VerifyMFAStepUp+checkRestrictedMFAGate are two separate calls
 // for the restricted-secret-read flow.
-func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, sessionToken string, parsed *protocol.ParsedCredentialAssertionData) error {
+func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, sessionToken string, parsed ports.WebAuthnParsed) error {
 	if c.webauthnRP == nil {
 		return ErrWebAuthnDisabled
 	}
@@ -454,15 +466,15 @@ func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, ses
 	if sess.Purpose != webauthnReauthSessionPurpose || sess.UserID != userID {
 		return fmt.Errorf("webauthn session mismatch")
 	}
-	var sd webauthn.SessionData
-	if err := json.Unmarshal(sess.Data, &sd); err != nil {
+	sd, err := c.webauthnRP.DecodeSession(sess.Data)
+	if err != nil {
 		return err
 	}
 	wu, err := c.loadWebAuthnUser(ctx, userID)
 	if err != nil {
 		return err
 	}
-	cred, err := c.webauthnRP.ValidateLogin(wu, sd, parsed)
+	cred, err := c.webauthnRP.ValidateLogin(wu.rpUser(), sd, parsed)
 	if err != nil {
 		c.auditWebAuthnFailed(ctx, userID, "reauth")
 		c.recordFailedLogin(ctx, user) // count the failed re-auth attempt toward the lockout, mirroring requireReauth
@@ -505,7 +517,7 @@ func (c *KeyorixCore) FinishWebAuthnReauth(ctx context.Context, userID uint, ses
 // password step, and returns the CredentialAssertion options plus an opaque
 // webauthn session token to echo back at FinishWebAuthnLogin (alongside the
 // challenge, which is consumed there).
-func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) (*protocol.CredentialAssertion, string, error) {
+func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) (json.RawMessage, string, error) {
 	return c.BeginWebAuthnLoginHoldingLoginSlot(ctx, challenge, nil)
 }
 
@@ -516,7 +528,7 @@ func (c *KeyorixCore) BeginWebAuthnLogin(ctx context.Context, challenge string) 
 // unlimited Begin calls at no budget cost. The slot is bound to the ceremony
 // row instead, and FinishWebAuthnLoginPending's LoginCompletion hands it back
 // only once a session is delivered. slotID nil means nothing was reserved.
-func (c *KeyorixCore) BeginWebAuthnLoginHoldingLoginSlot(ctx context.Context, challenge string, slotID *uint) (*protocol.CredentialAssertion, string, error) {
+func (c *KeyorixCore) BeginWebAuthnLoginHoldingLoginSlot(ctx context.Context, challenge string, slotID *uint) (json.RawMessage, string, error) {
 	if c.webauthnRP == nil {
 		return nil, "", ErrWebAuthnDisabled
 	}
@@ -531,12 +543,10 @@ func (c *KeyorixCore) BeginWebAuthnLoginHoldingLoginSlot(ctx context.Context, ch
 	if len(wu.creds) == 0 {
 		return nil, "", fmt.Errorf("no passkeys registered")
 	}
-	// WAUN-001: require user-verification (PIN or biometric) for the MFA assertion,
-	// not just key presence — prevents a stolen/found hardware key from satisfying the
-	// second factor without the user's knowledge.
-	assertion, sd, err := c.webauthnRP.BeginLogin(wu,
-		webauthn.WithUserVerification(protocol.VerificationRequired),
-	)
+	// WAUN-001: the relying party requires user-verification (PIN or biometric)
+	// for the MFA assertion, not just key presence — prevents a stolen/found
+	// hardware key from satisfying the second factor without the user's knowledge.
+	assertion, sd, err := c.webauthnRP.BeginLogin(wu.rpUser())
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to begin login: %w", err)
 	}
@@ -579,7 +589,7 @@ func (c *KeyorixCore) checkWebAuthnAccountGates(wu *webauthnUser) error {
 // Convenience wrapper over FinishWebAuthnLoginPending for callers that own
 // nothing further after this returns; every TRANSPORT must use the Pending form
 // — see Login/LoginPending and LoginCompletion for why (#2894).
-func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, error) {
+func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed ports.WebAuthnParsed) (*models.Session, *models.User, UserIdentity, error) {
 	session, user, identity, lc, err := c.FinishWebAuthnLoginPending(ctx, challenge, sessionToken, userAgent, ip, parsed)
 	if err != nil {
 		return nil, user, UserIdentity{}, err
@@ -592,7 +602,7 @@ func (c *KeyorixCore) FinishWebAuthnLogin(ctx context.Context, challenge, sessio
 // left open — the returned LoginCompletion MUST get Succeeded or Failed exactly
 // once (#2894). On an error return the user is non-nil for every post-verdict
 // failure, so a transport can name the account in its auth.login_error event.
-func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
+func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge, sessionToken, userAgent, ip string, parsed ports.WebAuthnParsed) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	if c.webauthnRP == nil {
 		return nil, nil, UserIdentity{}, nil, ErrWebAuthnDisabled
 	}
@@ -614,8 +624,8 @@ func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge,
 	if sess.Purpose != "login" || sess.UserID != ch.UserID {
 		return nil, nil, UserIdentity{}, nil, fmt.Errorf("webauthn session mismatch")
 	}
-	var sd webauthn.SessionData
-	if err := json.Unmarshal(sess.Data, &sd); err != nil {
+	sd, err := c.webauthnRP.DecodeSession(sess.Data)
+	if err != nil {
 		return nil, nil, UserIdentity{}, nil, err
 	}
 	wu, err := c.loadWebAuthnUser(ctx, ch.UserID)
@@ -635,7 +645,7 @@ func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge,
 	if err := c.checkWebAuthnAccountGates(wu); err != nil {
 		return nil, nil, UserIdentity{}, nil, err
 	}
-	cred, err := c.webauthnRP.ValidateLogin(wu, sd, parsed)
+	cred, err := c.webauthnRP.ValidateLogin(wu.rpUser(), sd, parsed)
 	// #3048: the assertion has been evaluated, pass or fail; ValidateLogin makes
 	// no storage call, so every later storage call is post-verdict.
 	markLoginVerdict(ctx)
@@ -737,7 +747,7 @@ func (c *KeyorixCore) FinishWebAuthnLoginPending(ctx context.Context, challenge,
 // thus which user) to use. User verification is REQUIRED, so the single passkey
 // gesture proves both possession and the user (MFA-grade), making this a complete
 // passwordless login. Returns the assertion options + an opaque session token.
-func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (*protocol.CredentialAssertion, string, error) {
+func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (json.RawMessage, string, error) {
 	return c.BeginWebAuthnPasswordlessLoginHoldingLoginSlot(ctx, nil)
 }
 
@@ -745,13 +755,12 @@ func (c *KeyorixCore) BeginWebAuthnPasswordlessLogin(ctx context.Context) (*prot
 // with the transport's kept budget slot bound to the ceremony row, exactly as
 // BeginWebAuthnLoginHoldingLoginSlot does: the slot stays counted unless the
 // Finish that consumes this row delivers a session.
-func (c *KeyorixCore) BeginWebAuthnPasswordlessLoginHoldingLoginSlot(ctx context.Context, slotID *uint) (*protocol.CredentialAssertion, string, error) {
+func (c *KeyorixCore) BeginWebAuthnPasswordlessLoginHoldingLoginSlot(ctx context.Context, slotID *uint) (json.RawMessage, string, error) {
 	if c.webauthnRP == nil {
 		return nil, "", ErrWebAuthnDisabled
 	}
-	assertion, sd, err := c.webauthnRP.BeginDiscoverableLogin(
-		webauthn.WithUserVerification(protocol.VerificationRequired),
-	)
+	// Discoverable, user verification REQUIRED (inside the relying party).
+	assertion, sd, err := c.webauthnRP.BeginPasskeyLogin()
 	if err != nil {
 		return nil, "", fmt.Errorf("failed to begin passwordless login: %w", err)
 	}
@@ -779,7 +788,7 @@ func (c *KeyorixCore) BeginWebAuthnPasswordlessLoginHoldingLoginSlot(ctx context
 // Convenience wrapper over FinishWebAuthnPasswordlessLoginPending for callers
 // that own nothing further after this returns; every TRANSPORT must use the
 // Pending form — see Login/LoginPending and LoginCompletion for why (#2894).
-func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, error) {
+func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessionToken, userAgent, ip string, parsed ports.WebAuthnParsed) (*models.Session, *models.User, UserIdentity, error) {
 	session, user, identity, lc, err := c.FinishWebAuthnPasswordlessLoginPending(ctx, sessionToken, userAgent, ip, parsed)
 	if err != nil {
 		return nil, user, UserIdentity{}, err
@@ -793,7 +802,7 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLogin(ctx context.Context, sessi
 // Succeeded or Failed exactly once (#2894). On an error return the user is
 // non-nil for every post-verdict failure, so a transport can name the account
 // in its auth.login_error event.
-func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context, sessionToken, userAgent, ip string, parsed *protocol.ParsedCredentialAssertionData) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
+func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context, sessionToken, userAgent, ip string, parsed ports.WebAuthnParsed) (*models.Session, *models.User, UserIdentity, *LoginCompletion, error) {
 	if c.webauthnRP == nil {
 		return nil, nil, UserIdentity{}, nil, ErrWebAuthnDisabled
 	}
@@ -804,8 +813,8 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context
 	if sess.Purpose != "passwordless" {
 		return nil, nil, UserIdentity{}, nil, fmt.Errorf("webauthn session mismatch")
 	}
-	var sd webauthn.SessionData
-	if err := json.Unmarshal(sess.Data, &sd); err != nil {
+	sd, err := c.webauthnRP.DecodeSession(sess.Data)
+	if err != nil {
 		return nil, nil, UserIdentity{}, nil, err
 	}
 
@@ -817,10 +826,10 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context
 	// evaluated nothing. Carried out of the handler by closure, because
 	// ValidatePasskeyLogin folds whatever the handler returns into its own error.
 	var notEvaluated error
-	handler := func(_, userHandle []byte) (webauthn.User, error) {
+	handler := func(_, userHandle []byte) (ports.WebAuthnUser, error) {
 		if len(userHandle) != 8 {
 			// Malformed input: a genuine negative result, still a failed attempt.
-			return nil, fmt.Errorf("unexpected user handle")
+			return ports.WebAuthnUser{}, fmt.Errorf("unexpected user handle")
 		}
 		// #2846 review: the handle is attacker-chosen, and no user id we issue is
 		// 0 or above MaxInt64 (ids are int8 in the database). Such a handle names
@@ -831,7 +840,7 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context
 		// the caller unlimited unthrottled attempts.
 		raw := binary.BigEndian.Uint64(userHandle)
 		if raw == 0 || raw > math.MaxInt64 {
-			return nil, fmt.Errorf("unexpected user handle")
+			return ports.WebAuthnUser{}, fmt.Errorf("unexpected user handle")
 		}
 		uid := uint(raw)
 		wu, err := c.loadWebAuthnUser(ctx, uid)
@@ -841,12 +850,12 @@ func (c *KeyorixCore) FinishWebAuthnPasswordlessLoginPending(ctx context.Context
 			if !storage.IsUserNotFound(err) {
 				notEvaluated = err
 			}
-			return nil, err
+			return ports.WebAuthnUser{}, err
 		}
 		resolved = wu.user
-		return wu, nil
+		return wu.rpUser(), nil
 	}
-	_, cred, err := c.webauthnRP.ValidatePasskeyLogin(handler, sd, parsed)
+	cred, err := c.webauthnRP.ValidatePasskeyLogin(handler, sd, parsed)
 	if notEvaluated != nil {
 		// Not audited here: the transport writes auth.login_error and hands the
 		// per-IP slot back, and answers exactly as for a failed assertion.
@@ -961,9 +970,10 @@ func (c *KeyorixCore) checkPasswordlessAccountState(ctx context.Context, user *m
 // and the account owner is alerted loudly: a distinct audit event (superseding the
 // old passive "clone_warning" line) plus an in-app/email notification, rather than
 // only a silent log entry. Returns a rejection error when CloneWarning fired, nil
-// otherwise (the normal, incrementing-counter case).
-func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred *webauthn.Credential, ip string) error {
-	if !cred.Authenticator.CloneWarning {
+// otherwise (the normal, incrementing-counter case). The relying party carries
+// the library's flag as ports.WebAuthnVerified.CloneWarning.
+func (c *KeyorixCore) rejectIfCloned(ctx context.Context, userID uint, cred ports.WebAuthnVerified, ip string) error {
+	if !cred.CloneWarning {
 		return nil
 	}
 	// Scoped to userID (#307) — the lookup itself enforces ownership, so no separate
@@ -1112,8 +1122,8 @@ func (c *KeyorixCore) MarkWebAuthnCredentialClonedByLookup(ctx context.Context, 
 // suspenders for the single-process SQLite case, where AdvanceWebAuthnCredentialCounter's
 // own row lock is a no-op); combined with LocalStorage's row lock on Postgres, the
 // counter stays monotonic across replicas too.
-func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint, cred *webauthn.Credential) {
-	blob, err := json.Marshal(cred)
+func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint, cred ports.WebAuthnVerified) {
+	blob, err := json.Marshal(cred.Credential)
 	if err != nil {
 		return
 	}
@@ -1131,7 +1141,7 @@ func (c *KeyorixCore) persistUpdatedCredential(ctx context.Context, userID uint,
 	besteffort.Run(ctx, "webauthn.persistUpdatedCredential", func() error {
 		c.webauthnCredentialMu.Lock()
 		defer c.webauthnCredentialMu.Unlock()
-		_, err := c.storage.AdvanceWebAuthnCredentialCounter(ctx, cred.ID, userID, blob, cred.Authenticator.SignCount, now)
+		_, err := c.storage.AdvanceWebAuthnCredentialCounter(ctx, cred.ID, userID, blob, cred.SignCount, now)
 		return err
 	})
 }
