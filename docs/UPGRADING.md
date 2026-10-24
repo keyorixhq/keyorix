@@ -1097,6 +1097,36 @@ before upgrading the CLI:
   "an internal error occurred". Behaviour is unchanged: the target is still refused unless a
   server operator sets that option.
 
+## 6w. Roles carry an assignable scope (schema epoch 6, #3546)
+
+The first boot adds `roles.assignable_scope` (schema epoch 6; the compatibility floor stays
+3, so an epoch-5 replica keeps running during a rolling upgrade) and sets it once:
+`project_*` roles `project`, `system_*` and `alert_operator` `global`, the legacy
+`admin`/`editor`/`viewer`/`auditor`/`super_admin` roles and **every existing custom role
+`any`** (nothing that worked before breaks). Roles created after the upgrade default to
+`project`.
+
+The legacy roles stay `any` on purpose: they are granted per project today, to machine
+identities and to users (`keyorix machine grant-role <name> --project default --role viewer`,
+`keyorix rbac assign-role --user <email> --role admin --project payments`), and those grants
+keep working, as do install-wide grants of them.
+
+What to check:
+
+- **API clients that create roles and then grant them without `project_id`** now get 400:
+  send `"assignable_scope": "any"` (or `"global"`) on `POST /api/v1/roles`, or change the
+  role with `PUT /api/v1/roles/{id}`.
+- **A `system_*` role granted with a `project_id`** (for example through project members or a
+  project invitation) is now refused; grant it without a project.
+- **The startup `WARNING` lists** existing grants outside their role's scope and pending
+  invitations that can no longer be accepted. Nothing is changed or removed automatically.
+- **Mixed versions and rolling back the binary.** An epoch-5 binary (allowed by the
+  compatibility floor) ignores `assignable_scope`: it refuses only the four `project_*`
+  built-ins without a project. While it runs, a custom role set to `project` or `global`, or a
+  `system_*` role offered on a project, is not refused by that binary. Roles it creates get
+  the column default, `project`. Finish the rollout (or the rollback) promptly and read the
+  startup `WARNING` on the new version afterwards.
+
 ## 7. Rollback
 
 The step-by-step version, with the commands verified on 0.96.1 → 0.96.3 (Docker

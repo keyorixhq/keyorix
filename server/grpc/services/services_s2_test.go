@@ -207,7 +207,7 @@ func TestMapRoleError_Validation(t *testing.T) {
 	if st.Code() != codes.InvalidArgument {
 		t.Errorf("expected InvalidArgument, got %v", st.Code())
 	}
-	if st.Message() != "invalid role name or description" {
+	if st.Message() != "invalid role name, description or assignable_scope" {
 		t.Errorf("expected the fixed safe message, got %q (raw error text -- including caller input -- must not leak)", st.Message())
 	}
 }

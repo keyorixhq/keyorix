@@ -164,7 +164,7 @@ func TestApproveAccessRequest_GrantsRole(t *testing.T) {
 	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	// Admin upgrades the grant to developer.
 	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
-	store.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "test-role-5"}, nil).Maybe() // #3546 role-scope check
+	store.On("GetRole", mock.Anything, uint(5)).Return(&models.Role{ID: 5, Name: "test-role-5", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
 	store.On("AssignRole", ctx, uint(2), uint(5), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.MatchedBy(func(r *models.AccessRequest) bool {
 		return r.State == AccessRequestApproved && r.GrantedRole == "project_developer" && r.ResolvedBy == 9
@@ -207,7 +207,7 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
-	store.On("GetRole", mock.Anything, uint(6)).Return(&models.Role{ID: 6, Name: "test-role-6"}, nil).Maybe() // #3546 role-scope check
+	store.On("GetRole", mock.Anything, uint(6)).Return(&models.Role{ID: 6, Name: "test-role-6", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
 	store.On("AssignRole", ctx, uint(2), uint(6), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
@@ -224,10 +224,10 @@ func TestApproveAccessRequest_FallsBackToSuggestedRole(t *testing.T) {
 // stubAdminRoleLookups registers the admin role names so roleSetContainsAdmin can
 // resolve them; super_admin=1, admin=2, system_admin=3, project_admin=4.
 func stubAdminRoleLookups(store *MockStorage, ctx context.Context) {
-	store.On("GetRoleByName", ctx, "super_admin").Return(&models.Role{ID: 1}, nil)
-	store.On("GetRoleByName", ctx, "admin").Return(&models.Role{ID: 2}, nil)
-	store.On("GetRoleByName", ctx, "system_admin").Return(&models.Role{ID: 3}, nil)
-	store.On("GetRoleByName", ctx, "project_admin").Return(&models.Role{ID: 4}, nil)
+	store.On("GetRoleByName", ctx, "super_admin").Return(&models.Role{ID: 1, Name: "super_admin"}, nil)
+	store.On("GetRoleByName", ctx, "admin").Return(&models.Role{ID: 2, Name: "admin"}, nil)
+	store.On("GetRoleByName", ctx, "system_admin").Return(&models.Role{ID: 3, Name: "system_admin"}, nil)
+	store.On("GetRoleByName", ctx, "project_admin").Return(&models.Role{ID: 4, Name: "project_admin"}, nil)
 }
 
 // The same admin-role ceiling applies to project invitations: a non-admin inviter
@@ -324,7 +324,7 @@ func TestApproveAccessRequest_AdminApproverMayGrantAdmin(t *testing.T) {
 	store.On("GetUserRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{2}, nil)
 	store.On("GetUserGroupRoleIDsAt", ctx, uint(9), storage.Scope{ProjectID: 1}).Return([]uint{}, nil)
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{2}).Return(true, nil)
-	store.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2"}, nil).Maybe() // #3546 role-scope check
+	store.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
 	store.On("AssignRole", ctx, uint(2), uint(2), storage.Scope{ProjectID: 1}).Return(nil)
 	store.On("UpdateAccessRequest", ctx, mock.Anything).Return(true, nil)
 	store.On("LogAuditEvent", ctx, mock.Anything).Return(nil)
@@ -631,7 +631,7 @@ func TestInviteGlobalWithLink_ThrottlesRepeatedInitialInvites(t *testing.T) {
 	fixed := c.now()
 	anyAudit(store)
 
-	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 2}, nil)
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 2, Name: "system_viewer"}, nil)
 	store.On("CreateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).
 		Return(&models.ProjectInvitation{ID: 8, State: InvitationPending}, nil)
 	store.On("SupersedeActiveSetupTokens", ctx, SetupPurposeInvitationAccept, "c@d.com", (*uint)(nil)).Return(nil)

@@ -1352,6 +1352,10 @@ type Storage interface {
 	// other production caller should exist; this is the one narrow, storage-
 	// internal write path the ADR names, not a general role-mutation primitive.
 	SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error
+	// SetRoleAssignableScope writes models.Role.AssignableScope (#3546 Phase 2)
+	// for roleID, that column only (no full-row write). Callers: role seeding
+	// (built-in scopes) and internal/core's CreateRoleWithScope.
+	SetRoleAssignableScope(ctx context.Context, roleID uint, scope string) error
 
 	// RBAC Operations.
 	// AssignRole/RemoveRole bind a role to a user at the given Scope

@@ -232,6 +232,7 @@ func m1CreateProjectAndEnv(ctx context.Context, w *faultWorld, name string) (uin
 func m1CreateRoleWithPermissions(ctx context.Context, w *faultWorld, name string, perms []string) (uint, error) {
 	st, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/roles/", map[string]any{
 		"name": name, "description": "fuzz m1 role " + name, "permissions": perms,
+		"assignable_scope": "any", // granted globally below (#3546: the default, project, is not)
 	})
 	if err != nil {
 		return 0, err

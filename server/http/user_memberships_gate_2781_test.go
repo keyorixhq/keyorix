@@ -56,6 +56,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 const membershipsGatePassword = "CorrectHorse9Battery!"
@@ -84,7 +85,7 @@ func mkRoleWithPermissions(t *testing.T, cs *core.KeyorixCore, roleName string, 
 	}
 	admin, err := cs.GetUserByEmail(ctx, "testadmin@example.com")
 	require.NoError(t, err)
-	_, _, err = cs.CreateRole(ctx, admin.ID, roleName, "PROJ-ACCESS-1 gate fixture: "+roleName, ids)
+	_, _, err = cs.CreateRoleWithScope(ctx, admin.ID, roleName, "PROJ-ACCESS-1 gate fixture: "+roleName, ids, models.RoleAssignableAny) // granted globally (#3546)
 	require.NoError(t, err)
 }
 

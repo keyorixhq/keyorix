@@ -46,9 +46,9 @@ var storageGrantWriters = map[string]bool{
 
 // roleScopeCheckFuncs are the role-scope checks (role_scope_guard.go).
 var roleScopeCheckFuncs = map[string]bool{
-	"requireScopeValidForRole":     true,
-	"requireScopeValidForRoleName": true,
-	"validateRoleScope":            true,
+	"requireScopeValidForRole":      true,
+	"requireScopeValidForRoleModel": true,
+	"validateRoleScope":             true,
 }
 
 // roleScopeExemptGrantWriters are functions that write a grant without the

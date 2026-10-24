@@ -424,6 +424,15 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	// the clean "account already exists" message instead of a dead "token already
 	// used" error. Consuming up front (the previous order) permanently burned the
 	// invite link for the loser of that race even though nothing unsafe happened.
+	// #3546 (#3554 review follow-up 2): an invitation created before #3546 may name
+	// a role its scope now refuses (a project role as the global system role).
+	// Refuse it HERE, before the account is created and the token spent: failing
+	// in applyInvitationGrants below would burn the link and create (then delete)
+	// an account for an invitation that can never be accepted. The client still
+	// gets the generic setup-link answer; the reason is in the audit row.
+	if err := c.requireInvitationGrantScopesValid(ctx, inv); err != nil {
+		return nil, err
+	}
 	username, err := c.deriveUsername(ctx, inv.Email)
 	if err != nil {
 		return nil, err

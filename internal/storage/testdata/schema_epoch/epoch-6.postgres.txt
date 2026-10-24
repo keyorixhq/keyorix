@@ -1,4 +1,4 @@
-# schema of a fresh postgres install at currentSchemaEpoch 5; see schema_epoch_snapshot_test.go
+# schema of a fresh postgres install at currentSchemaEpoch 6; see schema_epoch_snapshot_test.go
 column access_request_approvals.approver_id bigint nullable=NO default=<none>
 column access_request_approvals.approver_machine_identity_id bigint nullable=NO default=0
 column access_request_approvals.created_at timestamp with time zone nullable=YES default=<none>
@@ -464,6 +464,7 @@ column risk_exceptions.revoked_by bigint nullable=YES default=<none>
 column risk_exceptions.title text nullable=YES default=<none>
 column role_permissions.permission_id bigint nullable=NO default=<none>
 column role_permissions.role_id bigint nullable=NO default=<none>
+column roles.assignable_scope text nullable=NO default='project'::text
 column roles.bypasses_permission_checks boolean nullable=NO default=false
 column roles.description text nullable=YES default=<none>
 column roles.id bigint nullable=NO default=nextval('roles_id_seq'::regclass)

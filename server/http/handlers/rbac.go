@@ -78,12 +78,18 @@ type CreateRoleRequest struct {
 	Name        string   `json:"name"        validate:"required,min=3,max=50,identifier"`
 	Description string   `json:"description" validate:"required,min=1,max=200"`
 	Permissions []string `json:"permissions" validate:"required,min=1"`
+	// AssignableScope is where the role may be granted (#3546): global,
+	// project or any. Omitted: project.
+	AssignableScope string `json:"assignable_scope,omitempty" validate:"omitempty,oneof=global project any"`
 }
 
 // UpdateRoleRequest is the request body for role update.
 type UpdateRoleRequest struct {
 	Description *string   `json:"description,omitempty" validate:"omitempty,min=1,max=200"`
 	Permissions *[]string `json:"permissions,omitempty" validate:"omitempty,min=1"`
+	// AssignableScope, when set, changes where the role may be granted
+	// (#3546); existing grants are not changed.
+	AssignableScope *string `json:"assignable_scope,omitempty" validate:"omitempty,oneof=global project any"`
 }
 
 // AssignRoleRequest is the request body for assigning a role.
@@ -171,7 +177,7 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	// #2545, extended to roles: a client-asserted origin (e.g. keyorix-migrate's source
 	// policy/path) is recorded as a labelled note on the audit event, never as attribution.
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
-	role, assignedPerms, err := h.coreService.CreateRole(auditCtx, userCtx.UserID, req.Name, req.Description, permissionIDs)
+	role, assignedPerms, err := h.coreService.CreateRoleWithScope(auditCtx, userCtx.UserID, req.Name, req.Description, permissionIDs, req.AssignableScope)
 	if err != nil {
 		log.Printf("Error creating role: %v", err)
 		msg := err.Error()
@@ -349,6 +355,13 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	if req.Description != nil {
 		role.Description = *req.Description
 	}
+	// "" keeps the scope core reads inside its transaction. Sending back the
+	// value GetRole read above would undo a narrowing another admin committed
+	// in between, as a widening (REVIEW-3585-DEEP-1 F4).
+	role.AssignableScope = ""
+	if req.AssignableScope != nil {
+		role.AssignableScope = *req.AssignableScope
+	}
 	// core.UpdateRole is the single place that rejects mutating a built-in
 	// role, runs the role-row update AND the permission replacement in one
 	// storage transaction, and audits only after that transaction commits —
@@ -363,6 +376,8 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 		}
 		if strings.Contains(err.Error(), "built-in") {
 			sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
+		} else if errors.Is(err, core.ErrRoleValidation) {
+			sendError(w, "ValidationError", "assignable_scope must be one of: global, project, any", http.StatusBadRequest, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to update role", http.StatusInternalServerError, nil)
 		}

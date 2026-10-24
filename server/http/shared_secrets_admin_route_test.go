@@ -24,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // TestSharedSecretsForUser_NonAdminRefusedByRouterPermissionGate: a user
@@ -108,8 +109,9 @@ func TestSharedSecretsForUser_ProjectViewerLikeActorRefusedAgainstSameRankPeer(t
 
 	admin, err := testCore.GetUserByEmail(ctx, "testadmin@example.com")
 	require.NoError(t, err)
-	_, _, err = testCore.CreateRole(ctx, admin.ID, "s6_viewer_like",
-		"secrets.read+users.read only, mirrors project_viewer's exact permission bundle", permIDs)
+	_, _, err = testCore.CreateRoleWithScope(ctx, admin.ID, "s6_viewer_like",
+		"secrets.read+users.read only, mirrors project_viewer's exact permission bundle", permIDs,
+		models.RoleAssignableAny) // granted globally below (#3546)
 	require.NoError(t, err)
 
 	_, err = testCore.CreateUser(ctx, &core.CreateUserRequest{
