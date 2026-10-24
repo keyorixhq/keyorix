@@ -1045,7 +1045,13 @@ jobs:
     # skipped and build-and-test fails closed on that.
     if: needs.preflight.result == 'success' && needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     strategy:
-      fail-fast: false
+      # Merge queue: one red leg already fails the round (build-and-test needs
+      # test-suite=success), so stop the other legs instead of letting them hold
+      # their runners until the slowest leg ends; build-and-test then reports at
+      # once instead of after the slowest leg (CI-FAILFAST-1, measured in the PR).
+      # Every other event keeps running all legs, so a PR or nightly run still
+      # shows every failing leg at once.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         include:
           # root was a single ~1160s leg (measured 2026-08-03) -- slower than
@@ -3582,6 +3588,76 @@ jobs:
   # ids; a matrix such as test-suite is reported under its job id). The run
   # link points at the per-leg detail.
   #
+  # Merge-queue fail fast (CI-FAILFAST-1). A queue round whose required result
+  # is already red used to keep every other job running to the end, and
+  # build-and-test only reported a repo-guards or test-leg failure after the
+  # slowest leg (measurements and the simulation are in the PR). Each job below runs only on merge_group, only when the one job it needs has
+  # failed, and then cancels every run still going for this merge-group commit
+  # (failfast-cancel.yml, scripts/ci/failfast-cancel.sh). build-and-test and
+  # web-e2e-real-smoke use always(), so they still run and report the failure.
+  #
+  # Only jobs whose failure already fails the round are watched: required
+  # checks (e2e-smoke, static-analysis, web-e2e-real-smoke) or jobs
+  # build-and-test fails on (preflight; repo-guards, which runs in the queue
+  # only on a selected run, where build-and-test requires it). Never add a job
+  # whose failure the queue tolerates (migrate, helm-chart-policy, openapi-lint,
+  # edge-builds): a cancel there would turn a passing round red. A test-suite
+  # leg needs no job here: the matrix's merge_group fail-fast stops its siblings.
+  # A separate job (not a step in the failing job) keeps the failing job's own
+  # result "failure" rather than "cancelled", and keeps actions: write out of
+  # every job that runs repository tests. No needs: gate was added in front of
+  # test-suite: the cheap checks did not fail in the measured queue rounds, and
+  # gating on repo-guards (or adr-numbers) would delay every green round.
+  failfast-preflight:
+    needs: [preflight]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: preflight
+
+  failfast-static-analysis:
+    needs: [static-analysis]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: static-analysis
+
+  failfast-repo-guards:
+    needs: [repo-guards]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: repo-guards
+
+  failfast-e2e-smoke:
+    needs: [e2e-smoke]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: e2e-smoke
+
+  failfast-web-e2e-real-smoke:
+    needs: [web-e2e-real-smoke]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: web-e2e-real-smoke
+
   # CI-SELECT-1: the merge queue now tests only what each PR can affect, and
   # this nightly run is the full-suite safety net behind it. The issue names
   # the PRs merged since the last green nightly run, so a failure here that
