@@ -68,14 +68,6 @@ storage:
     dek_path: "/app/keys/data.key"
     salt_path: "/app/keys/kek.salt"
 
-secrets:
-  chunking:
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 100
-  limits:
-    max_secrets_per_user: 10000
-
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true

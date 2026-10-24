@@ -38,6 +38,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/pquerna/otp/totp"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -146,7 +147,7 @@ func sccSetupWorld(t *testing.T) *sccWorld {
 	if err != nil {
 		t.Fatalf("webauthn RP: %v", err)
 	}
-	cShadow.SetWebAuthn(rp)
+	cShadow.SetWebAuthn(webauthnrp.Wrap(rp))
 
 	ctx := context.Background()
 	cShadow.SetBootstrapToken("scc-bootstrap-token")

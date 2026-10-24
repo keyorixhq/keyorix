@@ -117,7 +117,7 @@ keyorix hygiene --expiring-days 14 --stale-days 60`,
 	"invite list":   `keyorix invite list --project payments`,
 	"invite resend": `keyorix invite resend --project payments --id 12`,
 	"invite revoke": `keyorix invite revoke --project payments --id 12`,
-	"invite send":   `keyorix invite send --project payments --email bob@example.com --role developer`,
+	"invite send":   `keyorix invite send --project payments --email bob@example.com --role project_developer`,
 
 	"legal-hold lift":   `keyorix legal-hold lift --reason "case closed, matter 2026-17"`,
 	"legal-hold place":  `keyorix legal-hold place --reason "litigation hold, matter 2026-17"`,
@@ -137,12 +137,12 @@ keyorix machine binding add ci-deployer --project payments --issuer https://toke
 	"machine binding rm":        `keyorix machine binding rm ci-deployer 4 --project payments`,
 	"machine create":            `keyorix machine create --project payments --name ci-deployer --type ci --classification internal`,
 	"machine describe":          `keyorix machine describe ci-deployer --project payments`,
-	"machine grant-role":        `keyorix machine grant-role ci-deployer --project payments --role developer`,
+	"machine grant-role":        `keyorix machine grant-role ci-deployer --project payments --role project_developer`,
 	"machine list":              `keyorix machine list --project payments`,
 	"machine migrate-from-user": `keyorix machine migrate-from-user svc-deploy --project payments --type ci`,
 	"machine reactivate":        `keyorix machine reactivate ci-deployer --project payments`,
 	"machine revoke":            `keyorix machine revoke ci-deployer --project payments`,
-	"machine revoke-role":       `keyorix machine revoke-role ci-deployer --project payments --role developer`,
+	"machine revoke-role":       `keyorix machine revoke-role ci-deployer --project payments --role project_developer`,
 	"machine roles":             `keyorix machine roles ci-deployer --project payments`,
 	"machine suspend":           `keyorix machine suspend ci-deployer --project payments`,
 	"machine token issue": `# The token is shown once; store it straight into your CI system
@@ -194,10 +194,10 @@ keyorix pat create --name ci-readonly --scope secrets.read --project-id 3 --expi
 	"project use": `# Make "payments" the default for later commands
 keyorix project use payments`,
 
-	"rbac assign-role": `keyorix rbac assign-role --user alice@example.com --role developer --project payments
+	"rbac assign-role": `keyorix rbac assign-role --user alice@example.com --role project_developer --project payments
 # Time-bound grant
 keyorix rbac assign-role --user alice@example.com --role admin --project payments --ttl 4h`,
-	"rbac assign-role-to-group":   `keyorix rbac assign-role-to-group --group platform-team --role developer --project payments`,
+	"rbac assign-role-to-group":   `keyorix rbac assign-role-to-group --group platform-team --role project_developer --project payments`,
 	"rbac audit-logs":             `keyorix rbac audit-logs --limit 20`,
 	"rbac check-permission":       `keyorix rbac check-permission --user alice@example.com --permission secrets.read`,
 	"rbac export-matrix":          `keyorix rbac export-matrix --format csv --output rbac-matrix.csv`,
@@ -205,10 +205,10 @@ keyorix rbac assign-role --user alice@example.com --role admin --project payment
 	"rbac list-permissions":       `keyorix rbac list-permissions --user alice@example.com`,
 	"rbac list-roles":             `keyorix rbac list-roles`,
 	"rbac list-user-roles":        `keyorix rbac list-user-roles --user alice@example.com`,
-	"rbac remove-role":            `keyorix rbac remove-role --user alice@example.com --role developer --project payments`,
-	"rbac remove-role-from-group": `keyorix rbac remove-role-from-group --group platform-team --role developer --project payments`,
+	"rbac remove-role":            `keyorix rbac remove-role --user alice@example.com --role project_developer --project payments`,
+	"rbac remove-role-from-group": `keyorix rbac remove-role-from-group --group platform-team --role project_developer --project payments`,
 
-	"request access":                     `keyorix request access --project payments --role developer --reason "on-call this week"`,
+	"request access":                     `keyorix request access --project payments --role project_developer --reason "on-call this week"`,
 	"request bulk-approve":               `keyorix request bulk-approve --ids 4,5,6`,
 	"request bulk-reject":                `keyorix request bulk-reject --ids 7,8 --reason "no business need"`,
 	"request list":                       `keyorix request list --project payments`,
