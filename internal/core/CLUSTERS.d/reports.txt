@@ -1,0 +1,26 @@
+# reports: dashboards, usage, hygiene, access stats, inventory, risk and other read-only reports
+# One glob per line, matched against the file name (README.md).
+dashboard.go
+usage_*.go
+deployment_hygiene.go
+hygiene_trends.go
+project_health.go
+project_hygiene.go
+project_stats.go
+secret_access_*.go
+secret_audit_trail.go
+secret_expiring.go
+secret_inventory*.go
+secret_orphaned.go
+secret_ownership_history.go
+secret_risk.go
+secret_total_reads.go
+secret_read_aggregation.go
+blast_radius.go
+drift.go
+billing.go
+secret_name_conformance*.go
+secret_policy_info.go
+activity_labels.go
+secret_impact_preview.go
+recovery_key_status.go

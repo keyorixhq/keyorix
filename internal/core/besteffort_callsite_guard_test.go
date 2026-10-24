@@ -106,6 +106,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // bestEffortSeeds are the best-effort post-commit steps named in INV-CORE-34's
@@ -157,7 +159,12 @@ type beCallSite struct {
 	protected bool // inside a protecting closure or a recovering function
 }
 
-func (s beCallSite) key() string { return "internal/core/" + s.file + ":" + s.fn + ":" + s.callee }
+func (s beCallSite) key() string {
+	if strings.Contains(s.file, "/") { // a core family file outside internal/core (srcpath.CoreFamilyRel)
+		return s.file + ":" + s.fn + ":" + s.callee
+	}
+	return "internal/core/" + s.file + ":" + s.fn + ":" + s.callee
+}
 
 type beScan struct {
 	declNames      map[string]bool
@@ -167,21 +174,49 @@ type beScan struct {
 	closures       int
 }
 
+// beScanCore scans the core family (internal/core and the packages extracted
+// from it, ADR-116 R5), keyed by srcpath.CoreFamilyRel.
+func beScanCore(t *testing.T) *beScan {
+	t.Helper()
+	paths, err := srcpath.CoreFamilyGoFiles()
+	if err != nil {
+		t.Fatalf("best-effort call-site guard: %v", err)
+	}
+	byName := map[string]string{}
+	for _, p := range paths {
+		byName[srcpath.CoreFamilyRel(p)] = p
+	}
+	return beScanFiles(t, byName)
+}
+
+// beScanDir scans one directory: a synthetic fixture or a mutated copy of the
+// core family. The real scan is beScanCore.
 func beScanDir(t *testing.T, dir string) *beScan {
 	t.Helper()
-	fset := token.NewFileSet()
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		t.Fatalf("best-effort call-site guard: %v", err)
 	}
+	byName := map[string]string{}
+	for _, e := range entries {
+		if n := e.Name(); !e.IsDir() && strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
+			byName[n] = filepath.Join(dir, n)
+		}
+	}
+	return beScanFiles(t, byName)
+}
+
+// beScanFiles scans the non-generated files of byName (key -> path).
+func beScanFiles(t *testing.T, byName map[string]string) *beScan {
+	t.Helper()
+	fset := token.NewFileSet()
 	files := map[string]*ast.File{}
 	var names []string
-	for _, e := range entries {
-		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") || strings.Contains(n, "generated") {
+	for n, path := range byName {
+		if strings.Contains(filepath.Base(path), "generated") {
 			continue
 		}
-		f, perr := parser.ParseFile(fset, filepath.Join(dir, n), nil, 0)
+		f, perr := parser.ParseFile(fset, path, nil, 0)
 		if perr != nil {
 			t.Fatalf("best-effort call-site guard: parse %s: %v", n, perr)
 		}
@@ -488,7 +523,7 @@ func beTypeStr(e ast.Expr) string {
 // TestBestEffortCallSites_EveryCallProtectedOrAllowlisted is the guard proper.
 func TestBestEffortCallSites_EveryCallProtectedOrAllowlisted(t *testing.T) {
 	t.Parallel()
-	s := beScanDir(t, ".")
+	s := beScanCore(t)
 	var bad []string
 	seen := map[string]bool{}
 	for _, c := range s.violations() {
@@ -512,7 +547,7 @@ func TestBestEffortCallSites_EveryCallProtectedOrAllowlisted(t *testing.T) {
 // reads like a load-bearing one and silently pre-approves the shape coming back.
 func TestBestEffortCallSites_NoStaleAllowlistRows(t *testing.T) {
 	t.Parallel()
-	s := beScanDir(t, ".")
+	s := beScanCore(t)
 	live := map[string]bool{}
 	for _, c := range s.violations() {
 		live[c.key()] = true
@@ -536,7 +571,7 @@ func TestBestEffortCallSites_NoStaleAllowlistRows(t *testing.T) {
 // SEEDED half of the set: every seed must still be declared in internal/core.
 func TestBestEffortCallSites_SeedsAreDeclared(t *testing.T) {
 	t.Parallel()
-	s := beScanDir(t, ".")
+	s := beScanCore(t)
 	for name := range bestEffortSeeds {
 		if !s.declNames[name] {
 			t.Errorf("seed %q is not declared in internal/core any more: it was renamed or removed, so INV-CORE-34's "+
@@ -549,7 +584,7 @@ func TestBestEffortCallSites_SeedsAreDeclared(t *testing.T) {
 // when the scan finds nothing, so guard the population, not just the verdict.
 func TestBestEffortCallSites_ScanPreconditionHolds(t *testing.T) {
 	t.Parallel()
-	s := beScanDir(t, ".")
+	s := beScanCore(t)
 	if s.closures < bestEffortMinProtectedClosures {
 		t.Errorf("only %d besteffort.Run/goSafe call(s) found, floor %d: the protecting-call matcher stopped matching",
 			s.closures, bestEffortMinProtectedClosures)
@@ -704,16 +739,13 @@ func TestBestEffortCallSites_MutationKillsRecoverWrapper(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tmp := t.TempDir()
-			entries, err := os.ReadDir(".")
+			paths, err := srcpath.CoreFamilyGoFiles()
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, e := range entries {
-				n := e.Name()
-				if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
-					continue
-				}
-				b, rerr := os.ReadFile(n)
+			for _, path := range paths {
+				n := filepath.Base(path)
+				b, rerr := os.ReadFile(path) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 				if rerr != nil {
 					t.Fatal(rerr)
 				}
@@ -728,7 +760,7 @@ func TestBestEffortCallSites_MutationKillsRecoverWrapper(t *testing.T) {
 				}
 			}
 			base := map[string]bool{}
-			for _, v := range beScanDir(t, ".").violations() {
+			for _, v := range beScanCore(t).violations() {
 				base[v.key()+fmt.Sprint(v.line)] = true
 			}
 			var fresh []string

@@ -1,0 +1,10 @@
+# reminders: notification channels/retry, alert escalation, expiry/token/role/licence/certificate reminders, read-quota alerts
+# One glob per line, matched against the file name (README.md).
+notification_*.go
+alert_escalation.go
+expiry_reminders.go
+token_expiry_remind.go
+role_expiry_notify.go
+license_expiry.go
+read_quota_alerts.go
+certificate_expiry.go

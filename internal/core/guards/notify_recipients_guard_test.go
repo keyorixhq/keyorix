@@ -55,7 +55,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -63,6 +62,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 type recipientKind string
@@ -305,16 +306,11 @@ func nameOr(via, name string) string {
 
 func readCoreSources(t *testing.T) map[string]string {
 	t.Helper()
-	files, err := filepath.Glob("../*.go")
-	require.NoError(t, err)
 	src := map[string]string{}
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(f)
+	for _, f := range coreFamilySources(t) {
+		b, err := os.ReadFile(f) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 		require.NoError(t, err)
-		src[strings.TrimPrefix(f, "../")] = string(b)
+		src[srcpath.CoreFamilyRel(f)] = string(b)
 	}
 	require.Greater(t, len(src), 50, "scan root is wrong: too few non-test files in internal/core")
 	return src

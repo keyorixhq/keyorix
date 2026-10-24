@@ -28,21 +28,12 @@ import (
 func TestNamedLockOrder_EveryCallSiteKeyHasAFamily(t *testing.T) {
 	fset := token.NewFileSet()
 	var files []*ast.File
-	for _, dir := range []string{"..", "../storage", "../../storage/store"} {
-		paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
+	for _, p := range append(coreFamilySources(t), namedLockStorageSources(t)...) {
+		f, err := parser.ParseFile(fset, p, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, p := range paths {
-			if strings.HasSuffix(p, "_test.go") {
-				continue
-			}
-			f, err := parser.ParseFile(fset, p, nil, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			files = append(files, f)
-		}
+		files = append(files, f)
 	}
 
 	// Constructor name -> the key's fixed text (Sprintf prefix before the
@@ -184,4 +175,24 @@ func TestNamedLockOrder_EveryCallSiteKeyHasAFamily(t *testing.T) {
 			t.Errorf("storage.NamedLockOrder declares family %q but no WithNamedLock call site uses it — delete the stale entry", fam.Prefix)
 		}
 	}
+}
+
+// namedLockStorageSources lists the non-test sources of the two storage
+// packages that also build named-lock keys (internal/core/storage and
+// internal/storage/store). The core family part comes from coreFamilySources.
+func namedLockStorageSources(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, dir := range []string{"../storage", "../../storage/store"} {
+		paths, err := filepath.Glob(filepath.Join(dir, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range paths {
+			if !strings.HasSuffix(p, "_test.go") {
+				out = append(out, p)
+			}
+		}
+	}
+	return out
 }
