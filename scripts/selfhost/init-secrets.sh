@@ -56,6 +56,41 @@ random_token() {
     fi
 }
 
+# The server container runs as uid 1001 and REFUSES a group-readable secret file that
+# its own uid owns (the permission rule never trusts a file the process itself could
+# chmod). On a host where your uid is also 1001 the 0640 files above would be refused,
+# so say so now instead of at `docker compose up`. The owner must be root (see the
+# NOTE below); the group bit is what the container reads through.
+#
+# INIT_SECRETS_SERVER_UID names the uid to refuse. Default 1001 (the shipped image). Set it
+# only if you rebuilt the image with a different server uid (operator override), or from
+# tests that must not run as the server uid. It must be a number: anything else is an error
+# (a value that never matches would silently turn this check off).
+server_uid="${INIT_SECRETS_SERVER_UID:-1001}"
+case "$server_uid" in
+    ''|*[!0-9]*)
+        echo "init-secrets: ERROR: INIT_SECRETS_SERVER_UID must be a numeric uid, got '$server_uid'" >&2
+        exit 1
+        ;;
+esac
+
+# Refuse BEFORE writing anything when the files this run would create are doomed (#3522):
+# running as the server uid, any file we create is owned by it and the server rejects it.
+# (Files that already exist are judged by the owner check at the end, so a re-run after
+# `sudo chown root:GID secrets/*` still works for that user.)
+if [ "$(id -u)" = "$server_uid" ]; then
+    _missing=""
+    for _f in db_password master_password admin_password bootstrap_token; do
+        [ -e "$dir/$_f" ] || _missing="$_missing $dir/$_f"
+    done
+    if [ -n "$_missing" ]; then
+        echo "init-secrets: ERROR: you are uid $server_uid, the uid the server container runs as; the files this run would create" >&2
+        echo "init-secrets: would be owned by uid $server_uid and the server refuses a group-readable secret it owns. Nothing was written." >&2
+        echo "init-secrets: Run this script as a different regular user; it then tells you the 'sudo chown root:GID $dir/*' to run after." >&2
+        exit 1
+    fi
+fi
+
 umask 027
 mkdir -p "$dir"
 chmod 750 "$dir"
@@ -225,23 +260,6 @@ echo
 echo "The first admin's password is in $dir/admin_password (user: KEYORIX_ADMIN_USERNAME, default admin)."
 echo "Back up $dir/master_password separately: losing it makes every stored secret undecryptable."
 
-# The server container runs as uid 1001 and REFUSES a group-readable secret file that
-# its own uid owns (the permission rule never trusts a file the process itself could
-# chmod). On a host where your uid is also 1001 the 0640 files above would be refused,
-# so say so now instead of at `docker compose up`. The owner must be root (see the
-# NOTE below); the group bit is what the container reads through.
-#
-# INIT_SECRETS_SERVER_UID names the uid to refuse. Default 1001 (the shipped image). Set it
-# only if you rebuilt the image with a different server uid (operator override), or from
-# tests that must not run as the server uid. It must be a number: anything else is an error
-# (a value that never matches would silently turn this check off).
-server_uid="${INIT_SECRETS_SERVER_UID:-1001}"
-case "$server_uid" in
-    ''|*[!0-9]*)
-        echo "init-secrets: ERROR: INIT_SECRETS_SERVER_UID must be a numeric uid, got '$server_uid'" >&2
-        exit 1
-        ;;
-esac
 bad=""
 for _f in db_password master_password admin_password bootstrap_token; do
     _owner=$(stat -c %u "$dir/$_f" 2>/dev/null || stat -f %u "$dir/$_f" 2>/dev/null || echo "")
