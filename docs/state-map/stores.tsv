@@ -118,7 +118,7 @@ internal/faultstorage/gen/main.go (os.WriteFile)	file_write	internal/faultstorag
 internal/secretenv/secretenv.go (os.OpenFile)	file_write	internal/secretenv	1
 internal/securefiles/securefiles.go (os.OpenFile)	file_write	internal/securefiles	2
 internal/serverguard/serverguard.go (os.OpenFile)	file_write	internal/serverguard	1
-internal/storage/factory.go (os.OpenFile)	file_write	internal/storage	1
+internal/storage/factory_local.go (os.OpenFile)	file_write	internal/storage	1
 internal/storage/factory_sqlite_migration_lock.go (os.OpenFile)	file_write	internal/storage	1
 migrate/cmd/cloud_common.go (os.Create)	file_write	migrate/cmd	1
 migrate/cmd/vault.go (os.Create)	file_write	migrate/cmd	1
