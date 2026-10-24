@@ -459,6 +459,24 @@ It is generated: **on a merge conflict take main's version, then run
 `TestFaultyStorageGenerated_IsFresh` (default `go test`, so CI) fails on any drift.
 `.gitattributes` marks it `linguist-generated=true merge=ours`.
 
+### Writing or widening a repo-wide guard: the rollout contract
+
+A guard that walks the repository or a registry every PR touches fails the
+whole merge queue when it goes red. Two rules (`docs/guard-rollout-contract.md`,
+with the incidents behind them):
+
+1. **No calendar at PR time.** Never compare `time.Now()` with a row's date in a
+   test. Validate the format and pass the date to `guardrules.CheckExpiry` from a
+   `Test*NotExpired` test; the nightly job on main evaluates it, warns 7 days
+   ahead and keeps one issue open. `TestGuardTestsDoNotReadTheCalendar` fails on
+   a `_test.go` file that reads the clock and parses or formats a date.
+2. **Report-only first day, proven against the open PRs.** Report through
+   `g := guardrules.Rollout(t)`, add `docs/guard-rollout.d/<TestName>.tsv`, and
+   paste `scripts/guard-meets-open-prs.sh -p ./<pkg> -r '<TestRegex>'` output (main
+   plus the 5 most recently updated open PRs' merge results) into the PR body,
+   naming every PR it would fail. A widened guard (new scan root, new rule)
+   counts as new. The row is deleted after a green nightly on main.
+
 ## Modern Go
 
 Before editing a Go file, list the modern-Go guidelines that apply to it (no
