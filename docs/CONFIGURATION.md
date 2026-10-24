@@ -17,7 +17,7 @@ The config file is located via, in order: an explicit path argument, then
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035, ADR-058) — includes [revocation semantics by backend](#credential-revocation-semantics-by-backend)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
 - [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
-- [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028)
+- [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028) · [crypto_inventory](#crypto_inventory)
 
 ---
 
@@ -2086,6 +2086,24 @@ scim:
 > low-variety value, a placeholder such as `changeme`, or the same value as another
 > configured secret); see
 > [startup-refusals.md](operator/startup-refusals.md#weak-scim-token).
+
+## crypto_inventory
+
+Tunes the quantum-risk score of the crypto inventory and CycloneDX CBOM
+(`GET /api/v1/compliance/crypto-inventory`, `keyorix crypto inventory`). Every key
+and certificate Keyorix holds is scored 0–100 by how long it must stay secure
+(remaining life, or an assumed lifetime when it has no expiry) plus the time needed
+to migrate, against a **quantum horizon** — the date a cryptographically relevant
+quantum computer is assumed to exist. Classical public-key keys (RSA, ECDSA, Ed25519)
+score high; AES-256 and hash/HMAC-256 keys score low. The settings change only the
+reported score; no enforcement depends on them.
+
+```yaml
+crypto_inventory:
+  quantum_horizon: "2035-01-01"   # default; NIST IR 8547 (draft) disallows classical public-key crypto in 2035
+  migration_years: 3              # default; time needed to move off a vulnerable algorithm
+  unbounded_lifetime_years: 10    # default; lifetime assumed for a key with no expiry
+```
 
 ## sso
 

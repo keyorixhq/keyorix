@@ -153,6 +153,7 @@ var keptPaths = []string{
 	"/api/v1/compliance/evidence/verify",
 	"/api/v1/compliance/controls",
 	"/api/v1/compliance/controls.csv",
+	"/api/v1/compliance/crypto-inventory",
 	"/api/v1/compliance/digest",
 	"/api/v1/compliance/digest/send",
 	"/api/v1/compliance/permission-changes",
