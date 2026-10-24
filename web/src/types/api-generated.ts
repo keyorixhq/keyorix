@@ -1096,6 +1096,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/break-glass/{activationId}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record the independent post-activation review of a break-glass grant
+         * @description ADR-112 post-activation review: a written record that someone other than the activating user checked what the emergency access was used for. It is a record, not a control: it neither extends nor shortens the grant. Requires roles.assign at the project scope, and is refused while impersonating (403), so a puppet identity cannot forge an independent review. The activation must have concluded (revoked or expired) first, and an activation can be reviewed once. The note is trimmed, must be 10 to 2000 characters, and becomes part of the permanent audit record (break_glass.reviewed). The reviewer must not be the activating user and must be an attributable human user (403 otherwise). A missing activation, or one that belongs to another project, is the same 404.
+         */
+        post: operations["reviewBreakGlass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/share-recipients": {
         parameters: {
             query?: never;
@@ -7878,6 +7898,39 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    reviewBreakGlass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+                activationId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Review note (what was checked); trimmed before the length check */
+                    note: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Envelope {data, message}. Break-glass activation reviewed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
         };
     };
     searchShareRecipients: {
