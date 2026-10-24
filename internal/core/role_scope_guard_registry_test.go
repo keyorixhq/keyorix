@@ -57,6 +57,8 @@ var roleScopeExemptGrantWriters = map[string]string{
 	"bootstrapSystemLocked": "first-boot grants of the fixed global-tier roles system_viewer and admin at Scope{}",
 	"createUser":            "the fixed baseline system_viewer (global tier) at Scope{}",
 	"ProvisionSCIMUser":     "the fixed baseline system_viewer (global tier) at Scope{}",
+	"applyRoleSetOn": "only called from replaceUserRoleSet, which runs requireScopeValidForRole on every addition before the first removal or write; " +
+		"the check cannot run inside applyRoleSetOn itself (it reads through c.storage while the transaction is open, which deadlocks on Postgres)",
 }
 
 // minRoleScopeGrantWriteFuncs is a tripwire against a walker that silently

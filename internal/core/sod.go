@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -395,11 +396,17 @@ func (c *KeyorixCore) userSoDViolations(ctx context.Context, u *models.User, pol
 // and friends, #419) so both compute "what does this principal effectively hold"
 // identically — one policy-matching rule, not two.
 func (c *KeyorixCore) userHeldPermissionSet(ctx context.Context, userID uint) (map[string]bool, error) {
-	perms, err := c.storage.GetUserPermissions(ctx, userID)
+	return userHeldPermissionSetOn(ctx, c.storage, userID)
+}
+
+// userHeldPermissionSetOn is userHeldPermissionSet read through st (a transaction
+// that must see its own uncommitted role removals: replaceUserRoleSet).
+func userHeldPermissionSetOn(ctx context.Context, st storage.Storage, userID uint) (map[string]bool, error) {
+	perms, err := st.GetUserPermissions(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	groupPerms, err := c.storage.GetUserGroupPermissions(ctx, userID)
+	groupPerms, err := st.GetUserGroupPermissions(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -510,12 +517,17 @@ func (c *KeyorixCore) machineSoDViolations(ctx context.Context, report *SoDViola
 // user's own group membership to be project_id=0) when called with the global
 // scope — so this call is scope-correct for free, reusing already-tested code.
 func (c *KeyorixCore) isGlobalAdminRoleName(ctx context.Context, userID uint) (string, error) {
-	ids, err := c.scopedRoleIDs(ctx, userID, Scope{})
+	return isGlobalAdminRoleNameOn(ctx, c.storage, userID)
+}
+
+// isGlobalAdminRoleNameOn is isGlobalAdminRoleName read through st.
+func isGlobalAdminRoleNameOn(ctx context.Context, st storage.Storage, userID uint) (string, error) {
+	ids, err := scopedRoleIDsOn(ctx, st, userID, Scope{})
 	if err != nil {
 		return "", err
 	}
 	for _, id := range ids {
-		role, rerr := c.storage.GetRole(ctx, id)
+		role, rerr := st.GetRole(ctx, id)
 		if rerr != nil {
 			if storage.IsRoleNotFound(rerr) {
 				// A dangling user-role/group-role row pointing at a since-deleted
@@ -609,7 +621,12 @@ func sodPolicyNewlyCompletedBy(policies []*models.SoDPolicy, held, adding map[st
 // rolePermissionNameSet returns the permission names roleID's role_permissions
 // rows carry.
 func (c *KeyorixCore) rolePermissionNameSet(ctx context.Context, roleID uint) (map[string]bool, error) {
-	perms, err := c.storage.GetRolePermissions(ctx, roleID)
+	return rolePermissionNameSetOn(ctx, c.storage, roleID)
+}
+
+// rolePermissionNameSetOn is rolePermissionNameSet read through st.
+func rolePermissionNameSetOn(ctx context.Context, st storage.Storage, roleID uint) (map[string]bool, error) {
+	perms, err := st.GetRolePermissions(ctx, roleID)
 	if err != nil {
 		return nil, err
 	}
@@ -635,35 +652,54 @@ func sodBlockedErr(pol *models.SoDPolicy, detail string) error {
 // merely "not in the same project"). This is the choke point AssignUserRole and
 // AssignUserRoleWithExpiry both call.
 func (c *KeyorixCore) requireNoSoDViolation(ctx context.Context, userID, roleID uint) error {
-	policies, err := c.storage.ListSoDPolicies(ctx)
+	return requireNoSoDViolationOn(ctx, c.storage, userID, []uint{roleID}, Scope{})
+}
+
+// requireNoSoDViolationOn is requireNoSoDViolation for granting every role in
+// roleIDs at scope together, read through st: the roles' permissions are unioned,
+// so two roles that complete a policy only together are refused too. A transaction
+// passes itself as st to judge the grants against the role set it has already
+// changed (replaceUserRoleSet: the removals of the same request). An admin-bypass
+// role granted at the global scope makes the user an admin, so the whole grant is
+// out of scope (package doc above); at any other scope that role alone is skipped,
+// exactly as a single-role grant of it is.
+func requireNoSoDViolationOn(ctx context.Context, st storage.Storage, userID uint, roleIDs []uint, scope Scope) error {
+	policies, err := st.ListSoDPolicies(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 	}
 	if len(policies) == 0 {
 		return nil
 	}
-	adminRole, err := c.isGlobalAdminRoleName(ctx, userID)
+	adminRole, err := isGlobalAdminRoleNameOn(ctx, st, userID)
 	if err != nil {
 		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 	}
 	if adminRole != "" {
 		return nil // already holds admin-bypass — see package doc above
 	}
-	role, err := c.storage.GetRole(ctx, roleID)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
-	}
-	if isAdminRoleName(role.Name) {
-		return nil // granting admin-bypass — see package doc above
-	}
-	adding, err := c.rolePermissionNameSet(ctx, roleID)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+	adding := map[string]bool{}
+	for _, roleID := range roleIDs {
+		role, err := st.GetRole(ctx, roleID)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		if isAdminRoleName(role.Name) {
+			if scope == (Scope{}) {
+				return nil // granting admin-bypass — see package doc above
+			}
+			continue
+		}
+		perms, err := rolePermissionNameSetOn(ctx, st, roleID)
+		if err != nil {
+			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
+		}
+		maps.Copy(adding, perms)
 	}
 	if len(adding) == 0 {
 		return nil
 	}
-	held, err := c.userHeldPermissionSet(ctx, userID)
+	held, err := userHeldPermissionSetOn(ctx, st, userID)
 	if err != nil {
 		return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 	}

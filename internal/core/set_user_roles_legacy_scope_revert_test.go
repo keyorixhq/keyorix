@@ -10,67 +10,75 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSetUserRoles_RevertRestoresLegacyGlobalProjectRole is #3554 review
-// follow-up 3: SetUserRoles' compensating revert re-grants what it removed
-// through AssignUserRole, which runs the role-scope check since #3546. A legacy
+// TestSetUserRoles_LegacyGlobalProjectRole_NeverDroppedSilently is #3554 review
+// follow-up 3, restated for the #3488 split (role_set_replace.go). A legacy
 // project role held at the global scope (written before #3546) is a grant the
-// check refuses as NEW, so without the restore marker a failed SetUserRoles
-// removed it and could not put it back: the failure silently dropped a grant.
-func TestSetUserRoles_RevertRestoresLegacyGlobalProjectRole(t *testing.T) {
+// role-scope check refuses as NEW. Before #3488 a failed SetUserRoles re-granted
+// what it had removed through AssignUserRole, whose scope check refused the legacy
+// row, so the failure silently dropped it. Since #3488 nothing re-grants: the
+// removal is the caller's own request and stands, and a failed addition after it
+// is a PartialMutationError naming the removed role, never a silent drop. A
+// replacement whose addition the scope check refuses is refused before the
+// removal, so the legacy row stays.
+func TestSetUserRoles_LegacyGlobalProjectRole_NeverDroppedSilently(t *testing.T) {
 	t.Parallel()
-	c, st := newBootstrappedCore(t)
-	ctx := context.Background()
 
-	u, err := st.CreateUser(ctx, foldedTestUser(t, "legacy", "legacy@example.com"))
-	require.NoError(t, err)
-	developer, err := st.GetRoleByName(ctx, "project_developer")
-	require.NoError(t, err)
-	auditor, err := st.GetRoleByName(ctx, "system_auditor")
-	require.NoError(t, err)
+	t.Run("addition fails after the removal: the removal is reported", func(t *testing.T) {
+		t.Parallel()
+		c, st := newBootstrappedCore(t)
+		ctx := context.Background()
 
-	global := storage.Scope{}
-	// The legacy row, written the way pre-#3546 servers wrote it (raw storage).
-	require.NoError(t, st.AssignRole(ctx, u.ID, developer.ID, global))
+		u, err := st.CreateUser(ctx, foldedTestUser(t, "legacy", "legacy@example.com"))
+		require.NoError(t, err)
+		developer, err := st.GetRoleByName(ctx, "project_developer")
+		require.NoError(t, err)
+		auditor, err := st.GetRoleByName(ctx, "system_auditor")
+		require.NoError(t, err)
 
-	// New set: drop the legacy developer grant, add system_auditor (which fails).
-	armed := true
-	c.storage = failOnceAssignRoleForRoleStorage(st, auditor.ID, &armed)
+		global := storage.Scope{}
+		// The legacy row, written the way pre-#3546 servers wrote it (raw storage).
+		require.NoError(t, st.AssignRole(ctx, u.ID, developer.ID, global))
 
-	const actor = uint(1) // bootstrapped global admin
-	err = c.SetUserRoles(ctx, actor, u.ID, []uint{auditor.ID}, global, false)
-	require.Error(t, err)
-	require.False(t, armed, "the injected fault must actually have fired")
+		// New set: drop the legacy developer grant, add system_auditor (which fails).
+		armed := true
+		c.storage = failOnceAssignRoleForRoleStorage(st, auditor.ID, &armed)
 
-	got, gerr := st.GetUserRoleIDsExact(ctx, u.ID, global)
-	require.NoError(t, gerr)
-	assert.ElementsMatch(t, []uint{developer.ID}, got,
-		"the revert must restore the legacy global project_developer grant it removed, not drop it")
-}
+		const actor = uint(1) // bootstrapped global admin
+		err = c.SetUserRoles(ctx, actor, u.ID, []uint{auditor.ID}, global, false)
+		require.Error(t, err)
+		require.False(t, armed, "the injected fault must actually have fired")
+		pe, ok := AsPartialMutationError(err)
+		require.True(t, ok, "a failed addition after the legacy grant's removal must say the removal landed, got %v", err)
+		assert.Contains(t, pe.Applied, "removal", "Applied names the removal")
+		assert.Contains(t, pe.NotApplied, "addition", "NotApplied names the addition")
 
-// TestRoleScopeRestoreMarker_CoversOnlyItsOwnGrant: the marker skips the check
-// for the exact (role, scope) it names and for nothing else, so it cannot be
-// used to slip a different refused grant through.
-func TestRoleScopeRestoreMarker_CoversOnlyItsOwnGrant(t *testing.T) {
-	t.Parallel()
-	c, st := newBootstrappedCore(t)
-	ctx := context.Background()
+		got, gerr := st.GetUserRoleIDsExact(ctx, u.ID, global)
+		require.NoError(t, gerr)
+		assert.Empty(t, got, "exactly the requested removal applied, the failed addition not")
+	})
 
-	developer, err := st.GetRoleByName(ctx, "project_developer")
-	require.NoError(t, err)
-	viewer, err := st.GetRoleByName(ctx, "project_viewer")
-	require.NoError(t, err)
+	t.Run("addition refused by the scope check: nothing is removed", func(t *testing.T) {
+		t.Parallel()
+		c, st := newBootstrappedCore(t)
+		ctx := context.Background()
 
-	marked := withRoleScopeRestore(ctx, developer.ID, storage.Scope{})
-	require.NoError(t, c.requireScopeValidForRole(marked, developer.ID, storage.Scope{}),
-		"the marked (role, scope) is the restore")
-	for name, tc := range map[string]struct {
-		roleID uint
-		scope  storage.Scope
-	}{
-		"another role at the same scope": {viewer.ID, storage.Scope{}},
-		"the same role at another scope": {developer.ID, storage.Scope{EnvironmentID: 9}},
-	} {
-		err := c.requireScopeValidForRole(marked, tc.roleID, tc.scope)
-		assert.True(t, errors.Is(err, ErrRoleScopeInvalid), "%s: must still be refused, got %v", name, err)
-	}
+		u, err := st.CreateUser(ctx, foldedTestUser(t, "legacy2", "legacy2@example.com"))
+		require.NoError(t, err)
+		developer, err := st.GetRoleByName(ctx, "project_developer")
+		require.NoError(t, err)
+		viewer, err := st.GetRoleByName(ctx, "project_viewer")
+		require.NoError(t, err)
+
+		global := storage.Scope{}
+		require.NoError(t, st.AssignRole(ctx, u.ID, developer.ID, global))
+
+		const actor = uint(1)
+		err = c.SetUserRoles(ctx, actor, u.ID, []uint{viewer.ID}, global, false)
+		require.True(t, errors.Is(err, ErrRoleScopeInvalid), "project_viewer at the global scope must be refused, got %v", err)
+
+		got, gerr := st.GetUserRoleIDsExact(ctx, u.ID, global)
+		require.NoError(t, gerr)
+		assert.ElementsMatch(t, []uint{developer.ID}, got,
+			"the scope refusal comes before the removal: the legacy grant stays")
+	})
 }

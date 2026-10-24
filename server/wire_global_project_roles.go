@@ -22,8 +22,9 @@ const maxGlobalProjectRoleGrantLines = 50
 // scope, which applies in EVERY project. Existing grants are not touched (some
 // may be relied on): this lists them, pending invitations that can no longer
 // be accepted, and SSO settings that would create such grants, as a WARNING
-// for an administrator to review. Read-only and best-effort: it never blocks
-// startup.
+// for an administrator to review. ROLE-SHAPE-1 adds grants at
+// {project_id: 0, environment_id: X} of any role, which X's project's access
+// review does not list. Read-only and best-effort: it never blocks startup.
 func wireGlobalProjectRoleGrantsNotice(cw *coreWiring) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -41,12 +42,41 @@ func wireGlobalProjectRoleGrantsNotice(cw *coreWiring) error {
 	invs, err := cw.core.ListPendingInvitationsOutsideAssignableScope(ctx)
 	if err != nil {
 		log.Printf("pending invitation scope check: %v (continuing; the check did not run)", err)
+	} else {
+		for _, line := range invitationsOutsideScopeNotice(invs) {
+			log.Print(line)
+		}
+	}
+	envGrants, err := cw.core.ListEnvironmentWithoutProjectGrants(ctx)
+	if err != nil {
+		log.Printf("environment-without-project grant check: %v (continuing; the check did not run)", err)
 		return nil
 	}
-	for _, line := range invitationsOutsideScopeNotice(invs) {
+	for _, line := range environmentWithoutProjectGrantNotice(envGrants) {
 		log.Print(line)
 	}
 	return nil
+}
+
+// environmentWithoutProjectGrantNotice renders the startup notice for grants at
+// {project_id: 0, environment_id: X} (ROLE-SHAPE-1, #2857); nil when there are
+// none. Any role: unlike the assignable-scope notice below, the problem is the
+// shape, which the access review of X's project does not list.
+func environmentWithoutProjectGrantNotice(grants []core.EnvironmentWithoutProjectGrant) []string {
+	if len(grants) == 0 {
+		return nil
+	}
+	lines := []string{fmt.Sprintf("WARNING: %d existing role grant(s) at project_id=0 with an environment_id: each applies "+
+		"inside that environment but is missing from its project's access review. New grants like these are refused "+
+		"since #3546; these were left in place. Re-create each with the environment's project_id, then remove it:", len(grants))}
+	for i, g := range grants {
+		if i == maxGlobalProjectRoleGrantLines {
+			lines = append(lines, fmt.Sprintf("WARNING:   ... and %d more (each project's access review names its own)", len(grants)-i))
+			break
+		}
+		lines = append(lines, "WARNING:   "+g.Describe())
+	}
+	return lines
 }
 
 // roleGrantsOutsideScopeNotice renders the startup notice for grants; nil when

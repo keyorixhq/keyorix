@@ -132,7 +132,8 @@ export function useUpdateProjectMemberRole(projectId: number) {
     return useMutation({
         mutationFn: ({ userId, role }: { userId: number; role: string }) =>
             projectsApi.updateMemberRole(projectId, userId, role),
-        onSuccess: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) }),
+        // onSettled: a 503 MutationPartiallyApplied changed the member's roles too.
+        onSettled: () => queryClient.invalidateQueries({ queryKey: PROJECT_KEYS.members(projectId) }),
     });
 }
 

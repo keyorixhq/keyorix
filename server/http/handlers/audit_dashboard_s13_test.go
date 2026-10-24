@@ -339,15 +339,6 @@ func TestAcknowledgeAnomalyAlert_BadID_S13(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, w.Code)
 }
 
-// TestAcknowledgeAnomalyAlert_NoCoreService_S13 verifies the nil-core guard
-// returns 500. Additional call-site for coverage distinct from existing tests.
-func TestAcknowledgeAnomalyAlert_NoCoreService_S13(t *testing.T) {
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	AcknowledgeAnomalyAlert(w, req)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // TestListAnomalyAlerts_NoCoreService_AcknowledgedFalse_S13 — ?acknowledged=0
 // exercises the branch where the string is not "true"/"1" so acknowledged=false.
 func TestListAnomalyAlerts_NoCoreService_AcknowledgedFalse_S13(t *testing.T) {

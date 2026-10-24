@@ -1681,6 +1681,11 @@ func (m *MockStorage) CountPendingAuditEvents(ctx context.Context) (int64, error
 	return args.Get(0).(int64), args.Error(1)
 }
 
+func (m *MockStorage) OldestPendingAuditEventAt(ctx context.Context) (time.Time, bool, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(time.Time), args.Bool(1), args.Error(2)
+}
+
 func (m *MockStorage) GetRecoveryKeyRecord(ctx context.Context) (*models.RecoveryKeyRecord, bool, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {

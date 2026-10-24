@@ -34,7 +34,24 @@ The four audit-verification alerts (`KeyorixAuditChainBreakRecorded`, `KeyorixAu
 `KeyorixAuditVerifyStale`, `KeyorixAuditVerifyNeverPassed`) and the dashboard panels that say "needs the
 keyorix-protected scrape job" depend on the second job. Without it
 `KeyorixAuditVerifyNeverPassed` fires after two days, which is the intended signal.
-`KeyorixAuditOwedPending` also reads the second job; without it that alert can never fire.
+`KeyorixAuditOwedPending` and the owed-audit age and unreadable alerts
+(`KeyorixAuditOwedOldestPendingWarn`, `KeyorixAuditOwedOldestPendingCritical`,
+`KeyorixAuditOwedMetricUnreadable`) also read the second job; without it they can never fire.
+
+### Owed-audit age thresholds
+
+`keyorix_audit_owed_oldest_pending_age_seconds` is the age of the oldest owed audit row (0 when
+none). Defaults, as literals in the `expr` of each rule, in seconds:
+
+| Alert | Severity | Default | Edit |
+|---|---|---|---|
+| `KeyorixAuditOwedOldestPendingWarn` | warning | `> 3600` (1 hour) | the number in its `expr` |
+| `KeyorixAuditOwedOldestPendingCritical` | critical | `> 86400` (24 hours) | the number in its `expr` |
+
+Each also waits `for: 5m`. Keep warn below critical. The critical alert fires together with the
+warning; route by severity or inhibit the warning with the critical in Alertmanager. The gauge
+answers NaN, never 0, when the database cannot be read; `KeyorixAuditOwedMetricUnreadable` fires
+on the scrape-error counter then (the thresholds do not apply).
 
 The posture and tamper series are on the second job for the same reason: `keyorix_encryption_state`,
 `keyorix_encryption_kek_provider_info`, `keyorix_encryption_operation_failures_total`,
