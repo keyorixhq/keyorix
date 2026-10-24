@@ -81,7 +81,12 @@ Rules (all enforced at startup; the server refuses to start rather than guess):
 - **File missing, unreadable, empty, not a regular file, or larger than 1 MiB:**
   error. The server does not fall back to `X` or to a value in `keyorix.yaml`.
 - **Nothing is logged:** errors and warnings name the variable and the path, never
-  the value or the file contents.
+  the value or the file contents. A relative path (`KEYORIX_TOKEN_FILE=./token`)
+  works, but errors do not show it, because it may be the secret itself (someone
+  who set `X_FILE` to the value instead of `X`):
+  `KEYORIX_DB_PASSWORD_FILE (a relative path, not shown: it may be the secret itself): cannot open secret file: no such file or directory`.
+  An absolute path is shown. The server, the CLI, `keyorix-k8s-sync` and the
+  container entrypoint all behave this way.
 - **File permissions -- key material is refused, other secrets follow the
   file-permission policy.** The rule is the one the KEK file and
   `--passphrase-file` already follow: `0600` or `0400`. One exception exists for
@@ -421,7 +426,12 @@ With `dsn:` instead of fields, put the CA in the connection string
 `verify-full`/`verify-ca`. `ssl_root_cert` together with `dsn` is refused,
 because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
-encrypted nor verified.
+encrypted nor verified. So is a CA file with `ssl_mode: allow` or `prefer`
+(or a `dsn` with `sslrootcert=<file>` whose effective sslmode is
+disable/allow/prefer, including a dsn with no `sslmode`): the driver loads the
+CA but never checks the server's certificate against it, and may fall back to
+plaintext. `sslrootcert=system` with allow/prefer is accepted, because the
+driver then runs `verify-full`.
 
 **`ssl_mode` together with `dsn`.** The dsn is used as-is, so `ssl_mode` used
 to be silently ignored next to it: `ssl_mode: verify-full` with a dsn saying
@@ -448,8 +458,10 @@ is not refused.
 
 The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
-`system`). `admin validate --posture` prints one informational line saying
-what is encrypted and what is verified against which CA.
+`system`), or mounts `externalDatabase.caSecret` for you. `admin validate
+--posture` prints one informational line saying what is encrypted and what is
+verified against which CA. A worked example with a private CA, including a
+wrong-CA check: [operator/postgres-tls.md](operator/postgres-tls.md).
 
 ### PostgreSQL DSN forms
 
@@ -715,7 +727,8 @@ storage:
   reconstruct; with it, the reconstructed KEK is verified against a real HMAC-SHA256
   commitment computed at split time. `KEYORIX_MASTER_PASSWORD` is **not** required.
   Move an existing install onto it with `keyorix-server admin encryption migrate-provider
-  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`. ⚠️ Losing
+  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`
+  (the commitment is required there: the migration refuses without it). ⚠️ Losing
   more than N-K shares makes the KEK — and all data — permanently unrecoverable;
   store and back up shares separately.
 - **`tpm`**: the KEK is **sealed to the host TPM 2.0** (`tpm_device`, default
@@ -772,12 +785,8 @@ acceptable only for local development.
 
 ```yaml
 secrets:
-  chunking:
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 100
   limits:
-    max_secrets_per_user: 10000
+    max_secret_size: 65536   # bytes per value on create/update/rotate; default 64 KiB, max 1 MiB
 ```
 
 ## security
@@ -1649,10 +1658,10 @@ evidence_delivery:
 When **encryption is enabled**, each exported pack is **signed**: a detached
 `<file>.json.sig` is written next to it (and the webhook delivery carries the
 signature in the `X-Keyorix-Evidence-Signature` header). The signature is an HMAC
-keyed by a DEK-derived key the database/DBA does not hold, so an archived pack's
+keyed by a KEK-derived key (`deriveEvidenceSignKey`) the database/DBA does not hold, so an archived pack's
 authenticity is provable later — verify with `keyorix compliance verify --file
 <pack>` (it asks the server, which recomputes the HMAC; a signature made under a
-pre-rotation DEK is reported as unverifiable rather than tampered).
+pre-KEK-rotation key is reported as unverifiable rather than tampered).
 
 ### Who "the project's admins" are (all project-level alerts)
 
@@ -1710,11 +1719,12 @@ certificate_expiry:
 An opt-in background scheduler that signs the audit hash-chain head (ADR-029) so
 **tail-truncation and genesis re-seed are detectable on-box**, not just via an
 off-box anchor. Each run records a `(chained_events, head_id, head_hash)`
-checkpoint with an HMAC keyed by a DEK-derived key the database/DBA does not hold;
+checkpoint with an HMAC keyed by a KEK-derived key (`deriveAuditCheckpointKey`, `internal/encryption/keymanager_lifecycle.go`) the database/DBA does not hold;
 `keyorix audit verify` (and `GET /audit/verify`) then enforce the live chain
 against the latest checkpoint. Single-replica-gated (ADR-039).
 
-**Requires encryption enabled** — the signing key is derived from the DEK, so with
+**Requires encryption enabled** — the signing key is derived from the KEK (not the
+DEK, so a DEK rotation does not change it; a KEK rotation does), so with
 encryption off the scheduler logs a warning and does nothing.
 
 ```yaml
@@ -1749,8 +1759,8 @@ knowing:
   older versions cannot read the new anchor layout and report the chain broken.
 
 **External-notary anchoring** (`audit.checkpoint_notary`, opt-in). The checkpoint
-HMAC is keyed by a DEK-derived key the running server holds — which detects
-truncation/rewrite by a *database* actor, but an attacker who also obtains the DEK
+HMAC is keyed by a KEK-derived key (`deriveAuditCheckpointKey`) the running server holds — which detects
+truncation/rewrite by a *database* actor, but an attacker who also obtains the KEK
 could forge a checkpoint. Anchoring each written checkpoint to an external **RFC
 3161 timestamp authority (TSA)** adds an independent, signed proof-of-existence over
 the checkpoint's canonical bytes that binds it to a third party's clock and signing
@@ -1779,7 +1789,7 @@ audit:
 >
 > The new checkpoint's anchor (asserted time + TSA) is shown by
 > `keyorix audit checkpoint`. Requires `audit_checkpoints` to be doing the writing
-> (which requires encryption — the checkpoint signing key is DEK-derived).
+> (which requires encryption — the checkpoint signing key is KEK-derived, `deriveAuditCheckpointKey`).
 
 **Offline anchor source** (`audit.offline_anchor_path`, ADR-108 §B4, opt-in). An
 always-on external notary (above) needs live network access, which an air-gapped
@@ -1968,9 +1978,9 @@ permanently unreadable the moment you enable this.
 
 When enabled, reading a "restricted" secret's **value** (not its metadata —
 `GetSecret`/listing are unaffected) requires an approved, **secret-scoped**
-access request: `keyorix request secret-access --secret-id <id> --user
-<email>` to request it, `keyorix request review --id <id> --action approve
---by <admin-email>` to approve it (an administrator at the secret's project).
+access request: `keyorix request secret-access --secret-id <id> --reason
+<why>` to request it, `keyorix request review --id <id> --action approve` to
+approve it (an administrator at the secret's project).
 This reuses the same `AccessRequest` model/flow as `dual_control` above
 (ADR-024), narrowed with a `SecretID` rather than granting a role. A read whose
 acting principal cannot be identified as a specific user — a machine/service
@@ -2128,9 +2138,51 @@ signs in — useful when an IdP isn't wired for SCIM push. The account is create
 stored as its `externalId` for future reconciliation, and is granted `default_role`
 (`system_viewer` when unset; an unknown role grants nothing — least-privilege on
 misconfiguration). The JIT creation is audited as `auth.sso_jit_provisioned`. The IdP
-must return an `email` claim (request the `email` scope), or the login is refused. A
-later SCIM push for the same `externalId` reconciles to the same account. Leave
+must return an `email` claim (request the `email` scope), or the login is refused. Leave
 `auto_provision` off to require that accounts be provisioned ahead of time.
+
+> **A JIT account is not managed by SCIM** (since #3493). Its `externalId` is in the
+> reserved `sso:<provider>:<sub>` scheme, so SCIM get, list, update, deactivate, delete
+> and group membership all refuse it, and a SCIM push for it is not reconciled to it.
+
+### Offboarding an SSO / JIT account
+
+**Disabling a user at the IdP, or deactivating them over SCIM, does not offboard a JIT or
+SSO-claimed account.** Its personal access tokens (PATs) and sessions stay valid until one
+of these happens:
+
+- a Keyorix administrator suspends, deactivates or deletes the user (below);
+- each PAT reaches its own expiry (a PAT created without one never does);
+- the session lifetime ends. With `session.absolute_ttl` unset (the default) a session
+  can be refreshed indefinitely, so it is not a dependable bound; set it if you rely on it.
+
+The inactivity sweep (`keyorix user suspend-inactive`) is **not scheduled**: nothing in the
+server runs it, and it skips global administrators. Run it by hand, or do not count on it.
+
+To offboard such a user, as an administrator holding `users.write` (`users.delete` for
+the delete):
+
+```bash
+# 1. Find the user id (the leaver's email, or the IdP subject as external_id=sso:<provider>:<sub>).
+curl -s -H "Authorization: Bearer $KEYORIX_TOKEN" \
+  "https://<host>/api/v1/users/by-email?email=leaver@example.com"
+
+# 2. Suspend: login is blocked and every session and PAT of the user is revoked at once.
+keyorix user suspend --id <user-id> --by admin@example.com
+#    API equivalent:
+curl -s -X POST -H "Authorization: Bearer $KEYORIX_TOKEN" \
+  "https://<host>/api/v1/users/<user-id>/suspend"
+
+# 3. Or remove the account (soft delete; sessions and PATs are revoked in the same step).
+keyorix user delete --id <user-id> --by admin@example.com --force
+#    API equivalent: DELETE /api/v1/users/<user-id>
+```
+
+Suspension is reversible (`keyorix user reactivate`), but the revoked PATs stay revoked.
+If the IdP later re-enables the person, nothing in Keyorix changes until you reactivate
+them. Make this step part of your leaver process, and prefer short PAT lifetimes for SSO
+users. See SCIM-7 in
+[the SCIM and SSO threat model](security/threat-models/scim-and-sso-accounts.md).
 
 > **Email trust.** An email an IdP explicitly marks unverified (`email_verified:
 > false`) is not used to match an existing account or to provision a new one — only

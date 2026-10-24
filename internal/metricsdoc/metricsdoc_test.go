@@ -67,6 +67,7 @@ var boundedLabels = map[string]string{
 	"op":        "closed set: encrypt, decrypt",
 	"provider":  "KEK provider type normalised to the 9 known provider names plus `other` (encryption.providerLabel)",
 	"reason":    "closed enum documented in the metric help (unreachable/timeout/server_error)",
+	"lock":      "closed set of advisory-lock kinds (config.lockLossKinds plus `other`), listed in the metric help",
 }
 
 // forbiddenLabelTokens: if any `_`-separated token of a label name is in this set the
@@ -96,6 +97,10 @@ var endpointOverrides = map[string]string{
 	"keyorix_audit_verify_failure_recorded":               epScheduler,
 	"keyorix_audit_verify_state_rejected":                 epScheduler,
 	"keyorix_audit_owed_pending":                          epScheduler,
+	"keyorix_audit_owed_failures_total":                   epScheduler,
+	"keyorix_audit_owed_oldest_pending_age_seconds":       epScheduler,
+	"keyorix_audit_owed_metric_scrape_errors_total":       epScheduler,
+	"keyorix_audit_checkpoint_truncation_refused_total":   epScheduler,
 
 	// Posture and tamper signals (an anonymous reader must not learn that encryption is
 	// off, that decrypts or audit appends fail, that the KEK chain downgraded, how hard
@@ -126,6 +131,10 @@ var postureMetricsMustBeProtected = []string{
 	"keyorix_audit_verify_failure_recorded",
 	"keyorix_audit_verify_state_rejected",
 	"keyorix_audit_owed_pending",
+	"keyorix_audit_owed_failures_total",
+	"keyorix_audit_owed_oldest_pending_age_seconds",
+	"keyorix_audit_owed_metric_scrape_errors_total",
+	"keyorix_audit_checkpoint_truncation_refused_total",
 }
 
 func endpointOf(d metricDef) string {

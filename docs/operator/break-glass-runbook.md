@@ -88,9 +88,37 @@ accepting writes.
    verdict is **INDETERMINATE** (exit code 2): the chain is intact but known to be missing
    those rows. When they are settled the section says `none` and the verdict is VALID
    again. On a database the verifier's role cannot read `break_glass_activations` from,
-   the section says NOT CHECKED and the "does NOT prove" list says so.
+   the section says NOT CHECKED and the "does NOT prove" list says so. For any other
+   BROKEN or INDETERMINATE verdict, see `docs/operator/audit-chain-break-runbook.md`.
 
 An unsettled degraded activation is never removed by `data_retention.break_glass_days`.
+
+### Watching the queue: how old is the oldest owed row
+
+The owed rows (every owed revocation, not only break-glass) sit in `pending_audit_events`
+until the backfill writes them. Three series on the authenticated
+`GET /api/v1/admin/scheduler-metrics` (the `keyorix-protected` scrape job) show it; the
+shipped rules are in `deploy/observability/prometheus-alerts.yaml`:
+
+| Series | Normal | Alert |
+|---|---|---|
+| `keyorix_audit_owed_pending` (count) | 0 | `KeyorixAuditOwedPending`: above 0 for 10 minutes |
+| `keyorix_audit_owed_oldest_pending_age_seconds` | 0 | `KeyorixAuditOwedOldestPendingWarn` above 1 hour, `KeyorixAuditOwedOldestPendingCritical` above 24 hours (both for 5 minutes; thresholds are the numbers in each rule's `expr`, see `deploy/observability/README.md`) |
+| `keyorix_audit_owed_metric_scrape_errors_total` | flat | `KeyorixAuditOwedMetricUnreadable`: increasing for 15 minutes |
+
+The count says rows exist; only the age tells a row that is delayed (minutes, the backfill is
+catching up) from one that is stuck (hours, nothing is bringing it in), so a delayed row cannot
+quietly become one that never arrives. Each alert has a section in
+`deploy/observability/runbook.md`.
+
+During an audit outage the database is often the thing that is down. The two gauges read the
+database when scraped, with a 3-second bound, and answer **NaN, never 0 and never their last
+value**, when they cannot: `KeyorixAuditOwedPending` and the age alerts then cannot fire, which is
+why `KeyorixAuditOwedMetricUnreadable` watches the scrape-error counter instead. If it fires, you
+are blind to the queue; restore the database, then look at the age at once. The age read is one
+index lookup on `pending_audit_events.created_at` and takes no lock, so it cannot slow the
+backfill. A replica whose clock is ahead of the one that wrote the oldest row reads as age 0 for
+that row, not negative.
 
 ### Settling by hand (mixed-version upgrade only)
 

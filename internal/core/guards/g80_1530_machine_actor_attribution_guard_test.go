@@ -72,14 +72,14 @@ var auditAttributionAllowlist = map[string]string{
 		"scheduler/config-change event with no human or machine actor, correctly using the system-actor marker " +
 		"rather than a null. Never machine-identity-typed, so emitAudit's corrections would never apply to it " +
 		"anyway.",
-	"server/main.go:auditConnectorProjectBindingCreate": "hardcodes ActorType: core.ActorTypeSystem and never " +
+	"server/wire_connect.go:auditConnectorProjectBindingCreate": "hardcodes ActorType: core.ActorTypeSystem and never " +
 		"sets UserID (absent from the struct literal, so it's the zero value nil) -- an unattended boot-time " +
 		"binding-creation event with no actor, same shape as the anomaly.go entry above.",
-	"server/main.go:auditKeylessModeStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
+	"server/startup_audit_events.go:auditKeylessModeStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
 		"UserID (absent from the struct literal) -- the boot-time keyless-mode warning event " +
 		"(docs/design-b2-recover-admin.md §5), emitted before any request context exists, same " +
 		"no-actor shape as auditConnectorProjectBindingCreate above.",
-	"server/main.go:auditReadsSkippedStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
+	"server/startup_audit_events.go:auditReadsSkippedStartup": "hardcodes ActorType: core.ActorTypeSystem and never sets " +
 		"UserID (absent from the struct literal) -- the boot-time insecure_audit_skip_reads warning event " +
 		"(ADR-112 Amendment 4), emitted before any request context exists, same no-actor shape as " +
 		"auditKeylessModeStartup above and for the same reason.",
@@ -87,7 +87,7 @@ var auditAttributionAllowlist = map[string]string{
 		"server/admin/admin.go) and never sets UserID (absent from the struct literal, so it's the zero value " +
 		"nil) -- a host-side `keyorix-server admin` CLI action with no HTTP/gRPC request context to derive a " +
 		"machine identity from in the first place (ADR-108 §B: no admin command starts a network listener), " +
-		"same never-machine-identity-typed shape as the anomaly.go and server/main.go entries above.",
+		"same never-machine-identity-typed shape as the anomaly.go and server boot-path entries above.",
 	"server/admin/recover_admin_logic.go:recordRecoveryAuditEvent": "hardcodes ActorType: adminActorType " +
 		"(\"admin_cli\"), same never-machine-identity-typed, no-network-listener shape as the recordAdminAction " +
 		"entry above (ADR-108 §B). UNLIKE recordAdminAction, this one DOES set UserID -- to the RECOVERED " +
@@ -96,6 +96,12 @@ var auditAttributionAllowlist = map[string]string{
 		"here is the host OS user (no Keyorix identity to attribute to, by definition -- design §4) and is never " +
 		"conflated with the target. ActorType never being \"machine_identity\" is what makes emitAudit's " +
 		"corrections inapplicable here, independent of what UserID holds.",
+	"server/admin/recover_admin_logic.go:recordRecoveryKeyMismatch": "hardcodes ActorType: adminActorType " +
+		"(\"admin_cli\") for the refused `keyorix-server admin recover-admin` attempt (recovery key did not " +
+		"match) -- same host-side, no-network-listener shape as recordRecoveryAuditEvent above (ADR-108 §B). " +
+		"UserID is set only to the TARGET account of the attempt, never to an acting identity: the actor is " +
+		"the host OS user, and ActorType is never \"machine_identity\", so emitAudit's MachineIdentityID " +
+		"stamp has nothing to correct here.",
 	"server/admin/login_lockout.go:logLoginLockoutAudit": "hardcodes ActorType: adminActorType " +
 		"(\"admin_cli\") for `keyorix-server admin clear-login-lockout` (#2936) -- same host-side, " +
 		"no-network-listener shape as recordRecoveryAuditEvent above (ADR-108 §B). Like it, UserID is set only " +

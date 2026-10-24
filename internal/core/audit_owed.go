@@ -6,7 +6,9 @@
 //  1. The effect and a pending_audit_events record of the owed row commit in ONE
 //     transaction, so the effect can never commit without either its audit row or a
 //     durable record of the missing one. If even that record cannot be written, the
-//     effect is applied on its own: revocation wins, and the gap is logged.
+//     effect is applied on its own: revocation wins, the owed row is named in a
+//     SECURITY line before the effect commits, and its record is queued right after
+//     the commit, before the append wait (RD-TLA-OWED-FIX-1).
 //  2. The owed row is appended, and the record claimed (deleted), in one transaction
 //     with a bounded wait. Success is the normal case and leaves nothing behind.
 //  3. Otherwise the failure is loud: a SECURITY log line naming the event, a process
@@ -82,11 +84,24 @@ func (c *KeyorixCore) commitOwingAudit(ctx context.Context, effect func(st stora
 			return err // the effect itself failed: nothing happened, as before
 		}
 		// The record of the owed row could not be written. The effect must not depend
-		// on it: apply it alone, then still try the audit row below.
-		log.Printf("SECURITY: could not record the owed audit event %q (%s) before its effect: %v; applying the effect without that record", event.EventType, event.Description, err)
+		// on it: apply it alone, then still try the audit row below. The row is named
+		// BEFORE the effect, so a process that dies before the row is recorded leaves
+		// a loud trace of it, never a silent loss (RD-TLA-OWED-FIX-1).
+		log.Printf("SECURITY: owed audit event %q (%s) could not be recorded before its effect: %v; applying the effect without that record. %s",
+			event.EventType, event.Description, err, owedAtRiskNote)
 		pendingID = 0
 		if err := effect(c.storage); err != nil {
 			return err
+		}
+		// Queue the record now, before the bounded append wait: a crash at the append
+		// then leaves a durable owed record instead of a row held only in memory.
+		if encErr == nil {
+			if id, qerr := c.queueOwedAuditLate(ctx, event.EventType, encoded); qerr == nil {
+				pendingID = id
+				log.Printf("SECURITY: owed audit event %q queued right after its effect as pending audit event %d: %s", event.EventType, id, event.Description)
+			} else {
+				log.Printf("SECURITY: owed audit event %q could not be queued after its effect either (held in memory until written): %s: %v", event.EventType, event.Description, qerr)
+			}
 		}
 	}
 	_ = c.writeOwedAudit(ctx, pendingID, event) // never fails the effect: loud on failure
@@ -105,8 +120,11 @@ func (c *KeyorixCore) commitOwingAudit(ctx context.Context, effect func(st stora
 //
 // A revocation is never blocked by the audit log (Andrei 2026-10-14), so a failure
 // to write the pending record does not fail the change either: fn is run again with
-// a collect-only target, the change commits without a record, and the row is still
-// attempted after the commit (and logged as NOT queued if that fails too).
+// a collect-only target, the change commits without a record (each owed row named in
+// a SECURITY line before the commit), the records are queued right after the commit
+// (queueOwedRowsLate), and the rows are then appended as usual. Only when the pending
+// table refuses that too are the rows held in memory, attempted directly, and logged
+// as NOT queued if the append fails as well.
 //
 // fn may run twice (the fallback), so it must recompute everything it reads, and it
 // must write its audit rows through tgt, last, like withAuditedMutation's fn.
@@ -143,6 +161,13 @@ func (c *KeyorixCore) runOwedAuditMutation(ctx context.Context, fn func(tx stora
 				// collect-only run surfaces any genuine failure of fn again.
 				return sink.owedErr
 			}
+			if collectOnly && ferr == nil {
+				// Named BEFORE the commit: if the process dies before the rows are
+				// queued below, the loss is loud, never silent (RD-TLA-OWED-FIX-1).
+				for _, e := range sink.owedRows {
+					log.Printf("SECURITY: owed audit event %q (%s) commits without its pending record. %s", e.event.EventType, e.event.Description, owedAtRiskNote)
+				}
+			}
 			return ferr
 		})
 		return sink, err
@@ -154,10 +179,70 @@ func (c *KeyorixCore) runOwedAuditMutation(ctx context.Context, fn func(tx stora
 		}
 		log.Printf("SECURITY: could not record the owed audit event(s) before the change: %v; applying the change without that record", err)
 		if sink, err = run(true); err != nil {
+			if len(sink.owedRows) > 0 {
+				log.Printf("SECURITY: the change did not commit, so the %d owed audit event(s) named above are not owed: %v", len(sink.owedRows), err)
+			}
 			return nil, err
 		}
+		// Queue the rows right after the commit, not after the append wait in settle
+		// (which a caller may run much later, after its lock or cache eviction): a crash
+		// from here on leaves durable owed records.
+		c.queueOwedRowsLate(ctx, sink.owedRows)
 	}
 	return func() { c.settleOwedAudit(ctx, sink) }, nil
+}
+
+// owedAtRiskNote ends the SECURITY line that names an owed row committing without its
+// pending record: until a later line says it was written or queued, it exists only in
+// this process.
+const owedAtRiskNote = "It is queued right after the commit and lost if the process stops before it is written or queued: record it by hand if no later line says it was"
+
+// queueOwedRowsLate records, in one transaction, the owed rows of a change that
+// committed through the collect-only fallback, and sets their pendingID so settle
+// claims them as it appends them. It runs right after the commit, before any append
+// wait (RD-TLA-OWED-FIX-1: before, the rows were queued only after a refused append,
+// so a crash at the append lost them with no record and no log). If the pending table
+// still refuses, the rows stay in memory with pendingID 0: settle appends them
+// directly and, if that fails too, queues them late again (writeOwedAudit) or logs them
+// as NOT queued. A commit whose acknowledgement is lost here leaves pendingID 0 on rows
+// that were recorded: such a row can be written twice (a duplicate, never a loss), as
+// queueOwedAuditLate documents.
+func (c *KeyorixCore) queueOwedRowsLate(ctx context.Context, rows []owedAuditEntry) {
+	if len(rows) == 0 {
+		return
+	}
+	ids := make([]uint, len(rows))
+	err := func() (err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic queueing owed audit events: %v", r)
+			}
+		}()
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), owedAuditWait)
+		defer cancel()
+		return c.storage.WithTransaction(wctx, func(tx storage.Storage) error {
+			for i, e := range rows {
+				encoded, err := json.Marshal(e.event)
+				if err != nil {
+					return err
+				}
+				p := &models.PendingAuditEvent{EventType: e.event.EventType, Event: string(encoded)}
+				if err := tx.CreatePendingAuditEvent(wctx, p); err != nil {
+					return err
+				}
+				ids[i] = p.ID
+			}
+			return nil
+		})
+	}()
+	if err != nil {
+		log.Printf("SECURITY: the %d owed audit event(s) named above could not be queued after the commit either (held in memory until written): %v", len(rows), err)
+		return
+	}
+	for i := range rows {
+		rows[i].pendingID = ids[i]
+		log.Printf("SECURITY: owed audit event %q queued right after the commit as pending audit event %d: %s", rows[i].event.EventType, ids[i], rows[i].event.Description)
+	}
 }
 
 // settleOwedAudit appends the rows an owing transaction recorded, after its commit.
@@ -168,7 +253,7 @@ func (c *KeyorixCore) settleOwedAudit(ctx context.Context, sink *auditForwardSin
 	refused := false
 	for _, e := range sink.owedRows {
 		if refused {
-			c.noteOwedAuditNotAttempted(e.pendingID, e.event)
+			c.noteOwedAuditNotAttempted(ctx, e.pendingID, e.event)
 			continue
 		}
 		refused = !c.writeOwedAudit(ctx, e.pendingID, e.event)
@@ -177,11 +262,19 @@ func (c *KeyorixCore) settleOwedAudit(ctx context.Context, sink *auditForwardSin
 
 // noteOwedAuditNotAttempted is writeOwedAudit's failure report for a row not tried
 // because the audit log refused the one before it.
-func (c *KeyorixCore) noteOwedAuditNotAttempted(pendingID uint, event *models.AuditEvent) {
+func (c *KeyorixCore) noteOwedAuditNotAttempted(ctx context.Context, pendingID uint, event *models.AuditEvent) {
 	owedAuditFailures.Add(1)
 	if pendingID == 0 {
-		log.Printf("SECURITY: audit event %q was not attempted (the audit log refused the previous owed row) and is NOT queued for backfill (record it by hand): %s",
-			event.EventType, event.Description)
+		encoded, err := json.Marshal(event)
+		if err == nil {
+			if pendingID, err = c.queueOwedAuditLate(ctx, event.EventType, encoded); err == nil {
+				log.Printf("SECURITY: audit event %q was not attempted (the audit log refused the previous owed row); queued for backfill late as pending audit event %d: %s",
+					event.EventType, pendingID, event.Description)
+				return
+			}
+		}
+		log.Printf("SECURITY: audit event %q was not attempted (the audit log refused the previous owed row) and is NOT queued for backfill (record it by hand): %s: %v",
+			event.EventType, event.Description, err)
 		return
 	}
 	log.Printf("SECURITY: audit event %q was not attempted (the audit log refused the previous owed row); queued for backfill as pending audit event %d: %s",
@@ -241,6 +334,13 @@ func (c *KeyorixCore) writeOwedAudit(ctx context.Context, pendingID uint, event 
 			log.Printf("SECURITY: panic settling owed audit event %q (pending %d): %v", event.EventType, pendingID, r)
 		}
 	}()
+	// A row with no pending record (the collect-only fallback: the record could not be
+	// written in the change's transaction) is encoded now, before the append can touch
+	// it, so it can still be queued if the append fails.
+	var late []byte
+	if pendingID == 0 {
+		late, _ = json.Marshal(event)
+	}
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), owedAuditWait)
 	defer cancel()
 	_, err := c.appendOwedAudit(wctx, pendingID, 0, event)
@@ -249,6 +349,15 @@ func (c *KeyorixCore) writeOwedAudit(ctx context.Context, pendingID uint, event 
 	}
 	owedAuditFailures.Add(1)
 	if pendingID == 0 {
+		if late != nil {
+			if id, qerr := c.queueOwedAuditLate(ctx, event.EventType, late); qerr == nil {
+				log.Printf("SECURITY: audit event %q could not be written after its effect committed; queued for backfill late as pending audit event %d: %s; user=%v secret=%v: %v",
+					event.EventType, id, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), err)
+				return false
+			} else {
+				err = fmt.Errorf("%w; queueing it for backfill failed too: %w", err, qerr)
+			}
+		}
 		log.Printf("SECURITY: audit event %q could not be written after its effect committed and is NOT queued for backfill (record it by hand): %s; user=%v secret=%v: %v",
 			event.EventType, event.Description, uintOrNil(event.UserID), uintOrNil(event.SecretNodeID), err)
 		return false
@@ -259,6 +368,29 @@ func (c *KeyorixCore) writeOwedAudit(ctx context.Context, pendingID uint, event 
 		log.Printf("SECURITY: could not note the failure on pending audit event %d: %v", pendingID, rerr)
 	}
 	return false
+}
+
+// queueOwedAuditLate records an owed row whose effect committed WITHOUT its pending
+// record (the collect-only fallback) once its append failed or was not attempted, so
+// the backfill still writes it and it survives a restart (SUPERFAN-1022 note 1). It is
+// a write of its own after the commit, with a bounded wait: a second chance for the
+// record the change's transaction could not write, not a replacement for it. Exactly
+// once is kept by the backfill's claim; the one case it cannot rule out is an append
+// that committed but reported an error (a lost commit acknowledgement), which can then
+// be written twice -- a duplicate row, never a lost one.
+func (c *KeyorixCore) queueOwedAuditLate(ctx context.Context, eventType string, encoded []byte) (id uint, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("panic queueing owed audit event: %v", r)
+		}
+	}()
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), owedAuditWait)
+	defer cancel()
+	p := &models.PendingAuditEvent{EventType: eventType, Event: string(encoded)}
+	if err := c.storage.CreatePendingAuditEvent(wctx, p); err != nil {
+		return 0, err
+	}
+	return p.ID, nil
 }
 
 // appendOwedAudit claims pendingID (when non-zero) and appends event in one

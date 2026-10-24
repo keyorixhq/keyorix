@@ -358,6 +358,9 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	updated, perms, err := h.coreService.UpdateRole(r.Context(), userCtx.UserID, role, newPermissionIDs)
 	if err != nil {
 		log.Printf("Error updating role: %v", err)
+		if sendPartialMutation(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "built-in") {
 			sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
 		} else {
@@ -481,6 +484,9 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		log.Printf("Error assigning role: %v", err)
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "already assigned") {
 			sendError(w, "ConflictError", "Role already assigned to user", http.StatusConflict, nil)
 		} else {
@@ -800,6 +806,9 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		log.Printf("Error assigning role to group: %v", err)
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else if strings.Contains(err.Error(), "already assigned") {

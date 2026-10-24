@@ -232,6 +232,10 @@ together (table `pending_audit_events`). If the audit log then refuses the row:
 - the `audit_owed_backfill` job (every minute, one replica at a time) writes the
   row, exactly once, as soon as the audit log accepts writes again. The row is
   dated when it is written, and its description says when the suspension happened.
+- `keyorix_audit_owed_oldest_pending_age_seconds` (authenticated scheduler-metrics
+  endpoint) is the age of the oldest owed row, so a row that is stuck rather than
+  delayed is visible: the shipped alerts warn above 1 hour and go critical above
+  24 hours (`deploy/observability/`, `docs/operator/break-glass-runbook.md`).
 
 A suspend that also clears synced copies is different: it is refused (nothing
 changes) when its audit row cannot be written. See `docs/k8s-operator.md`.
@@ -283,6 +287,9 @@ option there, but it does not bundle the key-material files.
   rewrites history before taking the backup; an anchor held outside this host
   is what actually constrains a host admin who holds both the database and its
   checkpoint signing key (`../AIRGAP_RUNBOOK.md` "Exporting an audit-chain anchor").
+  Unlike the backup, the anchor export (and `admin verify-audit`) needs the
+  database to itself **on PostgreSQL too**: beside a running server it is
+  refused, so schedule it in a maintenance window with the server stopped.
 - **Record `KEYORIX_MASTER_PASSWORD` (or the file/fd/stdin passphrase)
   separately from both** — required to derive the KEK that unwraps the
   backed-up DEK, and losing it makes an otherwise-perfect backup pair useless.
@@ -294,10 +301,17 @@ option there, but it does not bundle the key-material files.
   `admin verify-audit` automatically and fails (non-zero exit) if the chain
   reports BROKEN, but an untested restore procedure can still surface
   operational surprises (wrong config, wrong key-file paths) that are best
-  found in a drill, not an actual incident. `admin restore
-  --overwrite-existing` moves any existing target aside
-  (`<path>.pre-restore-<timestamp>`) rather than truncating it, so a botched
-  drill still has a way back.
+  found in a drill, not an actual incident. Restore into an **empty** target
+  (a fresh directory, or an empty PostgreSQL database); that is the supported
+  flow and the one the drill script exercises. `admin restore
+  --overwrite-existing` moves only existing key files and a SQLite database
+  file aside (`<path>.pre-restore-<timestamp>`) rather than truncating them.
+  It does **not** empty a PostgreSQL database: the rows are loaded into the
+  tables that are already there, so over a database that holds data the
+  restore stops on a duplicate key (the load is one transaction, so the
+  database itself is unchanged) after the key files have already been
+  replaced. To restore over a used PostgreSQL database, drop and recreate it
+  first ([`../SELF_HOSTING.md`](../SELF_HOSTING.md) §5).
 
 ## 7. Process and host hardening
 

@@ -74,6 +74,7 @@ Not searched (so not in the list):
 | C | config.go:2907 | `gRPC server is enabled but no port is specified` |
 | C | config.go:2917 | `autocert is enabled but no domains are specified` |
 | R | config.go:2921 | `TLS is enabled but cert_file or key_file is missing` |
+| C | airgap_profile.go (Validate) | `server.http.tls.auto_cert: true is not available in this build` (air-gapped build only; AIRGAP-ACME-1) |
 | C | config.go:2931-2934 | `gRPC TLS auto_cert is not supported`, `gRPC TLS is enabled but cert_file or key_file is missing` |
 | C | config.go:2964 | `postgres storage requires either database.dsn or all of host, name, and user` |
 | C | config.go:2981 | `database path is not specified` |
@@ -114,10 +115,10 @@ Not searched (so not in the list):
 | R | database_tls.go:87 | `is not a valid sslmode` |
 | R | database_tls.go:286 | `cannot be combined with storage.database.dsn` |
 | C | database_tls.go:144 | `when dsn is set` (ssl_mode vs dsn disagree) |
-| C | database_tls.go:304 | `ssl_root_cert is set but storage.database.ssl_mode is disable` |
+| C | database_tls.go:305, 319, 345 | `ssl_root_cert is set but storage.database.ssl_mode is` disable/allow/prefer, `storage.database.dsn sets sslrootcert but its effective sslmode is` |
 | C | database_tls.go:193-233 | CA file: not a regular file, `writable by group or others, refusing to trust it`, larger than limit, `contains a private key`, no PEM certificate |
-| C | database_tls.go:340, 345 | `selects a PostgreSQL connection service` (dsn / `PGSERVICE`) |
-| C | database_tls.go:454-603 | connection string syntax errors (`malformed`, `unterminated`, `forbidden NUL byte`) |
+| C | database_tls.go:368, 373 | `selects a PostgreSQL connection service` (dsn / `PGSERVICE`) |
+| C | database_tls.go:482-631 | connection string syntax errors (`malformed`, `unterminated`, `forbidden NUL byte`) |
 | C | postgres_dsn.go:69, 289 | `dsn already contains a password`, `the PostgreSQL driver's connection settings differ from what the TLS` |
 
 ### Database and storage

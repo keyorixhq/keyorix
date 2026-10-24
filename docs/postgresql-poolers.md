@@ -111,13 +111,16 @@ So the server checks every lock connection while the lock is held, in every
 mode: it pings it every 5 seconds (`config.PinnedLockPingInterval`, 5 s timeout),
 and the single_writer holder session is polled every 250 ms anyway. A dead
 connection is reported with one log line for every kind of lock, `<holder>: the
-connection holding the advisory lock is gone, so the lock is lost: <error>`, and:
+connection holding the advisory lock is gone, so the lock is lost: <error>`, counted
+in the metric `keyorix_advisory_lock_lost_total{lock}` (alert on any increase), and:
 
 | Lock | What the holder does when it is lost |
 |---|---|
 | named lock (`WithNamedLock`), scheduler job lock, bootstrap lock, audit-checkpoint lock, audit list index build lock | The critical section's context is cancelled with cause `ErrAdvisoryLockLost`, so its queries stop, and the call returns that error joined with its own: a section that ran without its lock never reports plain success. A scheduler tick is logged as failed; the next tick takes the lock again or skips. |
 | server-presence lock (`serverguard`) | The server logs it, shuts down gracefully and exits with status 1, so an admin command cannot run beside it. The supervisor restarts it. |
 | `single_writer` holder lock | The same: graceful shutdown, exit 1, so a second single-writer server never runs beside it (docs/single-writer.md). |
+| admin command lock (the presence lock held exclusively by `keyorix-server admin ...`) | The command prints an ERROR and stops with exit status 1, as after a crash, so it does not run on beside a server or another admin command that may have started meanwhile. Check that none did (stop any that started), then re-run the command. Every state-changing admin command already survives a crash (DEK rotation has crash recovery). |
+| key-initialisation lock (`storage.encryption.key_dir_lock: database`, first boot and rotation crash recovery) | Start-up is refused: a sibling replica may have written the key files at the same time, so this replica does not serve with keys that may not match them. The supervisor restarts it and it loads the files now on disk. |
 | migration lock | Nothing extra: the migration runs on the lock's own connection, so its next statement fails. |
 
 The ping is skipped while a lock statement is using the connection (a nested
@@ -130,10 +133,15 @@ long: the error makes the overlap visible, it does not prevent it.
 Not covered: a lock released while its connection stays alive (nothing in
 Keyorix does that), and a connection that a pooler silently reconnects to a new
 backend behind the client's back (PgBouncer closes the client connection
-instead; other poolers are not supported, see the end of this page). Tested on
+instead; other poolers are not supported, see the end of this page). The design
+note [design/pooler-lock-loss.md](design/pooler-lock-loss.md) lists every lock, the
+failure modes per deployment shape and the detection options. Tested on
 a direct connection (`TestSessionAdvisoryLock_KilledLockBackend_StopsTheHolder`,
 `TestPostgres_ServerGuard_LostSessionPresenceLockIsReported`,
-`TestGuard_KilledHolderBackend_ClosesLost`, and `TestLockLoss_Postgres`, which
+`TestGuard_KilledHolderBackend_ClosesLost`,
+`TestPostgres_ServerGuard_LostExclusiveLockIsReported`,
+`TestAcquireDatabaseLock_LostLockStopsTheCommand`,
+`TestPostgres_WithKeyInitLock_LostLockFailsTheHolder`, and `TestLockLoss_Postgres`, which
 kills the lock backend of a real running server and checks the exit status);
 through PgBouncer by `scripts/pgbouncer-matrix.sh`.
 

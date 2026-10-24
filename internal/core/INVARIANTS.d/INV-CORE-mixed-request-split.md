@@ -14,7 +14,19 @@
   row read in commit 1), `ReissueOneTimePassword` (account restricted + sessions ended, then the
   credential), `IssueMachineToken` with `ReplaceCredentialID` (`rotateMachineToken`: the old
   credential revoked and evicted, then the new one issued; ask
-  perf-cred-lookup-1-rotation-audit-gated (b)). If commit 2 fails, commit 1 stays and the call returns `*PartialMutationError`
+  perf-cred-lookup-1-rotation-audit-gated (b)), `UpdateRole` (permissions removed + added: the
+  removals alone, then the description and the additions, decided on the permission set read in
+  each transaction), `UpdateSharePermission` (a lower permission + a later or cleared expiry, or
+  the reverse: the narrower value of each part, then the requested share, decided on
+  `LockShareRecordForUpdate`; MERGE-FIX-3482K, ask 3482-mixed-update-role-share (a)), `SetUserRoles`
+  and `SetProjectMemberRole` (`replaceUserRoleSet`, role_set_replace.go, #3488: the removals in one
+  transaction under the last-admin / project-admin guard, which also judges the additions'
+  separation-of-duties check on the set it leaves, then the additions in one transaction under
+  `sodGrantLockKey`, each re-reading the role set in its own transaction; nothing is ever re-granted to
+  compensate. One exception, ask atomic-owed-1-admin-swap: a `SetProjectMemberRole` swap of the
+  project's only administrator to another roles.assign role, whose removals alone would strand the
+  project (INV last-admin), is ONE fail-closed transaction and changes nothing during an audit outage).
+  If commit 2 fails, commit 1 stays and the call returns `*PartialMutationError`
   (`errors.Is` `ErrMutationPartiallyApplied`; it unwraps to the cause), which the transports
   answer with HTTP 503 (error `MutationPartiallyApplied`, `details` {code
   `mutation_partially_applied`, revocation_applied true, remainder_applied false, applied,
@@ -24,17 +36,24 @@
   the same request is safe: commit 1 is idempotent. The one retry that cannot complete by itself
   is MFA-on + rename by an actor without a second factor: the new requirement gates the actor
   (`ProjectMFARequired`) and the refused retry changes nothing. If BOTH the owed record and the
-  append of commit 1's row fail, the narrowing still applies and the row is the loud "NOT queued
-  for backfill" gap: a violation, never accepted as complete (Andrei 2026-10-20).
+  append of commit 1's row fail, the narrowing still applies and the row is queued after the commit
+  (`queueOwedAuditLate`); only if that record fails too is it the loud "NOT queued for backfill"
+  gap: a violation, never accepted as complete (Andrei 2026-10-20).
   Why: a mixed request used to fail closed as a whole, so an audit outage rolled its revocation
   back (REVIEW-3482 F1); owing the whole call instead could commit a widening with no row.
-  Guard: `internal/core` `TestMixedRequestSplit_NarrowingNeverBlockedRemainderFailsClosed` (9 mixed requests
+  Guard: `internal/core` `TestSetUserRoles_AuditOutage_NeverLosesARole`,
+  `TestSetProjectMemberRole_AuditOutage_NeverStrandsOrLies`, `TestSetUserRoles_RefusedAdditionChangesNothing`
+  (role.assigned refused or total outage, SQLite and PostgreSQL, read the role set),
+  `TestMixedRequestSplit_NarrowingNeverBlockedRemainderFailsClosed` (11 mixed requests
   x success / audit outage + backfill + retry / commit-2 append error, effect-then-error, panic /
   crash after commit 1 / owed record refused / record AND append refused, SQLite and PostgreSQL;
-  every case reads the database), `TestMixedRequestSplit_RetryAfterPartialIsIdempotent`;
+  every case reads the database), `TestMixedRequestSplit_RetryAfterPartialIsIdempotent`,
+  `TestSecurityMutationAudit_UpdateRole_ByDirection` / `_UpdateSharePermission_ByDirection`
+  (pure narrowing owed, pure widening fail closed, mixed partial);
   `server/faultops` `TestOwedAuditSplit_SweepEverySplitOp` (the same sites over the real HTTP,
-  SCIM and gRPC stack, LogAuditEvent#1..n, pinned `owedAuditSplitExpectedOwedTypes`) and
-  `TestOwedAuditSplit_Calibration` (red/green of `owedAuditSplitVerdict`).
-  Not covered: `UpdateRole` / `UpdateSharePermission` stay classified per call
-  (`withDirectedAuditedMutation`: a mixed update widens and fails closed as a whole); no static
-  guard detects a new mixed request that is not split.
+  SCIM and gRPC stack, LogAuditEvent#1..n, pinned `owedAuditSplitExpectedOwedTypes`),
+  `TestOwedAuditSplit_Calibration` (red/green of `owedAuditSplitVerdict`),
+  `TestRoleEditorUpdate_AuditFailure_ByDirection`, `TestShareUpdate_AuditFailure_ByDirection`.
+  Not covered: no static guard detects a new mixed request that is not split. The share
+  scenarios' expiry is invisible to the faultops state comparison (every `time.Time` is
+  excluded); there the second commit is told apart by its row, and the core tests read the expiry.

@@ -53,6 +53,7 @@ cd keyorix && make install
 **Self-host the full stack (web UI + API + PostgreSQL) with Docker Compose:**
 
 ```bash
+git clone --branch v0.96.3 https://github.com/keyorixhq/keyorix.git && cd keyorix   # the compose file, .env.example and scripts/selfhost/ live in the repo; use a release tag, main can be ahead of the published images
 cp .env.example .env
 ./scripts/selfhost/init-secrets.sh   # generates ./secrets/* (Docker secrets files); admin password is in ./secrets/admin_password
 docker compose up -d                 # open http://localhost:8088
@@ -154,36 +155,36 @@ dbPassword, _ := client.GetSecretScoped(ctx, "db-password",
     keyorix.ProjectByName("my-project"), keyorix.EnvironmentByName("production"))
 ```
 
-**Python**
-```bash
-pip install keyorix
-```
+**Python** (from source: not verified yet, see the note below)
 ```python
 client = keyorix.Client("https://your-server:8443", os.environ["KEYORIX_TOKEN"])
 db_password = client.get_secret_scoped("db-password", "my-project", "production")
 ```
 
-**Node.js**
+**Node.js** (from source)
 ```bash
-npm install @keyorixhq/sdk
+git clone https://github.com/keyorixhq/keyorix-sdks.git
+npm pack ./keyorix-sdks/node
+npm install ./keyorixhq-sdk-0.3.0.tgz
 ```
 ```javascript
 const client = new keyorix.Client("https://your-server:8443", process.env.KEYORIX_TOKEN);
 const dbPassword = await client.getSecretScoped("db-password", "my-project", "production");
 ```
 
-**Java**
-```xml
-<dependency>
-    <groupId>com.keyorix</groupId>
-    <artifactId>keyorix-sdk</artifactId>
-    <version>0.3.0</version>
-</dependency>
-```
+**Java** (from source: not verified yet, see the note below)
 ```java
 KeyorixClient client = Keyorix.newClient("https://your-server:8443", System.getenv("KEYORIX_TOKEN"));
 String dbPassword = client.getSecretScoped("db-password", "my-project", "production");
 ```
+
+**Packages are not published yet.** `pip install keyorix`,
+`npm install @keyorixhq/sdk` and the `com.keyorix:keyorix-sdk` Maven
+dependency do not work today: nothing is on PyPI, npm or Maven Central. Only
+the Go module resolves from a registry. The Node.js steps above (clone, pack,
+install the tarball) were run and the package loads. A from-source install of
+the Python and Java SDKs has not been verified yet; use the `python/` and
+`java/` directories of the `keyorix-sdks` clone and their READMEs.
 
 Each language's `examples/petstore/` directory in
 [keyorix-sdks](https://github.com/keyorixhq/keyorix-sdks) has a full

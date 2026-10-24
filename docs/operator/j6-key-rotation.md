@@ -5,6 +5,9 @@ encrypts secret values) and the **KEK** (key-encryption key, derived from your m
 passphrase — what wraps the DEK at rest). The output shown below is illustrative
 (version numbers and fingerprints differ on your install).
 
+For the preflight, the checks afterwards, rollback and what not to do, see
+[key-rotation-runbook.md](key-rotation-runbook.md).
+
 Both commands need exclusive access to the database — stop the server first (every replica, if you run several; see below). They read the
 current master passphrase from `KEYORIX_MASTER_PASSWORD`, `KEYORIX_MASTER_PASSWORD_FILE`,
 `--passphrase-file`, `--passphrase-fd` or `--passphrase-stdin`.
@@ -58,8 +61,13 @@ fingerprint in `system_metadata`, not key material), and every replica checks it
    then re-encrypts with the encrypted tables locked against writes (reads
    continue) and records the new epoch in the same transaction.
 4. Copy the new `dek.key` (and `kek.salt` with the password provider) from that
-   host to every other replica's key directory, or confirm they share the
-   volume (Helm `ReadWriteMany` keys volume).
+   host to every other replica's key directory. With the Helm chart's Secret mode,
+   rotate in a workspace and publish the result as a new key Secret instead
+   (`admin encryption key-secret unpack` / `export`; procedure and crash recovery in
+   [multi-replica-keys.md, "Rotation in Secret mode"](../multi-replica-keys.md#rotation-in-secret-mode)).
+   Keep the rotating host's key directory until every replica runs on the new key
+   set: if the rotation was interrupted after its commit, its `dek.key.pending` is the
+   only copy of the new DEK.
 5. Start the replicas.
 
 A replica whose `dek.key` is still the old one refuses to start:
@@ -82,6 +90,13 @@ the old DEK, or by re-running `rotate`. SQLite (single server) is unchanged.
 ## Rotate the KEK (change the master passphrase)
 
 This re-wraps the DEK under a new passphrase; it does **not** touch any database row.
+It still opens the database (read only, to finish an interrupted DEK rotation first, and to
+take the exclusive presence lock, #3513), so the database must be reachable with the
+configured `storage` settings: on PostgreSQL the server must be reachable, on SQLite run it
+from the directory the configured path is relative to. When it is not, `rotate-kek` fails with
+`cannot connect to the database to check for a running server`, although only key files change.
+Bring the database up first; `--force` is not a fix for this (see the runbook).
+`admin encryption migrate-provider` opens it the same way.
 
 ```bash
 keyorix-server admin encryption rotate-kek --config ./keyorix.yaml --confirm --new-passphrase-file ./new_master_password

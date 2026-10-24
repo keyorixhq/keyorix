@@ -12,8 +12,11 @@ development releases. They do not carry a declared support period, a Declaration
 Conformity, or a CE marking, and they are not offered as products placed on the EU
 market.
 
-Pre-1.0, security fixes land on the latest release only. Upgrade to the latest
-release to receive them.
+Pre-1.0, the security fix rules are in the table in
+[SECURITY.md](SECURITY.md#supported-versions-pre-10). In short: fixes of every
+severity land on the current minor release line, and only Critical and High fixes
+are backported to the previous minor. For Medium and Low severity, upgrade to the
+current minor. A new policy is published with 1.0.0 and replaces this rule.
 
 The policy below takes effect at v1.0.
 

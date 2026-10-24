@@ -124,7 +124,7 @@ test('an inactivity session timeout really ends the session (server-side, not ju
     const profileBefore = await page.context().request.get('/api/v1/auth/profile');
     expect(profileBefore.ok(), 'the session must actually be valid before the timeout').toBeTruthy();
 
-    // web/src/constants.ts's DEFAULT_VALUES.SESSION_TIMEOUT is 1 hour; fast-
+    // getEnvConfig().SESSION_TIMEOUT (web/src/utils/index.ts) is 1 hour; fast-
     // forward well past it so the inactivity-logout branch in useAuth fires.
     await page.clock.fastForward('01:05:00');
 

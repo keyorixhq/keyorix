@@ -140,6 +140,15 @@ same `sslmode=` in the dsn, or remove `ssl_mode`. Check with `keyorix-server adm
 --posture` after updating the binary. See
 [CONFIGURATION.md](CONFIGURATION.md#postgresql-tls).
 
+**PostgreSQL: a CA with `ssl_mode` allow/prefer refuses to start**
+(PG-SSL-ROOT-CERT-1). The driver loaded the CA but never checked the server's
+certificate against it. A CA file in `ssl_root_cert` (or `sslrootcert=` in a
+dsn) with an effective sslmode of `disable`, `allow` or `prefer` (a dsn with no
+`sslmode` is `prefer`) is refused, and so is `system` with `disable`. Before
+upgrading, set `ssl_mode: verify-full` (or `sslmode=verify-full` in the dsn).
+Helm: the same `externalDatabase.sslRootCert`/`sslMode` shapes fail `helm
+template`. Walk-through: [operator/postgres-tls.md](operator/postgres-tls.md).
+
 **Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
 CMD). `docker run <image> <command>` and `docker compose run backend <command>`
 still run `<command>`, after the optional config copy (`KEYORIX_CONFIG_SOURCE`);
@@ -1019,11 +1028,38 @@ writes (`sso:<provider>:<sub>`). After the upgrade:
   created just-in-time by SSO, and native accounts that signed in through SSO.
 
 **Check after upgrading.** If your IdP's SCIM connector ever sent an `externalId`
-starting with `sso:`, such a row now exists but SCIM can no longer deactivate or delete
-it. Look for them (`SELECT id, username, external_id FROM users WHERE external_id LIKE 'sso:%'`)
-and decide per account whether it is a SCIM-created row or an SSO-claimed one. An
-IdP-side disable of an SSO/JIT account does not revoke its sessions or PATs; see
-SCIM-7 in [security/threat-models/scim-and-sso-accounts.md](security/threat-models/scim-and-sso-accounts.md).
+starting with `sso:`, SCIM created a row that SCIM can no longer deactivate or delete.
+Before this change the server accepted such an `externalId` on create. A plain
+`external_id LIKE 'sso:%'` query also lists every account SSO itself claimed or
+created, so join to the audit rows SCIM wrote when it created the account. The audit
+event's `user_id` is the acting principal, not the new user; the new user's id is in the
+description (`SCIM provisioned user <id> (username=..., externalId="...", active=...)`).
+This one statement runs unchanged on SQLite (`sqlite3 <database file>`) and PostgreSQL
+(`psql`):
+
+<!-- upgrading-6v-check-query -->
+```sql
+SELECT u.id, u.username, u.email, u.external_id, u.account_state
+FROM users u
+JOIN audit_events a
+  ON a.event_type = 'scim.user_provisioned'
+ AND a.description LIKE 'SCIM provisioned user ' || CAST(u.id AS TEXT) || ' (%'
+WHERE substr(u.external_id, 1, 4) = 'sso:'
+  AND u.deleted_at IS NULL
+ORDER BY u.id;
+```
+
+Every row returned was created by SCIM and carries an `sso:` id, so it is no longer
+SCIM-managed. No rows means nothing to do. The check only sees accounts whose
+`scim.user_provisioned` audit row is still in the audit log (audit retention purges old
+rows). A bare `external_id LIKE 'sso:%'` with no join answers a different question: which
+accounts SSO owns.
+
+Decide per row whether the person should still have access, and if not, offboard the
+account in Keyorix. An IdP-side disable of an SSO/JIT account does not revoke its
+sessions or PATs; see SCIM-7 in
+[security/threat-models/scim-and-sso-accounts.md](security/threat-models/scim-and-sso-accounts.md)
+and [Offboarding an SSO / JIT account](CONFIGURATION.md#offboarding-an-sso--jit-account).
 Deactivate such accounts, or revoke their PATs, in Keyorix.
 
 ## 6j. CLI: webhook URLs and tokens stay off the command line
@@ -1063,28 +1099,42 @@ before upgrading the CLI:
 
 ## 7. Rollback
 
-If an upgrade goes wrong:
+The step-by-step version, with the commands verified on 0.96.1 → 0.96.3 (Docker
+Compose, SQLite and PostgreSQL), is [operator/upgrade-rollback.md](operator/upgrade-rollback.md).
 
-1. Stop the new version.
-2. Restore the backup you took in step 1, using a binary matching the
-   version that backup came from (an `admin restore` binary can read
-   older-format archives, but restoring into a *newer* schema than the
-   backup's own binary understands is not the supported direction — restore
-   with the matching or a newer binary, then let migrations run forward
-   again, not backward). **Expect `admin restore` to refuse this by
-   default** with a message about the archive being behind the host's own
-   audit high-water mark — that's the intended rollback-protection
-   behavior, not a malfunction, for exactly this scenario (the target has
-   moved on since the backup). Pass `--allow-rollback` to proceed; it
-   prints a loud warning and records the override to the audit trail.
-3. `admin verify-audit` after restore, on whichever binary you rolled back
-   to, to confirm the audit chain is intact.
-4. If the new version's database has already advanced the recorded schema
-   epoch (ADR-097), a straight downgrade of the *binary* while keeping the
-   already-migrated database is refused at startup by design (`database
-   schema epoch N is newer than this binary's schema epoch M`) — this is
-   why step 2 restores data from before the failed upgrade rather than
-   attempting to run the new binary's data on the old binary.
+**First decide which rollback is possible.** A server refuses to start when the
+database records a compatibility floor above its own schema epoch (ADR-101).
+
+- **Same floor (e.g. within v0.96.x, all epoch 2): put the old binary or image back.**
+  Stop the new version, put back the old binary (or set the Compose pins back), and
+  start. Data written on the new version is kept. Checked for 0.96.3 → 0.96.1: the old
+  release read and wrote the upgraded data, and `admin verify-audit` stayed VALID with
+  both binaries.
+- **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
+  binary refuses with `database declares a minimum compatible schema epoch of 3`, and
+  nothing lowers the floor. A database written by a binary with a newer epoch but
+  without a recorded floor is refused with `database schema epoch N is newer than this
+  binary's schema epoch M` (ADR-097).
+
+Restoring the backup you took in step 1:
+
+1. Stop the new version and put back the old binary or image. Restore with that old
+   binary, the version the backup came from. `admin restore` refuses an archive
+   whose schema epoch is newer than its own.
+2. Restoring over the upgraded install on the same host needs `--allow-rollback`.
+   Without it, restore refuses with a message about the archive being behind the
+   host's own audit high-water mark. That refusal is the intended rollback protection:
+   the restore un-revokes anything revoked after the backup. With the flag it prints a
+   loud warning and records the override to the audit trail.
+3. SQLite: `admin restore ... --overwrite-existing --allow-rollback` moves the existing
+   database and key files aside (`*.pre-restore-<timestamp>`). **PostgreSQL: empty the
+   database first** (`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`, or drop and
+   recreate the database), then restore with the same two flags.
+   `--overwrite-existing` does not empty a PostgreSQL database: over existing rows the
+   restore fails on a duplicate key *after* it has already replaced the key files
+   (SELF_HOSTING.md §5).
+4. Run `admin verify-audit` after the restore, with the binary you rolled back to, and
+   check that the chain is intact.
 
 ## 8. See also
 
