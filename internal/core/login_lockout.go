@@ -470,16 +470,28 @@ func (c *KeyorixCore) UnlockUser(ctx context.Context, adminID, userID uint) erro
 	if err != nil {
 		return fmt.Errorf("user not found: %w", err)
 	}
-	if err := c.storage.UpdateLoginLockoutState(ctx, userID, 0, nil, nil, 0); err != nil {
-		return fmt.Errorf("failed to unlock user: %w", err)
+	// UNLOCK-AUDIT-1: lifting a brute-force refusal is a security action, so it
+	// must never happen without a record (server/admin's clear-login-lockout
+	// audits first for the same reason). The clear and the account.unlocked row
+	// commit in one transaction: an audit write that errors or panics rolls the
+	// clear back (ErrMutationAuditUnavailable), and a clear that fails leaves no
+	// row claiming an unlock that did not happen. The audit write is the last
+	// statement of the transaction (mutation_audit_tx.go).
+	aid := adminID
+	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := tx.UpdateLoginLockoutState(ctx, userID, 0, nil, nil, 0); err != nil {
+			return fmt.Errorf("failed to unlock user: %w", err)
+		}
+		c.writeAuditEventFullOn(ctx, tgt, EventAccountUnlocked, &aid, nil, nil, "",
+			fmt.Sprintf("user %d login lockout cleared by admin %d", userID, adminID))
+		return nil
+	}); err != nil {
+		return err
 	}
 	c.budgetFallbackClear(c.accountBudget(), accountBudgetKey(userID))
 	user.FailedLoginAttempts = 0
 	user.LastFailedLoginAt = nil
 	user.LoginLockedUntil = nil
 	user.LoginLockoutCount = 0
-	aid := adminID
-	c.writeAuditEventFull(ctx, EventAccountUnlocked, &aid, nil, nil, "",
-		fmt.Sprintf("user %d login lockout cleared by admin %d", userID, adminID))
 	return nil
 }
