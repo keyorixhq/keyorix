@@ -44,7 +44,7 @@ func TestSyntheticMoveIsPureMove(t *testing.T) {
 func TestPlantedChangeIsRed(t *testing.T) {
 	args := append([]string{"-base", tree("base"), "-head", tree("changed")}, strings.Fields(moveFlags)...)
 	code, out := runProvemove(t, args...)
-	want := "CHANGED body: core|func:helperT\nNOT A PURE MOVE: 1 difference(s), 6 declarations identical\n"
+	want := "CHANGED body: core|func:helperT [test]\nNOT A PURE MOVE: 1 difference(s), 6 declarations identical\n"
 	if code != 1 || out != want {
 		t.Fatalf("one-token body change: exit %d, output %q, want %q", code, out, want)
 	}

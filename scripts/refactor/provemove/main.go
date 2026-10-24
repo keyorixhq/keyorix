@@ -17,9 +17,16 @@
 //
 // A declaration is keyed by "<package>|<kind>:<name>" (kind func, method, type,
 // var, const; a method's name is "(*Recv).Name" or "(Recv).Name"), so moving it
-// to another file or directory of the same package keeps its key. Its body is
-// printed with go/printer and compared as a token stream without comments, so
-// formatting, alignment and comments never count.
+// to another file or directory of the same package keeps its key. The key ends
+// in " [...]" when the file is a _test.go file or carries a GOOS/GOARCH
+// file-name suffix ("x|func:TestA [test]", "x|func:F [linux amd64]"): a test
+// moved into a non-test file stops running, and a suffix is a build constraint,
+// so either reports MISSING and ADDED. Its body is printed with go/printer and
+// compared as a token stream without comments, so formatting, alignment and
+// comments never count, except the declaration's //go: directives (its doc
+// comment's //go:embed, //go:noinline ..., and a //go:linkname anywhere in the
+// file that names it) and the file's //go:build / +build lines, which are part
+// of the body.
 //
 //   - -pkgmap new=old renames a package for the key (coretests=core: a test moved
 //     to package coretests compares against its old self in package core).
@@ -32,8 +39,13 @@
 // difference, "CHANGED body: <key>", "MISSING in head: <key>", "ADDED in head:
 // <key>" (exit 1). Exit 2 is a usage or parse error.
 //
-// What it does not check: imports (compare `go list -deps` instead), comments,
-// build constraints, the order of declarations, and an identifier that resolves
+// It fails (exit 2) when no declaration was read at all, or when a -dirs entry
+// exists in neither tree (a typo would otherwise prove nothing).
+//
+// What it does not check: imports (compare `go list -deps` instead), comments
+// other than the directives above, a //go: directive that is neither in a
+// declaration's doc comment nor a //go:linkname (for example //go:generate),
+// the order of declarations, and an identifier that resolves
 // to a different object after a qualifier is stripped (shadowing). Reviewers
 // read the import diff. Repeated names (several init funcs, `var _ = ...`) are
 // compared as a multiset of bodies.
@@ -88,6 +100,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		_, _ = fmt.Fprintln(stderr, "provemove: head:", err)
 		return 2
+	}
+	if len(base) == 0 && len(head) == 0 {
+		_, _ = fmt.Fprintf(stderr, "provemove: no declarations read from -dirs %s in either tree: check the paths\n", strings.Join(opts.dirs, ","))
+		return 2
+	}
+	for _, dir := range opts.dirs {
+		if !isDir(opts.base, dir) && !isDir(opts.head, dir) {
+			_, _ = fmt.Fprintf(stderr, "provemove: -dirs entry %s exists in neither tree: check the path\n", dir)
+			return 2
+		}
 	}
 	diffs, n := compare(base, head)
 	if len(diffs) == 0 {
@@ -153,8 +175,14 @@ func splitPairs(s, flagName string) (map[string]string, error) {
 	return m, nil
 }
 
+func isDir(root, dir string) bool {
+	fi, err := os.Stat(filepath.Join(root, filepath.FromSlash(dir)))
+	return err == nil && fi.IsDir()
+}
+
 // collect reads every .go file directly in each dir of root. A dir missing from
-// one tree (a new package, or one the move emptied) is skipped.
+// one tree (a new package, or one the move emptied) is skipped here; run fails
+// on a dir missing from both.
 func collect(root string, dirs []string, opts options, isBase bool) (decls, error) {
 	out := decls{}
 	fset := token.NewFileSet()
@@ -171,7 +199,7 @@ func collect(root string, dirs []string, opts options, isBase bool) (decls, erro
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") {
 				continue
 			}
-			f, err := parser.ParseFile(fset, filepath.Join(abs, e.Name()), nil, parser.SkipObjectResolution)
+			f, err := parser.ParseFile(fset, filepath.Join(abs, e.Name()), nil, parser.SkipObjectResolution|parser.ParseComments)
 			if err != nil {
 				return nil, err
 			}
@@ -182,10 +210,14 @@ func collect(root string, dirs []string, opts options, isBase bool) (decls, erro
 			if isBase {
 				renameIdents(f, opts.rename)
 			}
+			class := fileClass(e.Name())
+			build := buildLines(f)
+			linknames := linknameDirectives(f)
 			for _, d := range f.Decls {
-				for key, body := range declBodies(fset, d) {
-					k := pkg + "|" + key
-					out[k] = append(out[k], normalise(body, opts.strip))
+				for key, b := range declBodies(fset, d) {
+					k := pkg + "|" + key + class
+					dirs := slices.Concat(build, b.directives, linknames[b.name])
+					out[k] = append(out[k], strings.Join(dirs, "")+normalise(b.text, opts.strip))
 				}
 			}
 		}
@@ -193,38 +225,143 @@ func collect(root string, dirs []string, opts options, isBase bool) (decls, erro
 	return out, nil
 }
 
-// declBodies returns key -> normalised text for one top-level declaration (a
-// GenDecl yields one entry per spec name; imports yield none).
-func declBodies(fset *token.FileSet, d ast.Decl) map[string]string {
-	res := map[string]string{}
+// body is one declaration's printed text, its name (for //go:linkname) and the
+// //go: directive lines of its doc comments.
+type body struct {
+	name       string
+	text       string
+	directives []string
+}
+
+// declBodies returns key -> body for one top-level declaration (a GenDecl
+// yields one entry per spec name; imports yield none).
+func declBodies(fset *token.FileSet, d ast.Decl) map[string]body {
+	res := map[string]body{}
 	switch d := d.(type) {
 	case *ast.FuncDecl:
+		dirs := directives(d.Doc)
 		d.Doc = nil
 		key := "func:" + d.Name.Name
 		if d.Recv != nil && len(d.Recv.List) > 0 {
 			key = "method:(" + recvName(d.Recv.List[0].Type) + ")." + d.Name.Name
 		}
-		res[key] = render(fset, d)
+		res[key] = body{name: d.Name.Name, text: render(fset, d), directives: dirs}
 	case *ast.GenDecl:
 		if d.Tok == token.IMPORT {
 			return res
 		}
+		declDirs := directives(d.Doc)
 		for _, spec := range d.Specs {
 			switch s := spec.(type) {
 			case *ast.TypeSpec:
+				dirs := slices.Concat(declDirs, directives(s.Doc))
 				s.Doc, s.Comment = nil, nil
-				res["type:"+s.Name.Name] = render(fset, &ast.GenDecl{Tok: token.TYPE, Specs: []ast.Spec{s}})
+				res["type:"+s.Name.Name] = body{name: s.Name.Name, text: render(fset, &ast.GenDecl{Tok: token.TYPE, Specs: []ast.Spec{s}}), directives: dirs}
 			case *ast.ValueSpec:
+				dirs := slices.Concat(declDirs, directives(s.Doc))
 				s.Doc, s.Comment = nil, nil
 				// Each name of "var a, b = 1, 2" keeps the whole spec as its body.
-				body := render(fset, &ast.GenDecl{Tok: d.Tok, Specs: []ast.Spec{s}})
+				text := render(fset, &ast.GenDecl{Tok: d.Tok, Specs: []ast.Spec{s}})
 				for _, n := range s.Names {
-					res[strings.ToLower(d.Tok.String())+":"+n.Name] = body
+					res[strings.ToLower(d.Tok.String())+":"+n.Name] = body{name: n.Name, text: text, directives: dirs}
 				}
 			}
 		}
 	}
 	return res
+}
+
+// directives returns the //go: lines of a doc comment, one "directive ...\n"
+// line each, in order.
+func directives(cg *ast.CommentGroup) []string {
+	if cg == nil {
+		return nil
+	}
+	var out []string
+	for _, c := range cg.List {
+		if strings.HasPrefix(c.Text, "//go:") {
+			out = append(out, "directive "+strings.TrimSpace(c.Text)+"\n")
+		}
+	}
+	return out
+}
+
+// linknameDirectives maps a local name to every "//go:linkname <local> ..."
+// comment of the file, wherever it is (it need not be attached to the
+// declaration).
+func linknameDirectives(f *ast.File) map[string][]string {
+	out := map[string][]string{}
+	for _, cg := range f.Comments {
+		for _, c := range cg.List {
+			fields := strings.Fields(c.Text)
+			if len(fields) >= 2 && fields[0] == "//go:linkname" {
+				out[fields[1]] = append(out[fields[1]], "linkname "+strings.Join(fields[1:], " ")+"\n")
+			}
+		}
+	}
+	return out
+}
+
+// buildLines returns the file's //go:build and // +build lines (comments
+// before the package clause), which apply to every declaration in it.
+func buildLines(f *ast.File) []string {
+	var out []string
+	for _, cg := range f.Comments {
+		if cg.Pos() >= f.Package {
+			break
+		}
+		for _, c := range cg.List {
+			if t := strings.TrimSpace(c.Text); strings.HasPrefix(t, "//go:build") || strings.HasPrefix(t, "// +build") {
+				out = append(out, "build "+t+"\n")
+			}
+		}
+	}
+	return out
+}
+
+// knownOS and knownArch are the GOOS and GOARCH values go/build recognises in a
+// file-name suffix (go/build/syslist.go).
+var (
+	knownOS   = setOf("aix android darwin dragonfly freebsd hurd illumos ios js linux nacl netbsd openbsd plan9 solaris wasip1 windows zos")
+	knownArch = setOf("386 amd64 amd64p32 arm armbe arm64 arm64be loong64 mips mipsle mips64 mips64le mips64p32 mips64p32le " +
+		"ppc ppc64 ppc64le riscv riscv64 s390 s390x sparc sparc64 wasm")
+)
+
+func setOf(s string) map[string]bool {
+	m := map[string]bool{}
+	for _, w := range strings.Fields(s) {
+		m[w] = true
+	}
+	return m
+}
+
+// fileClass returns the key suffix for a file name: "" for a plain non-test
+// file, else " [test]", " [linux]", " [test linux amd64]" ... It follows
+// go/build's goodOSArchFile: the part after the first "_", minus a trailing
+// _test, ends in _GOOS_GOARCH, _GOOS or _GOARCH.
+func fileClass(name string) string {
+	name = strings.TrimSuffix(name, ".go")
+	var tags []string
+	if strings.HasSuffix(name, "_test") {
+		tags = append(tags, "test")
+	}
+	if i := strings.Index(name, "_"); i >= 0 {
+		l := strings.Split(name[i:], "_")
+		if n := len(l); n > 0 && l[n-1] == "test" {
+			l = l[:n-1]
+		}
+		n := len(l)
+		switch {
+		case n >= 2 && knownOS[l[n-2]] && knownArch[l[n-1]]:
+			tags = append(tags, l[n-2], l[n-1])
+		case n >= 1 && (knownOS[l[n-1]] || knownArch[l[n-1]]):
+			tags = append(tags, l[n-1])
+		}
+	}
+	if len(tags) == 0 {
+		return ""
+	}
+	return " [" + strings.Join(tags, " ") + "]"
 }
 
 func recvName(e ast.Expr) string {
