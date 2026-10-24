@@ -11,6 +11,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
+	"github.com/keyorixhq/keyorix/internal/restorejournal"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/startup"
 )
@@ -311,9 +312,15 @@ func enforceSecretFilePermissions(cfg *config.Config) error {
 
 // verifyKeyFileSetConsistency is the boot-time key-file-set consistency check
 // (ADR-112, follow-up from #2400) — see keyfiles.VerifyKeySetConsistency's own
-// doc comment for the two things it checks and why. No-op when encryption is
-// disabled: there is no key material to check in the first place.
+// doc comment for the two things it checks and why. It first refuses while an
+// interrupted `admin restore` journal exists (restorejournal.RefuseIfPresent):
+// the key files and the data may then be from different points in time. The
+// key-set half is a no-op when encryption is disabled: there is no key
+// material to check in the first place.
 func verifyKeyFileSetConsistency(cfg *config.Config) error {
+	if err := restorejournal.RefuseIfPresent(cfg); err != nil {
+		return err
+	}
 	if !cfg.Storage.Encryption.Enabled {
 		return nil
 	}

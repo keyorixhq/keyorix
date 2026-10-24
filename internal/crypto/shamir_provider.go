@@ -194,11 +194,16 @@ func (p *ShamirKeyProvider) KEK() ([]byte, error) { // NOSONAR -- cognitive comp
 	}
 
 	var commitment []byte
-	if p.commitmentHex != "" {
+	// Trimmed before the emptiness test: a blank value used to decode to zero
+	// bytes and skip both the check and the warning below (REVIEW-ENCRYPTIONOPS-1 F6).
+	if commitmentHex := strings.TrimSpace(p.commitmentHex); commitmentHex != "" {
 		var err error
-		commitment, err = hex.DecodeString(strings.TrimSpace(p.commitmentHex))
+		commitment, err = hex.DecodeString(commitmentHex)
 		if err != nil {
 			return nil, fmt.Errorf("shamir key provider: shamir_commitment is not valid hex: %w", err)
+		}
+		if len(commitment) != sha256.Size {
+			return nil, fmt.Errorf("shamir key provider: shamir_commitment must be %d hex characters (the value shamir-split printed), got %d", 2*sha256.Size, len(commitmentHex))
 		}
 	} else {
 		// #429: without a stored commitment, reconstruction is verified ONLY by the

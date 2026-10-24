@@ -46,22 +46,36 @@ export MUTATION_STATE_DIR
 mkdir -p "$MUTATION_STATE_DIR"
 
 # Packages to mutation-test, one per line:
-# "<go-package-path>|<label>[|<min-efficacy-pct>]". Widen this deliberately,
-# one package at a time, as each is brought into good shape -- see .github's
-# retired mutation-testing.yml (superseded by this script) for the reasoning
-# on why this starts scoped to two packages instead of the whole repo.
+# "<go-package-path>|<label>[|<timeout-coefficient>[|<min-efficacy-pct>]]".
+# The optional third field is passed to gremlins as --timeout-coefficient. gremlins sizes its
+# per-mutant timeout from the time of the coverage-gathering run, and for a package whose tests
+# are fast but whose per-mutant build is not (internal/saml: ~0.3 s of tests, ~1 s to rebuild
+# against crewjam/saml) the default timeout expires on most mutants; they come back TIMED OUT,
+# which summarize.py counts as neither killed nor lived, so the report shows no usable result.
+# Leave it empty for packages that do not need it: a larger coefficient also makes a genuinely
+# hanging mutant take that much longer to time out.
 #
-# The optional third field is an absolute floor, measured when the package was
-# brought in (MUTANT-SEC-1, gremlins --workers 1). Falling below it fails the
-# run at the end, in addition to the relative-regression notice from
-# notify-summary.sh. The remaining survivors in these packages are equivalent
-# mutants (see the item commits), so the floor is the measured value, not 100.
+# Widen this deliberately, one package at a time, as each is brought into good
+# shape -- see .github's retired mutation-testing.yml (superseded by this
+# script) for the reasoning on why this starts scoped to few packages
+# instead of the whole repo.
+#
+# The optional fourth field is an absolute floor, measured when the package was
+# brought in (MUTANT-SEC-1, gremlins --workers 1; leave the third field empty
+# when no timeout coefficient is needed). Falling below it fails the run at the
+# end, in addition to the relative-regression notice from notify-summary.sh.
+# The remaining survivors in these packages are equivalent mutants (see the item
+# commits), so the floor is the measured value, not 100.
 PACKAGES="internal/core|core
 internal/storage/store|storage-store
-internal/keyfiles|keyfiles|93.55
-internal/securefiles|securefiles|98.31
-internal/recoverykey|recoverykey|82.35
-internal/evidencesink|evidencesink|100"
+internal/keyfiles|keyfiles||93.55
+internal/securefiles|securefiles||98.31
+internal/recoverykey|recoverykey||82.35
+internal/evidencesink|evidencesink||100
+# internal/saml: efficacy 97.70% (85 killed, 2 equivalent survivors), 21 not covered; needs the timeout coefficient (see above)
+internal/saml|saml|40
+# internal/secretenv: efficacy 100% (31 killed), 4 not covered (switch case expressions, pinned by a truth table)
+internal/secretenv|secretenv"
 
 cd "$KEYORIX_REPO"
 
@@ -72,9 +86,13 @@ git reset --hard origin/main --quiet
 
 below_floor=0
 
-while IFS='|' read -r pkg label min_efficacy; do
+while IFS='|' read -r pkg label timeout_coef min_efficacy; do
   [[ -z "$pkg" ]] && continue
   case "$pkg" in \#*) continue ;; *) ;; esac
+  timeout_args=()
+  if [[ -n "${timeout_coef:-}" ]]; then
+    timeout_args=(--timeout-coefficient "$timeout_coef")
+  fi
 
   echo "=== $(date -u +%FT%TZ) mutation-testing ./$pkg ($label) ==="
   result_json="$MUTATION_STATE_DIR/last-$label.json"
@@ -92,7 +110,7 @@ while IFS='|' read -r pkg label min_efficacy; do
   fi
 
   set +e
-  gremlins unleash --workers "$MUTATION_WORKERS" -o "$result_json_tmp" "./$pkg" \
+  gremlins unleash --workers "$MUTATION_WORKERS" ${timeout_args[@]+"${timeout_args[@]}"} -o "$result_json_tmp" "./$pkg" \
     >"$MUTATION_STATE_DIR/last-$label.log" 2>&1
   status=$?
   set -e

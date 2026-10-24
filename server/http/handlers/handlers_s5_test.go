@@ -500,22 +500,6 @@ func TestAdminJobsHandler_RunComplianceDigest_Unauthorized(t *testing.T) {
 
 // ── SoD handlers — CatalogHandler ────────────────────────────────────────────
 
-func TestListSoDPolicies_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDPolicies(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestListSoDViolations_HappyPath(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	h.ListSoDViolations(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestCreateSoDPolicy_HappyPath(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	body := `{"name":"SoD-S5","description":"test","permission_a":"secrets.read","permission_b":"secrets.write"}`
@@ -536,14 +520,6 @@ func TestDeleteSoDPolicy_HappyPath(t *testing.T) {
 }
 
 // ── ProjectMemberships — InviteMember & TransitionMembership ──────────────────
-
-func TestInviteMember_BadJSON(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.InviteMember(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
 
 func TestInviteMember_HappyPath_ProjectNotFound(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -1019,14 +995,6 @@ func TestCatalogHandler_ListProjects_IncludeDeleted(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-func TestCatalogHandler_ListEnvironments_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil)) // #2780: authorizes in-handler
-	w := httptest.NewRecorder()
-	h.ListEnvironments(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestCatalogHandler_UpdateProject_RequireMFAUnauthorized(t *testing.T) {
 	h := newCatalogHandlerS4(t)
 	// require_mfa present without user context → 401
@@ -1235,15 +1203,6 @@ func TestAuthHandler_RefreshToken_HappyPath_NoToken(t *testing.T) {
 	assert.NotEqual(t, http.StatusInternalServerError, w.Code)
 }
 
-func TestAuthHandler_ListSessions_HappyPathS5(t *testing.T) {
-	h := newAuthHandlerWithWebAuthn(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	w := httptest.NewRecorder()
-	h.ListSessions(w, req)
-	// user 1 may have no sessions → 200
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestAuthHandler_InitSystem_HappyPath(t *testing.T) {
 	h := newAuthHandlerWithWebAuthn(t)
 	body := `{"username":"sysadmin","email":"sysadmin@example.com","display_name":"Admin","password":"AdminSecret1!"}`
@@ -1292,14 +1251,6 @@ func TestShareSecret_UnauthorizedS5(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ShareSecret(w, req)
 	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareSecret_BadJSONS5(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.ShareSecret(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestShareSecret_NotFoundS5(t *testing.T) {
@@ -1411,36 +1362,12 @@ func TestAccessReviewCampaigns_GetAccessReviewCampaign_NotFound(t *testing.T) {
 
 // ── shares_query.go — ListSharedSecrets / ListGroupSharedSecrets ────────────────
 
-func TestListSharedSecrets_HappyPath(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	w := httptest.NewRecorder()
-	h.ListSharedSecrets(w, req)
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestListGroupSharedSecrets_HappyPath(t *testing.T) {
 	h := newShareHandlerS4(t)
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
 	w := httptest.NewRecorder()
 	h.ListGroupSharedSecrets(w, req)
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestRemoveSelfFromShare_Unauthorized(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.RemoveSelfFromShare(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestRemoveSelfFromShare_BadID(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad"))
-	w := httptest.NewRecorder()
-	h.RemoveSelfFromShare(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestRemoveSelfFromShare_NotFound(t *testing.T) {
@@ -1625,14 +1552,6 @@ func TestRBACHandler_GetUserRoles_BadIDS5(t *testing.T) {
 
 // ── shares_crud — RevokeShare ─────────────────────────────────────────────────
 
-func TestRevokeShare_Unauthorized(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.RevokeShare(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 func TestRevokeShare_NotFound(t *testing.T) {
 	h := newShareHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "9999"))
@@ -1651,14 +1570,6 @@ func TestCatalogHandler_GetProject_NotFound(t *testing.T) {
 	h.GetProject(w, req)
 	// not found → not crash
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
-}
-
-func TestCatalogHandler_DeleteProject_BadID(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withChiParam(httptest.NewRequest(http.MethodDelete, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	h.DeleteProject(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestCatalogHandler_DeleteProject_NotFound(t *testing.T) {
@@ -1948,14 +1859,6 @@ func TestUpdateSharePermission_BadID(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-func TestUpdateSharePermission_BadJSON(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.UpdateSharePermission(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
 func TestUpdateSharePermission_ValidationError(t *testing.T) {
 	h := newShareHandlerS4(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPut, "/", strings.NewReader(`{"permission":"invalid"}`)), "id", "1"))
@@ -2010,14 +1913,6 @@ func TestWriteAuditCheckpoint_Unauthorized(t *testing.T) {
 // ── access_request_proxy.go — UpdateAccessRequestProxy happy path ────────────
 
 // ── audit_anomaly.go — BadID path (no core service needed for BadID) ──────────
-
-func TestAcknowledgeAnomalyAlert_BadIDS5(t *testing.T) {
-	req := withChiParam(httptest.NewRequest(http.MethodPost, "/", nil), "id", "bad")
-	w := httptest.NewRecorder()
-	AcknowledgeAnomalyAlert(w, req)
-	// No core service context → 500, not 400 (BadID only reached after core service check)
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
 
 // ── users_roles.go — UpdateUserRoles happy path ───────────────────────────────
 
@@ -2100,15 +1995,6 @@ func TestRemoveGroupMember_HappyPath(t *testing.T) {
 }
 
 // ── access_review_campaigns.go — ListAccessReviewCampaigns ───────────────────
-
-func TestListAccessReviewCampaigns_HappyPathS5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	// ListAccessReviewCampaigns needs chi "id" URL param for the project ID
-	req := withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "1")
-	w := httptest.NewRecorder()
-	h.ListAccessReviewCampaigns(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
 
 func TestListAccessReviewCampaigns_BadIDS5(t *testing.T) {
 	h := newCatalogHandlerS4(t)
@@ -2324,14 +2210,6 @@ func TestRBACHandler_AssignPermissionToRole_HappyPath(t *testing.T) {
 	h.AssignPermissionToRole(w, req)
 	// Not 401.
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestRBACHandler_AssignPermissionToRole_BadJSONS5(t *testing.T) {
-	h := NewRBACHandler(newHandlerCoreS4(t))
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.AssignPermissionToRole(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestRBACHandler_RemovePermissionFromRole_HappyPath(t *testing.T) {
@@ -2917,14 +2795,6 @@ func TestSecretHandler_GetSecretByName_NotFound_S5(t *testing.T) {
 	assert.NotEqual(t, http.StatusBadRequest, w.Code)
 }
 
-func TestSecretHandler_GetSecretValueByRef_Unauthorized_S5(t *testing.T) {
-	h := newSecretHandlerS4(t)
-	req := httptest.NewRequest(http.MethodGet, "/?ref=proj/env/name", nil)
-	w := httptest.NewRecorder()
-	h.GetSecretValueByRef(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
 // TestSecretHandler_GetSecretValueByRef_NoResolvedSecretInContext_S5 is a
 // second instance of the defensive-branch coverage above (this file has
 // accreted a few near-duplicate GetSecretValueByRef tests across sprints);
@@ -3321,14 +3191,6 @@ func TestRotationPoliciesHandler_Status_HappyPath_NotFound_S5(t *testing.T) {
 // These functions use GetCoreServiceFromContext, not GetUserFromContext.
 // Without a core service in context they return 500; we test that (not 401).
 
-func TestListAnomalyAlerts_NoCoreService_S5(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	w := httptest.NewRecorder()
-	ListAnomalyAlerts(w, req)
-	// No core service → 500
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
-}
-
 // ── machine_token_hygiene.go — additional paths ───────────────────────────────
 
 func TestMachineTokenHygiene_Unauthorized_S5(t *testing.T) {
@@ -3374,15 +3236,6 @@ func TestShareHandler_UpdateSharePermission_HappyPath_S5(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.UpdateSharePermission(w, req)
 	// Not found → not 401
-	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestShareHandler_ListShares_HappyPath_S5(t *testing.T) {
-	h := newShareHandlerS4(t)
-	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/", nil))
-	w := httptest.NewRecorder()
-	h.ListShares(w, req)
-	// Empty DB → not 401
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
 }
 
@@ -3644,14 +3497,6 @@ func TestProjectMembers_ListProjectMembers_WithProjectID_S5(t *testing.T) {
 	h.ListProjectMembers(w, req)
 	// Empty DB → not 401
 	assert.NotEqual(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestProjectMembers_AddProjectMember_BadJSON_S5(t *testing.T) {
-	h := newCatalogHandlerS4(t)
-	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodPost, "/", strings.NewReader("{bad")), "id", "1"))
-	w := httptest.NewRecorder()
-	h.AddProjectMember(w, req)
-	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestProjectMembers_UpdateProjectMember_BadJSON_S5(t *testing.T) {

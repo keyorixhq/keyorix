@@ -33,6 +33,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -210,6 +211,36 @@ func TestCreateStorage_Postgres_VerifyFull_TrustedVsUntrustedCA(t *testing.T) {
 		assert.Contains(t, err.Error(), "storage.database.ssl_root_cert")
 		conns, _ := f.counts()
 		assert.Equal(t, 0, conns, "no connection may be opened without a named CA")
+	})
+
+	// PG-SSL-ROOT-CERT-1: a CA file with allow/prefer would be ignored by the
+	// driver (premise test below), so the config is refused before any socket.
+	t.Run("prefer/allow with a CA file: refused before any connection", func(t *testing.T) {
+		for _, mode := range []string{"prefer", "allow"} {
+			f := startFakeTLSPostgres(t, serverCA.serverCert(t, net.ParseIP("127.0.0.1")))
+			_, err := NewStorageFactory().CreateStorage(tlsTestConfig(f, mode, trusted))
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "storage.database.ssl_mode is "+mode)
+			conns, _ := f.counts()
+			assert.Equal(t, 0, conns, "%s: no connection may be opened with a CA the driver would not check", mode)
+		}
+	})
+
+	// The premise the refusal above rests on, tested against pgx itself rather
+	// than read from its source: under sslmode=prefer pgx completes the TLS
+	// handshake with a server whose certificate the named CA did NOT sign. If
+	// this ever fails (pgx starts verifying under prefer), the refusal is still
+	// safe but no longer necessary; revisit rootCertIgnoredError then.
+	t.Run("premise: pgx ignores sslrootcert under prefer", func(t *testing.T) {
+		f := startFakeTLSPostgres(t, serverCA.serverCert(t, net.ParseIP("127.0.0.1")))
+		dsn := "host=127.0.0.1 port=" + strconv.Itoa(f.addr.Port) + " user=k dbname=k connect_timeout=5 " +
+			"sslmode=prefer sslrootcert=" + untrusted
+		pc, err := pgx.ParseConfig(dsn)
+		require.NoError(t, err)
+		_, err = pgx.ConnectConfig(t.Context(), pc)
+		require.Error(t, err, "the fake closes after the handshake")
+		_, ok := f.counts()
+		assert.GreaterOrEqual(t, ok, 1, "pgx completed TLS against a CA the sslrootcert did not name")
 	})
 }
 

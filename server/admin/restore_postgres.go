@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 
+	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 
 	"github.com/jackc/pgx/v5/stdlib"
@@ -202,7 +203,13 @@ var postgresResyncSchemaCache sync.Map
 // internal/backupfmt/order.go's own ChildHasIDColumn convention for the
 // identical structural reason) -- registry-driven, not a hand-picked table
 // list, so a model added to the registry later is covered automatically.
-func resyncPostgresSequences(db *sql.DB) error {
+//
+// Runs INSIDE the restore's load transaction (db is that transaction), and
+// therefore never moves a sequence backwards: setval is not transactional,
+// so if the load then rolls back, the live rows keep their own (possibly
+// higher) ids and a lowered sequence would collide with them. The value is
+// the larger of MAX(id) and the sequence's current position.
+func resyncPostgresSequences(db *gorm.DB) error {
 	for _, m := range storage.AllModels() {
 		s, err := schema.Parse(m, &postgresResyncSchemaCache, schema.NamingStrategy{})
 		if err != nil {
@@ -211,13 +218,34 @@ func resyncPostgresSequences(db *sql.DB) error {
 		if s.LookUpField("ID") == nil {
 			continue // composite-PK join table -- no single sequence to resync
 		}
-		// #nosec G201 -- s.Table/idCol come from parseSchema resolving storage.AllModels()'s
-		// compiled-in Go structs via GORM's own naming strategy, never from archive or request content.
-		q := fmt.Sprintf( // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query
-			`SELECT setval(pg_get_serial_sequence('%s', 'id'), COALESCE((SELECT MAX(id) FROM %s), 1), `+
-				`(SELECT MAX(id) FROM %s) IS NOT NULL)`,
-			s.Table, quoteIdentPG(s.Table), quoteIdentPG(s.Table))
-		if _, err := db.Exec(q); err != nil { // nosemgrep: go.lang.security.audit.sqli.gosql-sqli.gosql-sqli -- q is built entirely from s.Table above, never from archive/request content; see the #nosec G201 note
+		var seq sql.NullString
+		if err := db.Raw("SELECT pg_get_serial_sequence(?, 'id')", s.Table).Row().Scan(&seq); err != nil {
+			return fmt.Errorf("find the id sequence of table %q: %w", s.Table, err)
+		}
+		if !seq.Valid {
+			continue // no sequence-backed id column
+		}
+		var last int64
+		var called bool
+		// #nosec G202 -- seq.String is pg_get_serial_sequence's own schema-qualified, already-quoted name for a registry table
+		if err := db.Raw("SELECT last_value, is_called FROM "+seq.String).Row().Scan(&last, &called); err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- a name returned by pg_get_serial_sequence for a registry table
+			return fmt.Errorf("read sequence %s: %w", seq.String, err)
+		}
+		var maxID sql.NullInt64
+		// #nosec G202 -- s.Table comes from storage.AllModels()'s compiled-in Go structs, quoted by quoteIdentPG
+		if err := db.Raw("SELECT MAX(id) FROM " + quoteIdentPG(s.Table)).Row().Scan(&maxID); err != nil { // nosemgrep: go.lang.security.audit.database.string-formatted-query.string-formatted-query -- registry table name, never archive or request content
+			return fmt.Errorf("read MAX(id) of table %q: %w", s.Table, err)
+		}
+		next := maxID.Int64
+		if called && last > next {
+			next = last
+		}
+		if next == 0 {
+			err = db.Exec("SELECT setval(?::regclass, 1, false)", seq.String).Error
+		} else {
+			err = db.Exec("SELECT setval(?::regclass, ?, true)", seq.String, next).Error
+		}
+		if err != nil {
 			return fmt.Errorf("resync sequence for table %q: %w", s.Table, err)
 		}
 	}

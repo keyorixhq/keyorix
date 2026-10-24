@@ -68,7 +68,23 @@
 //     absolute, "." or "..", a symlinked directory, DSN query parameters)
 //     meets on one lock file (TestSQLitePathSpellings_MeetOnTheSameLock). A
 //     symlink to the database FILE, or a hard link, used by only one side does
-//     not: the two sides then lock different sidecar files.
+//     not: the two sides then lock different sidecar files. "file:" URI
+//     spellings resolve to the file SQLite opens
+//     (TestSQLiteURISpellings_MeetOnTheSameLock).
+//   - The SQLite lock lives on the sidecar's inode, not its name. Deleting or
+//     replacing <db path>.server.lock while a server holds it (taking it for a
+//     stale lock file: it never is, an flock ends with its process) leaves the
+//     server on the old inode (REVIEW-SERVERGUARD-RECOVERYKEY-1 F4). A running
+//     server checks every config.PinnedLockPingInterval (5 s) that the path
+//     still names the file it holds, and otherwise re-creates it and takes the
+//     lock again, or, when an admin command already holds the new file, closes
+//     Presence.Lost so the server stops (sidecarWatch). An admin command that
+//     starts AND finishes inside that interval is not detected. An admin
+//     command's own exclusive hold is not watched. Both sides check, after the
+//     flock, that the path still names the file they locked, so an unlink
+//     between open and flock cannot leave one on a deleted file (lockSidecar).
+//     A filesystem without flock support or inode numbers is refused at start
+//     with an error saying so.
 //   - Postgres advisory locks share one numeric keyspace across the whole
 //     database cluster, not namespaced per application. A collision with an
 //     unrelated application choosing the same key is possible in principle;
@@ -85,9 +101,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -137,13 +155,15 @@ type Presence struct {
 	lost    chan struct{} // closed when the lock is found lost; nil if it cannot be
 }
 
-// Lost is closed when the PostgreSQL presence lock is found lost while held:
+// Lost is closed when the presence lock is found lost while held. PostgreSQL:
 // a pg_terminate_backend, a PostgreSQL restart or failover, a network
 // partition or (pgbouncer-transaction) a PgBouncer timeout ends the lock's
 // backend or its transaction without any other signal to the holder. From that
 // moment an admin command can start beside this server, so the caller should
-// stop serving. A nil channel (a receive blocks forever) for SQLite, whose
-// flock lives as long as the process, and for remote storage; never closed
+// stop serving. On SQLite it is closed when the sidecar lock file was deleted
+// or replaced and the server could not take the lock on the new file (an admin
+// command holds it: see sidecarWatch). A nil channel (a receive blocks
+// forever) for remote storage and an in-memory SQLite database; never closed
 // after Release.
 func (p *Presence) Lost() <-chan struct{} {
 	if p == nil {
@@ -230,18 +250,32 @@ func ProbeRunning(cfg *config.Config) (running bool, detail string, err error) {
 }
 
 // sqliteLockPath resolves the sidecar lock path for cfg's configured
-// database, mirroring internal/storage/factory.go's localStorageDBFile: an
-// in-memory database (no real on-disk file) has nothing to guard.
+// database, like internal/storage/factory.go's localStorageDBFile: an
+// in-memory database (no real on-disk file) has nothing to guard. Unlike it,
+// a SQLite URI filename ("file:/data/secrets.db", "file:///...",
+// "file://localhost/...", percent-encoded, with a query) is resolved to the
+// file SQLite opens, so it meets a plain spelling of the same path on one
+// sidecar (TestSQLiteURISpellings_MeetOnTheSameLock), and only the query
+// marks a database in-memory ("mode=memory" in a directory name does not).
 func sqliteLockPath(cfg *config.Config) (path string, isRealFile bool) {
 	dbPath := cfg.Storage.Database.Path
 	if dbPath == "" {
 		dbPath = "./secrets.db"
 	}
-	base := dbPath
-	if idx := strings.IndexByte(base, '?'); idx != -1 {
-		base = base[:idx]
+	base, query, _ := strings.Cut(dbPath, "?")
+	if rest, ok := strings.CutPrefix(base, "file:"); ok {
+		rest, _, _ = strings.Cut(rest, "#")
+		if hier, ok := strings.CutPrefix(rest, "//"); ok {
+			if authority, p, _ := strings.Cut(hier, "/"); authority == "" || authority == "localhost" {
+				rest = "/" + p
+			}
+		}
+		if dec, err := url.PathUnescape(rest); err == nil {
+			rest = dec
+		}
+		base = rest
 	}
-	if base == "" || base == ":memory:" || strings.Contains(dbPath, "mode=memory") {
+	if base == "" || base == ":memory:" || strings.Contains(query, "mode=memory") {
 		return "", false
 	}
 	return base + serverLockSuffix, true
@@ -261,28 +295,192 @@ func openLockFile(path string) (*os.File, error) {
 	return f, nil
 }
 
+// Test seams. Production never changes them: afterLockFileOpen runs between
+// opening the sidecar and locking it (where an unlink races the flock),
+// flockFn takes the lock, lockFileInode reads a file's inode number.
+var (
+	afterLockFileOpen func(path string)
+	flockFn           = syscall.Flock
+	lockFileInode     = inodeOf
+)
+
+// lockFileAttempts bounds lockSidecar's retries when the sidecar is replaced
+// between opening and locking it.
+const lockFileAttempts = 3
+
+// errSidecarHeld means another process holds the sidecar in a conflicting
+// mode (flock EWOULDBLOCK): the one outcome that is "held", not "broken".
+var errSidecarHeld = errors.New("server lock file is held")
+
+func inodeOf(fi os.FileInfo) (uint64, bool) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st.Ino == 0 {
+		return 0, false
+	}
+	return st.Ino, true
+}
+
+// pathNamesFile reports whether path currently names the file fi describes
+// (false, not an error, when path no longer exists).
+func pathNamesFile(path string, fi os.FileInfo) (bool, error) {
+	cur, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("stat server lock file %q: %w", path, err)
+	}
+	return os.SameFile(fi, cur), nil
+}
+
+// lockSidecar opens the sidecar at path and flocks it non-blocking (how is
+// LOCK_SH or LOCK_EX), then checks that path still names the file it locked.
+// The lock lives on the inode: a sidecar unlinked or replaced between the
+// open and the flock would leave the caller holding a lock on a file nobody
+// else can open (REVIEW-SERVERGUARD-RECOVERYKEY-1 F4), so it tries again, up
+// to lockFileAttempts times. errSidecarHeld means a conflicting holder; any
+// other error means the guard cannot work here (a filesystem without flock
+// support or inode numbers, a lock file that keeps being replaced), said
+// loudly at start rather than run unguarded.
+func lockSidecar(path string, how int) (*os.File, error) {
+	for range lockFileAttempts {
+		f, err := openLockFile(path)
+		if err != nil {
+			return nil, err
+		}
+		fi, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("stat server lock file %q: %w", path, err)
+		}
+		if _, ok := lockFileInode(fi); !ok {
+			_ = f.Close()
+			return nil, fmt.Errorf("server lock file %q: the filesystem reports no inode numbers, so a deleted or replaced lock file cannot be detected; put the SQLite database on a local filesystem, or use storage.type: postgres", path)
+		}
+		if hook := afterLockFileOpen; hook != nil {
+			hook(path)
+		}
+		if err := flockFn(int(f.Fd()), how|syscall.LOCK_NB); err != nil {
+			_ = f.Close()
+			if errors.Is(err, syscall.EWOULDBLOCK) {
+				return nil, errSidecarHeld
+			}
+			return nil, fmt.Errorf("lock server lock file %q: %w: the filesystem holding it does not support file locks (flock), so a server and an admin command cannot exclude each other; put the SQLite database on a local filesystem, or use storage.type: postgres", path, err)
+		}
+		same, err := pathNamesFile(path, fi)
+		if err == nil && same {
+			return f, nil
+		}
+		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		_ = f.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return nil, fmt.Errorf("server lock file %q was replaced between opening and locking it %d times in a row: another process keeps deleting or replacing it (it is never a stale lock file; do not delete it), or the filesystem does not keep inode numbers stable (put the SQLite database on a local filesystem, or use storage.type: postgres)", path, lockFileAttempts)
+}
+
 func acquireSQLitePresence(cfg *config.Config) (*Presence, error) {
 	path, isRealFile := sqliteLockPath(cfg)
 	if !isRealFile {
 		return &Presence{}, nil
-	}
-	f, err := openLockFile(path)
-	if err != nil {
-		return nil, err
 	}
 	// Non-blocking: the only thing that can hold this EXCLUSIVELY is an
 	// admin command (this package never takes exclusive on a server's own
 	// behalf) -- a server startup that loses this race must fail fast with
 	// that specific, actionable message, not hang waiting for an admin
 	// operation of unknown duration to finish.
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
+	f, err := lockSidecar(path, syscall.LOCK_SH)
+	if errors.Is(err, errSidecarHeld) {
 		return nil, fmt.Errorf("an admin operation is running against this database (%s); retry when it finishes", path)
 	}
-	return &Presence{release: func() error {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		return f.Close()
-	}}, nil
+	if err != nil {
+		return nil, err
+	}
+	w := &sidecarWatch{path: path, f: f, lost: make(chan struct{}), stop: make(chan struct{}), done: make(chan struct{})}
+	go w.run(config.PinnedLockPingInterval)
+	return &Presence{lost: w.lost, release: w.release}, nil
+}
+
+// sidecarWatch keeps a server's SQLite presence lock on the file its path
+// names (REVIEW-SERVERGUARD-RECOVERYKEY-1 F4). Every interval (the PostgreSQL
+// presence watch's, config.PinnedLockPingInterval) it checks that the path
+// still names the inode it holds. If the sidecar was deleted or replaced, it
+// opens (re-creating) the file the path now names and takes LOCK_SH on it,
+// then lets the old one go. If that fails, an admin command already holds the
+// new file exclusively (or the file cannot be locked at all), so the server
+// is no longer excluding admin commands: lost is closed, and the server stops
+// as on a lost PostgreSQL presence lock (server/lock_loss.go).
+//
+// Not covered: an admin command that starts and finishes inside one interval
+// after the deletion ran beside the server, and nothing can tell afterwards.
+// Only the watcher goroutine uses f until release has stopped it.
+type sidecarWatch struct {
+	path string
+	f    *os.File
+	lost chan struct{}
+	stop chan struct{}
+	done chan struct{}
+
+	releaseOnce sync.Once
+	releaseErr  error
+}
+
+func (w *sidecarWatch) run(interval time.Duration) {
+	defer close(w.done)
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-w.stop:
+			return
+		case <-t.C:
+		}
+		err := w.check()
+		select {
+		case <-w.stop: // a loss found after Release is not reported
+			return
+		default:
+		}
+		if err != nil {
+			log.Printf("serverguard presence lock: %v, so the lock is lost", err)
+			close(w.lost)
+			return
+		}
+	}
+}
+
+func (w *sidecarWatch) check() error {
+	fi, err := w.f.Stat()
+	if err == nil {
+		if same, serr := pathNamesFile(w.path, fi); serr == nil && same {
+			return nil
+		}
+	}
+	nf, err := lockSidecar(w.path, syscall.LOCK_SH)
+	switch {
+	case err == nil:
+		_ = syscall.Flock(int(w.f.Fd()), syscall.LOCK_UN)
+		_ = w.f.Close()
+		w.f = nf
+		log.Printf("serverguard: WARNING: %s was deleted or replaced while this server held it; re-created it and took the presence lock again. It is never a stale lock file: do not delete it", w.path)
+		return nil
+	case errors.Is(err, errSidecarHeld):
+		return fmt.Errorf("%s was deleted or replaced while this server held it, and an admin command now holds the new file exclusively", w.path)
+	default:
+		return fmt.Errorf("%s was deleted or replaced while this server held it, and taking it again failed: %w", w.path, err)
+	}
+}
+
+// release stops the watch and lets the lock go. Safe to call more than once.
+func (w *sidecarWatch) release() error {
+	w.releaseOnce.Do(func() {
+		close(w.stop)
+		<-w.done
+		_ = syscall.Flock(int(w.f.Fd()), syscall.LOCK_UN)
+		w.releaseErr = w.f.Close()
+	})
+	return w.releaseErr
 }
 
 func acquireSQLiteExclusive(cfg *config.Config) (*Exclusive, error) {
@@ -290,13 +488,12 @@ func acquireSQLiteExclusive(cfg *config.Config) (*Exclusive, error) {
 	if !isRealFile {
 		return &Exclusive{}, nil
 	}
-	f, err := openLockFile(path)
+	f, err := lockSidecar(path, syscall.LOCK_EX)
+	if errors.Is(err, errSidecarHeld) {
+		return nil, &lockHeldErr{fmt.Errorf("another process holds this database (a live server, or another admin command) via %s", path)}
+	}
 	if err != nil {
 		return nil, err
-	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		_ = f.Close()
-		return nil, &lockHeldErr{fmt.Errorf("another process holds this database (a live server, or another admin command) via %s", path)}
 	}
 	return &Exclusive{release: func() error {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

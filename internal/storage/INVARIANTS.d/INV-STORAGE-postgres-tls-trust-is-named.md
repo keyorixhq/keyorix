@@ -5,7 +5,10 @@
   `dsn` — a PEM file that exists, is a regular file of at most 1 MiB, holds a certificate and no
   private key, and is not group/world-writable — or the explicit value `system`. Never the
   driver's implicit `PGSSLROOTCERT`, `~/.postgresql/root.crt` or OS store. `ssl_root_cert` with
-  `dsn`, or with `ssl_mode: disable`, is refused rather than ignored. Enforced in
+  `dsn`, or with `ssl_mode: disable`, is refused rather than ignored; so is a CA file (fields or
+  dsn) whose effective sslmode is `allow`/`prefer`, which pgx loads but never verifies against
+  (PG-SSL-ROOT-CERT-1: `internal/config/database_tls_ignored_ca_test.go`; the pgx premise is
+  `factory_postgres_tls_test.go`'s "premise: pgx ignores sslrootcert under prefer"). Enforced in
   `config.ValidateDatabaseTLS`, run by `Config.Validate` (server boot) AND by
   `config.ResolvePostgresConnConfig`, which returns an error instead of a config — so every connection
   (`createPostgresStorage`, `OpenGormDB`, `serverguard`, admin restore/verify-audit) is checked
