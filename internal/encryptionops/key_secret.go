@@ -37,6 +37,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
@@ -197,7 +198,7 @@ func readKeySet(enc *config.EncryptionConfig, baseDir string) ([]keySetFile, err
 			return nil, fmt.Errorf("key files %s and %s have the same name, so they cannot both be keys of one Secret (mounted as one directory)", other, p)
 		}
 		seen[key] = p
-		data, err := os.ReadFile(p) // #nosec G304 -- a path from the operator's own encryption config
+		data, err := secretenv.ReadRegularFile("key file", p) // a path from the operator's own encryption config; refuses a FIFO/device instead of hanging
 		if err != nil {
 			wipeKeySet(files)
 			return nil, err
@@ -518,7 +519,7 @@ func UnpackKeySecret(in, dir string, stdin io.Reader, msg io.Writer) error {
 func readManifestInput(in string, stdin io.Reader) ([]byte, error) {
 	r := stdin
 	if in != "-" {
-		f, err := os.Open(in) // #nosec G304 -- the operator's own manifest file
+		f, err := secretenv.OpenRegularNamed("--in manifest", in) // the operator's own manifest file; refuses a FIFO/device
 		if err != nil {
 			return nil, err
 		}
