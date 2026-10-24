@@ -26,7 +26,7 @@
 
 # shellcheck disable=SC2034  # CLOSURE_* results are read by the sourcing scripts
 # Modules a closure row may name. Add a module here only together with a self-test case.
-CLOSURE_KNOWN_MODULES=". cli"
+CLOSURE_KNOWN_MODULES=". cli migrate"
 
 closure_pkg_resolve() {
     local root="$1" pkg="$2" rel seg dir mod known ok

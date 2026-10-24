@@ -62,6 +62,13 @@ mount = project name, second = environment name — the same convention "vault" 
 mapping uses). --path-map <vault-prefix>=<projectID>:<environmentID> overrides this for a
 prefix that doesn't follow it (repeatable, longest prefix wins).
 
+A Keyorix grant covers a whole project/environment, so a policy maps only when its path covers
+the whole Vault subtree mapped there: "<mount>/data/<project>/<env>/*", "<mount>/data/<project>/*",
+or "<prefix>/*" for a --path-map prefix. A narrower path (one secret, a deeper subtree, part of
+a --path-map prefix) is reported unmappable (path-narrower-than-scope) rather than widened; give
+it its own --path-map and environment, or grant it by hand. metadata/ and list-only stanzas are
+reported unmappable (metadata-only): Keyorix has no permission that lists without reading values.
+
 --k8s-issuer is required to produce any Kubernetes auth role mapping: Vault's own Kubernetes
 auth config has no OIDC-discoverable issuer URL to read (it stores a CA bundle and review-JWT
 instead), so the operator must supply the cluster's actual token issuer. Every Kubernetes role

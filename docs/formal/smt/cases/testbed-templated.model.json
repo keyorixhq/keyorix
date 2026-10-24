@@ -1,0 +1,46 @@
+{
+  "case": "testbed-templated",
+  "description": "Testbed policy mig1-templated ({{identity.entity.id}} path).",
+  "constructed": false,
+  "sources": [
+    "scripts/vault-migration-testbed/seed.sh#mig1-templated"
+  ],
+  "kv_mounts": [
+    {
+      "path": "secret/",
+      "kv_version": 2
+    },
+    {
+      "path": "team-b/",
+      "kv_version": 2
+    },
+    {
+      "path": "kv1-legacy/",
+      "kv_version": 1
+    }
+  ],
+  "vault_rules": [
+    {
+      "policy": "mig1-templated",
+      "path": "secret/data/users/{{identity.entity.id}}/*",
+      "capabilities": [
+        "read"
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "mount": "secret/",
+      "path_prefix": "",
+      "project_id": 1,
+      "environment_id": 11
+    }
+  ],
+  "grants": [],
+  "unmappable": [
+    {
+      "source_ref": "policy:mig1-templated path:secret/data/users/{{identity.entity.id}}/*",
+      "category": "sentinel-or-templated"
+    }
+  ]
+}

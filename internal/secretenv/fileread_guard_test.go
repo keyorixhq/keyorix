@@ -125,6 +125,7 @@ var nonSecretFileReads = map[string]string{
 	"server/admin/restore.go:archiveHeadFromStagedAuditEvents": "our own staged file, checksum-verified by ExtractArchive",
 	"internal/k8ssync/rest_sink.go:NewInClusterSink":           "fixed kubelet-mounted ServiceAccount paths (constants), not operator-supplied",
 	"internal/securefiles/securefiles.go:SyncDir":              "directory open for fsync, not a file read",
+	"server/admin/restore.go:buildStagedSQLiteRestore":         "our own staged database file (dbPath-derived name), opened only to fsync it",
 	"server/admin/restore.go:fsyncDir":                         "directory open for fsync, not a file read",
 }
 

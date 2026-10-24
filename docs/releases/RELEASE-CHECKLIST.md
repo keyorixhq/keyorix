@@ -18,7 +18,9 @@ example `v0.96.1`) throughout.
       `internal/core` and `internal/storage/store`):
       `GOMAXPROCS=2 gremlins unleash --workers 2 ./internal/crypto` and the same for
       `./internal/keyfiles`. Test efficacy must not be lower than the last recorded
-      value (2026-10-23: crypto 88.2%, keyfiles 100%; the crypto survivors are #3612).
+      value (2026-10-23: crypto 98.8% after #3612, keyfiles 100%; the three
+      remaining crypto survivors are equivalent mutants listed in
+      `internal/crypto/mutation_equivalents_test.go`).
       Add `./internal/secretenv` and `./internal/saml` once their mutants are
       reachable (today most are not covered). Record the new numbers here when they
       change.
