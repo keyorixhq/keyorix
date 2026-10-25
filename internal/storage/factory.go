@@ -33,7 +33,7 @@ const (
 // column encodes). NOT bumped for pure comment/refactor changes that don't
 // touch what gets written to the database. Every bump must also decide
 // minCompatibleSchemaEpoch below (ADR-101).
-const currentSchemaEpoch = 6
+const currentSchemaEpoch = 7
 
 // schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
 // key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
@@ -101,6 +101,13 @@ const schemaEpochMetadataKey = "schema_epoch"
 // replica never reads the column (QueryFields) and inserts without it, so its rows
 // have NULL, which means "no request id" -- exactly what such a row has. The column
 // is outside the hash chain, so verification is unaffected either way.
+//
+// Epoch 7 (roles.assignable_scope, GROUP-ROLE-SCOPE-1 Phase 2, #3546) leaves it at
+// 3: an epoch-6 (or older) replica never writes the column, so a role it creates
+// mid-rollout gets the column default, project (the new-role default: fail closed);
+// its grant check ignores the column and still refuses the four project_* built-ins
+// at the global scope by name (the Phase 1 rule), so for the length of the rollout
+// it accepts what epoch 6 always accepted, never more.
 const minCompatibleSchemaEpoch = 3
 
 // schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's
@@ -1411,6 +1418,23 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		if err := exec("UPDATE roles SET bypasses_permission_checks = true " +
 			"WHERE name IN ('super_admin', 'admin', 'system_admin', 'project_admin')"); err != nil {
 			return err
+		}
+	}
+
+	// GROUP-ROLE-SCOPE-1 Phase 2 (#3546): roles.assignable_scope. The column's
+	// default is the NEW-role default (project); the one-time backfill sets every
+	// EXISTING role to any (nothing that worked before breaks), then the built-ins
+	// to their fixed scope. Column and backfill share one transaction: the
+	// column's absence gates the backfill, so a crash between them must not leave
+	// it unrun (every role, system_admin included, would read as project-only).
+	if tableExists(db, "roles") && !columnExists(db, "roles", "assignable_scope") {
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Migrator().AddColumn(&models.Role{}, "AssignableScope"); err != nil {
+				return err
+			}
+			return backfillRoleAssignableScope(tx)
+		}); err != nil {
+			return fmt.Errorf("failed to add roles.assignable_scope: %w", err)
 		}
 	}
 

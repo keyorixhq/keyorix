@@ -825,6 +825,13 @@ type Role struct {
 	// /system proxy writes it. Renaming a role does not move this flag; a
 	// newly-created role never has it regardless of what it is named.
 	BypassesPermissionChecks bool `gorm:"not null;default:false"`
+	// AssignableScope is where a grant of this role may be written
+	// (GROUP-ROLE-SCOPE-1 Phase 2, #3546): RoleAssignableGlobal (project 0
+	// only), RoleAssignableProject (a project, optionally an environment of it)
+	// or RoleAssignableAny. See role_assignable_scope.go. The column default is
+	// the new-role default, project; existing roles were backfilled once
+	// (backfillRoleAssignableScope, internal/storage/factory.go).
+	AssignableScope string `gorm:"not null;default:'project'"`
 }
 
 type Permission struct {
