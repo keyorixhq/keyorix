@@ -13,7 +13,17 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
+
+// pgJobLockDSN is a DSN for a database of its own. AuditVerifyJobLockKey is a
+// Postgres advisory lock, which is per database, not per schema: tests that hold
+// it (below) or start a full verification must not share a database with each
+// other, or one sees the other as "another replica" and fails at random.
+func pgJobLockDSN(t *testing.T) string {
+	t.Helper()
+	return pgdsn.IsolatedDatabase(t, pgTestDSN(t), "core_auditjob")
+}
 
 func newIncrementalPGReplica(t *testing.T, dsn string, clk *incrClock) *KeyorixCore {
 	t.Helper()
@@ -32,7 +42,7 @@ func newIncrementalPGReplica(t *testing.T, dsn string, clk *incrClock) *KeyorixC
 func TestIncrementalVerify_Postgres(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	dsn := pgIsolatedSchemaDSN(t, pgTestDSN(t))
+	dsn := pgJobLockDSN(t)
 	db := pgOpen(t, dsn)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.AuditCheckpoint{}, &models.SystemMetadata{}, &models.LegalHold{},
