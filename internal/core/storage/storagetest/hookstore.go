@@ -34,7 +34,9 @@ import (
 //     fault fires inside the transaction too (the failOnce*/atomicity idiom), and
 //     StoreHooks.WithTransaction overrides it outright.
 //
-// The per-method plumbing lives in hookstore_methods.go. It was derived
+// The per-method plumbing lives in hook_<domain>.go (one file per storage.Storage
+// domain, mirroring iface_<domain>.go) and the StoreHooks struct in
+// hookstore_methods.go. It was derived
 // mechanically from storage.Storage and is plain code: to hook one more method add a
 // field to StoreHooks and a method to HookStore following the pattern there. A
 // signature that drifts from the interface stops HookStore satisfying it, which is a

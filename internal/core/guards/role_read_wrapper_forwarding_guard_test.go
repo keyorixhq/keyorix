@@ -129,7 +129,7 @@ func TestRoleReadWrappersForwardTheCombinedRoleRead(t *testing.T) {
 	seen := map[string]bool{}
 	for path := range files {
 		switch filepath.Base(path) {
-		case "local_principal_permission.go", "faulty_storage_generated.go", "mockstorage_principal_permission.go":
+		case "local_principal_permission.go", "faulty_storage_generated.go", "mock_rbac.go":
 			seen[filepath.Base(path)] = true
 		}
 	}

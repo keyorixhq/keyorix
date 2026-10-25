@@ -68,7 +68,7 @@ var auditAttributionAllowlist = map[string]string{
 		"site of an attribution bug: whatever emitAudit correction should have applied already happened " +
 		"upstream, before this call. Every one of the other 417 generated methods has the identical pass-" +
 		"through shape; this is the one storage.Storage method this guard's AST walk happens to care about.",
-	"internal/core/storage/storagetest/hookstore_methods.go:LogAuditEvent": "CORE-TESTKIT-1: the test double " +
+	"internal/core/storage/storagetest/hook_audit.go:LogAuditEvent":"CORE-TESTKIT-1: the test double " +
 		"HookStore's per-method plumbing (moved verbatim from internal/core/hook_storage_methods_test.go, " +
 		"where this scan skipped it as a _test.go file). It runs the test's hook or forwards the " +
 		"*models.AuditEvent the caller already built, unmodified, and never builds or mutates one, so it " +
