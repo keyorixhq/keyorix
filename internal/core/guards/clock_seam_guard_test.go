@@ -14,22 +14,30 @@
 // Recognized forms: any SelectorExpr named SetClockForTesting, setClock or
 // StorageForTesting, called or not (a method value `f := c.StorageForTesting`
 // or a method expression `(*KeyorixCore).SetClockForTesting` is a use too, PR
-// #3695 re-review N7), found anywhere in a non-_test.go file
-// repo-wide, OUTSIDE the literal body of the FuncDecl that IS
-// SetClockForTesting or setClock (service.go's SetClockForTesting
-// legitimately calls oidc.go's setClock once, to propagate one clock to an
-// already-wired OIDCVerifier -- that's the seam's own implementation, not a
-// violation). Scoped repo-wide, not just internal/core: SetClockForTesting is
-// exported, so any package could in principle call it.
+// #3695 re-review N7), and any bare identifier with one of those names (an
+// unqualified call `StorageForTesting(c)` or value `var h = StorageForTesting`
+// of a same-named package-level function, PR #3711 deep review F1), found
+// anywhere in a non-_test.go file repo-wide, OUTSIDE the literal body of a
+// METHOD that IS SetClockForTesting, setClock or StorageForTesting
+// (service.go's SetClockForTesting legitimately calls oidc.go's setClock once,
+// to propagate one clock to an already-wired OIDCVerifier -- that's the seam's
+// own implementation, not a violation). A package-level function with a seam
+// name gets no exemption: its body is scanned, only its own declared name is
+// not counted as a use. Scoped repo-wide, not just internal/core:
+// SetClockForTesting is exported, so any package could in principle call it.
 //
 // What this guard silently skips (known gaps, deliberately not fixed here):
-//   - It matches by NAME on the selector. A reflective lookup such as
-//     reflect.ValueOf(c).MethodByName("StorageForTesting") carries the name in a
-//     string literal, not a SelectorExpr, so it is not seen.
-//   - Any FuncDecl named SetClockForTesting, setClock or StorageForTesting, in
-//     any package, is exempt inside its own body. A same-named wrapper elsewhere
-//     therefore hides nothing it calls from this scan, but it only matters if the
-//     wrapper is itself called from production, and that call IS caught.
+//   - It matches by NAME, syntactically, with no type information. A reflective
+//     lookup such as reflect.ValueOf(c).MethodByName("StorageForTesting")
+//     carries the name in a string literal, not an identifier, so it is not
+//     seen. Conversely, an unrelated identifier with a seam name (a local
+//     variable, a struct field, an interface method) is reported, a false
+//     positive rather than a miss.
+//   - Any METHOD named SetClockForTesting, setClock or StorageForTesting, on any
+//     receiver type, in any package, is exempt inside its own body. A
+//     same-named method on another type can therefore call the real seam
+//     unseen; a production call of that wrapper method is still caught, because
+//     it is a SelectorExpr with the seam name.
 //   - Only .go files outside _test.go are scanned, and the walk skips the
 //     directories in clockSeamGuardSkipDirs (web/, vendor/, ...). It does not
 //     skip .claude-worktrees/, so a local run in a checkout containing that
@@ -98,9 +106,10 @@ func clockSeamGuardRepoRoot(t *testing.T) string {
 }
 
 // scanClockSeamFile parses a single .go file and returns every use (call,
-// method value, method expression) of a guarded name found in it, EXCLUDING uses found inside the literal
-// body of a FuncDecl whose own name is itself a guarded name -- that body is
-// the seam's definition, not a caller of it.
+// method value, method expression, unqualified identifier) of a guarded name
+// found in it, EXCLUDING uses found inside the literal body of a METHOD whose
+// own name is itself a guarded name -- that body is the seam's definition, not
+// a caller of it.
 func scanClockSeamFile(fset *token.FileSet, path string) ([]clockSeamSite, error) {
 	src, err := os.ReadFile(path) // #nosec G304 -- fixed repo-internal path from filepath.WalkDir below, not external input
 	if err != nil {
@@ -111,18 +120,31 @@ func scanClockSeamFile(fset *token.FileSet, path string) ([]clockSeamSite, error
 		return nil, err
 	}
 	var sites []clockSeamSite
+	// skip holds idents already accounted for: the Sel of a recorded
+	// SelectorExpr, and a non-exempt FuncDecl's own name.
+	skip := map[*ast.Ident]bool{}
 	record := func(n ast.Node) bool {
-		sel, ok := n.(*ast.SelectorExpr)
-		if !ok || !clockSeamGuardedFuncs[sel.Sel.Name] {
-			return true
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if clockSeamGuardedFuncs[x.Sel.Name] {
+				skip[x.Sel] = true
+				sites = append(sites, clockSeamSite{relPath: path, line: fset.Position(x.Pos()).Line, fn: x.Sel.Name})
+			}
+		case *ast.Ident:
+			// An unqualified use of a same-named package-level function
+			// (PR #3711 deep review F1).
+			if clockSeamGuardedFuncs[x.Name] && !skip[x] {
+				sites = append(sites, clockSeamSite{relPath: path, line: fset.Position(x.Pos()).Line, fn: x.Name})
+			}
 		}
-		pos := fset.Position(sel.Pos())
-		sites = append(sites, clockSeamSite{relPath: path, line: pos.Line, fn: sel.Sel.Name})
 		return true
 	}
 	for _, decl := range f.Decls {
 		if fd, ok := decl.(*ast.FuncDecl); ok && clockSeamGuardedFuncs[fd.Name.Name] {
-			continue // the seam's own definition -- exempt, see file doc comment
+			if fd.Recv != nil {
+				continue // the seam's own definition (a method) -- exempt, see file doc comment
+			}
+			skip[fd.Name] = true // a same-named free function: its name is not a use, its body is scanned
 		}
 		ast.Inspect(decl, record)
 	}
@@ -226,4 +248,24 @@ func TestClockSeamScanCatchesMethodValues(t *testing.T) {
 		got = append(got, strconv.Itoa(s.line)+":"+s.fn)
 	}
 	require.Equal(t, []string{"2:StorageForTesting", "3:SetClockForTesting", "4:setClock"}, got)
+}
+
+// TestClockSeamScanCatchesUnqualifiedSameNamedWrapper: PR #3711 deep review F1.
+// A package-level function named like a seam is not the seam's definition, so
+// its body is scanned, and an unqualified call or function value of it (an
+// *ast.Ident, not a SelectorExpr) is a use too.
+func TestClockSeamScanCatchesUnqualifiedSameNamedWrapper(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "leaf.go")
+	src := "package core\n" +
+		"func StorageForTesting(c *KeyorixCore) Storage { return c.StorageForTesting() }\n" +
+		"func (c *KeyorixCore) handler() { _ = StorageForTesting(c) }\n" +
+		"var hook = StorageForTesting\n"
+	require.NoError(t, os.WriteFile(path, []byte(src), 0o600))
+	sites, err := scanClockSeamFile(token.NewFileSet(), path)
+	require.NoError(t, err)
+	got := make([]string, 0, len(sites))
+	for _, s := range sites {
+		got = append(got, strconv.Itoa(s.line)+":"+s.fn)
+	}
+	require.Equal(t, []string{"2:StorageForTesting", "3:StorageForTesting", "4:StorageForTesting"}, got)
 }
