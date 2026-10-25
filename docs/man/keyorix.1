@@ -1075,6 +1075,37 @@ Examples:
 .nf
 keyorix config unset ca_file
 .fi
+.SS keyorix crypto
+Cryptographic inventory and quantum\-risk reporting
+.PP
+Usage: \fBkeyorix crypto [command]\fR
+.SS keyorix crypto inventory
+List every key and certificate the server holds, with a quantum\-risk score
+.PP
+List every key and certificate the server holds or depends on (KEK, DEK, recovery key verifier, TLS certificates, derived signing/HMAC keys, WebAuthn and OIDC verification keys): algorithm, size, expiry, where it is stored, and a quantum\-risk score (0\-100) from its remaining lifetime against the configured quantum horizon. Classical public\-key keys (RSA, ECDSA, Ed25519) are flagged QUANTUM\-VULNERABLE.
+.PP
+The output holds metadata only, never key material. \-\-format cbom emits a CycloneDX 1.6 cryptographic bill of materials. Requires the audit.read permission; each read is recorded in the audit log.
+.PP
+Usage: \fBkeyorix crypto inventory [flags]\fR
+.PP
+Examples:
+.PP
+.nf
+keyorix crypto inventory
+keyorix crypto inventory \-\-format json
+keyorix crypto inventory \-\-format cbom \-\-output keyorix.cbom.json
+.fi
+.PP
+Flags:
+.TP
+\fB\-\-force\fR
+with \-\-output: overwrite an existing file
+.TP
+\fB\-\-format\fR \fIstring\fR
+output format: table, json or cbom (CycloneDX 1.6) (default table)
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fIstring\fR
+write the json or cbom output to this file (mode 0600) instead of stdout
 .SS keyorix docs
 Print the CLI reference (Markdown) or its man page
 .PP
