@@ -321,6 +321,21 @@ jobs:
       # nightly schedule (.github/workflows/fault-tolerance-nightly.yml) is
       # the unconditional full check; this is the narrow PR-time one.
       fault_tolerance_relevant: ${{ steps.filter.outputs.fault_tolerance_relevant }}
+      # Queue parity (CI-PARITY-1, 2026-10-25): true when the PR touches the
+      # HARNESS of a FULL-only job -- the job's own definition (ci.yml) or the
+      # scripts/files the job itself drives -- so a FAST pull_request runs that
+      # job too instead of leaving it to the merge queue. #3529 changed
+      # scripts/selfhost/init-secrets.sh and docker-boot-smoke's own step;
+      # the PR run skipped the job and the queue failed it 10 times (21-22
+      # Oct). Narrow on purpose: harness files only, never server/** or the
+      # other broad inputs (those stay FULL-only, CI-LIGHT-1). web-e2e-real-smoke
+      # has no harness gate: changed web/e2e/real specs get their own PR-time
+      # run (web-e2e-changed-specs, SMOKE-FLAKE-2 #3670).
+      harness_docker_boot: ${{ steps.filter.outputs.harness_docker_boot }}
+      harness_helm_boot: ${{ steps.filter.outputs.harness_helm_boot }}
+      harness_demo: ${{ steps.filter.outputs.harness_demo }}
+      harness_e2e: ${{ steps.filter.outputs.harness_e2e }}
+      harness_fuzz: ${{ steps.filter.outputs.harness_fuzz }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -425,6 +440,12 @@ jobs:
           # job that would exercise it.
           relevant web_e2e_relevant '^(web/|server/http/|scripts/e2e/web-real-smoke\.sh$)'
           relevant fault_tolerance_relevant '^server/faultops/|^scripts/check-fault-tolerance-issues\.sh$'
+          # Queue parity: the harness of each FULL-only job (see the outputs).
+          relevant harness_docker_boot '^(scripts/selfhost/|docker-compose|keyorix\.docker\.yaml$|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_helm_boot '^(deploy/helm/|\.github/testdata/helm|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_demo '^(scripts/demo/|scripts/airgap-e2e\.sh$|scripts/totpgen/|server/Dockerfile$|\.dockerignore$)'
+          relevant harness_e2e '^(scripts/e2e/|Makefile$)'
+          relevant harness_fuzz '^scripts/fuzzing/'
           # FAST-profile path gates. operator/ and migrate/ are separate Go
           # modules with no dependency on the root module (no replace to
           # ../), so only their own tree changes them. cli/ imports the root
@@ -1843,7 +1864,7 @@ jobs:
   # e2e-nightly.yml.
   e2e-smoke:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.full_profile == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -2125,6 +2146,9 @@ jobs:
   # computes boot_smoke_relevant from the group diff with the same regex, so
   # a group runs this exactly when one of its PRs would have.
   # demo-up-smoke and helm-boot-smoke below follow the same rule.
+  # Queue parity (CI-PARITY-1): a FAST pull_request still runs it when the PR
+  # touches its harness (changes.harness_docker_boot); same for demo-up-smoke,
+  # helm-boot-smoke, e2e-smoke and fuzz-targets/fuzz-reach.
   #
   # Merge-queue gate (CI-SELECT-1): on merge_group this runs when the
   # `select` job's gate_docker_boot is true -- the server binary (./server or
@@ -2136,7 +2160,7 @@ jobs:
   # container booting just as well. Outside merge_group the gate is true.
   docker-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_docker_boot == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_docker_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_docker_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2224,7 +2248,7 @@ jobs:
   # merge_group only, like docker-boot-smoke above.
   demo-up-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_demo == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_demo == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_demo == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2301,7 +2325,7 @@ jobs:
   # merge_group only.
   helm-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_helm_boot == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_helm_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_helm_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2669,7 +2693,7 @@ jobs:
     # or a changed .go file (any module) that has a `func Fuzz` line before
     # or after the change (an added, removed, renamed or build-tag-moved fuzz
     # target is the only thing this job's comparison can see change).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_targets == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2778,7 +2802,7 @@ jobs:
     # an affected (changed or importing a changed) package among the TARGETS
     # packages of scripts/fuzzing/harness-acceptance.sh (read at run time; an
     # unreadable list opens the gate).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_reach == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_reach == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
