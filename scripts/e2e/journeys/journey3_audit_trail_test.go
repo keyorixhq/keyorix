@@ -419,7 +419,7 @@ func runVerifyAudit(t *testing.T, s *harness.Server, dbPath string) (verifyAudit
 // afterward) -- see this function's call site for why that matters here.
 func checkpointWAL(t *testing.T, dbPath string) {
 	t.Helper()
-	cmd := exec.Command("sqlite3", dbPath, "PRAGMA wal_checkpoint(TRUNCATE);") // #nosec G204 -- dbPath is this test's own tempdir-derived path, never attacker input
+	cmd := sqliteCLI(dbPath, "PRAGMA wal_checkpoint(TRUNCATE);") // #nosec G204 -- dbPath is this test's own tempdir-derived path, never attacker input
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sqlite3 wal_checkpoint failed: %v\n%s", err, out)
 	}
@@ -458,7 +458,7 @@ func copyFile(t *testing.T, src, dst string) {
 func tamperAuditRow(t *testing.T, dbPath string, id int) {
 	t.Helper()
 	stmt := fmt.Sprintf("UPDATE audit_events SET description = 'tampered-by-N3-journey' WHERE id = %d;", id)
-	cmd := exec.Command("sqlite3", dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived copy, id is an int from this test's own prior query, never attacker input
+	cmd := sqliteCLI(dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived copy, id is an int from this test's own prior query, never attacker input
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sqlite3 tamper UPDATE failed: %v\n%s", err, out)
 	}
@@ -474,7 +474,7 @@ func tamperAuditRow(t *testing.T, dbPath string, id int) {
 func deleteAuditRow(t *testing.T, dbPath string, id int) {
 	t.Helper()
 	stmt := fmt.Sprintf("DELETE FROM audit_events WHERE id = %d;", id)
-	cmd := exec.Command("sqlite3", dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived copy, id is an int from this test's own prior query, never attacker input
+	cmd := sqliteCLI(dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived copy, id is an int from this test's own prior query, never attacker input
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sqlite3 tamper DELETE failed: %v\n%s", err, out)
 	}

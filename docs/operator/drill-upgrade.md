@@ -84,3 +84,9 @@ on the upgraded database (`system_metadata` read `schema_epoch` 5, `schema_min_c
   (`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`), and the restore ran with
   `--overwrite-existing --allow-rollback` (without flags it is refused). Secrets decrypted
   afterwards, and `admin verify-audit` said `VALID`. The post-upgrade secret was gone, as expected.
+
+Release to release, v0.96.1 → v0.96.3 with the binaries from the published images, SQLite
+and PostgreSQL 16 (2026-10-22): every check passed, including a DEK rotation before the
+upgrade. Both releases are epoch 2, so v0.96.1 started on the upgraded data and served it.
+The rollback paths that came out of that run, including restoring the pre-upgrade backup
+in place, are in [upgrade-rollback.md](upgrade-rollback.md).

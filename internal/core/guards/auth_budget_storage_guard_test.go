@@ -21,13 +21,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 var loginAttemptsStorageMethods = map[string]bool{
@@ -44,18 +44,13 @@ var loginAttemptsCallersOutsideTheLimiter = map[string]string{
 }
 
 func TestAuthBudgetStorage_OnlyThroughTheSharedLimiter(t *testing.T) {
-	entries, err := os.ReadDir("..")
-	require.NoError(t, err)
 	fset := token.NewFileSet()
 	var bad []string
 	inLimiter := 0
 	used := map[string]bool{}
-	for _, e := range entries {
-		name := e.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, "../"+name, nil, 0)
+	for _, path := range coreFamilySources(t) {
+		name := srcpath.CoreFamilyRel(path)
+		f, err := parser.ParseFile(fset, path, nil, 0)
 		require.NoError(t, err)
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)

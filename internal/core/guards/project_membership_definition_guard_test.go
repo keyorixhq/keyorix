@@ -406,29 +406,20 @@ func TestProjectMembership_OneDefinition_JournalReadsAreAllowlisted(t *testing.T
 // no handler calls it would be vacuous precisely because the method is gone.)
 func TestProjectMembership_OneDefinition_NoCoreWrapperForJournalPerUserRead(t *testing.T) {
 	t.Parallel()
-	root := membershipDefinitionRepoRoot(t)
-	coreDir := filepath.Join(root, "internal", "core")
-
 	banned := map[string]string{
 		"ListUserProjectMemberships": "removed in #2781 — it was the second definition's entry point. " +
 			"Use ListProjectMembershipsForUser (project_membership_definition.go).",
 	}
 
-	entries, err := os.ReadDir(coreDir)
-	if err != nil {
-		t.Fatalf("failed to read %s: %v", coreDir, err)
-	}
 	fset := token.NewFileSet()
 	checked := 0
 	var violations []string
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
+	for _, path := range coreFamilySources(t) {
+		name := srcpath.CoreFamilyRel(path)
 		checked++
-		file, perr := parser.ParseFile(fset, filepath.Join(coreDir, e.Name()), nil, 0)
+		file, perr := parser.ParseFile(fset, path, nil, 0)
 		if perr != nil {
-			t.Fatalf("failed to parse %s: %v", e.Name(), perr)
+			t.Fatalf("failed to parse %s: %v", name, perr)
 		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
@@ -436,12 +427,12 @@ func TestProjectMembership_OneDefinition_NoCoreWrapperForJournalPerUserRead(t *t
 				continue
 			}
 			if reason, bad := banned[fn.Name.Name]; bad {
-				violations = append(violations, e.Name()+": method "+fn.Name.Name+" must not exist — "+reason)
+				violations = append(violations, name+": method "+fn.Name.Name+" must not exist — "+reason)
 			}
 		}
 	}
 	if checked < 50 {
-		t.Fatalf("only parsed %d non-test files in internal/core; expected well over 50 — the directory scan is broken, not the code", checked)
+		t.Fatalf("only parsed %d non-test files in the core family; expected well over 50 — the directory scan is broken, not the code", checked)
 	}
 	if len(violations) > 0 {
 		t.Fatalf("banned core method(s) reintroduced (%d):\n  %s", len(violations), strings.Join(violations, "\n  "))

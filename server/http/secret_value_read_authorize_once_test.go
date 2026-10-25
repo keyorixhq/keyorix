@@ -80,7 +80,7 @@ func voOpenStorage(t *testing.T, backend string) (storageCfg *config.Config, pgT
 	t.Helper()
 	switch backend {
 	case "sqlite":
-		return &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqlitetest.DSN("kxvo_")}}}, ""
+		return &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqlitetest.FactoryPath(t, "kxvo_")}}}, ""
 	case "postgres":
 		pgDSN := os.Getenv("KEYORIX_TEST_PG_DSN")
 		if pgDSN == "" {

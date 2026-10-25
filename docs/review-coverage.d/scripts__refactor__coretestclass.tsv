@@ -1,0 +1,1 @@
+scripts/refactor/coretestclass	none	-	PR #3695 (CORE-SPLIT-GUARDS-1): developer tool run by hand that classifies internal/core _test.go files for the core package split (advisory output only; -out writes per-set file lists); never linked into a shipped binary, no auth or storage decisions; unit-tested in main_test.go	pending

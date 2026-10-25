@@ -69,6 +69,16 @@ a --path-map prefix) is reported unmappable (path-narrower-than-scope) rather th
 it its own --path-map and environment, or grant it by hand. metadata/ and list-only stanzas are
 reported unmappable (metadata-only): Keyorix has no permission that lists without reading values.
 
+Under the default convention "secret/data/team-a/prod/x" and "kv1/team-a/prod/x" land in the
+same environment, so plan-access lists every KV mount's <project>/ and <project>/<env>/ keys
+(names only). A default-convention policy maps only when no other KV mount holds paths in its
+scope; otherwise, or when a mount cannot be listed, it is reported unmappable
+(cross-mount-scope). apply-access lists again and applies nothing if that changed.
+
+secrets.read in Keyorix also lists secret names and reads version metadata. When a policy's
+grant adds that (no matching metadata/ list/read stanza in Vault), the report lists the policy
+under "Access added beyond Vault" and the JSON item carries "implied_access".
+
 --k8s-issuer is required to produce any Kubernetes auth role mapping: Vault's own Kubernetes
 auth config has no OIDC-discoverable issuer URL to read (it stores a CA bundle and review-JWT
 instead), so the operator must supply the cluster's actual token issuer. Every Kubernetes role
@@ -183,6 +193,12 @@ func runPlanAccess(cmd *cobra.Command, _ []string) error {
 		create, skip, conflict, unmappable, prefix, prefix, prefix)
 	if conflict > 0 {
 		_, _ = fmt.Fprintln(cmd.OutOrStdout(), "Conflicts are never auto-resolved — review the report and rename one side before running apply-access.")
+	}
+	if implied := accessplan.ImpliedAccessPolicies(built.Items); len(implied) > 0 {
+		_, _ = fmt.Fprintf(cmd.OutOrStdout(), "%d policies would also get secret names / version metadata their Vault policy does not grant (secrets.read implies list; never values):\n", len(implied))
+		for _, ip := range implied {
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "  %s: %s (%s)\n", ip.Policy, strings.Join(ip.Access, ", "), strings.Join(ip.Paths, ", "))
+		}
 	}
 	return nil
 }

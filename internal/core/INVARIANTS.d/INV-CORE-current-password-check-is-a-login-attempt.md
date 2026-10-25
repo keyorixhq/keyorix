@@ -10,7 +10,16 @@
   committed and only when the password alone is full authentication (no TOTP, no
   passkey): with a second factor enrolled, a correct password plus a refused new password
   must not reset the count that factor's guesses feed, as the password step of an MFA
-  login does not. The account-security-factor changes (`requireReauth`) already fed the
+  login does not. A NEW password refused because it is in the password HISTORY
+  (`ErrPasswordReused`, generic wording) is charged the same way: `ChangePassword` calls
+  `recordFailedLogin` and the transport keeps the per-IP slot, because the refusal tells the
+  caller something about past passwords; re-submitting the current password (which the caller
+  just proved they know) and the other policy refusals (`ErrPasswordPolicy`, named by rule)
+  cost nothing (`change_password_policy_refusal_test.go`). Only a caller that has verified the
+  current password may be told "must differ from the current password" (`validateNewPasswordAs(..., true)`);
+  the setup/reset-link path (`CompleteSetup`, `validateNewPassword`) verifies nothing, so a candidate
+  equal to the current password gets the same generic refusal as a history password
+  (`setup_consume_reuse_refusal_test.go`). The account-security-factor changes (`requireReauth`) already fed the
   counter; their refusals now also carry `ErrReauthRejected` (text unchanged) so the
   transport can keep the per-IP slot (INV-HTTP-every-auth-route-budgeted). Why:
   AUTH-PW-BUDGET (HARDEN-HTTP-1's rate-limit inventory, #3321): both endpoints used a bare
@@ -24,3 +33,11 @@
   `TestRequireReauth_RejectionsCarryTheSentinel`), and the call-site allowlist in
   `login_lockout_clear_site_guard_test.go` (the two clears and the re-check are listed with
   their reasons).
+  The text of a refused new password is fixed wording built from the policy's rule enum
+  (`PasswordPolicy.Unmet`/`DescribeAll`), never from or wrapping an error returned by a
+  check that was handed the candidate, and the handler logs a fixed line for it instead of
+  the error (PG-DRILL-2: CodeQL `go/clear-text-logging` followed the wrapped validator error
+  into the log call and failed the merge queue). Guard:
+  `change_password_fixed_text_test.go` (`TestChangePassword_PolicyRefusalTextIsFixedAndWrapsNothing`,
+  `TestChangePassword_NamedRefusalsWrapNothing`, `TestValidateNewPassword_RefusalWrapsNothing`) and the
+  log assertions in `TestChangePassword_EachPolicyRuleIsNamed`.

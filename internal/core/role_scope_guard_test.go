@@ -27,32 +27,50 @@ import (
 )
 
 func TestValidateRoleScope(t *testing.T) {
+	builtin := func(name string) *models.Role {
+		return &models.Role{Name: name, AssignableScope: models.BuiltinRoleAssignableScopes[name]}
+	}
+	custom := func(name, scope string) *models.Role { return &models.Role{Name: name, AssignableScope: scope} }
+	project, global := Scope{ProjectID: 3}, Scope{}
 	cases := []struct {
-		role    string
+		role    *models.Role
 		scope   Scope
 		refused bool
 	}{
-		{"project_admin", Scope{}, true},
-		{"project_developer", Scope{}, true},
-		{"project_viewer", Scope{}, true},
-		{"project_auditor", Scope{}, true},
-		{"project_developer", Scope{ProjectID: 3}, false},
-		{"project_developer", Scope{ProjectID: 3, EnvironmentID: 4}, false},
-		{"system_viewer", Scope{}, false},
-		{"system_admin", Scope{}, false},
-		{"admin", Scope{}, false},
-		{"viewer", Scope{}, false},
-		{"system_viewer", Scope{EnvironmentID: 4}, true},
-		{"admin", Scope{EnvironmentID: 4}, true},
-		// Exact names, not a prefix: a custom role named project_* keeps its
-		// behaviour in a patch release (Phase 2 gives custom roles an explicit
-		// assignable scope).
-		{"project_custom", Scope{}, false},
-		{"Project_Developer", Scope{}, false},
+		{builtin("project_admin"), global, true},
+		{builtin("project_developer"), global, true},
+		{builtin("project_viewer"), global, true},
+		{builtin("project_auditor"), global, true},
+		{builtin("project_developer"), project, false},
+		{builtin("project_developer"), Scope{ProjectID: 3, EnvironmentID: 4}, false},
+		{builtin("system_viewer"), global, false},
+		{builtin("system_admin"), global, false},
+		{builtin("alert_operator"), global, false},
+		// Phase 2: an install-wide role is refused at a project.
+		{builtin("system_admin"), project, true},
+		{builtin("system_viewer"), Scope{ProjectID: 3, EnvironmentID: 4}, true},
+		// Legacy roles are any: granted per project today.
+		{builtin("admin"), global, false},
+		{builtin("viewer"), project, false},
+		{builtin("system_viewer"), Scope{EnvironmentID: 4}, true},
+		{builtin("admin"), Scope{EnvironmentID: 4}, true},
+		// Custom roles: the stored scope decides, never the name.
+		{custom("deployers", models.RoleAssignableProject), global, true},
+		{custom("deployers", models.RoleAssignableProject), project, false},
+		{custom("ops-all", models.RoleAssignableAny), global, false},
+		{custom("ops-all", models.RoleAssignableAny), project, false},
+		{custom("ops-global", models.RoleAssignableGlobal), project, true},
+		{custom("project_custom", models.RoleAssignableAny), global, false},
+		// An empty scope (a hand-built role; storage never returns one): a
+		// built-in's fixed scope, else project. Fail closed, never any.
+		{custom("project_developer", ""), global, true},
+		{custom("system_admin", ""), global, false},
+		{custom("unknown", ""), global, true},
+		{custom("unknown", "bogus"), global, true},
 	}
 	for _, tc := range cases {
 		err := validateRoleScope(tc.role, tc.scope)
-		require.Equal(t, tc.refused, err != nil, "%s at %+v: %v", tc.role, tc.scope, err)
+		require.Equal(t, tc.refused, err != nil, "%s (%q) at %+v: %v", tc.role.Name, tc.role.AssignableScope, tc.scope, err)
 		if tc.refused {
 			require.ErrorIs(t, err, ErrRoleScopeInvalid)
 			msg, ok := RoleScopeClientMessage(err)
@@ -60,8 +78,45 @@ func TestValidateRoleScope(t *testing.T) {
 			require.NotEmpty(t, msg)
 		}
 	}
-	msg, _ := RoleScopeClientMessage(validateRoleScope("project_developer", Scope{}))
+	msg, _ := RoleScopeClientMessage(validateRoleScope(builtin("project_developer"), global))
 	require.Equal(t, "role project_developer is project-scoped; specify a project_id (and optionally environment_id)", msg)
+	msg, _ = RoleScopeClientMessage(validateRoleScope(builtin("system_admin"), project))
+	require.Equal(t, "role system_admin is install-wide; grant it without project_id and environment_id", msg)
+}
+
+// TestBuiltinRoleAssignableScopes_CoversEveryBuiltinRole: the seed table names
+// exactly the built-in roles, so no built-in silently falls back to project and
+// no stale name lingers in the table.
+func TestBuiltinRoleAssignableScopes_CoversEveryBuiltinRole(t *testing.T) {
+	for name := range builtinRoleNames {
+		_, ok := models.BuiltinRoleAssignableScopes[name]
+		require.True(t, ok, "built-in role %s has no assignable scope in models.BuiltinRoleAssignableScopes", name)
+	}
+	for name := range models.BuiltinRoleAssignableScopes {
+		require.True(t, builtinRoleNames[name], "models.BuiltinRoleAssignableScopes names %s, which is not a built-in role", name)
+	}
+	for _, rdef := range defaultRoles {
+		require.True(t, builtinRoleNames[rdef.Name], "seeded role %s is not in builtinRoleNames", rdef.Name)
+	}
+}
+
+// TestBootstrapAndReconcile_SeedEveryBuiltinRoleScope asserts the effect on a
+// real store: after first boot and the alert_operator reconcile, every seeded
+// built-in role carries its fixed scope.
+func TestBootstrapAndReconcile_SeedEveryBuiltinRoleScope(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	require.NoError(t, c.ReconcileAlertsWriteRole(ctx))
+	roles, err := st.ListRoles(ctx)
+	require.NoError(t, err)
+	seen := 0
+	for _, r := range roles {
+		if want, ok := models.BuiltinRoleAssignableScopes[r.Name]; ok {
+			seen++
+			require.Equal(t, want, r.AssignableScope, "seeded role %s", r.Name)
+		}
+	}
+	require.GreaterOrEqual(t, seen, len(defaultRoles), "every seeded role must be found")
 }
 
 // roleScopeWorld is a bootstrapped install with two projects (each with one
@@ -73,6 +128,8 @@ type roleScopeWorld struct {
 	p1, e1, p2, e2   uint
 	projectDeveloper *models.Role
 	systemViewer     *models.Role
+	customProject    *models.Role // created with the default scope (project)
+	customAny        *models.Role // created with assignable_scope any
 }
 
 func newRoleScopeWorld(t *testing.T, c *KeyorixCore) *roleScopeWorld {
@@ -99,6 +156,11 @@ func newRoleScopeWorld(t *testing.T, c *KeyorixCore) *roleScopeWorld {
 	w.projectDeveloper, err = c.storage.GetRoleByName(ctx, "project_developer")
 	require.NoError(t, err)
 	w.systemViewer, err = c.storage.GetRoleByName(ctx, "system_viewer")
+	require.NoError(t, err)
+	w.customProject, _, err = c.CreateRole(ctx, w.adminID, "rs-deployers", "custom, default scope", nil)
+	require.NoError(t, err)
+	require.Equal(t, models.RoleAssignableProject, w.customProject.AssignableScope, "a new custom role defaults to project")
+	w.customAny, _, err = c.CreateRoleWithScope(ctx, w.adminID, "rs-anywhere", "custom, widened", nil, models.RoleAssignableAny)
 	require.NoError(t, err)
 	return w
 }
@@ -194,6 +256,29 @@ func roleScopeEntryPoints(w *roleScopeWorld) map[string]func(ctx context.Context
 		"AssignUserRole unknown environment": func(ctx context.Context) error {
 			return c.AssignUserRole(ctx, w.adminID, w.userID, pd.ID, Scope{ProjectID: w.p1, EnvironmentID: 9999}, false)
 		},
+		// Phase 2: the role's AssignableScope, not its name, decides.
+		"AssignUserRole install-wide role at a project": func(ctx context.Context) error {
+			return c.AssignUserRole(ctx, w.adminID, w.userID, w.systemViewer.ID, Scope{ProjectID: w.p1}, false)
+		},
+		"AddProjectMember install-wide role": func(ctx context.Context) error {
+			return c.AddProjectMember(ctx, w.adminID, w.p1, w.userID, "system_admin", false)
+		},
+		"InviteToProject install-wide role": func(ctx context.Context) error {
+			_, err := c.InviteToProject(ctx, w.p1, "erin@example.com", "system_viewer", w.adminID, 0)
+			return err
+		},
+		"InviteGlobal install-wide role in a project assignment": func(ctx context.Context) error {
+			_, err := c.InviteGlobal(ctx, "ivan@example.com", "", []ProjectAssignment{{ProjectID: w.p1, Role: "system_admin"}}, w.adminID, 0)
+			return err
+		},
+		"CreateUserWithAssignments install-wide role in a project assignment": func(ctx context.Context) error {
+			_, err := c.CreateUserWithAssignments(ctx, &CreateUserRequest{Username: "frank", Email: "frank@example.com", DisplayName: "Frank", Password: "Correct-Horse-Battery-9"},
+				"", []ProjectAssignment{{ProjectID: w.p1, Role: "system_admin"}}, w.adminID, false)
+			return err
+		},
+		"AssignRoleToGroup new custom role (project by default) globally": func(ctx context.Context) error {
+			return c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customProject.ID, Scope{}, false)
+		},
 	}
 }
 
@@ -214,7 +299,9 @@ func runRoleScopeEntryPoints(t *testing.T, c *KeyorixCore) {
 	require.Error(t, err, "no JIT user may be created behind a refused default_role")
 	_, err = c.storage.GetUserByEmail(ctx, "bob@example.com")
 	require.Error(t, err, "no user may be created behind a refused system role")
-	grants, err := c.ListGlobalProjectTierRoleGrants(ctx)
+	_, err = c.storage.GetUserByEmail(ctx, "frank@example.com")
+	require.Error(t, err, "no user may be created behind a refused project assignment")
+	grants, err := c.ListRoleGrantsOutsideAssignableScope(ctx)
 	require.NoError(t, err)
 	require.Empty(t, grants)
 
@@ -239,6 +326,14 @@ func runRoleScopeEntryPoints(t *testing.T, c *KeyorixCore) {
 	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, legacyAdmin.ID, Scope{}, false))
 	require.Contains(t, w.grantRows(t), fmtGrant("group", w.groupID, w.projectDeveloper.ID, w.p1, 0))
 	require.Contains(t, w.grantRows(t), fmtGrant("user", w.userID, w.projectDeveloper.ID, w.p1, w.e1))
+	// Phase 2 positive controls: a legacy role (any) at a project, a custom
+	// role at its own scope, and a widened custom role at both.
+	viewer, err := c.storage.GetRoleByName(ctx, "viewer")
+	require.NoError(t, err)
+	require.NoError(t, c.AssignUserRole(ctx, w.adminID, w.userID, viewer.ID, Scope{ProjectID: w.p1}, false))
+	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customProject.ID, Scope{ProjectID: w.p2}, false))
+	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customAny.ID, Scope{}, false))
+	require.NoError(t, c.AssignRoleToGroup(ctx, w.adminID, w.groupID, w.customAny.ID, Scope{ProjectID: w.p1}, false))
 }
 
 // TestEveryRoleGrantEntryPointRefusesProjectRoleAtGlobalScope is the SQLite
@@ -256,21 +351,51 @@ func TestEveryRoleGrantEntryPointRefusesProjectRoleAtGlobalScope_Postgres(t *tes
 	runRoleScopeEntryPoints(t, bootstrapCoreOn(t, db))
 }
 
-// TestListGlobalProjectTierRoleGrants_ReportsLegacyGrants: grants written
+// TestListRoleGrantsOutsideAssignableScope_ReportsLegacyGrants: grants written
 // before the guard (here straight into storage) are listed, users and groups,
-// and nothing else is.
-func TestListGlobalProjectTierRoleGrants_ReportsLegacyGrants(t *testing.T) {
+// a project role held globally and an install-wide role held at a project
+// (#3554 review follow-up 4), and nothing else is.
+func TestListRoleGrantsOutsideAssignableScope_ReportsLegacyGrants(t *testing.T) {
 	c, _ := newBootstrappedCore(t)
 	ctx := context.Background()
 	w := newRoleScopeWorld(t, c)
 	require.NoError(t, c.storage.AssignRoleToGroup(ctx, w.groupID, w.projectDeveloper.ID, Scope{}))
 	require.NoError(t, c.storage.AssignRole(ctx, w.userID, w.projectDeveloper.ID, Scope{EnvironmentID: w.e1}))
 	require.NoError(t, c.storage.AssignRole(ctx, w.userID, w.projectDeveloper.ID, Scope{ProjectID: w.p1})) // valid: not listed
-	got, err := c.ListGlobalProjectTierRoleGrants(ctx)
+	require.NoError(t, c.storage.AssignRole(ctx, w.userID, w.systemViewer.ID, Scope{ProjectID: w.p2}))
+	require.NoError(t, c.storage.AssignRole(ctx, w.userID, w.customAny.ID, Scope{})) // any: not listed
+	got, err := c.ListRoleGrantsOutsideAssignableScope(ctx)
 	require.NoError(t, err)
-	require.Equal(t, []GlobalProjectRoleGrant{
-		{PrincipalType: "group", PrincipalID: w.groupID, RoleName: "project_developer"},
-		{PrincipalType: "user", PrincipalID: w.userID, RoleName: "project_developer", EnvironmentID: w.e1},
+	require.Equal(t, []RoleGrantOutsideScope{
+		{PrincipalType: "group", PrincipalID: w.groupID, RoleName: "project_developer", AssignableScope: models.RoleAssignableProject},
+		{PrincipalType: "user", PrincipalID: w.userID, RoleName: "project_developer", AssignableScope: models.RoleAssignableProject, EnvironmentID: w.e1},
+		{PrincipalType: "user", PrincipalID: w.userID, RoleName: "system_viewer", AssignableScope: models.RoleAssignableGlobal, ProjectID: w.p2},
+	}, got)
+}
+
+// TestListPendingInvitationsOutsideAssignableScope: a pending invitation whose
+// grant is now refused is listed (#3554 review follow-up 2); a valid one and an
+// accepted one are not.
+func TestListPendingInvitationsOutsideAssignableScope(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	w := newRoleScopeWorld(t, c)
+	future := c.now().Add(time.Hour)
+	mk := func(inv *models.ProjectInvitation) uint {
+		inv.InvitedBy, inv.ExpiresAt, inv.CreatedAt = w.adminID, &future, c.now()
+		created, err := st.CreateProjectInvitation(ctx, inv)
+		require.NoError(t, err)
+		return created.ID
+	}
+	bad := mk(&models.ProjectInvitation{Email: "g@example.com", SystemRole: "project_developer", State: InvitationPending})
+	badProject := mk(&models.ProjectInvitation{ProjectID: w.p1, Email: "p@example.com", Role: "system_admin", State: InvitationPending})
+	mk(&models.ProjectInvitation{ProjectID: w.p1, Email: "ok@example.com", Role: "project_viewer", State: InvitationPending})
+	mk(&models.ProjectInvitation{Email: "done@example.com", SystemRole: "project_developer", State: InvitationAccepted})
+	got, err := c.ListPendingInvitationsOutsideAssignableScope(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []InvitationOutsideScope{
+		{InvitationID: bad, Email: "g@example.com", RoleName: "project_developer"},
+		{InvitationID: badProject, Email: "p@example.com", RoleName: "system_admin", ProjectID: w.p1},
 	}, got)
 }
 
@@ -284,4 +409,74 @@ func bootstrapCoreOn(t *testing.T, db *gorm.DB) *KeyorixCore {
 	})
 	require.NoError(t, err)
 	return c
+}
+
+// TestInviteMember_InstallWideRoleIsRefusedAtInviteTime is REVIEW-3585-DEEP-1
+// F3: in allowlist mode InviteMember parked an `invited` membership holding an
+// install-wide role, which could never activate (the activation grant refuses
+// it). Now refused up front in every mode, with no membership and no grant.
+func TestInviteMember_InstallWideRoleIsRefusedAtInviteTime(t *testing.T) {
+	for _, mode := range []string{ValidationModeAllowlist, ValidationModeOpen} {
+		t.Run(mode, func(t *testing.T) {
+			c, _ := newBootstrappedCore(t)
+			ctx := context.Background()
+			w := newRoleScopeWorld(t, c)
+			c.SetMembershipValidationMode(mode)
+			before := w.grantRows(t)
+
+			_, err := c.InviteMember(ctx, w.p1, w.userID, "system_admin", w.adminID, 0, false)
+			require.Error(t, err)
+			require.True(t, errors.Is(err, ErrRoleScopeInvalid), "want a role-scope refusal, got: %v", err)
+			ms, err := c.storage.ListProjectMemberships(ctx, w.p1)
+			require.NoError(t, err)
+			require.Empty(t, ms, "a refused invite must write no membership")
+			require.ElementsMatch(t, before, w.grantRows(t), "a refused invite must write no grant row")
+
+			// Positive control: a project role is invited.
+			m, err := c.InviteMember(ctx, w.p1, w.userID, "project_viewer", w.adminID, 0, false)
+			require.NoError(t, err)
+			require.Equal(t, w.userID, m.UserID)
+		})
+	}
+}
+
+// TestUpdateRole_KeepScopeSurvivesANarrowingBetweenCommits is the core half of
+// REVIEW-3585-DEEP-1 F4: "" (keep the stored scope) on an update that adds a
+// permission runs in two commits. A narrowing (any -> project) committed by
+// another admin between them must be kept: commit 2 used to write the scope
+// commit 1 had read.
+func TestUpdateRole_KeepScopeSurvivesANarrowingBetweenCommits(t *testing.T) {
+	c, st := newBootstrappedCore(t)
+	ctx := context.Background()
+	w := newRoleScopeWorld(t, c)
+	perms, err := c.ListPermissions(ctx)
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, len(perms), 2)
+	require.NoError(t, st.AssignPermissionToRole(ctx, w.customAny.ID, perms[0].ID))
+
+	txs, narrowed := 0, false
+	hc := NewKeyorixCore(hooked(st, &storeHooks{
+		WithTransaction: func(next storage.Storage, ctx context.Context, fn func(storage.Storage) error) error {
+			txs++
+			if txs == 2 { // after commit 1, before commit 2: admin B narrows
+				require.NoError(t, next.SetRoleAssignableScope(ctx, w.customAny.ID, models.RoleAssignableProject))
+				narrowed = true
+			}
+			return next.WithTransaction(ctx, fn)
+		},
+	}))
+	role, err := st.GetRole(ctx, w.customAny.ID)
+	require.NoError(t, err)
+	role.AssignableScope = "" // keep
+	role.Description = "A adds a permission"
+	add := []uint{perms[0].ID, perms[1].ID}
+	_, final, err := hc.UpdateRole(ctx, w.adminID, role, &add)
+	require.NoError(t, err)
+	require.True(t, narrowed, "the update never reached a second commit")
+	require.Len(t, final, 2, "the added permission landed")
+
+	stored, err := st.GetRole(ctx, w.customAny.ID)
+	require.NoError(t, err)
+	require.Equal(t, models.RoleAssignableProject, stored.AssignableScope, "commit 2 undid the narrowing with commit 1's read")
+	require.Equal(t, "A adds a permission", stored.Description)
 }

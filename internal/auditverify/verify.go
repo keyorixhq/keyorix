@@ -126,6 +126,9 @@ type Result struct {
 	// are owed to the chain (BREAKGLASS-OWED-1); any unsettled one makes the
 	// verdict at least INDETERMINATE.
 	OwedBreakGlass OwedBreakGlassStatus `json:"owed_break_glass"`
+	// KeyTransition reports the checkpoint-key transition records written by
+	// rotate-kek / migrate-provider (docs/design-audit-key-transition.md).
+	KeyTransition KeyTransitionStatus `json:"key_transition"`
 
 	// AnchorSource records how this run resolved its Options.ExternalAnchor
 	// bundle: "flag" (the caller's --anchor was passed explicitly), "config
@@ -147,6 +150,10 @@ type Result struct {
 
 	GeneratedAt     time.Time `json:"generated_at"`
 	VerifierVersion string    `json:"verifier_version"`
+
+	// keyTransitionEvents are the in-chain system.audit_key_transition rows
+	// the walk saw.
+	keyTransitionEvents []keyTransitionEvent
 }
 
 // escalate raises r's verdict to v (with reason) only if v outranks the
@@ -189,6 +196,11 @@ type Options struct {
 	// checkpoint/high-water/retention-anchor rows are read and reported but
 	// their signatures are never checked.
 	CheckpointKey []byte
+	// PreviousCheckpointKeys are checkpoint keys of earlier key epochs (from
+	// before a rotate-kek / migrate-provider). Each key transition record's
+	// old-key MAC is checked under the one that signs the checkpoint the record
+	// names.
+	PreviousCheckpointKeys [][]byte
 	// TSARoots, if set, lets this run independently re-verify an RFC 3161
 	// external-notary anchor on the latest checkpoint — the one check that
 	// needs no shared secret at all (design §3).
@@ -253,6 +265,9 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 	// checkpoint/high-water on top adds nothing but noise.
 	if result.Verdict != VerdictBroken {
 		if err := enforceCheckpoint(ctx, db, opts, result); err != nil {
+			return nil, err
+		}
+		if err := checkKeyTransitions(ctx, db, opts, result); err != nil {
 			return nil, err
 		}
 	} else {
@@ -389,6 +404,9 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 			}
 			prevHash = e.EntryHash
 			chainedEvents++
+			if e.EventType == auditKeyTransitionEvent {
+				result.keyTransitionEvents = append(result.keyTransitionEvents, keyTransitionEvent{id: e.ID, description: e.Description})
+			}
 		}
 
 		lastID = batch[len(batch)-1].ID
@@ -568,6 +586,12 @@ func buildNotProven(opts Options, result *Result) []string {
 		notProven = append(notProven,
 			"that each SETTLED degraded break-glass activation's owed rows are in the chain: the server marks it settled "+
 				"in the same transaction as the append of its last owed row, and this run does not re-derive that from audit_events")
+	}
+	if kt := result.KeyTransition; kt.Present && kt.OldKeyVerified < kt.Records {
+		notProven = append(notProven, fmt.Sprintf(
+			"the old-key signature of %d of %d key transition record(s) was not checked: pass the earlier checkpoint key(s) "+
+				"with --previous-checkpoint-key-file to prove the pre-rotation state was not forged by a holder of the new key",
+			kt.Records-kt.OldKeyVerified, kt.Records))
 	}
 	if result.ExternalAnchor.Supplied && !result.ExternalAnchor.Authenticated {
 		notProven = append(notProven,

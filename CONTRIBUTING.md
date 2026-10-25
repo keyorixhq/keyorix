@@ -27,7 +27,12 @@ git commit -s -m "your commit message"
 This adds a `Signed-off-by: Your Name <you@example.com>` trailer to the
 commit, matching your git author identity — nothing more. A CI check
 (`.github/workflows/dco.yml`) verifies every commit in a PR has one; PRs
-without it won't pass CI. If you forgot:
+without it won't pass CI. The sign-off is the only trailer we want: no
+AI-assistant attribution (co-author or session trailers, "generated with"
+footers or links) in commit messages, the PR title or the PR body. The
+`no-attribution` check (`.github/workflows/no-attribution.yml`,
+`scripts/ci/check-no-attribution.sh`) fails a PR that has any. If you forgot
+the sign-off:
 
 ```
 git commit --amend -s --no-edit                              # last commit only
@@ -36,7 +41,7 @@ git rebase --exec 'git commit --amend --no-edit -s' <base>    # every commit sin
 
 ### Optional git hooks
 
-This repo ships two opt-in hooks in `.githooks/` (not installed by default —
+This repo ships three opt-in hooks in `.githooks/` (not installed by default —
 `.git/hooks/` and `.githooks/` are different directories, and git only uses
 the latter once you point it there):
 
@@ -48,6 +53,10 @@ git config core.hooksPath .githooks
   message from your git author identity, so the DCO check above never fails
   on a forgotten `-s`. Skips merge/squash/revert/fixup commits and commits
   that already have a trailer.
+- **`commit-msg`** — refuses a commit whose message carries AI-assistant
+  attribution, with the same patterns and script as the `no-attribution` CI
+  check (`scripts/ci/check-no-attribution.sh --message-file`). Comment lines
+  and the `git commit -v` diff are not checked.
 - **`pre-push`** — runs `golangci-lint` locally before a push leaves your
   machine, scoped to just the package(s) your push actually changed (diffed
   against `origin/main`); runs the full module instead if `go.mod`, `go.sum`,
@@ -72,7 +81,7 @@ git config core.hooksPath .githooks
   commit's body. Skips silently if `gh`/`jq` aren't available or `gh` isn't
   authenticated.
 
-Neither hook is required — CI enforces both independently — but they turn a
+No hook is required — CI enforces all three independently — but they turn a
 CI round-trip into an immediate local one.
 
 ## Making a change

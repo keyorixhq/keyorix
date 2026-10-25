@@ -353,3 +353,26 @@ func ListUserpassUsers(ctx context.Context, c *Client) (configs []UserpassUserCo
 	}
 	return configs, unreadable, truncated, StatusOK, nil
 }
+
+// ListKVKeys LISTs dir (mount-relative, "" for the mount root, otherwise ending in "/") on a
+// KV mount: KV v2 through its metadata/ endpoint, KV v1 directly. Keys come back as Vault
+// returns them, a trailing "/" marking a directory. Only names are read, never a value.
+// plan-access uses this to see which <project>/ and <project>/<env>/ paths each mount holds
+// (ADR-114's cross-mount check). A 404 (empty or missing directory) is StatusNotFound with no
+// keys; a 403 is StatusForbidden.
+func ListKVKeys(ctx context.Context, c *Client, mount KVMount, dir string) (keys []string, status int, err error) {
+	listPath := mount.Path + dir
+	if mount.KVVersion == 2 {
+		listPath = mount.Path + "metadata/" + dir
+	}
+	var list struct {
+		Data struct {
+			Keys []string `json:"keys"`
+		} `json:"data"`
+	}
+	status, err = listJSON(ctx, c, listPath, &list)
+	if err != nil || status != StatusOK {
+		return nil, status, err
+	}
+	return list.Data.Keys, status, nil
+}

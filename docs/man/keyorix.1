@@ -1622,7 +1622,7 @@ Usage: \fBkeyorix invite send [flags]\fR
 Examples:
 .PP
 .nf
-keyorix invite send \-\-project payments \-\-email bob@example.com \-\-role developer
+keyorix invite send \-\-project payments \-\-email bob@example.com \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -1909,7 +1909,7 @@ Usage: \fBkeyorix machine grant\-role <name|id> [flags]\fR
 Examples:
 .PP
 .nf
-keyorix machine grant\-role ci\-deployer \-\-project payments \-\-role developer
+keyorix machine grant\-role ci\-deployer \-\-project payments \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -2006,7 +2006,7 @@ Usage: \fBkeyorix machine revoke\-role <name|id> [flags]\fR
 Examples:
 .PP
 .nf
-keyorix machine revoke\-role ci\-deployer \-\-project payments \-\-role developer
+keyorix machine revoke\-role ci\-deployer \-\-project payments \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -2647,7 +2647,7 @@ Usage: \fBkeyorix rbac assign\-role [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac assign\-role \-\-user alice@example.com \-\-role developer \-\-project payments
+keyorix rbac assign\-role \-\-user alice@example.com \-\-role project_developer \-\-project payments
 # Time\-bound grant
 keyorix rbac assign\-role \-\-user alice@example.com \-\-role admin \-\-project payments \-\-ttl 4h
 .fi
@@ -2682,7 +2682,7 @@ Usage: \fBkeyorix rbac assign\-role\-to\-group [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac assign\-role\-to\-group \-\-group platform\-team \-\-role developer \-\-project payments
+keyorix rbac assign\-role\-to\-group \-\-group platform\-team \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2864,7 +2864,7 @@ Usage: \fBkeyorix rbac remove\-role [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac remove\-role \-\-user alice@example.com \-\-role developer \-\-project payments
+keyorix rbac remove\-role \-\-user alice@example.com \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2892,7 +2892,7 @@ Usage: \fBkeyorix rbac remove\-role\-from\-group [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac remove\-role\-from\-group \-\-group platform\-team \-\-role developer \-\-project payments
+keyorix rbac remove\-role\-from\-group \-\-group platform\-team \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2924,7 +2924,7 @@ Usage: \fBkeyorix request access [flags]\fR
 Examples:
 .PP
 .nf
-keyorix request access \-\-project payments \-\-role developer \-\-reason "on\-call this week"
+keyorix request access \-\-project payments \-\-role project_developer \-\-reason "on\-call this week"
 .fi
 .PP
 Flags:
@@ -5200,9 +5200,6 @@ keyorix user create \-\-username bob \-\-email bob@example.com \-\-setup\-link
 .fi
 .PP
 Flags:
-.TP
-\fB\-\-by\fR \fIstring\fR
-Acting admin email (unused in this REST\-only CLI \-\- kept for flag compatibility; the session behind your bearer token is always the acting admin)
 .TP
 \fB\-\-display\-name\fR \fIstring\fR
 Display name (defaults to username)

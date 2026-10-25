@@ -785,12 +785,8 @@ acceptable only for local development.
 
 ```yaml
 secrets:
-  chunking:
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 100
   limits:
-    max_secrets_per_user: 10000
+    max_secret_size: 65536   # bytes per value on create/update/rotate; default 64 KiB, max 1 MiB
 ```
 
 ## security

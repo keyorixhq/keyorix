@@ -138,14 +138,7 @@ func actorKindParamIndex(t *testing.T) map[string]int {
 	t.Helper()
 	idx := map[string]int{}
 	fset := token.NewFileSet()
-	entries, err := filepath.Glob("../*.go")
-	if err != nil {
-		t.Fatalf("globbing internal/core: %v", err)
-	}
-	for _, path := range entries {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
-		}
+	for _, path := range coreFamilySources(t) {
 		f, perr := parser.ParseFile(fset, path, nil, 0)
 		if perr != nil {
 			t.Fatalf("parsing %s: %v", path, perr)
