@@ -83,7 +83,8 @@ requiring `prosrc` to equal the compiled-in body (or a sha256 of it), `proconfig
 A background job on each PostgreSQL server reads one catalog statement every interval:
 
 1. **Body check.** Each trigger's `tgfoid` must name a function whose `prosrc` equals the
-   compiled-in body, written in plpgsql, with `proconfig IS NULL` and `NOT prosecdef`. Both
+   compiled-in body, written in plpgsql, with `proconfig` exactly
+   `{search_path=pg_catalog, pg_temp}` and `NOT prosecdef`. Both
    triggers must point at that one function with `tgenabled = 'A'`.
 2. **Row-version fingerprint.** Record the `xmin` of both `pg_trigger` rows and of the `pg_proc`
    row, plus each `tgfoid`. No SQL statement can set a row's `xmin` back. A sandwich, a drop and
@@ -96,7 +97,10 @@ On a failed body check, the job logs at error level, increments
 logs, increments the counter and bumps the generation. Bumping the generation invalidates every
 replica's cache, so any staleness from the tampered period is flushed fleet-wide, not just hidden
 on one replica. A false positive (an unforeseen catalog rewrite such as a `pg_upgrade`) costs one
-cache refill and changes no decision.
+cache refill and changes no decision. If the repair or the bump cannot commit, the job keeps the
+previous baseline and stays pending: every later tick repairs and bumps until one commits and
+the re-read is clean. It never adopts the catalog it reads after a failed attempt as a new
+baseline, because the body may have been restored in between and nothing would be left to see.
 
 To keep the fingerprint stable across ordinary boots, the installer stops rewriting a function
 that is already correct. It replaces the body only when the body check fails, and logs a warning
@@ -146,13 +150,19 @@ interval. C costs a table scan for little gain over B. D leaves a silent, unboun
 
 ## Findings recorded while doing this
 
-- `keyorix_bump_role_permissions_generation()` and the `secret_nodes` cache-epoch function do not
-  pin `search_path`; the `internal/solewriter` functions do (`SET search_path = pg_catalog,
-  pg_temp`). A writer that runs with `search_path = <own schema>, pg_catalog` and owns a function
-  or operator there could shadow what the body calls, in that writer's own session. Per the
-  analysis above, that only makes the writer's own writes go unseen, which gives no gain. It is
-  still worth closing as hygiene in a follow-up. That follow-up changes the function body, so it
-  must change the compiled-in expected body in the same PR.
+- Fixed in this PR: `keyorix_bump_role_permissions_generation()` and the `secret_nodes`
+  cache-epoch function now pin `search_path = pg_catalog, pg_temp`, as the `internal/solewriter`
+  functions do. Before, a session with `search_path = <schema>, pg_catalog` and a `bigint +
+  integer` operator in that schema made its direct writes move neither the generation nor
+  `cache_epoch`. This is not limited to the writer's own session: a role that owns the database
+  or another role can set that `search_path` for every session (`ALTER DATABASE/ROLE ... SET`),
+  including a defender's, and no trigger or function row changes for the check to see. The check
+  now expects exactly the pinned `proconfig`, and the installers re-create an older unpinned
+  function on the next boot.
 - The `secret_nodes` cache-epoch trigger (`secret_node_cache_epoch.go`) has the same owner-level
   exposure as this trigger. B's job is built so that a second function can be registered; that is
   a follow-up.
+- The check covers the triggers and their function, not the row they write. The owner can make
+  the bump a no-op on `system_metadata` itself (a `BEFORE UPDATE` trigger on the generation key
+  that keeps `OLD.value`, a rule, or forced row-level security that hides the row from the
+  server's role), and the job's own bump goes through the same table. Also a follow-up.
