@@ -15,7 +15,7 @@ import {
 } from '../../features/admin';
 import type { Group, Role } from '../../types/rbac';
 import { useProjects, useProjectEnvironments } from '../../features/projects/api';
-import { PROJECT_TIER_ROLE_NAMES, type RoleGrantScope } from '../../services/rbac';
+import { roleScopeRefusal, type RoleGrantScope } from '../../services/rbac';
 import { EXPIRY_OPTIONS, expiresAtFromPreset, formatRemaining } from '../../lib/expiry';
 
 interface GroupFormData {
@@ -74,7 +74,7 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
                     </div>
                 )}
             </td>
-            <td className="px-4 py-3">
+            <td className="sticky right-0 px-4 py-3" style={{ backgroundColor: 'var(--bg-surface)' }}>
                 <div className="flex items-center gap-1 justify-end">
                     <button
                         type="button"
@@ -219,8 +219,9 @@ export const GroupsPage: React.FC = () => {
         if (assignedRoleIds.has(role.id)) {
             removeMutation.mutate({ groupId: manageGroupId, roleId: role.id, scope: grantScope });
         } else {
-            if (PROJECT_TIER_ROLE_NAMES.has(role.name) && !grantProjectId) {
-                setRoleScopeError(`${role.name} is a project role: choose a project above, then check it again.`);
+            const refusal = roleScopeRefusal(role, grantProjectId || undefined);
+            if (refusal) {
+                setRoleScopeError(refusal);
                 return;
             }
             // A non-permanent preset makes this a time-bound (JIT) grant.
@@ -252,8 +253,10 @@ export const GroupsPage: React.FC = () => {
             </div>
 
             {/* Table */}
-            <div className="rounded-xl border overflow-hidden" style={{ borderColor: 'var(--border)' }}>
-                <table className="w-full text-sm">
+            {/* On a phone the table scrolls sideways inside the card; the Actions column stays pinned
+                to the right edge so Manage roles / Edit / Delete are always reachable. */}
+            <div className="rounded-xl border overflow-x-auto" style={{ borderColor: 'var(--border)' }}>
+                <table data-testid="groups-table" className="w-full min-w-[640px] text-sm">
                     <thead>
                         <tr style={{ backgroundColor: 'var(--bg-subtle)' }}>
                             <th
@@ -281,8 +284,8 @@ export const GroupsPage: React.FC = () => {
                                 Roles
                             </th>
                             <th
-                                className="px-4 py-3 text-right text-xs font-medium"
-                                style={{ color: 'var(--text-muted)' }}
+                                className="sticky right-0 px-4 py-3 text-right text-xs font-medium"
+                                style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-subtle)' }}
                             >
                                 Actions
                             </th>

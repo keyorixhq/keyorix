@@ -1,0 +1,1 @@
+AUDIT-VERIFY-STATE-BEFORE-BREAK	./internal/core	TestAuditVerifyStateFailClosed_RowBeforeKnownBreak	default-ci	pending	-	an older authentic audit verification state row put back after a restart erased a recorded verification failure; a row saved before a break the chain records is now a sticky discontinuity

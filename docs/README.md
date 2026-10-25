@@ -5,6 +5,7 @@
 | Step | Document |
 |------|----------|
 | The one supported pilot install, step by step | [operations/pilot-install.md](./operations/pilot-install.md) |
+| PostgreSQL with the single binary (config, password file, database TLS) | [operations/postgres-single-binary.md](./operations/postgres-single-binary.md) |
 | Binaries, first admin, first secret | [QUICK_START.md](../QUICK_START.md) |
 | Install with an AI assistant, no secret typed or shown | [INSTALL-WITH-AI.md](../INSTALL-WITH-AI.md) |
 | Docker Compose + PostgreSQL, TLS, backups, metrics, troubleshooting | [SELF_HOSTING.md](./SELF_HOSTING.md) |
@@ -14,12 +15,14 @@
 | Backup, restore and offline audit anchors (also air-gapped) | [AIRGAP_RUNBOOK.md](./AIRGAP_RUNBOOK.md) |
 | Upgrading | [UPGRADING.md](./UPGRADING.md) |
 | Versioning and deprecation policy (draft) | [VERSIONING.md](./VERSIONING.md) |
+| Verify a release: signatures, SBOMs, provenance, images, charts (also air-gapped) | [operator/verifying-releases.md](./operator/verifying-releases.md) |
 | Key rotation: preflight, verify, rollback, what not to do | [operator/key-rotation-runbook.md](./operator/key-rotation-runbook.md), steps and output in [operator/j6-key-rotation.md](./operator/j6-key-rotation.md) |
 | Lost admin, lost authenticator code (TOTP) | [operator/lost-totp-runbook.md](./operator/lost-totp-runbook.md), [operator/j5-lost-admin.md](./operator/j5-lost-admin.md) |
 | Emergency access (break-glass), including when the audit log is down | [operator/break-glass-runbook.md](./operator/break-glass-runbook.md) |
 | Audit chain reports BROKEN or INDETERMINATE: triage, evidence | [operator/audit-chain-break-runbook.md](./operator/audit-chain-break-runbook.md) |
 | Troubleshooting | [operator/j7-troubleshooting.md](./operator/j7-troubleshooting.md) |
 | PostgreSQL tuning, audit durability | [PERFORMANCE.md](./PERFORMANCE.md) |
+| PostgreSQL TLS with your own CA (`verify-full`, `ssl_root_cert`) | [operator/postgres-tls.md](./operator/postgres-tls.md) |
 | Hardware sizing: what decides it, tiers, how to measure your own | [SIZING.md](./SIZING.md) |
 | Edge and industrial devices | [edge-deployment.md](./edge-deployment.md) |
 | A guided tour of the CLI | [operator/demo.md](./operator/demo.md) |

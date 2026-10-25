@@ -97,7 +97,7 @@ func TestPGReplaceDBName_URLConnects(t *testing.T) {
 	scoped := PGReplaceDBName(base, dbName)
 	db, err := gorm.Open(postgres.Open(scoped), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
-		t.Fatalf("open scoped DSN %q: %v", scoped, err)
+		t.Fatalf("open scoped DSN (not printed: it carries the password): %v", err)
 	}
 	var currentDB string
 	if err := db.Raw("SELECT current_database()").Scan(&currentDB).Error; err != nil {
@@ -141,7 +141,7 @@ func TestPGSearchPathDSN_URLConnects(t *testing.T) {
 	scoped := PGSearchPathDSN(base, schema)
 	db, err := gorm.Open(postgres.Open(scoped), &gorm.Config{Logger: logger.Discard})
 	if err != nil {
-		t.Fatalf("open scoped DSN %q: %v", scoped, err)
+		t.Fatalf("open scoped DSN (not printed: it carries the password): %v", err)
 	}
 	var currentSchema string
 	if err := db.Raw("SELECT current_schema()").Scan(&currentSchema).Error; err != nil {

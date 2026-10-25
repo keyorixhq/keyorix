@@ -30,10 +30,7 @@ func TestResyncPostgresSequences_FixesCollisionAfterExplicitIDInserts(t *testing
 		require.NoError(t, db.Exec("INSERT INTO projects (id, name) VALUES (?, ?)", i, "restored").Error)
 	}
 
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-
-	require.NoError(t, resyncPostgresSequences(sqlDB),
+	require.NoError(t, resyncPostgresSequences(db),
 		"resyncPostgresSequences must not fail against a real, freshly-loaded table set")
 
 	require.NoError(t, db.Create(&models.Project{Name: "post-restore"}).Error,
@@ -59,9 +56,7 @@ func TestResyncPostgresSequences_EmptyTableStaysAtOne(t *testing.T) {
 	db := pgAdminRawOpen(t, dsn)
 	require.NoError(t, db.AutoMigrate(storage.AllModels()...))
 
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, resyncPostgresSequences(sqlDB))
+	require.NoError(t, resyncPostgresSequences(db))
 
 	require.NoError(t, db.Create(&models.Project{Name: "first"}).Error)
 	var firstID uint

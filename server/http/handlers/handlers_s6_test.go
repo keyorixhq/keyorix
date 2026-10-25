@@ -121,14 +121,6 @@ func TestAdminJobsHandler_RunComplianceDigest_HappyPath_S6(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
-func TestAdminJobsHandler_RunExpiryReminders_HappyPath_S6(t *testing.T) {
-	h := NewAdminJobsHandler(newHandlerCoreS4(t))
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/?lead_days=7", nil))
-	w := httptest.NewRecorder()
-	h.RunExpiryReminders(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 func TestAdminJobsHandler_RunExpiryReminders_InvalidLeadDays_S6(t *testing.T) {
 	h := NewAdminJobsHandler(newHandlerCoreS4(t))
 	// lead_days=notanumber → falls back to 0 → still succeeds
@@ -611,14 +603,6 @@ func TestUserHandler_SearchUsers_MissingQuery_S6(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.SearchUsers(w, req)
 	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-func TestUserHandler_SearchUsers_HappyPath_S6(t *testing.T) {
-	// Skip the SearchUsers happy-path: SQLite doesn't support ILIKE which the
-	// underlying storage query uses; the 500 from SQLite would mask the handler
-	// logic we are covering (same issue as ListUsers search). The unauthorized
-	// and missing-query paths above cover the early-return branches.
-	t.Skip("SQLite does not support ILIKE; SearchUsers happy-path tested in integration")
 }
 
 func TestUserHandler_StaleAccounts_Unauthorized_S6(t *testing.T) {

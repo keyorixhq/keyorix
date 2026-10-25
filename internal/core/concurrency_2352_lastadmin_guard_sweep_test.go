@@ -42,6 +42,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -214,28 +215,28 @@ func TestConcurrency_RemoveRoleFromGroup_GlobalScope_ExactlyOneOfTwoAdminRoutesR
 // concurrency_remove_user_role_toctou_test.go's delayedRemoveRoleStorage,
 // applied to the group-role storage call instead of the direct-user one.
 type delayedRemoveRoleFromGroupStorage struct {
-	storage.Storage
+	inner                       storage.Storage
 	targetGroupID, targetRoleID uint
 	blocked, release            chan struct{}
 }
 
-// WithTransaction re-wraps the transaction handle so the pause still fires now that
-// the targeted call runs INSIDE the mutation's audited transaction (AUDIT-TX-3):
-// without it the call would hit the undecorated store the transaction builds.
-func (d *delayedRemoveRoleFromGroupStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
-	return d.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		wrapped := *d
-		wrapped.Storage = tx
-		return fn(&wrapped)
+// store returns d.inner decorated with d's RemoveRoleFromGroup pause. WrapTx re-wraps
+// the transaction handle so the pause still fires now that the targeted call runs
+// INSIDE the mutation's audited transaction (AUDIT-TX-3): without it the call would
+// hit the undecorated store the transaction builds.
+func (d *delayedRemoveRoleFromGroupStorage) store() storage.Storage {
+	return storagetest.Hooked(d.inner, &storagetest.StoreHooks{
+		WrapTx:              true,
+		RemoveRoleFromGroup: d.RemoveRoleFromGroup,
 	})
 }
 
-func (d *delayedRemoveRoleFromGroupStorage) RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
+func (d *delayedRemoveRoleFromGroupStorage) RemoveRoleFromGroup(next storage.Storage, ctx context.Context, groupID, roleID uint, scope storage.Scope) error {
 	if groupID == d.targetGroupID && roleID == d.targetRoleID {
 		close(d.blocked)
 		<-d.release
 	}
-	return d.Storage.RemoveRoleFromGroup(ctx, groupID, roleID, scope)
+	return next.RemoveRoleFromGroup(ctx, groupID, roleID, scope)
 }
 
 // TestConcurrency_RemoveRoleFromGroup_ProjectScope_TOCTOU_Deterministic forces
@@ -271,11 +272,11 @@ func TestConcurrency_RemoveRoleFromGroup_ProjectScope_TOCTOU_Deterministic(t *te
 
 	realStorage := store.NewLocalStorage(db)
 	wrapped := &delayedRemoveRoleFromGroupStorage{
-		Storage:       realStorage,
+		inner:         realStorage,
 		targetGroupID: 10, targetRoleID: 10,
 		blocked: make(chan struct{}), release: make(chan struct{}),
 	}
-	c := core.NewKeyorixCore(wrapped)
+	c := core.NewKeyorixCore(wrapped.store())
 	ctx := context.Background()
 	scope := core.Scope{ProjectID: 1}
 
@@ -422,28 +423,28 @@ func TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_NeverStripsBothAd
 // technique as delayedRemoveRoleFromGroupStorage above, applied to DeleteGroup's
 // own write instead of RemoveRoleFromGroup's.
 type delayedDeleteGroupStorage struct {
-	storage.Storage
+	inner            storage.Storage
 	targetGroupID    uint
 	blocked, release chan struct{}
 }
 
-// WithTransaction re-wraps the transaction handle so the pause still fires now that
-// the targeted call runs INSIDE the mutation's audited transaction (AUDIT-TX-3):
-// without it the call would hit the undecorated store the transaction builds.
-func (d *delayedDeleteGroupStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
-	return d.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		wrapped := *d
-		wrapped.Storage = tx
-		return fn(&wrapped)
+// store returns d.inner decorated with d's DeleteGroup pause. WrapTx re-wraps the
+// transaction handle so the pause still fires now that the targeted call runs INSIDE
+// the mutation's audited transaction (AUDIT-TX-3): without it the call would hit the
+// undecorated store the transaction builds.
+func (d *delayedDeleteGroupStorage) store() storage.Storage {
+	return storagetest.Hooked(d.inner, &storagetest.StoreHooks{
+		WrapTx:      true,
+		DeleteGroup: d.DeleteGroup,
 	})
 }
 
-func (d *delayedDeleteGroupStorage) DeleteGroup(ctx context.Context, id uint) error {
+func (d *delayedDeleteGroupStorage) DeleteGroup(next storage.Storage, ctx context.Context, id uint) error {
 	if id == d.targetGroupID {
 		close(d.blocked)
 		<-d.release
 	}
-	return d.Storage.DeleteGroup(ctx, id)
+	return next.DeleteGroup(ctx, id)
 }
 
 // TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_TOCTOU_Deterministic
@@ -473,10 +474,10 @@ func TestConcurrency_DeleteGroup_RemoveProjectMember_CrossPath_TOCTOU_Determinis
 	_, db := newGroupVsDirectProjectAdminFixture(t, "deletegroup_vs_removeprojectmember_toctou.db")
 	realStorage := store.NewLocalStorage(db)
 	wrapped := &delayedDeleteGroupStorage{
-		Storage: realStorage, targetGroupID: 10,
+		inner: realStorage, targetGroupID: 10,
 		blocked: make(chan struct{}), release: make(chan struct{}),
 	}
-	cWrapped := core.NewKeyorixCore(wrapped)
+	cWrapped := core.NewKeyorixCore(wrapped.store())
 	ctx := context.Background()
 
 	var errA, errB error

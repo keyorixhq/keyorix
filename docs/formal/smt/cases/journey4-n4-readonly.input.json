@@ -1,0 +1,42 @@
+{
+  "case": "journey4-n4-readonly",
+  "description": "Journey 4 policy n4-readonly, with a --path-map matching journey 4's --vault-path n4-team import (the operator-correct mapping).",
+  "constructed": false,
+  "policy_sources": [
+    {
+      "file": "scripts/e2e/journeys/journey4_vault_migrate_test.go",
+      "policy": "n4-readonly"
+    }
+  ],
+  "kv_mounts": [
+    {
+      "Path": "secret/",
+      "KVVersion": 2
+    }
+  ],
+  "projects": [
+    {
+      "ID": 1,
+      "Name": "n4-project"
+    }
+  ],
+  "environments": {
+    "1": [
+      {
+        "ID": 11,
+        "Name": "production"
+      }
+    ]
+  },
+  "path_map": [
+    "secret/data/n4-team=1:11"
+  ],
+  "imports": [
+    {
+      "mount": "secret/",
+      "path_prefix": "n4-team/",
+      "project_id": 1,
+      "environment_id": 11
+    }
+  ]
+}

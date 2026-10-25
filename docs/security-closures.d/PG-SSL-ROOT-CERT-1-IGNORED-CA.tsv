@@ -1,0 +1,1 @@
+PG-SSL-ROOT-CERT-1-IGNORED-CA	./internal/config	TestValidate_RootCertTheConnectionWouldIgnore_Refused	default-ci	-	-	A Postgres CA file with an effective sslmode of disable/allow/prefer (fields or dsn; pgx loads it but never verifies) and sslrootcert=system with disable refuse to start instead of looking authenticated; ResolvePostgresConnConfig enforces it on every connection

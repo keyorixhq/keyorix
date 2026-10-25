@@ -33,7 +33,9 @@ package besteffort
 
 import (
 	"context"
+	"fmt"
 	"log"
+	"strconv"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -91,12 +93,19 @@ func RunRecover(step string) func() {
 	return func() {
 		if r := recover(); r != nil {
 			failuresTotal.WithLabelValues(step).Inc()
-			log.Printf("SECURITY: best-effort step %q panicked (post-commit, primary operation already succeeded): %v", step, r)
+			log.Printf("SECURITY: best-effort step %q panicked (post-commit, primary operation already succeeded): %s", step, oneLine(r))
 		}
 	}
 }
 
 func recordFailure(step string, err error) {
 	failuresTotal.WithLabelValues(step).Inc()
-	log.Printf("best-effort step %q failed (post-commit, primary operation already succeeded): %v", step, err)
+	log.Printf("best-effort step %q failed (post-commit, primary operation already succeeded): %s", step, oneLine(err))
 }
+
+// oneLine renders a panic value or error as one quoted, escaped line. The text can come
+// from outside the process (an SMTP or webhook reply, a driver message), and a raw
+// newline in it would let it forge a separate log line, including a fake "SECURITY:"
+// one (TestRun_FailureLogIsOneLine). fmt.Sprint also survives an Error or String
+// method that panics.
+func oneLine(v any) string { return strconv.Quote(fmt.Sprint(v)) }

@@ -37,8 +37,8 @@
 #      fixes this by making the row say which environment its proof requires,
 #      so a skip can be judged against that claim instead of against a single
 #      hardcoded assumption. This script still does not set the DSN itself —
-#      .github/workflows/ci.yml's test-suite job (`core-1` leg) runs this SAME
-#      script a second time, in the one job that already has Postgres — that
+#      .github/workflows/ci.yml's closures-pg job runs this SAME
+#      script a second time, in a job that has a Postgres service — that
 #      second run is what actually proves a pg-gated row; this rule just stops
 #      the DSN-less run from reporting a false failure for it.
 #
@@ -426,6 +426,15 @@ SELF-TEST-3D	./internal/core	TestCheckClosuresSelfTestFixture_SkipsWithoutPGDSN	
 
     run_case "row in a module the checker cannot run (operator/)" "reject" \
         'SELF-TEST-26	./operator/api	TestX	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    # migrate-module cases: a ./migrate/... row runs `go test` inside migrate/ (own go.mod).
+    run_case "migrate-module row whose test passes" "accept" \
+        'SELF-TEST-27	./migrate/internal/accessplan	TestCheckClosuresSelfTestFixture_MigrateModulePasses	default-ci	deadbeef	-	calibration row' \
+        ""
+
+    run_case "migrate-module row, test does not exist" "reject" \
+        'SELF-TEST-28	./migrate/internal/accessplan	TestThisNameDoesNotExistAnywhere	default-ci	deadbeef	-	calibration row' \
         ""
 
     # The fragment-shape validator lives in the generator; run its own self-test.

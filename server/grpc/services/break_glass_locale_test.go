@@ -127,5 +127,16 @@ func TestBreakGlassGRPC_RefusalCodesAreLocaleIndependent(t *testing.T) {
 			_, err = svc.RevokeBreakGlass(bgCtx(), &pb.RevokeBreakGlassRequest{ProjectId: 1, ActivationId: act.GetId()})
 			assert.Equal(t, codes.FailedPrecondition, status.Code(err), "%v", err)
 		})
+		t.Run(name+"/activate while already active", func(t *testing.T) {
+			svc := newBreakGlassService(t)
+			_, err := svc.ActivateBreakGlass(bgCtx(), &pb.ActivateBreakGlassRequest{ProjectId: 1, Justification: "prod incident #42", Ttl: "1h"})
+			require.NoError(t, err)
+			if translated {
+				translateBreakGlassErrorPrefixes(t)
+			}
+			_, err = svc.ActivateBreakGlass(bgCtx(), &pb.ActivateBreakGlassRequest{ProjectId: 1, Justification: "prod incident #42", Ttl: "1h"})
+			assert.Equal(t, codes.AlreadyExists, status.Code(err), "%v", err)
+			assert.Equal(t, "you already have an active break-glass grant on this project; revoke it before activating again", status.Convert(err).Message())
+		})
 	}
 }

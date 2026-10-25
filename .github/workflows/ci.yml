@@ -84,6 +84,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # docs/guard-rollout-contract.md rule 2: a guard listed in docs/guard-rollout.d
+  # is report-only on pull_request and merge_group runs and blocking on pushes to
+  # main/release and on the nightly schedule (internal/guardrules.Rollout).
+  KEYORIX_GUARD_ROLLOUT: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'enforce' || 'report-only' }}
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
   # the tools that gate our security checks are themselves a supply-chain
   # surface. govulncheck deliberately floats — Google x/ tool, vuln DB is
@@ -321,6 +325,21 @@ jobs:
       # nightly schedule (.github/workflows/fault-tolerance-nightly.yml) is
       # the unconditional full check; this is the narrow PR-time one.
       fault_tolerance_relevant: ${{ steps.filter.outputs.fault_tolerance_relevant }}
+      # Queue parity (CI-PARITY-1, 2026-10-25): true when the PR touches the
+      # HARNESS of a FULL-only job -- the job's own definition (ci.yml) or the
+      # scripts/files the job itself drives -- so a FAST pull_request runs that
+      # job too instead of leaving it to the merge queue. #3529 changed
+      # scripts/selfhost/init-secrets.sh and docker-boot-smoke's own step;
+      # the PR run skipped the job and the queue failed it 10 times (21-22
+      # Oct). Narrow on purpose: harness files only, never server/** or the
+      # other broad inputs (those stay FULL-only, CI-LIGHT-1). web-e2e-real-smoke
+      # has no harness gate: changed web/e2e/real specs get their own PR-time
+      # run (web-e2e-changed-specs, SMOKE-FLAKE-2 #3670).
+      harness_docker_boot: ${{ steps.filter.outputs.harness_docker_boot }}
+      harness_helm_boot: ${{ steps.filter.outputs.harness_helm_boot }}
+      harness_demo: ${{ steps.filter.outputs.harness_demo }}
+      harness_e2e: ${{ steps.filter.outputs.harness_e2e }}
+      harness_fuzz: ${{ steps.filter.outputs.harness_fuzz }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -425,6 +444,12 @@ jobs:
           # job that would exercise it.
           relevant web_e2e_relevant '^(web/|server/http/|scripts/e2e/web-real-smoke\.sh$)'
           relevant fault_tolerance_relevant '^server/faultops/|^scripts/check-fault-tolerance-issues\.sh$'
+          # Queue parity: the harness of each FULL-only job (see the outputs).
+          relevant harness_docker_boot '^(scripts/selfhost/|docker-compose|keyorix\.docker\.yaml$|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_helm_boot '^(deploy/helm/|\.github/testdata/helm|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_demo '^(scripts/demo/|scripts/airgap-e2e\.sh$|scripts/totpgen/|server/Dockerfile$|\.dockerignore$)'
+          relevant harness_e2e '^(scripts/e2e/|Makefile$)'
+          relevant harness_fuzz '^scripts/fuzzing/'
           # FAST-profile path gates. operator/ and migrate/ are separate Go
           # modules with no dependency on the root module (no replace to
           # ../), so only their own tree changes them. cli/ imports the root
@@ -861,13 +886,24 @@ jobs:
           fi
           ./actionlint
 
-  # Fast compile gate (~30s). Catches redeclarations, type errors, and build
-  # failures before the expensive test-suite/static-analysis jobs start -- those
-  # declare `needs: [preflight]`. Cheaper jobs (lint, licenses, fuzz-targets,
-  # operator, gitleaks, helm-*, openapi-lint) run their own independent
-  # compile/analysis and so run fully in parallel with preflight instead of
-  # waiting on it -- on a broken build they each fail on their own terms
-  # instead of via the shared gate, but nothing waits an extra ~30s to start.
+  # Compile gate and `go vet ./...`: UTF-8 check, go mod verify, go build, go
+  # vet. Not a required context itself; build-and-test fails unless it
+  # succeeded, so it is required through that aggregator.
+  #
+  # test-suite does NOT wait for it any more (CI-VETGATE-1, 2026-10-25). The
+  # job takes ~4-6 min, of which go vet is ~3.5 min (merge-queue run
+  # 40124088586: go vet 214 s of a 254 s job), and every test leg started
+  # only after it, 19% of a merge-queue round (CI-PARETO-1). The legs now
+  # start right after changes+select, like lint, and this job runs beside
+  # them. On a broken build each leg fails at its own `go test` compile.
+  # go vet stays here: golangci-lint's govet (lint job) is not the same
+  # check (its default analyzer set differs from go vet's and it drops
+  # findings in generated files), see the CI-VETGATE-1 PR.
+  #
+  # test-quick-root/test-quick-cli, static-analysis, exclusion-freshness
+  # and assert-leg-completeness still declare `needs: [preflight]`. Cheaper
+  # jobs (lint, licenses, fuzz-targets, operator, gitleaks, helm-*,
+  # openapi-lint) run their own compile/analysis in parallel with it.
   preflight:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
@@ -898,11 +934,14 @@ jobs:
       - name: go mod verify
         run: go mod verify
 
-      - name: go vet
-        run: go vet ./...
-
+      # go build before go vet: a compile error turns this job red in about a
+      # minute instead of after the full vet pass, and vet reuses the build
+      # cache this step fills.
       - name: go build
         run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
 
   # Quick-tier feedback for a pull_request push: `go test -short`, no -race,
   # SQLite only, on just the packages the PR's diff can plausibly affect
@@ -1024,11 +1063,12 @@ jobs:
   # aggregates both legs' results and does the coverage-floor check, keeping
   # that exact job name for branch protection's required status check.
   test-suite:
-    needs: [preflight, changes, select]
-    # A custom `if:` replaces the implicit "only run if needs succeeded"
-    # default, so preflight's success must be checked explicitly here too --
-    # otherwise a docs_only-unrelated broken build would no longer be
-    # fast-failed by preflight before this (expensive) job starts.
+    # Not gated on preflight (CI-VETGATE-1, 2026-10-25): waiting for its
+    # go vet delayed every leg by ~4-6 min. A broken build now fails in each
+    # leg's own `go test` compile instead of in preflight, and build-and-test
+    # still requires preflight=success (its gate step), so nothing that was
+    # required before is optional now. See the preflight job's comment.
+    needs: [changes, select]
     #
     # CI quick-tier split: this 18-shard -race matrix no longer runs on every
     # pull_request push -- it runs on merge_group (the merge queue proves the
@@ -1043,9 +1083,15 @@ jobs:
     # needs.select.result: on merge_group the `select` job decides which legs
     # run (each leg's first step below); if it did not succeed, test-suite is
     # skipped and build-and-test fails closed on that.
-    if: needs.preflight.result == 'success' && needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     strategy:
-      fail-fast: false
+      # Merge queue: one red leg already fails the round (build-and-test needs
+      # test-suite=success), so stop the other legs instead of letting them hold
+      # their runners until the slowest leg ends; build-and-test then reports at
+      # once instead of after the slowest leg (CI-FAILFAST-1, measured in the PR).
+      # Every other event keeps running all legs, so a PR or nightly run still
+      # shows every failing leg at once.
+      fail-fast: ${{ github.event_name == 'merge_group' }}
       matrix:
         include:
           # root was a single ~1160s leg (measured 2026-08-03) -- slower than
@@ -1227,6 +1273,25 @@ jobs:
           - leg: faultops-3
             timeout: 3300
             coverage-file: coverage_faultops3.out
+          # faultops 3 -> 5 (2026-10-25, CI-CUTPOLES-1): faultops was the slowest
+          # leg in 5 of 8 full merge-queue rounds (19.5-27.8 min). At 5 shards the
+          # largest test (TestOwedAuditOracle_SweepEveryScopedOp) sets the floor.
+          - leg: faultops-4
+            timeout: 3300
+            coverage-file: coverage_faultops4.out
+          - leg: faultops-5
+            timeout: 3300
+            coverage-file: coverage_faultops5.out
+          # server/admin out of root-4's catch-all into two test-name shards
+          # (2026-10-25, CI-CUTPOLES-1): 1121 s of root-4's 1340 s go test step on
+          # run 40133720073, root-4 the slowest leg in 2 of 8 full rounds. See
+          # admin_pkg in scripts/ci-test-legs.sh.
+          - leg: admin-1
+            timeout: 1800
+            coverage-file: coverage_admin1.out
+          - leg: admin-2
+            timeout: 1800
+            coverage-file: coverage_admin2.out
           # handlers (server/http/handlers, one package, 167 test files, 5151
           # top-level tests, all already t.Parallel()) measured at 911s in CI
           # -- vs. 15s wall / 37s summed-per-test locally without -race. That
@@ -1391,10 +1456,29 @@ jobs:
         if: steps.leg.outputs.run == 'true'
 
       - name: Set up Go
+        id: setup-go
         if: steps.leg.outputs.run == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.3'
+
+      # The -race -cover build cache go-race-cache.yml seeds from main once a
+      # day (setup-go's go.sum cache above holds no -race object: 0 of ~1,000
+      # build actions hit, CI-CACHE-SPIKE-1). Restored on top of setup-go's,
+      # newest entry first; the key never matches exactly, only the prefixes
+      # do. Restore only, never saved here (only main writes it). A miss or a
+      # cache-service error just means a cold compile, as before; a stale
+      # entry cannot change what is tested, since GOCACHE is content-addressed
+      # and -coverprofile disables test-result caching.
+      - name: Restore -race -cover build cache
+        if: steps.leg.outputs.run == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-restore-only
+          restore-keys: |
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-
 
       - name: go test (${{ matrix.leg }})
         if: steps.leg.outputs.run == 'true'
@@ -1447,8 +1531,8 @@ jobs:
               run_filter=$(leg_run_filter "$leg")
               pkgs=./server/http
               ;;
-            core-*|server-*)
-              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server).
+            core-*|server-*|admin-*)
+              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server, server/admin).
               run_filter=$(leg_run_filter "$leg")
               ;;
             encryption-*)
@@ -1510,19 +1594,6 @@ jobs:
           # shellcheck disable=SC2086
           go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
-      # This job is the ONLY one with a Postgres service container (see this
-      # job's own KEYORIX_TEST_PG_DSN comment above), so it is the only place
-      # a pg-gated docs/security-closures.d/ row can ever be genuinely
-      # proven rather than gate-skipped. Restricted to ONE leg, core-1 (exactly one
-      # of core-1/core-2): every pg-gated row today lives in ./internal/core,
-      # and running the full ledger sweep once per leg would just repeat the
-      # same ~17-row check 15 times for no new coverage. adr-numbers already runs this same script
-      # without a DSN (every pg-gated row gate-skips there, by design) --
-      # this is the run that actually counts as evidence for those rows.
-      - name: Verify pg-gated security closures with a real Postgres DSN available (core-1 leg only)
-        if: matrix.leg == 'core-1' && steps.leg.outputs.run == 'true'
-        run: ./scripts/check-closures.sh
-
       - name: Upload coverage artifact
         if: steps.leg.outputs.run == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1530,6 +1601,76 @@ jobs:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
           retention-days: 1
+
+  # pg-gated security closures, proven with a real Postgres DSN. This job and
+  # test-suite are the only ones with a Postgres service container, so this is
+  # the only place a pg-gated docs/security-closures.d/ row can be genuinely
+  # proven rather than gate-skipped. adr-numbers runs the same script without a
+  # DSN (every pg-gated row gate-skips there, by design); this run is the one
+  # that counts as evidence for those rows.
+  #
+  # Until CI-CUTPOLES-1 (2026-10-25) this was the last step of test-suite's
+  # core-1 leg: 8-15 min of check-closures.sh after 5-7 min of core-1's tests,
+  # which made core-1 a 14-23 min leg. Same script, same Postgres service and
+  # DSN, same condition (it runs exactly when the core-1 leg runs; a change to
+  # the ledger or the checker selects internal/core in select-affected.py), so
+  # what it proves is unchanged; it now runs beside the matrix instead of after
+  # one leg. build-and-test requires closures-pg=success wherever it requires
+  # test-suite=success.
+  closures-pg:
+    needs: [preflight, changes, select]
+    if: needs.preflight.result == 'success' && needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: keyorix
+          POSTGRES_PASSWORD: keyorix123
+          POSTGRES_DB: keyorix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYORIX_TEST_PG_DSN: "host=localhost port=5432 dbname=keyorix user=keyorix sslmode=disable password=keyorix123"
+    steps:
+      - name: Merge-queue selection (runs when the core-1 leg runs)
+        id: leg
+        env:
+          MODE: ${{ needs.select.outputs.mode }}
+          LEGS: ${{ needs.select.outputs.legs }}
+        run: |
+          if [ "$MODE" != "selected" ]; then
+            echo "Full run (mode=$MODE): verifying every closure row."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$(jq -r '.["core-1"] // ""' <<<"$LEGS")" ]; then
+            echo "Merge-queue selection: the core-1 leg does not run for this group (internal/core, the closure ledger and its checker are unaffected); skipping (the job reports success)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Merge-queue selection: the core-1 leg runs for this group; verifying every closure row."
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.leg.outputs.run == 'true'
+
+      - name: Set up Go
+        if: steps.leg.outputs.run == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+
+      - name: Verify pg-gated security closures with a real Postgres DSN available
+        if: steps.leg.outputs.run == 'true'
+        run: ./scripts/check-closures.sh
 
   # G80 C5: fails (does not warn) when a TEMPORARY exclusion in
   # scripts/ci-test-legs.sh has sat unreviewed for more than 30 days. Cheap
@@ -1547,12 +1688,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # docs/guard-rollout-contract.md rule 1: a date check never runs on a PR or
+      # in the merge queue (one calendar day would fail every entry). The nightly
+      # schedule enforces it here, and .github/workflows/guard-nightly.yml warns
+      # 7 days ahead through scripts/guard-expiry-report.sh.
       - name: Check CI exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           source scripts/ci-test-legs.sh
           check_exclusion_freshness
 
       - name: Check coverage-floor exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           source scripts/ci-test-legs.sh
           check_coverage_floor_exclusion_freshness
@@ -1658,7 +1805,7 @@ jobs:
   # status-check context by name -- a matrix or renamed job would report as
   # e.g. "build-and-test (root)" and never satisfy it.
   build-and-test:
-    needs: [preflight, test-suite, test-quick-root, test-quick-cli, static-analysis, changes, select, repo-guards]
+    needs: [preflight, test-suite, closures-pg, test-quick-root, test-quick-cli, static-analysis, changes, select, repo-guards]
     # always() so this still runs (and reports the failure below) even when
     # test-suite/test-quick-root/test-quick-cli/static-analysis genuinely
     # fail, not just when they're skipped -- combined with the docs_only/
@@ -1695,7 +1842,7 @@ jobs:
       # | pull_request                              | present        | test-suite                        |
       # | merge_group / push / workflow_dispatch / schedule | n/a     | test-suite                        |
       #
-      # static-analysis is required in every row. Fail CLOSED: the tier that
+      # preflight and static-analysis are required in every row. Fail CLOSED: the tier that
       # SHOULD have run reporting anything other than 'success' -- including
       # 'skipped' -- is a failure here, not a silent pass. A required check
       # that never runs is indistinguishable from one still pending, and
@@ -1740,6 +1887,14 @@ jobs:
           fi
           echo "full_tier=$is_full_tier" >> "$GITHUB_OUTPUT"
 
+          # preflight (go build + go vet) is required in every row. test-suite
+          # no longer needs it (CI-VETGATE-1), so a red preflight would no
+          # longer show up here as test-suite=skipped; check it directly.
+          if [ "${{ needs.preflight.result }}" != "success" ]; then
+            echo "::error::preflight=${{ needs.preflight.result }} (go build / go vet)"
+            exit 1
+          fi
+
           if [ "${{ needs.static-analysis.result }}" != "success" ]; then
             echo "::error::static-analysis=${{ needs.static-analysis.result }}"
             exit 1
@@ -1748,6 +1903,11 @@ jobs:
           if [ "$is_full_tier" = "true" ]; then
             if [ "${{ needs.test-suite.result }}" != "success" ]; then
               echo "::error::full tier (event=${{ github.event_name }}) requires test-suite=success, got test-suite=${{ needs.test-suite.result }}"
+              exit 1
+            fi
+            # Was a step of test-suite's core-1 leg until CI-CUTPOLES-1.
+            if [ "${{ needs.closures-pg.result }}" != "success" ]; then
+              echo "::error::full tier (event=${{ github.event_name }}) requires closures-pg=success (pg-gated security closures), got closures-pg=${{ needs.closures-pg.result }}"
               exit 1
             fi
           else
@@ -1807,7 +1967,7 @@ jobs:
           # floor). The coverage_storage_store*.out files below are included: they are THIS
           # leg's own new file, and omitting it would just be reproducing that
           # same gap in new code rather than inheriting an unrelated one.
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)
@@ -1837,7 +1997,7 @@ jobs:
   # e2e-nightly.yml.
   e2e-smoke:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.full_profile == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -1910,7 +2070,11 @@ jobs:
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.web_e2e_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_web_e2e == 'true'
     name: web-e2e-real-smoke-shard (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # SMOKE-FLAKE-1: a PASSING shard took median 576 s / max 595 s (shard 2) and max 590 s
+    # (shard 1) of the 600 s budget on 2026-10-22/23 (139 successful runs): one more spec file
+    # or a slower runner turns green into a timeout. A timeout is a hang detector, not a speed
+    # limit; the shard step's own duration is what to watch.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -1981,6 +2145,67 @@ jobs:
         run: |
           echo "web-e2e-real-smoke-shard matrix result: $SHARDS_RESULT"
           [ "$SHARDS_RESULT" = "success" ]
+
+  # SMOKE-FLAKE-1: a FAST pull_request run skips web-e2e-real-smoke (CI-LIGHT-1), so a PR that
+  # adds or edits a real-backend spec reached the merge queue without that spec ever having run:
+  # #3554 (group-role-scope.spec.ts, red on main for ~21 h, 73 of 93 merge-group rounds failed)
+  # and #3568 (suspend-clear-synced-copies-expired.spec.ts, red in its own queue rounds). This runs
+  # ONLY the spec files the PR adds or modifies, each on its own freshly booted server (about 30 s
+  # per file), and nothing when there are none. The full suite still runs in the merge queue.
+  web-e2e-changed-specs:
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.full_profile != 'true' && needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Real-backend spec files this PR adds or changes
+        id: specs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          specs="$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- 'web/e2e/real/*.spec.ts' | sed 's#^web/##' | tr '\n' ' ')"
+          echo "specs=${specs% }" >> "$GITHUB_OUTPUT"
+          echo "changed real-backend specs: ${specs:-none (nothing to run)}"
+      - name: Set up Go
+        if: steps.specs.outputs.specs != ''
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.specs.outputs.specs != ''
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.specs.outputs.specs != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install web dependencies
+        if: steps.specs.outputs.specs != ''
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install Playwright browser
+        if: steps.specs.outputs.specs != ''
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run the changed specs against a real backend
+        if: steps.specs.outputs.specs != ''
+        env:
+          KEYORIX_E2E_SPECS: ${{ steps.specs.outputs.specs }}
+        run: make e2e-web-smoke
+      - name: Upload the failed groups' logs, screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-e2e-changed-specs-report
+          path: web/playwright-report/
+          retention-days: 7
 
   # repo-guards (2026-10-05): the repo-wide structural guard tests (every
   # Test...Guard / ...Sweep / ...Completeness test: state-map completeness,
@@ -2119,6 +2344,9 @@ jobs:
   # computes boot_smoke_relevant from the group diff with the same regex, so
   # a group runs this exactly when one of its PRs would have.
   # demo-up-smoke and helm-boot-smoke below follow the same rule.
+  # Queue parity (CI-PARITY-1): a FAST pull_request still runs it when the PR
+  # touches its harness (changes.harness_docker_boot); same for demo-up-smoke,
+  # helm-boot-smoke, e2e-smoke and fuzz-targets/fuzz-reach.
   #
   # Merge-queue gate (CI-SELECT-1): on merge_group this runs when the
   # `select` job's gate_docker_boot is true -- the server binary (./server or
@@ -2130,15 +2358,33 @@ jobs:
   # container booting just as well. Outside merge_group the gate is true.
   docker-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_docker_boot == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_docker_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_docker_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # SMOKE-FLAKE-3: on 2026-10-23 13:29 UTC Docker Hub refused the anonymous pull of
+      # moby/buildkit ("unauthorized: authentication required") and answered HEAD for pinned base
+      # images with 500. The BuildKit image and the docker.io base images now come through
+      # Google's Docker Hub mirror, mirror.gcr.io.
+      # - The BuildKit image is pulled by tag@digest. The digest is the INDEX digest of
+      #   docker.io/moby/buildkit:buildx-stable-1 fetched on 2026-10-24 from UPSTREAM Docker Hub
+      #   with `docker buildx imagetools inspect docker.io/moby/buildkit:buildx-stable-1`, not from
+      #   the mirror. A pull whose content does not match the digest fails the job; there is no
+      #   fallback to an unpinned image. Bumping the tag requires re-fetching the digest from
+      #   upstream docker.io, never from mirror.gcr.io.
+      # - buildkitd mirrors: BuildKit tries mirror.gcr.io first and falls back to docker.io on a
+      #   miss. Every Dockerfile FROM is digest-pinned, so a mirror serving other content fails
+      #   the build instead of falling back silently.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Build server image (load, no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -2191,13 +2437,31 @@ jobs:
           echo "backend never answered /api/v1/version 200 within 120s (last HTTP code: ${code:-none})" >&2
           exit 1
 
+      # SMOKE-FLAKE-1: both steps used to die on "required variable KEYORIX_SECRETS_GID is missing"
+      # whenever the job failed before init-secrets.sh wrote .env (every failure of 2026-10-21/22
+      # and 2026-10-23), so a red run printed no container log at all. The fallback only lets
+      # compose parse the file for logs/down; the up step above is unchanged.
       - name: Dump compose logs on failure
         if: failure()
-        run: docker compose logs --no-color
+        env:
+          COMPOSE_PROJECT_NAME: kx-ci-boot-smoke
+        run: |
+          KEYORIX_SECRETS_GID="${KEYORIX_SECRETS_GID:-$(id -g)}" docker compose logs --no-color > boot-smoke-compose.log 2>&1 || true
+          cat boot-smoke-compose.log
+
+      - name: Upload compose logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-boot-smoke-compose-logs
+          path: boot-smoke-compose.log
+          retention-days: 7
 
       - name: Tear down
         if: always()
-        run: docker compose down -v
+        env:
+          COMPOSE_PROJECT_NAME: kx-ci-boot-smoke
+        run: KEYORIX_SECRETS_GID="${KEYORIX_SECRETS_GID:-$(id -g)}" docker compose down -v
 
   # DEMO-2: scripts/demo/up.sh builds its OWN local air-gapped image (the
   # published ghcr.io/keyorixhq/keyorix-server-airgap image never embeds the
@@ -2218,7 +2482,7 @@ jobs:
   # merge_group only, like docker-boot-smoke above.
   demo-up-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_demo == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_demo == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_demo == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2237,6 +2501,20 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
+
+      # SMOKE-FLAKE-3: up.sh builds with the runner's own dockerd; send its docker.io pulls
+      # through Google's Docker Hub mirror, mirror.gcr.io. dockerd falls back to docker.io when
+      # the mirror misses. Content is protected by the digest-pinned Dockerfile FROM lines: a
+      # digest mismatch fails the pull and is never retried unpinned. No image is named here, so
+      # there is no digest to bump; the pins live in the Dockerfiles.
+      - name: Pull Docker Hub images through mirror.gcr.io
+        run: |
+          f=/etc/docker/daemon.json
+          cur='{}'
+          if sudo test -s "$f"; then cur="$(sudo cat "$f")"; fi
+          printf '%s' "$cur" | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee "$f" >/dev/null
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
 
       - name: scripts/demo/up.sh (builds the image, seeds the demo)
         run: ./scripts/demo/up.sh
@@ -2295,15 +2573,33 @@ jobs:
   # merge_group only.
   helm-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_helm_boot == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_helm_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_helm_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # SMOKE-FLAKE-3: on 2026-10-23 13:29 UTC Docker Hub refused the anonymous pull of
+      # moby/buildkit ("unauthorized: authentication required") and answered HEAD for pinned base
+      # images with 500. The BuildKit image and the docker.io base images now come through
+      # Google's Docker Hub mirror, mirror.gcr.io.
+      # - The BuildKit image is pulled by tag@digest. The digest is the INDEX digest of
+      #   docker.io/moby/buildkit:buildx-stable-1 fetched on 2026-10-24 from UPSTREAM Docker Hub
+      #   with `docker buildx imagetools inspect docker.io/moby/buildkit:buildx-stable-1`, not from
+      #   the mirror. A pull whose content does not match the digest fails the job; there is no
+      #   fallback to an unpinned image. Bumping the tag requires re-fetching the digest from
+      #   upstream docker.io, never from mirror.gcr.io.
+      # - buildkitd mirrors: BuildKit tries mirror.gcr.io first and falls back to docker.io on a
+      #   miss. Every Dockerfile FROM is digest-pinned, so a mirror serving other content fails
+      #   the build instead of falling back silently.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Build server image (load, no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -2325,7 +2621,37 @@ jobs:
           cache-from: type=gha,scope=keyorix-web
           cache-to: type=gha,mode=max,scope=keyorix-web
 
+      # Network retry (CI-PARITY-1): kind-action downloads kind and its
+      # .sha256sum from GitHub releases; on 17 Oct the checksum file came back
+      # unreadable ("sha256sum: no properly formatted checksum lines found")
+      # and failed the job. Up to 3 attempts, 20 s / 60 s back-off; the action
+      # still verifies the checksum on every attempt (nothing is installed
+      # until it matches), and a half-created cluster is deleted first.
       - name: Create kind cluster
+        id: kind1
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 1)
+        if: steps.kind1.outcome == 'failure'
+        run: |
+          sleep 20
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 2)
+        id: kind2
+        if: steps.kind1.outcome == 'failure'
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 2)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
+        run: |
+          sleep 60
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 3)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
         uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: kx-ci-boot-smoke
@@ -2394,11 +2720,18 @@ jobs:
           echo "::error::admin login never succeeded (last HTTP status: ${code:-none}) -- first-boot bootstrap did not complete"
           exit 1
 
+      # SMOKE-FLAKE-1: a failure before the kind cluster exists (the 2026-10-23 Docker Hub 500 on
+      # the web image build) made this step fail on "connection to the server localhost:8080
+      # was refused" and print nothing useful; it now says the cluster was never created.
       - name: Describe pods and dump logs on failure
         if: failure()
         run: |
-          kubectl get pods -o wide
-          kubectl describe pods
+          if ! kubectl cluster-info >/dev/null 2>&1; then
+            echo "no kind cluster: the job failed before 'Create kind cluster' (see the first failed step above)"
+            exit 0
+          fi
+          kubectl get pods -o wide || true
+          kubectl describe pods || true
           kubectl logs -l app.kubernetes.io/instance=kx,app.kubernetes.io/component=server --tail=200 || true
 
       - name: Tear down
@@ -2663,7 +2996,7 @@ jobs:
     # or a changed .go file (any module) that has a `func Fuzz` line before
     # or after the change (an added, removed, renamed or build-tag-moved fuzz
     # target is the only thing this job's comparison can see change).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_targets == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2772,7 +3105,7 @@ jobs:
     # an affected (changed or importing a changed) package among the TARGETS
     # packages of scripts/fuzzing/harness-acceptance.sh (read at run time; an
     # unreadable list opens the gate).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_reach == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_reach == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2825,6 +3158,24 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.3'
+          # Both modules: the default key (root go.sum only) never cached the
+          # operator module's dependencies, so every run fetched them again.
+          cache-dependency-path: |
+            go.sum
+            operator/go.sum
+
+      # proxy.golang.org failed this job in the queue on 3 Oct ("TLS handshake
+      # timeout", operator module) and 20 Oct ("stream error ... INTERNAL_ERROR",
+      # root module). Fetch both modules up front with a bounded retry that
+      # fires on network errors only (scripts/ci/retry-net.sh: max 3 attempts,
+      # never on a go.sum mismatch). go mod download verifies every module
+      # against go.sum exactly as before; the diff check fails the job if it
+      # had to add or change a hash.
+      - name: Download Go modules (root + operator; retry on network errors only)
+        run: |
+          scripts/ci/retry-net.sh go mod download
+          (cd operator && GOWORK=off ../scripts/ci/retry-net.sh go mod download)
+          git diff --exit-code -- go.sum operator/go.sum
 
       # Keyed on the resolved Go version too (not just GO_LICENSES_VERSION): a
       # go-licenses binary built under one Go toolchain and then reused as-is
@@ -3582,6 +3933,76 @@ jobs:
   # ids; a matrix such as test-suite is reported under its job id). The run
   # link points at the per-leg detail.
   #
+  # Merge-queue fail fast (CI-FAILFAST-1). A queue round whose required result
+  # is already red used to keep every other job running to the end, and
+  # build-and-test only reported a repo-guards or test-leg failure after the
+  # slowest leg (measurements and the simulation are in the PR). Each job below runs only on merge_group, only when the one job it needs has
+  # failed, and then cancels every run still going for this merge-group commit
+  # (failfast-cancel.yml, scripts/ci/failfast-cancel.sh). build-and-test and
+  # web-e2e-real-smoke use always(), so they still run and report the failure.
+  #
+  # Only jobs whose failure already fails the round are watched: required
+  # checks (e2e-smoke, static-analysis, web-e2e-real-smoke) or jobs
+  # build-and-test fails on (preflight; repo-guards, which runs in the queue
+  # only on a selected run, where build-and-test requires it). Never add a job
+  # whose failure the queue tolerates (migrate, helm-chart-policy, openapi-lint,
+  # edge-builds): a cancel there would turn a passing round red. A test-suite
+  # leg needs no job here: the matrix's merge_group fail-fast stops its siblings.
+  # A separate job (not a step in the failing job) keeps the failing job's own
+  # result "failure" rather than "cancelled", and keeps actions: write out of
+  # every job that runs repository tests. No needs: gate was added in front of
+  # test-suite: the cheap checks did not fail in the measured queue rounds, and
+  # gating on repo-guards (or adr-numbers) would delay every green round.
+  failfast-preflight:
+    needs: [preflight]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: preflight
+
+  failfast-static-analysis:
+    needs: [static-analysis]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: static-analysis
+
+  failfast-repo-guards:
+    needs: [repo-guards]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: repo-guards
+
+  failfast-e2e-smoke:
+    needs: [e2e-smoke]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: e2e-smoke
+
+  failfast-web-e2e-real-smoke:
+    needs: [web-e2e-real-smoke]
+    if: failure() && github.event_name == 'merge_group'
+    permissions:
+      contents: read
+      actions: write
+    uses: ./.github/workflows/failfast-cancel.yml
+    with:
+      failed-job: web-e2e-real-smoke
+
   # CI-SELECT-1: the merge queue now tests only what each PR can affect, and
   # this nightly run is the full-suite safety net behind it. The issue names
   # the PRs merged since the last green nightly run, so a failure here that

@@ -26,7 +26,7 @@ func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		return nil, err
 	}
 
-	tlsConfig := &tls.Config{GetCertificate: tlsmetrics.Wrap(tlsmetrics.HTTP, reloader.GetCertificate)} // nosemgrep: go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion -- applyTLSHardening below sets MinVersion unconditionally on every path
+	tlsConfig := &tls.Config{GetCertificate: tlsmetrics.Wrap(tlsmetrics.HTTP, reloader.GetCertificate), VerifyConnection: tlsmetrics.ObserveHandshake(tlsmetrics.HTTP)} // nosemgrep: go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion -- applyTLSHardening below sets MinVersion unconditionally on every path
 	if err := applyTLSHardening(tlsConfig, cfg.Server.HTTP.TLS, cfg.Server.HTTP.TLSMode); err != nil {
 		return nil, err
 	}
@@ -92,6 +92,7 @@ func buildAutoCertTLSConfig(domains []string, tlsCfg config.TLSConfig, mode stri
 		HostPolicy: autocert.HostWhitelist(domains...),
 	}
 	tlsConfig := m.TLSConfig()
+	tlsConfig.VerifyConnection = tlsmetrics.ObserveHandshake(tlsmetrics.HTTP)
 	if err := applyTLSHardening(tlsConfig, tlsCfg, mode); err != nil {
 		return nil, err
 	}

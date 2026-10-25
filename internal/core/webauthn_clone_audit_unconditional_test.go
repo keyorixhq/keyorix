@@ -98,7 +98,7 @@ func TestRejectIfCloned_AuditsTheCloneEvenWhenTheDisableDoesNotTakeEffect(t *tes
 		c.storage = (&credentialVanishingStore{inner: c.storage, db: db}).store()
 
 		cred := &webauthn.Credential{ID: credID, Authenticator: webauthn.Authenticator{CloneWarning: true}}
-		err := c.rejectIfCloned(context.Background(), 1, cred, "203.0.113.9")
+		err := c.rejectIfCloned(context.Background(), 1, verifiedFrom(cred), "203.0.113.9")
 		require.Error(t, err, "a regressed signature counter must still refuse the authentication")
 
 		// The row really is gone, so this subtest is exercising the !matched
@@ -120,7 +120,7 @@ func TestRejectIfCloned_AuditsTheCloneEvenWhenTheDisableDoesNotTakeEffect(t *tes
 		c.storage = credentialDisableFailingStore(c.storage)
 
 		cred := &webauthn.Credential{ID: credID, Authenticator: webauthn.Authenticator{CloneWarning: true}}
-		err := c.rejectIfCloned(context.Background(), 1, cred, "203.0.113.9")
+		err := c.rejectIfCloned(context.Background(), 1, verifiedFrom(cred), "203.0.113.9")
 		require.Error(t, err, "a regressed signature counter must still refuse the authentication")
 
 		ev := soleCloneDetectedEvent(t, db)

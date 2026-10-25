@@ -16,32 +16,37 @@ import (
 	"github.com/keyorixhq/keyorix/internal/logging"
 )
 
-func TestLogContext_UsesCleanedCallerIDOrMintsOne(t *testing.T) {
+func TestLogContext_AlwaysMintsAndKeepsCallerIDApart(t *testing.T) {
 	var seen logging.Fields
-	var headerSeenByNext string
+	var serverID, headerSeenByNext string
 	h := LogContext(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		seen = logging.FromContext(r.Context())
+		serverID = logging.ServerRequestID(r.Context())
 		headerSeenByNext = r.Header.Get(RequestIDHeader)
 	}))
 
-	t.Run("caller id kept and echoed", func(t *testing.T) {
+	t.Run("caller id is not adopted", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/x", nil)
 		req.Header.Set(RequestIDHeader, "client-abc-123")
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		assert.Equal(t, "client-abc-123", seen.RequestID)
-		assert.Equal(t, "client-abc-123", rec.Header().Get(RequestIDHeader))
-		assert.Equal(t, "client-abc-123", headerSeenByNext, "downstream (chi RequestID) must adopt the same id")
+		assert.Len(t, seen.RequestID, 24)
+		assert.NotEqual(t, "client-abc-123", seen.RequestID)
+		assert.Equal(t, seen.RequestID, serverID, "the minted id is what the audit writer gets")
+		assert.Equal(t, "client-abc-123", seen.ClientRequestID)
+		assert.Equal(t, seen.RequestID, rec.Header().Get(RequestIDHeader), "the server id is echoed")
+		assert.Equal(t, seen.RequestID, headerSeenByNext, "downstream (chi RequestID) must adopt the server id")
 		assert.Equal(t, logging.PrincipalAnonymous, seen.PrincipalType)
 	})
 
-	t.Run("hostile id cleaned", func(t *testing.T) {
+	t.Run("hostile caller id cleaned", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/x", nil)
 		req.Header.Set(RequestIDHeader, "a\x1b[31mb"+strings.Repeat("z", 400))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
-		assert.NotContains(t, seen.RequestID, "\x1b")
-		assert.LessOrEqual(t, len(seen.RequestID), 128)
+		assert.NotContains(t, seen.ClientRequestID, "\x1b")
+		assert.LessOrEqual(t, len(seen.ClientRequestID), 128)
+		assert.Len(t, seen.RequestID, 24)
 	})
 
 	t.Run("missing id minted", func(t *testing.T) {
@@ -50,6 +55,7 @@ func TestLogContext_UsesCleanedCallerIDOrMintsOne(t *testing.T) {
 		first := seen.RequestID
 		h.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/x", nil))
 		assert.Len(t, first, 24)
+		assert.Empty(t, seen.ClientRequestID)
 		assert.NotEqual(t, first, seen.RequestID, "ids are unique per request")
 	})
 }
@@ -102,7 +108,8 @@ func TestJSONAccessLog_CarriesRequestFields(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/secrets/42?x=1", nil)
 	req.Header.Set(RequestIDHeader, "rid-777")
-	r.ServeHTTP(httptest.NewRecorder(), req)
+	rec0 := httptest.NewRecorder()
+	r.ServeHTTP(rec0, req)
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/auth/setup/SETUPTOKENSHOULDNOTLEAK", nil))
 	r.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/nope", nil))
 
@@ -116,7 +123,8 @@ func TestJSONAccessLog_CarriesRequestFields(t *testing.T) {
 
 	got := recs[0]
 	assert.Equal(t, "http request", got["msg"])
-	assert.Equal(t, "rid-777", got["request_id"])
+	assert.Equal(t, rec0.Header().Get(RequestIDHeader), got["request_id"], "request_id is the server's echoed id")
+	assert.Equal(t, "rid-777", got["client_request_id"], "the caller's id is logged apart")
 	assert.Equal(t, "machine_identity", got["principal_type"])
 	assert.Equal(t, "/api/v1/secrets/{id}", got["route"], "route is the pattern, not /api/v1/secrets/42")
 	assert.EqualValues(t, http.StatusTeapot, got["status"])

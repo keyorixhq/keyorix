@@ -12,6 +12,8 @@ package encryptionops
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -79,9 +81,18 @@ func TargetEncryptionConfig(cur *config.EncryptionConfig, opts MigrateOpts) (con
 		if len(opts.ToShareFiles)+len(opts.ToShareEnv) < 2 {
 			return tgt, fmt.Errorf("--to-type shamir requires at least 2 shares via --to-shamir-share-files/--to-shamir-share-env (the threshold)")
 		}
+		// The commitment is required here (REVIEW-ENCRYPTIONOPS-1 F5): without it,
+		// whoever holds threshold-1 genuine shares can forge one more that makes the
+		// reconstructed KEK any value they choose (#429), and the DEK would be
+		// wrapped under it. A migration is a new binding, so unlike a running
+		// install's pre-#429 split there is nothing to stay compatible with.
+		commitment := strings.TrimSpace(opts.ToShareCommitment)
+		if c, err := hex.DecodeString(commitment); err != nil || len(c) != sha256.Size {
+			return tgt, fmt.Errorf("--to-shamir-commitment is required for --to-type shamir and must be the %d-hex-character value `shamir-split` printed for these shares: without it, a holder of threshold-1 shares can forge a share that sets the KEK (#429)", 2*sha256.Size)
+		}
 		kp.ShamirShareFiles = opts.ToShareFiles
 		kp.ShamirShareEnv = opts.ToShareEnv
-		kp.ShamirCommitment = opts.ToShareCommitment
+		kp.ShamirCommitment = commitment
 	case "tpm":
 		if opts.ToWrappedKeyPath == "" {
 			return tgt, fmt.Errorf("--to-wrapped-key-path is required for --to-type tpm (where the sealed KEK blob lives)")
@@ -198,6 +209,10 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 	}
 	defer oldSvc.Shutdown()
 	closeGormDB(db)
+	audit, err := openAuditKeyChange(cfg, oldSvc)
+	if err != nil {
+		return err
+	}
 
 	// 2. Encrypt a probe value under the current DEK — used after re-wrapping to
 	//    verify the target provider yields the *same* DEK (data still decryptable).
@@ -220,7 +235,7 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 		return fmt.Errorf("failed to build target provider: %w", err)
 	}
 	fmt.Printf("🔄 Re-wrapping DEK: %s → %s provider...\n", ProviderLabel(enc.KeyProvider.Type), opts.ToType)
-	if err := oldSvc.RewrapDEKWithProvider(newProvider); err != nil {
+	if err := oldSvc.RewrapDEKWithProviderPrepare(newProvider, audit.prepare); err != nil {
 		// RewrapDEK leaves the active DEK untouched on failure — drop the backup.
 		_ = os.Remove(filepath.Join(baseDir, backupRel))
 		return fmt.Errorf("re-wrap failed — no changes made to the active DEK: %w", err)
@@ -239,6 +254,9 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 		RestoreBackup(baseDir, backupRel, enc.DEKPath)
 		return fmt.Errorf("verification failed (probe did not round-trip under the target provider) — restored previous DEK (its copy %s is kept; `migrate-provider cleanup` removes it)", backupRel)
 	}
+	// The audit checkpoint key is KEK-derived: carry the audit verification
+	// state over to the target provider's key (prepared before the re-wrap).
+	audit.complete(verifySvc)
 
 	PrintMigrateSummary(tgtEnc, backupRel)
 	return nil

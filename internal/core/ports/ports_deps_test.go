@@ -27,6 +27,9 @@ var forbiddenDepPrefixes = []string{
 	"github.com/Azure/azure-sdk-for-go/sdk/security/",
 	"cloud.google.com/go/",
 	"github.com/hashicorp/vault/api",
+	// ports_webauthn.go (CORE-DECOUPLE-WEBAUTHN-1) keeps every library value
+	// opaque; the library itself lives in internal/webauthnrp.
+	"github.com/go-webauthn/",
 }
 
 // TestPortsStaysFree fails if internal/core/ports picks up a dependency on

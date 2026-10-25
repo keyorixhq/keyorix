@@ -368,8 +368,8 @@ same idea applied to a mechanism already in front of you.
   — a skip is always a failure), `pg-gated` (needs `KEYORIX_TEST_PG_DSN`, e.g.
   a cross-replica race only real Postgres can demonstrate — a skip is
   expected and NOT a failure when the checker itself has no DSN, but IS one
-  the moment it does; `.github/workflows/ci.yml`'s `test-suite` job, `core-1`
-  leg, is the one job that actually proves these), or `manual` (no automated
+  the moment it does; `.github/workflows/ci.yml`'s `closures-pg` job (until
+  2026-10-25 a step of the `test-suite` `core-1` leg) is the one job that actually proves these), or `manual` (no automated
   test can exist — `note` must cite a specific artefact; this is an escape
   hatch, not a shortcut, and CI cannot verify it). Added 2026-09-08 after
   #1646 and #1780 — both real, both Postgres-race closures — sat with no row
@@ -459,6 +459,24 @@ It is generated: **on a merge conflict take main's version, then run
 `TestFaultyStorageGenerated_IsFresh` (default `go test`, so CI) fails on any drift.
 `.gitattributes` marks it `linguist-generated=true merge=ours`.
 
+### Writing or widening a repo-wide guard: the rollout contract
+
+A guard that walks the repository or a registry every PR touches fails the
+whole merge queue when it goes red. Two rules (`docs/guard-rollout-contract.md`,
+with the incidents behind them):
+
+1. **No calendar at PR time.** Never compare `time.Now()` with a row's date in a
+   test. Validate the format and pass the date to `guardrules.CheckExpiry` from a
+   `Test*NotExpired` test; the nightly job on main evaluates it, warns 7 days
+   ahead and keeps one issue open. `TestGuardTestsDoNotReadTheCalendar` fails on
+   a `_test.go` file that reads the clock and parses or formats a date.
+2. **Report-only first day, proven against the open PRs.** Report through
+   `g := guardrules.Rollout(t)`, add `docs/guard-rollout.d/<TestName>.tsv`, and
+   paste `scripts/guard-meets-open-prs.sh -p ./<pkg> -r '<TestRegex>'` output (main
+   plus the 5 most recently updated open PRs' merge results) into the PR body,
+   naming every PR it would fail. A widened guard (new scan root, new rule)
+   counts as new. The row is deleted after a green nightly on main.
+
 ## Modern Go
 
 Before editing a Go file, list the modern-Go guidelines that apply to it (no
@@ -511,3 +529,26 @@ truncation, and never fails on it.
 
 A real finding is fixed in code. This procedure is only for a finding the
 verification proves absent.
+
+## Testing and approval rules (from the 2026-10-23 usage review)
+
+- **Never stream full `go test ./...` output.** Redirect to `.scratch/` and grep for
+  `^(--- FAIL|FAIL|panic)`; output past 10 MiB is truncated.
+- **Postgres runs of `internal/core` need `-timeout 20m`.**
+- **Machine-wide `GOFLAGS` may contain `-trimpath`, which breaks source-locating
+  tests.** Run those with `GOFLAGS= go test ...`.
+- **New test doubles must not embed the whole storage interface** (a repo guard forbids
+  it). Embed or implement only the methods the test needs.
+- **A security fix needs red/green proof**: the test fails without the fix and passes
+  with it. If the red proof needs a throwaway edit to a production file, ask the
+  coordinator first.
+- **A known timing-flaky storage test that fails**: re-run it on `main` to confirm it is
+  unrelated before investigating.
+- **Approvals need test evidence at the reviewed SHA.** Reading code alone is not enough
+  for auth, SSO, role-scope, secretenv or storage changes; run the touched packages'
+  tests at the PR head and record pass/fail with the SHA. Re-check the head SHA before
+  approving; if it moved, review only the new commits.
+- **Security-sensitive reviews (auth, SSO, roles, secretenv, storage) go to Opus
+  sub-agents only**, never Sonnet.
+- **Review and diagnose against `git fetch origin` + `origin/main`**, never a possibly
+  stale local checkout.

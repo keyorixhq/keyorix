@@ -1,0 +1,5 @@
+# audit: audit log: write, owed audit, retention, verify, stream, search, mutation-audit transactions
+# One glob per line, matched against the file name (README.md).
+audit*.go
+mutation_audit_tx.go
+config_change_audit.go

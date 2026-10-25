@@ -1,0 +1,21 @@
+#!/bin/sh
+# Reject AI-assistant attribution (co-author trailers, session trailers,
+# "generated with" footers) in a commit message before the commit exists.
+# Enable with: git config core.hooksPath .githooks
+#
+# The patterns and the check live in scripts/ci/check-no-attribution.sh, the
+# same script CI runs on every PR's commits, title and body (workflow
+# no-attribution.yml), so the hook and CI cannot drift apart. Comment lines and
+# the `git commit -v` diff are not part of the message and are not checked.
+# Fails closed: if the script is missing, the commit is refused.
+
+COMMIT_MSG_FILE="$1"
+
+ROOT=$(git rev-parse --show-toplevel) || exit 1
+CHECK="$ROOT/scripts/ci/check-no-attribution.sh"
+if [ ! -f "$CHECK" ]; then
+  echo "commit-msg: $CHECK not found; cannot check the message for attribution, refusing the commit." >&2
+  echo "Restore the file, or bypass once with git commit --no-verify (CI still checks)." >&2
+  exit 1
+fi
+exec bash "$CHECK" --message-file "$COMMIT_MSG_FILE"
