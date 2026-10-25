@@ -132,3 +132,28 @@ func TestVerifyMFA_RecoveryCodeConsumePanicIsAnsweredLikeItsError(t *testing.T) 
 	require.NoError(t, probeEnv.db.Model(&models.Session{}).Count(&sessions).Error)
 	assert.Zero(t, sessions)
 }
+
+// TestMFAStepUp_RecoveryCodeConsumePanicIsAnsweredLikeItsError is the step-up
+// twin of TestVerifyMFA_RecoveryCodeConsumePanicIsAnsweredLikeItsError (#3557
+// (2), sibling call site in verifyMFAStepUpCode). A consume that commits and
+// then panics must be answered exactly like the consume's error ("unavailable",
+// uncounted) and leave one mfa.error row, not reach the Recovery 500 with the
+// correct recovery code burned and nothing audited.
+func TestMFAStepUp_RecoveryCodeConsumePanicIsAnsweredLikeItsError(t *testing.T) {
+	ch, cdb, ctrlCode, _ := stepUpParityEnv(t, stepUpFault{recoveryDown: true, useRecoveryCode: true})
+	control := observeHTTP(t, cdb, postStepUp(ch, ctrlCode))
+	require.Equal(t, http.StatusServiceUnavailable, control.status, "control: a consume error is 'unavailable'")
+
+	ph, pdb, probeCode, _ := stepUpParityEnv(t, stepUpFault{recoveryDown: true, recoveryPanics: true, useRecoveryCode: true})
+	probe := observeHTTP(t, pdb, postStepUp(ph, probeCode))
+
+	var burned int64
+	require.NoError(t, pdb.Model(&models.MFARecoveryCode{}).Where("used_at IS NOT NULL").Count(&burned).Error)
+	require.Equal(t, int64(1), burned, "the consume must have committed before the panic")
+	requireIdenticalResponse(t, control, probe, "stepup/ConsumeMFARecoveryCode/panic-after-commit")
+	assert.NotContains(t, probe.body, "injected", "the panic value must never reach the client")
+	assert.Equal(t, int64(1), eventCount(t, pdb, "mfa.error"), "the burned code must leave an mfa.error audit row")
+	var live int64
+	require.NoError(t, pdb.Model(&models.MFAStepUpGrant{}).Where("consumed_at IS NULL").Count(&live).Error)
+	assert.Zero(t, live, "a denied step-up must leave no live grant")
+}
