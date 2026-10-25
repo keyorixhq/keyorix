@@ -133,9 +133,7 @@ func TestAuditKeyTransition_CarriesFailureOver(t *testing.T) {
 	fcRun(t, func(t *testing.T, e *fcEnv) {
 		fcCertify(t, e)
 		tamperDescription(t, e.db, 3)
-		id, started, err := e.c.StartAuditFullVerification(context.Background())
-		require.NoError(t, err)
-		require.True(t, started)
+		id := startFullJobWhenFree(t, e.c)
 		waitAuditJob(t, e.c, id)
 		require.Equal(t, AuditVerifyStatusBroken, incrVerify(t, e.c).Status)
 		c2 := aktRotate(t, e)
