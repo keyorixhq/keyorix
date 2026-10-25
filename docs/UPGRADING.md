@@ -739,6 +739,9 @@ code. The checklist to follow is
 | CLI: webhook URLs refused as `--url` (CLI-UX-2) | §6x |
 | SECURITY: audit Vault access migrated with `keyorix-migrate` v0.96.0 to v0.96.3 (`vault audit-access`) | §6y |
 | Roles carry an assignable scope; API clients that grant a new role without `project_id` get 400 (schema epoch 7, #3546) | §6z |
+| PostgreSQL: the server checks it holds the database's DEK; upgrade every replica before the next DEK rotation (#3344) | §6s |
+| SCIM no longer creates or manages `sso:` accounts (#3493) | §6v |
+| "Last used" in access recertification means "within the review period" (`recertification.cadence_days`) | §6w |
 
 Each heading number in this document is unique. The sections are not in alphabetical
 order because they were added by different pull requests; look a section up by its
