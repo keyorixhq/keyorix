@@ -14,6 +14,7 @@
 | Hardening | [security/hardening-guide.md](./security/hardening-guide.md) |
 | Backup, restore and offline audit anchors (also air-gapped) | [AIRGAP_RUNBOOK.md](./AIRGAP_RUNBOOK.md) |
 | Upgrading | [UPGRADING.md](./UPGRADING.md) |
+| Versioning and deprecation policy (draft) | [VERSIONING.md](./VERSIONING.md) |
 | Verify a release: signatures, SBOMs, provenance, images, charts (also air-gapped) | [operator/verifying-releases.md](./operator/verifying-releases.md) |
 | Key rotation: preflight, verify, rollback, what not to do | [operator/key-rotation-runbook.md](./operator/key-rotation-runbook.md), steps and output in [operator/j6-key-rotation.md](./operator/j6-key-rotation.md) |
 | Lost admin, lost authenticator code (TOTP) | [operator/lost-totp-runbook.md](./operator/lost-totp-runbook.md), [operator/j5-lost-admin.md](./operator/j5-lost-admin.md) |
