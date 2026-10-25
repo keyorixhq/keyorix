@@ -20,9 +20,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 func TestNamedLockOrder_EveryCallSiteKeyHasAFamily(t *testing.T) {
@@ -163,17 +163,31 @@ func TestNamedLockOrder_EveryCallSiteKeyHasAFamily(t *testing.T) {
 	if sites < 20 {
 		t.Fatalf("found only %d WithNamedLock call sites — the scan stopped seeing them", sites)
 	}
-	today := time.Now().UTC().Format("2006-01-02")
 	for _, fam := range storage.NamedLockOrder {
 		if fam.PendingPR != "" {
-			if today > storage.NamedLockPendingExpires {
-				t.Errorf("storage.NamedLockOrder family %q still carries PendingPR %s after %s — delete the field (or the family, if that PR was abandoned)", fam.Prefix, fam.PendingPR, storage.NamedLockPendingExpires)
-			}
-			continue // declared ahead of the PR that adds its constructor
+			continue // declared ahead of the PR that adds its constructor; see TestNamedLockOrder_PendingNotExpired
 		}
 		if !usedFamilies[fam.Prefix] {
 			t.Errorf("storage.NamedLockOrder declares family %q but no WithNamedLock call site uses it — delete the stale entry", fam.Prefix)
 		}
+	}
+}
+
+// TestNamedLockOrder_PendingNotExpired: a family may carry PendingPR only until
+// storage.NamedLockPendingExpires. The date is evaluated by the nightly job on
+// main (guardrules.CheckExpiry), never at PR time. When it fires, delete the
+// PendingPR field (or the family, if that PR was abandoned).
+func TestNamedLockOrder_PendingNotExpired(t *testing.T) {
+	for _, fam := range storage.NamedLockOrder {
+		if fam.PendingPR == "" {
+			continue
+		}
+		guardrules.CheckExpiry(t, guardrules.Expiry{
+			Source:  "internal/core/storage/named_lock_order.go NamedLockPendingExpires",
+			Key:     "NamedLockOrder family " + fam.Prefix,
+			Expires: storage.NamedLockPendingExpires,
+			Note:    "PendingPR " + fam.PendingPR + "; delete the field once that PR has merged",
+		})
 	}
 }
 
