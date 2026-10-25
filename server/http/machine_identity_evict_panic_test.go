@@ -126,7 +126,7 @@ func miepRunEvictionFailureCase(t *testing.T, arm func(*faultstorage.FaultyStora
 		Storage: config.StorageConfig{
 			Type: "local",
 			Database: config.DatabaseConfig{
-				Path: sqlitetest.DSN("kxtest_"),
+				Path: sqlitetest.FactoryPath(t, "kxtest_"),
 			},
 		},
 	}

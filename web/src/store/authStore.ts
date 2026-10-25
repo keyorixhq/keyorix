@@ -104,6 +104,17 @@ export function mfaGraceFromWire(g: MfaGraceWire): MfaGrace {
 // POST /auth/refresh (see refreshToken). Module-scoped: there is one auth store.
 let inFlightRefresh: Promise<void> | null = null;
 
+// Shared in-flight logout, same idea: the inactivity timer, the absolute-expiry
+// banner, a request that finds the token expired and services/client.ts's 401
+// handler can all call logout() for one session. A second POST /auth/logout
+// carries the session the first just revoked, gets a 401 and redirected to
+// /login?logout_error=1 (a false "your session may still be valid"), cutting off
+// the first redirect. A caller that arrives while a logout runs joins it (the
+// session still reads as signed in until it ends). The refresh-failure paths
+// (refreshToken, client.ts handle401) log out only a session that is still signed
+// in: their refresh can fail BECAUSE a logout that already finished revoked it.
+let inFlightLogout: Promise<void> | null = null;
+
 // Re-entrancy guard for checkAuth, separate from isLoading — isLoading starts
 // true by design (to hold route guards in the spinner state until the first
 // check resolves), so gating checkAuth on isLoading would make its own very
@@ -232,44 +243,54 @@ export const useAuthStore = create<AuthStore>()(
                     }
                 },
 
-                logout: async () => {
-                    set({ isLoading: true });
-
-                    // G65: track whether the server-side session invalidation
-                    // itself failed, so it can be surfaced below instead of
-                    // silently reported as a clean logout. authService.logout()
-                    // rethrows on failure (it no longer swallows the error
-                    // itself); this is the only place that catches it.
-                    let serverLogoutFailed = false;
-                    try {
-                        await authService.logout();
-                    } catch (error) {
-                        serverLogoutFailed = true;
-                        console.warn('Logout request failed:', error);
-                    } finally {
-                        // Always clear local state regardless of server response —
-                        // a failed server-side logout must not trap the user in a
-                        // "logged in" UI state.
-                        set({
-                            user: null,
-                            isAuthenticated: false,
-                            impersonatedBy: null,
-                            isLoading: false,
-                            error: null,
-                        });
-
-                        // Clear stored data
-                        clearPersistedAuthData();
-                        // Redirect to login. This is a hard navigation
-                        // (window.location.href), so no in-memory React/store
-                        // state survives it — a server-side logout failure is
-                        // surfaced via a query param instead, mirroring the
-                        // sso_error pattern LoginPage already reads. The user
-                        // needs to know their session may still be valid
-                        // server-side (e.g. on a shared machine) even though the
-                        // client has cleared its own local state.
-                        window.location.href = serverLogoutFailed ? '/login?logout_error=1' : '/login';
+                logout: () => {
+                    // Single-flight (see inFlightLogout): a caller that arrives while a
+                    // logout runs waits for that one instead of starting another.
+                    if (inFlightLogout) {
+                        return inFlightLogout;
                     }
+                    inFlightLogout = (async () => {
+                        set({ isLoading: true });
+
+                        // G65: track whether the server-side session invalidation
+                        // itself failed, so it can be surfaced below instead of
+                        // silently reported as a clean logout. authService.logout()
+                        // rethrows on failure (it no longer swallows the error
+                        // itself); this is the only place that catches it.
+                        let serverLogoutFailed = false;
+                        try {
+                            await authService.logout();
+                        } catch (error) {
+                            serverLogoutFailed = true;
+                            console.warn('Logout request failed:', error);
+                        } finally {
+                            // Always clear local state regardless of server response —
+                            // a failed server-side logout must not trap the user in a
+                            // "logged in" UI state.
+                            set({
+                                user: null,
+                                isAuthenticated: false,
+                                impersonatedBy: null,
+                                isLoading: false,
+                                error: null,
+                            });
+
+                            // Clear stored data
+                            clearPersistedAuthData();
+                            // Redirect to login. This is a hard navigation
+                            // (window.location.href), so no in-memory React/store
+                            // state survives it — a server-side logout failure is
+                            // surfaced via a query param instead, mirroring the
+                            // sso_error pattern LoginPage already reads. The user
+                            // needs to know their session may still be valid
+                            // server-side (e.g. on a shared machine) even though the
+                            // client has cleared its own local state.
+                            window.location.href = serverLogoutFailed ? '/login?logout_error=1' : '/login';
+                        }
+                    })().finally(() => {
+                        inFlightLogout = null;
+                    });
+                    return inFlightLogout;
                 },
 
                 endSessionForReauth: () => {
@@ -292,7 +313,7 @@ export const useAuthStore = create<AuthStore>()(
                             // Past the absolute ceiling there is nothing to refresh into —
                             // re-authentication is required. Skip the round-trip and log out.
                             if (isAbsoluteExpiryPassed()) {
-                                await get().logout();
+                                if (get().isAuthenticated) await get().logout();
                                 throw new Error('Session lifetime exceeded');
                             }
 
@@ -307,8 +328,9 @@ export const useAuthStore = create<AuthStore>()(
                                 updateTokenExpiry(response.expires_at);
                                 updateAbsoluteTokenExpiry(response.absolute_expires_at);
                             } catch (error) {
-                                // If refresh fails, logout user
-                                await get().logout();
+                                // If refresh fails, log the user out, unless a logout that
+                                // already ran revoked the session (see inFlightLogout).
+                                if (get().isAuthenticated) await get().logout();
                                 throw error;
                             }
                         } finally {
