@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // RELEASE-PREP-2 item 3: the reverse of TestDocsConfigKeysExist. That test fails when a
@@ -127,19 +129,20 @@ func configReferenceDocs(t testing.TB) []string {
 }
 
 func TestEveryConfigKeyIsDocumented(t *testing.T) {
-	leaves := readLeafList(t, configLeavesFile)
+	g := guardrules.Rollout(t)
+	leaves := readLeafList(g, configLeavesFile)
 	if len(leaves) < 200 {
-		t.Fatalf("only %d leaves read from %s", len(leaves), configLeavesFile)
+		g.Fatalf("only %d leaves read from %s", len(leaves), configLeavesFile)
 	}
 	for _, l := range leaves {
 		if ok, bad := resolves(l); !ok {
-			t.Fatalf("%s lists %q but config.Config has no field %q: the surface file is stale (TestConfigSurface_LeafSetRatchet should have failed)", configLeavesFile, l, bad)
+			g.Fatalf("%s lists %q but config.Config has no field %q: the surface file is stale (TestConfigSurface_LeafSetRatchet should have failed)", configLeavesFile, l, bad)
 		}
 	}
-	documented := documentedConfigLeaves(configReferenceDocs(t), leaves)
+	documented := documentedConfigLeaves(configReferenceDocs(g), leaves)
 
 	known := map[string]bool{}
-	for _, l := range readLeafList(t, undocumentedLeavesFile) {
+	for _, l := range readLeafList(g, undocumentedLeavesFile) {
 		known[l] = true
 	}
 	onSurface := map[string]bool{}
@@ -151,7 +154,7 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 		}
 	}
 	for _, l := range missing {
-		t.Errorf("config key %q is not named in %v: document it in docs/CONFIGURATION.md (what it does, its default, when to change it). "+
+		g.Errorf("config key %q is not named in %v: document it in docs/CONFIGURATION.md (what it does, its default, when to change it). "+
 			"Do not add it to %s", l, configDocs, undocumentedLeavesTitle)
 	}
 	var stale []string
@@ -165,9 +168,9 @@ func TestEveryConfigKeyIsDocumented(t *testing.T) {
 	}
 	sort.Strings(stale)
 	for _, s := range stale {
-		t.Errorf("%s lists %s: delete the line", undocumentedLeavesTitle, s)
+		g.Errorf("%s lists %s: delete the line", undocumentedLeavesTitle, s)
 	}
-	t.Logf("%d config keys, %d documented, %d known undocumented", len(leaves), len(documented), len(known))
+	g.Logf("%d config keys, %d documented, %d known undocumented", len(leaves), len(documented), len(known))
 }
 
 // TestEveryConfigKeyDocCheckCatchesPlantedError is the red proof for both directions:

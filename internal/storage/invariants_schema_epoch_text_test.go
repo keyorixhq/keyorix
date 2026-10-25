@@ -17,6 +17,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 var inv02Numbers = regexp.MustCompile(`now epoch (\d+), floor (\d+)`)
@@ -55,16 +57,17 @@ func inv02Quoted(md string) (epoch, floor int, err string) {
 }
 
 func TestInvariantsStorage02_QuotesTheCodesEpochAndFloor(t *testing.T) {
+	g := guardrules.Rollout(t)
 	b, err := os.ReadFile("INVARIANTS.md")
 	if err != nil {
-		t.Fatal(err)
+		g.Fatal(err)
 	}
 	epoch, floor, problem := inv02Quoted(string(b))
 	if problem != "" {
-		t.Fatalf("INVARIANTS.md: %s (state the numbers the code has: epoch %d, floor %d)", problem, currentSchemaEpoch, minCompatibleSchemaEpoch)
+		g.Fatalf("INVARIANTS.md: %s (state the numbers the code has: epoch %d, floor %d)", problem, currentSchemaEpoch, minCompatibleSchemaEpoch)
 	}
 	if epoch != currentSchemaEpoch || floor != minCompatibleSchemaEpoch {
-		t.Fatalf("INVARIANTS.md INV-STORAGE-02 says `now epoch %d, floor %d`, the code has currentSchemaEpoch = %d and minCompatibleSchemaEpoch = %d: "+
+		g.Fatalf("INVARIANTS.md INV-STORAGE-02 says `now epoch %d, floor %d`, the code has currentSchemaEpoch = %d and minCompatibleSchemaEpoch = %d: "+
 			"update the sentence (and the history after it) in the same change that bumps them",
 			epoch, floor, currentSchemaEpoch, minCompatibleSchemaEpoch)
 	}

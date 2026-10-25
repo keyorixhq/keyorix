@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // RELEASE-PREP-2: docs/UPGRADING.md numbers its sections (6a ... 6x) and every other
@@ -66,25 +68,27 @@ func upgradingHeadings(doc string) (ids []string, empty []string) {
 }
 
 func TestUpgradingSectionNumbersAreUnique(t *testing.T) {
-	ids, empty := upgradingHeadings(readDoc(t, "docs/UPGRADING.md"))
+	g := guardrules.Rollout(t)
+	ids, empty := upgradingHeadings(readDoc(g, "docs/UPGRADING.md"))
 	if len(ids) < 20 {
-		t.Fatalf("found only %d numbered headings in UPGRADING.md; the heading pattern no longer matches", len(ids))
+		g.Fatalf("found only %d numbered headings in UPGRADING.md; the heading pattern no longer matches", len(ids))
 	}
 	seen := map[string]bool{}
 	for _, id := range ids {
 		if seen[id] {
-			t.Errorf("UPGRADING.md has two sections numbered %q: every reference to %q is ambiguous; give one of them the next free number and update its references", id, id)
+			g.Errorf("UPGRADING.md has two sections numbered %q: every reference to %q is ambiguous; give one of them the next free number and update its references", id, id)
 		}
 		seen[id] = true
 	}
 	for _, id := range empty {
-		t.Errorf("UPGRADING.md section %q has no body (a heading directly followed by another heading)", id)
+		g.Errorf("UPGRADING.md section %q has no body (a heading directly followed by another heading)", id)
 	}
 }
 
 func TestUpgradingSectionReferencesResolve(t *testing.T) {
-	root := repoRoot(t)
-	ids, _ := upgradingHeadings(readDoc(t, "docs/UPGRADING.md"))
+	g := guardrules.Rollout(t)
+	root := repoRoot(g)
+	ids, _ := upgradingHeadings(readDoc(g, "docs/UPGRADING.md"))
 	known := map[string]bool{}
 	for _, id := range ids {
 		known[id] = true
@@ -102,7 +106,7 @@ func TestUpgradingSectionReferencesResolve(t *testing.T) {
 			return nil
 		})
 		if err != nil {
-			t.Fatal(err)
+			g.Fatal(err)
 		}
 	}
 	files = append(files, filepath.Join(root, "SECURITY.md"), filepath.Join(root, "README.md"))
@@ -112,7 +116,7 @@ func TestUpgradingSectionReferencesResolve(t *testing.T) {
 	for _, f := range files {
 		b, err := os.ReadFile(f)
 		if err != nil {
-			t.Fatal(err)
+			g.Fatal(err)
 		}
 		rel, _ := filepath.Rel(root, f)
 		isUpgrading := filepath.ToSlash(rel) == "docs/UPGRADING.md"
@@ -123,14 +127,14 @@ func TestUpgradingSectionReferencesResolve(t *testing.T) {
 			for _, m := range letteredSection.FindAllStringSubmatch(line, -1) {
 				checked++
 				if !known[m[1]] {
-					t.Errorf("%s:%d: refers to UPGRADING section %q, which has no heading in docs/UPGRADING.md", filepath.ToSlash(rel), i+1, m[1])
+					g.Errorf("%s:%d: refers to UPGRADING section %q, which has no heading in docs/UPGRADING.md", filepath.ToSlash(rel), i+1, m[1])
 				}
 			}
 		}
 	}
-	t.Logf("%d lettered section references checked against %d headings", checked, len(known))
+	g.Logf("%d lettered section references checked against %d headings", checked, len(known))
 	if checked < 20 {
-		t.Fatalf("only %d references were found; the reference pattern no longer matches the docs", checked)
+		g.Fatalf("only %d references were found; the reference pattern no longer matches the docs", checked)
 	}
 }
 
