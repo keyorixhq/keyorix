@@ -386,10 +386,13 @@ func (c *KeyorixCore) GetSecret(ctx context.Context, id uint) (*models.SecretNod
 }
 
 // unexpiredSecret is GetSecret's expiration check: the secret itself, or
-// ErrorSecretExpired once its Expiration has passed.
+// ErrorSecretExpired once its Expiration has passed. Like the value gate
+// (enforceSecretReadGuardsWith), the refusal of a secret that is also suspended with the
+// clear-synced-copies marker carries the marker (#3215): GetSecretForRead judges expiry
+// here, before the value gate ever runs.
 func unexpiredSecret(secret *models.SecretNode) (*models.SecretNode, error) {
 	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
-		return nil, errSecretExpired(false)
+		return nil, errSecretExpired(secret.Status == SecretStatusSuspended && secret.SuspendClearSyncedCopies)
 	}
 	return secret, nil
 }
@@ -437,10 +440,7 @@ func (c *KeyorixCore) GetSecretByName(ctx context.Context, name string, projectI
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
 	}
-	if secret.Expiration != nil && time.Now().After(*secret.Expiration) {
-		return nil, errSecretExpired(false)
-	}
-	return secret, nil
+	return unexpiredSecret(secret)
 }
 
 // GetSecretByNameWithPermissionCheck retrieves a secret by name/project/environment
