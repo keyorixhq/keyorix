@@ -22,7 +22,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root" || exit 2
 check="scripts/ci/footprint-check.sh"
 host="$(go env GOOS)/$(go env GOARCH)"
-work="$(mktemp -d "${TMPDIR:-/tmp}/footprint-selftest.XXXXXX")"
+work="$(mktemp -d "${TMPDIR:-/tmp}/fpselftest.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 # mkbudget <file> <platform> <server> <cli> <rss>   (rss "null" allowed)

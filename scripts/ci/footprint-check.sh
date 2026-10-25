@@ -58,7 +58,7 @@ say() { echo "footprint-check: $*" >&2; }
 host="$(go env GOOS)/$(go env GOARCH)"
 [ -n "$platform" ] || platform="$host"
 
-work="$(mktemp -d "${TMPDIR:-/tmp}/footprint-check.XXXXXX")"
+work="$(mktemp -d "${TMPDIR:-/tmp}/fpcheck.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 
 # budget_get <file> <platform> <metric> -> integer, or "-" for null; exit 3 = no such platform row.
