@@ -1,0 +1,2 @@
+### Documentation
+- **ADR-117 (Proposed): TPM-sealed KEK with PCR policy and off-TPM recovery.** Design only, no behaviour change. It is a gap analysis of the existing `tpm` key provider (no boot-state binding, no recovery after TPM loss, a new KEK minted when the blob file is missing, no parameter encryption), plus the proposed fix. New: `docs/design-rd-tpm-seal.md`, the threat model `docs/security/threat-models/tpm-sealed-kek.md`, and a 5-minute demo script written against the future CLI (`docs/demo/tpm-sealed-kek.md`, marked not implemented).
