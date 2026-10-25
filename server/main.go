@@ -500,8 +500,7 @@ var bootRefusals = []struct {
 	// Refuse to start if the installed key files are a PARTIAL set (ADR-112,
 	// follow-up from #2400). Unconditional, like the permission check above: a
 	// broken key set is not a "weaker but working" state to warn about. The
-	// same call also applies a best-effort same-group mtime heuristic, which is
-	// deliberately not claimed as a mixed-generation guarantee — see
-	// keyfiles.VerifyKeySetConsistency and #2900.
+	// same call refuses a set mixed from different generations, from the
+	// key-set manifest's hashes (#2900) — see keyfiles.VerifyKeySetConsistency.
 	{"key file consistency", verifyKeyFileSetConsistency},
 }

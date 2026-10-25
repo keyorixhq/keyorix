@@ -142,6 +142,14 @@ func openKeyWriter(cfg *config.Config, baseDir, passphrase, what string) (*encry
 		service.Shutdown()
 		return nil, nil, fmt.Errorf("failed to open database to %s: %w", what, err)
 	}
+	// The key-set manifest step (#2900) under the same lock: refuse a partial,
+	// mixed or incoherent set before writing to it, and finish an interrupted
+	// rotate-kek the manifest proves finishable, exactly as server boot does.
+	if err := service.ReconcileKeySet(); err != nil {
+		closeGormDB(db)
+		service.Shutdown()
+		return nil, nil, fmt.Errorf("refusing to %s: %w", what, err)
+	}
 	// Heal an interrupted PRIOR rotation BEFORE Initialize, so Initialize loads the
 	// correct (possibly just-promoted) active DEK: promote dek.key.pending when the
 	// redo marker says the sweep committed, discard it otherwise.

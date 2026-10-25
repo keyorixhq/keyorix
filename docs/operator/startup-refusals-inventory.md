@@ -149,7 +149,7 @@ Not searched (so not in the list):
 | R | startup/validation.go explicitFirstBootRefusal | `no key material exists` (explicit `enable_file_permission_check` on a brand-new install) |
 | C | main.go enforceKeyFilePermissions | `key material is readable beyond its owner`, `key material is owned by an account the server does not trust` (#3410) ... `refusing to start (chmod 600 and chown` |
 | C | startup/validation.go:456-515 | `KEK salt path is unsafe`, `DEK path is unsafe`, `KEK salt file not found`, `has invalid size`, `wrapped DEK file not found`, `is too small`, `unsafe or relative database path`, `cannot open database file` |
-| C | keyfiles/consistency.go:282, 329 | `key material is an incomplete set`, `looks mixed from different generations` |
+| C | keyfiles/consistency.go (InspectKeySet) | `key material is an incomplete set`, `key material does not match the key-set manifest` |
 | R | main.go:556 / exclusive_lock.go:89 | `another process already holds the DEK lock` |
 | R | main.go:512 | `no master passphrase is available` |
 | R | keymanager_lifecycle.go unwrapDEK, main.go initializeEncryption | `wrong passphrase or corrupted key file`, `KEK derivation from the master passphrase read from` (names the source) |
