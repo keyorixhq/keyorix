@@ -236,12 +236,20 @@ func validHash(h string) bool {
 	return err == nil
 }
 
+func encodeManifest(m *Manifest) ([]byte, error) {
+	data, err := json.Marshal(m, json.Deterministic(true))
+	if err != nil {
+		return nil, fmt.Errorf("encode key-set manifest: %w", err)
+	}
+	return data, nil
+}
+
 // writeManifest replaces the manifest at path atomically through fs.
 func writeManifest(path string, m *Manifest, fs ManifestFS) error {
 	fs = fs.withDefaults()
-	data, err := json.Marshal(m, json.Deterministic(true))
+	data, err := encodeManifest(m)
 	if err != nil {
-		return fmt.Errorf("encode key-set manifest: %w", err)
+		return err
 	}
 	dir, name := filepath.Dir(path), filepath.Base(path)
 	if err := fs.WriteSync(dir, name+".pending", data); err != nil {
@@ -382,9 +390,20 @@ func (w *SetWriter) CommitManifest(op string, files map[string][]byte) error {
 	if w == nil {
 		return nil
 	}
-	m, err := w.load()
+	m, err := w.committed(op, files)
 	if err != nil {
 		return err
+	}
+	return writeManifest(w.manifestPath, m, w.fs)
+}
+
+// committed is the manifest CommitManifest writes: the current one (adopted
+// from disk when there is none) with files' entries replaced at the next
+// generation and any staged intent cleared.
+func (w *SetWriter) committed(op string, files map[string][]byte) (*Manifest, error) {
+	m, err := w.load()
+	if err != nil {
+		return nil, err
 	}
 	gen := m.Generation + 1
 	for k, h := range w.hashes(files) {
@@ -392,7 +411,27 @@ func (w *SetWriter) CommitManifest(op string, files map[string][]byte) error {
 	}
 	m.Generation = gen
 	m.Next = nil
-	return writeManifest(w.manifestPath, m, w.fs)
+	return m, nil
+}
+
+// PlanCommit returns the encoded manifest CommitManifest(op, files) would
+// write, without writing anything. For a writer whose own commit protocol
+// installs files together, so the manifest has to be installed as one of them
+// instead of beside them: `admin restore` stages these bytes as
+// <manifest>.restoring-* next to the staged key files, records it in the
+// restore journal with them, and the journal's install renames it into place
+// with them (server/admin/restore_commit.go). A two-phase StageManifest /
+// CommitManifest there would be a second commit protocol over the same files,
+// one that could disagree with the journal about whether the restore happened.
+func (w *SetWriter) PlanCommit(op string, files map[string][]byte) ([]byte, error) {
+	if w == nil {
+		return nil, nil
+	}
+	m, err := w.committed(op, files)
+	if err != nil {
+		return nil, err
+	}
+	return encodeManifest(m)
 }
 
 // CommitManifestFromDisk is CommitManifest for files op has just produced on disk (first-boot

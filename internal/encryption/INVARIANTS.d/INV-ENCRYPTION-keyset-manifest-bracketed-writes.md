@@ -12,7 +12,17 @@
   finishable (each old file's `.pending` holds the staged content: renamed into place, audit
   event) or incoherent (refused). First boot commits the whole set from disk; a writer on a
   pre-manifest install adopts the current set first; boot adopts a complete set with no or an
-  unparseable manifest (WARN + `encryption.keyset_manifest_adopted`). Why: #2900 — presence
+  unparseable manifest (WARN + `encryption.keyset_manifest_adopted`). One writer is not
+  bracketed, by design: `admin restore` already installs its key files through the restore
+  journal (`internal/restorejournal`, `server/admin/restore_commit.go`), so it stages the
+  manifest that records them (`SetWriter.PlanCommit`, no `Next` intent) as one more entry of
+  that journal, after the key files (`prepareRestoredKeySet`); the journal's install, its
+  `--recover` roll-forward and roll-back move the manifest with the key files, and while a
+  journal exists the server and every key writer refuse with the journal's message before
+  any manifest check runs (`TestAdminRestore_KilledMidInstall_RefusalsAndRecovery`,
+  `TestAdminRestore_Overwrite_KillPoints`,
+  `server:TestVerifyKeyFileSetConsistency_JournalRefusalComesBeforeManifestMismatch`).
+  Why: #2900 — presence
   and mtimes cannot tell these states apart. Guard:
   `internal/keyfiles/manifest_writers_structural_test.go:TestEveryKeyMaterialWriterUpdatesTheManifest`
   (every function in internal/encryption, internal/encryptionops, server/admin using a
