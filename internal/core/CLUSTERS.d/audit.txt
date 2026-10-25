@@ -3,3 +3,4 @@
 audit*.go
 mutation_audit_tx.go
 config_change_audit.go
+crypto_inventory_audit.go
