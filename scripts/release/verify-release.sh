@@ -33,7 +33,9 @@
 # Output: one "PASS|FAIL|SKIP  <check-id>  <message>" line per check on stdout,
 # progress on stderr. Exit 0 = every check passed; 1 = at least one FAIL;
 # 2 = no FAIL but some checks were SKIPped (incomplete, NOT a pass); 3 = usage or
-# missing required tool.
+# missing required tool. --allow-skip turns 2 into 0 only when every cosign signature
+# check ran: a SKIPped signature check always exits 2, because the openssl checks
+# alone accept a self-signed certificate (they prove nothing about who signed).
 set -u -o pipefail
 export LC_ALL=C
 
@@ -63,9 +65,14 @@ CURL_TIMEOUT=${KVR_CURL_TIMEOUT:-900} # per request; the binaries are tens of MB
 N_PASS=0
 N_FAIL=0
 N_SKIP=0
+N_SIG_SKIP=0 # SKIPped cosign signature checks: --allow-skip never covers these
 HTTP_STATUS=000
+# Mirror read credentials. They are sent ONLY by the registry client (reg_discover,
+# reg_token, reg_get), which sets HTTP_USERPWD locally; every other request (GitHub
+# release downloads, api.github.com) goes out without them.
+REG_USERPWD=""
+if [ -n "${REGISTRY_USER:-}" ]; then REG_USERPWD="${REGISTRY_USER}:${REGISTRY_PASSWORD:-}"; fi
 HTTP_USERPWD=""
-if [ -n "${REGISTRY_USER:-}" ]; then HTTP_USERPWD="${REGISTRY_USER}:${REGISTRY_PASSWORD:-}"; fi
 
 usage() {
   cat <<'EOF'
@@ -85,8 +92,10 @@ Options:
                         instead of downloading them
   --offline             do not call api.github.com (CI-run and attestation checks
                         become SKIP); implied nowhere, pass it explicitly
-  --commit SHA          commit the tag points to (needed for the sha-<7> tag check
-                        with --offline)
+  --commit SHA          commit the tag points to (full 40-character SHA; needed for
+                        the sha-<7> tag check with --offline). Online it must match
+                        the tag's commit on GitHub (FAIL otherwise); offline it is
+                        only ASSERTED, so source.commit is a SKIP
   --skip-binaries       do not download/hash the 14 binaries (SBOMs still checked)
   --skip-images         do not check images
   --skip-charts         do not check Helm charts
@@ -95,7 +104,9 @@ Options:
                         "--insecure-ignore-tlog=true" makes checksums.txt
                         verifiable without network today)
   --no-cosign|--no-gh   behave as if the tool were not installed
-  --allow-skip          exit 0 even if some checks were SKIPped (never hides FAIL)
+  --allow-skip          exit 0 even if some checks were SKIPped (never hides FAIL,
+                        and never covers a SKIPped cosign signature check: without
+                        cosign the result is always INCOMPLETE, exit 2)
   --self-test           run the built-in tests (fixtures; no network)
   -h, --help            this text
 
@@ -124,6 +135,9 @@ emit() { # STATUS ID MESSAGE
 pass() { emit PASS "$1" "$2"; }
 fail() { emit FAIL "$1" "$2"; }
 skip() { emit SKIP "$1" "$2"; }
+# sig_skip: a cosign signature check that did not run. Counted apart, because nothing
+# else in this script proves who signed the release (see summary and --allow-skip).
+sig_skip() { N_SIG_SKIP=$((N_SIG_SKIP + 1)); emit SKIP "$1" "$2"; }
 detail() { # indented follow-up lines for the previous result, from a file
   [ -s "$1" ] || return 0
   head -n "${2:-6}" "$1" | sed 's/^/        /'
@@ -158,7 +172,7 @@ cosign_reads_referrers() { [ -z "$COSIGN_MAJOR" ] || [ "$COSIGN_MAJOR" -ge "$COS
 # cosign_too_old ID: the precondition message for an image/chart signature check
 cosign_too_old() {
   COSIGN_OLD_SKIPS=$((COSIGN_OLD_SKIPS + 1))
-  skip "$1" "PRECONDITION NOT MET, not a verification failure: cosign $COSIGN_VERSION is too old to see referrer signatures (images and charts are signed with cosign v3). Install cosign >= 3 and re-run."
+  sig_skip "$1" "PRECONDITION NOT MET, not a verification failure: cosign $COSIGN_VERSION is too old to see referrer signatures (images and charts are signed with cosign v3). Install cosign >= 3 and re-run."
 }
 have_gh_auth() { [ "$NO_GH" = 0 ] && have gh && gh auth status >/dev/null 2>&1; }
 
@@ -213,7 +227,6 @@ fixture_get() {
 }
 
 gh_get() { # API-PATH OUT -> 0 on 200. Never sends registry credentials.
-  local HTTP_USERPWD=""
   local tok=${GITHUB_TOKEN:-${GH_TOKEN:-}}
   http_get "$GH_API/$1" "$2" "application/vnd.github+json" "$tok"
 }
@@ -243,7 +256,7 @@ MANIFEST_ACCEPT="application/vnd.oci.image.index.v1+json,application/vnd.oci.ima
 
 reg_discover() {
   [ -n "$REG_MODE" ] && return 0
-  local hdr ch
+  local hdr ch HTTP_USERPWD=$REG_USERPWD
   if http_get "$SCHEME://$REG_HOST/v2/" "$WORK/v2.root"; then
     REG_MODE=none
     return 0
@@ -266,7 +279,7 @@ reg_discover() {
 }
 
 reg_token() { # REPO-PATH -> bearer token on stdout (cached)
-  local cache url
+  local cache url HTTP_USERPWD=$REG_USERPWD
   cache="$WORK/tok.$(printf '%s' "$1" | tr '/:' '__')"
   if [ ! -s "$cache" ]; then
     url="${REG_REALM}?service=${REG_SERVICE}&scope=repository:$1:pull"
@@ -279,7 +292,7 @@ reg_token() { # REPO-PATH -> bearer token on stdout (cached)
 
 # reg_get REPO-PATH KIND(manifests|blobs) REF OUT [ACCEPT] -> 0 on HTTP 200
 reg_get() {
-  local tok=""
+  local tok="" HTTP_USERPWD=$REG_USERPWD
   reg_discover
   case $REG_MODE in
     none | basic) ;;
@@ -350,21 +363,33 @@ fetch_asset() { # NAME -> 0 if now present in $ASSETS_DIR
 
 check_source() {
   local sha=""
-  if [ -n "$COMMIT" ]; then
-    SHA=$COMMIT
-    pass source.commit "tag $TAG -> $SHA (given with --commit)"
-    return
-  fi
   if [ "$OFFLINE" = 1 ]; then
-    skip source.commit "--offline and no --commit: CI-run, provenance and sha-tag checks cannot run"
+    if [ -n "$COMMIT" ]; then
+      # nothing here can check the value: it is the user's assertion, so the sha-tag
+      # checks use it but source.commit is not a PASS
+      SHA=$COMMIT
+      skip source.commit "ASSERTED, not verified: tag $TAG -> $SHA was given with --commit and --offline cannot check it (compare with the source.commit line of a connected run)"
+    else
+      skip source.commit "--offline and no --commit: CI-run, provenance and sha-tag checks cannot run"
+    fi
     return
   fi
   if gh_get "repos/$REPO/commits/$TAG" "$WORK/commit.json"; then
     sha=$(jq -r '.sha // empty' "$WORK/commit.json")
   fi
-  if printf '%s\n' "$sha" | grep -Eq '^[0-9a-f]{40}$'; then
+  if [[ $sha =~ ^[0-9a-f]{40}$ ]]; then
+    if [ -n "$COMMIT" ] && [ "$COMMIT" != "$sha" ]; then
+      # the online lookup wins: the CI-run and sha-tag checks must not search by a wrong SHA
+      SHA=$sha
+      fail source.commit "--commit $COMMIT does not match the commit tag $TAG points to in $REPO ($sha)"
+      return
+    fi
     SHA=$sha
-    pass source.commit "tag $TAG -> $SHA"
+    if [ -n "$COMMIT" ]; then
+      pass source.commit "tag $TAG -> $SHA (matches --commit)"
+    else
+      pass source.commit "tag $TAG -> $SHA"
+    fi
   elif gh_limited "$WORK/commit.json"; then
     gh_limited_skip source.commit
   else
@@ -493,7 +518,7 @@ check_signature() {
       detail "$WORK/cosign.err" 4
     fi
   else
-    skip release.signature.cosign "cosign not installed (or --no-cosign): signature chain/Rekor NOT verified. Run: cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig --certificate-identity $want_id --certificate-oidc-issuer $ISSUER checksums.txt"
+    sig_skip release.signature.cosign "cosign not installed (or --no-cosign): signature chain/Rekor NOT verified. Run: cosign verify-blob --certificate checksums.txt.pem --signature checksums.txt.sig --certificate-identity $want_id --certificate-oidc-issuer $ISSUER checksums.txt"
   fi
 
   if ! have openssl; then
@@ -501,9 +526,11 @@ check_signature() {
     skip release.signature.offline "openssl not installed: raw signature not checked"
     return 0
   fi
-  # Partial checks that need no network or sigstore root: they prove WHO the
-  # certificate names and that the signature matches the certificate's key. They
-  # do not prove the certificate chains to Fulcio or was logged in Rekor (cosign does).
+  # Partial checks that need no network or sigstore root: they show what the
+  # certificate CLAIMS and that the signature matches the certificate's key. They do
+  # not prove who signed: anyone can make a self-signed certificate with the right SAN
+  # and issuer extension. Only cosign (chain to Fulcio, Rekor entry) proves that, so
+  # these two never stand in for release.signature.cosign (see sig_skip/summary).
   if grep -q 'BEGIN CERTIFICATE' "$ASSETS_DIR/checksums.txt.pem"; then
     cp "$ASSETS_DIR/checksums.txt.pem" "$WORK/cert.pem"
   else
@@ -524,12 +551,12 @@ check_signature() {
   elif ! printf '%s\n' "$iss_line" | grep -qF "$ISSUER"; then
     fail release.signature.cert "certificate OIDC issuer is '$(printf '%s' "$iss_line" | tr -d '[:space:]')', expected $ISSUER"
   else
-    pass release.signature.cert "certificate names $san, issuer $ISSUER (partial: chain/Rekor need cosign)"
+    pass release.signature.cert "certificate names $san, issuer $ISSUER (PARTIAL, consistency only: a self-signed certificate passes this; only cosign proves who signed)"
   fi
   if openssl x509 -in "$WORK/cert.pem" -pubkey -noout >"$WORK/pub.pem" 2>/dev/null &&
     b64d "$ASSETS_DIR/checksums.txt.sig" >"$WORK/sig.der" 2>/dev/null &&
     openssl dgst -sha256 -verify "$WORK/pub.pem" -signature "$WORK/sig.der" "$ASSETS_DIR/checksums.txt" >"$WORK/dgst.out" 2>&1; then
-    pass release.signature.offline "checksums.txt.sig matches the certificate key over checksums.txt (partial: chain/Rekor need cosign)"
+    pass release.signature.offline "checksums.txt.sig matches the certificate key over checksums.txt (PARTIAL, consistency only: proves nothing about who signed without cosign)"
   else
     fail release.signature.offline "checksums.txt.sig does NOT verify against the certificate key - checksums.txt was altered or the signature is wrong"
     detail "$WORK/dgst.out" 2
@@ -722,6 +749,13 @@ check_image() { # name repo suffix platforms
       bad_prov="$bad_prov ${p:7:12}:no-attestation-manifest"
       continue
     fi
+    # the index (signed) names the attestation manifest by digest: the bytes must hash to it,
+    # or a mirror could swap the SBOM/provenance under a correctly signed index
+    if [ "sha256:$(sha256_of "$am")" != "$adig" ]; then
+      bad_sbom="$bad_sbom ${p:7:12}:attestation-manifest-digest-mismatch"
+      bad_prov="$bad_prov ${p:7:12}:attestation-manifest-digest-mismatch"
+      continue
+    fi
     for atype in "$SBOM_PREDICATE" "$SLSA_PREDICATE"; do
       lay=$(att_layer_digest "$am" "$atype")
       if [ -z "$lay" ] || ! reg_get "$path" blobs "$lay" "$am.blob" ""; then
@@ -752,7 +786,7 @@ check_image() { # name repo suffix platforms
       detail "$WORK/cosign.err" 4
     fi
   else
-    skip "$id.signature" "cosign not installed (or --no-cosign; needs cosign >= 3). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/docker-publish.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
+    sig_skip "$id.signature" "cosign not installed (or --no-cosign; needs cosign >= 3). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/docker-publish.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
   fi
 
   # GitHub SLSA attestation for the image digest (digest-addressed, so valid for mirrors too)
@@ -816,7 +850,7 @@ check_chart() { # chart
       detail "$WORK/cosign.err" 4
     fi
   else
-    skip "$id.signature" "cosign not installed (or --no-cosign; needs cosign >= 3). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
+    sig_skip "$id.signature" "cosign not installed (or --no-cosign; needs cosign >= 3). Run: cosign verify --certificate-identity https://github.com/$REPO/.github/workflows/release.yml@refs/tags/$TAG --certificate-oidc-issuer $ISSUER $ref@$digest"
   fi
 }
 
@@ -877,6 +911,12 @@ summary() {
   fi
   if [ "$N_SKIP" -gt 0 ]; then
     printf 'RESULT: INCOMPLETE - %d check(s) did not run (see SKIP lines); this is not a pass.\n' "$N_SKIP"
+    if [ "$N_SIG_SKIP" -gt 0 ]; then
+      # never absorbed by --allow-skip: without cosign nothing proves who signed
+      printf 'SIGNATURES NOT VERIFIED: %d cosign signature check(s) did not run, so nothing here proves who signed this release\n' "$N_SIG_SKIP"
+      printf '                         (the openssl checks accept a self-signed certificate). --allow-skip does not cover this; exit 2.\n'
+      return 2
+    fi
     [ "$ALLOW_SKIP" = 1 ] && return 0
     return 2
   fi
@@ -893,7 +933,7 @@ st_cert() { # DIR SAN -> DIR/key.pem DIR/cert.pem
   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -keyout "$1/key.pem" -out "$1/cert.pem" \
     -subj "/CN=selftest" -days 2 \
     -addext "subjectAltName=critical,URI:$2" \
-    -addext "1.3.6.1.4.1.57264.1.1=ASN1:UTF8String:$ISSUER" >/dev/null 2>&1
+    -addext "1.3.6.1.4.1.57264.1.1=ASN1:UTF8String:${ST_ISSUER:-$ISSUER}" >/dev/null 2>&1
 }
 
 st_blob() { # FIXDIR FILE-CONTENT-PATH -> prints digest; stores as blob-<hex>
@@ -903,7 +943,7 @@ st_blob() { # FIXDIR FILE-CONTENT-PATH -> prints digest; stores as blob-<hex>
   printf 'sha256:%s' "$d"
 }
 
-st_world() { # DIR  (env: ST_SAN, ST_BAD_APPVERSION, ST_NO_TAG, ST_SBOM_TYPE)
+st_world() { # DIR  (env: ST_SAN, ST_ISSUER, ST_BAD_APPVERSION, ST_NO_TAG, ST_SBOM_TYPE)
   local W=$1 R=selftest/keyorix T=v9.9.9 V=9.9.9 S=0123456789abcdef0123456789abcdef01234567
   local F="$W/fx" A="$W/assets" n oa b
   local RB
@@ -1050,10 +1090,17 @@ st_run() { # NAME EXPECTED-EXIT [args...]  (world in $WORK/st/$NAME)
 # fake cosign. `cosign version` prints GitVersion: $FAKE_COSIGN_VERSION (default v3.0.6, the
 # real format). Like the real thing, a cosign older than v3 verifies blobs but finds no signature
 # on an image or chart (they are OCI referrers); FAKE_COSIGN=fail makes every verification fail.
+# It is strict about what it is asked, like the real cosign: the synthetic release was "signed"
+# by the selftest/keyorix workflows at v9.9.9 (release.yml for checksums.txt and the charts,
+# docker-publish.yml for the images) with OIDC issuer $FAKE_COSIGN_SIGNER_ISSUER (default
+# GitHub's). A verification that names another identity or issuer, verifies an image or chart
+# by tag instead of @sha256 digest, or lacks --certificate/--signature for the blob, fails.
+# Every call is appended to $FAKE_COSIGN_LOG when that is set.
 st_fake_cosign() {
   mkdir -p "$WORK/st/bin"
   cat >"$WORK/st/bin/cosign" <<'EOF'
 #!/bin/sh
+[ -n "${FAKE_COSIGN_LOG:-}" ] && printf '%s\n' "$*" >>"$FAKE_COSIGN_LOG"
 if [ "$1" = version ]; then
   [ -n "${FAKE_COSIGN_VERSION-v3.0.6}" ] && echo "GitVersion:    ${FAKE_COSIGN_VERSION-v3.0.6}"
   exit 0
@@ -1070,9 +1117,95 @@ case "${FAKE_COSIGN_VERSION-v3.0.6}" in
     fi
     ;;
 esac
+sub=$1
+shift
+id="" iss="" cert="" sig="" last=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --certificate-identity) id=$2; shift 2 ;;
+    --certificate-oidc-issuer) iss=$2; shift 2 ;;
+    --certificate) cert=$2; shift 2 ;;
+    --signature) sig=$2; shift 2 ;;
+    *) last=$1; shift ;;
+  esac
+done
+wf=https://github.com/selftest/keyorix/.github/workflows
+case $sub in
+  verify-blob)
+    if [ ! -s "$cert" ] || [ ! -s "$sig" ] || [ ! -f "$last" ]; then
+      echo "Error: fake cosign: verify-blob needs --certificate, --signature and the blob" >&2
+      exit 1
+    fi
+    want="$wf/release.yml@refs/tags/v9.9.9"
+    ;;
+  verify)
+    d=${last##*@sha256:}
+    case $d in
+      "$last" | *[!0-9a-f]*) echo "Error: fake cosign: not verified by digest: $last" >&2; exit 1 ;;
+    esac
+    if [ "${#d}" != 64 ]; then echo "Error: fake cosign: not verified by digest: $last" >&2; exit 1; fi
+    case $last in
+      */charts/*) want="$wf/release.yml@refs/tags/v9.9.9" ;;
+      *) want="$wf/docker-publish.yml@refs/tags/v9.9.9" ;;
+    esac
+    ;;
+  *) echo "Error: fake cosign: unexpected subcommand $sub" >&2; exit 1 ;;
+esac
+if [ "$id" != "$want" ]; then
+  echo "Error: none of the expected identities matched what was in the certificate (asked '$id', signed by '$want')" >&2
+  exit 1
+fi
+if [ "$iss" != "${FAKE_COSIGN_SIGNER_ISSUER:-https://token.actions.githubusercontent.com}" ]; then
+  echo "Error: none of the expected issuers matched (asked '$iss')" >&2
+  exit 1
+fi
 exit 0
 EOF
   chmod +x "$WORK/st/bin/cosign"
+}
+
+# fake curl for the credential-routing test: records every request (argv, and the -K -
+# stdin config where the script puts credentials) in $FAKE_CURL_LOG, answers 200 on a
+# registry's /v2/ and 404 everywhere else.
+st_fake_curl() {
+  mkdir -p "$WORK/st/curlbin"
+  cat >"$WORK/st/curlbin/curl" <<'EOF'
+#!/bin/sh
+log=${FAKE_CURL_LOG:?}
+printf 'ARGV %s\n' "$*" >>"$log"
+out="" hdr="" cfg=0 url=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) out=$2; shift 2 ;;
+    -D) hdr=$2; shift 2 ;;
+    -K) [ "$2" = - ] && cfg=1; shift 2 ;;
+    -m | -w | -H | --proto | --retry | --retry-delay) shift 2 ;;
+    *) url=$1; shift ;;
+  esac
+done
+creds=none
+[ "$cfg" = 1 ] && creds=$(tr '\n' ' ')
+printf 'URL %s\tCONFIG %s\n' "$url" "$creds" >>"$log"
+[ -n "$out" ] && : >"$out"
+[ -n "$hdr" ] && : >"$hdr"
+case $url in
+  */v2/) printf 200 ;;
+  *) printf 404 ;;
+esac
+exit 0
+EOF
+  chmod +x "$WORK/st/curlbin/curl"
+}
+
+st_atleast() { # FILE REGEX MIN
+  local got
+  got=$(grep -Ec "$2" "$1")
+  if [ "$got" -ge "$3" ]; then
+    ST_OK=$((ST_OK + 1))
+  else
+    ST_BAD=$((ST_BAD + 1))
+    printf '  SELF-TEST MISMATCH: %s matched %s lines in %s, expected at least %s\n' "$2" "$got" "$1" "$3" >&2
+  fi
 }
 
 self_test() {
@@ -1084,7 +1217,7 @@ self_test() {
   local base=(--repo selftest/keyorix --registry registry.test/keyorix --no-gh)
   local id n
 
-  log "self-test 1/11: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
+  log "self-test 1/15: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
   st_world "$WORK/st/ok"
   PATH="$WORK/st/bin:$PATH" st_run ok 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   for id in source.commit release.assets release.checksums.listing release.checksums.sboms release.checksums.binaries release.signature.cosign release.signature.cert release.signature.offline release.sbom release.provenance ci.release-run ci.docker-publish-run image.server.tag image.server.shatag image.server.platforms image.server.sbom image.server.buildkit-provenance image.server.signature image.server.slsa image.server-airgap.tag image.k8s-sync.signature image.operator.slsa image.mcp.platforms image.web.platforms chart.keyorix.version chart.keyorix-operator.signature; do
@@ -1097,7 +1230,7 @@ self_test() {
   PATH="$WORK/st/bin:$PATH" st_run ok-allow 0 "${base[@]}" --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 2/11: one altered binary, one missing SBOM, cosign rejecting everything"
+  log "self-test 2/15: one altered binary, one missing SBOM, cosign rejecting everything"
   st_world "$WORK/st/mut"
   printf 'tampered\n' >>"$WORK/st/mut/assets/keyorix_linux_amd64"
   rm "$WORK/st/mut/assets/keyorix-migrate_darwin_arm64_sbom.cdx.json"
@@ -1117,7 +1250,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL chart.keyorix.signature
   st_expect "$ST_OUT" PASS image.web.tag
 
-  log "self-test 3/11: checksums.txt altered after signing"
+  log "self-test 3/15: checksums.txt altered after signing"
   st_world "$WORK/st/sum"
   awk '{ if ($2 == "keyorix_darwin_arm64") $1 = "0000000000000000000000000000000000000000000000000000000000000000"; print $1 "  " $2 }' "$WORK/st/sum/assets/checksums.txt" >"$WORK/st/sum/c.txt"
   mv "$WORK/st/sum/c.txt" "$WORK/st/sum/assets/checksums.txt"
@@ -1126,13 +1259,13 @@ self_test() {
   st_expect "$ST_OUT" FAIL release.checksums.binaries
   st_expect "$ST_OUT" FAIL release.provenance
 
-  log "self-test 4/11: certificate names a different workflow"
+  log "self-test 4/15: certificate names a different workflow"
   ST_SAN="https://github.com/selftest/keyorix/.github/workflows/evil.yml@refs/tags/v9.9.9" st_world "$WORK/st/san"
   PATH="$WORK/st/bin:$PATH" st_run san 1 "${base[@]}" --assets-dir "$WORK/st/san/assets" --fixtures "$WORK/st/san/fx" v9.9.9
   st_expect "$ST_OUT" FAIL release.signature.cert
   st_expect "$ST_OUT" PASS release.signature.offline
 
-  log "self-test 5/11: chart appVersion wrong, one image tag missing"
+  log "self-test 5/15: chart appVersion wrong, one image tag missing"
   ST_BAD_APPVERSION=9.9.8 ST_NO_TAG=web st_world "$WORK/st/chart"
   PATH="$WORK/st/bin:$PATH" st_run chart 1 "${base[@]}" --assets-dir "$WORK/st/chart/assets" --fixtures "$WORK/st/chart/fx" v9.9.9
   st_expect "$ST_OUT" FAIL chart.keyorix.version
@@ -1140,7 +1273,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL image.web.tag
   st_expect "$ST_OUT" PASS image.server.tag
 
-  log "self-test 6/11: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
+  log "self-test 6/15: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
   st_world "$WORK/st/skip"
   printf 'https://registry.test/v2/\t-\t000\t\n' >"$WORK/st/skip/fx/index.tsv.new"
   awk -F'\t' '$1 != "https://registry.test/v2/"' "$WORK/st/skip/fx/index.tsv" >>"$WORK/st/skip/fx/index.tsv.new"
@@ -1152,7 +1285,7 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.offline
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 7/11: replay of GitHub-side data copied from the real v0.96.3 release"
+  log "self-test 7/15: replay of GitHub-side data copied from the real v0.96.3 release"
   local real
   real="$(dirname "$SELF")/testdata/real-v0.96.3"
   if [ -d "$real" ]; then
@@ -1170,7 +1303,7 @@ self_test() {
     ST_BAD=$((ST_BAD + 1))
   fi
 
-  log "self-test 8/11: cosign v2 verifies checksums.txt but cannot see referrer signatures: SKIP + precondition, never FAIL"
+  log "self-test 8/15: cosign v2 verifies checksums.txt but cannot see referrer signatures: SKIP + precondition, never FAIL"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v2.5.2 st_run cosign2 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_expect "$ST_OUT" SKIP image.server.signature
@@ -1199,14 +1332,14 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_count "$ST_OUT" 'PRECONDITION NOT MET' 0
 
-  log "self-test 9/11: unrecognised cosign version string (dev build, no output): the checks are attempted"
+  log "self-test 9/15: unrecognised cosign version string (dev build, no output): the checks are attempted"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=devel st_run cosigndev 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS image.server.signature
   st_expect "$ST_OUT" PASS chart.keyorix.signature
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION='' st_run cosignnone 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS image.web.signature
 
-  log "self-test 10/11: BuildKit attestation layers as the real registry serves them"
+  log "self-test 10/15: BuildKit attestation layers as the real registry serves them"
   local RB want got
   RB="$(dirname "$SELF")/testdata/real-buildkit-v0.96.3"
   # verbatim copy of the real v0.96.3 keyorix-k8s-sync attestation manifest (sha256:862b7c3f...)
@@ -1224,7 +1357,7 @@ self_test() {
   st_expect "$ST_OUT" PASS image.server.buildkit-provenance
   st_count "$ST_OUT" 'no-sbom-layer\(layer types: https://spdx.dev/Spdx,https://slsa.dev/provenance/v1\)' 6
 
-  log "self-test 11/11: GitHub API rate limit (HTTP 403 'API rate limit exceeded') is INCOMPLETE, never FAIL"
+  log "self-test 11/15: GitHub API rate limit (HTTP 403 'API rate limit exceeded') is INCOMPLETE, never FAIL"
   st_world "$WORK/st/rate"
   printf '{"message":"API rate limit exceeded for 203.0.113.7. (But here'"'"'s the good news: Authenticated requests get a higher rate limit.)","documentation_url":"https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting"}\n' >"$WORK/st/rate/fx/ratelimit.json"
   awk -F'\t' -v OFS='\t' '$1 ~ /^https:\/\/api\.github\.com\// { $2 = "ratelimit.json"; $3 = "403" } { print }' "$WORK/st/rate/fx/index.tsv" >"$WORK/st/rate/fx/index.tsv.new"
@@ -1239,6 +1372,102 @@ self_test() {
   st_count "$ST_OUT" '^FAIL ' 0
   st_count "$ST_OUT" 'GitHub API rate limit reached \(HTTP 403\).*NOT a verification failure' 8
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
+
+  log "self-test 12/15: --allow-skip never covers a SKIPped cosign signature check (a self-signed forgery must not exit 0)"
+  # the synthetic release IS a forgery as far as openssl can tell: a self-signed certificate
+  # with the right SAN and issuer extension, a matching signature and checksums
+  st_run nocosign-allow 2 "${base[@]}" --no-cosign --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" SKIP release.signature.cosign
+  st_expect "$ST_OUT" PASS release.signature.cert
+  st_expect "$ST_OUT" PASS release.signature.offline
+  st_expect "$ST_OUT" SKIP image.server.signature
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" '^SIGNATURES NOT VERIFIED: 10 cosign signature check' 1
+  st_count "$ST_OUT" 'PARTIAL, consistency only' 2
+  # the documented air-gap recipe, plus --allow-skip
+  st_run airgap-allow 2 "${base[@]}" --offline --no-cosign --allow-skip --commit 0123456789abcdef0123456789abcdef01234567 --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" SKIP release.signature.cosign
+  st_expect "$ST_OUT" PASS release.checksums.binaries
+  st_count "$ST_OUT" '^SIGNATURES NOT VERIFIED' 1
+  st_run airgap-allow-noimg 2 "${base[@]}" --offline --no-cosign --allow-skip --skip-images --skip-charts --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^SIGNATURES NOT VERIFIED: 1 cosign signature check' 1
+  # cosign v2 cannot see the image/chart signatures: their SKIPs are not covered either
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v2.5.2 st_run cosign2-allow 2 "${base[@]}" --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.signature.cosign
+  st_count "$ST_OUT" '^SIGNATURES NOT VERIFIED: 9 cosign signature check' 1
+  # control: a non-signature SKIP only (--no-gh) is still covered (ok-allow in 1/15 exits 0 too)
+  PATH="$WORK/st/bin:$PATH" st_run allow-control 0 "${base[@]}" --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" 'SIGNATURES NOT VERIFIED' 0
+
+  log "self-test 13/15: cosign is asked for the pinned identity, issuer and @digest; wrong issuer and missing .sig/.pem FAIL"
+  : >"$WORK/st/cosign.log"
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_LOG="$WORK/st/cosign.log" st_run cosign-args 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$WORK/st/cosign.log" '^verify-blob --certificate [^ ]+/checksums\.txt\.pem --signature [^ ]+/checksums\.txt\.sig --certificate-identity https://github\.com/selftest/keyorix/\.github/workflows/release\.yml@refs/tags/v9\.9\.9 --certificate-oidc-issuer https://token\.actions\.githubusercontent\.com [^ ]+/checksums\.txt$' 1
+  st_count "$WORK/st/cosign.log" '^verify --certificate-identity https://github\.com/selftest/keyorix/\.github/workflows/docker-publish\.yml@refs/tags/v9\.9\.9 --certificate-oidc-issuer https://token\.actions\.githubusercontent\.com registry\.test/keyorix/keyorix-[a-z0-9-]+@sha256:[0-9a-f]{64}$' 6
+  st_count "$WORK/st/cosign.log" '^verify --certificate-identity https://github\.com/selftest/keyorix/\.github/workflows/release\.yml@refs/tags/v9\.9\.9 --certificate-oidc-issuer https://token\.actions\.githubusercontent\.com registry\.test/keyorix/charts/keyorix[a-z0-9-]*@sha256:[0-9a-f]{64}$' 3
+  st_count "$WORK/st/cosign.log" '^verify' 10
+  # signed under another OIDC issuer: cosign refuses, every signature check FAILs
+  PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_SIGNER_ISSUER=https://accounts.google.com st_run issuer 1 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.signature.cosign
+  st_expect "$ST_OUT" FAIL image.server.signature
+  st_expect "$ST_OUT" FAIL chart.keyorix.signature
+  # a certificate whose issuer extension names another issuer: the partial check FAILs too
+  ST_ISSUER=https://accounts.google.com st_world "$WORK/st/certiss"
+  st_run certiss 1 "${base[@]}" --no-cosign --allow-skip --assets-dir "$WORK/st/certiss/assets" --fixtures "$WORK/st/certiss/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.signature.cert
+  # .sig or .pem missing: FAIL, also without cosign and with --allow-skip
+  st_world "$WORK/st/nosig"
+  rm "$WORK/st/nosig/assets/checksums.txt.sig"
+  PATH="$WORK/st/bin:$PATH" st_run nosig 1 "${base[@]}" --assets-dir "$WORK/st/nosig/assets" --fixtures "$WORK/st/nosig/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.signature.files
+  st_run nosig-allow 1 "${base[@]}" --no-cosign --allow-skip --assets-dir "$WORK/st/nosig/assets" --fixtures "$WORK/st/nosig/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.signature.files
+  st_world "$WORK/st/nopem"
+  rm "$WORK/st/nopem/assets/checksums.txt.pem"
+  PATH="$WORK/st/bin:$PATH" st_run nopem 1 "${base[@]}" --assets-dir "$WORK/st/nopem/assets" --fixtures "$WORK/st/nopem/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.signature.files
+  st_count "$ST_OUT" '^PASS +release\.signature\.cosign' 0
+
+  log "self-test 14/15: REGISTRY_USER/REGISTRY_PASSWORD go to the registry only, never to github.com or api.github.com"
+  st_fake_curl
+  : >"$WORK/st/curl.log"
+  PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=MIRROR-SECRET \
+    st_run creds 1 --repo selftest/keyorix --registry registry.test/keyorix --no-gh --no-cosign --skip-binaries v9.9.9
+  # the requests happened (not vacuous) ...
+  st_atleast "$WORK/st/curl.log" '^URL https://github\.com/selftest/keyorix/releases/download/v9\.9\.9/checksums\.txt(\.sig|\.pem)?	' 3
+  st_atleast "$WORK/st/curl.log" '^URL https://api\.github\.com/' 1
+  # ... the registry got the credentials (the stub records them) ...
+  st_atleast "$WORK/st/curl.log" '^URL https://registry\.test/v2/.*	CONFIG user = "mirroruser:MIRROR-SECRET"' 2
+  # ... and nothing else did, and they were never on a command line
+  st_count "$WORK/st/curl.log" '^URL https://(github\.com|api\.github\.com)/.*MIRROR-SECRET' 0
+  st_count "$WORK/st/curl.log" '^URL https://(github\.com|api\.github\.com)/.*	CONFIG none$' "$(grep -Ec '^URL https://(github\.com|api\.github\.com)/' "$WORK/st/curl.log")"
+  st_count "$WORK/st/curl.log" '^ARGV .*MIRROR-SECRET' 0
+
+  log "self-test 15/15: --commit is cross-checked online and only ASSERTED offline; TAG/--commit validation; attestation manifest bound to its digest"
+  PATH="$WORK/st/bin:$PATH" st_run commit-match 2 "${base[@]}" --commit 0123456789abcdef0123456789abcdef01234567 --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^PASS +source\.commit +tag v9\.9\.9 -> 0123456789abcdef0123456789abcdef01234567 \(matches --commit\)' 1
+  PATH="$WORK/st/bin:$PATH" st_run commit-wrong 1 "${base[@]}" --commit ffffffffffffffffffffffffffffffffffffffff --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL source.commit
+  st_expect "$ST_OUT" PASS ci.release-run # searched by the looked-up SHA, not the wrong --commit
+  st_expect "$ST_OUT" PASS image.server.shatag
+  PATH="$WORK/st/bin:$PATH" st_run commit-offline 2 "${base[@]}" --offline --commit 0123456789abcdef0123456789abcdef01234567 --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^SKIP +source\.commit +ASSERTED, not verified' 1
+  st_expect "$ST_OUT" PASS image.server.shatag
+  st_run commit-short 3 "${base[@]}" --commit 0123456 --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_run commit-newline 3 "${base[@]}" --commit $'0123456789abcdef0123456789abcdef01234567\nx' --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_run tag-newline 3 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" $'v9.9.9\n../../x'
+  st_run repo-newline 3 --repo $'selftest/keyorix\n../x' --registry registry.test/keyorix --no-gh --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  # a mirror serves other bytes (still valid JSON) for an attestation manifest the index names by digest
+  st_world "$WORK/st/attdig"
+  awk -F'\t' '$1 ~ /\/keyorix-server\/manifests\/sha256:/ { print $2 }' "$WORK/st/attdig/fx/index.tsv" >"$WORK/st/attdig/files"
+  st_atleast "$WORK/st/attdig/files" . 1
+  while IFS= read -r f; do printf '\n' >>"$WORK/st/attdig/fx/$f"; done <"$WORK/st/attdig/files"
+  PATH="$WORK/st/bin:$PATH" st_run attdig 1 "${base[@]}" --assets-dir "$WORK/st/attdig/assets" --fixtures "$WORK/st/attdig/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL image.server.sbom
+  st_expect "$ST_OUT" FAIL image.server.buildkit-provenance
+  st_atleast "$ST_OUT" 'attestation-manifest-digest-mismatch' 2
+  st_expect "$ST_OUT" PASS image.k8s-sync.sbom
 
   printf 'self-test: %d assertions passed, %d failed\n' "$ST_OK" "$ST_BAD"
   [ "$ST_BAD" = 0 ] || { log "outputs kept in $WORK/st"; KEEP_WORK=1; return 1; }
@@ -1283,8 +1512,10 @@ if [ "$SELF_TEST" = 1 ]; then
 fi
 
 [ -n "$TAG" ] || { usage >&2; die "TAG is required (for example v0.96.3)"; }
-printf '%s\n' "$TAG" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$' || die "TAG must look like v1.2.3, got '$TAG'"
-printf '%s\n' "$REPO" | grep -Eq '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$' || die "--repo must be OWNER/NAME"
+# [[ =~ ]] matches the whole string; grep would match line by line and let "v1.2.3\n../x" through
+[[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || die "TAG must look like v1.2.3, got '$TAG'"
+[[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--repo must be OWNER/NAME"
+[ -z "$COMMIT" ] || [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || die "--commit must be the full 40-character lowercase commit SHA, got '$COMMIT'"
 VER=${TAG#v}
 REG_HOST=${REGISTRY%%/*}
 REG_PREFIX=${REGISTRY#*/}
