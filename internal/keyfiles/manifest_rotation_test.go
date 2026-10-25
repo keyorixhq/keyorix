@@ -205,19 +205,23 @@ func TestInterruptedRotateKEK_AfterSaltRename_CommitIsRecorded(t *testing.T) {
 	}
 }
 
-// The remaining half of #2424: a restore that crashed between installing its
-// files leaves some files at the restored hashes and the rest at the old ones.
-// Restore stages no ".pending" files, so boot cannot finish it and refuses,
-// naming both halves.
-func TestInterruptedRestore_PartialInstall_Refused(t *testing.T) {
+// An operation that crashed between replacing its files, with no staging file
+// holding the content it was about to write, leaves some files at the staged
+// hashes and the rest at the recorded ones: boot cannot finish it and refuses,
+// naming both halves. (`admin restore` no longer stages an intent here: it
+// installs its key files and the manifest through the restore journal, and a
+// half-installed restore is refused by the journal check first and by the
+// recorded hashes after it -- TestAdminRestore_KilledMidInstall_RefusalsAndRecovery
+// in server/admin.)
+func TestInterruptedOperation_PartialInstallWithoutStaging_Refused(t *testing.T) {
 	f := newKEKRotationFixture(t)
-	restored := map[string][]byte{f.salt: []byte("restored-salt-0123456789abcdef01"), f.dek: []byte("restored-dek")}
-	if err := f.ks.StageManifest(OpRestore, restored); err != nil {
+	replaced := map[string][]byte{f.salt: []byte("replaced-salt-0123456789abcdef01"), f.dek: []byte("replaced-dek")}
+	if err := f.ks.StageManifest("test-operation", replaced); err != nil {
 		t.Fatal(err)
 	}
-	f.write(f.salt, restored[f.salt]) // the crash: the DEK was never installed
+	f.write(f.salt, replaced[f.salt]) // the crash: the DEK was never replaced
 	err := VerifyKeySetConsistency(passwordSetConfig(), f.dir)
-	if err == nil || !strings.Contains(err.Error(), "interrupted restore") {
-		t.Fatalf("a half-installed restore must be refused as an interrupted restore, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "key material is incoherent: an interrupted test-operation") {
+		t.Fatalf("a half-replaced set must be refused as incoherent, got %v", err)
 	}
 }

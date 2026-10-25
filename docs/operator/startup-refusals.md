@@ -540,7 +540,7 @@ key file consistency: key material is incoherent: an interrupted <operation> (ge
 
 **Match:** `key material is incoherent`
 
-**Cause.** A key operation (rotate-kek, restore, ...) was interrupted after it had replaced
+**Cause.** A key operation (rotate-kek, rotate, migrate-provider) was interrupted after it had replaced
 some of the active key files and before the rest, and boot cannot complete it: the key-set
 manifest records the content each file was about to get, and no staging file holds it. The
 active files belong to two generations, so the first decrypt would fail. (An interrupted
@@ -548,9 +548,10 @@ rotate-kek whose `kek.salt.pending` is intact is **not** refused: the server fin
 rename at boot, logs a WARN, records an `encryption.keyset_rotation_finished` audit event,
 and from then on the master passphrase is the **new** one given to rotate-kek. A rotation
 interrupted before it changed any active file only logs that its staging files can be
-deleted.) **Fix.** Re-run the operation; for a restore, `keyorix-server admin restore
---overwrite-existing` from the same backup. Otherwise restore the whole set from one backup.
-**In place:** no.
+deleted.) An interrupted `admin restore` is not reported here: it installs its key files and
+the key-set manifest through its restore journal, and the journal check below runs first.
+**Fix.** Re-run the operation, or restore the whole set from one backup with `keyorix-server
+admin restore --overwrite-existing`. **In place:** no.
 
 ### Interrupted restore — from code
 
@@ -562,11 +563,15 @@ an interrupted `admin restore` left its journal at <dir>/.keyorix-restore-journa
 
 **Cause.** An `admin restore` was killed (or failed to install a file) after it staged the
 archive's key files and data, so the key files and the data may be from different points in
-time. `admin backup` and a new `admin restore` refuse with the same message. **Fix.** Stop
+time. `admin backup`, a new `admin restore` and the key operations that write key files
+(`admin encryption rotate`, `rotate-kek`, `upgrade-aad`, `migrate-provider`, `init`) refuse with
+the same message. This check runs before the key-set checks above, so a half-installed restore
+is reported here, not as a mixed or incomplete key set. **Fix.** Stop
 every server on this data and run `keyorix-server admin restore --recover`: it rolls the
 restore forward if its data was committed and back otherwise, and refuses (changing
 nothing) when a staged key file is missing or altered
-([restore-failure-modes.md](restore-failure-modes.md)). Run it with the same config and
+([restore-failure-modes.md](restore-failure-modes.md)). Rolling forward also installs the
+restored set's `keyset.manifest.json`, so the next start's key-set check passes. Run it with the same config and
 working directory as the restore. Do not delete the journal by hand.
 **In place:** yes, `--recover`.
 

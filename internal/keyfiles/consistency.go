@@ -340,9 +340,8 @@ func (st *KeySetState) classifyIntent() error {
 		return fmt.Errorf(
 			"key material is incoherent: an interrupted %s (generation %d in the key-set manifest %s) already "+
 				"replaced %s but not %s, and no staging file holds the content it was about to write — the active "+
-				"files no longer belong to one generation, so the first decrypt would fail. Re-run the operation "+
-				"(for a restore: `keyorix-server admin restore --overwrite-existing` from the same backup), or "+
-				"restore the whole set from one backup",
+				"files no longer belong to one generation, so the first decrypt would fail. Re-run the operation, "+
+				"or restore the whole set from one backup with `keyorix-server admin restore --overwrite-existing`",
 			next.Operation, next.Generation, st.ManifestPath, strings.Join(done, ", "), strings.Join(stuck, ", "))
 	}
 	st.Intent = IntentFinishable
