@@ -14,10 +14,22 @@
 # only makes sense against an instance that was seeded the same way (the
 # CI job's own instance, or a demo you already brought up yourself).
 #
-# Usage: scripts/demo/check.sh [--url URL] [--sqlite|--postgres] [--keep]
+# Usage: scripts/demo/check.sh [--url URL] [--state FILE] [--used]
+#                              [--sqlite|--postgres] [--keep]
 #                              [--ui|--no-ui] [--offline]
 #   --url URL     check an already-running, already-seeded instance instead
 #                 of bringing one up (and never tears it down).
+#   --state FILE  the demo's state file: .demo-2-state (scripts/demo/up.sh) or
+#                 .demo-native/state.env (scripts/demo/native-up.sh). Default: with
+#                 --url, the file whose URL matches (.demo-2-state first, then
+#                 .demo-native/state.env); without --url, .demo-2-state. It supplies
+#                 the admin login, TOTP key and machine token; without one the
+#                 checks that need them fail with 401.
+#   --used        the target is a USED demo (reads, scenarios or a rehearsal already
+#                 ran): open new_user/new_ip alerts from those reads are expected, so
+#                 "no open anomalies" and "exactly one compliance gap" print a note
+#                 and count as WARN, not FAIL. Without --used both stay strict: a
+#                 fresh demo must show neither. Any other alert still FAILs.
 #   --sqlite      bring up via scripts/demo/up.sh (default).
 #   --postgres    bring up via docker compose (docker-compose.yml) against a
 #                 throwaway Postgres, seeded by this script.
@@ -50,12 +62,14 @@ ensure_totpgen() {
   GOWORK=off go build -o "$TOTPGEN_BIN" "$REPO_ROOT/scripts/totpgen/main.go"
 }
 
-GREEN='\033[0;32m'; RED='\033[0;31m'; NC='\033[0m'
+GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[0;33m'; NC='\033[0m'
 
-URL="" BACKEND="sqlite" KEEP=false UI_MODE="auto" OFFLINE=false
+URL="" BACKEND="sqlite" KEEP=false UI_MODE="auto" OFFLINE=false STATE_FILE="" USED=false
 while [ $# -gt 0 ]; do
   case "$1" in
-    --url) URL="$2"; shift 2 ;;
+    --url) [ $# -ge 2 ] || { echo "--url needs a value" >&2; exit 1; }; URL="$2"; shift 2 ;;
+    --state) [ $# -ge 2 ] || { echo "--state needs a value" >&2; exit 1; }; STATE_FILE="$2"; shift 2 ;;
+    --used) USED=true; shift ;;
     --sqlite) BACKEND="sqlite"; shift ;;
     --postgres) BACKEND="postgres"; shift ;;
     --keep) KEEP=true; shift ;;
@@ -72,6 +86,8 @@ cleanup_scratch() { rm -rf "$SCRATCH"; }
 trap cleanup_scratch EXIT
 
 PROBLEMS=0
+WARNINGS=0
+WARN_RC=3   # a step returns this for "passed with a warning" (only meaningful with --used)
 FAILED_STEPS=()
 TOTAL_START=$SECONDS
 
@@ -131,6 +147,11 @@ get_secret_by_ref() { req GET "/api/v1/secrets/value?ref=$(urlenc "$2")" "$1"; }
 # ---------------------------------------------------------------------------
 run_step() { # run_step "name" fn_name
   local name="$1" fn="$2"
+  # Test hook (scripts/demo/check_state_test.go): run only the steps whose name matches this
+  # extended regex. Unset = every step; never set it for a real readiness check.
+  if [ -n "${KEYORIX_CHECK_ONLY:-}" ] && ! printf '%s' "$name" | grep -Eq "$KEYORIX_CHECK_ONLY"; then
+    return 0
+  fi
   local out="$SCRATCH/step.out"
   : > "$out"
   local t0=$SECONDS
@@ -141,6 +162,10 @@ run_step() { # run_step "name" fn_name
     local extra=""
     [ -s "$out" ] && extra=" ($(tail -1 "$out"))"
     printf "${GREEN}✅${NC} %s (%ss)%s\n" "$name" "$dur" "$extra"
+  elif [ "$rc" -eq "$WARN_RC" ]; then
+    WARNINGS=$((WARNINGS + 1))
+    printf "${YELLOW}⚠️ ${NC} WARN %s (%ss)\n" "$name" "$dur"
+    sed 's/^/      | /' "$out"
   else
     PROBLEMS=$((PROBLEMS + 1))
     FAILED_STEPS+=("$name")
@@ -381,11 +406,45 @@ else
   BROUGHT_UP=true
 fi
 
-if [ "$BACKEND" = "sqlite" ] && [ -f "$REPO_ROOT/.demo-2-state" ]; then
-  MACHINE_TOKEN="$(grep -oE 'kx_machine_[A-Za-z0-9_-]+' "$REPO_ROOT/.demo-2-state" | head -1)"
+# Two state-file shapes: up.sh's human-readable .demo-2-state, and native-up.sh's
+# .demo-native/state.env (shell assignments, DEMO_* keys). Without a state file the admin
+# has no TOTP key / machine token and every authenticated step fails with 401.
+NATIVE_STATE_DEFAULT="${KEYORIX_DEMO_DIR:-$REPO_ROOT/.demo-native}/state.env"
+norm_url() { local u="${1%/}"; echo "${u//localhost/127.0.0.1}"; }
+state_env_url() { # state_env_url FILE -> the DEMO_URL recorded in a state.env
+  # shellcheck disable=SC1090
+  ( DEMO_URL=""; . "$1" >/dev/null 2>&1; echo "${DEMO_URL:-}" )
+}
+if [ -z "$STATE_FILE" ] && [ "$BACKEND" = "sqlite" ]; then
+  if [ -n "$URL" ] && [ -f "$NATIVE_STATE_DEFAULT" ] && [ "$(norm_url "$(state_env_url "$NATIVE_STATE_DEFAULT")")" = "$(norm_url "$URL")" ]; then
+    STATE_FILE="$NATIVE_STATE_DEFAULT"
+  elif [ -f "$REPO_ROOT/.demo-2-state" ]; then
+    STATE_FILE="$REPO_ROOT/.demo-2-state"
+  fi
+fi
+if [ -n "$STATE_FILE" ] && [ ! -f "$STATE_FILE" ]; then
+  echo "--state $STATE_FILE: no such file (up.sh writes .demo-2-state, native-up.sh writes .demo-native/state.env)" >&2
+  exit 1
+fi
+[ -z "$STATE_FILE" ] || [ "$BACKEND" != "sqlite" ] || echo "==> credentials from $STATE_FILE" >&2
+
+if [ -n "$STATE_FILE" ] && [ "$BACKEND" = "sqlite" ] && grep -q '^DEMO_URL=' "$STATE_FILE"; then
+  # native-up.sh / seed-demo.sh state.env: the admin password may live in a file.
+  # shellcheck disable=SC1090
+  . "$STATE_FILE"
+  if [ -n "${DEMO_ADMIN_PASSWORD_FILE:-}" ]; then
+    ADMIN_PASSWORD="$(cat "$DEMO_ADMIN_PASSWORD_FILE" 2>/dev/null)" || { echo "cannot read DEMO_ADMIN_PASSWORD_FILE ($DEMO_ADMIN_PASSWORD_FILE) named in $STATE_FILE" >&2; exit 1; }
+  elif [ -n "${DEMO_ADMIN_PASSWORD:-}" ]; then
+    ADMIN_PASSWORD="$DEMO_ADMIN_PASSWORD"
+  fi
+  [ -z "${DEMO_ALICE_PASSWORD:-}" ] || ALICE_PASSWORD="$DEMO_ALICE_PASSWORD"
+  MACHINE_TOKEN="${DEMO_MACHINE_TOKEN:-}"
+  [ -n "$ADMIN_MFA_SECRET" ] || ADMIN_MFA_SECRET="${DEMO_ADMIN_TOTP:-}"
+elif [ -n "$STATE_FILE" ] && [ "$BACKEND" = "sqlite" ]; then
+  MACHINE_TOKEN="$(grep -oE 'kx_machine_[A-Za-z0-9_-]+' "$STATE_FILE" | head -1)"
   # up.sh enrols TOTP for the admin and records the key there; the admin login
   # step needs it to answer the second-factor challenge.
-  [ -n "$ADMIN_MFA_SECRET" ] || ADMIN_MFA_SECRET="$(sed -n 's/^  Admin TOTP key: \([A-Z2-7]*\).*/\1/p' "$REPO_ROOT/.demo-2-state" | head -1)"
+  [ -n "$ADMIN_MFA_SECRET" ] || ADMIN_MFA_SECRET="$(sed -n 's/^  Admin TOTP key: \([A-Z2-7]*\).*/\1/p' "$STATE_FILE" | head -1)"
 elif [ "$BACKEND" = "postgres" ] && [ -f "$REPO_ROOT/.demo-2-pg-state" ]; then
   MACHINE_TOKEN="$(cat "$REPO_ROOT/.demo-2-pg-state")"
 fi
@@ -465,6 +524,21 @@ step_admin_login() {
   return 0
 }
 
+# classify_open_anomalies: splits the open (unacknowledged) alerts, minus check.sh's own
+# scratch secret, into ANOM_EXPECTED (new_user / new_ip: what earlier reads of a USED demo
+# cause) and ANOM_OTHER (anything else). Returns 1 with a message when the API call fails.
+ANOM_EXPECTED="" ANOM_OTHER=""
+classify_open_anomalies() {
+  local open
+  open="$(demo_open_anomalies "$SERVER_URL" "$ADMIN_TOKEN" | awk '$5 != "check-secret"')"
+  case "$open" in
+    ERROR*) echo "GET /api/v1/audit/anomalies failed (${open#ERROR })"; return 1 ;;
+  esac
+  ANOM_EXPECTED="$(printf '%s\n' "$open" | awk '$2 == "new_user" || $2 == "new_ip"')"
+  ANOM_OTHER="$(printf '%s\n' "$open" | awk 'NF && $2 != "new_user" && $2 != "new_ip"')"
+  return 0
+}
+
 # step_seed_posture asserts what a FRESH demo shows on the Compliance page: a
 # healthy posture with exactly ONE deliberate, explainable finding -- the
 # production secret (payments-webhook-secret) that has no rotation policy
@@ -485,6 +559,19 @@ step_seed_posture() {
   gaps="$(jget '",".join(c["id"] for c in d["data"]["controls"] if c["status"]=="gap")')"
   unknown="$(jget '",".join(c["id"] for c in d["data"]["controls"] if c["status"] in ("unknown","partially_evaluated"))')"
   [ -z "$unknown" ] || { echo "controls with an unknown/partial status on a fresh demo: $unknown -- the posture could not be collected, internal/core/control_framework.go"; return 1; }
+  # --used: the anomaly-detection control is red because of new_user/new_ip alerts that
+  # earlier reads caused; that is expected there, and only those alerts are excused.
+  local used_note=""
+  if [ "$USED" = true ]; then
+    case "$gaps" in
+      anomaly-detection,secret-rotation|secret-rotation,anomaly-detection)
+        classify_open_anomalies || return 1
+        if [ -z "$ANOM_OTHER" ] && [ -n "$ANOM_EXPECTED" ]; then
+          gaps="secret-rotation"
+          used_note="used demo: the anomaly-detection control is red only because of new_user/new_ip alerts from earlier reads (expected; --used); a fresh demo must show none"
+        fi ;;
+    esac
+  fi
   [ "$gaps" = "secret-rotation" ] || {
     echo "a fresh demo must show exactly one gap, secret-rotation (the production secret with no rotation policy); got: '${gaps:-none}' -- scripts/demo/up.sh seed, docs/demo/GOLDEN-PATH.md section 1b"
     return 1
@@ -502,7 +589,12 @@ step_seed_posture() {
   fi
   # No high-severity anomaly: that is what turns the anomaly-detection control red.
   local passing; passing="$(jget 'next(c["status"] for c in d["data"]["controls"] if c["id"]=="anomaly-detection")')"
-  [ "$passing" = "pass" ] || { echo "anomaly-detection control is '$passing' on a fresh demo, expected pass (no high-severity alert)"; return 1; }
+  if [ -n "$used_note" ]; then
+    echo "$used_note"
+    echo "one deliberate finding: secret-rotation ($detail)"
+    return "$WARN_RC"
+  fi
+  [ "$passing" = "pass" ] || { echo "anomaly-detection control is '$passing' on a fresh demo, expected pass (no high-severity alert); if this demo has already been used (reads, scenarios), pass --used"; return 1; }
   echo "one deliberate finding: secret-rotation ($detail)"
   return 0
 }
@@ -650,7 +742,7 @@ step_breakglass() {
 }
 
 step_machine_read_by_ref() {
-  [ -n "$MACHINE_TOKEN" ] || { echo "no machine token found (.demo-2-state / .demo-2-pg-state missing) -- was this instance brought up via scripts/demo/up.sh or this script?"; return 1; }
+  [ -n "$MACHINE_TOKEN" ] || { echo "no machine token found (.demo-2-state / .demo-native/state.env / .demo-2-pg-state missing; pass --state FILE) -- was this instance brought up via scripts/demo/up.sh, native-up.sh or this script?"; return 1; }
   get_secret_by_ref "$MACHINE_TOKEN" "default/development/stripe-api-key"
   [ "$HTTP_CODE" = "200" ] || { echo "ci-app machine token could not read default/development/stripe-api-key by ref: $HTTP_CODE $RESP_BODY -- server/http/handlers/secrets_crud.go GetSecretValueByRef"; return 1; }
   local v; v="$(jget 'd["data"]["value"]')"
@@ -872,15 +964,19 @@ step_no_open_anomalies() {
     sleep 5
     up="$(demo_uptime_seconds "$SERVER_URL" "$ADMIN_TOKEN")" || { echo "lost the server while waiting for the first anomaly pass (detail above)"; return 1; }
   done
+  classify_open_anomalies || return 1
+  if [ "$USED" = true ] && [ -z "$ANOM_OTHER" ] && [ -n "$ANOM_EXPECTED" ]; then
+    echo "used demo: new_user/new_ip alerts from earlier reads are expected (--used); open now (ID TYPE SEVERITY ACCESSED_BY SECRET):"
+    echo "$ANOM_EXPECTED"
+    return "$WARN_RC"
+  fi
   local open
-  open="$(demo_open_anomalies "$SERVER_URL" "$ADMIN_TOKEN" | awk '$5 != "check-secret"')"
-  case "$open" in
-    ERROR*) echo "GET /api/v1/audit/anomalies failed (${open#ERROR })"; return 1 ;;
-  esac
+  open="$(printf '%s\n%s\n' "$ANOM_EXPECTED" "$ANOM_OTHER" | awk 'NF')"
   if [ -n "$open" ]; then
     echo "open anomaly alerts on a fresh demo after ${up}s (ID TYPE SEVERITY ACCESSED_BY SECRET):"
     echo "$open"
     echo "fix the cause: scripts/demo/up.sh seed / scripts/demo/lib.sh demo_settle_anomalies, or the detector (internal/core/anomaly.go); do not acknowledge by hand"
+    echo "if this demo has already been used (reads, scenarios), new_user/new_ip alerts are expected: pass --used"
     return 1
   fi
   echo "no open anomaly alerts ${up}s after start"
@@ -946,7 +1042,11 @@ fi
 echo ""
 TOTAL_DUR=$((SECONDS - TOTAL_START))
 if [ "$PROBLEMS" -eq 0 ]; then
-  printf "${GREEN}DEMO READY${NC} (%ss)\n" "$TOTAL_DUR"
+  if [ "$WARNINGS" -gt 0 ]; then
+    printf "${GREEN}DEMO READY${NC} (%ss, %s warning(s): used demo, see WARN lines above)\n" "$TOTAL_DUR" "$WARNINGS"
+  else
+    printf "${GREEN}DEMO READY${NC} (%ss)\n" "$TOTAL_DUR"
+  fi
   exit 0
 else
   printf "${RED}NOT READY: %s problem(s)${NC} (%ss)\n" "$PROBLEMS" "$TOTAL_DUR"

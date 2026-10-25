@@ -19,9 +19,10 @@ const rolePrefix = "vault-migrated"
 // (ADR-114's permission-mapping table). "" means no Keyorix equivalent exists for that
 // capability alone (every such capability either already got its own special handling — sudo,
 // deny — before reaching here, or is simply not one of the four this tool recognizes).
+// "list" maps to nothing: it reveals key names only, and secrets.read would add the values.
 func capabilityToPermission(capability string) string {
 	switch capability {
-	case "read", "list":
+	case "read":
 		return "secrets.read"
 	case "create", "update":
 		return "secrets.write"
@@ -128,10 +129,14 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 	var items []Item
 	var allows []namedStanza
 	var denyPaths []string
+	var granting []healthscan.PolicyPathBlock // every non-deny stanza, for impliedAccess.
 
 	for _, pol := range policies {
 		for _, b := range pol.Blocks {
 			ref := stanzaRef(pol.Name, b.Path)
+			if !containsCapability(b.Capabilities, "deny") {
+				granting = append(granting, b)
+			}
 			switch {
 			case containsCapability(b.Capabilities, "sudo"):
 				items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref,
@@ -147,6 +152,13 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 				denyPaths = append(denyPaths, b.Path)
 			default:
 				perms := mappedPermissions(b.Capabilities)
+				if len(perms) == 0 && containsCapability(b.Capabilities, "list") {
+					items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref,
+						Category: CategoryMetadataOnly,
+						Reason:   fmt.Sprintf("capabilities %v list key names but never read values — Keyorix has no list-only permission, and secrets.read would expose every value in the scope", b.Capabilities),
+					})
+					continue
+				}
 				if len(perms) == 0 {
 					items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref,
 						Category: CategorySentinelOrTemplated,
@@ -170,10 +182,15 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 		}
 		res, category, reason, ok := mapper.Resolve(as.block.Path)
 		if !ok {
-			items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref, Category: category, Reason: reason})
+			items = append(items, Item{Kind: KindRole, Outcome: Unmappable, SourceRef: ref, Category: category, Reason: reason,
+				SourcePolicy: as.policyName, CrossMountEvidence: res.CrossMountEvidence})
 			continue
 		}
 		name := roleName(as.perms)
+		var implied []string
+		if slices.Contains(as.perms, "secrets.read") {
+			implied = impliedAccess(as.block.Path, mapper, granting, denyPaths)
+		}
 		items = append(items, Item{
 			Kind: KindRole, Outcome: Create, SourceRef: ref,
 			ProposedName:          name,
@@ -181,6 +198,9 @@ func BuildPolicyItems(policies []healthscan.Policy, mapper *PathMapper) []Item {
 			ProposedEnvironmentID: res.EnvironmentID,
 			ProposedPermissions:   as.perms,
 			ProvenanceKey:         plan.SourceID("role", name, fmt.Sprint(res.ProjectID), fmt.Sprint(res.EnvironmentID)),
+			SourcePolicy:          as.policyName,
+			ImpliedAccess:         implied,
+			CrossMountEvidence:    res.CrossMountEvidence,
 		})
 	}
 	return items

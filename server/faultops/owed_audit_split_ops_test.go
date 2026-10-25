@@ -102,6 +102,10 @@ var owedAuditSplitExpectedOwedTypes = map[string]map[string]int{
 	"GRPC keyorix.v1.RoleService.UpdateRole [remove+add]":                           {"permission.removed": 1},
 	"REST PUT /api/v1/shares/{id} [write->read+later-expiry]":                       {"share_updated": 1},
 	"GRPC keyorix.v1.ShareService.UpdateSharePermission [write->read+later-expiry]": {"share_updated": 1},
+	// #3488 (ATOMIC-OWED-1): a role-set replacement's removal, and a member role
+	// change's removal of the member's previous project role.
+	"REST PUT /api/v1/users/{id}/roles [remove+add]":           {"role.removed": 1},
+	"REST PUT /api/v1/projects/{id}/members/{userId} [change]": {"role.removed": 1},
 }
 
 // shareLater is the later expiry the share split scenarios request: one fixed instant,
@@ -494,6 +498,64 @@ func splitScenarios() []splitScenario {
 			},
 			restType: "share_updated", restDesc: "(from read to read)",
 		},
+		// #3488 (ATOMIC-OWED-1): a user holding project_viewer at project 1 is given
+		// project_developer instead. The removal commits first (owed), then the grant
+		// (fail closed); the narrow-only reference removes the role alone.
+		{
+			key: "REST PUT /api/v1/users/{id}/roles [remove+add]",
+			setup: func(ctx context.Context, w *faultWorld) (any, error) {
+				return userWithProjectRoleForFuzz(ctx, w, "fuzz-split-userroles")
+			},
+			mixed:    asOutcome(userRolesPut("project_developer"), false),
+			narrow:   asResult(userRolesPut()),
+			restType: "role.assigned", restDesc: "assigned to",
+		},
+		{
+			key: "REST PUT /api/v1/projects/{id}/members/{userId} [change]",
+			setup: func(ctx context.Context, w *faultWorld) (any, error) {
+				return userWithProjectRoleForFuzz(ctx, w, "fuzz-split-member")
+			},
+			mixed: asOutcome(func(ctx context.Context, w *faultWorld, state any) (int, []byte, error) {
+				return httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/projects/1/members/%d", state.(uint)), map[string]any{"role": "project_developer"})
+			}, false),
+			narrow: asResult(func(ctx context.Context, w *faultWorld, state any) (int, []byte, error) {
+				return httpJSON(ctx, w, http.MethodDelete, fmt.Sprintf("/api/v1/projects/1/members/%d", state.(uint)), nil)
+			}),
+			restType: "role.assigned", restDesc: "assigned to",
+		},
+	}
+}
+
+// userWithProjectRoleForFuzz creates a user holding project_viewer at project 1.
+func userWithProjectRoleForFuzz(ctx context.Context, w *faultWorld, name string) (any, error) {
+	id, err := createUserForFuzz(ctx, w, name)
+	if err != nil {
+		return nil, err
+	}
+	st, body, err := userRolesPut("project_viewer")(ctx, w, id)
+	if err != nil {
+		return nil, err
+	}
+	if st/100 != 2 {
+		return nil, fmt.Errorf("setup PUT user roles: HTTP %d: %s", st, body)
+	}
+	return id, nil
+}
+
+// userRolesPut replaces the user's roles at project 1 with the named roles.
+func userRolesPut(roles ...string) func(ctx context.Context, w *faultWorld, state any) (int, []byte, error) {
+	return func(ctx context.Context, w *faultWorld, state any) (int, []byte, error) {
+		ids := []uint{}
+		for _, name := range roles {
+			var r models.Role
+			if err := w.db.Where("name = ?", name).First(&r).Error; err != nil {
+				return 0, nil, err
+			}
+			ids = append(ids, r.ID)
+		}
+		return httpJSON(ctx, w, http.MethodPut, fmt.Sprintf("/api/v1/users/%d/roles", state.(uint)), map[string]any{
+			"role_ids": ids, "project_id": 1, "environment_id": 0,
+		})
 	}
 }
 
@@ -784,27 +846,31 @@ func TestOwedAuditSplit_SweepEverySplitOp(t *testing.T) {
 func TestOwedAuditSplit_Calibration(t *testing.T) {
 	sc := splitScenarios()[0]
 	refNarrow, refMixed := splitReference(t, sc, true), splitReference(t, sc, false)
+	// Each run builds its worlds on the subtest's t, so they close when the subtest ends
+	// (maxLiveWorldDBsPerTest, world_db_budget_test.go).
 	// LogAuditEvent#2 is the second commit's append (the first is the owed row's).
-	partialRun := func() splitRun {
+	partialRun := func(t *testing.T) splitRun {
+		t.Helper()
 		r := runSplitFaulted(t, sc, &faultstorage.FaultSpec{Method: "LogAuditEvent", NthCall: 2, Kind: faultstorage.KindError, Err: errFuzzInjected}, refNarrow, refMixed)
 		require.True(t, r.in.out.partial, "precondition: a partial apply (%s)", r.in.out.detail)
 		return r
 	}
-	queuedRun := func() splitRun {
+	queuedRun := func(t *testing.T) splitRun {
+		t.Helper()
 		r := runSplitFaulted(t, sc, &faultstorage.FaultSpec{Method: "LogAuditEvent", NthCall: 1, Kind: faultstorage.KindError, Err: errFuzzInjected}, refNarrow, refMixed)
 		require.True(t, r.in.out.success, "precondition: success with the owed row queued (%s)", r.in.out.detail)
 		return r
 	}
 
 	t.Run("green/partial-apply", func(t *testing.T) {
-		require.Empty(t, owedAuditSplitVerdict(partialRun().in))
+		require.Empty(t, owedAuditSplitVerdict(partialRun(t).in))
 	})
 	t.Run("green/success-owed-row-queued", func(t *testing.T) {
-		require.Empty(t, owedAuditSplitVerdict(queuedRun().in))
+		require.Empty(t, owedAuditSplitVerdict(queuedRun(t).in))
 	})
 	t.Run("red/owed-row-neither-written-nor-queued", func(t *testing.T) {
 		// The record AND the append failed: the owed row is gone (the NOT-queued gap).
-		r := queuedRun()
+		r := queuedRun(t)
 		require.NoError(t, r.w.db.Where("1 = 1").Delete(&models.PendingAuditEvent{}).Error)
 		after, err := snapshotDB(r.w.db)
 		require.NoError(t, err)
@@ -812,27 +878,27 @@ func TestOwedAuditSplit_Calibration(t *testing.T) {
 		require.Contains(t, owedAuditSplitVerdict(r.in), "NOT-queued gap")
 	})
 	t.Run("red/partial-but-second-commit-applied", func(t *testing.T) {
-		r := partialRun()
+		r := partialRun(t)
 		r.in.after = refMixed
 		require.NotEmpty(t, owedAuditSplitVerdict(r.in))
 	})
 	t.Run("red/partial-but-narrowing-missing", func(t *testing.T) {
-		r := partialRun()
+		r := partialRun(t)
 		r.in.after = r.in.before
 		require.NotEmpty(t, owedAuditSplitVerdict(r.in))
 	})
 	t.Run("red/partial-not-machine-readable", func(t *testing.T) {
-		r := partialRun()
+		r := partialRun(t)
 		r.in.out.details = map[string]string{"code": core.PartialMutationErrorCode, "revocation_applied": "true"}
 		require.Contains(t, owedAuditSplitVerdict(r.in), "machine-readably")
 	})
 	t.Run("red/failure-that-changed-state", func(t *testing.T) {
-		r := partialRun()
+		r := partialRun(t)
 		r.in.out = splitOutcome{detail: "HTTP 500: a plain failure"}
 		require.Contains(t, owedAuditSplitVerdict(r.in), "changed state")
 	})
 	t.Run("red/no-backfill", func(t *testing.T) {
-		r := partialRun()
+		r := partialRun(t)
 		r.in.converge = nil
 		require.Contains(t, owedAuditSplitVerdict(r.in), "backfill was not run")
 	})

@@ -120,8 +120,9 @@ func bootstrapCeilingParityFixture(t *testing.T) (coreService *core.KeyorixCore,
 	if len(permIDs) != 2 {
 		t.Fatalf("expected exactly 2 permissions (users.write, users.delete) in the catalog, found %d", len(permIDs))
 	}
-	narrowRole, _, err := coreService.CreateRole(ctx, admin.ID, "narrow-user-manager",
-		"users.write/users.delete only -- no other admin authority", permIDs)
+	narrowRole, _, err := coreService.CreateRoleWithScope(ctx, admin.ID, "narrow-user-manager",
+		"users.write/users.delete only -- no other admin authority", permIDs,
+		models.RoleAssignableAny) // granted globally below (#3546)
 	if err != nil {
 		t.Fatalf("create narrow role: %v", err)
 	}

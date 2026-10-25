@@ -38,7 +38,9 @@ func Key(it Item) string {
 	case KindMachineIdentity:
 		return "machine:" + it.ProposedName
 	case KindMachineRoleGrant:
-		return "grant:" + it.ProposedMachineRef + "|" + it.ProposedRoleRef
+		// The scope is part of the grant: without it, a grant reviewed in one environment would
+		// authorise a fresh one of the same role in another.
+		return fmt.Sprintf("grant:%s|%s|%d:%d", it.ProposedMachineRef, it.ProposedRoleRef, it.ProposedProjectID, it.ProposedEnvironmentID)
 	case KindOIDCBinding:
 		return "binding:" + it.ProposedMachineRef + "|" + it.ProposedOIDCIssuer + "|" + it.ProposedOIDCSubject
 	default:

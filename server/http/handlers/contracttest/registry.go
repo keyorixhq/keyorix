@@ -94,6 +94,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"restoreEnvironment":                 reasonSchemaNotYetWritten, // post /api/v1/projects/{projectId}/environments/{id}/restore
 	"restoreProject":                     reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/restore
 	"restoreUser":                        reasonSchemaNotYetWritten, // post /api/v1/users/{id}/restore
+	"reviewBreakGlass":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass/{activationId}/review
 	"revokeBreakGlass":                   reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/break-glass/{activationId}/revoke
 	"revokeMachineToken":                 reasonSchemaNotYetWritten, // delete /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}
 	"revokeProjectAccessReview":          reasonSchemaNotYetWritten, // post /api/v1/projects/{id}/access-review/revoke
@@ -140,6 +141,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"exportComplianceControlsCSV":        reasonSchemaNotYetWritten, // get /api/v1/compliance/controls.csv
 	"getComplianceCredentialTrends":      reasonSchemaNotYetWritten, // get /api/v1/compliance/credential-trends
 	"getComplianceDigest":                reasonSchemaNotYetWritten, // get /api/v1/compliance/digest
+	"getCryptoInventory":                 reasonSchemaNotYetWritten, // get /api/v1/compliance/crypto-inventory
 	"getCompliancePermissionBaseline":    reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline
 	"getCompliancePermissionBaselineCSV": reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline.csv
 	"getCompliancePermissionChanges":     reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-changes

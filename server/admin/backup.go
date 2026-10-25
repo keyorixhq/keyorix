@@ -36,6 +36,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/keyfiles"
+	"github.com/keyorixhq/keyorix/internal/restorejournal"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 	"github.com/keyorixhq/keyorix/internal/storage"
@@ -161,6 +162,11 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	}
 	if cfg.Storage.Type != "local" && cfg.Storage.Type != "sqlite" && !isPostgresStorage(cfg) {
 		return fmt.Errorf("admin backup does not support storage type %q", cfg.Storage.Type)
+	}
+	// An interrupted restore's key files and data may not match: a backup of
+	// them would carry the mismatch into every later restore.
+	if err := restorejournal.RefuseIfPresent(cfg); err != nil {
+		return err
 	}
 
 	// design §4: SQLite always holds the exclusive lock (VACUUM INTO's own

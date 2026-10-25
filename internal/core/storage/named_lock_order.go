@@ -19,7 +19,7 @@ type NamedLockFamily struct {
 	// PendingPR names the open PR that introduces this family's constructor,
 	// when the family is declared here ahead of it (so its place in the order
 	// is fixed before the nesting lands). Delete it once that PR merges;
-	// TestNamedLockOrder_EveryCallSiteKeyHasAFamily fails on any PendingPR
+	// TestNamedLockOrder_PendingNotExpired (nightly job) flags any PendingPR
 	// after NamedLockPendingExpires.
 	PendingPR string
 }

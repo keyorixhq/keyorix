@@ -51,6 +51,9 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		// A typed code for "disabled" (same 403, same message, same position in the
@@ -66,6 +69,11 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 			status = http.StatusForbidden
 		case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 			status = http.StatusBadRequest
+		case errors.Is(err, storage.ErrBreakGlassAlreadyActive):
+			// The caller's own grant is still live: a conflict with current state,
+			// and core's message ("revoke it before activating again") is the
+			// actionable text the UI should show.
+			status = http.StatusConflict
 		case errors.Is(err, core.ErrBreakGlassUnrecordable):
 			// BREAKGLASS-OWED-1: neither the audit log nor an owed-audit record
 			// could be written, so nothing was granted. The message is core's

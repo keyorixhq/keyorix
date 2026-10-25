@@ -1,0 +1,3 @@
+### Security
+
+- **On SQLite, deleting `<db>.server.lock` under a running server no longer lets an admin command run beside it.** The server checks every 5 seconds that the lock file is still the one it holds; if it was deleted or replaced, it re-creates it and takes the lock again, or, when an admin command took the new file first, shuts down with exit status 1 (as on a lost PostgreSQL presence lock). A lock file deleted between opening and locking it is detected at acquisition too. A filesystem without `flock` support or inode numbers is now refused at start with an error saying so. See docs/operator/j7-troubleshooting.md.

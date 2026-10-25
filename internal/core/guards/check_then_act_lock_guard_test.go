@@ -59,12 +59,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // checkThenActCheckCallRe matches this package's own naming convention for a
@@ -97,20 +98,15 @@ type checkThenActHit struct {
 // visible to the audit-before-write scan's "lastWrite" search; the two guards
 // intentionally differ here because WithNamedLock, not WithTransaction, is
 // this guard's unit of safety).
-func scanCheckThenActHits(t *testing.T, root string) []checkThenActHit {
+func scanCheckThenActHits(t *testing.T, files []string) []checkThenActHit {
 	t.Helper()
 	var hits []checkThenActHit
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("check-then-act lock guard: cannot read %s: %v", root, err)
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || strings.Contains(name, "generated") {
+	for _, p := range files {
+		name := srcpath.CoreFamilyRel(p)
+		if strings.Contains(filepath.Base(p), "generated") {
 			continue
 		}
-		p := filepath.Join(root, name)
 		f, perr := parser.ParseFile(fset, p, nil, 0)
 		if perr != nil {
 			t.Fatalf("check-then-act lock guard: cannot parse %s: %v", p, perr)
@@ -225,7 +221,7 @@ func loadCheckThenActExemptions(t *testing.T, path, fragDir string) map[string]b
 // it with a one-line reason and file a `race-gap` issue per entry, per
 // GUARD-2's brief) — never silently ignored.
 func TestCheckThenActLockGuard_UnlockedSecurityCheck(t *testing.T) {
-	hits := scanCheckThenActHits(t, "..")
+	hits := scanCheckThenActHits(t, coreFamilySources(t))
 	exempt := loadCheckThenActExemptions(t, "../../../docs/check-then-act-lock-exempt.tsv", "../../../docs/check-then-act-lock-exempt.d")
 
 	var unclassified []string

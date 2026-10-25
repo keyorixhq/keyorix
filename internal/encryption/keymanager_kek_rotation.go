@@ -34,6 +34,21 @@ import (
 //
 // The manager must already be Initialized (currentDEK in memory).
 func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error {
+	return km.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, nil)
+}
+
+// AuditKeyChangePrepare is called by a KEK change once the new KEK is known and
+// before any key file is written, with the audit-checkpoint key and key version
+// the new KEK derives (the caller must not keep the key). An error aborts the
+// change with every file untouched. rotate-kek and migrate-provider use it to
+// prepare the audit key transition record under both keys
+// (docs/design-audit-key-transition.md).
+type AuditKeyChangePrepare func(newAuditCheckpointKey []byte, newKeyVersion string) error
+
+// RotateKEKPassphraseWithPrepare is RotateKEKPassphrase calling prepare (when
+// non-nil) after the old passphrase is verified and before the key files are
+// written.
+func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase string, prepare AuditKeyChangePrepare) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
@@ -105,12 +120,10 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 		return fmt.Errorf("rotate KEK: wrap DEK with new KEK: %w", err)
 	}
 
-	if err := km.commitNewKEKFiles(newSalt, newWrappedDEK); err != nil {
-		return err
-	}
-
 	// Derive new evidence-signing and audit-checkpoint keys from the new KEK,
-	// matching Initialize's derivation exactly, before wiping the new KEK.
+	// matching Initialize's derivation exactly, before wiping the new KEK. They
+	// are derived before the files commit so prepare can use the new
+	// audit-checkpoint key while the old one is still the active one.
 	newESK, newESKID, err := deriveEvidenceSignKey(newKEK)
 	if err != nil {
 		return fmt.Errorf("rotate KEK: re-derive evidence-signing key: %w", err)
@@ -125,6 +138,21 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 		wipeBytes(newESK)
 		wipeBytes(newACK)
 		return fmt.Errorf("rotate KEK: re-derive backup-manifest key: %w", err)
+	}
+	if prepare != nil {
+		if err := prepare(newACK, newACKID); err != nil {
+			wipeBytes(newESK)
+			wipeBytes(newACK)
+			wipeBytes(newBMK)
+			return fmt.Errorf("rotate KEK: aborted before any key file was written: %w", err)
+		}
+	}
+
+	if err := km.commitNewKEKFiles(newSalt, newWrappedDEK); err != nil {
+		wipeBytes(newESK)
+		wipeBytes(newACK)
+		wipeBytes(newBMK)
+		return err
 	}
 
 	// Update in-memory state under the already-held mu.Lock.

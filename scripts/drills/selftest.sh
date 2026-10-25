@@ -45,7 +45,9 @@ printf 111111 >"$WORK/code.AAAA"
 printf 222222 >"$WORK/code.BBBB"
 a1="$(totp_fresh AAAA)"
 b1="$(totp_fresh BBBB)"
-(sleep 2; printf 333333 >"$WORK/code.AAAA") &
+# Replace the file atomically: a plain `printf >file` truncates first, and the 1 s poll in
+# totp_fresh landing in that window read "" and accepted it as a fresh code (flaked in the queue).
+(sleep 2; printf 333333 >"$WORK/code.AAAA.new"; mv "$WORK/code.AAAA.new" "$WORK/code.AAAA") &
 a2="$(totp_fresh AAAA)"
 wait
 rc=0

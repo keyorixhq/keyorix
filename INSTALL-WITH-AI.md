@@ -120,6 +120,12 @@ If something else already listens on port 8080
 (`curl -s localhost:8080` or `ss -ltn` shows it), choose a free port now and use
 it in step 4 and wherever this page says `8080`.
 
+The install directory `~/keyorix` is only a convention: use any directory (a second
+install on the same host needs its own), because the commands name their files by relative path (`secrets/...`, `./keyorix.yaml`),
+so only the directory you run them from matters. The CLI's credential file is
+not part of that directory (it is per OS user, see QUICK_START.md, "Log in"): give a
+second install its own `XDG_CONFIG_HOME` on Linux, or its own `HOME` on macOS.
+
 ### 3. Generate the install secrets
 
 ```bash
@@ -267,16 +273,21 @@ curl -fs --retry 30 --retry-connrefused --retry-delay 1 --cacert certs/server.cr
 
 Show the step 13 output, then tell the user:
 
-- **Back up together, offline:** `keys/`, `keyorix.db` and `keyorix.yaml`, or in one
+- **Back up together, offline:** `keys/`, `keyorix.db`, `keyorix.yaml` and
+  `secrets/metrics_token` (the config names it), or in one
   archive: stop the server, run
   `KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password ./bin/keyorix-server admin backup --output ./keyorix-backup.tar.gz --config ./keyorix.yaml`,
   start the server again and store the archive off this host. To restore on a new
-  host, create an empty install directory with `bin/`, `keyorix.yaml`, `certs/` and
-  `secrets/master_password` (the same passphrase) and run `admin restore --input <archive> --config ./keyorix.yaml`;
+  host, create an empty install directory with `bin/`, `keyorix.yaml`, `certs/`,
+  `secrets/master_password` (the same passphrase) and `secrets/metrics_token` (the config
+  names it, the server will not start without it) and run `admin restore --input <archive> --config ./keyorix.yaml`;
   it ends with `verify-audit on the restored database: VALID`. Back up
   `secrets/master_password` **separately** (a password manager or a sealed
   envelope): without it every stored secret is lost, and there is no recovery.
   Keep `recovery-key.age` (or the key from step 12) away from this host too.
+- **Keep the admin password in your password manager.** Step 11 deletes
+  `secrets/admin_password`, but every later `keyorix login` needs it: after a restore,
+  or on another machine with the CLI.
 - `certs/server.crt` is self-signed for `localhost` and this host's name; replace it
   (same paths) with a CA-issued certificate before other machines connect.
 - The server was started with `nohup`. To run it as a service, see

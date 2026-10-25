@@ -1,0 +1,2 @@
+### Security
+- **`scripts/k8s-e2e/run.sh` (J6) no longer passes the master, admin and database passwords to `helm` with `--set`** (visible in `ps`); they come from a 0600 values file via `-f`, like the other k8s-e2e installs. `TestDocsShowNoLiteralSecretOnCommandLine` now also fails on `helm --set`/`--set-string` with a credential key (password, token, secret, passphrase, apiKey; `existingSecret`/`secretName` references are fine) and on `kubectl --from-literal` with a credential key, in `scripts/**/*.sh` and `deploy/**/*.sh`.

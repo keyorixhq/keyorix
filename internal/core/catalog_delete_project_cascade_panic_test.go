@@ -10,6 +10,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -26,11 +27,11 @@ import (
 
 // cascadePanicSpy backs both panic sites: ListDynamicSecretConfigs (X1's first
 // reported panic) and, via RevokeLeasesForConfig's own ListDynamicSecretLeases
-// call, the second. Embeds storage.Storage as nil like deleteProjectSpy in
-// catalog_delete_project_test.go — any method besides the ones below panics on a
-// nil pointer dereference if reached, so an unexpected call fails loudly.
+// call, the second. store() serves it as a storagetest.Hooked over a nil inner store
+// like deleteProjectSpy in catalog_delete_project_test.go — any method besides the ones
+// hooked below panics on a nil pointer dereference if reached, so an unexpected call
+// fails loudly.
 type cascadePanicSpy struct {
-	storage.Storage
 	panicOnListConfigs bool
 	panicOnListLeases  bool
 	panicOnGuard       bool
@@ -38,7 +39,23 @@ type cascadePanicSpy struct {
 	auditEvents        []*models.AuditEvent
 }
 
-func (s *cascadePanicSpy) DeleteProjectIfEmpty(_ context.Context, id uint) (int, error) {
+func (s *cascadePanicSpy) store() storage.Storage {
+	var hs *storagetest.HookStore
+	hs = storagetest.Hooked(nil, &storagetest.StoreHooks{
+		DeleteProjectIfEmpty: s.DeleteProjectIfEmpty,
+		WithTransaction: func(_ storage.Storage, ctx context.Context, fn func(storage.Storage) error) error {
+			return s.WithTransaction(ctx, fn, hs)
+		},
+		SuspendMachineIdentitiesForDeletedProject: s.SuspendMachineIdentitiesForDeletedProject,
+		ListDynamicSecretConfigs:                  s.ListDynamicSecretConfigs,
+		ListDynamicSecretLeases:                   s.ListDynamicSecretLeases,
+		GetDynamicSecretConfig:                    s.GetDynamicSecretConfig,
+		LogAuditEvent:                             s.LogAuditEvent,
+	})
+	return hs
+}
+
+func (s *cascadePanicSpy) DeleteProjectIfEmpty(_ storage.Storage, _ context.Context, id uint) (int, error) {
 	if s.panicOnGuard {
 		panic("simulated pre-commit guard panic")
 	}
@@ -47,29 +64,29 @@ func (s *cascadePanicSpy) DeleteProjectIfEmpty(_ context.Context, id uint) (int,
 
 // WithTransaction / SuspendMachineIdentitiesForDeletedProject: DeleteProject runs the
 // cascade and its machine-identity step (#3433) in one transaction; this spy has none.
-func (s *cascadePanicSpy) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
-	return fn(s)
+func (s *cascadePanicSpy) WithTransaction(_ context.Context, fn func(storage.Storage) error, self storage.Storage) error {
+	return fn(self)
 }
 
-func (s *cascadePanicSpy) SuspendMachineIdentitiesForDeletedProject(_ context.Context, _ uint) ([]*models.MachineIdentity, error) {
+func (s *cascadePanicSpy) SuspendMachineIdentitiesForDeletedProject(_ storage.Storage, _ context.Context, _ uint) ([]*models.MachineIdentity, error) {
 	return nil, nil
 }
 
-func (s *cascadePanicSpy) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
+func (s *cascadePanicSpy) ListDynamicSecretConfigs(_ storage.Storage, _ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
 	if s.panicOnListConfigs {
 		panic("simulated ListDynamicSecretConfigs panic")
 	}
 	return s.configs, nil
 }
 
-func (s *cascadePanicSpy) ListDynamicSecretLeases(_ context.Context, _ uint) ([]*models.DynamicSecretLease, error) {
+func (s *cascadePanicSpy) ListDynamicSecretLeases(_ storage.Storage, _ context.Context, _ uint) ([]*models.DynamicSecretLease, error) {
 	if s.panicOnListLeases {
 		panic("simulated ListDynamicSecretLeases panic")
 	}
 	return nil, nil
 }
 
-func (s *cascadePanicSpy) GetDynamicSecretConfig(_ context.Context, id uint) (*models.DynamicSecretConfig, error) {
+func (s *cascadePanicSpy) GetDynamicSecretConfig(_ storage.Storage, _ context.Context, id uint) (*models.DynamicSecretConfig, error) {
 	for _, c := range s.configs {
 		if c.ID == id {
 			return c, nil
@@ -78,7 +95,7 @@ func (s *cascadePanicSpy) GetDynamicSecretConfig(_ context.Context, id uint) (*m
 	return nil, fmt.Errorf("config %d not found", id)
 }
 
-func (s *cascadePanicSpy) LogAuditEvent(_ context.Context, event *models.AuditEvent) error {
+func (s *cascadePanicSpy) LogAuditEvent(_ storage.Storage, _ context.Context, event *models.AuditEvent) error {
 	s.auditEvents = append(s.auditEvents, event)
 	return nil
 }
@@ -86,7 +103,7 @@ func (s *cascadePanicSpy) LogAuditEvent(_ context.Context, event *models.AuditEv
 func TestDeleteProject_CascadePanicInListConfigs_StillReturnsNil(t *testing.T) {
 	t.Parallel()
 	spy := &cascadePanicSpy{panicOnListConfigs: true}
-	c := core.NewKeyorixCore(spy)
+	c := core.NewKeyorixCore(spy.store())
 
 	err := c.DeleteProject(context.Background(), 0, 7, false)
 	require.NoError(t, err, "the project delete already committed — a panic in the best-effort post-commit cascade must not surface as an error")
@@ -103,7 +120,7 @@ func TestDeleteProject_CascadePanicInRevokeLeases_StillReturnsNil(t *testing.T) 
 		panicOnListLeases: true,
 		configs:           []*models.DynamicSecretConfig{{ID: 5, ProjectID: 7}},
 	}
-	c := core.NewKeyorixCore(spy)
+	c := core.NewKeyorixCore(spy.store())
 
 	err := c.DeleteProject(context.Background(), 0, 7, false)
 	require.NoError(t, err, "the project delete already committed — a panic revoking leases must not surface as an error")
@@ -122,7 +139,7 @@ func TestDeleteProject_CascadePanicInRevokeLeases_StillReturnsNil(t *testing.T) 
 func TestDeleteProject_PreCommitPanic_StillPropagates(t *testing.T) {
 	t.Parallel()
 	spy := &cascadePanicSpy{panicOnGuard: true}
-	c := core.NewKeyorixCore(spy)
+	c := core.NewKeyorixCore(spy.store())
 
 	assert.Panics(t, func() {
 		_ = c.DeleteProject(context.Background(), 0, 7, false)
@@ -133,7 +150,7 @@ func TestDeleteProject_PreCommitPanic_StillPropagates(t *testing.T) {
 func TestDeleteProject_CascadeNoPanic_NoCascadeFailedAudit(t *testing.T) {
 	t.Parallel()
 	spy := &cascadePanicSpy{}
-	c := core.NewKeyorixCore(spy)
+	c := core.NewKeyorixCore(spy.store())
 
 	require.NoError(t, c.DeleteProject(context.Background(), 0, 7, false))
 	for _, e := range spy.auditEvents {

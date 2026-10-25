@@ -1075,6 +1075,37 @@ Examples:
 .nf
 keyorix config unset ca_file
 .fi
+.SS keyorix crypto
+Cryptographic inventory and quantum\-risk reporting
+.PP
+Usage: \fBkeyorix crypto [command]\fR
+.SS keyorix crypto inventory
+List every key and certificate the server holds, with a quantum\-risk score
+.PP
+List every key and certificate the server holds or depends on (KEK, DEK, recovery key verifier, TLS certificates, derived signing/HMAC keys, WebAuthn and OIDC verification keys): algorithm, size, expiry, where it is stored, and a quantum\-risk score (0\-100) from its remaining lifetime against the configured quantum horizon. Classical public\-key keys (RSA, ECDSA, Ed25519) are flagged QUANTUM\-VULNERABLE.
+.PP
+The output holds metadata only, never key material. \-\-format cbom emits a CycloneDX 1.6 cryptographic bill of materials. Requires the audit.read permission; each read is recorded in the audit log.
+.PP
+Usage: \fBkeyorix crypto inventory [flags]\fR
+.PP
+Examples:
+.PP
+.nf
+keyorix crypto inventory
+keyorix crypto inventory \-\-format json
+keyorix crypto inventory \-\-format cbom \-\-output keyorix.cbom.json
+.fi
+.PP
+Flags:
+.TP
+\fB\-\-force\fR
+with \-\-output: overwrite an existing file
+.TP
+\fB\-\-format\fR \fIstring\fR
+output format: table, json or cbom (CycloneDX 1.6) (default table)
+.TP
+\fB\-o\fR, \fB\-\-output\fR \fIstring\fR
+write the json or cbom output to this file (mode 0600) instead of stdout
 .SS keyorix docs
 Print the CLI reference (Markdown) or its man page
 .PP
@@ -1591,7 +1622,7 @@ Usage: \fBkeyorix invite send [flags]\fR
 Examples:
 .PP
 .nf
-keyorix invite send \-\-project payments \-\-email bob@example.com \-\-role developer
+keyorix invite send \-\-project payments \-\-email bob@example.com \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -1878,7 +1909,7 @@ Usage: \fBkeyorix machine grant\-role <name|id> [flags]\fR
 Examples:
 .PP
 .nf
-keyorix machine grant\-role ci\-deployer \-\-project payments \-\-role developer
+keyorix machine grant\-role ci\-deployer \-\-project payments \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -1975,7 +2006,7 @@ Usage: \fBkeyorix machine revoke\-role <name|id> [flags]\fR
 Examples:
 .PP
 .nf
-keyorix machine revoke\-role ci\-deployer \-\-project payments \-\-role developer
+keyorix machine revoke\-role ci\-deployer \-\-project payments \-\-role project_developer
 .fi
 .PP
 Flags:
@@ -2616,7 +2647,7 @@ Usage: \fBkeyorix rbac assign\-role [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac assign\-role \-\-user alice@example.com \-\-role developer \-\-project payments
+keyorix rbac assign\-role \-\-user alice@example.com \-\-role project_developer \-\-project payments
 # Time\-bound grant
 keyorix rbac assign\-role \-\-user alice@example.com \-\-role admin \-\-project payments \-\-ttl 4h
 .fi
@@ -2651,7 +2682,7 @@ Usage: \fBkeyorix rbac assign\-role\-to\-group [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac assign\-role\-to\-group \-\-group platform\-team \-\-role developer \-\-project payments
+keyorix rbac assign\-role\-to\-group \-\-group platform\-team \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2833,7 +2864,7 @@ Usage: \fBkeyorix rbac remove\-role [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac remove\-role \-\-user alice@example.com \-\-role developer \-\-project payments
+keyorix rbac remove\-role \-\-user alice@example.com \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2861,7 +2892,7 @@ Usage: \fBkeyorix rbac remove\-role\-from\-group [flags]\fR
 Examples:
 .PP
 .nf
-keyorix rbac remove\-role\-from\-group \-\-group platform\-team \-\-role developer \-\-project payments
+keyorix rbac remove\-role\-from\-group \-\-group platform\-team \-\-role project_developer \-\-project payments
 .fi
 .PP
 Flags:
@@ -2893,7 +2924,7 @@ Usage: \fBkeyorix request access [flags]\fR
 Examples:
 .PP
 .nf
-keyorix request access \-\-project payments \-\-role developer \-\-reason "on\-call this week"
+keyorix request access \-\-project payments \-\-role project_developer \-\-reason "on\-call this week"
 .fi
 .PP
 Flags:
@@ -4999,6 +5030,8 @@ Show the configured server, login state, and version\-skew check
 .PP
 status is the remote\-only successor to the old CLI's "status" command (docs/cli\-split\-inventory.md §2.7): it has no local/embedded branch to fall back to (ADR\-108 Decision A removes local mode entirely). Unlike the old command, it actually parses GET /health's response body instead of discarding it, and reports the GET /api/v1/version skew check.
 .PP
+status also prints the credential file it reads: keyorix/credentials.yaml under the OS user config directory (~/.config on Linux, ~/Library/Application Support on macOS). The file is per OS user, so two installs on one account share it. On Linux, XDG_CONFIG_HOME moves it (a separate login, ca_file and token per value); macOS ignores XDG_CONFIG_HOME, so use a different HOME there.
+.PP
 Usage: \fBkeyorix status\fR
 .PP
 Examples:
@@ -5167,9 +5200,6 @@ keyorix user create \-\-username bob \-\-email bob@example.com \-\-setup\-link
 .fi
 .PP
 Flags:
-.TP
-\fB\-\-by\fR \fIstring\fR
-Acting admin email (unused in this REST\-only CLI \-\- kept for flag compatibility; the session behind your bearer token is always the acting admin)
 .TP
 \fB\-\-display\-name\fR \fIstring\fR
 Display name (defaults to username)

@@ -91,6 +91,8 @@ type Config struct {
 	// SCIM configures the SCIM 2.0 provisioning endpoints (RFC 7644) used by an IdP
 	// to provision/deprovision users. Disabled (zero value) = /scim/v2 is not served.
 	SCIM SCIMConfig `yaml:"scim"`
+	// CryptoInventory tunes the quantum-risk score of the crypto inventory / CBOM.
+	CryptoInventory CryptoInventoryConfig `yaml:"crypto_inventory"`
 	// SSO configures human single-sign-on login via OIDC (authorization-code flow):
 	// users sign in through their IdP and Keyorix mints a session. Disabled (zero
 	// value) = the /auth/sso endpoints are not served.
@@ -321,19 +323,37 @@ func (c *Config) SecretFilePaths() []string {
 // when the upgrade grace turned a refusal into a warning, so the caller can
 // avoid recording that boot as "enforced".
 func (c *Config) EnforceSecretFilePermissions() (graceSoftened bool, err error) {
-	keyMaterial := map[string]string{} // path -> variable, for the key-material _FILE secrets
+	keyMaterial := map[string]bool{} // the key-material secrets, by variable name
 	for _, n := range c.keyMaterialSecretEnvNames() {
-		if p := os.Getenv(n + secretenv.FileSuffix); p != "" {
-			keyMaterial[p] = n + secretenv.FileSuffix
-		}
+		keyMaterial[n] = true
 	}
+	// Each file is named by the variable or config key it came from, through
+	// secretenv.DescribeFile (CheckPermissionsNamed): a relative path is never
+	// shown, it may be the secret itself (SECRETENV-REVIEW-1 F4).
 	var problems, keyProblems []string
-	for _, p := range c.SecretFilePaths() {
-		if err := secretenv.CheckPermissions(p); err != nil {
-			if v, ok := keyMaterial[p]; ok {
-				keyProblems = append(keyProblems, v+": "+err.Error())
+	seen := map[string]bool{}
+	for _, fv := range secretenv.FileVars(c.secretEnvNames()...) {
+		if seen[fv.Path] {
+			continue
+		}
+		seen[fv.Path] = true
+		if err := secretenv.CheckPermissionsNamed(fv.Var(), fv.Path); err != nil {
+			if keyMaterial[fv.Name] {
+				keyProblems = append(keyProblems, err.Error())
 				continue
 			}
+			problems = append(problems, err.Error())
+		}
+	}
+	for _, m := range []struct{ key, path string }{
+		{"server.http.metrics_token_file", c.Server.HTTP.MetricsTokenFile},
+		{"server.grpc.metrics_token_file", c.Server.GRPC.MetricsTokenFile},
+	} {
+		if m.path == "" || seen[m.path] {
+			continue
+		}
+		seen[m.path] = true
+		if err := secretenv.CheckPermissionsNamed(m.key, m.path); err != nil {
 			problems = append(problems, err.Error())
 		}
 	}
@@ -680,6 +700,7 @@ var configValidators = []func(*Config) error{
 	validateSSOSection,
 	validateWebAuthnSection,
 	validateSecuritySection,
+	validateCryptoInventorySection,
 }
 
 // Save saves the configuration to a YAML file. Mirrors Load's path handling:

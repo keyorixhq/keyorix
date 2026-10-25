@@ -37,6 +37,28 @@ type writeWorld struct {
 	db      *gorm.DB
 	project uint
 	env     uint
+	// onFail, when set, is called by runWrites after every failed write.
+	onFail func()
+}
+
+// holdWriteLock begins a write transaction on w's database through the world's
+// own open path (so in the gated world the holder owns the gate, like any other
+// writer), writes one row so SQLite's write lock is certainly held, and keeps it
+// until release is closed. It returns once the lock is held; the returned func
+// waits for the holder's rollback. This forces the contention the tests below
+// reason about instead of hoping a host is slow enough to produce it under load.
+func (w *writeWorld) holdWriteLock(t *testing.T, release <-chan struct{}) (wait func()) {
+	t.Helper()
+	holder := w.db.Begin()
+	require.NoError(t, holder.Error)
+	require.NoError(t, holder.Exec("UPDATE environments SET name = name WHERE id = ?", w.env).Error)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		<-release
+		_ = holder.Rollback()
+	}()
+	return func() { <-done }
 }
 
 // newCompressedWriteWorld builds core on a file SQLite database opened with the
@@ -115,6 +137,9 @@ func (w *writeWorld) runWrites(t *testing.T, clients, perClient int) []writeOutc
 				out = append(out, writeOutcome{name: name, err: err, dur: time.Since(t0)})
 				mu.Unlock()
 				if err != nil {
+					if w.onFail != nil {
+						w.onFail()
+					}
 					continue
 				}
 				audits.Add(1)
@@ -127,6 +152,9 @@ func (w *writeWorld) runWrites(t *testing.T, clients, perClient int) []writeOutc
 				mu.Lock()
 				out = append(out, writeOutcome{name: name, update: true, err: err, dur: time.Since(t0)})
 				mu.Unlock()
+				if err != nil && w.onFail != nil {
+					w.onFail()
+				}
 			}
 		}(c)
 	}
@@ -163,15 +191,27 @@ func summarizeOutcomes(os []writeOutcome) (errs int, p99, max time.Duration, fir
 // TestSQLite_ConcurrentDistinctSecretWrites_UngatedControlFails runs the same
 // workload without the write gate and must see the failure, so this test cannot
 // pass vacuously.
+//
+// The workload starts while another writer holds the write lock for
+// gatedHoldFor (several busy_timeouts), so the first writes certainly wait longer
+// than busy_timeout. Under load alone a fast host never waited that long and the
+// pair proved nothing there (MERGE-FIX-AUTO-10222025).
 func TestSQLite_ConcurrentDistinctSecretWrites_SucceedOrFailFast(t *testing.T) {
 	if testing.Short() {
 		t.Skip("load-shaped test; skipped in -short")
 	}
+	const gatedHoldFor = 4 * compressedBusyTimeout
 	w := newCompressedWriteWorld(t, true)
+	release := make(chan struct{})
+	held := w.holdWriteLock(t, release)
+	time.AfterFunc(gatedHoldFor, func() { close(release) })
 	outcomes := w.runWrites(t, 60, 6)
+	held()
 	errs, p99, max, firstErr := summarizeOutcomes(outcomes)
 	t.Logf("gated: ops=%d errors=%d p99=%s max=%s", len(outcomes), errs, p99, max)
 	require.Zero(t, errs, "every write to a distinct secret must succeed; first error: %v", firstErr)
+	require.Greater(t, max, compressedBusyTimeout,
+		"a write must have queued behind the held writer for longer than busy_timeout, or this run proved nothing")
 	// Latency is not bounded by busy_timeout here: creates in one environment
 	// legitimately queue on its per-environment named lock (withEnvironmentSecretGuard).
 	// The bound below only detects a hang; the property under test is (1) and (3).
@@ -195,12 +235,24 @@ func TestSQLite_ConcurrentDistinctSecretWrites_SucceedOrFailFast(t *testing.T) {
 // harness must observe the PERF-2 symptom: a write failing with SQLITE_BUSY after
 // starving in SQLite's busy handler for the whole busy_timeout. If this stops failing, the guard above has stopped proving
 // anything and the compression constants need recalibrating.
+//
+// The contention is forced, not hoped for: the workload starts while another
+// writer holds SQLite's write lock, and that holder lets go only once a write has
+// failed (or the workload has ended). Without the gate nothing makes a writer
+// wait for the holder outside SQLite, so every write that overlaps the hold
+// starves in the busy handler; whether the host is fast no longer matters.
 func TestSQLite_ConcurrentDistinctSecretWrites_UngatedControlFails(t *testing.T) {
 	if testing.Short() {
 		t.Skip("load-shaped test; skipped in -short")
 	}
 	w := newCompressedWriteWorld(t, false)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	w.onFail = func() { releaseOnce.Do(func() { close(release) }) }
+	held := w.holdWriteLock(t, release)
 	outcomes := w.runWrites(t, 60, 6)
+	w.onFail() // nothing failed: release so the holder ends; the assertion below reports it
+	held()
 	errs, p99, max, firstErr := summarizeOutcomes(outcomes)
 	t.Logf("ungated control: ops=%d errors=%d (first: %v) p99=%s max=%s", len(outcomes), errs, firstErr, p99, max)
 	require.Positive(t, errs, "control must reproduce SQLITE_BUSY failures without the gate (max=%s)", max)

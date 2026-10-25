@@ -1,0 +1,2 @@
+### Documentation
+- **ADR-116 (Proposed): signed audit checkpoints and a standalone verifier.** Design for hybrid Ed25519 + ML-DSA-65 checkpoint statements over the audit hash chain, commitments to the owed-audit set, a chain-exact export and an offline `keyorix-verify` binary; answers RUNBOOKS-1 gap 5 (older checkpoints after a key change) offline. Design only, nothing implemented: `docs/adr-116-signed-audit-checkpoints.md`, `docs/design-rd-audit-ckpt.md`, demo script `docs/demo/rd-audit-ckpt.md`, threat-model rows AUDIT-6 to AUDIT-10 (GAP).

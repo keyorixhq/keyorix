@@ -29,7 +29,10 @@
 # (no access for "other", no group write) passes.
 services:
   postgres:
-    image: postgres:15-alpine
+    # SMOKE-FLAKE-3: pinned by tag@digest (index digest from docker.io, 2026-10-24, via
+    # `docker buildx imagetools inspect docker.io/postgres:15-alpine`). Bumping the tag
+    # requires re-fetching the digest from UPSTREAM docker.io, never from a mirror.
+    image: postgres:15-alpine@sha256:a8e042598834300dfaa17a54f695b87b7f25d3490433bbbe2ef3bffbb9747f24
     restart: unless-stopped
     environment:
       POSTGRES_DB: keyorix
@@ -83,7 +86,7 @@ services:
       retries: 10
 
   backend:
-    image: ghcr.io/keyorixhq/keyorix-server:0.96.0 # pin; bump to match release tag on upgrades
+    image: ghcr.io/keyorixhq/keyorix-server:0.96.3 # pin; bump to match release tag on upgrades
     # To build from source instead of pulling the published image, comment out
     # `image:` above and uncomment:
     # build:
@@ -169,7 +172,7 @@ services:
     # Published by docker-publish.yml from the same release tag as the server
     # image. Registry tags carry no leading "v" (docker/metadata-action semver
     # pattern): release v0.95.3 -> image tag 0.95.3.
-    image: ghcr.io/keyorixhq/keyorix-web:0.96.0 # pin; bump to match release tag on upgrades
+    image: ghcr.io/keyorixhq/keyorix-web:0.96.3 # pin; bump to match release tag on upgrades
     restart: unless-stopped
     ports:
       - "8088:80"
@@ -249,7 +252,10 @@ services:
   # would fail here and, because caddy waits for this service to complete
   # successfully, leave HTTPS down. It grants read/search only, not write.
   caddy-init:
-    image: caddy:2-alpine
+    # SMOKE-FLAKE-3: pinned by tag@digest (index digest from docker.io, 2026-10-24, via
+    # `docker buildx imagetools inspect docker.io/caddy:2-alpine`). Bumping requires
+    # re-fetching from UPSTREAM docker.io, never from a mirror. Same pin as the caddy service.
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
     profiles: ["tls"]
     restart: "no"
     user: "0:0"
@@ -284,7 +290,9 @@ services:
       - caddy_config:/config
 
   caddy:
-    image: caddy:2-alpine
+    # SMOKE-FLAKE-3: same tag@digest pin as caddy-init above; bump both together, digest
+    # re-fetched from UPSTREAM docker.io (`docker buildx imagetools inspect docker.io/caddy:2-alpine`).
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
     profiles: ["tls"]
     restart: unless-stopped
     user: "65532:65532"

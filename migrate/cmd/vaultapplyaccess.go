@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -30,7 +31,9 @@ as --plan). Re-derives and re-checks the plan fresh against live Vault and Keyor
 before executing each item — never trusting the file's snapshot — and only ever executes an
 item that is BOTH present in the reviewed file AND still resolves to "create" in the fresh
 re-derivation. Idempotent and resumable: an item already migrated by a prior run resolves to
-"skip" and is left untouched.
+"skip" and is left untouched. If another KV mount's <project>/<env>/ paths changed since
+plan-access listed them (cross-mount check, see plan-access --help), nothing is applied: re-run
+plan-access and review the new plan.
 
   keyorix-migrate vault apply-access --vault-addr https://vault.example.com:8200 \
     --server https://keyorix.example.com --token-file ./pat.txt \
@@ -149,6 +152,9 @@ func runApplyAccess(cmd *cobra.Command, _ []string) error {
 	for _, w := range warnings {
 		_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "WARNING:", w)
 	}
+	if err := refuseCrossMountDrift(cmd.ErrOrStderr(), reviewedPlan.Items, fresh.Items); err != nil {
+		return err
+	}
 
 	// SelectForApply also passes the fresh plan's Skip-outcome roles/machine identities (never
 	// written, only their ids read) so a resumed run can attach grants to parents an earlier,
@@ -195,4 +201,19 @@ func runApplyAccess(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("%d item(s) failed to apply — see the errors above", failed)
 	}
 	return nil
+}
+
+// refuseCrossMountDrift fails the whole run, before anything is written, when the KV tree
+// listing behind the reviewed plan's default-convention scopes changed between plan-access and
+// this re-derivation (accessplan.CrossMountDrift): the reviewer approved grants on a Vault tree
+// that is no longer the one being migrated.
+func refuseCrossMountDrift(stderr io.Writer, reviewed, fresh []accessplan.Item) error {
+	drift := accessplan.CrossMountDrift(reviewed, fresh)
+	if len(drift) == 0 {
+		return nil
+	}
+	for _, d := range drift {
+		_, _ = fmt.Fprintln(stderr, "ERROR: Vault KV tree changed since plan-access:", d)
+	}
+	return fmt.Errorf("%d policy stanza(s) resolve against a different Vault KV tree than the reviewed plan — nothing was applied; re-run plan-access, review the new plan, and apply that", len(drift))
 }

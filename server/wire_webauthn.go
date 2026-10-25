@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 )
 
 // cmpOr returns a if non-empty, else b (a tiny local helper to avoid a new import).
@@ -20,8 +20,10 @@ func wireWebAuthn(cw *coreWiring) error {
 	cfg, coreService := cw.cfg, cw.core
 	// Wire WebAuthn / passkeys (ADR-036) when configured. A bad RP config (no
 	// origins / invalid RP ID) fails loud rather than silently disabling passkeys.
+	// The relying party is internal/webauthnrp (the go-webauthn library stays out
+	// of internal/core, CORE-DECOUPLE-WEBAUTHN-1).
 	if wa := cfg.WebAuthn; wa.Enabled {
-		rp, werr := webauthn.New(&webauthn.Config{
+		rp, werr := webauthnrp.New(webauthnrp.Config{
 			RPID:          wa.RPID,
 			RPDisplayName: cmpOr(wa.RPDisplayName, "Keyorix"),
 			RPOrigins:     wa.RPOrigins,

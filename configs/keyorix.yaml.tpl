@@ -146,6 +146,8 @@ storage:
     # ssl_root_cert: /etc/keyorix/pg-ca.pem  # CA that signed the database's certificate;
     #   REQUIRED with verify-full (the server refuses to start without it), or "system"
     #   for the OS CA store. A relative path is relative to this file's directory.
+    #   Refused with ssl_mode disable/allow/prefer (the CA would never be checked).
+    #   Walk-through: docs/operator/postgres-tls.md
 
     # Connection pool. Leave max_open_conns unset to get the measured default for
     # your storage.type: 8 for SQLite, 25 for Postgres (#2631; docs/CONFIGURATION.md
@@ -175,15 +177,13 @@ storage:
     salt_path: "keys/kek.salt"
 
 secrets:
-  chunking:
-    # Enable chunking large secrets into smaller parts
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 10
-
   limits:
-    # Maximum number of secrets per user
-    max_secrets_per_user: 1000
+    # Largest secret value accepted on create, update and rotate, in bytes. Default
+    # 65536 (64 KiB); values above 1 MiB are refused at startup. Reads and deletes of
+    # an already stored larger value still work. (There is no per-user secret count
+    # quota and no chunking setting: the secrets.chunking.* and
+    # secrets.limits.max_secrets_per_user keys are not enforced.)
+    max_secret_size: 65536
 
 security:
   # Check file permission safety on startup
@@ -279,8 +279,10 @@ session:
   # and the user must re-authenticate. Empty or "0" = no ceiling. The login/refresh
   # responses return `absolute_expires_at` when a ceiling is set.
   #
-  # Recommended short-lived configuration (used by default here — #G37; set to ""
-  # to restore the old unbounded-refresh behaviour):
+  # This file sets the 12h ceiling by default (#G37; set absolute_ttl to "" to
+  # restore the old unbounded-refresh behaviour) but keeps access_ttl at 24h, so an
+  # issued token stays valid until the ceiling. The recommended short-lived
+  # configuration also shortens the access window:
   #   access_ttl: "30m"
   #   absolute_ttl: "12h"
   absolute_ttl: "12h"

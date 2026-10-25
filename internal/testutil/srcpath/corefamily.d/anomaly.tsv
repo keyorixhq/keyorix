@@ -1,0 +1,2 @@
+# kind	dir	reason (README.md)
+extracted	internal/anomaly	CORE-ANOMALY-LEAF-1: Isolation Forest pass (anomaly_ml.go, isolation_forest.go), pure leaf

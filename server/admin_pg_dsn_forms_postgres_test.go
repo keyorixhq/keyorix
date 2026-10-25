@@ -362,6 +362,8 @@ func TestAdminPostgres_DSNForms_IsolatedDatabaseIsNotTheSharedOne(t *testing.T) 
 	require.NoError(t, err)
 	require.NotEqual(t, baseCfg.Database, isoCfg.Database)
 	require.True(t, strings.HasPrefix(isoCfg.Database, "admin_pr11_"), isoCfg.Database)
-	require.Equal(t, baseCfg.Password, isoCfg.Password)
-	require.Equal(t, replaceAdminDBName(base, isoCfg.Database), isolated)
+	// Never require.Equal on these: a failure prints both values, and the
+	// password / DSN come from KEYORIX_TEST_PG_DSN.
+	require.True(t, baseCfg.Password == isoCfg.Password, "isolated DSN's password differs from the base DSN's")
+	require.True(t, replaceAdminDBName(base, isoCfg.Database) == isolated, "isolated DSN is not the base DSN with only the database name replaced")
 }

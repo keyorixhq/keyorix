@@ -145,6 +145,10 @@ func breakGlassToProto(a *models.BreakGlassActivation) *pb.BreakGlassActivation 
 // PermissionDenied/NotFound silently became Internal. An error that carries no
 // sentinel is Internal whatever its words say.
 func breakGlassError(err error) error {
+	// #3546: a role-scope refusal is the caller's to fix (fixed, client-safe text).
+	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
+		return status.Error(codes.InvalidArgument, scopeMsg)
+	}
 	switch {
 	case errors.Is(err, core.ErrRestrictedPATCannotBreakGlass):
 		// PAT-GUARD-2: fixed text, the sentinel's own wording; names no resource.
@@ -153,6 +157,8 @@ func breakGlassError(err error) error {
 		return status.Error(codes.NotFound, "break-glass activation not found") // GRPC-005: was msg — leaked storage error details
 	case errors.Is(err, core.ErrBreakGlassInvalidRequest):
 		return status.Error(codes.InvalidArgument, "invalid request") // GRPC-005: was msg — leaked minimum justification length
+	case errors.Is(err, storage.ErrBreakGlassAlreadyActive):
+		return status.Error(codes.AlreadyExists, "you already have an active break-glass grant on this project; revoke it before activating again")
 	case errors.Is(err, core.ErrBreakGlassDisabled):
 		// Same code and text as before; the typed reason rides in the status details
 		// (google.rpc.ErrorInfo), so a client need not match the text.

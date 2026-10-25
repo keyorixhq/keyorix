@@ -112,7 +112,7 @@ func TestConcurrency_RestoreGroup_AdminGrantRace_CrossReplicaPostgres(t *testing
 	// The admin-tier role's one real signal is the structural bypass flag
 	// (ADR-084, roleSetContainsAdmin) -- not its name, not its bundled
 	// permissions. Named innocuously on purpose.
-	adminRole := models.Role{Name: "sneaky_admin", BypassesPermissionChecks: true}
+	adminRole := models.Role{Name: "sneaky_admin", BypassesPermissionChecks: true, AssignableScope: models.RoleAssignableAny}
 	require.NoError(t, setupDB.Create(&adminRole).Error)
 	nonAdmin := models.User{Username: "rg-nonadmin", UsernameFolded: "rg-nonadmin", IsActive: true, AccountState: AccountActive}
 	require.NoError(t, setupDB.Create(&nonAdmin).Error)
