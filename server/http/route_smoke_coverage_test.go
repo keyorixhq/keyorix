@@ -40,7 +40,7 @@ func TestEveryRouteHasAnE2ESmokeCallOrSkip(t *testing.T) {
 	}
 	e2eDir := filepath.Join(root, "scripts", "e2e")
 	called := e2eSmokeCalledRouteKeys(t, e2eDir)
-	skipped := e2eSmokeSkipListKeys(t, filepath.Join(e2eDir, "coverage.go"))
+	skipped := e2eSmokeSkipListKeys(t, filepath.Join(root, filepath.FromSlash("scripts/e2e/coverage.go")))
 	if len(called) < 100 || len(skipped) < 10 {
 		t.Fatalf("found %d called and %d skipped route keys in %s: the source scan is broken, fix it, not this floor", len(called), len(skipped), e2eDir)
 	}
