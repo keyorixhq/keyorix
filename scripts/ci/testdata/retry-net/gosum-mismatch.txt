@@ -1,6 +1,6 @@
 verifying github.com/pquerna/otp@v1.5.0/go.mod: checksum mismatch
 	downloaded: h1:dkJfzwRKNiegxyNb54X/3fLwhCynbMspSyWKnvi1AEg=
-	go.sum:     h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+	go.sum:     h1:dkJfzwRKNiegxyNb54X/3fLwhCynbMspSyWKnvi1AAA=
 
 SECURITY ERROR
 This download does NOT match an earlier download recorded in go.sum.
