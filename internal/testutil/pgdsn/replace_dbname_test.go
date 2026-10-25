@@ -95,23 +95,35 @@ func TestPGReplaceDBName_KeywordExactOutput(t *testing.T) {
 }
 
 // TestPGReplaceDBName_PanicMessageHasNoPassword: url.Parse's *url.Error quotes
-// the raw URL, so formatting it whole would put the password in the panic text.
+// the raw URL, and even its inner error can quote part of the password (an
+// unescaped '/' or '#' ends the authority early, so the text before it is
+// reported as an "invalid port"). The panic text must contain neither.
 func TestPGReplaceDBName_PanicMessageHasNoPassword(t *testing.T) {
-	const pw = "hunter2-do-not-leak"
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected a panic for an unparseable URL DSN")
-		}
-		msg := fmt.Sprint(r)
-		if strings.Contains(msg, pw) {
-			t.Fatal("panic message contains the DSN password") // never print msg
-		}
-		if !strings.Contains(msg, "cannot parse URL DSN") {
-			t.Fatalf("panic message lost its context: %q", msg)
-		}
-	}()
-	PGReplaceDBName("postgres://kx:"+pw+"@h:notaport/db", "n")
+	cases := []struct {
+		name, dsn, secret string
+	}{
+		{"bad-port", "postgres://kx:hunter2-do-not-leak@h:notaport/db", "hunter2-do-not-leak"},
+		{"slash-in-password", "postgres://kx:secretPart/rest@h/db", "secretPart"},
+		{"hash-in-password", "postgres://kx:secretPart#rest@h/db", "secretPart"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				r := recover()
+				if r == nil {
+					t.Fatal("expected a panic for an unparseable URL DSN")
+				}
+				msg := fmt.Sprint(r)
+				if strings.Contains(msg, tc.secret) {
+					t.Fatal("panic message contains DSN password material") // never print msg
+				}
+				if !strings.Contains(msg, "cannot parse URL DSN") {
+					t.Fatal("panic message lost its context")
+				}
+			}()
+			PGReplaceDBName(tc.dsn, "n")
+		})
+	}
 }
 
 func TestPGReplaceDBName_UnparseableURLPanics(t *testing.T) {

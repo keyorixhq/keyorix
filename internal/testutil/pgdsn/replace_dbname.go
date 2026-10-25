@@ -1,8 +1,6 @@
 package pgdsn
 
 import (
-	"errors"
-	"fmt"
 	"net/url"
 	"strings"
 )
@@ -20,12 +18,11 @@ func replaceURLDBName(base, newName string) string {
 		// Never return base unchanged: that is exactly the silent no-op that
 		// pointed "isolated" tests at the shared database.
 		//
-		// A *url.Error quotes the whole raw URL, password included, so only
-		// its inner error (which describes the problem, not the input) is shown.
-		if ue, ok := errors.AsType[*url.Error](err); ok {
-			err = ue.Err
-		}
-		panic(fmt.Sprintf("pgdsn: cannot parse URL DSN: %v", err))
+		// The message is fixed and carries no error detail: a *url.Error
+		// quotes the whole raw URL, and even its inner error can quote part of
+		// the password (an unescaped '/' or '#' in it ends the authority early,
+		// so "kx:secretPart" is reported as an invalid port ":secretPart").
+		panic("pgdsn: cannot parse URL DSN (details withheld: the error text can contain the password; percent-encode reserved characters in the password)")
 	}
 	u.Path = "/" + newName
 	u.RawPath = ""
