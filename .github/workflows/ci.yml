@@ -2355,7 +2355,37 @@ jobs:
           cache-from: type=gha,scope=keyorix-web
           cache-to: type=gha,mode=max,scope=keyorix-web
 
+      # Network retry (CI-PARITY-1): kind-action downloads kind and its
+      # .sha256sum from GitHub releases; on 17 Oct the checksum file came back
+      # unreadable ("sha256sum: no properly formatted checksum lines found")
+      # and failed the job. Up to 3 attempts, 20 s / 60 s back-off; the action
+      # still verifies the checksum on every attempt (nothing is installed
+      # until it matches), and a half-created cluster is deleted first.
       - name: Create kind cluster
+        id: kind1
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 1)
+        if: steps.kind1.outcome == 'failure'
+        run: |
+          sleep 20
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 2)
+        id: kind2
+        if: steps.kind1.outcome == 'failure'
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 2)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
+        run: |
+          sleep 60
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 3)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
         uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: kx-ci-boot-smoke
@@ -2855,6 +2885,24 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.3'
+          # Both modules: the default key (root go.sum only) never cached the
+          # operator module's dependencies, so every run fetched them again.
+          cache-dependency-path: |
+            go.sum
+            operator/go.sum
+
+      # proxy.golang.org failed this job in the queue on 3 Oct ("TLS handshake
+      # timeout", operator module) and 20 Oct ("stream error ... INTERNAL_ERROR",
+      # root module). Fetch both modules up front with a bounded retry that
+      # fires on network errors only (scripts/ci/retry-net.sh: max 3 attempts,
+      # never on a go.sum mismatch). go mod download verifies every module
+      # against go.sum exactly as before; the diff check fails the job if it
+      # had to add or change a hash.
+      - name: Download Go modules (root + operator; retry on network errors only)
+        run: |
+          scripts/ci/retry-net.sh go mod download
+          (cd operator && GOWORK=off ../scripts/ci/retry-net.sh go mod download)
+          git diff --exit-code -- go.sum operator/go.sum
 
       # Keyed on the resolved Go version too (not just GO_LICENSES_VERSION): a
       # go-licenses binary built under one Go toolchain and then reused as-is
