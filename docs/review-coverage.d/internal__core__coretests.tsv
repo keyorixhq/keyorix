@@ -1,0 +1,1 @@
+internal/core/coretests	none	-	PR CORE-BLACKBOX-TESTS-1: test-only package (doc.go + _test.go files) holding the black-box tests of internal/core moved verbatim from package core (ADR-121 decision 2); nothing imports it (R3 guard), never linked into a shipped binary, no auth or storage decisions of its own	test-helper
