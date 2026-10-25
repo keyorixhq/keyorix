@@ -68,7 +68,7 @@ func storageInterfaceMethodNames() []string {
 
 // authzReadMethods back core.Authorize / permission resolution / scope
 // discovery (confirmed by reading their doc comments in
-// internal/core/storage/interface.go, not guessed — "Together they back
+// internal/core/storage/iface_*.go, not guessed — "Together they back
 // core.Authorize"). Oracle (c): a fault on any of these must never let an
 // operation SUCCEED — error or deny only, regardless of what the reference
 // (fault-free) run would have done.

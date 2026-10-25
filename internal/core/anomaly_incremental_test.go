@@ -182,7 +182,7 @@ func seedAnomalyScenarioActiveIDs() []int { return make([]int, 11) }
 
 // A candidate-query failure must fall back to the full sweep, never skip secrets.
 func failingCandidateStore(inner *hookStore) *hookStore {
-	h := *inner.h
+	h := *inner.Hooks()
 	h.ListSecretIDsAccessedSince = func(storage.Storage, context.Context, time.Time) ([]uint, error) {
 		return nil, fmt.Errorf("boom")
 	}

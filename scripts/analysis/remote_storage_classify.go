@@ -397,8 +397,8 @@ func main() {
 				if strings.Contains(path, filepath.Join("internal", "storage", "store")) {
 					return nil // the storage-layer implementations themselves, not callers
 				}
-				if strings.HasSuffix(path, filepath.Join("internal", "core", "storage", "interface.go")) {
-					return nil // the interface declaration, not a call
+				if strings.HasSuffix(filepath.Dir(path), filepath.Join("internal", "core", "storage")) {
+					return nil // the interface declaration (iface_*.go, interface.go), not a call
 				}
 				b, rerr := os.ReadFile(path)
 				if rerr != nil {

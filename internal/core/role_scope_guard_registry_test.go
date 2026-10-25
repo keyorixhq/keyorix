@@ -33,7 +33,7 @@ import (
 )
 
 // storageGrantWriters are every storage.Storage method that writes a user,
-// group or machine-identity role grant row (internal/core/storage/interface.go;
+// group or machine-identity role grant row (internal/core/storage/iface_*.go;
 // the row constructors in internal/storage/store are local_rbac.go AssignRole*/
 // AssignRoleToGroup*, local_users.go CreateUserWithRoleGrants and
 // local_machine_credentials.go AssignMachineRole — nothing else creates a
