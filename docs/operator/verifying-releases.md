@@ -192,12 +192,17 @@ Read the limits first; they decide what "verified" can mean inside.
 | Works with no network | Does not work with no network today |
 |-----------------------|-------------------------------------|
 | `release.checksums.*` (every file against `checksums.txt`), `release.assets`, `release.sbom` | **Verifying the signature of `checksums.txt` with cosign.** Neither `--offline` nor `--insecure-ignore-tlog=true` makes this work (details below) |
-| `release.signature.cert` (the certificate names the right workflow and tag) and `release.signature.offline` (the signature matches the certificate's key over `checksums.txt`, checked with `openssl`) | Anything that calls api.github.com: workflow-run evidence, GitHub SLSA attestations, binary provenance (SKIPped with `--offline`) |
+| `release.signature.cert` (PARTIAL: the certificate *claims* the right workflow and tag) and `release.signature.offline` (the signature matches the certificate's key over `checksums.txt`, checked with `openssl`). Neither proves who signed | Anything that calls api.github.com: workflow-run evidence, GitHub SLSA attestations, binary provenance (SKIPped with `--offline`) |
 | On a mirror: `image.*.tag`, `.platforms`, `.sbom`, `.buildkit-provenance`, `chart.*.version` (registry content only) | cosign verification of image and chart signatures: it needs a Sigstore trust root; this guide has **not** tested a transferred-trust-root flow, so treat it as unavailable |
 
-`release.signature.cert` and `.offline` are reported as partial: together they show *who*
-the certificate names and that `checksums.txt` is the file that was signed, but not that
-the certificate chains to Sigstore or that the signature was publicly logged.
+`release.signature.cert` and `.offline` are reported as PARTIAL, consistency only. **Without
+cosign they prove nothing about who signed.** They show what the certificate *claims* (the
+workflow and the issuer) and that the signature matches the certificate's own key. Anyone can
+make a self-signed certificate that claims the release workflow and sign forged files with
+it, and both checks pass. Only cosign checks that the certificate chains to Sigstore's Fulcio
+and that the signature was publicly logged. For that reason the script never lets a SKIPped
+cosign signature check count as verified: `--allow-skip` does not cover it, and the exit
+code stays 2 (INCOMPLETE).
 
 **`--insecure-ignore-tlog` does not verify `checksums.txt` offline.** The signature in
 `checksums.txt.sig` was made with a Fulcio certificate that is valid for only ten minutes.
@@ -213,9 +218,9 @@ network namespace: every variant fails.
 **Fully offline verification of `checksums.txt` needs a Sigstore bundle**
 (`checksums.txt.bundle`: signature, certificate and the Rekor entry in one file). The
 release pipeline does not publish one yet (tracked as RC-ARTIFACTS-1 gap 1). Until it
-does, the strongest offline statement is: *checksums.txt matched the certificate and the
-workflow identity (the two partial checks), and I verified the full cosign signature on a
-connected host*. Do the connected-host run (below), keep its output, and compare the
+does, the strongest offline statement is: *I verified the full cosign signature on a
+connected host, and the files here match the `checksums.txt` that run verified*. The two
+partial checks add nothing to that on their own. Do the connected-host run (below), keep its output, and compare the
 digests it prints with the ones the isolated run prints.
 
 **On a connected host**
@@ -290,20 +295,24 @@ scripts/release/verify-release.sh "$TAG" \
 
 `--no-cosign` is deliberate: without network cosign fails on the trust root, and the
 script would print a FAIL that says nothing about the release. With it, the signature
-checks are SKIPped and the verdict is INCOMPLETE (exit 2); add `--allow-skip` only if you
-accept that those checks ran on the connected host. `--registry` points images and charts
+checks are SKIPped and the verdict is INCOMPLETE (exit 2), also with `--allow-skip`. That
+exit 2 is expected here: the signatures were verified on the connected host, not inside.
+Do not treat exit 0 as required, and do not script around the 2. `--registry` points images and charts
 at the mirror (`--plain-http` for an http-only mirror; `REGISTRY_USER` /
 `REGISTRY_PASSWORD` if it needs read credentials). `--commit` makes the `sha-<7>` tag check
-run; **without `--commit`, that check is a SKIP** (and so is `source.commit`), which is the
-alternative if you did not copy the `sha-<7>` tags.
+run; **without `--commit`, that check is a SKIP**, which is the alternative if you did not
+copy the `sha-<7>` tags. Offline, `source.commit` is a SKIP either way: with `--commit` it
+says ASSERTED, because nothing inside can check the value you typed. On a connected host
+the script compares `--commit` with the commit the tag points to and FAILs on a mismatch.
 
-What this proves inside: the files match `checksums.txt`, `checksums.txt` is the file the
-certificate's key signed, the certificate names the release workflow at this tag, the
-mirror holds the tags, platforms and BuildKit SBOM/provenance attestations, and (compare
-the `image.*.tag` and `chart.*.version` digests with `verify-connected.txt`) the mirrored
-digests are the ones whose signatures you verified on the connected host. What it does not
-prove inside: the Sigstore chain and the transparency-log entry, until `checksums.txt.bundle`
-is published.
+What this proves inside: the files match `checksums.txt`, the mirror holds the tags,
+platforms and BuildKit SBOM/provenance attestations, and (compare the `image.*.tag` and
+`chart.*.version` digests with `verify-connected.txt`) the mirrored digests are the ones
+whose signatures you verified on the connected host. Trust in `checksums.txt` itself comes
+**only** from the connected-host cosign run: compare `sha256sum checksums.txt` on both sides.
+The `release.signature.cert` and `.offline` PASS lines inside do not prove who signed (a
+self-signed certificate passes them). What it does not prove inside: who signed, the
+Sigstore chain and the transparency-log entry, until `checksums.txt.bundle` is published.
 
 Offline flags vary between cosign versions. Whatever you choose, confirm it against a
 known-good tag in your environment before relying on it for a release you have not seen.
@@ -313,7 +322,8 @@ known-good tag in your environment before relying on it for a release you have n
 - It proves provenance and integrity, not safety. It does not scan for vulnerabilities
   (the pipeline's Trivy gate does, and the script checks that the gate ran and passed).
 - Evidence that comes from GitHub (workflow runs, attestations) is only as trustworthy
-  as GitHub; the cosign and openssl checks do not depend on it.
+  as GitHub; the cosign checks do not depend on it. The openssl checks do not depend on
+  GitHub either, but they do not prove who signed (see above).
 - The script knows the expected file and image lists for the current release layout. If
   a release legitimately adds an artifact, the script reports it as `unexpected` until it
   is updated; that is deliberate, because an attachment not covered by `checksums.txt`
