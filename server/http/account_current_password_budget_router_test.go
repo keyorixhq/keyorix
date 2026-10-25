@@ -61,7 +61,7 @@ func newAcctBudgetEnv(t *testing.T) *acctBudgetEnv {
 
 	scfg := &config.Config{Storage: config.StorageConfig{
 		Type:     "local",
-		Database: config.DatabaseConfig{Path: sqlitetest.DSN("kxacctbudget_")},
+		Database: config.DatabaseConfig{Path: sqlitetest.FactoryPath(t, "kxacctbudget")},
 	}}
 	st, err := appstorage.NewStorageFactory().CreateStorage(scfg)
 	require.NoError(t, err)
