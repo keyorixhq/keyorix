@@ -1,0 +1,2 @@
+### Internal
+- **Nightly guard expiry and rollout job.** `.github/workflows/guard-nightly.yml` evaluates every dated guard exemption against today (7 days' warning) and runs report-only guards in enforce mode, keeping one issue per concern. CI sets `KEYORIX_GUARD_ROLLOUT=enforce` on pushes to main and on the schedule only; the CI exclusion-freshness date checks run on the schedule only, no longer on PRs or in the merge queue.

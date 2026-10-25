@@ -79,18 +79,18 @@ func TestQuoteIdentifier_S22_Empty(t *testing.T) {
 
 // TestQuoteLiteral_S22_Clean verifies a clean value is single-quoted.
 func TestQuoteLiteral_S22_Clean(t *testing.T) {
-	assert.Equal(t, `'newpass'`, quoteLiteral("newpass"))
+	assert.Equal(t, `E'newpass'`, quoteLiteral("newpass"))
 }
 
 // TestQuoteLiteral_S22_SingleQuoteDoubled verifies that an embedded
 // single-quote is doubled.
 func TestQuoteLiteral_S22_SingleQuoteDoubled(t *testing.T) {
-	assert.Equal(t, `'it''s'`, quoteLiteral("it's"))
+	assert.Equal(t, `E'it''s'`, quoteLiteral("it's"))
 }
 
 // TestQuoteLiteral_S22_Empty verifies an empty literal is safe.
 func TestQuoteLiteral_S22_Empty(t *testing.T) {
-	assert.Equal(t, `''`, quoteLiteral(""))
+	assert.Equal(t, `E''`, quoteLiteral(""))
 }
 
 // ---------------------------------------------------------------------------

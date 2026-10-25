@@ -1,7 +1,7 @@
 # Upgrade checklist: v0.96.x to v0.97.0
 
 For operators moving a running install (a pilot, a production instance) from
-v0.96.1 or v0.96.2 to v0.97.0. It orders the steps; the reasons and exact
+v0.96.1 or v0.96.3 to v0.97.0 (v0.96.2 has a tag but no published images). It orders the steps; the reasons and exact
 settings are in [UPGRADING.md](../UPGRADING.md) (section numbers below). Work
 through it top to bottom and write down the result of every check.
 

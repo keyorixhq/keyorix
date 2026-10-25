@@ -441,6 +441,54 @@ describe('authStore', () => {
 
             expect(window.location.href).toBe('/login');
         });
+
+        it('runs once when two callers log out at the same time: one server call, one redirect, no false logout_error', async () => {
+            // The inactivity timer and a request that finds the token expired can both call
+            // logout() while the first POST /auth/logout is still in flight (web-e2e run
+            // 39329908362: page.waitForURL('/login') failed with net::ERR_ABORTED, the first
+            // navigation cut off by the second). The second POST carries the session the first
+            // just revoked, gets a 401, and sent the user to /login?logout_error=1.
+            useAuthStore.setState({ user: makeUser(), isAuthenticated: true });
+            let finishServerLogout: () => void = () => {};
+            vi.mocked(authService.logout)
+                .mockImplementationOnce(() => new Promise<void>((resolve) => (finishServerLogout = resolve)))
+                .mockRejectedValueOnce(new Error('Request failed with status code 401'));
+            const redirects: string[] = [];
+            Object.defineProperty(window, 'location', {
+                configurable: true,
+                value: {
+                    pathname: '/dashboard',
+                    get href() {
+                        return redirects[redirects.length - 1] ?? '';
+                    },
+                    set href(v: string) {
+                        redirects.push(v);
+                    },
+                },
+            });
+
+            const first = useAuthStore.getState().logout();
+            const second = useAuthStore.getState().logout();
+            finishServerLogout();
+            await Promise.all([first, second]);
+
+            expect(authService.logout).toHaveBeenCalledOnce();
+            expect(redirects).toEqual(['/login']);
+
+            // A straggler after it finished: a request's 401 handler refreshes, the refresh fails
+            // on the session the logout revoked, and must not log out (and redirect) again.
+            vi.mocked(authService.refreshToken).mockRejectedValueOnce(new Error('Request failed with status code 401'));
+            await expect(useAuthStore.getState().refreshToken()).rejects.toThrow('401');
+            expect(authService.logout).toHaveBeenCalledOnce();
+            expect(redirects).toEqual(['/login']);
+
+            // A later logout (a new session) is not swallowed.
+            useAuthStore.setState({ user: makeUser(), isAuthenticated: true });
+            vi.mocked(authService.logout).mockReset().mockResolvedValueOnce(undefined);
+            await useAuthStore.getState().logout();
+            expect(authService.logout).toHaveBeenCalledOnce();
+            expect(redirects).toEqual(['/login', '/login']);
+        });
     });
 
     describe('persisted snapshot never carries permissions (G65)', () => {
@@ -527,6 +575,7 @@ describe('authStore', () => {
         });
 
         it('logs the user out and rethrows the original error when the refresh request itself fails', async () => {
+            useAuthStore.setState({ user: makeUser(), isAuthenticated: true });
             vi.mocked(authService.logout).mockResolvedValueOnce(undefined);
             vi.mocked(authService.refreshToken).mockRejectedValueOnce(new Error('refresh rejected'));
 
@@ -542,6 +591,7 @@ describe('authStore', () => {
             // authService.refreshToken() call. That keeps get().logout() from being
             // invoked a second time by the outer catch when the thrown
             // "Session lifetime exceeded" error propagates.
+            useAuthStore.setState({ user: makeUser(), isAuthenticated: true });
             vi.mocked(authUtils.isAbsoluteExpiryPassed).mockReturnValueOnce(true);
             vi.mocked(authService.logout).mockResolvedValue(undefined);
 

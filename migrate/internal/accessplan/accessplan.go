@@ -58,6 +58,18 @@ const (
 	// CategoryMetadataOnly: the stanza grants key listing or KV v2 metadata, never values;
 	// secrets.read would expose values.
 	CategoryMetadataOnly UnmappableCategory = "metadata-only"
+	// CategoryCrossMountScope: the policy resolves by the default convention, but another KV
+	// mount also holds paths under the same <project>/ or <project>/<env>/ (or could not be
+	// listed), so the scope may hold that mount's imported secrets too.
+	CategoryCrossMountScope UnmappableCategory = "cross-mount-scope"
+)
+
+// Implied access a Create role grant adds beyond its Vault policy: Keyorix's secrets.read also
+// lists secret names and reads version metadata in the scope, which Vault grants separately
+// (KV v2: "list" and "read" on metadata/). Never secret values.
+const (
+	ImpliedListNames           = "list-names"
+	ImpliedReadVersionMetadata = "read-version-metadata"
 )
 
 // Item is one proposed (or rejected) Keyorix object, with everything a human reviewer or
@@ -99,6 +111,18 @@ type Item struct {
 	// ProposedMachineRef names the parent machine identity a KindMachineRoleGrant/
 	// KindOIDCBinding belongs to.
 	ProposedMachineRef string
+
+	// SourcePolicy is the Vault policy name a KindRole item came from.
+	SourcePolicy string
+	// ImpliedAccess is set on a Create KindRole item holding secrets.read when the role/user's
+	// Vault policies do not also grant listing (ImpliedListNames) or version metadata
+	// (ImpliedReadVersionMetadata) on the same subtree: access the migration adds that Vault
+	// never granted (names and metadata only, ADR-114 known residual).
+	ImpliedAccess []string
+	// CrossMountEvidence is set on a KindRole item resolved by the default convention: one
+	// "<mount><project>/[<env>/]: <state>" line per KV mount, as plan-access listed the Vault
+	// tree. apply-access refuses to run when its fresh read differs from the reviewed plan's.
+	CrossMountEvidence []string
 
 	// ProvenanceKey is the migrate.source-id this object would carry in its Description —
 	// apply-access's idempotency key (ADR-114's "Provenance and idempotency").

@@ -36,6 +36,12 @@ type TLSReport struct {
 	VerifyError string `json:"verify_error,omitempty"`
 	// TLSVersion is the negotiated protocol version, when the handshake completed.
 	TLSVersion string `json:"tls_version,omitempty"`
+	// KeyExchange is the key-exchange group the handshake negotiated (for example
+	// "X25519MLKEM768"), when the handshake completed and used an ECDHE group.
+	KeyExchange string `json:"key_exchange,omitempty"`
+	// PostQuantumKeyExchange is true when KeyExchange is a hybrid with an ML-KEM
+	// component. It says nothing about the certificate chain, which is classical.
+	PostQuantumKeyExchange bool `json:"post_quantum_key_exchange,omitempty"`
 	// Chain is the server's chain, leaf first. After a verification failure it is the
 	// unverified chain the server presented, when the error carries it.
 	Chain []CertInfo `json:"chain,omitempty"`
@@ -81,6 +87,7 @@ func InspectTLS(ctx context.Context, serverURL, caFile string) (TLSReport, error
 		st := conn.(*tls.Conn).ConnectionState()
 		rep.Verified = true
 		rep.TLSVersion = tls.VersionName(st.Version)
+		rep.KeyExchange, rep.PostQuantumKeyExchange = keyExchangeName(st.CurveID)
 		if len(st.VerifiedChains) > 0 {
 			rep.Chain = certInfos(st.VerifiedChains[0])
 		} else {
@@ -113,6 +120,31 @@ func InspectTLS(ctx context.Context, serverURL, caFile string) (TLSReport, error
 		return rep, err
 	}
 	return rep, nil
+}
+
+// keyExchangeName names a negotiated group and says whether it is an ML-KEM hybrid. An
+// unknown group is named by its code point; a zero id (no ECDHE group) is "".
+func keyExchangeName(id tls.CurveID) (name string, postQuantum bool) {
+	switch id {
+	case 0:
+		return "", false
+	case tls.X25519MLKEM768:
+		return "X25519MLKEM768", true
+	case tls.SecP256r1MLKEM768:
+		return "SecP256r1MLKEM768", true
+	case tls.SecP384r1MLKEM1024:
+		return "SecP384r1MLKEM1024", true
+	case tls.X25519:
+		return "X25519", false
+	case tls.CurveP256:
+		return "P-256", false
+	case tls.CurveP384:
+		return "P-384", false
+	case tls.CurveP521:
+		return "P-521", false
+	default:
+		return fmt.Sprintf("group-0x%04x", uint16(id)), false
+	}
 }
 
 func certInfos(certs []*x509.Certificate) []CertInfo {

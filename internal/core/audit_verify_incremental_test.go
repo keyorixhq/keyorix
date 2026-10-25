@@ -147,7 +147,7 @@ func TestIncrementalVerify_NotProvenUntilFirstCycleCompletes(t *testing.T) {
 	assert.Equal(t, AuditVerifyStatusValid, r.Status, r.NotProvenReason)
 	require.NotNil(t, r.LastFullVerificationAt)
 	assert.Equal(t, auditFullSourceRolling, r.LastFullVerificationSource)
-	assert.Equal(t, int64(36), r.ChainedEvents)
+	assert.Equal(t, int64(37), r.ChainedEvents) // 36 events + the state marker
 
 	p, err = c.AuditVerificationStatus(context.Background())
 	require.NoError(t, err)
@@ -325,7 +325,8 @@ func TestIncrementalVerify_TailTruncationWithNewerCheckpointsDeleted(t *testing.
 }
 
 // (4) A state row edited without the key, or replaced with a forged claim, is
-// ignored: the API reports not_proven with the reason, never valid.
+// ignored: the API reports broken with the reason (a sticky discontinuity since
+// AUDIT-VERIFY-STATE-1), never valid.
 func TestIncrementalVerify_ForgedStateIgnored(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -345,8 +346,8 @@ func TestIncrementalVerify_ForgedStateIgnored(t *testing.T) {
 	sig[0] ^= 1
 	require.NoError(t, c.storage.SetSystemMetadata(ctx, auditVerifyStateKey, strings.Join([]string{parts[0], parts[1], string(sig)}, auditVerifyStateSep)))
 	r := incrVerify(t, c)
-	assert.Equal(t, AuditVerifyStatusNotProven, r.Status)
-	assert.Contains(t, r.StateReason, "fails its signature")
+	assert.Equal(t, AuditVerifyStatusBroken, r.Status)
+	assert.Contains(t, r.Reason, "fails its signature")
 
 	// A forged state claiming a recent valid full verification, signed with the wrong key.
 	forger := NewKeyorixCore(c.storage)
@@ -355,18 +356,19 @@ func TestIncrementalVerify_ForgedStateIgnored(t *testing.T) {
 	require.NoError(t, forger.saveAuditVerifyState(ctx, &auditVerifyState{LastFull: &auditFullResult{
 		StartedAt: clk.t, CompletedAt: clk.t, ThroughID: 10, Source: auditFullSourceJob, Valid: true}}))
 	r = incrVerify(t, c)
-	assert.Equal(t, AuditVerifyStatusNotProven, r.Status)
+	assert.Equal(t, AuditVerifyStatusBroken, r.Status)
 	assert.Nil(t, r.LastFullVerificationAt)
 
-	// The next tick replaces the untrusted row with fresh state that records the
-	// rejection (not_proven, with an in-chain event), never with a clean slate.
+	// The next tick replaces the untrusted row with fresh state that records a
+	// sticky discontinuity (broken, with an in-chain event), never a clean slate.
 	clk.advance()
 	tickOK(t, c)
 	r = incrVerify(t, c)
 	assert.Empty(t, r.StateReason)
-	assert.Equal(t, AuditVerifyStatusNotProven, r.Status)
-	assert.Contains(t, r.NotProvenReason, "fails its signature")
-	assert.Equal(t, int64(1), countEvents(t, db, "system.audit_verification_state_rejected"))
+	assert.Equal(t, AuditVerifyStatusBroken, r.Status)
+	assert.Contains(t, r.Reason, "verification state discontinuity (garbled)")
+	assert.Contains(t, r.Reason, "fails its signature")
+	assert.Equal(t, int64(1), countEvents(t, db, auditVerifyStateDiscontinuityEvent))
 }
 
 // A stale full verification (older than two cycles) is not_proven again.

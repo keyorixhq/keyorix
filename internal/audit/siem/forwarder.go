@@ -382,6 +382,10 @@ type eventPayload struct {
 	// export consumer cannot tell a gap (a lost event) from a contiguous stream.
 	EntryHash string `json:"entry_hash,omitempty"`
 	PrevHash  string `json:"prev_hash,omitempty"`
+	// RequestID is the server's id of the request that wrote the event (advisory,
+	// outside the hash chain). The SIEM's copy is the off-box record of the value at
+	// write time (docs/specs/audit-request-id.md §5).
+	RequestID *string `json:"request_id,omitempty"`
 }
 
 func toPayload(e *models.AuditEvent) eventPayload {
@@ -405,6 +409,7 @@ func toPayload(e *models.AuditEvent) eventPayload {
 		ActingAs:       e.ActingAs,
 		EntryHash:      e.EntryHash,
 		PrevHash:       e.PrevHash,
+		RequestID:      e.RequestID,
 	}
 	if e.Diff != "" {
 		p.Diff = json.RawMessage(e.Diff)

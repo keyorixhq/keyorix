@@ -688,8 +688,15 @@ var typeScopedTimeInText = map[string][]string{
 // worlds straddle a second boundary; found by FuzzOwedAuditRevocations, ~4% of replays
 // of one input). The legacy oracle never compared AuditEvent content on a success, so it
 // never saw this. Only the time VALUE is ignored; the text around it is compared.
+//
+// RequestID is dropped too: the in-request row carries the request's server id, while
+// an owed row is captured before the storage funnel stamps it and is backfilled on the
+// scheduler's context with NULL (docs/specs/audit-request-id.md §3, a listed follow-up).
+// The id is advisory and outside the hash chain, so it says nothing about whether the
+// owed row is the same audit fact.
 func owedAuditCanon(row map[string]any, stripLate bool) (string, error) {
 	delete(row, "ID")
+	delete(row, "RequestID")
 	if row["Success"] == nil {
 		row["Success"] = true // gorm default:true
 	}

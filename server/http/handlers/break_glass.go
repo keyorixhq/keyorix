@@ -51,6 +51,9 @@ func (h *CatalogHandler) ActivateBreakGlass(w http.ResponseWriter, r *http.Reque
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		// A typed code for "disabled" (same 403, same message, same position in the

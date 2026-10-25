@@ -1,0 +1,9 @@
+# compliance: compliance posture, evidence export/signing, control frameworks, risk exceptions, retention, legal hold
+# One glob per line, matched against the file name (README.md).
+compliance_*.go
+control_framework.go
+evidence_*.go
+risk_exceptions.go
+data_retention.go
+legal_hold.go
+secret_retention_override.go

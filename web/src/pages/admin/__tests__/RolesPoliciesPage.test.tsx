@@ -218,8 +218,27 @@ describe('RolesPoliciesPage — create role', () => {
         expect(within(dialog).getByRole('button', { name: 'Create' })).not.toBeDisabled();
 
         fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+        // #3546: a new role is per project unless widened.
         expect(createMutate).toHaveBeenCalledWith(
-            { name: 'auditor-lite', description: 'Read-only audit access' },
+            { name: 'auditor-lite', description: 'Read-only audit access', assignable_scope: 'project' },
+            expect.anything()
+        );
+    });
+
+    it('submits a widened assignable scope when one is chosen', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'ops-all' } });
+        const scope = within(dialog).getByLabelText('Can be granted');
+        expect(scope).toHaveValue('project');
+        fireEvent.change(scope, { target: { value: 'any' } });
+        expect(within(dialog).getByText(/applies in every project/)).toBeInTheDocument();
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+        expect(createMutate).toHaveBeenCalledWith(
+            { name: 'ops-all', description: '', assignable_scope: 'any' },
             expect.anything()
         );
     });

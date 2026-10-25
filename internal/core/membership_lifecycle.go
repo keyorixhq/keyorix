@@ -167,6 +167,13 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 	if err != nil {
 		return nil, fmt.Errorf("unknown role %q: %w", role, err)
 	}
+	// #3546: refuse at invite time what the activation grant would refuse (an
+	// install-wide role on one project), like buildProjectInvite. Otherwise an
+	// allowlist/idp-mode invite parks an `invited` membership that can never
+	// activate.
+	if err := c.requireScopeValidForRoleModel(ctx, inviteMemberRole, Scope{ProjectID: projectID}); err != nil {
+		return nil, err
+	}
 	if err := c.domainAllowedForUser(ctx, userID); err != nil {
 		return nil, err
 	}

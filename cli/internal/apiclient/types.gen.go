@@ -110,6 +110,20 @@ const (
 	QuotaReportRowStatusWarning   QuotaReportRowStatus = "warning"
 )
 
+// Defines values for RoleAssignableScope.
+const (
+	RoleAssignableScopeAny     RoleAssignableScope = "any"
+	RoleAssignableScopeGlobal  RoleAssignableScope = "global"
+	RoleAssignableScopeProject RoleAssignableScope = "project"
+)
+
+// Defines values for RoleWithPermissionsAssignableScope.
+const (
+	RoleWithPermissionsAssignableScopeAny     RoleWithPermissionsAssignableScope = "any"
+	RoleWithPermissionsAssignableScopeGlobal  RoleWithPermissionsAssignableScope = "global"
+	RoleWithPermissionsAssignableScopeProject RoleWithPermissionsAssignableScope = "project"
+)
+
 // Defines values for RotationPlanSecretStatus.
 const (
 	DueSoon RotationPlanSecretStatus = "due_soon"
@@ -242,6 +256,13 @@ const (
 	Other          CreateRiskExceptionJSONBodyCategory = "other"
 	Rotation       CreateRiskExceptionJSONBodyCategory = "rotation"
 	Sod            CreateRiskExceptionJSONBodyCategory = "sod"
+)
+
+// Defines values for CreateRoleJSONBodyAssignableScope.
+const (
+	CreateRoleJSONBodyAssignableScopeAny     CreateRoleJSONBodyAssignableScope = "any"
+	CreateRoleJSONBodyAssignableScopeGlobal  CreateRoleJSONBodyAssignableScope = "global"
+	CreateRoleJSONBodyAssignableScopeProject CreateRoleJSONBodyAssignableScope = "project"
 )
 
 // Defines values for CreateRotationPolicyJSONBodyScope.
@@ -872,11 +893,16 @@ type RBACAuditLogEntry struct {
 
 // Role A role (internal/storage/models.Role), via the handler-level roleWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign.
 type Role struct {
-	BypassesPermissionChecks *bool   `json:"bypasses_permission_checks,omitempty"`
-	Description              *string `json:"description,omitempty"`
-	Id                       *int    `json:"id,omitempty"`
-	Name                     *string `json:"name,omitempty"`
+	// AssignableScope Where the role may be granted (#3546): global = no project only, project = a project (optionally an environment of it) only, any = either.
+	AssignableScope          *RoleAssignableScope `json:"assignable_scope,omitempty"`
+	BypassesPermissionChecks *bool                `json:"bypasses_permission_checks,omitempty"`
+	Description              *string              `json:"description,omitempty"`
+	Id                       *int                 `json:"id,omitempty"`
+	Name                     *string              `json:"name,omitempty"`
 }
+
+// RoleAssignableScope Where the role may be granted (#3546): global = no project only, project = a project (optionally an environment of it) only, any = either.
+type RoleAssignableScope string
 
 // RoleRef A minimal role reference (id, name only) -- GET /api/v1/users/{id}/roles's shape.
 type RoleRef struct {
@@ -886,12 +912,16 @@ type RoleRef struct {
 
 // RoleWithPermissions A role with its assigned permissions (internal/core.RoleWithPermissions, embeds models.Role), via the handler-level roleWithPermissionsWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak (the embedded Role's fields promoted under their own untagged names) as part of the API-hygiene casing campaign.
 type RoleWithPermissions struct {
-	BypassesPermissionChecks *bool         `json:"bypasses_permission_checks,omitempty"`
-	Description              *string       `json:"description,omitempty"`
-	Id                       *int          `json:"id,omitempty"`
-	Name                     *string       `json:"name,omitempty"`
-	Permissions              *[]Permission `json:"permissions,omitempty"`
+	AssignableScope          *RoleWithPermissionsAssignableScope `json:"assignable_scope,omitempty"`
+	BypassesPermissionChecks *bool                               `json:"bypasses_permission_checks,omitempty"`
+	Description              *string                             `json:"description,omitempty"`
+	Id                       *int                                `json:"id,omitempty"`
+	Name                     *string                             `json:"name,omitempty"`
+	Permissions              *[]Permission                       `json:"permissions,omitempty"`
 }
+
+// RoleWithPermissionsAssignableScope defines model for RoleWithPermissions.AssignableScope.
+type RoleWithPermissionsAssignableScope string
 
 // RotationDryRunCheck defines model for RotationDryRunCheck.
 type RotationDryRunCheck struct {
@@ -2093,12 +2123,17 @@ type CreateRiskExceptionJSONBodyCategory string
 
 // CreateRoleJSONBody defines parameters for CreateRole.
 type CreateRoleJSONBody struct {
-	Description string `json:"description"`
-	Name        string `json:"name"`
+	// AssignableScope Where the role may be granted. Default project.
+	AssignableScope *CreateRoleJSONBodyAssignableScope `json:"assignable_scope,omitempty"`
+	Description     string                             `json:"description"`
+	Name            string                             `json:"name"`
 
 	// Permissions Permission names.
 	Permissions []string `json:"permissions"`
 }
+
+// CreateRoleJSONBodyAssignableScope defines parameters for CreateRole.
+type CreateRoleJSONBodyAssignableScope string
 
 // AssignPermissionToRoleJSONBody defines parameters for AssignPermissionToRole.
 type AssignPermissionToRoleJSONBody struct {

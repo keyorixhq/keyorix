@@ -59,16 +59,17 @@ func TestCheckSchemaEpoch_1674_ErrorCarriesAllFourDiagnosticElements(t *testing.
 	require.NoError(t, db.AutoMigrate(&models.SystemMetadata{}))
 
 	before := time.Now()
-	require.NoError(t, db.Create(&models.SystemMetadata{Key: schemaEpochMetadataKey, Value: "7"}).Error)
+	newer := currentSchemaEpoch + 1
+	require.NoError(t, db.Create(&models.SystemMetadata{Key: schemaEpochMetadataKey, Value: strconv.Itoa(newer)}).Error)
 
 	err = checkSchemaEpoch(db)
 	require.Error(t, err)
 	msg := err.Error()
 
 	// (1) the database's recorded epoch. (2) this binary's compiled-in epoch.
-	// Anchored to the surrounding words, not bare digits -- a bare "1" or "7"
+	// Anchored to the surrounding words, not bare digits -- a bare "1" or "8"
 	// would trivially match inside the RFC3339 timestamp asserted below too.
-	assert.Contains(t, msg, "schema epoch 7", "error must name the database's recorded epoch")
+	assert.Contains(t, msg, fmt.Sprintf("schema epoch %d", newer), "error must name the database's recorded epoch")
 	assert.Contains(t, msg, fmt.Sprintf("schema epoch %d ", currentSchemaEpoch), "error must name this binary's compiled-in epoch")
 	// (3) when the newer epoch was recorded -- an RFC3339 timestamp AND a
 	// relative age ("... ago"), not just a bare number.

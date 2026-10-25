@@ -1,0 +1,3 @@
+# scim: SCIM users and groups
+# One glob per line, matched against the file name (README.md).
+scim*.go

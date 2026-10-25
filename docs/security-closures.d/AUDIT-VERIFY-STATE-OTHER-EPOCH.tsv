@@ -1,0 +1,1 @@
+AUDIT-VERIFY-STATE-OTHER-EPOCH	./internal/core	TestAuditVerifyStateFailClosed_RowFromOtherKeyEpoch	default-ci	pending	-	an audit verification state row signed under another key epoch was silently restarted; its key-version claim is unauthenticated, so it is now a sticky discontinuity
