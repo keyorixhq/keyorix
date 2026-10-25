@@ -32,7 +32,7 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   wrong error; the test pins the early, specific refusal.
 - **INV-STORAGE-04** Rolling back past a recorded `minCompatibleEpoch` floor
   (`system_metadata` key `schema_min_compatible_epoch`, declared by `minCompatibleSchemaEpoch`
-  in `factory.go`) must still refuse; an additive-safe migration must NOT raise that floor; a
+  in `factory_schema_epoch.go`) must still refuse; an additive-safe migration must NOT raise that floor; a
   recorded epoch or floor is never lowered by an older binary; a corrupt or sub-1 floor fails
   closed. Why: ADR-101 (#2502). Guard: `factory_schema_epoch_floor_test.go`
   (`TestSchemaEpochFloor_RefusesOutsideSupportedRange`, `_StartsInsideSupportedRange`,
@@ -60,7 +60,7 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 - **INV-STORAGE-07** A full `AutoMigrate` is never run against a table already column-altered
   outside AutoMigrate (poisons the pgx prepared-statement cache, corrupts
   `information_schema` checks). Why: ADR-078, which itself states this is enforced only
-  procedurally — by ~15 commented call sites in `factory.go`, not structurally. UNGUARDED by
+  procedurally — by ~15 commented call sites in `factory.go` and its `migrate_<domain>.go` steps, not structurally. UNGUARDED by
   design, documented as such; do not add a structural guard without first reading ADR-078's
   own reasoning for why it declined one.
 
@@ -222,7 +222,7 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
 
   The gate is held across `BeginTx`'s wait for a free pool connection, bounded only by the
   caller's ctx (an HTTP request ctx often has no deadline). The pool defaults to 8 connections
-  (`DefaultSQLiteMaxOpenConns` in `factory.go`, shared with readers), so a writer that cannot get a connection — all 8
+  (`DefaultSQLiteMaxOpenConns` in `factory_pool.go`, shared with readers), so a writer that cannot get a connection — all 8
   held by readers or by a stuck query — blocks every other writer behind the gate until its ctx
   ends. This is an ACCEPTED tradeoff, not an oversight: bounding the connection wait would
   need a derived ctx, and `database/sql` rolls a transaction back when the ctx passed to
