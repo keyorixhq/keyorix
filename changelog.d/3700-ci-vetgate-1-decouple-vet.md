@@ -1,0 +1,2 @@
+### Internal
+- **Test legs no longer wait for `go vet`.** `test-suite` now depends on `changes` and `select` only (like `lint`), so its legs start about 4-6 minutes earlier in every full CI round; `preflight` (`go build`, then `go vet ./...`) runs beside them and `build-and-test` fails unless it succeeded. `go vet` is kept: golangci-lint's `govet` is not the same check. Required check names and the ruleset are unchanged.
