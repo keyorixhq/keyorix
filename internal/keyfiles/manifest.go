@@ -371,6 +371,13 @@ func (w *SetWriter) hashes(files map[string][]byte) map[string]string {
 // StageManifest records that op is about to replace files (full path → the content
 // they will have). Call it before the first active file is replaced; a crash
 // between Stage and Commit leaves a set boot can classify (VerifyKeySetConsistency).
+//
+// An earlier operation's intent still staged in the manifest is resolved
+// first, never silently replaced: when every file it names already has its
+// staged content (its commit was lost) it is committed, when none does (it
+// stopped before changing anything) it is dropped, and otherwise StageManifest
+// refuses, because replacing it would leave the manifest recording neither the
+// files' old nor their current content.
 func (w *SetWriter) StageManifest(op string, files map[string][]byte) error {
 	if w == nil {
 		return nil
@@ -379,8 +386,50 @@ func (w *SetWriter) StageManifest(op string, files map[string][]byte) error {
 	if err != nil {
 		return err
 	}
+	if err := w.resolveStaged(m); err != nil {
+		return err
+	}
 	m.Next = &ManifestIntent{Generation: m.Generation + 1, Operation: op, Files: w.hashes(files)}
 	return writeManifest(w.manifestPath, m, w.fs)
+}
+
+// resolveStaged folds m's staged intent, if any, into m as described on
+// StageManifest.
+func (w *SetWriter) resolveStaged(m *Manifest) error {
+	next := m.Next
+	if next == nil {
+		return nil
+	}
+	dir := filepath.Dir(w.manifestPath)
+	var applied, untouched int
+	for key, staged := range next.Files {
+		full := filepath.FromSlash(key)
+		if !filepath.IsAbs(full) {
+			full = filepath.Join(dir, full)
+		}
+		h, err := hashKeyFile(full)
+		switch {
+		case err == nil && h == staged:
+			applied++
+		case err == nil && h == m.Files[key].SHA256:
+			untouched++
+		}
+	}
+	switch {
+	case applied == len(next.Files):
+		log.Printf("[WARN] key set: an earlier %s (generation %d) replaced its files but its manifest commit is missing: recording it before this operation", next.Operation, next.Generation)
+		for key, staged := range next.Files {
+			m.Files[key] = ManifestEntry{SHA256: staged, Generation: next.Generation, Operation: next.Operation}
+		}
+		m.Generation = next.Generation
+	case untouched == len(next.Files):
+		// Abandoned before it changed the active set (boot treats it the same way).
+	default:
+		return fmt.Errorf("the key-set manifest %s records an unresolved interrupted %s (generation %d) that changed only part of its files: "+
+			"start the server once so it is finished or reported, then re-run this operation", w.manifestPath, next.Operation, next.Generation)
+	}
+	m.Next = nil
+	return nil
 }
 
 // CommitManifest records that op has replaced files (full path → their new content):
