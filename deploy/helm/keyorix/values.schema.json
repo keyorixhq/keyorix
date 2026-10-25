@@ -7,6 +7,24 @@
       "type": "string",
       "enum": ["", "strict", "standard"]
     },
+    "server": {
+      "type": "object",
+      "properties": {
+        "keysSecret": {
+          "description": "Secret mode (docs/multi-replica-keys.md): the key files come read-only from this Secret, created with `keyorix-server admin encryption key-secret generate|export`. Required for server.replicas > 1.",
+          "type": ["object", "null"],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "name": {
+              "type": "string",
+              "pattern": "^$|^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$",
+              "maxLength": 253
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    },
     "postgresql": {
       "type": "object",
       "properties": {

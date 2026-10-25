@@ -152,7 +152,6 @@ root_base() {
 # ALSO be pinned to another, and root-4 is defined as everything else.
 root_1_pkgs() {
   cat <<'EOF'
-github.com/keyorixhq/keyorix/server/grpc/services
 github.com/keyorixhq/keyorix/internal/crypto
 github.com/keyorixhq/keyorix/server/grpc
 github.com/keyorixhq/keyorix/internal/testhelper
@@ -162,6 +161,9 @@ github.com/keyorixhq/keyorix/cmd/validate-translations
 github.com/keyorixhq/keyorix/internal/startup
 github.com/keyorixhq/keyorix/internal/di
 github.com/keyorixhq/keyorix/server/webui
+github.com/keyorixhq/keyorix/internal/encryptionops
+github.com/keyorixhq/keyorix/deploy/edge
+github.com/keyorixhq/keyorix/internal/solewriter
 EOF
 }
 
@@ -187,6 +189,8 @@ github.com/keyorixhq/keyorix/internal/connect
 github.com/keyorixhq/keyorix/internal/storage/models
 github.com/keyorixhq/keyorix/internal/delivery
 github.com/keyorixhq/keyorix/internal/core/storage
+github.com/keyorixhq/keyorix/server/grpc/services
+github.com/keyorixhq/keyorix/internal/core/guards
 EOF
 }
 
@@ -265,12 +269,21 @@ faultops_pkgs() {
 # They were pinned two per shard by hand; their -race seconds are now rows of
 # scripts/ci-test-weights.tsv and the weighted assignment places them.)
 
+# admin_pkg: server/admin, split out of root-4 into two test-name shards
+# (2026-10-25, CI-CUTPOLES-1). It was root-4's whole critical path: 1121 s of
+# root-4's 1340 s `go test` step on merge-queue run 40133720073 (723 s on the
+# verbose run 39745883015), the next root-4 package 64 s. Its tests are serial,
+# so a leg of its own would still run ~22 min; two shards halve the tests.
+admin_pkg() {
+  echo "github.com/keyorixhq/keyorix/server/admin"
+}
+
 # root_4_pkgs: the dynamic catch-all -- every root_base() package not pinned
-# to root-1/2/3/core/storage-store/encryption/faultops above, so a newly added
-# package always lands somewhere (root-4) rather than silently running nowhere.
+# to root-1/2/3/core/storage-store/encryption/faultops/admin above, so a newly
+# added package always lands somewhere (root-4) rather than silently running nowhere.
 root_4_pkgs() {
   local pinned
-  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(server_pkg) <(core_pkgs) <(storage_store_pkgs) <(encryption_pkgs) <(faultops_pkgs) | sort -u)
+  pinned=$(cat <(root_1_pkgs) <(root_2_pkgs) <(server_pkg) <(core_pkgs) <(storage_store_pkgs) <(encryption_pkgs) <(faultops_pkgs) <(admin_pkg) | sort -u)
   comm -23 <(root_base | sort -u) <(echo "$pinned")
 }
 
@@ -323,8 +336,9 @@ http_pkg() {
 # package in one leg with no -run filter (so Example* tests run too).
 # <preload> is "-" or "<shard>:<weight>[,<shard>:<weight>...]": that shard starts the bin-pack with
 # that much weight already on it, for work the leg does besides its tests
-# (core-1 also runs scripts/check-closures.sh, ~9-10 min of CI wall: preload
-# 1:570). Several shards may be preloaded: "1:570,3:100". (A bias correction for
+# (core-1 used to run scripts/check-closures.sh after its tests, preload 1:640;
+# since CI-CUTPOLES-1 that is the closures-pg job of its own and no leg is
+# preloaded). Several shards may be preloaded: "1:570,3:100". (A bias correction for
 # core-3 was tried and dropped: core's shards swap places between rounds by
 # +-6 min -- 17.4/16.7/22.6, then 17.6/23.3/18.3 -- which is runner and
 # Postgres noise, not something a constant fixes.)
@@ -334,15 +348,21 @@ http_pkg() {
 # packs evenly; at 4 legs that is ~17 min of tests per leg, at 6 ~11. core-1..3 ran
 # 20.7 / 21.6 / 22.9 min on merge-queue run 39526263047 and would then be the
 # critical path; a fourth shard puts each at ~17-18.
+# CI-CUTPOLES-1 (2026-10-25): faultops 3 -> 5 (faultops was the slowest leg in 5
+# of 8 full rounds; at 5 its largest test, TestOwedAuditOracle_SweepEveryScopedOp,
+# has a leg nearly to itself, and more legs only add fixed cost), admin new
+# (server/admin out of root-4, see admin_pkg), core keeps 4 shards without the
+# check-closures preload.
 # This table, ci.yml's matrix and assert_matrix_consistent move together.
 sharded_legs() {
   cat <<'EOF'
-core|core_pkgs|4|1:570
+core|core_pkgs|4|-
 server|server_pkg|2|-
 http|http_pkg|6|-
 handlers|handlers_pkg|2|-
 encryption|encryption_pkgs|2|-
-faultops|faultops_pkgs|3|-
+faultops|faultops_pkgs|5|-
+admin|admin_pkg|2|-
 storage-store|storage_store_pkgs|1|-
 EOF
 }
@@ -569,7 +589,7 @@ assert_pinned_leg_packages_valid() {
   local actual failed=0
   actual=$(go list ./... | sort -u)
 
-  local -a exclusive_lists=(root_1_pkgs root_2_pkgs server_pkg core_pkgs storage_store_pkgs encryption_pkgs faultops_pkgs)
+  local -a exclusive_lists=(root_1_pkgs root_2_pkgs server_pkg core_pkgs storage_store_pkgs encryption_pkgs faultops_pkgs admin_pkg)
   local list_name pkg
   local pinned_pkg_names="" pinned_pkg_owners=""
 

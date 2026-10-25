@@ -405,6 +405,10 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			// admin got a useless "Failed to update user" (HTTP 500) instead of
 			// the readable refusal `user delete` on the same target already got.
 			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
+		case strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)):
+			// Core's rename rule (validateUsernameCharset) and other core-only
+			// checks the request-body tags do not repeat; same mapping as CreateUser.
+			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			sendError(w, "InternalError", "Failed to update user", http.StatusInternalServerError, nil)
 		}

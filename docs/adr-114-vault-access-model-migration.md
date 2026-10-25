@@ -80,6 +80,24 @@ Approximate-with-narrowing or Unmappable, never Exact.
 | `delete` | `secrets.delete` |
 | `sudo` | *(none — see table above, stanza is Unmappable)* |
 
+**Known residual: `secrets.read` implies listing names and reading version
+metadata.** Keyorix's `secrets.read` lets its holder list the secret names in
+the granted scope and read their version metadata. Vault grants those
+separately (KV v2: `list` and `read` on the `metadata/` twin of the `data/`
+path; KV v1: `list` on the path, and KV v1 keeps no version metadata). A
+policy that grants `read` on `data/` but not the matching `metadata/` stanzas
+therefore migrates to a grant that also reveals names and version metadata
+Vault did not. Never secret values. Accepted as a residual (Andrei,
+2026-10-23, ask `rd-smt-fix-secretsread-implies-list`): requiring the
+`metadata/` stanzas would make most demo and testbed policies unmappable.
+The plan does not hide it: every `create` role item whose policy set lacks
+those stanzas carries `implied_access` (`list-names`,
+`read-version-metadata`) in the JSON plan, and the Markdown/HTML report and
+`plan-access`'s summary list each such policy by name
+(`accessplan.ImpliedAccessPolicies`, tested on journey 4's `n4-readonly`
+and the testbed's `mig1-glob-readonly`). An operator who must keep names
+hidden grants that scope by hand instead.
+
 ### Role granularity
 
 One Keyorix custom `Role` is created per **unique capability-set** the
@@ -107,6 +125,27 @@ routinely spans many projects and environments by glob. The convention:
   mapping") deliberately — a customer who already migrated secret values
   with that layout gets the same project/environment resolution for access
   grants, no second mental model.
+- **Cross-mount scopes** (Andrei, 2026-10-23, ask
+  `rd-smt-fix-cross-mount-convention`, option c): the convention ignores the
+  mount, so `secret/data/team-a/prod/x` and `kv1/team-a/prod/x` both belong to
+  `team-a/prod`, and a grant from a policy on one mount would also reach the
+  other mount's imported secrets. `plan-access` therefore lists every KV
+  mount's root and each `<project>/` directory (names only, never values). A
+  default-convention stanza maps only when no other KV mount holds paths under
+  its `<project>/` (project-wide grant) or `<project>/<env>/` (environment
+  grant); otherwise, or when a mount or directory cannot be listed, it is
+  **Unmappable** (`cross-mount-scope`). Each such stanza records what every
+  mount held (`cross_mount_evidence` in the JSON plan). `apply-access` lists
+  the tree again when it re-derives the plan and applies **nothing** if any
+  stanza's evidence differs from the reviewed plan's, in either direction, or
+  if the reviewed plan has none (written before this check), so a change
+  between `plan-access` and `apply-access` is never applied unreviewed.
+  Residual: `apply-access`'s own window between that LIST and its writes
+  (seconds; a path another mount gains in it is not seen), the same as for
+  any secret written to the other mount after `apply-access`. Neither is
+  re-checked, and `audit-access` sees only the tree at the time it runs.
+  Not covered either: `--path-map` scopes (the override declares the scope's
+  content).
 - **Override**: `--path-map <vault-prefix>=<projectID>:<environmentID>`
   (repeatable), required whenever the Vault tree doesn't follow the
   convention, or the operator wants a different target than the name match

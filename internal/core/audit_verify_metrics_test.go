@@ -148,7 +148,7 @@ func TestAuditVerifyMetrics_UntrustedRaiseThenStaleTrustedPublish(t *testing.T) 
 
 	// Another load finds the stored row untrusted but carrying a sticky failure.
 	c.observeAuditVerifyStateUntrusted(&auditVerifyState{V: 1, Gen: 9,
-		Failure: &auditVerifyFailure{DetectedAt: clk.t, Gen: 9, Source: "test", Reason: "break"}})
+		Failure: &auditVerifyFailure{DetectedAt: clk.t, Gen: 9, Source: "test", Reason: "break"}}, true)
 	require.Equal(t, float64(1), testutil.ToFloat64(auditVerifyFailureRecorded))
 	require.Equal(t, float64(1), testutil.ToFloat64(auditVerifyStateRejected))
 
@@ -176,7 +176,7 @@ func TestAuditVerifyMetrics_UntrustedRaiseWithLowGenStillBlocksStaleReader(t *te
 
 	c.bumpAuditVerifyGen(9)
 	c.observeAuditVerifyState(&auditVerifyState{V: 1, Gen: 9})
-	c.observeAuditVerifyStateUntrusted(&auditVerifyState{V: 1}) // malformed: Gen 0
+	c.observeAuditVerifyStateUntrusted(&auditVerifyState{V: 1}, true) // malformed: Gen 0
 	require.Equal(t, float64(1), testutil.ToFloat64(auditVerifyStateRejected))
 
 	c.observeAuditVerifyState(&auditVerifyState{V: 1, Gen: 9})

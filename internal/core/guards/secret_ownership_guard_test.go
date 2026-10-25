@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // ownerIDMutationAllowlist maps "file.go:FuncName" to why that function is allowed to
@@ -49,19 +51,10 @@ var ownerIDMutationAllowlist = map[string]string{
 // TestNoUntrackedOwnerIDMutations is the AST freshness check described above.
 func TestNoUntrackedOwnerIDMutations(t *testing.T) {
 	t.Parallel()
-	entries, err := os.ReadDir("..")
-	if err != nil {
-		t.Fatalf("failed to list package directory: %v", err)
-	}
-
 	fset := token.NewFileSet()
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		path := filepath.Join("..", name)
-		src, err := os.ReadFile(path)
+	for _, path := range coreFamilySources(t) {
+		name := srcpath.CoreFamilyRel(path)
+		src, err := os.ReadFile(path) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 		if err != nil {
 			t.Fatalf("failed to read %s: %v", path, err)
 		}

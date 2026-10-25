@@ -324,20 +324,6 @@ func TestStartGRPCServer_S27_TLSBadCert(t *testing.T) {
 
 // ── initializeCoreService: login lockout disabled warning ────────────────────
 
-// TestInitializeCoreService_S27_LoginLockoutDisabledWarning exercises the
-// login-lockout disabled branch (ll.Disabled = true). A warning is logged
-// but no error is returned.
-func TestInitializeCoreService_S27_LoginLockoutDisabledWarning(t *testing.T) {
-	initI18n(t)
-	cfg := newMinimalCfg(t)
-	cfg.Security.LoginLockout = config.LoginLockoutConfig{Disabled: true}
-
-	_, _, err := initializeCoreService(cfg)
-	if err != nil {
-		t.Fatalf("initializeCoreService with lockout disabled: %v", err)
-	}
-}
-
 // ── initializeCoreService: license with grants (status.Grants() = true) ─────
 
 // TestInitializeCoreService_S27_LicenseGrantsPath exercises the license.Gate

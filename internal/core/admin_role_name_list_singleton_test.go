@@ -44,11 +44,12 @@ package core
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // adminNameUseKind classifies what an admin-role-name literal is doing.
@@ -112,13 +113,6 @@ var adminRoleNameLiteralAllowlist = map[string]adminNameUse{
 			"administrative — a reserved name is not an administrative one (system_viewer, " +
 			"auditor are in it).",
 	},
-	"role_scope_guard.go:projectTierRoleNames": {
-		kindRoleDefinition,
-		"The ADR-021 project TIER (#3546): which built-in roles may only be granted at a " +
-			"project scope. Decides whether a grant's SCOPE is valid, never whether a role " +
-			"confers administrative authority; project_admin is in it as a project-tier " +
-			"role alongside project_viewer, and admin-ness stays with the structural flag.",
-	},
 	"auth_bootstrap.go:bootstrapSystemLocked": {
 		kindRoleDefinition,
 		"roleIDs[\"admin\"] — the bootstrap admin's own grant, looked up by key in the map " +
@@ -165,22 +159,19 @@ var adminRoleNameLiteralRe = regexp.MustCompile(`"(?:super_admin|system_admin|pr
 // name, so an occurrence can be attributed to the declaration that contains it.
 var adminNameDeclRe = regexp.MustCompile(`^(?:func\s+(?:\([^)]*\)\s*)?|var\s+)([A-Za-z0-9_]+)`)
 
-// actualAdminRoleNameLiteralSites scans every non-test *.go file directly in
-// internal/core and returns the set of "file:decl" keys where an admin role
+// actualAdminRoleNameLiteralSites scans every non-test *.go file of the core
+// family (internal/core and the packages extracted from it) and returns the set of "file:decl" keys where an admin role
 // name appears as a string literal outside a comment.
 func actualAdminRoleNameLiteralSites(t *testing.T) map[string]bool {
 	t.Helper()
 	found := map[string]bool{}
-	entries, err := os.ReadDir(".")
+	paths, err := srcpath.CoreFamilyGoFiles()
 	if err != nil {
-		t.Fatalf("reading internal/core: %v", err)
+		t.Fatalf("listing the core family: %v", err)
 	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(".", name))
+	for _, path := range paths {
+		name := srcpath.CoreFamilyRel(path)
+		b, err := os.ReadFile(path) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 		if err != nil {
 			t.Fatalf("reading %s: %v", name, err)
 		}

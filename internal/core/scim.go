@@ -38,7 +38,11 @@ var scimNonAlphanum = regexp.MustCompile(`[^a-z0-9]`)
 
 // deriveSCIMUsername builds a unique alphanumeric username from a SCIM userName
 // (typically an email/UPN): its local-part, lowercased and stripped to [a-z0-9],
-// padded to the 3-char minimum, with a numeric suffix on collision.
+// padded to the 3-char minimum, with a numeric suffix on collision. SCIM and
+// SSO/SAML JIT provisioning both use it, so an IdP-supplied non-ASCII,
+// fullwidth or whitespace-padded userName/email never fails
+// validateUsernameCharset: it is normalized (e.g. "jürgen@x" -> "jrgen",
+// "日本@x" -> "usr"), never rejected (TestIdPDerivedUsernames_PassUsernameRule).
 func (c *KeyorixCore) deriveSCIMUsername(ctx context.Context, userName string) (string, error) {
 	base := userName
 	if i := strings.IndexByte(base, '@'); i > 0 {

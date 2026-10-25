@@ -46,6 +46,31 @@ func validateUsernameFormat(username string) error {
 	return nil
 }
 
+// usernameCharsetRegex is validateIdentifier's anti-homograph guard (G38)
+// widened by the ASCII punctuation usernames legitimately carry today
+// ("john.developer", "user@example.com" in docs/API_REFERENCE.md): letters,
+// digits, space, '.', '_', '@', '+', '-'. ASCII-only, so a fullwidth
+// ("ａｄｍｉｎ"), no-break-space ("ad min") or ideographic-space variant
+// of an existing name cannot be created as a second principal: identity.
+// NewFoldedName folds none of those onto the ASCII form (IDENTITY-FOLD-
+// SPACE-WIDTH), and changing that profile would re-key every stored
+// username_folded value.
+var usernameCharsetRegex = regexp.MustCompile(`^[a-zA-Z0-9 ._@+-]+$`)
+
+// validateUsernameCharset applies usernameCharsetRegex plus validateIdentifier's
+// whitespace rule. It runs ONLY where a username is chosen: create
+// (validateCreateUserRequest) and rename (UpdateUser, when the name actually
+// changes). It must never run on login, lookup or token validation: accounts
+// stored before this rule (or a name that fails it) keep working unchanged.
+// SCIM and SSO JIT never hand it an IdP string: deriveSCIMUsername normalizes
+// to [a-z0-9] first.
+func validateUsernameCharset(username string) error {
+	if !usernameCharsetRegex.MatchString(username) {
+		return fmt.Errorf("%s: username must contain only ASCII letters, digits, spaces, '.', '_', '@', '+' or '-'", i18n.T("ErrorValidation", nil))
+	}
+	return validateIdentifierWhitespace(username)
+}
+
 func validateEmailFormat(email string) error {
 	if !emailRegex.MatchString(email) {
 		return fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), i18n.T("LabelEmail", nil))
@@ -333,7 +358,7 @@ func (c *KeyorixCore) CreateUserWithAssignments(ctx context.Context, req *Create
 	}
 	// #3546: the system role lands at the global scope, so a project-tier role
 	// there would apply in every project. Project roles go in assignments.
-	if err := c.requireScopeValidForRoleName(ctx, sr.Name, Scope{}); err != nil {
+	if err := c.requireScopeValidForRoleModel(ctx, sr, Scope{}); err != nil {
 		return nil, err
 	}
 	// Escalation-by-proxy guard (#480), mirroring InviteGlobal (#231): a global
@@ -439,6 +464,11 @@ func (c *KeyorixCore) resolveProjectRoleGrant(ctx context.Context, actorID uint,
 	if err != nil {
 		return storage.RoleGrant{}, fmt.Errorf("%s: unknown role %q", i18n.T("ErrorValidation", nil), a.Role)
 	}
+	// #3546: an install-wide role never lands at one project, the same check
+	// AssignUserRole and the InviteGlobal assignments apply.
+	if err := c.requireScopeValidForRoleModel(ctx, r, Scope{ProjectID: a.ProjectID}); err != nil {
+		return storage.RoleGrant{}, err
+	}
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, r.ID, Scope{ProjectID: a.ProjectID}, actorIsMachine); err != nil {
 		return storage.RoleGrant{}, err
 	}
@@ -539,6 +569,12 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
 	}
 	if req.Username != "" && req.Username != user.Username {
+		// Checked here, not in validateUpdateUserRequest: a client that echoes
+		// the stored username back unchanged (a legacy name this rule would
+		// reject) must still be able to update the other fields.
+		if err := validateUsernameCharset(req.Username); err != nil {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		}
 		foldedUsername, ferr := identity.NewFoldedName(req.Username)
 		if ferr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
@@ -1299,6 +1335,9 @@ func (c *KeyorixCore) validateCreateUserRequest(req *CreateUserRequest) error {
 		return fmt.Errorf("%s", i18n.T("LabelUsername", nil))
 	}
 	if err := validateUsernameFormat(req.Username); err != nil {
+		return err
+	}
+	if err := validateUsernameCharset(req.Username); err != nil {
 		return err
 	}
 	if req.Email == "" {

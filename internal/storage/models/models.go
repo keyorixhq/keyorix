@@ -825,6 +825,13 @@ type Role struct {
 	// /system proxy writes it. Renaming a role does not move this flag; a
 	// newly-created role never has it regardless of what it is named.
 	BypassesPermissionChecks bool `gorm:"not null;default:false"`
+	// AssignableScope is where a grant of this role may be written
+	// (GROUP-ROLE-SCOPE-1 Phase 2, #3546): RoleAssignableGlobal (project 0
+	// only), RoleAssignableProject (a project, optionally an environment of it)
+	// or RoleAssignableAny. See role_assignable_scope.go. The column default is
+	// the new-role default, project; existing roles were backfilled once
+	// (backfillRoleAssignableScope, internal/storage/factory.go).
+	AssignableScope string `gorm:"not null;default:'project'"`
 }
 
 type Permission struct {
@@ -1647,6 +1654,16 @@ type AuditEvent struct {
 	// review can't query is only half the control. Indexed as
 	// (machine_identity_id, event_time), see store.AuditListIndexes.
 	MachineIdentityID *uint
+
+	// RequestID is the server-minted id of the HTTP request that wrote the row
+	// (logging.ServerRequestID), for joining an audit row with that request's log
+	// lines. NULL when there was no request (scheduler, startup, gRPC) or the row was
+	// written by an epoch-5 replica. LogAuditEvent sets it from the context and
+	// overwrites whatever the caller put here. It is NOT covered by the hash chain:
+	// anyone with database write access can change it undetected, so it is an
+	// advisory correlation hint, never evidence (docs/specs/audit-request-id.md §5).
+	// Deliberately not indexed (§4).
+	RequestID *string
 
 	// Tamper-evidence hash chain (ADR-029). PrevHash is the EntryHash of the
 	// immediately preceding chained event (a fixed genesis constant for the

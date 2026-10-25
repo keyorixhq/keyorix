@@ -27,7 +27,12 @@ git commit -s -m "your commit message"
 This adds a `Signed-off-by: Your Name <you@example.com>` trailer to the
 commit, matching your git author identity — nothing more. A CI check
 (`.github/workflows/dco.yml`) verifies every commit in a PR has one; PRs
-without it won't pass CI. If you forgot:
+without it won't pass CI. The sign-off is the only trailer we want: no
+AI-assistant attribution (co-author or session trailers, "generated with"
+footers or links) in commit messages, the PR title or the PR body. The
+`no-attribution` check (`.github/workflows/no-attribution.yml`,
+`scripts/ci/check-no-attribution.sh`) fails a PR that has any. If you forgot
+the sign-off:
 
 ```
 git commit --amend -s --no-edit                              # last commit only
@@ -36,7 +41,7 @@ git rebase --exec 'git commit --amend --no-edit -s' <base>    # every commit sin
 
 ### Optional git hooks
 
-This repo ships two opt-in hooks in `.githooks/` (not installed by default —
+This repo ships three opt-in hooks in `.githooks/` (not installed by default —
 `.git/hooks/` and `.githooks/` are different directories, and git only uses
 the latter once you point it there):
 
@@ -48,6 +53,10 @@ git config core.hooksPath .githooks
   message from your git author identity, so the DCO check above never fails
   on a forgotten `-s`. Skips merge/squash/revert/fixup commits and commits
   that already have a trailer.
+- **`commit-msg`** — refuses a commit whose message carries AI-assistant
+  attribution, with the same patterns and script as the `no-attribution` CI
+  check (`scripts/ci/check-no-attribution.sh --message-file`). Comment lines
+  and the `git commit -v` diff are not checked.
 - **`pre-push`** — runs `golangci-lint` locally before a push leaves your
   machine, scoped to just the package(s) your push actually changed (diffed
   against `origin/main`); runs the full module instead if `go.mod`, `go.sum`,
@@ -72,7 +81,7 @@ git config core.hooksPath .githooks
   commit's body. Skips silently if `gh`/`jq` aren't available or `gh` isn't
   authenticated.
 
-Neither hook is required — CI enforces both independently — but they turn a
+No hook is required — CI enforces all three independently — but they turn a
 CI round-trip into an immediate local one.
 
 ## Making a change
@@ -102,6 +111,34 @@ CI round-trip into an immediate local one.
    `OrganizationAdmin`/`bypass_mode: always` bypass actor, so that wasn't
    accurate. See [docs/security/SDLC.md](docs/security/SDLC.md#branch-protection)
    for the ruleset evidence.
+
+## How to add a feature without touching shared wiring files
+
+`server/main.go`, `internal/config/config.go` and `internal/storage/factory.go`
+are where every feature used to wire itself in, so two open PRs touching them
+held each other up in the merge queue. They now keep only ordered lists; a
+feature is a **new file plus one line in a list**. Order in a list is behaviour
+(start order, validation order, log order), so put your line where it belongs,
+not just at the end.
+
+| You are adding | New file | The one line |
+|---|---|---|
+| A background job | `server/scheduler_<job>.go`: `const schedLock<Name> int64 = 0x4B455953_<4 ASCII bytes>` (unique; `TestSchedulerLockKeysAreDistinct`) and `func start<Name>Scheduler(ctx context.Context, cfg *config.Config, coreService *core.KeyorixCore)` calling `runScheduler`/`runSchedulerAfter(ctx, "<job>", interval, func() middleware.SchedulerOutcome { return lockedRun(...) })` | `schedulerStarts` in `server/main.go` |
+| A core setting / integration wired at boot | `server/wire_<domain>.go`: `func wire<Name>(cw *coreWiring) error` (reads `cw.cfg`, sets on `cw.core`; a non-nil error stops the boot) | `coreWiringSteps` in `server/main.go` |
+| A boot refusal (before storage opens) | a `func(*config.Config) error` in its own file | `bootRefusals` in `server/main.go` (logged as `<name>: <error>`) |
+| A config section | `internal/config/config_<domain>.go`: the `<Name>Config` type, its getters/defaults and `validate<Name>Section(c *Config) error` | one field in `Config` (`internal/config/config.go`) and, if it validates, one entry in `configValidators` |
+| A storage backend | `internal/storage/factory_<backend>.go`: `var <backend>Backend = storageBackend{names: ..., create: ...}` | `storageBackends` in `internal/storage/factory.go` (also extend `Config.Validate`'s storage.type switch and `TestStorageBackends_SelectionTable`) |
+
+Then, as for any change: a new config key updates
+`internal/config/testdata/config_surface_leaves.txt` and is classified by the
+insecure-settings sweep; a new job regenerates the state map
+(`go run ./cmd/statemapgen`). Schema migrations still go in `migrateDatabase` in
+`factory.go` with a `currentSchemaEpoch` bump: two PRs bumping the epoch must
+serialise, so that collision is deliberate.
+
+`TestWiringHotFiles_StayThin` (`server/wiring_hot_files_test.go`) fails when a
+new function, type or block lands in one of the three central files instead of
+its own file.
 
 ## What CI checks
 

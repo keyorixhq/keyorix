@@ -77,6 +77,15 @@ var deprecatedSettingAliases = []deprecatedSettingAlias{
 	{"audit_checkpoints.disabled", "audit_checkpoints.insecure_disable_audit_checkpoints"},
 }
 
+// ignoredSettingPaths are keys that still decode but that no code ever read
+// (SUBTRACT-202610; Andrei 2026-10-23: deprecate now, delete the paths and their
+// struct fields after one minor release). Setting one only adds a start-up
+// warning; the tree is left unchanged.
+var ignoredSettingPaths = []string{
+	"secrets.chunking",
+	"secrets.limits.max_secrets_per_user",
+}
+
 // DeprecatedSettingAliasPaths returns every (old, new) dotted-path pair Load
 // still rewrites, so docs guards can derive the list from code.
 func DeprecatedSettingAliasPaths() [][2]string {
@@ -185,6 +194,16 @@ func resolveDeprecatedAliases(data []byte) ([]byte, []string) {
 				"%q is deprecated, use %q instead (same meaning, no behavior change)",
 				alias.OldPath, alias.NewPath))
 			oldKeyNode.Value = newLeaf
+		})
+	}
+	for _, p := range ignoredSettingPaths {
+		segs := strings.Split(p, ".")
+		walkToParents(doc, segs, func(parent *yaml.Node) {
+			if k, _ := mapGet(parent, segs[len(segs)-1]); k != nil {
+				warnings = append(warnings, fmt.Sprintf(
+					"%q is deprecated and ignored (no Keyorix feature reads it); remove it -- it will be rejected after the next minor release",
+					p))
+			}
 		})
 	}
 	if !changed {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -50,7 +49,7 @@ func TestJourney_SecretSuspendAuditRefusedHintCLI(t *testing.T) {
 	dbPath := filepath.Join(s.Dir, "keyorix.db")
 	sqlite := func(stmt string) {
 		t.Helper()
-		out, err := exec.Command("sqlite3", dbPath, stmt).CombinedOutput() // #nosec G204 -- this test's own tempdir DB path and a fixed statement
+		out, err := sqliteCLI(dbPath, stmt).CombinedOutput() // #nosec G204 -- this test's own tempdir DB path and a fixed statement
 		if err != nil {
 			t.Fatalf("sqlite3 %q: %v\n%s", stmt, err, out)
 		}

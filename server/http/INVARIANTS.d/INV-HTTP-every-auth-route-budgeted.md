@@ -18,7 +18,8 @@
   budget: its handler calls `admitCredentialCheck` (the limiter's check, then a slot
   reserved before the credential check) and `settleCredentialCheck` (a rejected
   credential keeps the slot: `ErrIncorrectCurrentPassword`, `ErrReauthRejected`,
-  `ErrLoginPostVerdict`; any other outcome hands it back) and defers
+  `ErrLoginPostVerdict`, and `ErrPasswordReused`, a new password found in the password
+  history; any other outcome hands it back) and defers
   `releaseCredentialSlotOnPanic` (a panic, answered 500 by Recovery, hands an unsettled
   slot back so the 500 changes nothing; no client can cause one, and unlike the login
   handlers' identical-response rule, INV-HTTP-login-panic-release-pre-verdict-only, no

@@ -1,0 +1,4 @@
+# anomaly: anomaly detection, isolation forest, anomaly config and alerting
+# One glob per line, matched against the file name (README.md).
+anomaly*.go
+isolation_forest.go

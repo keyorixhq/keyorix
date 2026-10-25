@@ -302,6 +302,17 @@ const samlAssertionNS = "urn:oasis:names:tc:SAML:2.0:assertion"
 // per 3 input bytes before the library ever sees it.
 const maxResponseDepth = 64
 
+// maxResponseElements bounds the number of elements in the whole response. It equals
+// goxmldsig's per-traversal budget (etreeutils.NewDefaultNSContext, 1000 since v1.6.1
+// enforced on NSDetatch, GHSA-qhrp-hfff-vphr): the library stack refuses a signed
+// Response or Assertion whose subtree is larger, but not through a clean error (only
+// parseResponseRecovered's recover turns it into a refusal). Refusing here first keeps
+// the library off that path.
+// Counting the whole response is at most a few elements stricter than the library (an
+// unsigned Response wrapper, a KeyInfo the library strips before counting).
+// TestMaxResponseElements_MatchesGoxmldsigBudget pins the value to the library.
+const maxResponseElements = 1000
+
 // strictAssertionShape parses the posted SAMLResponse with namespace resolution (so a
 // correctly-bound prefix of any name passes) and refuses any shape the library would
 // either mis-bind or fail to handle safely:
@@ -315,7 +326,8 @@ const maxResponseDepth = 64
 //     assertion namespace (no NameID-named child in any other namespace, no BaseID or
 //     EncryptedID beside it), and that NameID holds text only;
 //   - only the HTTP-POST binding with plaintext assertions: no SAMLart form key, no
-//     root-level EncryptedAssertion, one root element, at most maxResponseDepth deep.
+//     root-level EncryptedAssertion, one root element, at most maxResponseDepth deep
+//     and at most maxResponseElements elements.
 //
 // It returns the text of the root Assertion's Subject NameID, which the caller compares
 // against what the library authenticated. Unlike the epilogue check this is fail-closed:
@@ -353,6 +365,7 @@ func strictAssertionShape(r *http.Request) (string, error) {
 	dec := xml.NewDecoder(bytes.NewReader(decoded))
 	var stack []*frame
 	nameID, haveNameID, sawRoot := "", false, false
+	elements := 0
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
@@ -413,6 +426,9 @@ func strictAssertionShape(r *http.Request) (string, error) {
 			}
 			if len(stack) >= maxResponseDepth {
 				return "", fmt.Errorf("saml: response nests deeper than %d elements", maxResponseDepth)
+			}
+			if elements++; elements > maxResponseElements {
+				return "", fmt.Errorf("saml: response has more than %d elements", maxResponseElements)
 			}
 			stack = append(stack, f)
 		case xml.CharData:

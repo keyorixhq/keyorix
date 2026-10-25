@@ -32,6 +32,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -149,7 +150,7 @@ func newWebAuthnSpecTestCore(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		RPID: "example.org", RPDisplayName: "Keyorix", RPOrigins: []string{"https://example.org"},
 	})
 	require.NoError(t, err)
-	c.SetWebAuthn(rp)
+	c.SetWebAuthn(webauthnrp.Wrap(rp))
 	return c, db
 }
 

@@ -1096,6 +1096,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/projects/{id}/break-glass/{activationId}/review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Record the independent post-activation review of a break-glass grant
+         * @description ADR-112 post-activation review: a written record that someone other than the activating user checked what the emergency access was used for. It is a record, not a control: it neither extends nor shortens the grant. Requires roles.assign at the project scope, and is refused while impersonating (403), so a puppet identity cannot forge an independent review. The activation must have concluded (revoked or expired) first, and an activation can be reviewed once. The note is trimmed, must be 10 to 2000 characters, and becomes part of the permanent audit record (break_glass.reviewed). The reviewer must not be the activating user and must be an attributable human user (403 otherwise). A missing activation, or one that belongs to another project, is the same 404.
+         */
+        post: operations["reviewBreakGlass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/projects/{id}/share-recipients": {
         parameters: {
             query?: never;
@@ -1150,7 +1170,7 @@ export interface paths {
         get?: never;
         /**
          * Update a project member's role
-         * @description Change the role assigned to an existing project member.
+         * @description Change the role assigned to an existing project member. The member's other project roles are removed first, then the new role is granted; if the grant cannot be recorded in the audit log the answer is 503 with error MutationPartiallyApplied and details {code: mutation_partially_applied, revocation_applied: true, remainder_applied: false, applied, not_applied, retry_safe: true}: the removals are applied, the new role is not, and the same request can be retried. Swapping the project's only administrator to another administrator role is applied in one step: during an audit outage it changes nothing.
          */
         put: operations["updateProjectMember"];
         post?: never;
@@ -3693,7 +3713,7 @@ export interface paths {
         get: operations["getUserRolesForUser"];
         /**
          * Replace user roles at a scope
-         * @description Replace the user's role assignments at the given project or global scope with the provided role IDs.
+         * @description Replace the user's role assignments at the given project or global scope with the provided role IDs. A replacement that removes roles and adds others is applied in two steps, the removals first; if the additions cannot be recorded in the audit log the answer is 503 with error MutationPartiallyApplied and details {code: mutation_partially_applied, revocation_applied: true, remainder_applied: false, applied, not_applied, retry_safe: true}: the removals are applied, the additions are not, and the same request can be retried.
          */
         put: operations["updateUserRoles"];
         post?: never;
@@ -5869,6 +5889,11 @@ export interface components {
             name?: string;
             description?: string;
             bypasses_permission_checks?: boolean;
+            /**
+             * @description Where the role may be granted (#3546): global = no project only, project = a project (optionally an environment of it) only, any = either.
+             * @enum {string}
+             */
+            assignable_scope?: "global" | "project" | "any";
         };
         /** @description A permission (internal/storage/models.Permission), via the handler-level permissionWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign. */
         Permission: {
@@ -5884,6 +5909,8 @@ export interface components {
             name?: string;
             description?: string;
             bypasses_permission_checks?: boolean;
+            /** @enum {string} */
+            assignable_scope?: "global" | "project" | "any";
             permissions?: components["schemas"]["Permission"][];
         };
         /** @description A user's identity plus their assigned roles (internal/core.UserRoleAssignment), via the handler-level userRoleAssignmentWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak on the nested Roles field (its own UserID/Username/Email were already correctly tagged) as part of the API-hygiene casing campaign. */
@@ -7880,6 +7907,39 @@ export interface operations {
             404: components["responses"]["Error"];
         };
     };
+    reviewBreakGlass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+                activationId: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Review note (what was checked); trimmed before the length check */
+                    note: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Envelope {data, message}. Break-glass activation reviewed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            500: components["responses"]["Error"];
+        };
+    };
     searchShareRecipients: {
         parameters: {
             query?: {
@@ -8005,6 +8065,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     removeProjectMember: {
@@ -12642,6 +12703,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
+            503: components["responses"]["Error"];
         };
     };
     getUserMembershipsForUser: {
@@ -13184,6 +13246,11 @@ export interface operations {
                     description: string;
                     /** @description Permission names. */
                     permissions: string[];
+                    /**
+                     * @description Where the role may be granted. Default project.
+                     * @enum {string}
+                     */
+                    assignable_scope?: "global" | "project" | "any";
                 };
             };
         };
@@ -13251,6 +13318,11 @@ export interface operations {
                     description?: string;
                     /** @description Replaces the role's permissions by name. */
                     permissions?: string[];
+                    /**
+                     * @description Changes where the role may be granted; existing grants are not changed.
+                     * @enum {string}
+                     */
+                    assignable_scope?: "global" | "project" | "any";
                 };
             };
         };

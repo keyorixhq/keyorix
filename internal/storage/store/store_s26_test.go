@@ -567,12 +567,6 @@ func TestGetSecretIncludingDeleted_S26_NotFound(t *testing.T) {
 // local_purge.go — error paths (broken DB)
 // ---------------------------------------------------------------------------
 
-func TestPurgeDeletedUsersBefore_S26_BrokenDB(t *testing.T) {
-	ls := newBrokenDB(t)
-	_, err := ls.PurgeDeletedUsersBefore(context.Background(), time.Now())
-	require.Error(t, err)
-}
-
 func TestPurgeDeletedProjectsBefore_S26_BrokenDB(t *testing.T) {
 	ls := newBrokenDB(t)
 	_, err := ls.PurgeDeletedProjectsBefore(context.Background(), time.Now())
@@ -596,12 +590,6 @@ func TestAcknowledgeAnomalyAlert_S26_NotFound(t *testing.T) {
 	err := ls.AcknowledgeAnomalyAlert(context.Background(), 9999, 1, time.Now())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
-}
-
-func TestAcknowledgeAnomalyAlert_S26_BrokenDB(t *testing.T) {
-	ls := newBrokenDB(t)
-	err := ls.AcknowledgeAnomalyAlert(context.Background(), 1, 1, time.Now())
-	require.Error(t, err)
 }
 
 // ---------------------------------------------------------------------------

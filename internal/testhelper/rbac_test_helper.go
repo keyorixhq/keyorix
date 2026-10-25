@@ -159,9 +159,11 @@ func (h *RBACTestHelper) seedTestData(t *testing.T) {
 		// ADR-084: bypasses_permission_checks is the structural admin-bypass
 		// flag, not the name — set true here for super_admin/admin exactly
 		// as real bootstrap seeding would, so tests using this helper to
-		// exercise the admin bypass keep working.
-		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, name_folded, description, bypasses_permission_checks) VALUES (?, ?, ?, ?, ?)",
-			role.ID, role.Name, role.Name, role.Description, role.Name == "super_admin" || role.Name == "admin")
+		// exercise the admin bypass keep working. assignable_scope likewise
+		// (#3546 Phase 2): the built-in's fixed scope, as seeding writes it.
+		_, _ = h.SqlDB.Exec("INSERT OR IGNORE INTO roles (id, name, name_folded, description, bypasses_permission_checks, assignable_scope) VALUES (?, ?, ?, ?, ?, ?)",
+			role.ID, role.Name, role.Name, role.Description, role.Name == "super_admin" || role.Name == "admin",
+			models.BuiltinRoleAssignableScopes[role.Name])
 	}
 
 	// Create default permissions using raw SQL

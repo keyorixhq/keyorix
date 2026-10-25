@@ -180,6 +180,8 @@ call's lock. If the second commit fails the narrowing stays and the answer is HT
 | Machine token rotation (`replace_credential_id`) | `IssueMachineToken` → `rotateMachineToken` | old credential revoked (and evicted), `machine_identity.token_revoked` | new credential, `machine_identity.token_rotated` |
 | Role update: permissions removed + added (MERGE-FIX-3482K) | `UpdateRole` | removals, `permission.removed`×n | description + additions, `role.updated` + `permission.assigned`×n |
 | Share update: lower permission + later/cleared expiry, or the reverse (MERGE-FIX-3482K) | `UpdateSharePermission` | the narrower value of each part, `share_updated` / `group_share_updated` | the requested share, `share_updated` / `group_share_updated` |
+| Role-set replacement: roles removed + added (#3488) | `SetUserRoles` → `replaceUserRoleSet` | removals, `role.removed`×n (the additions' SoD check runs on the set they leave) | additions, `role.assigned`×n |
+| Member role change: other project roles removed + the new one granted (#3488) | `SetProjectMemberRole` → `replaceUserRoleSet` | removals, `role.removed`×n | the new role, `role.assigned`; a swap of the project's only administrator is ONE fail-closed transaction instead (its removals alone would strand the project) |
 
 ## Revocations: never blocked, row owed in the same transaction (AUDIT-TX-3)
 
@@ -223,9 +225,6 @@ its `user.updated` row to the owed record and adds
 
 ## Remaining, with the reason each is not in a fail-closed or owed transaction
 
-- **`SetUserRoles`**: a compensated sequence of single grants and removals. Each
-  grant inside it is in-tx, each removal is owed; the sequence as a whole is not one
-  transaction by design (the compensation logic reverts partial progress).
 - **Setup-token issuance (`setup_token.issued`) and invitation accept
   (`invitation.accepted`)**: `setup_token.go` / `setup_consume.go` belong to the
   login/setup flow another session owns (FIX-3277). Their rows stay after the commit.

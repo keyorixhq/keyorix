@@ -112,12 +112,13 @@ internal/encryption/fault_hooks.go (securefiles.SecureWriteFileSync)	file_write	
 internal/encryption/keymanager_filelock.go (os.OpenFile)	file_write	internal/encryption	2
 internal/encryption/keymanager_lifecycle.go (securefiles.SecureWriteFileSync)	file_write	internal/encryption	1
 internal/encryption/keymanager_rotation.go (securefiles.SecureWriteFileSync)	file_write	internal/encryption	1
+internal/encryptionops/key_secret.go (securefiles.SecureCreateFileSync)	file_write	internal/encryptionops	2
 internal/encryptionops/shamir_split.go (securefiles.SecureCreateFileSync)	file_write	internal/encryptionops	2
 internal/faultstorage/gen/main.go (os.WriteFile)	file_write	internal/faultstorage/gen	2
 internal/secretenv/secretenv.go (os.OpenFile)	file_write	internal/secretenv	1
 internal/securefiles/securefiles.go (os.OpenFile)	file_write	internal/securefiles	2
 internal/serverguard/serverguard.go (os.OpenFile)	file_write	internal/serverguard	1
-internal/storage/factory.go (os.OpenFile)	file_write	internal/storage	1
+internal/storage/factory_local.go (os.OpenFile)	file_write	internal/storage	1
 internal/storage/factory_sqlite_migration_lock.go (os.OpenFile)	file_write	internal/storage	1
 migrate/cmd/cloud_common.go (os.Create)	file_write	migrate/cmd	1
 migrate/cmd/vault.go (os.Create)	file_write	migrate/cmd	1
@@ -132,6 +133,7 @@ scripts/fuzzing/autofuzzgen/main.go (os.WriteFile)	file_write	scripts/fuzzing/au
 scripts/fuzzing/reencode-seeds.go (os.WriteFile)	file_write	scripts/fuzzing	1
 scripts/metrics/cfgkeys/main.go (os.WriteFile)	file_write	scripts/metrics/cfgkeys	1
 scripts/metrics/surfacewalk/startup.go (os.Create)	file_write	scripts/metrics/surfacewalk	1
+scripts/refactor/coretestclass/main.go (os.WriteFile)	file_write	scripts/refactor/coretestclass	1
 server/admin/audit_export_checkpoint.go (os.OpenFile)	file_write	server/admin	1
 server/admin/audit_export_checkpoint_key.go (os.OpenFile)	file_write	server/admin	1
 server/admin/backup.go (os.OpenFile)	file_write	server/admin	1
