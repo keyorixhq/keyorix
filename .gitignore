@@ -74,6 +74,8 @@ certs/
 *.key
 *.crt
 *.pem
+# public Sigstore signing certificate of a real release, fixture of verify-release.sh --self-test
+!scripts/release/testdata/real-v0.96.3/assets/checksums.txt.pem
 *.p12
 *.pfx
 
