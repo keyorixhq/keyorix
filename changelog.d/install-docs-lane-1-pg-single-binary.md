@@ -1,0 +1,2 @@
+### Documentation
+- **PostgreSQL with the single binary is documented.** New `docs/operations/postgres-single-binary.md`: the config keys (`dsn` or fields, `ssl_mode`, `ssl_root_cert`), the password through `KEYORIX_DB_PASSWORD_FILE`, `admin init --storage-type postgres` (no empty SQLite file), the database-TLS requirement of the secure baseline and the errors you meet. `SELF_HOSTING.md` section 10 and `pilot-install.md` no longer say that `--storage-type` does not exist.
