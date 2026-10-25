@@ -135,3 +135,55 @@ func TestInspectTLS_NotHTTPSAndUnreachable(t *testing.T) {
 		t.Error("an unreadable CA file must be an error")
 	}
 }
+
+// RD-PQTLS-1: the CLI's handshake offers and negotiates the post-quantum hybrid key
+// exchange against a server whose tls.Config sets no CurvePreferences (as Keyorix's does),
+// and `keyorix doctor` can say so.
+func TestInspectTLS_ReportsKeyExchangeGroup(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12} // the shape of Keyorix's listener config: floor set, no CurvePreferences
+	srv.StartTLS()
+	defer srv.Close()
+	rep, err := InspectTLS(context.Background(), srv.URL, writeCA(t, srv.Certificate()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.KeyExchange != "X25519MLKEM768" || !rep.PostQuantumKeyExchange {
+		t.Fatalf("want key_exchange X25519MLKEM768 and post_quantum_key_exchange true: %+v", rep)
+	}
+}
+
+func TestInspectTLS_ClassicalServerIsReportedClassical(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12, CurvePreferences: []tls.CurveID{tls.CurveP256}}
+	srv.StartTLS()
+	defer srv.Close()
+	rep, err := InspectTLS(context.Background(), srv.URL, writeCA(t, srv.Certificate()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.KeyExchange != "P-256" || rep.PostQuantumKeyExchange {
+		t.Fatalf("want a classical P-256 report: %+v", rep)
+	}
+}
+
+func TestHardenedClientWithCAFile_NegotiatesX25519MLKEM768(t *testing.T) {
+	srv := httptest.NewUnstartedServer(http.NotFoundHandler())
+	srv.TLS = &tls.Config{MinVersion: tls.VersionTLS12}
+	srv.StartTLS()
+	defer srv.Close()
+	c, err := NewHardenedHTTPClientWithCAFile(writeCA(t, srv.Certificate()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state *tls.ConnectionState
+	resp, err := c.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	state = resp.TLS
+	if state == nil || state.CurveID != tls.X25519MLKEM768 {
+		t.Fatalf("API client negotiated %+v, want X25519MLKEM768", state)
+	}
+}

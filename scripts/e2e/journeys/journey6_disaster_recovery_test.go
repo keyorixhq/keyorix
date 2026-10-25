@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -718,7 +717,7 @@ func secretCiphertextHex(t *testing.T, dbPath string, secID int) string {
 	t.Helper()
 	stmt := fmt.Sprintf(
 		"SELECT hex(encrypted_value) FROM secret_versions WHERE secret_node_id = %d ORDER BY id DESC LIMIT 1;", secID)
-	cmd := exec.Command("sqlite3", dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived path, secID is an int from this test's own prior REST resolution, never attacker input
+	cmd := sqliteCLI(dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived path, secID is an int from this test's own prior REST resolution, never attacker input
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("sqlite3 read ciphertext failed: %v\n%s", err, out)

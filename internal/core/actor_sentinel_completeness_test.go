@@ -27,11 +27,12 @@ package core
 
 import (
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 type actorSentinelClass int
@@ -184,22 +185,19 @@ var actorSentinelFuncRe = regexp.MustCompile(`^func\s+(?:\([^)]*\)\s*)?([A-Za-z0
 // actorSentinelCompareRe matches a real actorID==0/actorID!=0 comparison.
 var actorSentinelCompareRe = regexp.MustCompile(`actorID\s*(==|!=)\s*0`)
 
-// actualActorSentinelSites scans every non-test *.go file directly in
-// internal/core (this package) and returns the set of "file:func" keys where
+// actualActorSentinelSites scans every non-test *.go file of the core family
+// (internal/core and the packages extracted from it) and returns the set of "file:func" keys where
 // a real (non-comment) actorID==0/actorID!=0 comparison appears.
 func actualActorSentinelSites(t *testing.T) map[string]bool {
 	t.Helper()
 	found := map[string]bool{}
-	entries, err := os.ReadDir(".")
+	paths, err := srcpath.CoreFamilyGoFiles()
 	if err != nil {
-		t.Fatalf("reading internal/core: %v", err)
+		t.Fatalf("listing the core family: %v", err)
 	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(".", name))
+	for _, path := range paths {
+		name := srcpath.CoreFamilyRel(path)
+		b, err := os.ReadFile(path) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 		if err != nil {
 			t.Fatalf("reading %s: %v", name, err)
 		}

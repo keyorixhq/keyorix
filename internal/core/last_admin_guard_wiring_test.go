@@ -111,7 +111,7 @@ func TestDeprovisionSCIMGroup_RefusesWhenGroupHoldsLastAdmin(t *testing.T) {
 	require.Error(t, err, "must refuse to delete a group holding the install's last route to admin authority")
 
 	// The group must still exist — the guard must run BEFORE the delete.
-	_, getErr := c.storage.GetGroup(ctx, 5)
+	_, getErr := c.StorageForTesting().GetGroup(ctx, 5)
 	require.NoError(t, getErr, "group must not have been deleted when the guard refuses")
 }
 
@@ -139,7 +139,7 @@ func TestReplaceSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
 	_, err := c.ReplaceSCIMGroup(ctx, 9, 5, "", nil)
 	require.Error(t, err, "must refuse a SCIM PUT that would strip the install's last admin-group membership")
 
-	members, mErr := c.storage.ListGroupMembers(ctx, 5)
+	members, mErr := c.StorageForTesting().ListGroupMembers(ctx, 5)
 	require.NoError(t, mErr)
 	require.Len(t, members, 1, "the membership must not have been removed when the guard refuses")
 }
@@ -157,7 +157,7 @@ func TestPatchSCIMGroup_RefusesRemovingLastAdminMember(t *testing.T) {
 	_, err := c.PatchSCIMGroup(ctx, 9, 5, nil, nil, []uint{1})
 	require.Error(t, err, "must refuse a SCIM PATCH remove that would strip the install's last admin-group membership")
 
-	members, mErr := c.storage.ListGroupMembers(ctx, 5)
+	members, mErr := c.StorageForTesting().ListGroupMembers(ctx, 5)
 	require.NoError(t, mErr)
 	require.Len(t, members, 1, "the membership must not have been removed when the guard refuses")
 }
@@ -177,7 +177,7 @@ func TestPatchSCIMGroup_AllowsRemovingMemberWhenAnotherAdminExists(t *testing.T)
 	_, err := c.PatchSCIMGroup(ctx, 9, 5, nil, nil, []uint{1})
 	require.NoError(t, err, "removing one admin route is fine when another survives")
 
-	members, mErr := c.storage.ListGroupMembers(ctx, 5)
+	members, mErr := c.StorageForTesting().ListGroupMembers(ctx, 5)
 	require.NoError(t, mErr)
 	assert.Empty(t, members)
 }
@@ -208,6 +208,6 @@ func TestSetAccountState_ReactivationBypassesLastAdminGuardByConstruction(t *tes
 	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.UserRole{UserID: 1, RoleID: 10}).Error) // the ONLY global admin, currently suspended
 
-	err := c.storage.SetAccountState(ctx, 1, AccountPasswordResetRequired, time.Now())
+	err := c.StorageForTesting().SetAccountState(ctx, 1, AccountPasswordResetRequired, time.Now())
 	require.NoError(t, err, "reactivating the install's only admin via the raw storage primitive must never be refused")
 }

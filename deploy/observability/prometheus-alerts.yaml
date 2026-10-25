@@ -98,6 +98,42 @@ groups:
           description: "A secret suspend or a degraded break-glass activation took effect but its audit row was refused by the audit log and is still waiting for the backfill (minutely). It should drain within minutes once the audit log accepts writes; above zero for 10 minutes means the backfill is blocked or a row cannot be written."
           runbook_url: "https://github.com/keyorixhq/keyorix/blob/main/deploy/observability/runbook.md#keyorixauditowedpending"
 
+      # Age of the oldest owed audit row. KeyorixAuditOwedPending says rows exist; these say
+      # for how long, so "delayed" cannot quietly become "never". Thresholds (edit the number
+      # in expr, in seconds; see deploy/observability/README.md "Owed-audit age thresholds"):
+      #   warning  3600   (1 hour: the minutely backfill has failed for an hour)
+      #   critical 86400  (24 hours: an owed revocation record is a day late)
+      # Run both: the critical alert fires alongside the warning, route it by severity.
+      - alert: KeyorixAuditOwedOldestPendingWarn
+        expr: max(keyorix_audit_owed_oldest_pending_age_seconds) > 3600
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Keyorix's oldest owed audit row has waited {{ $value | humanizeDuration }}"
+          description: "An action took effect (a secret suspend, a revocation or a degraded break-glass activation) but its audit row is still not in the audit log after more than 1 hour, although the backfill runs every minute. The row is delayed no longer: something is stopping the backfill or the audit log is refusing it."
+          runbook_url: "https://github.com/keyorixhq/keyorix/blob/main/deploy/observability/runbook.md#keyorixauditowedoldestpendingwarn"
+
+      - alert: KeyorixAuditOwedOldestPendingCritical
+        expr: max(keyorix_audit_owed_oldest_pending_age_seconds) > 86400
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keyorix's oldest owed audit row is {{ $value | humanizeDuration }} old"
+          description: "An owed audit row has been missing from the audit log for more than 24 hours. The audit trail of a revocation or break-glass activation is a day late and may never arrive without operator action."
+          runbook_url: "https://github.com/keyorixhq/keyorix/blob/main/deploy/observability/runbook.md#keyorixauditowedoldestpendingcritical"
+
+      - alert: KeyorixAuditOwedMetricUnreadable
+        expr: sum(increase(keyorix_audit_owed_metric_scrape_errors_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Keyorix cannot read its owed audit rows for the metrics"
+          description: "The owed-audit gauges (count and oldest age) could not read the database on scrape for 15 minutes and answer NaN meanwhile, so the two owed-audit alerts above cannot fire. Treat it as an audit outage you cannot see into."
+          runbook_url: "https://github.com/keyorixhq/keyorix/blob/main/deploy/observability/runbook.md#keyorixauditowedmetricunreadable"
+
       - alert: KeyorixAuditChainBreakRecorded
         expr: max(keyorix_audit_verify_failure_recorded) == 1
         labels:

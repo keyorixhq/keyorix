@@ -37,7 +37,8 @@ checks is [docs/releases/RELEASE-CHECKLIST.md](docs/releases/RELEASE-CHECKLIST.m
    `scripts/pgo/refresh.sh`); it is the server's profile-guided-optimisation input.
    **Install docs must match the release (checklist item).** README and `QUICK_START.md`
    at the release tag must match `main` for install commands, and every version they
-   pin (`V=` in `QUICK_START.md`, the image pins in `docker-compose.yml`, any
+   pin (`V=` in `QUICK_START.md`, the image pins in `docker-compose.yml`, the
+   `git clone --branch vX.Y.Z` lines in `README.md` and `docs/SELF_HOSTING.md` §2, any
    `releases/download/` URL or image tag in `README.md`, `INSTALL-WITH-AI.md`,
    `docs/SELF_HOSTING.md`) must be the version being tagged. The v0.96.3 docs pointed at
    v0.96.0 and carried a README block that cannot work (INSTALL-CLEANROOM-1, F2/F3).
@@ -58,11 +59,14 @@ That's it. Watch the runs under the repo's **Actions** tab.
 
 | Workflow | Trigger | Output |
 |----------|---------|--------|
-| `release.yml` → `build-and-release` | `v*` tag | CLI + server + keyorix-migrate binaries for linux/darwin × amd64/arm64 (`keyorix_<os>_<arch>`, `keyorix-server_<os>_<arch>`, `keyorix-server-airgap_<os>_<arch>` linux-only, `keyorix-migrate_<os>_<arch>`), one CycloneDX SBOM per binary (`<binary_asset_name>_sbom.cdx.json`, 14 total) plus one shared, production-scope frontend SBOM (`keyorix-server_frontend_sbom.cdx.json`, linked from all six server/server-airgap SBOMs — ADR-073), `checksums.txt` covering all 29 files, and `checksums.txt.sig`/`.pem` (cosign keyless signature). All attached to the GitHub Release. `keyorix-server-airgap` replaces the old `keyorix-server-lean` (ADR-109 step 6 — see CHANGELOG.md). |
-| `release.yml` → `publish-chart` | `v*` tag | Helm chart pushed to `oci://ghcr.io/keyorixhq/charts` (chart + app version = the tag without the `v`). |
-| `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-server` image tagged with the semver version. |
-| `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-server` AIR-GAPPED variant, tagged `<version>-airgap` (ADR-109 step 6) — same multi-arch platforms and Trivy gates as the full image. |
-| `docker-publish.yml` | `v*` tag (and `main`) | `ghcr.io/keyorixhq/keyorix-web` image tagged with the same semver version — same workflow run, same tag (ADR-070). |
+| `release.yml` → `build-and-release` | `v*` tag | CLI + server + keyorix-migrate binaries for linux/darwin × amd64/arm64 (`keyorix_<os>_<arch>`, `keyorix-server_<os>_<arch>`, `keyorix-server-airgap_<os>_<arch>` linux-only, `keyorix-migrate_<os>_<arch>`), one CycloneDX SBOM per binary (`<binary_asset_name>_sbom.cdx.json`, 14 total) plus one shared, production-scope frontend SBOM (`keyorix-server_frontend_sbom.cdx.json`, linked from all six server/server-airgap SBOMs — ADR-073), `checksums.txt` covering all 29 files, and `checksums.txt.sig`/`.pem` (cosign keyless signature). All 32 assets (14 binaries, 15 SBOMs, 3 signing files) are attached to the GitHub Release, and one SLSA build-provenance attestation (14 subjects, the binaries) is written to GitHub's Attestations API (`gh attestation verify`). `keyorix-server-airgap` replaces the old `keyorix-server-lean` (ADR-109 step 6 — see CHANGELOG.md). |
+| `release.yml` → `publish-chart` | `v*` tag | Helm charts `keyorix`, `keyorix-k8s-sync` and `keyorix-operator` pushed to `oci://ghcr.io/keyorixhq/charts` and cosign-signed (chart + app version = the tag without the `v`). Charts carry a signature only: no SLSA provenance and no SBOM. |
+| `docker-publish.yml` | `v*` tag (and the nightly `main` build) | `ghcr.io/keyorixhq/keyorix-server` image tagged with the semver version (and `sha-<7>`), `linux/amd64` + `linux/arm64`. |
+| `docker-publish.yml` | `v*` tag (and the nightly `main` build) | `ghcr.io/keyorixhq/keyorix-server` AIR-GAPPED variant, tagged `<version>-airgap` (ADR-109 step 6) — same multi-arch platforms and Trivy gates as the full image. |
+| `docker-publish.yml` | `v*` tag (and the nightly `main` build) | `ghcr.io/keyorixhq/keyorix-web` image tagged with the same semver version, `linux/amd64` + `linux/arm64` — same workflow run, same tag (ADR-070). |
+| `docker-publish.yml` | `v*` tag (and the nightly `main` build) | `ghcr.io/keyorixhq/keyorix-k8s-sync`, `keyorix-operator` and `keyorix-mcp` images, tagged with the same semver version (single runner platform, `linux/amd64`). |
+
+Every image is pushed by digest first, then Trivy-scanned (HIGH/CRITICAL gate), carries a BuildKit SPDX SBOM and provenance in the index, a GitHub SLSA attestation and a keyless cosign signature (`docker-publish.yml@refs/tags/<tag>`), and only then gets its tags.
 
 **Supported build targets: Linux and macOS only (amd64/arm64).** Windows is not a
 release target and the Go packages are not kept cross-compilable for it: on `main`,

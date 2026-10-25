@@ -19,7 +19,7 @@ triage, containment and evidence. Section 5 lists what does exist and what is mi
 | Where | Command / signal | Verdicts |
 |---|---|---|
 | Running server | `keyorix audit verify` (add `--full` for a full walk now, `--json` for the raw result) | `VALID`, `BROKEN`, `NOT PROVEN`; non-zero exit on the last two |
-| Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
+| Prometheus | `keyorix_audit_verify_failure_recorded` (1 while a break is recorded: page on it), `keyorix_audit_verify_state_discontinuity` (1 while a sticky state discontinuity is recorded), `keyorix_audit_verify_state_rejected`, `keyorix_audit_verify_last_success_timestamp_seconds{check="tail"\|"full"}` | |
 | Compliance posture | `GET /api/v1/compliance/posture`, field `audit_integrity` | reads the persisted state, walks nothing |
 | Offline, independent code | `keyorix-server admin verify-audit` | exit `0` VALID, `1` BROKEN, `2` INDETERMINATE, `3` usage/input error |
 | Restore | `keyorix-server admin restore` runs `verify-audit` on the restored database | fails (non-zero) on BROKEN |
@@ -34,6 +34,24 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
 - `NOT PROVEN` is not a break. It means the server has no recent full verification, or its
   persisted verification state was untrusted (`system.audit_verification_state_rejected`
   event). Run `keyorix audit verify --full`, which clears it if the chain is sound.
+- A reason starting `audit verification state discontinuity (<kind>)` is `BROKEN` and never
+  clears: the signed verification state was deleted, garbled, signed under another key epoch,
+  claims rows that are gone ("past the chain head"), or is an older row put back over a
+  recorded break. That state held the proof of what was certified, so the server cannot say
+  whether rows were lost before this point. It appends a
+  `system.audit_verification_state_discontinuity` event, raises
+  `keyorix_audit_verify_state_discontinuity` and `keyorix_audit_verify_failure_recorded`, and
+  keeps checkpointing new rows. `--full` does not clear it. Treat it like a truncation
+  (sections 2, 5, 6): compare against an external anchor, a backup or the high-water witness
+  file. `rotate-kek` and `migrate-provider` carry the state over to the new key
+  (`docs/design-audit-key-transition.md`), so an honest key change does not produce one.
+  `key transition` means the transition record is missing, forged or for another epoch, and
+  `other key epoch` means a key change that did not carry the state over (an older binary).
+  A `before a recorded break` discontinuity also appears when a replica running a version
+  from before this check saves the state during a rolling upgrade (it drops the fields that
+  place the row against the chain): stop older replicas before upgrading. A binary rollback
+  to such a version (upgrade-rollback.md §4A) followed by a re-upgrade has the same effect.
+  There is no command to accept a discontinuity yet (`docs/design-audit-reseal-options.md`).
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.
 
@@ -125,8 +143,10 @@ backup mounted from the wrong date, a replica that has not caught up: all look l
 truncation. Re-copy correctly and re-run before concluding anything.
 
 **c. A key that changed.** `rotate-kek` and `migrate-provider` change the KEK-derived
-checkpoint key; checkpoints signed before then no longer verify under the new key.
-Online, that reads as "does not verify under the current signing key ... a KEK-provider
+checkpoint key, and since AUDIT-ROTATE-TRANSITION-1 they carry the audit state over and
+write a fresh checkpoint under the new key (key-rotation-runbook.md section 5). What follows
+applies to a key change by an older binary, where checkpoints signed before it no longer
+verify under the new key. Online, that reads as "does not verify under the current signing key ... a KEK-provider
 migration occurred and no fresh checkpoint has been written yet", and a checkpoint write
 under the new key (the scheduler, or `keyorix audit checkpoint`) re-baselines it, provided
 the chain itself walks clean. Offline, `verify-audit` has no notion of key versions and

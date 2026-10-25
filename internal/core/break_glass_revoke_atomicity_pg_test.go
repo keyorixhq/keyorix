@@ -68,10 +68,10 @@ func setupBreakGlassAtomicityFixture(t *testing.T, c *KeyorixCore) *models.Break
 	require.NoError(t, err)
 
 	scope := storage.Scope{ProjectID: 55}
-	require.NoError(t, c.storage.AssignRole(ctx, user.ID, role.ID, scope))
+	require.NoError(t, c.StorageForTesting().AssignRole(ctx, user.ID, role.ID, scope))
 
 	expiresAt := time.Now().Add(2 * time.Hour)
-	activation, err := c.storage.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
+	activation, err := c.StorageForTesting().CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
 		ProjectID: 55, UserID: user.ID, RoleID: role.ID, RoleName: role.Name,
 		Justification: "pg atomicity proof", State: BreakGlassActive, ExpiresAt: &expiresAt,
 	})
@@ -116,7 +116,7 @@ func TestRevokeBreakGlassActivationAtomic_PostgresTransaction_GenuineFailureRoll
 	// Re-read from a fresh query (not the failed in-flight transaction): the
 	// activation must still be "active" — the whole transaction rolled back,
 	// not just the role removal.
-	fresh, gerr := c.storage.GetBreakGlassActivation(context.Background(), activation.ID)
+	fresh, gerr := c.StorageForTesting().GetBreakGlassActivation(context.Background(), activation.ID)
 	require.NoError(t, gerr)
 	require.Equal(t, BreakGlassActive, fresh.State, "the activation-state update must have rolled back together with the failed role removal")
 
@@ -161,7 +161,7 @@ func TestRevokeBreakGlassActivationAtomic_PostgresTransaction_AlreadyGoneRoleRem
 	err := c.RevokeBreakGlassActivationAtomic(context.Background(), 1, 0, activation, now)
 	require.NoError(t, err, "a zero-rows RemoveRole must not abort the outer transaction — it is not a failing SQL statement")
 
-	fresh, gerr := c.storage.GetBreakGlassActivation(context.Background(), activation.ID)
+	fresh, gerr := c.StorageForTesting().GetBreakGlassActivation(context.Background(), activation.ID)
 	require.NoError(t, gerr)
 	require.Equal(t, BreakGlassRevoked, fresh.State, "the activation must have committed as revoked despite the zero-rows role removal")
 

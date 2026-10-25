@@ -1,0 +1,2 @@
+### Internal
+- **Merge-queue rounds stop at their first round-failing failure.** On `merge_group`, the test-suite matrix now uses `fail-fast` (one red leg stops its siblings), and a new `failfast-*` job after each of preflight, static-analysis, repo-guards, e2e-smoke and web-e2e-real-smoke cancels every run still going for that merge-group commit (`.github/workflows/failfast-cancel.yml`, `scripts/ci/failfast-cancel.sh`). `build-and-test` still reports the failure. Required check names, the ruleset and pull_request runs are unchanged.

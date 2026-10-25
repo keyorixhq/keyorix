@@ -1,0 +1,1 @@
+AUDIT-KEY-TRANSITION-FORGED	./internal/core	TestAuditKeyTransition_RecordForged	default-ci	pending	3642	a key transition record whose new-key MAC fails is never completed and reads as a sticky key-transition discontinuity, so a DB-only actor cannot invent or alter a transition (missing and wrong-epoch records: TestAuditKeyTransition_RecordMissing, _RecordForWrongEpoch)

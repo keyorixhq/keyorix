@@ -26,17 +26,6 @@ export interface MockSecret {
     metadata: Record<string, string>;
 }
 
-export interface MockShare {
-    id: number;
-    secretId: number;
-    recipientType: 'user' | 'group';
-    recipientId: number;
-    recipientName: string;
-    permission: 'read' | 'write';
-    createdAt: string;
-    createdBy: string;
-}
-
 // Mock user data
 export const mockUser: MockUser = {
     id: 1,
@@ -44,24 +33,6 @@ export const mockUser: MockUser = {
     email: 'test@example.com',
     role: 'user',
     permissions: ['secrets:read', 'secrets:write', 'shares:read', 'shares:write'],
-};
-
-export const mockAdminUser: MockUser = {
-    id: 2,
-    username: 'admin',
-    email: 'admin@example.com',
-    role: 'admin',
-    permissions: [
-        'secrets:read',
-        'secrets:write',
-        'secrets:delete',
-        'shares:read',
-        'shares:write',
-        'shares:delete',
-        'users:read',
-        'users:write',
-        'system:admin',
-    ],
 };
 
 // Mock secret data
@@ -125,74 +96,6 @@ export const mockSecrets: MockSecret[] = [
     },
 ];
 
-// Mock share data
-export const mockShares: MockShare[] = [
-    {
-        id: 1,
-        secretId: 2,
-        recipientType: 'user',
-        recipientId: 3,
-        recipientName: 'developer',
-        permission: 'read',
-        createdAt: '2024-01-14T16:00:00Z',
-        createdBy: 'testuser',
-    },
-    {
-        id: 2,
-        secretId: 2,
-        recipientType: 'group',
-        recipientId: 1,
-        recipientName: 'dev-team',
-        permission: 'read',
-        createdAt: '2024-01-14T16:05:00Z',
-        createdBy: 'testuser',
-    },
-];
-
-// API response mocks
-export const mockApiResponse = <T>(data: T) => ({
-    data,
-    message: 'Success',
-    success: true,
-});
-
-export const mockPaginatedResponse = <T>(data: T[], page = 1, pageSize = 10) => ({
-    data,
-    total: data.length,
-    page,
-    pageSize,
-    totalPages: Math.ceil(data.length / pageSize),
-});
-
-export const mockApiError = (message: string, code = 'ERROR') => ({
-    error: message,
-    code,
-    success: false,
-});
-
-// Mock API client
-export const mockApiClient = {
-    get: vi.fn(),
-    post: vi.fn(),
-    put: vi.fn(),
-    delete: vi.fn(),
-    patch: vi.fn(),
-};
-
-// Mock React Query hooks
-export const mockUseQuery = vi.fn();
-export const mockUseMutation = vi.fn();
-
-// Mock router hooks
-export const mockUseNavigate = vi.fn();
-export const mockUseLocation = vi.fn(() => ({
-    pathname: '/',
-    search: '',
-    hash: '',
-    state: null,
-}));
-export const mockUseParams = vi.fn(() => ({}));
-
 // Mock local storage
 export const mockLocalStorage = {
     getItem: vi.fn(),
@@ -232,10 +135,4 @@ export const setupMocks = () => {
 
     // Reset all mocks
     vi.clearAllMocks();
-};
-
-// Cleanup function
-export const cleanupMocks = () => {
-    vi.clearAllMocks();
-    vi.resetAllMocks();
 };

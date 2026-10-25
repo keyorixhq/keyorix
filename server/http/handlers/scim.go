@@ -45,11 +45,20 @@ func writeSCIM(w http.ResponseWriter, status int, body any) {
 }
 
 func scimError(w http.ResponseWriter, status int, detail string) {
-	writeSCIM(w, status, map[string]any{
+	scimErrorTyped(w, status, "", detail)
+}
+
+// scimErrorTyped is scimError with an RFC 7644 §3.12 scimType ("" omits it).
+func scimErrorTyped(w http.ResponseWriter, status int, scimType, detail string) {
+	body := map[string]any{
 		"schemas": []string{scimErrorSchema},
 		"status":  strconv.Itoa(status),
 		"detail":  detail,
-	})
+	}
+	if scimType != "" {
+		body["scimType"] = scimType
+	}
+	writeSCIM(w, status, body)
 }
 
 // toSCIMUser maps a Keyorix user to a SCIM User resource. SCIM userName echoes the
@@ -212,7 +221,8 @@ func listResponsePaged(resources []map[string]any, total, startIndex int) map[st
 // generic core.GetUser also used by the admin console/self-profile lookups) so a
 // non-SCIM-managed (native) account's id is refused the same way ReplaceUser/
 // PatchUser/DeleteUser already refuse one (#120) — a generic 404 either way, so the
-// response never confirms whether an out-of-scope id exists at all (#G85).
+// response never confirms whether an out-of-scope id exists at all (#G85). A storage
+// failure is a 500, not a 404 an IdP's reconciliation would read as "gone" (#3494).
 func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := scimID(w, r)
 	if !ok {
@@ -220,7 +230,7 @@ func (h *SCIMHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.coreService.GetSCIMUser(r.Context(), id)
 	if err != nil {
-		scimError(w, http.StatusNotFound, "user not found")
+		writeSCIMWriteError(w, r, fmt.Sprintf("reading SCIM user %d", id), err)
 		return
 	}
 	writeSCIM(w, http.StatusOK, toSCIMUser(user))
@@ -243,20 +253,14 @@ func (h *SCIMHandler) CreateUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.coreService.ProvisionSCIMUser(r.Context(), 0, p.UserName, p.displayName(), p.primaryEmail(), p.ExternalID, active)
 	if err != nil {
-		status := http.StatusBadRequest
-		msg := err.Error()
-		switch {
-		case strings.Contains(msg, "already exists"):
-			status = http.StatusConflict
-		case strings.Contains(msg, errDomainNotAllowed):
-			status = http.StatusForbidden
-		case strings.Contains(msg, "is required"):
-			// Deliberately safe validation message from ProvisionSCIMUser — pass through.
-		default:
-			log.Printf("Error provisioning SCIM user %q: %v", p.UserName, err)
-			msg = clientSafe(err)
+		// The domain refusal's text is a fixed core literal, safe to pass through.
+		// Everything else is classified by sentinel: a storage failure is a 500 the
+		// IdP retries, not a 400 it gives up on (#3494).
+		if strings.Contains(err.Error(), errDomainNotAllowed) {
+			scimError(w, http.StatusForbidden, err.Error())
+			return
 		}
-		scimError(w, status, msg)
+		writeSCIMWriteError(w, r, fmt.Sprintf("provisioning SCIM user %q", p.UserName), err)
 		return
 	}
 	writeSCIM(w, http.StatusCreated, toSCIMUser(user))
@@ -277,11 +281,7 @@ func (h *SCIMHandler) ReplaceUser(w http.ResponseWriter, r *http.Request) {
 	email := p.primaryEmail()
 	user, err := h.coreService.UpdateSCIMUser(r.Context(), 0, id, &dn, &email, p.Active)
 	if err != nil {
-		log.Printf("Error replacing SCIM user %d: %v", id, err)
-		if scimPartialMutation(w, err) {
-			return
-		}
-		scimError(w, http.StatusNotFound, clientSafe(err))
+		writeSCIMWriteError(w, r, fmt.Sprintf("replacing SCIM user %d", id), err)
 		return
 	}
 	writeSCIM(w, http.StatusOK, toSCIMUser(user))
@@ -350,25 +350,23 @@ func (h *SCIMHandler) PatchUser(w http.ResponseWriter, r *http.Request) {
 	}
 	user, err := h.coreService.UpdateSCIMUser(r.Context(), 0, id, displayName, nil, active)
 	if err != nil {
-		log.Printf("Error patching SCIM user %d: %v", id, err)
-		if scimPartialMutation(w, err) {
-			return
-		}
-		scimError(w, http.StatusNotFound, clientSafe(err))
+		writeSCIMWriteError(w, r, fmt.Sprintf("patching SCIM user %d", id), err)
 		return
 	}
 	writeSCIM(w, http.StatusOK, toSCIMUser(user))
 }
 
 // DeleteUser handles DELETE /scim/v2/Users/{id} — deprovision (suspend + soft-delete).
+// A storage failure rolls the whole deprovision back and answers 500 (or 503 +
+// Retry-After when transient), never 404: the IdP must retry, the account is still
+// active (#3494).
 func (h *SCIMHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 	id, ok := scimID(w, r)
 	if !ok {
 		return
 	}
 	if err := h.coreService.DeprovisionSCIMUser(r.Context(), 0, id); err != nil {
-		log.Printf("Error deprovisioning SCIM user %d: %v", id, err)
-		scimError(w, http.StatusNotFound, clientSafe(err))
+		writeSCIMWriteError(w, r, fmt.Sprintf("deprovisioning SCIM user %d", id), err)
 		return
 	}
 	w.Header().Set("Content-Type", scimContentType)

@@ -321,7 +321,14 @@ EOT
 demo_stamp_build_args() {
   local root="${1:-$REPO_ROOT}" ver commit bdate
   DEMO_STAMP_ARGS=()
-  ver="$(git -C "$root" describe --tags --always --dirty 2>/dev/null)" || return 0
+  # Not `describe --dirty`: both callers run `make populate-webui-dist` first, which replaces
+  # the committed placeholder server/webui/dist/index.html with the real bundle, so --dirty
+  # saw a modified tracked file and stamped every demo build "-dirty" (DEMO-WALK-4 finding 6).
+  # The generated dist is not a source change; any other tracked edit still says -dirty.
+  ver="$(git -C "$root" describe --tags --always 2>/dev/null)" || return 0
+  if [ -n "$(git -C "$root" status --porcelain --untracked-files=no -- . ':!server/webui/dist' 2>/dev/null)" ]; then
+    ver="$ver-dirty"
+  fi
   commit="$(git -C "$root" rev-parse --short HEAD 2>/dev/null)" || return 0
   bdate="$(TZ=UTC git -C "$root" log -1 --format=%cd --date=format-local:%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" || return 0
   DEMO_STAMP_ARGS=(--build-arg "VERSION=$ver" --build-arg "GIT_COMMIT=$commit" --build-arg "BUILD_DATE=$bdate")

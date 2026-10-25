@@ -27,7 +27,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -110,19 +109,12 @@ func TestClearLoginFailures_HasNoCallerBeforeAFallibleStep(t *testing.T) {
 		allowed[s.fn+"->"+s.callee] = s.why
 	}
 
-	files, err := filepath.Glob("../*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
 	fset := token.NewFileSet()
 	var found []string
 	seen := map[string]bool{}
 	scanned := 0
-	for _, path := range files {
-		if strings.HasSuffix(path, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(path) // #nosec G304 -- a glob of this package's own sources
+	for _, path := range coreFamilySources(t) {
+		src, err := os.ReadFile(path) // #nosec G304 -- core family source file from srcpath.CoreFamilyGoFiles
 		if err != nil {
 			t.Fatal(err)
 		}

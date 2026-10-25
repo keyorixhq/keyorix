@@ -29,7 +29,9 @@ scripts/demo/native-up.sh
 To serve the dashboard from the same process build it in first (`make build-ui`, needs `pnpm`);
 without it the server answers API-only and says so in its log.
 
-What the script does: builds the server, CLI and helpers into `bin/`, creates `.demo-native/`
+What the script does: builds the server, CLI, TOTP helper and the scenario helpers
+(`demo-dbexec`, `keyorix-mcp`, `demo-oidcissuer`, `demo-fakevault`, `keyorix-migrate`; each only
+when missing; `--no-helpers` skips them, `--build-only` builds and stops) into `bin/`, creates `.demo-native/`
 (gitignored: config, keys, SQLite file, server log, `state.env` with the demo logins at mode
 0600), starts the server, enrols MFA for the three seeded accounts, seeds, then waits for the
 first anomaly-detection pass and acknowledges the low-severity "first observed access" alerts the
@@ -121,6 +123,12 @@ off-hours setting, and revokes or deletes the actors the scenarios created.
 
 Check it works: `scripts/demo/anomaly-check.sh` asserts that the seed is calm, that each scenario
 produces its evidence, and that each reset returns to zero open anomalies.
+
+Readiness walk of the running native demo: `scripts/demo/check.sh --url http://127.0.0.1:18490 --no-ui`.
+It finds `.demo-native/state.env` by itself (the file whose `DEMO_URL` matches `--url`), or take
+`--state FILE`. On a fresh demo it is strict: any open anomaly alert, or a second compliance gap,
+fails. After reads or scenarios have run, add `--used`: open `new_user`/`new_ip` alerts from those
+reads are then a printed WARN (exit 0), while any other alert still fails.
 
 ## 4. Scenario catalogue
 

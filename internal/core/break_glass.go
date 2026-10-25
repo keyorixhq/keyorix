@@ -303,7 +303,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 	}
 	for _, a := range existing {
 		if a.UserID == userID && a.State == BreakGlassActive && a.ExpiresAt != nil && a.ExpiresAt.After(bgNow) {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "you already have an active break-glass grant on this project; revoke it before activating again")
+			return nil, refuseBreakGlass("you already have an active break-glass grant on this project; revoke it before activating again", storage.ErrBreakGlassAlreadyActive)
 		}
 	}
 	if c.breakGlassPolicy.EmergencyRole == "" {
@@ -522,7 +522,7 @@ func (c *KeyorixCore) grantBreakGlassTx(
 	// #3546: the activation scope is always project-scoped today (projectID==0 is
 	// refused up front); the pure check keeps the rule explicit on this direct
 	// grant write without a read through c.storage inside tx.
-	if err := validateRoleScope(role.Name, scope); err != nil {
+	if err := validateRoleScope(role, scope); err != nil {
 		return nil, err
 	}
 	a, err := tx.CreateBreakGlassActivation(ctx, &models.BreakGlassActivation{
@@ -538,9 +538,10 @@ func (c *KeyorixCore) grantBreakGlassTx(
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrBreakGlassAlreadyActive) {
-			// Same text as before; the kind lets the degraded path tell this
-			// refusal apart from a failing database.
-			return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "you already have an active break-glass grant on this project; revoke it before activating again"), storage.ErrBreakGlassAlreadyActive)
+			// A conflict with current state, not invalid input, so no
+			// "Validation error:" prefix; the kind lets the degraded path tell
+			// this refusal apart from a failing database.
+			return nil, refuseBreakGlass("you already have an active break-glass grant on this project; revoke it before activating again", storage.ErrBreakGlassAlreadyActive)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}

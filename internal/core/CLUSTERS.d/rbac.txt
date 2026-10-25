@@ -1,0 +1,7 @@
+# rbac: roles, groups, permissions, SoD, RBAC management
+# One glob per line, matched against the file name (README.md).
+rbac*.go
+admin_roles.go
+groups.go
+sod.go
+permission*.go

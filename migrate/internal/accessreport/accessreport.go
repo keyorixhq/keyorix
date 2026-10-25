@@ -11,6 +11,7 @@ import (
 	"html"
 	"io"
 	"sort"
+	"strings"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/accessplan"
 )
@@ -36,6 +37,12 @@ type Line struct {
 	// object's Description with — present in the JSON report (never in Markdown/HTML, which
 	// are for human review only) so `apply-access --plan <file>` can read it back.
 	ProvenanceKey string `json:"provenance_key,omitempty"`
+	// SourcePolicy, ImpliedAccess and CrossMountEvidence mirror the Item fields. ImpliedAccess is
+	// the machine-readable list of access a grant adds beyond its Vault policy (names and
+	// version metadata, never values); apply-access re-checks CrossMountEvidence.
+	SourcePolicy       string   `json:"source_policy,omitempty"`
+	ImpliedAccess      []string `json:"implied_access,omitempty"`
+	CrossMountEvidence []string `json:"cross_mount_evidence,omitempty"`
 }
 
 func toLine(it accessplan.Item) Line {
@@ -47,6 +54,7 @@ func toLine(it accessplan.Item) Line {
 		ProposedIdentityType: it.ProposedIdentityType, ProposedOIDCIssuer: it.ProposedOIDCIssuer,
 		ProposedOIDCSubject: it.ProposedOIDCSubject, ProposedRoleRef: it.ProposedRoleRef,
 		ProposedMachineRef: it.ProposedMachineRef, ProvenanceKey: it.ProvenanceKey,
+		SourcePolicy: it.SourcePolicy, ImpliedAccess: it.ImpliedAccess, CrossMountEvidence: it.CrossMountEvidence,
 	}
 }
 
@@ -64,6 +72,7 @@ func (l Line) toItem() accessplan.Item {
 		ProposedIdentityType: l.ProposedIdentityType, ProposedOIDCIssuer: l.ProposedOIDCIssuer,
 		ProposedOIDCSubject: l.ProposedOIDCSubject, ProposedRoleRef: l.ProposedRoleRef,
 		ProposedMachineRef: l.ProposedMachineRef, ProvenanceKey: l.ProvenanceKey,
+		SourcePolicy: l.SourcePolicy, ImpliedAccess: l.ImpliedAccess, CrossMountEvidence: l.CrossMountEvidence,
 	}
 }
 
@@ -140,6 +149,20 @@ func WriteMarkdown(w io.Writer, p accessplan.Plan, vaultAddr string) error {
 		return err
 	}
 
+	if implied := accessplan.ImpliedAccessPolicies(p.Items); len(implied) > 0 {
+		if _, err := fmt.Fprintf(w, "## %s (%d policies)\n\n%s\n\n", impliedHeading, len(implied), impliedExplanation); err != nil {
+			return err
+		}
+		for _, ip := range implied {
+			if _, err := fmt.Fprintf(w, "- **%s**: %s — %s\n", ip.Policy, strings.Join(ip.Access, ", "), strings.Join(ip.Paths, ", ")); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintln(w); err != nil {
+			return err
+		}
+	}
+
 	for _, outcome := range []accessplan.Outcome{accessplan.Unmappable, accessplan.Conflict, accessplan.Create, accessplan.Skip} {
 		group := itemsWithOutcome(p.Items, outcome)
 		if len(group) == 0 {
@@ -204,6 +227,11 @@ func proposedLabel(it accessplan.Item) string {
 	return it.ProposedOIDCSubject
 }
 
+const (
+	impliedHeading     = "Access added beyond Vault: secret names and version metadata"
+	impliedExplanation = "Keyorix's secrets.read also lists secret names and reads version metadata in the granted scope. These policies' proposed grants add that, although the Vault policy does not grant list/read on the matching metadata/ path (KV v1: list; KV v1 has no version metadata). Never secret values. Known residual (ADR-114): grant manually instead if names must stay hidden."
+)
+
 // environmentLabel renders ADR-114's env=0 sentinel as "global" rather than the bare integer —
 // the report's one place a reader could otherwise mistake 0 for "environment id zero" instead
 // of "every environment in this project."
@@ -255,6 +283,20 @@ li{margin:.4rem 0}
 <p>%d to create, %d already migrated (skip), %d conflicts, %d unmappable (human review).</p>
 `, html.EscapeString(vaultAddr), s.Create, s.Skip, s.Conflict, s.Unmappable); err != nil {
 		return err
+	}
+
+	if implied := accessplan.ImpliedAccessPolicies(p.Items); len(implied) > 0 {
+		if _, err := fmt.Fprintf(w, "<h2 class=\"unmappable\">%s (%d policies)</h2><p>%s</p><ul>\n", html.EscapeString(impliedHeading), len(implied), html.EscapeString(impliedExplanation)); err != nil {
+			return err
+		}
+		for _, ip := range implied {
+			if _, err := fmt.Fprintf(w, "<li><code>%s</code>: %s — %s</li>\n", html.EscapeString(ip.Policy), html.EscapeString(strings.Join(ip.Access, ", ")), html.EscapeString(strings.Join(ip.Paths, ", "))); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprint(w, "</ul>\n"); err != nil {
+			return err
+		}
 	}
 
 	for _, outcome := range []accessplan.Outcome{accessplan.Unmappable, accessplan.Conflict, accessplan.Create, accessplan.Skip} {

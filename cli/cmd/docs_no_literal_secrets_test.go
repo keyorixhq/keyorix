@@ -190,10 +190,14 @@ func scanShellForSecrets(content string) []docsSecretHit {
 //     PASSWORD, PASSWD, TOKEN, SECRET, PASSPHRASE, API_KEY, MFA, TOTP or CODE.
 //     `-e NAME` (inherit from the environment) and `--env-file` are the safe forms.
 //   - curl -u/--user USER:PASS.
+//   - helm --set / --set-string KEY=VALUE (SCRIPT-SECRETS-ARGS-1) whose dotted KEY ends in a
+//     credential name (password, token, secret, passphrase, apiKey, ...). `-f <0600 values
+//     file>` and `--set-file KEY=<path>` are the safe forms.
+//   - kubectl `--from-literal=KEY=VALUE` whose KEY is a credential name. Use `--from-file`.
 //
 // NOT recognised, so a green run is not more than this: a header or body held in a
 // variable ("$hdr", "$body") or built by a function; a header split from its flag by a
-// line continuation; helm --set, kubectl --from-literal and an interpreter's argv
+// line continuation; a helm --set whose key is held in a variable; an interpreter's argv
 // (python3 -c / jq --arg). `NAME=value cmd` environment prefixes are not argv and are
 // deliberately allowed.
 var (
@@ -201,6 +205,9 @@ var (
 	curlBodyFlagRE   = regexp.MustCompile(`(?:^|[\s(])(-d|--data|--data-raw|--data-binary|--data-urlencode|--data-ascii|--json)(?:=|\s+)(\S.*)$`)
 	credWordRE       = regexp.MustCompile(`(?i)pass(?:word|wd|phrase)?|token|totp|mfa|otp|api[_-]?key|credential|secret[_-]?(?:value|key|id)|client_secret|\\?"value\\?"`)
 	envFlagCredRE    = regexp.MustCompile(`(?:^|[\s(])(?:-e|--env)(?:=|\s+)["']?[A-Za-z0-9_]*(?:PASSWORD|PASSWD|TOKEN|SECRET|PASSPHRASE|API_?KEY|MFA|TOTP|CODE)[A-Za-z0-9_]*=`)
+	helmSetCredRE    = regexp.MustCompile(`(?i)(?:^|[\s(])--set(?:-string)?(?:=|\s+)["']?[A-Za-z0-9_.\[\]-]*(?:password|passwd|token|secret|passphrase|api_?key)[A-Za-z0-9_]*=`)
+	helmSecretRefRE  = regexp.MustCompile(`(?i)existing|secretname|secretref|\.name=`)
+	fromLiteralRE    = regexp.MustCompile(`(?i)--from-literal(?:=|\s+)["']?[A-Za-z0-9_.-]*(?:password|passwd|token|secret|passphrase|api_?key)[A-Za-z0-9_.-]*=`)
 	curlUserFlagRE   = regexp.MustCompile(`(?:^|[\s(])(?:-u|--user)(?:=|\s+)["']?[^\s"':@]+:[^\s"']`)
 )
 
@@ -247,6 +254,13 @@ func findSecretArgvShape(line string) string {
 	}
 	if m := envFlagCredRE.FindString(line); m != "" {
 		return "credential container env on argv: " + strings.TrimSpace(m)
+	}
+	// existingSecret / secretName / secretRef name a Secret object, not its contents.
+	if m := helmSetCredRE.FindString(line); m != "" && !helmSecretRefRE.MatchString(m) {
+		return "credential in helm --set on argv: " + strings.TrimSpace(m)
+	}
+	if m := fromLiteralRE.FindString(line); m != "" {
+		return "credential in kubectl --from-literal on argv: " + strings.TrimSpace(m)
 	}
 	// -u means "UTC" to date and "unique" to sort, so only a line that names curl counts.
 	if strings.Contains(line, "curl") && curlUserFlagRE.MatchString(line) {
@@ -384,6 +398,11 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"docker env token":     `    -e KEYORIX_BOOTSTRAP_TOKEN="$TOK" \`,
 		"docker env long":      `docker run --env POSTGRES_PASSWORD=x img`,
 		"curl user":            `curl -u "admin:$PW" "$URL"`,
+		// SCRIPT-SECRETS-ARGS-1 shapes.
+		"helm set master":     `    --set auth.masterPassword="k8s-e2e-master-password"`,
+		"helm set db":         `helm install r ./c --set postgresql.auth.password="$DB"`,
+		"helm set-string tok": `helm upgrade r ./c --set-string server.metrics.token=abc`,
+		"from-literal":        `kubectl create secret generic s --from-literal=api_token="$T"`,
 	} {
 		if len(scanShellForSecrets(sh)) == 0 {
 			t.Errorf("shell guard missed (%s): %q", name, sh)
@@ -412,6 +431,10 @@ func TestDocsSecretGuardCalibration(t *testing.T) {
 		"bootstrap env prefix": `KEYORIX_BOOTSTRAP_TOKEN="$T" "$CLI" system init`,
 		"test -e":              `[ -e "$TOKEN_FILE" ] && echo ok`,
 		"curl user no pass":    `curl -u admin "$URL"`,
+		"helm values file":     `helm install r ./c -f "$d/secret-values.yaml" --set server.image.tag="$TAG"`,
+		"helm set-file":        `helm install r ./c --set-file auth.masterPassword="$f"`,
+		"helm set existing":    `helm install r ./c --set secureBaseline.existingSecret="$S"`,
+		"from-file secret":     `kubectl create secret generic s --from-file=metrics_token="$f"`,
 		"allow marker curl":    `curl -H "Authorization: Bearer $T" "$URL" # docs-secrets:allow (fixture)`,
 	} {
 		if hits := scanShellForSecrets(sh); len(hits) != 0 {

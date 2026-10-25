@@ -1,0 +1,59 @@
+name: No attribution
+
+# Fails a PR whose commit messages, title or body carry AI-assistant
+# attribution (co-author trailers, session trailers, "generated with" footers
+# and links; the patterns are in scripts/ci/check-no-attribution.sh). CLAUDE.md
+# and docs/adr-081 forbid them, but a written rule kept losing to session
+# harnesses that append the lines by default (CI-NO-ATTRIBUTION-1).
+#
+# Its own workflow rather than a ci.yml job: the `edited` type below re-runs
+# this check when the title or body changes, and adding `edited` to ci.yml
+# would re-run the whole suite on every description edit.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+    # Same branches as ci.yml's pull_request trigger.
+    branches: [main, 'release/**', 'adr082/**', 'feat/**', 'fix/**']
+  # Merge queue: commit messages only (a merge group has no title or body).
+  # A merge commit's message lands on main too, so it is checked like any
+  # other commit.
+  merge_group:
+
+permissions:
+  contents: read
+
+# Cancel superseded runs for the same PR; merge_group refs are unique per group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  no-attribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full commit history without old file contents. A fixed depth is
+          # not enough: main takes about 100 commits a day, so a PR branched a
+          # few days ago has its merge base deeper than any small depth, and
+          # the check refuses (exit 2) rather than read a partial range.
+          fetch-depth: 0
+          filter: blob:none
+
+      # The script's own offline tests (scripts/ci/check-no-attribution-test.sh)
+      # run first, on every PR, so a change that breaks the check fails here
+      # whatever else the PR touches. A couple of seconds.
+      - name: Self-test
+        run: scripts/ci/check-no-attribution-test.sh
+
+      # Title and body go through env, never ${{ }} inside run:, so their
+      # text is data, not shell. The script prints a matching line only after
+      # a label, so PR text cannot start a workflow command.
+      - name: Check commit messages, PR title and PR body
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: scripts/ci/check-no-attribution.sh "$BASE_SHA..$HEAD_SHA"

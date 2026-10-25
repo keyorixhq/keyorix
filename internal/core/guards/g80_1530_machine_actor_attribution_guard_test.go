@@ -68,6 +68,12 @@ var auditAttributionAllowlist = map[string]string{
 		"site of an attribution bug: whatever emitAudit correction should have applied already happened " +
 		"upstream, before this call. Every one of the other 417 generated methods has the identical pass-" +
 		"through shape; this is the one storage.Storage method this guard's AST walk happens to care about.",
+	"internal/core/storage/storagetest/hook_audit.go:LogAuditEvent": "CORE-TESTKIT-1: the test double " +
+		"HookStore's per-method plumbing (moved verbatim from internal/core/hook_storage_methods_test.go, " +
+		"where this scan skipped it as a _test.go file). It runs the test's hook or forwards the " +
+		"*models.AuditEvent the caller already built, unmodified, and never builds or mutates one, so it " +
+		"cannot be the site of an attribution bug. The package is test-only: no production file may import " +
+		"it (ADR-121 R3, test_only_packages_guard_test.go).",
 	"internal/core/anomaly.go:auditBusinessHoursConfig": "hardcodes ActorType: \"system\" -- a " +
 		"scheduler/config-change event with no human or machine actor, correctly using the system-actor marker " +
 		"rather than a null. Never machine-identity-typed, so emitAudit's corrections would never apply to it " +
@@ -96,6 +102,12 @@ var auditAttributionAllowlist = map[string]string{
 		"here is the host OS user (no Keyorix identity to attribute to, by definition -- design §4) and is never " +
 		"conflated with the target. ActorType never being \"machine_identity\" is what makes emitAudit's " +
 		"corrections inapplicable here, independent of what UserID holds.",
+	"server/admin/recover_admin_logic.go:recordRecoveryKeyMismatch": "hardcodes ActorType: adminActorType " +
+		"(\"admin_cli\") for the refused `keyorix-server admin recover-admin` attempt (recovery key did not " +
+		"match) -- same host-side, no-network-listener shape as recordRecoveryAuditEvent above (ADR-108 §B). " +
+		"UserID is set only to the TARGET account of the attempt, never to an acting identity: the actor is " +
+		"the host OS user, and ActorType is never \"machine_identity\", so emitAudit's MachineIdentityID " +
+		"stamp has nothing to correct here.",
 	"server/admin/login_lockout.go:logLoginLockoutAudit": "hardcodes ActorType: adminActorType " +
 		"(\"admin_cli\") for `keyorix-server admin clear-login-lockout` (#2936) -- same host-side, " +
 		"no-network-listener shape as recordRecoveryAuditEvent above (ADR-108 §B). Like it, UserID is set only " +

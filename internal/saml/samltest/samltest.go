@@ -12,13 +12,16 @@
 package samltest
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -125,4 +128,60 @@ func SignedResponse(fixture *IdPFixture, idpEntityID string, spMetadata *csaml.E
 		return "", fmt.Errorf("samltest: PostBinding: %w", err)
 	}
 	return form.SAMLResponse, nil
+}
+
+// CountElements returns the number of XML elements in a base64 SAMLResponse.
+func CountElements(samlResponse string) (int, error) {
+	raw, err := base64.StdEncoding.DecodeString(samlResponse)
+	if err != nil {
+		return 0, fmt.Errorf("samltest: decode SAMLResponse: %w", err)
+	}
+	// #nosec G709 -- counting tokens of a fixture this package just built.
+	dec := xml.NewDecoder(bytes.NewReader(raw))
+	n := 0
+	for {
+		tok, err := dec.Token()
+		if errors.Is(err, io.EOF) {
+			return n, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("samltest: parse SAMLResponse: %w", err)
+		}
+		if _, ok := tok.(xml.StartElement); ok {
+			n++
+		}
+	}
+}
+
+// SignedResponseWithElements is SignedResponse for a fixed identity, grown one group
+// (one AttributeValue element) at a time until the whole response holds exactly
+// `elements` elements: the shape for testing element-count limits on the signed path.
+func SignedResponseWithElements(fixture *IdPFixture, idpEntityID string, spMetadata *csaml.EntityDescriptor, nameID string, elements int, relayState string) (string, error) {
+	build := func(groups int) (string, int, error) {
+		g := make([]string, groups)
+		for i := range g {
+			g[i] = "group"
+		}
+		resp, err := SignedResponse(fixture, idpEntityID, spMetadata, nameID, nameID, "User", g, relayState)
+		if err != nil {
+			return "", 0, err
+		}
+		n, err := CountElements(resp)
+		return resp, n, err
+	}
+	_, base, err := build(1)
+	if err != nil {
+		return "", err
+	}
+	if elements <= base {
+		return "", fmt.Errorf("samltest: smallest response has %d elements, want %d", base, elements)
+	}
+	resp, n, err := build(1 + elements - base)
+	if err != nil {
+		return "", err
+	}
+	if n != elements {
+		return "", fmt.Errorf("samltest: built %d elements, want %d", n, elements)
+	}
+	return resp, nil
 }

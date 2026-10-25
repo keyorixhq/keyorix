@@ -814,6 +814,10 @@ func (h *AuthHandler) settleCredentialCheck(r *http.Request, att *credentialAtte
 		}
 	case errors.Is(err, core.ErrReauthRejected), errors.Is(err, core.ErrLoginPostVerdict):
 		// Core audited it; the slot stays counted.
+	case errors.Is(err, core.ErrPasswordReused):
+		// A new password found in the password history is disclosed to the caller,
+		// so it is a guess against that history: it keeps the slot like a wrong
+		// current password (core counted the account lockout and audited it).
 	default:
 		h.returnLoginSlot(r.Context(), att.slot)
 	}
@@ -870,6 +874,14 @@ func (h *AuthHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, core.ErrIncorrectCurrentPassword) {
 			sendError(w, "Unauthorized", "Current password is incorrect", http.StatusUnauthorized, nil)
+			return
+		}
+		if msg, refused := core.PolicyRefusalMessage(err); refused {
+			// The caller must see which rule the new password broke to pick another.
+			// The message is fixed wording from core; the log line is fixed too, so
+			// nothing that came out of a password check reaches a log call.
+			log.Printf("ChangePassword: user %d: new password refused by policy", userCtx.UserID)
+			sendError(w, "BadRequest", msg, http.StatusBadRequest, nil)
 			return
 		}
 		log.Printf("ChangePassword: user %d error: %v", userCtx.UserID, err)

@@ -55,11 +55,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -564,19 +564,18 @@ var childLiveArrivesRe = regexp.MustCompile(`arrives with #\d+`)
 
 // TestChildParentLiveness_PendingRowsNotExpired: see the full-row guard's twin.
 func TestChildParentLiveness_PendingRowsNotExpired(t *testing.T) {
-	now := time.Now().UTC()
 	for _, r := range loadChildLiveExempt(t) {
 		if r.Expires == "-" {
 			require.NotContainsf(t, r.Reason, "pending: #", "%s:%d a pending row must carry an expiry date", childLiveExemptPath, r.Line)
 			require.Falsef(t, childLiveArrivesRe.MatchString(r.Reason), "%s:%d an \"arrives with\" row must carry an expiry date", childLiveExemptPath, r.Line)
 			continue
 		}
-		exp, err := time.Parse("2006-01-02", r.Expires)
-		require.NoErrorf(t, err, "%s:%d expires must be YYYY-MM-DD or -", childLiveExemptPath, r.Line)
-		require.Truef(t, now.Before(exp.Add(24*time.Hour)), "%s:%d exemption %s expired on %s: %s", childLiveExemptPath, r.Line, r.key(), r.Expires, r.Reason)
-		if days := int(exp.Sub(now.Truncate(24*time.Hour)).Hours() / 24); days <= 3 {
-			t.Logf("WARNING: %s:%d exemption %s expires in %d days (%s): resolve or renew it now, it fails hard the day after", childLiveExemptPath, r.Line, r.key(), days, r.Expires)
-		}
+		guardrules.CheckExpiry(t, guardrules.Expiry{
+			Source:  fmt.Sprintf("%s:%d", childLiveExemptPath, r.Line),
+			Key:     r.key(),
+			Expires: r.Expires,
+			Note:    r.Reason,
+		})
 	}
 }
 

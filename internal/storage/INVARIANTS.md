@@ -14,9 +14,16 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   explicitly covers the older binary (INV-STORAGE-04). With no floor recorded, the refusal is
   unconditional. Why: ADR-097, ADR-101. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`,
   `TestSchemaEpochFloor_RefusesOutsideSupportedRange/db_epoch_above_binary,_no_floor_recorded`.
-- **INV-STORAGE-02** `currentSchemaEpoch` (now 3: 2 for `secret_nodes.purge_at`, #3021, floor raised to 2; 3 for the additive `pending_audit_events`, floor stays 2) has not silently bumped without the
-  accompanying ADR-101 compatibility-floor work landing — this is a deliberate tripwire, not a
-  claim that raising the epoch is wrong. Guard: `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_Is5_SeeADR101`.
+- **INV-STORAGE-02** `currentSchemaEpoch` and `minCompatibleSchemaEpoch` (now epoch 7, floor 3) have not
+  silently changed without the accompanying ADR-101 compatibility-floor work landing — this is a
+  deliberate tripwire, not a claim that raising the epoch is wrong. History: 2 for
+  `secret_nodes.purge_at` (#3021, floor raised to 2); 3 for `pending_audit_events` and the HA-READY-1
+  formats, one epoch (floor raised to 3: a v0.96.x binary refuses to start); 4 for the machine-identity
+  cascade marker (#3433, floor stays 3); 5 for the break-glass degraded columns (floor stays 3); 6 for `audit_events.request_id` (floor stays 3); 7 for `roles.assignable_scope` (#3546, floor stays 3). The
+  numbers in the parentheses are checked against the constants, not trusted. Guard:
+  `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_Is7_SeeADR101` (pins both constants),
+  `invariants_schema_epoch_text_test.go:TestInvariantsStorage02_QuotesTheCodesEpochAndFloor` (this
+  sentence says what the constants say).
 - **INV-STORAGE-03** A corrupt (non-integer) `schema_epoch` value in `system_metadata` fails
   closed (refuses boot), not proceed silently. Why: ADR-097 "Corrupt value" section. Guard:
   `factory_schema_epoch_corrupt_test.go` (`TestSchemaEpoch_CorruptValueShapes_MigrateDatabaseRefuses`,

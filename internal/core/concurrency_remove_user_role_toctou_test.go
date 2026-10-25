@@ -65,6 +65,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -78,34 +79,31 @@ import (
 // blocked once it starts waiting, so the test can deterministically sequence a
 // second, concurrent call around the pause.
 type delayedRemoveRoleStorage struct {
-	storage.Storage
+	inner                      storage.Storage
 	targetUserID, targetRoleID uint
 	blocked, release           chan struct{}
 }
 
-// WithTransaction wraps the transaction-scoped storage.Storage fn receives
-// with an identical decorator sharing this one's channels, so a caller that
-// performs its targeted RemoveRole call INSIDE a transaction
-// (RevokeBreakGlassActivationAtomic's tx.RemoveRole, break_glass.go) still
-// gets paused -- without this override, that RemoveRole call would run on
-// the fresh, un-decorated *LocalStorage WithTransaction constructs
-// internally (local_transaction.go) and the pause would never fire.
-func (d *delayedRemoveRoleStorage) WithTransaction(ctx context.Context, fn func(storage.Storage) error) error {
-	return d.Storage.WithTransaction(ctx, func(tx storage.Storage) error {
-		return fn(&delayedRemoveRoleStorage{
-			Storage:      tx,
-			targetUserID: d.targetUserID, targetRoleID: d.targetRoleID,
-			blocked: d.blocked, release: d.release,
-		})
+// store returns d.inner decorated with d's RemoveRole pause. WrapTx re-wraps the
+// transaction-scoped storage.Storage fn receives with the same hooks (sharing this
+// one's channels), so a caller that performs its targeted RemoveRole call INSIDE a
+// transaction (RevokeBreakGlassActivationAtomic's tx.RemoveRole, break_glass.go)
+// still gets paused -- without it, that RemoveRole call would run on the fresh,
+// un-decorated *LocalStorage WithTransaction constructs internally
+// (local_transaction.go) and the pause would never fire.
+func (d *delayedRemoveRoleStorage) store() storage.Storage {
+	return storagetest.Hooked(d.inner, &storagetest.StoreHooks{
+		WrapTx:     true,
+		RemoveRole: d.RemoveRole,
 	})
 }
 
-func (d *delayedRemoveRoleStorage) RemoveRole(ctx context.Context, userID, roleID uint, scope storage.Scope) error {
+func (d *delayedRemoveRoleStorage) RemoveRole(next storage.Storage, ctx context.Context, userID, roleID uint, scope storage.Scope) error {
 	if userID == d.targetUserID && roleID == d.targetRoleID {
 		close(d.blocked)
 		<-d.release
 	}
-	return d.Storage.RemoveRole(ctx, userID, roleID, scope)
+	return next.RemoveRole(ctx, userID, roleID, scope)
 }
 
 func TestConcurrency_RemoveUserRole_ProjectScope_TOCTOU_Deterministic(t *testing.T) {
@@ -129,11 +127,11 @@ func TestConcurrency_RemoveUserRole_ProjectScope_TOCTOU_Deterministic(t *testing
 
 	realStorage := store.NewLocalStorage(db)
 	wrapped := &delayedRemoveRoleStorage{
-		Storage:      realStorage,
+		inner:        realStorage,
 		targetUserID: 1, targetRoleID: 10,
 		blocked: make(chan struct{}), release: make(chan struct{}),
 	}
-	c := core.NewKeyorixCore(wrapped)
+	c := core.NewKeyorixCore(wrapped.store())
 	ctx := context.Background()
 	scope := core.Scope{ProjectID: 1}
 
