@@ -95,7 +95,7 @@ func svStorageConfig(t *testing.T, backend string) *config.Config {
 	t.Helper()
 	switch backend {
 	case "sqlite":
-		return &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqlitetest.DSN("kxsv_")}}}
+		return &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqlitetest.FactoryPath(t, "kxsv_")}}}
 	case "postgres":
 		pgDSN := os.Getenv("KEYORIX_TEST_PG_DSN")
 		if pgDSN == "" {

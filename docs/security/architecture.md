@@ -141,6 +141,19 @@ middleware, in-handler authorizers, and gRPC (`server/grpc/services/*`), which
 is what let the PAT-restriction filter (§4) be added at one place and
 automatically bind every present and future authorization path.
 
+**Where a role may be granted is a property of the role (#3546).**
+`models.Role.AssignableScope` is `global` (only with no project: the
+`system_*` roles and `alert_operator`), `project` (only with a project,
+optionally one of its environments: the `project_*` roles and every new
+custom role by default) or `any` (the legacy `admin`/`editor`/`viewer`/
+`auditor`/`super_admin` roles, custom roles that existed before the
+upgrade, and any custom role an administrator widens). Core refuses a grant
+outside it on every grant path (HTTP 400 / gRPC `InvalidArgument`), so a
+grant that forgets its `project_id` can no longer apply in every project.
+Widening a role's scope is audited fail-closed, like adding a permission;
+changing it never touches existing grants. Grants that predate the check are
+listed in a startup warning for review, never changed automatically.
+
 **Admin bypass is a structural marker, not a name match.**
 `models.Role.BypassesPermissionChecks`, resolved by role ID, replaced an
 earlier fixed-name lookup (`roleSetContainsAdmin`) at all 8 call sites. It is

@@ -146,7 +146,7 @@ func TestRestoreEnvironment_RefusesNonAdminWhenProjectHoldsAdminRole(t *testing.
 	require.NotEmpty(t, envs)
 	env := envs[0]
 	require.NoError(t, db.Create(&models.UserRole{UserID: 99, RoleID: 1, ProjectID: p.ID}).Error) // admin at project scope
-	require.NoError(t, c.storage.DeleteEnvironment(ctx, env.ID))
+	require.NoError(t, c.StorageForTesting().DeleteEnvironment(ctx, env.ID))
 
 	err = c.RestoreEnvironment(ctx, 1, p.ID, env.ID) // actor 1 has no roles at all
 	require.Error(t, err)
@@ -167,7 +167,7 @@ func TestRestoreEnvironment_AllowsGlobalAdmin(t *testing.T) {
 	require.NotEmpty(t, envs)
 	env := envs[0]
 	require.NoError(t, db.Create(&models.UserRole{UserID: 99, RoleID: 1, ProjectID: p.ID}).Error)
-	require.NoError(t, c.storage.DeleteEnvironment(ctx, env.ID))
+	require.NoError(t, c.StorageForTesting().DeleteEnvironment(ctx, env.ID))
 
 	require.NoError(t, c.RestoreEnvironment(ctx, 2, p.ID, env.ID))
 }

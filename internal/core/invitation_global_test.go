@@ -30,8 +30,8 @@ func TestInviteGlobal_ValidatesAndSnapshotsAssignments(t *testing.T) {
 	// GetProject is a fixed stub in the mock (always resolves), so only roles are
 	// asserted here.
 	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3, Name: "system_auditor"}, nil)
-	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5}, nil)
-	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6}, nil)
+	store.On("GetRoleByName", ctx, "project_developer").Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
+	store.On("GetRoleByName", ctx, "project_viewer").Return(&models.Role{ID: 6, Name: "project_viewer"}, nil)
 	store.On("CreateProjectInvitation", ctx, mock.MatchedBy(func(inv *models.ProjectInvitation) bool {
 		// Global invite: no project scope, system role set, assignments snapshotted.
 		if inv.ProjectID != 0 || inv.Role != "" || inv.SystemRole != "system_auditor" || inv.State != InvitationPending {
@@ -64,7 +64,7 @@ func TestInviteGlobal_RejectsUnknownRole(t *testing.T) {
 	c := newInviteCore(store)
 	ctx := context.Background()
 
-	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1}, nil)
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
 	store.On("GetRoleByName", ctx, "bogus_role").Return(nil, assertNotFoundErr())
 	// F6 sweep (2026-09-22): the roles.assign baseline does NOT apply here --
 	// systemRole is left empty (the mandatory, non-discretionary system_viewer
@@ -102,7 +102,7 @@ func TestInviteGlobal_RejectsAssignmentMissingRole(t *testing.T) {
 	c := newInviteCore(store)
 	ctx := context.Background()
 
-	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1}, nil)
+	store.On("GetRoleByName", ctx, "system_viewer").Return(&models.Role{ID: 1, Name: "system_viewer"}, nil)
 	// F6 sweep (2026-09-22): the roles.assign baseline does NOT apply here --
 	// systemRole is left empty (the mandatory, non-discretionary system_viewer
 	// default) -- see invitations.go's InviteGlobal comment for the full reasoning.
@@ -205,7 +205,7 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 	store.On("RoleSetBypassesPermissionChecks", ctx, []uint{100}).Return(false, nil)
 	store.On("RoleSetHasPermission", ctx, []uint{100}, "roles.assign").Return(true, nil)
 	// System role grant at scope 0.
-	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3}, nil)
+	store.On("GetRoleByName", ctx, "system_auditor").Return(&models.Role{ID: 3, Name: "system_auditor"}, nil)
 	store.On("GetRole", ctx, uint(3)).Return(&models.Role{ID: 3, Name: "system_auditor"}, nil) // #3546 role-scope check
 	store.On("AssignRole", ctx, uint(20), uint(3), storage.Scope{ProjectID: 0}).Return(nil)
 	// One membership per assignment (open mode → active → role granted).

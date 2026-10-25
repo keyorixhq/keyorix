@@ -98,7 +98,8 @@ func TestEveryRoleGrantRPCRefusesEnvironmentWithoutProject(t *testing.T) {
 			require.NoError(t, err)
 			g, err := w.core.CreateGroup(ctx, w.adminID, &core.CreateGroupRequest{Name: n + "group"})
 			require.NoError(t, err)
-			role, _, err := w.core.CreateRole(ctx, w.adminID, n+"role", "role-shape probe", nil)
+			role, _, err := w.core.CreateRoleWithScope(ctx, w.adminID, n+"role", "role-shape probe", nil,
+				models.RoleAssignableAny) // the controls grant it at {P, X} and at {0, 0} (#3546)
 			require.NoError(t, err)
 
 			try := func(project, env uint) error {

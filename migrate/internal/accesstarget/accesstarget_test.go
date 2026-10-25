@@ -137,3 +137,33 @@ func TestMachineHasOIDCBinding(t *testing.T) {
 		t.Fatalf("has=%v err=%v, want true/nil", has, err)
 	}
 }
+
+// SeesEveryProject asks the include_deleted=true listing, which the server answers 403 unless
+// the token holds secrets.read at the global scope: 200 is yes, 403 is no, anything else is an
+// error (unknown is never "yes").
+func TestSeesEveryProject(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		want    bool
+		wantErr bool
+	}{
+		{http.StatusOK, true, false},
+		{http.StatusForbidden, false, false},
+		{http.StatusInternalServerError, false, true},
+		{http.StatusUnauthorized, false, true},
+	} {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/v1/projects", func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Query().Get("include_deleted") != "true" {
+				t.Errorf("query = %q, want include_deleted=true", r.URL.RawQuery)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(tc.status)
+			_, _ = w.Write([]byte(`{"data":{"projects":[]}}`))
+		})
+		got, err := fakeKeyorix(t, mux).SeesEveryProject(context.Background())
+		if got != tc.want || (err != nil) != tc.wantErr {
+			t.Fatalf("HTTP %d: got %v, err %v; want %v, error %v", tc.status, got, err, tc.want, tc.wantErr)
+		}
+	}
+}

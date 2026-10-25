@@ -43,13 +43,15 @@ How the server treats a break (`docs/specs/audit-incremental-verification.md` §
   `keyorix_audit_verify_state_discontinuity` and `keyorix_audit_verify_failure_recorded`, and
   keeps checkpointing new rows. `--full` does not clear it. Treat it like a truncation
   (sections 2, 5, 6): compare against an external anchor, a backup or the high-water witness
-  file. A `rotate-kek` or `migrate-provider` currently also produces `other key epoch`, because
-  a key change does not yet carry the state over. A `before a recorded break` discontinuity
-  also appears when a replica running a version from before this check saves the state during
-  a rolling upgrade (it drops the fields that place the row against the chain): stop older
-  replicas before upgrading. A binary rollback to such a version (upgrade-rollback.md §4A)
-  followed by a re-upgrade has the same effect. There is no command to accept it yet
-  (`docs/design-audit-reseal-options.md`).
+  file. `rotate-kek` and `migrate-provider` carry the state over to the new key
+  (`docs/design-audit-key-transition.md`), so an honest key change does not produce one.
+  `key transition` means the transition record is missing, forged or for another epoch, and
+  `other key epoch` means a key change that did not carry the state over (an older binary).
+  A `before a recorded break` discontinuity also appears when a replica running a version
+  from before this check saves the state during a rolling upgrade (it drops the fields that
+  place the row against the chain): stop older replicas before upgrading. A binary rollback
+  to such a version (upgrade-rollback.md §4A) followed by a re-upgrade has the same effect.
+  There is no command to accept a discontinuity yet (`docs/design-audit-reseal-options.md`).
 - New audit events keep chaining onto the current tail, so the service keeps working and
   the break stays where it is.
 
@@ -141,8 +143,10 @@ backup mounted from the wrong date, a replica that has not caught up: all look l
 truncation. Re-copy correctly and re-run before concluding anything.
 
 **c. A key that changed.** `rotate-kek` and `migrate-provider` change the KEK-derived
-checkpoint key; checkpoints signed before then no longer verify under the new key.
-Online, that reads as "does not verify under the current signing key ... a KEK-provider
+checkpoint key, and since AUDIT-ROTATE-TRANSITION-1 they carry the audit state over and
+write a fresh checkpoint under the new key (key-rotation-runbook.md section 5). What follows
+applies to a key change by an older binary, where checkpoints signed before it no longer
+verify under the new key. Online, that reads as "does not verify under the current signing key ... a KEK-provider
 migration occurred and no fresh checkpoint has been written yet", and a checkpoint write
 under the new key (the scheduler, or `keyorix audit checkpoint`) re-baselines it, provided
 the chain itself walks clean. Offline, `verify-audit` has no notion of key versions and

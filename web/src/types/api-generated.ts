@@ -5889,6 +5889,11 @@ export interface components {
             name?: string;
             description?: string;
             bypasses_permission_checks?: boolean;
+            /**
+             * @description Where the role may be granted (#3546): global = no project only, project = a project (optionally an environment of it) only, any = either.
+             * @enum {string}
+             */
+            assignable_scope?: "global" | "project" | "any";
         };
         /** @description A permission (internal/storage/models.Permission), via the handler-level permissionWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign. */
         Permission: {
@@ -5904,6 +5909,8 @@ export interface components {
             name?: string;
             description?: string;
             bypasses_permission_checks?: boolean;
+            /** @enum {string} */
+            assignable_scope?: "global" | "project" | "any";
             permissions?: components["schemas"]["Permission"][];
         };
         /** @description A user's identity plus their assigned roles (internal/core.UserRoleAssignment), via the handler-level userRoleAssignmentWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak on the nested Roles field (its own UserID/Username/Email were already correctly tagged) as part of the API-hygiene casing campaign. */
@@ -7872,6 +7879,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
@@ -13239,6 +13247,11 @@ export interface operations {
                     description: string;
                     /** @description Permission names. */
                     permissions: string[];
+                    /**
+                     * @description Where the role may be granted. Default project.
+                     * @enum {string}
+                     */
+                    assignable_scope?: "global" | "project" | "any";
                 };
             };
         };
@@ -13306,6 +13319,11 @@ export interface operations {
                     description?: string;
                     /** @description Replaces the role's permissions by name. */
                     permissions?: string[];
+                    /**
+                     * @description Changes where the role may be granted; existing grants are not changed.
+                     * @enum {string}
+                     */
+                    assignable_scope?: "global" | "project" | "any";
                 };
             };
         };

@@ -138,7 +138,7 @@ func TestBootstrapSystem_ConcurrentCallsProduceExactlyOneAdmin(t *testing.T) {
 	assert.Equal(t, 0, errs, "no concurrent bootstrap call holding the valid token should error")
 	assert.Equal(t, 1, created, "exactly one concurrent call may create the first admin")
 
-	_, total, err := c.storage.ListUsers(context.Background(), &storage.UserFilter{Page: 1, PageSize: 100})
+	_, total, err := c.StorageForTesting().ListUsers(context.Background(), &storage.UserFilter{Page: 1, PageSize: 100})
 	require.NoError(t, err)
 	assert.Equal(t, int64(1), total, "the store must end up with exactly one admin user, not one per racing caller")
 }

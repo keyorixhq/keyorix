@@ -1,0 +1,5 @@
+# machine: machine identities, machine tokens, personal access tokens
+# One glob per line, matched against the file name (README.md).
+machine_*.go
+pat.go
+pat_*.go

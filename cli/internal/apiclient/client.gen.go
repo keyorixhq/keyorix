@@ -19264,6 +19264,7 @@ type ActivateBreakGlassResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON409 *Error
 	JSON503 *Error
 }
 
@@ -30338,6 +30339,13 @@ func ParseActivateBreakGlassResponse(rsp *http.Response) (*ActivateBreakGlassRes
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Error

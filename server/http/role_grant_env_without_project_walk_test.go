@@ -148,7 +148,8 @@ func roleShapeWalk(t *testing.T, backend string) {
 		require.NoError(t, err)
 		g, err := r.c.CreateGroup(ctx, w.adminID, &core.CreateGroupRequest{Name: n + "group"})
 		require.NoError(t, err)
-		role, _, err := r.c.CreateRole(ctx, w.adminID, n+"role", "role-shape probe", nil)
+		role, _, err := r.c.CreateRoleWithScope(ctx, w.adminID, n+"role", "role-shape probe", nil,
+			models.RoleAssignableAny) // the controls grant it at {P, X} and at {0, 0} (#3546)
 		require.NoError(t, err)
 		w.ids["user"], w.ids["group"] = u.ID, g.ID
 		path := w.awPaths(rt.Path)[0]

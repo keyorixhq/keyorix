@@ -170,7 +170,7 @@ func TestConcurrency_DeleteEnvironment_NeverOrphansAConcurrentlyRestoredSecret(t
 		require.NoError(t, c.DeleteSecret(ctx, created.ID))
 
 		_ = raceAgainstDeleteEnvironment(c, ctx, envID, func() error {
-			return c.storage.RestoreSecret(ctx, created.ID)
+			return c.StorageForTesting().RestoreSecret(ctx, created.ID)
 		})
 		if countOrphan(t, db, envID) {
 			orphaned++

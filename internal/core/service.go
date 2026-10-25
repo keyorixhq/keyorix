@@ -458,6 +458,9 @@ type KeyorixCore struct {
 	// auditVerifyEvidence caches the in-chain verification-state events seen so
 	// far (audit_verify_state.go), so a load scans only new rows.
 	auditVerifyEvidence auditVerifyEvidenceIndex
+	// auditKeyTransitionHook, when set (tests only), runs after each step of
+	// CompleteAuditKeyTransition; an error stops it there, as a crash would.
+	auditKeyTransitionHook func(step string) error
 	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
 	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
 	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.
@@ -973,6 +976,18 @@ func (c *KeyorixCore) SetClockForTesting(now func() time.Time) {
 	if c.oidcVerifier != nil {
 		c.oidcVerifier.setClock(now)
 	}
+}
+
+// StorageForTesting returns the raw storage handle behind every authorization
+// check this KeyorixCore makes (ADR-121 decision 2). It exists so tests that
+// live outside package core (internal/core/coretests) can seed and inspect
+// rows the way in-package tests do through c.storage; export_test.go is not
+// visible to them, so the method must be exported. Production code never
+// calls this: a caller gets the store with every authorization check in core
+// bypassed. Only _test.go files may use it; clock_seam_guard_test.go
+// (internal/core/guards) fails on any other use, including a method value.
+func (c *KeyorixCore) StorageForTesting() storage.Storage {
+	return c.storage
 }
 
 // SetWebhookURLValidator replaces the SSRF guard applied to notification channel

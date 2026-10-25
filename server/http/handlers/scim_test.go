@@ -388,7 +388,8 @@ func TestSCIM_CreateUser_DBErrorSanitized(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateUser(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Users", bytes.NewReader([]byte(body))))
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// 500, not the 400 this used to pin: a storage failure is not the IdP's fault (#3494).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
 }
 
@@ -407,7 +408,8 @@ func TestSCIM_ReplaceUser_DBErrorSanitized(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.ReplaceUser(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Users/"+id, bytes.NewReader([]byte(body))), id))
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// 500, not the 404 this used to pin: a 404 tells the IdP the user is gone (#3494).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
 }
 
@@ -424,7 +426,8 @@ func TestSCIM_PatchUser_DBErrorSanitized(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.PatchUser(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Users/"+id, bytes.NewReader([]byte(patch))), id))
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// 500, not the 404 this used to pin: a 404 tells the IdP the user is gone (#3494).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
 }
 
@@ -442,6 +445,7 @@ func TestSCIM_DeleteUser_DBErrorSanitized(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.DeleteUser(w, withID(httptest.NewRequest(http.MethodDelete, "/scim/v2/Users/"+id, nil), id))
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// 500, not the 404 this used to pin: a 404 tells the IdP the user is gone (#3494).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "users")
 }

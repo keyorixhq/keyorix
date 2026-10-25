@@ -1,0 +1,106 @@
+name: Guard expiry and rollout (nightly)
+
+# docs/guard-rollout-contract.md. PR and merge-queue checks never read the
+# calendar and never block on a guard that is still report-only; this
+# scheduled run on main is where both happen instead:
+#   expiry:  every dated exemption (Test*NotExpired tests and the TEMPORARY CI
+#            exclusions) against today; warns 7 days ahead.
+#   rollout: every docs/guard-rollout.d guard in enforce mode; the verdicts
+#            artifact is what the coordinator's promotion script reads before
+#            it deletes a row (the guard then blocks everywhere).
+#   issue:   one GitHub issue per concern, opened or commented while there is
+#            something to do, closed when clear (scripts/ci/failure-issue.sh).
+on:
+  schedule:
+    # 04:23 UTC, off the round minute and clear of the other nightly slots
+    # (fault-tolerance 4:09, anchore-syft 4:12, sonarcloud 4:27, pg-race 4:47).
+    - cron: '23 4 * * *'
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  expiry:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      rc: ${{ steps.report.outputs.rc }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Evaluate every dated exemption against today (7 days' warning)
+        id: report
+        run: |
+          set +e
+          ./scripts/guard-expiry-report.sh --out expiry.md
+          rc=$?
+          set -e
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+          cat expiry.md >>"$GITHUB_STEP_SUMMARY"
+          # 0 clear, 1 something due (warning only), 2 expired, 3 check broken
+          [ "$rc" -le 1 ]
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: guard-expiry-report
+          path: expiry.md
+          retention-days: 14
+
+  rollout:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Run every report-only guard in enforce mode
+        run: |
+          set +e
+          ./scripts/guard-rollout-status.sh >rollout-verdicts.tsv
+          rc=$?
+          set -e
+          { echo '| test | package | introduced by | verdict |'; echo '|---|---|---|---|'
+            awk -F'\t' '{ printf "| %s | %s | %s | %s |\n", $1, $2, $3, $4 }' rollout-verdicts.tsv; } >>"$GITHUB_STEP_SUMMARY"
+          exit "$rc"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: guard-rollout-verdicts
+          path: rollout-verdicts.tsv
+          retention-days: 14
+
+  issue:
+    needs: [expiry, rollout]
+    if: always() && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: guard-expiry-report
+        continue-on-error: true
+      - name: Open, update or close the expiry issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RC: ${{ needs.expiry.outputs.rc }}
+        run: |
+          title="Guard exemptions expire within 7 days"
+          if [ "${RC:-3}" = 0 ]; then
+            ./scripts/ci/failure-issue.sh success "$title"
+          else
+            detail=$(cat expiry.md 2>/dev/null || echo "No report: the expiry job did not finish (exit ${RC:-unknown}).")
+            ./scripts/ci/failure-issue.sh failure "$title" "$detail"
+          fi
+      - name: Open, update or close the rollout issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ needs.rollout.result == 'success' && 'success' || 'failure' }}
+        run: ./scripts/ci/failure-issue.sh "$OUTCOME" "A report-only guard fails in enforce mode on main" "Fix the guard or the code before its docs/guard-rollout.d row is deleted; the run summary names the guard."

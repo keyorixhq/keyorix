@@ -364,16 +364,23 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 	// existence check (withEnvironmentSecretGuard). Project: the status write and a
 	// LockLiveProject re-read share one transaction, write first, rolled back when the
 	// project is gone (INV-STORE-21) — deleteProjectCascade takes no environment lock.
-	var matched bool
+	//
+	// UNLOCK-AUDIT-1: lifting a suspension restores access, so the secret.resumed
+	// row commits in the same transaction (withAuditedMutation, fail closed): an
+	// audit write that errors or panics rolls the status flip back. The row is
+	// written last, after every check that can still refuse the resume.
+	uid, sid := actorID, secretID
 	guarded := func(ctx context.Context) error {
-		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
-			var terr error
-			matched, terr = tx.TransitionSecretStatus(ctx, secret, fromStatus)
+		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			matched, terr := tx.TransitionSecretStatus(ctx, secret, fromStatus)
 			if terr != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), terr)
 			}
 			if !matched {
-				return nil
+				// Nothing was written, so there is nothing to audit: leave through
+				// a sentinel (the transaction rolls back) rather than commit
+				// without the row withAuditedMutation requires.
+				return errSecretResumeLostRace
 			}
 			live, lerr := tx.LockLiveProject(ctx, secret.ProjectID)
 			if lerr != nil {
@@ -383,6 +390,8 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 				return fmt.Errorf("%s: project %d was deleted; restore it before resuming this secret",
 					i18n.T("ErrorNotFound", nil), secret.ProjectID)
 			}
+			c.writeAuditEventFullOn(ctx, tgt, EventSecretResumed, &uid, &sid, nil, "",
+				fmt.Sprintf("resumed secret %q", secret.Name))
 			return nil
 		})
 	}
@@ -391,17 +400,19 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 	} else {
 		err = guarded(ctx)
 	}
-	if err != nil {
-		return nil, err
-	}
-	if !matched {
+	if errors.Is(err, errSecretResumeLostRace) {
 		// Lost the race: the row's persisted status moved away from fromStatus
 		// between the GetSecret read above and this write (a concurrent
 		// suspend/resume, or any other concurrent writer of this row) — treat
 		// as a failed write rather than silently overwriting the winner.
 		return nil, fmt.Errorf("secret %d's status changed concurrently; retry", secretID)
 	}
-	uid, sid := actorID, secretID
-	c.writeAuditEvent(ctx, EventSecretResumed, &uid, &sid, fmt.Sprintf("resumed secret %q", secret.Name))
+	if err != nil {
+		return nil, err
+	}
 	return secret, nil
 }
+
+// errSecretResumeLostRace: ResumeSecret's status transition matched no row, i.e. the
+// secret's status changed between its read and its write.
+var errSecretResumeLostRace = errors.New("secret status changed concurrently")

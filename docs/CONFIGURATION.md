@@ -208,7 +208,8 @@ server:
 `auto_cert` is ACME — it needs a public domain and inbound 80/443, so it does not work
 for a local, internal-only, or air-gapped deployment. For those, set `cert_file`/
 `key_file` to a PEM cert and key instead (gRPC's `tls:` block takes the same two
-fields; `domains`/`cert_cache_dir`/`allowed_ciphers` apply to HTTP only). `auto_cert`
+fields, `server.grpc.tls.cert_file` and `server.grpc.tls.key_file`;
+`domains`/`cert_cache_dir`/`allowed_ciphers` apply to HTTP only). `auto_cert`
 is HTTP-only: `server.grpc.tls.auto_cert: true` is refused at start-up, because gRPC has
 no ACME client and the flag used to start a listener whose every handshake failed. A quick
 self-signed pair for local use:
@@ -270,9 +271,10 @@ entry they go out without `Secure`, exactly as before. A forged
 never removed from a cookie that has it today.
 
 **HTTP only.** `trusted_proxies` and `hsts_preload` are read by the HTTP server
-only. The keys parse under `server.grpc` too (both listeners share one config
-shape) but the gRPC server never reads them, so setting either there logs a
-`WARNING` at every start and has no effect. Set them under `server.http`.
+only. The keys parse under `server.grpc` too (`server.grpc.trusted_proxies` and
+`server.grpc.hsts_preload`; both listeners share one config shape) but the gRPC
+server never reads them, so setting either there logs a `WARNING` at every start and
+has no effect. Set them under `server.http`.
 
 The web container's nginx makes its own HSTS decision and strips the backend's
 header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
@@ -281,8 +283,12 @@ behind a TLS-terminating load balancer").
 ### gRPC keepalive and connection limits (`server.grpc.keepalive`)
 
 Durations are Go duration strings (`"15m"`); an unset or unparseable value takes the
-default. Only the gRPC server reads this block (the keys parse under `server.http` too,
-but have no effect there).
+default. Only the gRPC server reads this block. The same eight keys parse under
+`server.http.keepalive` (`server.http.keepalive.time`, `server.http.keepalive.timeout`,
+`server.http.keepalive.min_time`, `server.http.keepalive.permit_without_stream`,
+`server.http.keepalive.max_connection_age`, `server.http.keepalive.max_connection_age_grace`,
+`server.http.keepalive.max_connection_idle` and `server.http.keepalive.handshake_timeout`)
+but have no effect there.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -446,6 +452,38 @@ the dsn has none, `PGSSLMODE`; otherwise the driver's default, `prefer`. With
 validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
 `storage.database.insecure_disable_database_tls` whatever `ssl_mode` says.
+
+**`PGSSLMODE` overrides the `prefer` default, and nothing else.** The
+environment variable is read only when a `dsn` is set, the dsn has no
+`sslmode`, and `ssl_mode` is not set. In order, the first rule that applies
+wins:
+
+1. `dsn` set, with `sslmode` in it: that value. `PGSSLMODE` is ignored.
+2. `dsn` set, no `sslmode` in it, `ssl_mode` set: refused at start-up (the dsn
+   must state `sslmode` itself, see above). `PGSSLMODE` does not rescue this.
+3. `dsn` set, no `sslmode` in it, no `ssl_mode`: `PGSSLMODE` if it is set (an
+   invalid value is refused), otherwise `prefer`.
+4. No `dsn` (connection built from the `host`/`port`/... fields): `ssl_mode`,
+   or `require` when it is empty. `PGSSLMODE` is **not** consulted.
+
+So `prefer`, which falls back to plaintext when the TLS attempt fails, is what
+a dsn without `sslmode` gets unless the process environment says otherwise:
+
+```yaml
+storage:
+  database:
+    dsn: "host=db user=keyorix dbname=keyorix"   # no sslmode
+```
+
+```
+# no PGSSLMODE:                 prefer       (may run in plaintext)
+PGSSLMODE=verify-full           verify-full  (also needs sslrootcert, see above)
+PGSSLMODE=verify_full           refused: not a valid sslmode
+# dsn: "... sslmode=require":   require      whatever PGSSLMODE says
+```
+
+Prefer writing `sslmode` into the dsn: a value in the file cannot be changed
+by the environment of whoever starts the process.
 
 **Connection-service files are refused.** `service=` or `servicefile=` in the
 `dsn`, or the `PGSERVICE` environment variable, make the PostgreSQL driver read
@@ -788,6 +826,17 @@ secrets:
   limits:
     max_secret_size: 65536   # bytes per value on create/update/rotate; default 64 KiB, max 1 MiB
 ```
+
+**Deprecated, never read.** These keys still parse but no code uses them, so setting
+one changes nothing; the server only prints a start-up warning. Remove them from your
+config. They are deleted after one minor release.
+
+| Key | What it did | Default | What to do |
+|---|---|---|---|
+| `secrets.chunking.enabled` | (never implemented) | `false` | Remove it. |
+| `secrets.chunking.max_chunk_size_kb` | (never implemented) | `0` | Remove it. |
+| `secrets.chunking.max_chunks_per_secret` | (never implemented) | `0` | Remove it. |
+| `secrets.limits.max_secrets_per_user` | (never enforced) | `0` | Remove it. To cap value size use `secrets.limits.max_secret_size`. |
 
 ## security
 
@@ -2082,6 +2131,26 @@ scim:
 > low-variety value, a placeholder such as `changeme`, or the same value as another
 > configured secret); see
 > [startup-refusals.md](operator/startup-refusals.md#weak-scim-token).
+
+### Status codes on a failed SCIM user request
+
+The status tells the IdP whether to retry, so a failed deactivation (PATCH or PUT
+with `active:false`) or DELETE is never answered `404` unless the user really is
+absent. A storage failure rolls the whole change back: the account is still active
+and its sessions and tokens are still valid until the IdP's retry succeeds.
+
+| Status | `scimType` | Meaning | IdP should |
+|---|---|---|---|
+| `404` | — | No such user, or an account SCIM does not manage | treat it as gone |
+| `409` | `uniqueness` | The email or `externalId` belongs to another user | fix the data |
+| `409` | — | Refused: the user is the install's last administrator | fix the role assignment |
+| `400` | `invalidValue` | An attribute value is not acceptable | fix the data |
+| `503` + `Retry-After` | — | Write contention or a concurrent change to the same user; nothing was written | retry after the delay |
+| `500` | — | Any other server-side failure (database unavailable, deadlock, rolled-back transaction); nothing was written | retry |
+| `503` (Keyorix `PartialMutation` extension) | — | The deactivation was applied, the rest of the request was not (see the body) | retry the request |
+
+The `500` body carries a generic `detail`; the cause is in the server log with the
+request id.
 
 ## sso
 

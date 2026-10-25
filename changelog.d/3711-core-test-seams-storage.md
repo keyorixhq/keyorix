@@ -1,0 +1,2 @@
+### Testing
+- **`(*KeyorixCore).StorageForTesting()` gives tests outside package core the raw storage handle** (ADR-121 decision 2), next to `SetClockForTesting`. `clock_seam_guard_test.go` now fails on any non-`_test.go` use of it, including a method value. Six in-package test files read `c.storage` through it, which makes seven files black-box with their helper closure (81 to 88). No product behaviour and no test assertion changed.

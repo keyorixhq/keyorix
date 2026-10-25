@@ -109,7 +109,9 @@ and for a machine identity whose last grant was just removed: the removal
 applies to the next request, cached token or not. Checked by
 `server/http` `TestEveryGETRouteWithholdsDataFromZeroGrantCredentials` and
 `TestZeroGrantAfterRevocation_CachedMachineTokenReadsNothing` (every GET route,
-SQLite and Postgres).
+SQLite and Postgres). A token that does not authenticate is 401, never an empty
+200. The reasoning is in
+[ADR-096, Amendment 1](adr-096-anti-enumeration-403-for-both.md#amendment-1-2026-10-17-a-zero-grant-caller-on-a-list-route-gets-an-empty-200).
 
 ## 🔐 **Secret Management API**
 
