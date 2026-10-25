@@ -627,7 +627,7 @@ This release raises the schema compatibility floor to 3 (ADR-101); its schema ep
 is 6 (epochs 4, 5 and 6 are additive and leave the floor at 3, see 6o.1).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
-epoch of 3 (database schema epoch 6)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
+epoch of 3 (database schema epoch 7)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
 database:
 
 - **The v2 audit retention anchor (#3258).** v0.96.x reads it as malformed, so its
@@ -1151,7 +1151,7 @@ before upgrading the CLI:
   "an internal error occurred". Behaviour is unchanged: the target is still refused unless a
   server operator sets that option.
 
-## 6w. SECURITY: audit Vault access migrated with keyorix-migrate v0.96.0–v0.96.3
+## 6y. SECURITY: audit Vault access migrated with keyorix-migrate v0.96.0–v0.96.3
 
 If you ran `keyorix-migrate vault apply-access` with v0.96.0, v0.96.1, v0.96.2 or v0.96.3,
 some migrated machine identities may hold grants wider than their Vault policy: a policy
@@ -1197,7 +1197,7 @@ Two more shapes, both in every release that shipped `plan-access`:
   report, `implied_access` in the JSON); if names must stay hidden for one of them, revoke its
   grant and grant the secrets by hand.
 
-## 6x. Roles carry an assignable scope (schema epoch 7, #3546)
+## 6z. Roles carry an assignable scope (schema epoch 7, #3546)
 
 The first boot adds `roles.assignable_scope` (schema epoch 7; the compatibility floor stays
 3, so an epoch-6 replica keeps running during a rolling upgrade) and sets it once:
@@ -1242,7 +1242,7 @@ database records a compatibility floor above its own schema epoch (ADR-101).
   both binaries.
 - **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
   binary refuses with `database declares a minimum compatible schema epoch of 3 (database
-  schema epoch 6)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
+  schema epoch 7)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
   v0.96.x binary never starts again on a database a v0.97 server has started against. A database written by a binary with a newer epoch but
   without a recorded floor is refused with `database schema epoch N is newer than this
   binary's schema epoch M` (ADR-097).
