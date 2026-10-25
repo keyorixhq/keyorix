@@ -34,8 +34,10 @@
 # progress on stderr. Exit 0 = every check passed; 1 = at least one FAIL;
 # 2 = no FAIL but some checks were SKIPped (incomplete, NOT a pass); 3 = usage or
 # missing required tool. --allow-skip turns 2 into 0 only when every cosign signature
-# check ran: a SKIPped signature check always exits 2, because the openssl checks
-# alone accept a self-signed certificate (they prove nothing about who signed).
+# check in scope ran: a SKIPped signature check (no cosign, cosign too old, registry or
+# tag unreachable) always exits 2, because the openssl checks alone accept a self-signed
+# certificate (they prove nothing about who signed). Only --skip-images/--skip-charts
+# take signatures out of scope, and the summary then says SCOPE REDUCED.
 set -u -o pipefail
 export LC_ALL=C
 
@@ -106,7 +108,9 @@ Options:
   --no-cosign|--no-gh   behave as if the tool were not installed
   --allow-skip          exit 0 even if some checks were SKIPped (never hides FAIL,
                         and never covers a SKIPped cosign signature check: without
-                        cosign the result is always INCOMPLETE, exit 2)
+                        cosign, or with the registry or a tag unreachable, the result
+                        is always INCOMPLETE, exit 2). --skip-images/--skip-charts
+                        are covered, and the summary says SCOPE REDUCED
   --self-test           run the built-in tests (fixtures; no network)
   -h, --help            this text
 
@@ -200,14 +204,31 @@ http_get() {
   [ "$PLAIN_HTTP" = 1 ] && proto='=http,https'
   local -a a=(-sS -L --retry 2 --retry-delay 2 -m "$CURL_TIMEOUT" --proto "$proto" -D "$out.hdr" -o "$out" -w '%{http_code}')
   [ -n "$accept" ] && a+=(-H "Accept: $accept")
-  [ -n "$bearer" ] && a+=(-H "Authorization: Bearer $bearer")
+  # credentials (password, bearer token) via stdin config so they never show up in `ps`
+  local cfg="" q
   if [ -n "$HTTP_USERPWD" ]; then
-    # credentials via stdin config so they never show up in `ps`
-    HTTP_STATUS=$(printf 'user = "%s"\n' "$HTTP_USERPWD" | curl -K - "${a[@]}" "$url" 2>"$out.err") || HTTP_STATUS=000
+    q=$(cfg_quote "$HTTP_USERPWD") || { printf 'credentials contain a control character\n' >"$out.err"; return 1; }
+    cfg="user = \"$q\""$'\n'
+  fi
+  if [ -n "$bearer" ]; then
+    # a registry token comes from the token server: it must not be able to add config lines
+    q=$(cfg_quote "$bearer") || { printf 'bearer token contains a control character: not sent\n' >"$out.err"; return 1; }
+    cfg="${cfg}header = \"Authorization: Bearer $q\""$'\n'
+  fi
+  if [ -n "$cfg" ]; then
+    HTTP_STATUS=$(printf '%s' "$cfg" | curl -K - "${a[@]}" "$url" 2>"$out.err") || HTTP_STATUS=000
   else
     HTTP_STATUS=$(curl "${a[@]}" "$url" 2>"$out.err") || HTTP_STATUS=000
   fi
   [ "$HTTP_STATUS" = 200 ]
+}
+
+# cfg_quote VALUE: VALUE escaped for a double-quoted curl config string; fails on a control
+# character (a newline would end the line and start a new option)
+cfg_quote() {
+  [[ $1 == *[[:cntrl:]]* ]] && return 1
+  local v=${1//\\/\\\\}
+  printf '%s' "${v//\"/\\\"}"
 }
 
 fixture_get() {
@@ -278,6 +299,22 @@ reg_discover() {
   esac
 }
 
+# sig_skip_all images|charts REASON: one signature SKIP per image or chart whose cosign
+# check cannot run, so that --allow-skip cannot turn an unreachable registry into exit 0
+sig_skip_all() {
+  local line c
+  case $1 in
+    images)
+      while IFS= read -r line; do
+        if [ -n "$line" ]; then sig_skip "image.${line%%|*}.signature" "$2"; fi
+      done <<EOF
+$IMAGES
+EOF
+      ;;
+    charts) for c in $CHARTS; do sig_skip "chart.$c.signature" "$2"; done ;;
+  esac
+}
+
 reg_token() { # REPO-PATH -> bearer token on stdout (cached)
   local cache url HTTP_USERPWD=$REG_USERPWD
   cache="$WORK/tok.$(printf '%s' "$1" | tr '/:' '__')"
@@ -302,13 +339,14 @@ reg_get() {
   http_get "$SCHEME://$REG_HOST/v2/$1/$2/$3" "$4" "${5-}" "$tok"
 }
 
-# registry_ok ID-PREFIX: emit a SKIP/FAIL and return 1 if the registry cannot be used
+# registry_ok ID-PREFIX images|charts: emit a SKIP/FAIL and return 1 if the registry cannot be used
 registry_ok() {
   reg_discover
   case $REG_MODE in
     none | bearer | basic) return 0 ;;
     down)
       skip "$1" "registry $REG_HOST unreachable from this host (no HTTP answer; blocked network or DNS) - run this check where the registry is reachable"
+      sig_skip_all "$2" "registry $REG_HOST unreachable: cosign signature not checked"
       return 1
       ;;
     *)
@@ -711,6 +749,7 @@ check_image() { # name repo suffix platforms
   if ! reg_get "$path" manifests "$vtag" "$mf" "$MANIFEST_ACCEPT"; then
     if [ "$HTTP_STATUS" = 000 ]; then
       skip "$id.tag" "$ref:$vtag - registry unreachable"
+      sig_skip "$id.signature" "$ref:$vtag - registry unreachable: cosign signature not checked"
     else
       fail "$id.tag" "$ref:$vtag not found (HTTP $HTTP_STATUS) - the image was not published, or the pipeline stopped at the Trivy/sign gate before tagging"
     fi
@@ -815,6 +854,7 @@ check_chart() { # chart
   if ! reg_get "$path" manifests "$VER" "$mf" "$MANIFEST_ACCEPT"; then
     if [ "$HTTP_STATUS" = 000 ]; then
       skip "$id.version" "$ref:$VER - registry unreachable"
+      sig_skip "$id.signature" "$ref:$VER - registry unreachable: cosign signature not checked"
     else
       fail "$id.version" "$ref:$VER not found (HTTP $HTTP_STATUS) - publish-chart job did not push it"
     fi
@@ -876,7 +916,7 @@ run_checks() {
 
   if [ "$SKIP_IMAGES" = 1 ]; then
     skip images "--skip-images"
-  elif registry_ok image.registry; then
+  elif registry_ok image.registry images; then
     log "== images"
     local line
     while IFS= read -r line; do
@@ -891,7 +931,7 @@ EOF
   fi
   if [ "$SKIP_CHARTS" = 1 ]; then
     skip charts "--skip-charts"
-  elif registry_ok chart.registry; then
+  elif registry_ok chart.registry charts; then
     log "== Helm charts"
     local c
     for c in $CHARTS; do check_chart "$c"; done
@@ -904,6 +944,13 @@ summary() {
   if [ "$COSIGN_OLD_SKIPS" -gt 0 ]; then
     printf 'PRECONDITION NOT MET: cosign %s cannot see the referrer signatures of images and charts, so %d signature check(s) did not run.\n' "$COSIGN_VERSION" "$COSIGN_OLD_SKIPS"
     printf '                      Install cosign >= 3 (https://github.com/sigstore/cosign/releases) and re-run. This is not a verification failure.\n'
+  fi
+  # an explicit scope reduction is covered by --allow-skip, but never silently
+  local scope="" what=""
+  [ "$SKIP_IMAGES" = 1 ] && { scope="$scope --skip-images"; what="image"; }
+  [ "$SKIP_CHARTS" = 1 ] && { scope="$scope --skip-charts"; what="${what:+$what and }chart"; }
+  if [ -n "$scope" ]; then
+    printf 'SCOPE REDUCED:%s: the %s signatures were not verified by this run; verify them where the registry is reachable.\n' "$scope" "$what"
   fi
   if [ "$N_FAIL" -gt 0 ]; then
     printf 'RESULT: FAILED - do not deploy this release until every FAIL above is explained.\n'
@@ -1398,6 +1445,31 @@ self_test() {
   # control: a non-signature SKIP only (--no-gh) is still covered (ok-allow in 1/15 exits 0 too)
   PATH="$WORK/st/bin:$PATH" st_run allow-control 0 "${base[@]}" --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" 'SIGNATURES NOT VERIFIED' 0
+  st_count "$ST_OUT" '^SCOPE REDUCED' 0
+  # cosign present, but the registry gives no HTTP answer: the 9 image/chart signatures never ran
+  PATH="$WORK/st/bin:$PATH" st_run regdown-allow 2 "${base[@]}" --allow-skip --assets-dir "$WORK/st/skip/assets" --fixtures "$WORK/st/skip/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.signature.cosign
+  st_expect "$ST_OUT" SKIP image.registry
+  st_expect "$ST_OUT" SKIP image.web.signature
+  st_expect "$ST_OUT" SKIP chart.keyorix-operator.signature
+  st_count "$ST_OUT" '^SIGNATURES NOT VERIFIED: 9 cosign signature check' 1
+  # cosign present, registry fine, but one image tag and one chart get no HTTP answer
+  st_world "$WORK/st/tagdown"
+  awk -F'\t' -v OFS='\t' '$1 == "https://registry.test/v2/keyorix/keyorix-web/manifests/9.9.9" || $1 == "https://registry.test/v2/keyorix/charts/keyorix/manifests/9.9.9" { $3 = "000" } { print }' \
+    "$WORK/st/tagdown/fx/index.tsv" >"$WORK/st/tagdown/fx/index.tsv.new"
+  mv "$WORK/st/tagdown/fx/index.tsv.new" "$WORK/st/tagdown/fx/index.tsv"
+  PATH="$WORK/st/bin:$PATH" st_run tagdown-allow 2 "${base[@]}" --allow-skip --assets-dir "$WORK/st/tagdown/assets" --fixtures "$WORK/st/tagdown/fx" v9.9.9
+  st_expect "$ST_OUT" SKIP image.web.tag
+  st_expect "$ST_OUT" SKIP image.web.signature
+  st_expect "$ST_OUT" SKIP chart.keyorix.version
+  st_expect "$ST_OUT" SKIP chart.keyorix.signature
+  st_expect "$ST_OUT" PASS image.server.signature
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" '^SIGNATURES NOT VERIFIED: 2 cosign signature check' 1
+  # --skip-images/--skip-charts are a scope the user chose: covered, but said out loud
+  PATH="$WORK/st/bin:$PATH" st_run scope-allow 0 "${base[@]}" --allow-skip --skip-images --skip-charts --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.signature.cosign
+  st_count "$ST_OUT" '^SCOPE REDUCED: --skip-images --skip-charts: the image and chart signatures were not verified by this run' 1
 
   log "self-test 13/15: cosign is asked for the pinned identity, issuer and @digest; wrong issuer and missing .sig/.pem FAIL"
   : >"$WORK/st/cosign.log"
@@ -1429,10 +1501,10 @@ self_test() {
   st_expect "$ST_OUT" FAIL release.signature.files
   st_count "$ST_OUT" '^PASS +release\.signature\.cosign' 0
 
-  log "self-test 14/15: REGISTRY_USER/REGISTRY_PASSWORD go to the registry only, never to github.com or api.github.com"
+  log "self-test 14/15: REGISTRY_USER/REGISTRY_PASSWORD go to the registry only, GITHUB_TOKEN to api.github.com only, both never on a command line"
   st_fake_curl
   : >"$WORK/st/curl.log"
-  PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=MIRROR-SECRET \
+  PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=MIRROR-SECRET GITHUB_TOKEN='' GH_TOKEN='' \
     st_run creds 1 --repo selftest/keyorix --registry registry.test/keyorix --no-gh --no-cosign --skip-binaries v9.9.9
   # the requests happened (not vacuous) ...
   st_atleast "$WORK/st/curl.log" '^URL https://github\.com/selftest/keyorix/releases/download/v9\.9\.9/checksums\.txt(\.sig|\.pem)?	' 3
@@ -1443,6 +1515,20 @@ self_test() {
   st_count "$WORK/st/curl.log" '^URL https://(github\.com|api\.github\.com)/.*MIRROR-SECRET' 0
   st_count "$WORK/st/curl.log" '^URL https://(github\.com|api\.github\.com)/.*	CONFIG none$' "$(grep -Ec '^URL https://(github\.com|api\.github\.com)/' "$WORK/st/curl.log")"
   st_count "$WORK/st/curl.log" '^ARGV .*MIRROR-SECRET' 0
+  # GITHUB_TOKEN goes to api.github.com only, through the stdin config, never on a command line
+  : >"$WORK/st/curl.log"
+  PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" GITHUB_TOKEN=GH-SECRET GH_TOKEN='' \
+    st_run ghtoken 1 --repo selftest/keyorix --registry registry.test/keyorix --no-gh --no-cosign --skip-binaries v9.9.9
+  st_atleast "$WORK/st/curl.log" '^URL https://api\.github\.com/.*	CONFIG header = "Authorization: Bearer GH-SECRET"' 1
+  st_count "$WORK/st/curl.log" '^ARGV .*GH-SECRET' 0
+  st_count "$WORK/st/curl.log" '^URL https://(github\.com|registry\.test)/.*GH-SECRET' 0
+  # a quote or backslash cannot add curl config lines; a control character is refused
+  : >"$WORK/st/curl.log"
+  PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD='a"b\c' \
+    st_run creds-quote 1 --repo selftest/keyorix --registry registry.test/keyorix --no-gh --no-cosign --skip-binaries v9.9.9
+  st_atleast "$WORK/st/curl.log" '^URL https://registry\.test/v2/.*	CONFIG user = "mirroruser:a\\"b\\\\c" $' 1
+  PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=$'a\nurl = "https://evil.test/"' \
+    st_run creds-newline 3 --repo selftest/keyorix --registry registry.test/keyorix --no-gh --no-cosign --skip-binaries v9.9.9
 
   log "self-test 15/15: --commit is cross-checked online and only ASSERTED offline; TAG/--commit validation; attestation manifest bound to its digest"
   PATH="$WORK/st/bin:$PATH" st_run commit-match 2 "${base[@]}" --commit 0123456789abcdef0123456789abcdef01234567 --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
@@ -1516,6 +1602,7 @@ fi
 [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][0-9A-Za-z.-]+)?$ ]] || die "TAG must look like v1.2.3, got '$TAG'"
 [[ $REPO =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || die "--repo must be OWNER/NAME"
 [ -z "$COMMIT" ] || [[ $COMMIT =~ ^[0-9a-f]{40}$ ]] || die "--commit must be the full 40-character lowercase commit SHA, got '$COMMIT'"
+cfg_quote "$REG_USERPWD" >/dev/null || die "REGISTRY_USER/REGISTRY_PASSWORD must not contain a control character (newline, tab, ...)"
 VER=${TAG#v}
 REG_HOST=${REGISTRY%%/*}
 REG_PREFIX=${REGISTRY#*/}

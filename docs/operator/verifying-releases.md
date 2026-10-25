@@ -38,7 +38,7 @@ in the public Sigstore transparency log (Rekor).
 | **`cosign`** | **>= 3** (3.0.6 was used for the v0.96.3 images and charts) | image and chart signatures (steps 4 and 5); also verifies `checksums.txt` (step 1) |
 | `openssl` | any recent | the two partial signature checks that need no network |
 | `gh` (logged in) | any recent | `gh attestation verify` (step 2, step 4); the script SKIPs without it |
-| `oras` | >= 1.2 | copying images and charts into a mirror **with their signatures** (see the mirror section) |
+| `oras` | >= 1.2 | resolving a chart's digest (step 5); copying images and charts into a mirror **with their signatures** (see the mirror section) |
 | `docker buildx` | any recent | `imagetools inspect` (step 4) |
 
 **Why cosign >= 3.** The release pipeline signs with two different cosign versions:
@@ -152,13 +152,18 @@ resolves to it).
 ```sh
 # cosign >= 3 is required here as well (referrer signature)
 for c in keyorix keyorix-k8s-sync keyorix-operator; do
-  helm show chart "oci://ghcr.io/keyorixhq/charts/$c" --version "$VER" | grep -E '^(name|version|appVersion):'
+  CHART=ghcr.io/keyorixhq/charts/$c
+  DIGEST=$(oras resolve "$CHART:$VER")
+  helm show chart "oci://$CHART" --version "$VER" | grep -E '^(name|version|appVersion):'
   cosign verify --certificate-identity "$ID/release.yml@refs/tags/$TAG" \
-    --certificate-oidc-issuer "$ISS" "ghcr.io/keyorixhq/charts/$c:$VER"
+    --certificate-oidc-issuer "$ISS" "$CHART@$DIGEST"
+  echo "$c verified: $CHART@$DIGEST"
 done
 ```
 
-`version` and `appVersion` must both equal `$VER`.
+`version` and `appVersion` must both equal `$VER`. As with images, verify the **digest**,
+then deploy that digest (or a version you have confirmed still resolves to it:
+`oras resolve "$CHART:$VER"` prints the same digest).
 
 ## What a failure means
 
@@ -201,8 +206,11 @@ workflow and the issuer) and that the signature matches the certificate's own ke
 make a self-signed certificate that claims the release workflow and sign forged files with
 it, and both checks pass. Only cosign checks that the certificate chains to Sigstore's Fulcio
 and that the signature was publicly logged. For that reason the script never lets a SKIPped
-cosign signature check count as verified: `--allow-skip` does not cover it, and the exit
-code stays 2 (INCOMPLETE).
+cosign signature check count as verified: `--allow-skip` does not cover it, whether cosign is
+missing or too old or the registry (or one image or chart tag) gave no answer, and the exit
+code stays 2 (INCOMPLETE). The one exception is a scope you choose yourself:
+`--skip-images` / `--skip-charts` leave those signatures out, `--allow-skip` then covers
+them, and the summary says `SCOPE REDUCED`.
 
 **`--insecure-ignore-tlog` does not verify `checksums.txt` offline.** The signature in
 `checksums.txt.sig` was made with a Fulcio certificate that is valid for only ten minutes.
@@ -230,7 +238,8 @@ TAG=v0.96.3; VER=${TAG#v}; MIRROR=registry.internal.example:5000/keyorix
 SRC=ghcr.io/keyorixhq
 mkdir release && cd release
 gh release download "$TAG" -R keyorixhq/keyorix
-../scripts/release/verify-release.sh "$TAG" --assets-dir "$PWD" | tee ../verify-connected.txt   # needs cosign >= 3
+set -o pipefail   # without it the pipeline reports tee's exit code, not the script's
+../scripts/release/verify-release.sh "$TAG" --assets-dir "$PWD" | tee ../verify-connected.txt   # needs cosign >= 3; must exit 0
 COMMIT=$(gh api "repos/keyorixhq/keyorix/commits/$TAG" --jq .sha); SHA7=${COMMIT:0:7}         # the commit the tag points to
 ```
 
