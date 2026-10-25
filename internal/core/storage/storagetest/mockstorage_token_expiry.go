@@ -3,7 +3,7 @@
 //
 // Do NOT add methods to mock_storage_test.go (that file is frozen). This file
 // is in the same "core" test package and Go allows the method set to span files.
-package core
+package storagetest
 
 import (
 	"context"

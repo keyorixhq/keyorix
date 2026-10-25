@@ -63,6 +63,13 @@ var auditWriteContextAllowlist = map[string]string{
 	// companion runtime test (TestLogAuditEvent_SucceedsWithAlreadyCanceledCallerContext)
 	// for behavioral (not just structural) proof this still holds.
 	"local_audit_chain.go:LocalStorage": "thin dispatcher forwarding ctx unmodified to logAuditEventDirect/logAuditEventBatched, both of which call auditWriteContext themselves before any I/O — same shape as the FaultyStorage exemption above, verified behaviorally by TestLogAuditEvent_SucceedsWithAlreadyCanceledCallerContext",
+	// CORE-TESTKIT-1: internal/core/storage/storagetest holds the storage.Storage test doubles moved
+	// verbatim out of internal/core's _test.go files, where this walk skipped them. Both are test-only
+	// (no production file may import the package: ADR-121 R3, test_only_packages_guard_test.go) and
+	// neither does I/O: HookStore runs the test's hook or delegates to the wrapped store, MockStorage
+	// records the call on a testify mock.
+	"hookstore_methods.go:HookStore": "test-only double (storagetest); runs the test's hook or forwards ctx unmodified to the wrapped store, never does I/O itself",
+	"mockstorage.go:MockStorage":     "test-only testify mock (storagetest); records the call and returns the stubbed result, never does I/O",
 }
 
 func TestLogAuditEventImplementations_DetachFromCallerCancellation(t *testing.T) {
