@@ -1,4 +1,4 @@
-package core
+package anomaly
 
 import (
 	"crypto/rand"
@@ -75,7 +75,7 @@ func (c MLConfig) withDefaults() MLConfig {
 		c.SampleSize = 256
 	}
 	if c.Seed <= 0 {
-		c.Seed = randomSeed()
+		c.Seed = RandomSeed()
 	}
 	return c
 }
@@ -83,7 +83,7 @@ func (c MLConfig) withDefaults() MLConfig {
 // randomSeed draws a positive int64 from crypto/rand for MLConfig's default seed. Falls
 // back to a time-based seed only if the OS CSPRNG is unavailable — vanishingly rare, and
 // still per-process-unique rather than a hardcoded constant.
-func randomSeed() int64 {
+func RandomSeed() int64 {
 	var buf [8]byte
 	if _, err := rand.Read(buf[:]); err != nil {
 		return time.Now().UnixNano()
@@ -161,7 +161,7 @@ func mlOutlierSeverity(score float64) string {
 // letting malicious accesses score below the detection threshold.
 const mlQuarantineDuration = 24 * time.Hour
 
-func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models.SecretAccessLog, cfg MLConfig, now time.Time) []models.AnomalyAlert {
+func MLOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models.SecretAccessLog, cfg MLConfig, now time.Time) []models.AnomalyAlert {
 	cfg = cfg.withDefaults()
 	if len(baselineLogs) < mlMinTrainSamples || len(recentLogs) == 0 {
 		return nil
@@ -207,7 +207,7 @@ func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models
 			AlertType:    "ml_outlier",
 			Severity:     mlOutlierSeverity(score),
 			Description: fmt.Sprintf("ML detected an anomalous access pattern (score %.2f): %s from %s at %s UTC differs from this secret's learned baseline",
-				score, displayOrUnknown(lg.AccessedBy), displayOrUnknown(lg.IPAddress), lg.AccessTime.UTC().Format("15:04")),
+				score, DisplayOrUnknown(lg.AccessedBy), DisplayOrUnknown(lg.IPAddress), lg.AccessTime.UTC().Format("15:04")),
 			AccessedBy: lg.AccessedBy,
 			IPAddress:  lg.IPAddress,
 			DetectedAt: now,
@@ -217,7 +217,7 @@ func mlOutlierAlerts(secret models.SecretNode, baselineLogs, recentLogs []models
 }
 
 // displayOrUnknown renders an empty actor/IP as a readable placeholder in alert text.
-func displayOrUnknown(s string) string {
+func DisplayOrUnknown(s string) string {
 	if s == "" {
 		return "an unknown source"
 	}

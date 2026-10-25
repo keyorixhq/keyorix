@@ -1,4 +1,4 @@
-package core
+package anomaly
 
 import (
 	"testing"
@@ -71,7 +71,7 @@ func TestMLOutlierAlertsFlagsRareKnownActor(t *testing.T) {
 		{AccessedBy: "alice", IPAddress: "10.0.0.3", AccessTime: time.Date(2026, 6, 22, 14, 0, 0, 0, time.UTC)}, // rare, known → outlier
 		{AccessedBy: "app", IPAddress: "10.0.0.1", AccessTime: time.Date(2026, 6, 22, 14, 0, 0, 0, time.UTC)},   // normal → no alert
 	}
-	alerts := mlOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true, Seed: 1}, now)
+	alerts := MLOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true, Seed: 1}, now)
 	if len(alerts) != 1 {
 		t.Fatalf("expected exactly 1 ml_outlier (the rare actor), got %d: %+v", len(alerts), alerts)
 	}
@@ -102,7 +102,7 @@ func TestMLOutlierAlertsHighSeverityForStranger(t *testing.T) {
 	recent := []models.SecretAccessLog{
 		{AccessedBy: "mallory", IPAddress: "8.8.8.8", AccessTime: time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)},
 	}
-	alerts := mlOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true, Seed: 1}, now)
+	alerts := MLOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true, Seed: 1}, now)
 	if len(alerts) != 1 {
 		t.Fatalf("expected the stranger to be flagged, got %d alerts", len(alerts))
 	}
@@ -122,7 +122,7 @@ func TestMLOutlierAlertsNoFalsePositiveOnNormal(t *testing.T) {
 		{AccessedBy: "app", IPAddress: "10.0.0.1", AccessTime: time.Date(2026, 6, 22, 10, 0, 0, 0, time.UTC)},
 		{AccessedBy: "app", IPAddress: "10.0.0.2", AccessTime: time.Date(2026, 6, 22, 15, 0, 0, 0, time.UTC)},
 	}
-	alerts := mlOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true, Seed: 1}, now)
+	alerts := MLOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true, Seed: 1}, now)
 	if len(alerts) != 0 {
 		t.Fatalf("normal-pattern accesses must not be flagged, got %d: %+v", len(alerts), alerts)
 	}
@@ -136,7 +136,7 @@ func TestMLOutlierAlertsSkipsSparseBaseline(t *testing.T) {
 	recent := []models.SecretAccessLog{
 		{AccessedBy: "mallory", IPAddress: "8.8.8.8", AccessTime: time.Date(2026, 6, 22, 3, 0, 0, 0, time.UTC)},
 	}
-	if alerts := mlOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true}, now); alerts != nil {
+	if alerts := MLOutlierAlerts(secret, baseline, recent, MLConfig{Enabled: true}, now); alerts != nil {
 		t.Fatalf("ML must abstain on a sparse baseline, got %+v", alerts)
 	}
 }
@@ -146,7 +146,7 @@ func TestMLOutlierAlertsEmptyRecent(t *testing.T) {
 	now := time.Date(2026, 6, 22, 12, 0, 0, 0, time.UTC)
 	secret := models.SecretNode{ID: 7, Name: "prod-db"}
 	baseline := buildBaselineLogs(160, now)
-	if alerts := mlOutlierAlerts(secret, baseline, nil, MLConfig{Enabled: true}, now); alerts != nil {
+	if alerts := MLOutlierAlerts(secret, baseline, nil, MLConfig{Enabled: true}, now); alerts != nil {
 		t.Fatalf("no recent accesses → no alerts, got %+v", alerts)
 	}
 }
