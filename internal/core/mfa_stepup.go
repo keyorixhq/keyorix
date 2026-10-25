@@ -236,7 +236,9 @@ func (c *KeyorixCore) verifyMFAStepUpCode(ctx context.Context, userID uint, code
 			}
 		}
 	} else {
-		consumed, cerr := c.storage.ConsumeMFARecoveryCode(ctx, userID, sha256Hex(normalizeRecoveryCode(code)), c.now())
+		// A panic in the consume is answered like its error (#3557,
+		// consumeRecoveryCodeRecovering): "unavailable", uncounted, mfa.error.
+		consumed, cerr := c.consumeRecoveryCodeRecovering(ctx, userID, code)
 		if cerr != nil {
 			storageErr = cerr
 		} else if consumed {

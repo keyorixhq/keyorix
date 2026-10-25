@@ -36,11 +36,13 @@ import (
 )
 
 // stepUpRecoveryFaultStub, once armed, fails ConsumeMFARecoveryCode always and
-// MarkTOTPStepUsed when failMark is set. Inert until armed, so enrolment runs
-// against real storage.
+// MarkTOTPStepUsed when failMark is set. With panicAfterCommit the armed
+// consume runs for real and then panics instead (#3557: the consume landed, the
+// caller never learns it). Inert until armed, so enrolment runs against real
+// storage.
 type stepUpRecoveryFaultStub struct {
 	corestorage.Storage
-	armed, failMark bool
+	armed, failMark, panicAfterCommit bool
 }
 
 func (s *stepUpRecoveryFaultStub) MarkTOTPStepUsed(ctx context.Context, userID uint, step int64) (bool, error) {
@@ -51,6 +53,10 @@ func (s *stepUpRecoveryFaultStub) MarkTOTPStepUsed(ctx context.Context, userID u
 }
 
 func (s *stepUpRecoveryFaultStub) ConsumeMFARecoveryCode(ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error) {
+	if s.armed && s.panicAfterCommit {
+		_, _ = s.Storage.ConsumeMFARecoveryCode(ctx, userID, codeHash, now)
+		panic("injected panic after commit: ConsumeMFARecoveryCode")
+	}
 	if s.armed {
 		return false, errors.New("injected: ConsumeMFARecoveryCode")
 	}
@@ -62,6 +68,11 @@ type stepUpFault struct {
 	spec          *faultstorage.FaultSpec // one faultstorage fault, or nil
 	recoveryDown  bool                    // ConsumeMFARecoveryCode fails
 	markTOTPFails bool                    // MarkTOTPStepUsed fails (with recoveryDown)
+	// recoveryPanics makes the recoveryDown consume commit and then panic.
+	recoveryPanics bool
+	// useRecoveryCode returns one of the account's recovery codes as the
+	// correct code instead of the current TOTP code.
+	useRecoveryCode bool
 }
 
 // stepUpParityEnv is one fresh account at lockout threshold−1 with MFA active,
@@ -91,14 +102,18 @@ func stepUpParityEnv(t *testing.T, f stepUpFault) (h *AuthHandler, db *gorm.DB, 
 	c.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
 		Enabled: true, MaxAttempts: 3, Window: time.Hour, BaseCooldown: 15 * time.Minute, MaxCooldown: time.Hour,
 	})
-	secret, _ := activateMFAForStepUpTest(t, c)
+	secret, recoveryCodes := activateMFAForStepUpTest(t, c)
 	require.NoError(t, db.Model(&models.User{}).Where("id = ?", 1).Updates(map[string]any{
 		"failed_login_attempts": 2, "last_failed_login_at": time.Now().UTC(),
 	}).Error)
 	code, err = totp.GenerateCode(secret, time.Now())
 	require.NoError(t, err)
+	if f.useRecoveryCode {
+		require.NotEmpty(t, recoveryCodes)
+		code = recoveryCodes[0]
+	}
 
-	stub.armed, stub.failMark = f.recoveryDown, f.markTOTPFails
+	stub.armed, stub.failMark, stub.panicAfterCommit = f.recoveryDown, f.markTOTPFails, f.recoveryPanics
 	if f.spec != nil {
 		fs.Arm(f.spec)
 	}
