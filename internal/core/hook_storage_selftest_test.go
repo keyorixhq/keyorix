@@ -306,7 +306,7 @@ type aliased = storagetest.HookStore
 		"x_test.go: d embeds hookStore",
 		"x_test.go: e embeds a",
 		"x_test.go: f embeds HookStore",
-	},wholeStorageEmbeddingViolations(t, map[string][]byte{"x_test.go": bad}))
+	}, wholeStorageEmbeddingViolations(t, map[string][]byte{"x_test.go": bad}))
 	assert.Empty(t, wholeStorageEmbeddingViolations(t, map[string][]byte{"y_test.go": []byte("package core_test\ntype z struct{ storage.Storage }\n")}),
 		"the external test package has its own archive")
 }

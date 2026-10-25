@@ -19,6 +19,5 @@ var (
 
 	stubAuthorizedPrincipal       = storagetest.StubAuthorizedPrincipal
 	stubUnauthorizedPrincipal     = storagetest.StubUnauthorizedPrincipal
-	stubNoShares                  = storagetest.StubNoShares
 	stubAuthorizedSecretPrincipal = storagetest.StubAuthorizedSecretPrincipal
 )
