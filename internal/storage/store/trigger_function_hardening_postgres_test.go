@@ -50,6 +50,68 @@ func TestRolePermGenerationIntegrity_FailedRepairIsRetriedNotAdopted_Postgres(t 
 	requireStaleThenFlushed(t, w, c)
 }
 
+// TestRolePermGenerationIntegrity_BlockedRepairStillFlushes_Postgres: the
+// invalidation must not wait on the repair. A trigger re-created on fewer
+// events, a direct revoke, and then another session holds role_permissions
+// (an idle transaction, a long pg_dump), so the repair's DROP TRIGGER cannot
+// get its lock. Every tick must still flush the warm caches, fail its repair
+// within the lock timeout instead of queueing behind the holder, and stay
+// pending; once the holder is gone the next tick repairs. Red before the bump
+// had its own transaction: the bump rolled back with the blocked repair and
+// the warm cache kept authorizing the revoked permission.
+func TestRolePermGenerationIntegrity_BlockedRepairStillFlushes_Postgres(t *testing.T) {
+	w, c := rpgIntegrityWorld(t)
+	db := w.writer.db
+	require.NoError(t, db.Transaction(func(tx *gorm.DB) error {
+		for _, q := range []string{
+			"DROP TRIGGER " + RolePermissionsGenerationTrigger + " ON role_permissions",
+			"CREATE TRIGGER " + RolePermissionsGenerationTrigger + " AFTER INSERT ON role_permissions FOR EACH STATEMENT EXECUTE PROCEDURE " + rolePermGenerationFunc + "()",
+			"ALTER TABLE role_permissions ENABLE ALWAYS TRIGGER " + RolePermissionsGenerationTrigger,
+		} {
+			if err := tx.Exec(q).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	}))
+	revokeDirect(t, db, w)
+	require.True(t, w.decide(t, w.perm.Name), "premise: the revocation went unseen and the warm cache still authorizes")
+
+	lock := db.Begin()
+	require.NoError(t, lock.Error)
+	t.Cleanup(func() { _ = lock.Rollback().Error })
+	require.NoError(t, lock.Exec("LOCK TABLE role_permissions IN ACCESS SHARE MODE").Error)
+	for tick := range 3 {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		start := time.Now()
+		flushed, err := c.check(ctx)
+		cancel()
+		took := time.Since(start)
+		require.Error(t, err, "tick %d: premise: the repair cannot take its lock", tick)
+		require.True(t, flushed, "tick %d: the bump committed although the repair failed", tick)
+		require.False(t, w.decide(t, w.perm.Name), "tick %d: the reader answers from the live join", tick)
+		require.Less(t, took, 8*time.Second, "tick %d: the repair gives up at its lock timeout, not the caller's deadline", tick)
+		// A further direct write while the trigger is still wrong: the next
+		// tick, still pending, must flush it too.
+		require.NoError(t, db.Exec("INSERT INTO role_permissions (role_id, permission_id) VALUES (?, ?)", w.role.ID, w.perm.ID).Error)
+		require.True(t, w.decide(t, w.perm.Name))
+		revokeDirect(t, db, w)
+		require.True(t, w.decide(t, w.perm.Name), "tick %d: premise: the trigger still misses a DELETE", tick)
+	}
+	require.NoError(t, lock.Rollback().Error)
+
+	flushed, err := c.check(context.Background())
+	require.NoError(t, err, "the holder is gone: the repair commits")
+	require.True(t, flushed)
+	require.False(t, w.decide(t, w.perm.Name))
+	st, err := readRolePermGenerationIntegrity(context.Background(), db)
+	require.NoError(t, err)
+	require.Empty(t, st.problem, "the definition is this release's again")
+	flushed, err = c.check(context.Background())
+	require.NoError(t, err)
+	require.False(t, flushed, "a repaired state is the new baseline, not a second alarm")
+}
+
 // pgFuncConfig returns pg_proc.proconfig of a zero-argument function in the
 // connection's schema, as text ("" when NULL).
 func pgFuncConfig(t *testing.T, db *gorm.DB, fn string) string {

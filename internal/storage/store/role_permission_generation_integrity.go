@@ -23,14 +23,18 @@
 //     rewrites neither row when they are already correct, so a clean boot of
 //     another replica changes nothing here.
 //
-// A bad definition: log, count, re-install (EnsureRolePermissionsGenerationTriggers)
-// and bump the generation. Changed row versions with a good definition: log,
-// count and bump. The bump invalidates every replica's cache, so whatever went
+// A bad definition: log, count, bump the generation, then re-install
+// (EnsureRolePermissionsGenerationTriggers, under a lock_timeout) and bump
+// again. Changed row versions with a good definition: log, count and bump.
+// The first bump commits in its own transaction, so a repair that cannot get
+// its lock or fails outright never holds the invalidation back; until a repair
+// commits and the re-read is clean every tick bumps again. The bump invalidates every replica's cache, so whatever went
 // unseen while the triggers were wrong is re-read from the live join everywhere,
 // not just here. A false alarm (a catalog rewrite this file does not foresee,
 // such as a pg_upgrade) costs one cache refill and changes no decision.
 //
-// Limits, stated: the window is one interval, for deliberate DDL only (the
+// Limits, stated: the window is one interval (plus at most one tick timeout),
+// also while a repair keeps failing, for deliberate DDL only (the
 // accidental states keep the per-statement proof's zero window). A superuser
 // below SQL (native code, the data directory, a replaced plpgsql handler or a
 // redefined pg_catalog function the body calls) is not detected. PostgreSQL
@@ -51,6 +55,15 @@ import (
 // rolePermGenerationIntegrityInterval is the time between two checks (a var so
 // tests can shorten it).
 var rolePermGenerationIntegrityInterval = 30 * time.Second
+
+// rolePermGenerationIntegrityTickTimeout bounds one tick, so a statement that
+// hangs cannot stop the ticks after it.
+var rolePermGenerationIntegrityTickTimeout = 10 * time.Second
+
+// rolePermGenerationRepairLockTimeout is the repair's lock_timeout: how long
+// its DROP TRIGGER may queue for the table's lock (stalling the table's
+// readers behind it) before the repair gives up until the next tick.
+var rolePermGenerationRepairLockTimeout = time.Second
 
 var rolePermGenerationTamperTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "keyorix_role_permission_generation_tamper_total",
@@ -181,17 +194,34 @@ func (c *rolePermGenerationIntegrityChecker) check(ctx context.Context) (bool, e
 	}
 	rolePermGenerationTamperTotal.Inc()
 	c.pending = true
+	// The bump commits on its own first: invalidation never waits on, or rolls
+	// back with, a repair that cannot finish.
 	if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if st.problem != "" {
-			if err := ensurePostgresRolePermGenerationTriggers(tx); err != nil {
-				return err
-			}
-		}
 		return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
 	}); err != nil {
 		// pending stays set and the baseline is left alone: the next tick
-		// repairs and bumps again, never adopts the current reading.
-		return false, fmt.Errorf("restore the role-permission generation triggers: %w", err)
+		// bumps (and repairs) again, never adopts the current reading.
+		return false, fmt.Errorf("invalidate the role-permission caches: %w", err)
+	}
+	if st.problem != "" {
+		// The repair bumps again in its own transaction, so a write made
+		// through the wrong trigger after the first bump is flushed when the
+		// repair commits. lock_timeout: its DROP TRIGGER takes an ACCESS
+		// EXCLUSIVE lock on the table, and a request queued behind an open
+		// transaction would stall every reader of the table behind it.
+		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
+				return err
+			}
+			if err := ensurePostgresRolePermGenerationTriggers(tx); err != nil {
+				return err
+			}
+			return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
+		}); err != nil {
+			// The caches were flushed, the triggers are still wrong: pending
+			// stays set, so every tick bumps again until a repair commits.
+			return true, fmt.Errorf("restore the role-permission generation triggers: %w", err)
+		}
 	}
 	// The repair rewrote catalog rows: the next tick compares against them.
 	after, err := readRolePermGenerationIntegrity(ctx, c.ls.db)
@@ -223,7 +253,10 @@ func (ls *LocalStorage) StartRolePermissionsGenerationIntegrityCheck(logf func(s
 		tick := time.NewTicker(rolePermGenerationIntegrityInterval)
 		defer tick.Stop()
 		for {
-			if _, err := c.check(ctx); err != nil && ctx.Err() == nil {
+			tctx, tcancel := context.WithTimeout(ctx, rolePermGenerationIntegrityTickTimeout)
+			_, err := c.check(tctx)
+			tcancel()
+			if err != nil && ctx.Err() == nil {
 				logf("role-permission generation integrity check: %v", err)
 			}
 			select {
