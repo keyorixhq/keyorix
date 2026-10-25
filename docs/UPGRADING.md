@@ -624,7 +624,7 @@ Details: [recertification-activity-window.md](recertification-activity-window.md
 ## 6q. Compatibility floor 3: v0.96.x cannot run against an upgraded database
 
 This release raises the schema compatibility floor to 3 (ADR-101); its schema epoch
-is 6 (epochs 4, 5 and 6 are additive and leave the floor at 3, see 6o.1).
+is 7 (epochs 4 to 7 are additive and leave the floor at 3, see 6o.1 and 6z).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
 epoch of 3 (database schema epoch 7)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
@@ -737,6 +737,8 @@ code. The checklist to follow is
 | `audit_durability` defaults to `standard` on PostgreSQL (#3268) | §6c |
 | `ssl_root_cert`, the `ssl_mode` allowlist, Compose Postgres over TLS (#3162, #3189, #3203) | §2 |
 | CLI: webhook URLs refused as `--url` (CLI-UX-2) | §6x |
+| SECURITY: audit Vault access migrated with `keyorix-migrate` v0.96.0 to v0.96.3 (`vault audit-access`) | §6y |
+| Roles carry an assignable scope; API clients that grant a new role without `project_id` get 400 (schema epoch 7, #3546) | §6z |
 
 Each heading number in this document is unique. The sections are not in alphabetical
 order because they were added by different pull requests; look a section up by its
@@ -872,8 +874,11 @@ log (`Error assigning role: could not record the change in the audit log; ...`, 
 `ERROR SECURITY: failed to persist audit event ...`). Checked for the role grant with a
 fault on the audit append: 500, no grant row left. The other covered endpoints go through
 their own handlers' default branch and were not each checked. So automation cannot tell
-this refusal from any other 500 by the status: retry a 500 on these endpoints, and look in
-the server log when it keeps failing. The one 503 on these paths is a request that both
+this refusal from any other 500 by the status. Before retrying a 500 on these endpoints,
+check that the object or grant does not already exist (list the user's roles, the tokens,
+the users): this refusal committed nothing, but another 500 on a call that creates a
+user, token or grant may have committed, and a blind retry can create a second
+credential. Look in the server log when it keeps failing. The one 503 on these paths is a request that both
 narrows and widens access (a user deactivated and renamed in one call, a role update
 that removes and adds permissions): the narrowing part is applied, the rest is not, and
 the answer is `503 MutationPartiallyApplied` (`mutation_partially_applied`, gRPC
@@ -887,7 +892,8 @@ append or a crash no longer loses it.
 What to do: nothing in the configuration. Operationally, a healthy audit path is
 now a precondition for granting access (break-glass excepted, see 6o.1). Before upgrading, run `keyorix-server admin verify-audit` and check
 database health and free disk space, and make sure automation that creates users,
-roles, shares or tokens retries on a 500 (see above).
+roles, shares or tokens retries on a 500 only after checking that the object does not
+already exist (see above).
 
 Not run against a release build. Proved on main (SQLite) by
 `internal/core/security_mutation_audit_tx_test.go:TestSecurityMutationAudit_RowExistsIffMutationCommitted`,

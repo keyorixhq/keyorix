@@ -76,7 +76,9 @@ deviation. Fix refusals before the real start. (Run it after the binary swap in 
   changes and the client sees a generic 500, not a 503 (checked for `POST /api/v1/user-roles`;
   the other endpoints use their handler's default error branch). The reason,
   `could not record the change in the audit log; nothing was changed, retry`, is only in the
-  server log (§6o). Break-glass does not fail on an audit outage: it commits degraded with
+  server log (§6o). Before retrying, it checks that the object or grant does not already exist
+  (list the roles, tokens or users): a different 500 on a call that creates a credential may
+  have committed, and a blind retry can create a second one. Break-glass does not fail on an audit outage: it commits degraded with
   a 15-minute expiry (§6o.1); `verify-audit` answers exit 2 while one is unsettled.
 - [ ] If PostgreSQL is the audit store and you want the v0.96 behaviour, decide on
   `audit_durability: strict` now (§6c). The default becomes `standard`.
