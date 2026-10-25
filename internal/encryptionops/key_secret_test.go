@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"gopkg.in/yaml.v3"
 )
 
@@ -127,8 +128,10 @@ func TestKeySecret_GenerateThenUnpack_OpensWithTheSamePassphrase(t *testing.T) {
 	if s.Metadata.Name != "keyorix-keys-1" || s.Metadata.Namespace != "keyorix" || s.Metadata.Labels["keyorix.io/key-set"] != "true" {
 		t.Fatalf("metadata: %+v", s.Metadata)
 	}
-	if len(s.Data) != 2 {
-		t.Fatalf("Secret keys %v, want exactly data.key and kek.salt", s.Data)
+	// The generated set carries the key-set manifest its first boot wrote
+	// (#2900), so a read-only Secret mount is checked for a mixed generation.
+	if len(s.Data) != 3 || s.Data["data.key"] == "" || s.Data["kek.salt"] == "" || s.Data[KeySetManifestName] == "" {
+		t.Fatalf("Secret keys %v, want exactly data.key, kek.salt and %s", s.Data, KeySetManifestName)
 	}
 	if len(s.file(t, "kek.salt")) != 32 {
 		t.Fatalf("kek.salt is %d bytes, want 32", len(s.file(t, "kek.salt")))
@@ -146,6 +149,15 @@ func TestKeySecret_GenerateThenUnpack_OpensWithTheSamePassphrase(t *testing.T) {
 	for _, f := range []string{"data.key", "kek.salt"} {
 		if m := fileMode(t, filepath.Join(cwd, "pod-keys", f)); m != 0o600 {
 			t.Fatalf("%s mode %o, want 600", f, m)
+		}
+	}
+	m, err := keyfiles.LoadManifest(filepath.Join(cwd, "pod-keys", KeySetManifestName))
+	if err != nil {
+		t.Fatalf("the unpacked set must carry its key-set manifest: %v", err)
+	}
+	for _, f := range []string{"data.key", "kek.salt"} {
+		if m.Files[f].SHA256 != keyfiles.HashBytes(s.file(t, f)) {
+			t.Fatalf("the unpacked manifest does not record the unpacked %s", f)
 		}
 	}
 	fp, err := openedFingerprint(t, filepath.Join(cwd, "pod-keys"), testBaselinePassphrase)
@@ -300,7 +312,7 @@ func TestKeySecret_StdoutPipeCarriesOnlyTheManifest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var s parsedKeySecret
-	if err := yaml.Unmarshal(out.Bytes(), &s); err != nil || s.Kind != "Secret" || len(s.Data) != 2 {
+	if err := yaml.Unmarshal(out.Bytes(), &s); err != nil || s.Kind != "Secret" || len(s.Data) != 3 {
 		t.Fatalf("stdout is not exactly the manifest (%v): %q", err, out.String())
 	}
 	if !strings.Contains(msg.String(), "to stdout") {

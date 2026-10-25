@@ -64,7 +64,7 @@ var manifestWriterExemptions = map[string]string{
 	"server/admin:writeRestoredFile":                   "the restored database file, not key material",
 	"server/admin:moveAsideSQLiteDB":                   "moves the database and its WAL sidecars aside",
 	"internal/encryptionops:writeKeySecret":            "writes a Kubernetes Secret manifest file (or stdout), not a file of a key directory",
-	"internal/encryptionops:UnpackKeySecret":           "unpacks a Secret into an empty workspace directory (O_EXCL), never into the active set of an install; the first key writer or server start on that directory adopts the files into a manifest (ReconcileKeySet)",
+	"internal/encryptionops:UnpackKeySecret":           "unpacks a Secret into an empty workspace directory (O_EXCL), never into the active set of an install; the Secret carries the key-set manifest its exporter wrote (TestKeySecret_GenerateThenUnpack_OpensWithTheSamePassphrase), and one without a manifest is adopted by the first key writer or server start there (ReconcileKeySet)",
 	"server/admin:auditEventCountFromDBBytes":          "a private temporary copy of an archived database",
 	"server/admin:liveKeyMaterial":                     "stages a copy of the key files in a temporary directory to unwrap the backup-manifest key",
 	"server/admin:stageKeyFilesForKEKUnwrap":           "stages the archive's key files in a temporary directory to unwrap the backup-manifest key",
