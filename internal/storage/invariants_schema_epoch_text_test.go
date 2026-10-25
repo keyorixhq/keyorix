@@ -4,7 +4,7 @@ package storage
 //
 // INV-STORAGE-02 in INVARIANTS.md quotes the current schema epoch and compatibility
 // floor ("now epoch E, floor F"). It said "now 3 ... floor stays 2" long after the code
-// had moved to epoch 6 and floor 3, because the number lived only in prose. This test
+// had moved on (floor 3), because the number lived only in prose. This test
 // reads the number out of the prose and compares it with currentSchemaEpoch and
 // minCompatibleSchemaEpoch, so the sentence cannot go stale again: a bump of either
 // constant fails here until INVARIANTS.md is updated in the same change.
@@ -22,12 +22,14 @@ import (
 var inv02Numbers = regexp.MustCompile(`now epoch (\d+), floor (\d+)`)
 
 // inv02Entry returns the text of the INV-STORAGE-02 bullet: from its marker to the next
-// bullet or heading.
+// bullet or heading. It reports no entry unless the marker occurs exactly once, so a
+// stale duplicate bullet left next to an updated one is caught.
 func inv02Entry(md string) (string, bool) {
-	_, rest, ok := strings.Cut(md, "- **INV-STORAGE-02**")
-	if !ok {
+	const marker = "- **INV-STORAGE-02**"
+	if strings.Count(md, marker) != 1 {
 		return "", false
 	}
+	_, rest, _ := strings.Cut(md, marker)
 	if i := strings.Index(rest, "\n- **INV-"); i >= 0 {
 		rest = rest[:i]
 	}
@@ -41,7 +43,7 @@ func inv02Entry(md string) (string, bool) {
 func inv02Quoted(md string) (epoch, floor int, err string) {
 	entry, ok := inv02Entry(md)
 	if !ok {
-		return 0, 0, "no INV-STORAGE-02 entry"
+		return 0, 0, "no INV-STORAGE-02 entry, or more than one"
 	}
 	m := inv02Numbers.FindStringSubmatch(entry)
 	if m == nil {
@@ -83,6 +85,12 @@ func TestInvariantsStorage02_TextCheckCatchesStaleNumbers(t *testing.T) {
 	other := "- **INV-STORAGE-02** no numbers here.\n- **INV-STORAGE-03** now epoch 9, floor 9\n"
 	if _, _, problem := inv02Quoted(other); problem == "" {
 		t.Fatal("numbers from the next entry must not be attributed to INV-STORAGE-02")
+	}
+	// Two INV-STORAGE-02 entries (a new bullet added, the stale one left behind) must be
+	// reported, even when the first one quotes the right numbers.
+	dup := "- **INV-STORAGE-02** (now epoch 7, floor 4) new\n- **INV-STORAGE-02** (now 3 ... floor stays 2) old\n"
+	if _, _, problem := inv02Quoted(dup); problem == "" {
+		t.Fatal("a second INV-STORAGE-02 entry must be reported")
 	}
 	e, f, problem := inv02Quoted("- **INV-STORAGE-02** (now epoch 7, floor 4) text\n- **INV-STORAGE-03** x\n")
 	if problem != "" || e != 7 || f != 4 {
