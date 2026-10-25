@@ -61,6 +61,27 @@ var (
 	// #2653/#2654).
 	ErrUserAccountStateConflict = errors.New("user's account state changed concurrently")
 
+	// ErrNotSCIMManaged is returned (wrapped) by the SCIM user operations for an
+	// existing account SCIM does not own (scimOwned). The SCIM transport answers it
+	// exactly like a missing id (404), so the response never confirms the account
+	// exists (#120, #G85). Matched with errors.Is, never by text (#3494).
+	ErrNotSCIMManaged = errors.New("not a SCIM-managed account")
+
+	// ErrEmailInUse is returned (wrapped) by UpdateSCIMUser when the requested email
+	// belongs to a different user, from the up-front check or from the unique index
+	// catching a concurrent writer (storage.ErrDuplicateEmail). SCIM: 409 uniqueness.
+	ErrEmailInUse = errors.New("email already in use by another user")
+
+	// ErrSCIMUserExists is returned by ProvisionSCIMUser when a user with the same
+	// externalId or email already exists. SCIM: 409 uniqueness.
+	ErrSCIMUserExists = errors.New("a user already exists for this externalId/email")
+
+	// ErrLastAdminDeactivation is guardLastAdminDeactivation's refusal: the target
+	// is the install's last administrator. A deliberate, permanent refusal, unlike a
+	// storage failure while the guard reads roles (that one stays a server error so
+	// the caller retries). SCIM: 409.
+	ErrLastAdminDeactivation = errors.New("refusing to deactivate the last install administrator")
+
 	// ErrNotProjectMember is returned by RemoveProjectMember when the target
 	// user holds no role grant in the project — a benign no-op distinguishable
 	// (via errors.Is) from a real refusal such as guardLastProjectAdmin's,

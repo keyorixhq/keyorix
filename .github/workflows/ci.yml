@@ -84,6 +84,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
+  # docs/guard-rollout-contract.md rule 2: a guard listed in docs/guard-rollout.d
+  # is report-only on pull_request and merge_group runs and blocking on pushes to
+  # main/release and on the nightly schedule (internal/guardrules.Rollout).
+  KEYORIX_GUARD_ROLLOUT: ${{ (github.event_name == 'push' || github.event_name == 'schedule') && 'enforce' || 'report-only' }}
   # Pinned security tooling (SSDLC Phase 1, June 2026). Do not use @latest:
   # the tools that gate our security checks are themselves a supply-chain
   # surface. govulncheck deliberately floats — Google x/ tool, vuln DB is
@@ -321,6 +325,21 @@ jobs:
       # nightly schedule (.github/workflows/fault-tolerance-nightly.yml) is
       # the unconditional full check; this is the narrow PR-time one.
       fault_tolerance_relevant: ${{ steps.filter.outputs.fault_tolerance_relevant }}
+      # Queue parity (CI-PARITY-1, 2026-10-25): true when the PR touches the
+      # HARNESS of a FULL-only job -- the job's own definition (ci.yml) or the
+      # scripts/files the job itself drives -- so a FAST pull_request runs that
+      # job too instead of leaving it to the merge queue. #3529 changed
+      # scripts/selfhost/init-secrets.sh and docker-boot-smoke's own step;
+      # the PR run skipped the job and the queue failed it 10 times (21-22
+      # Oct). Narrow on purpose: harness files only, never server/** or the
+      # other broad inputs (those stay FULL-only, CI-LIGHT-1). web-e2e-real-smoke
+      # has no harness gate: changed web/e2e/real specs get their own PR-time
+      # run (web-e2e-changed-specs, SMOKE-FLAKE-2 #3670).
+      harness_docker_boot: ${{ steps.filter.outputs.harness_docker_boot }}
+      harness_helm_boot: ${{ steps.filter.outputs.harness_helm_boot }}
+      harness_demo: ${{ steps.filter.outputs.harness_demo }}
+      harness_e2e: ${{ steps.filter.outputs.harness_e2e }}
+      harness_fuzz: ${{ steps.filter.outputs.harness_fuzz }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -425,6 +444,12 @@ jobs:
           # job that would exercise it.
           relevant web_e2e_relevant '^(web/|server/http/|scripts/e2e/web-real-smoke\.sh$)'
           relevant fault_tolerance_relevant '^server/faultops/|^scripts/check-fault-tolerance-issues\.sh$'
+          # Queue parity: the harness of each FULL-only job (see the outputs).
+          relevant harness_docker_boot '^(scripts/selfhost/|docker-compose|keyorix\.docker\.yaml$|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_helm_boot '^(deploy/helm/|\.github/testdata/helm|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_demo '^(scripts/demo/|scripts/airgap-e2e\.sh$|scripts/totpgen/|server/Dockerfile$|\.dockerignore$)'
+          relevant harness_e2e '^(scripts/e2e/|Makefile$)'
+          relevant harness_fuzz '^scripts/fuzzing/'
           # FAST-profile path gates. operator/ and migrate/ are separate Go
           # modules with no dependency on the root module (no replace to
           # ../), so only their own tree changes them. cli/ imports the root
@@ -1663,12 +1688,18 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # docs/guard-rollout-contract.md rule 1: a date check never runs on a PR or
+      # in the merge queue (one calendar day would fail every entry). The nightly
+      # schedule enforces it here, and .github/workflows/guard-nightly.yml warns
+      # 7 days ahead through scripts/guard-expiry-report.sh.
       - name: Check CI exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           source scripts/ci-test-legs.sh
           check_exclusion_freshness
 
       - name: Check coverage-floor exclusion freshness (fails on any TEMPORARY entry >30 days old)
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           source scripts/ci-test-legs.sh
           check_coverage_floor_exclusion_freshness
@@ -1966,7 +1997,7 @@ jobs:
   # e2e-nightly.yml.
   e2e-smoke:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.full_profile == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -2039,7 +2070,11 @@ jobs:
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.full_profile == 'true' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.web_e2e_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_web_e2e == 'true'
     name: web-e2e-real-smoke-shard (${{ matrix.shard }}/2)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # SMOKE-FLAKE-1: a PASSING shard took median 576 s / max 595 s (shard 2) and max 590 s
+    # (shard 1) of the 600 s budget on 2026-10-22/23 (139 successful runs): one more spec file
+    # or a slower runner turns green into a timeout. A timeout is a hang detector, not a speed
+    # limit; the shard step's own duration is what to watch.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -2110,6 +2145,67 @@ jobs:
         run: |
           echo "web-e2e-real-smoke-shard matrix result: $SHARDS_RESULT"
           [ "$SHARDS_RESULT" = "success" ]
+
+  # SMOKE-FLAKE-1: a FAST pull_request run skips web-e2e-real-smoke (CI-LIGHT-1), so a PR that
+  # adds or edits a real-backend spec reached the merge queue without that spec ever having run:
+  # #3554 (group-role-scope.spec.ts, red on main for ~21 h, 73 of 93 merge-group rounds failed)
+  # and #3568 (suspend-clear-synced-copies-expired.spec.ts, red in its own queue rounds). This runs
+  # ONLY the spec files the PR adds or modifies, each on its own freshly booted server (about 30 s
+  # per file), and nothing when there are none. The full suite still runs in the merge queue.
+  web-e2e-changed-specs:
+    needs: [changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.full_profile != 'true' && needs.changes.outputs.docs_only != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Real-backend spec files this PR adds or changes
+        id: specs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          specs="$(git diff --name-only --diff-filter=AM "$BASE_SHA"...HEAD -- 'web/e2e/real/*.spec.ts' | sed 's#^web/##' | tr '\n' ' ')"
+          echo "specs=${specs% }" >> "$GITHUB_OUTPUT"
+          echo "changed real-backend specs: ${specs:-none (nothing to run)}"
+      - name: Set up Go
+        if: steps.specs.outputs.specs != ''
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: steps.specs.outputs.specs != ''
+        with:
+          version: 11
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: steps.specs.outputs.specs != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - name: Install web dependencies
+        if: steps.specs.outputs.specs != ''
+        working-directory: web
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install Playwright browser
+        if: steps.specs.outputs.specs != ''
+        working-directory: web
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Run the changed specs against a real backend
+        if: steps.specs.outputs.specs != ''
+        env:
+          KEYORIX_E2E_SPECS: ${{ steps.specs.outputs.specs }}
+        run: make e2e-web-smoke
+      - name: Upload the failed groups' logs, screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-e2e-changed-specs-report
+          path: web/playwright-report/
+          retention-days: 7
 
   # repo-guards (2026-10-05): the repo-wide structural guard tests (every
   # Test...Guard / ...Sweep / ...Completeness test: state-map completeness,
@@ -2248,6 +2344,9 @@ jobs:
   # computes boot_smoke_relevant from the group diff with the same regex, so
   # a group runs this exactly when one of its PRs would have.
   # demo-up-smoke and helm-boot-smoke below follow the same rule.
+  # Queue parity (CI-PARITY-1): a FAST pull_request still runs it when the PR
+  # touches its harness (changes.harness_docker_boot); same for demo-up-smoke,
+  # helm-boot-smoke, e2e-smoke and fuzz-targets/fuzz-reach.
   #
   # Merge-queue gate (CI-SELECT-1): on merge_group this runs when the
   # `select` job's gate_docker_boot is true -- the server binary (./server or
@@ -2259,15 +2358,33 @@ jobs:
   # container booting just as well. Outside merge_group the gate is true.
   docker-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_docker_boot == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_docker_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_docker_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # SMOKE-FLAKE-3: on 2026-10-23 13:29 UTC Docker Hub refused the anonymous pull of
+      # moby/buildkit ("unauthorized: authentication required") and answered HEAD for pinned base
+      # images with 500. The BuildKit image and the docker.io base images now come through
+      # Google's Docker Hub mirror, mirror.gcr.io.
+      # - The BuildKit image is pulled by tag@digest. The digest is the INDEX digest of
+      #   docker.io/moby/buildkit:buildx-stable-1 fetched on 2026-10-24 from UPSTREAM Docker Hub
+      #   with `docker buildx imagetools inspect docker.io/moby/buildkit:buildx-stable-1`, not from
+      #   the mirror. A pull whose content does not match the digest fails the job; there is no
+      #   fallback to an unpinned image. Bumping the tag requires re-fetching the digest from
+      #   upstream docker.io, never from mirror.gcr.io.
+      # - buildkitd mirrors: BuildKit tries mirror.gcr.io first and falls back to docker.io on a
+      #   miss. Every Dockerfile FROM is digest-pinned, so a mirror serving other content fails
+      #   the build instead of falling back silently.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Build server image (load, no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -2320,13 +2437,31 @@ jobs:
           echo "backend never answered /api/v1/version 200 within 120s (last HTTP code: ${code:-none})" >&2
           exit 1
 
+      # SMOKE-FLAKE-1: both steps used to die on "required variable KEYORIX_SECRETS_GID is missing"
+      # whenever the job failed before init-secrets.sh wrote .env (every failure of 2026-10-21/22
+      # and 2026-10-23), so a red run printed no container log at all. The fallback only lets
+      # compose parse the file for logs/down; the up step above is unchanged.
       - name: Dump compose logs on failure
         if: failure()
-        run: docker compose logs --no-color
+        env:
+          COMPOSE_PROJECT_NAME: kx-ci-boot-smoke
+        run: |
+          KEYORIX_SECRETS_GID="${KEYORIX_SECRETS_GID:-$(id -g)}" docker compose logs --no-color > boot-smoke-compose.log 2>&1 || true
+          cat boot-smoke-compose.log
+
+      - name: Upload compose logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: docker-boot-smoke-compose-logs
+          path: boot-smoke-compose.log
+          retention-days: 7
 
       - name: Tear down
         if: always()
-        run: docker compose down -v
+        env:
+          COMPOSE_PROJECT_NAME: kx-ci-boot-smoke
+        run: KEYORIX_SECRETS_GID="${KEYORIX_SECRETS_GID:-$(id -g)}" docker compose down -v
 
   # DEMO-2: scripts/demo/up.sh builds its OWN local air-gapped image (the
   # published ghcr.io/keyorixhq/keyorix-server-airgap image never embeds the
@@ -2347,7 +2482,7 @@ jobs:
   # merge_group only, like docker-boot-smoke above.
   demo-up-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_demo == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_demo == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_demo == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2366,6 +2501,20 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: web/pnpm-lock.yaml
+
+      # SMOKE-FLAKE-3: up.sh builds with the runner's own dockerd; send its docker.io pulls
+      # through Google's Docker Hub mirror, mirror.gcr.io. dockerd falls back to docker.io when
+      # the mirror misses. Content is protected by the digest-pinned Dockerfile FROM lines: a
+      # digest mismatch fails the pull and is never retried unpinned. No image is named here, so
+      # there is no digest to bump; the pins live in the Dockerfiles.
+      - name: Pull Docker Hub images through mirror.gcr.io
+        run: |
+          f=/etc/docker/daemon.json
+          cur='{}'
+          if sudo test -s "$f"; then cur="$(sudo cat "$f")"; fi
+          printf '%s' "$cur" | jq '. + {"registry-mirrors": ["https://mirror.gcr.io"]}' | sudo tee "$f" >/dev/null
+          sudo systemctl restart docker
+          docker info --format '{{.RegistryConfig.Mirrors}}'
 
       - name: scripts/demo/up.sh (builds the image, seeds the demo)
         run: ./scripts/demo/up.sh
@@ -2424,15 +2573,33 @@ jobs:
   # merge_group only.
   helm-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_helm_boot == 'true'
+    if: github.event_name != 'push' && (needs.changes.outputs.harness_helm_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_helm_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # SMOKE-FLAKE-3: on 2026-10-23 13:29 UTC Docker Hub refused the anonymous pull of
+      # moby/buildkit ("unauthorized: authentication required") and answered HEAD for pinned base
+      # images with 500. The BuildKit image and the docker.io base images now come through
+      # Google's Docker Hub mirror, mirror.gcr.io.
+      # - The BuildKit image is pulled by tag@digest. The digest is the INDEX digest of
+      #   docker.io/moby/buildkit:buildx-stable-1 fetched on 2026-10-24 from UPSTREAM Docker Hub
+      #   with `docker buildx imagetools inspect docker.io/moby/buildkit:buildx-stable-1`, not from
+      #   the mirror. A pull whose content does not match the digest fails the job; there is no
+      #   fallback to an unpinned image. Bumping the tag requires re-fetching the digest from
+      #   upstream docker.io, never from mirror.gcr.io.
+      # - buildkitd mirrors: BuildKit tries mirror.gcr.io first and falls back to docker.io on a
+      #   miss. Every Dockerfile FROM is digest-pinned, so a mirror serving other content fails
+      #   the build instead of falling back silently.
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver-opts: image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
 
       - name: Build server image (load, no push)
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -2454,7 +2621,37 @@ jobs:
           cache-from: type=gha,scope=keyorix-web
           cache-to: type=gha,mode=max,scope=keyorix-web
 
+      # Network retry (CI-PARITY-1): kind-action downloads kind and its
+      # .sha256sum from GitHub releases; on 17 Oct the checksum file came back
+      # unreadable ("sha256sum: no properly formatted checksum lines found")
+      # and failed the job. Up to 3 attempts, 20 s / 60 s back-off; the action
+      # still verifies the checksum on every attempt (nothing is installed
+      # until it matches), and a half-created cluster is deleted first.
       - name: Create kind cluster
+        id: kind1
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 1)
+        if: steps.kind1.outcome == 'failure'
+        run: |
+          sleep 20
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 2)
+        id: kind2
+        if: steps.kind1.outcome == 'failure'
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 2)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
+        run: |
+          sleep 60
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 3)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
         uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: kx-ci-boot-smoke
@@ -2523,11 +2720,18 @@ jobs:
           echo "::error::admin login never succeeded (last HTTP status: ${code:-none}) -- first-boot bootstrap did not complete"
           exit 1
 
+      # SMOKE-FLAKE-1: a failure before the kind cluster exists (the 2026-10-23 Docker Hub 500 on
+      # the web image build) made this step fail on "connection to the server localhost:8080
+      # was refused" and print nothing useful; it now says the cluster was never created.
       - name: Describe pods and dump logs on failure
         if: failure()
         run: |
-          kubectl get pods -o wide
-          kubectl describe pods
+          if ! kubectl cluster-info >/dev/null 2>&1; then
+            echo "no kind cluster: the job failed before 'Create kind cluster' (see the first failed step above)"
+            exit 0
+          fi
+          kubectl get pods -o wide || true
+          kubectl describe pods || true
           kubectl logs -l app.kubernetes.io/instance=kx,app.kubernetes.io/component=server --tail=200 || true
 
       - name: Tear down
@@ -2792,7 +2996,7 @@ jobs:
     # or a changed .go file (any module) that has a `func Fuzz` line before
     # or after the change (an added, removed, renamed or build-tag-moved fuzz
     # target is the only thing this job's comparison can see change).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_targets == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2901,7 +3105,7 @@ jobs:
     # an affected (changed or importing a changed) package among the TARGETS
     # packages of scripts/fuzzing/harness-acceptance.sh (read at run time; an
     # unreadable list opens the gate).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_reach == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_reach == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2954,6 +3158,24 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.3'
+          # Both modules: the default key (root go.sum only) never cached the
+          # operator module's dependencies, so every run fetched them again.
+          cache-dependency-path: |
+            go.sum
+            operator/go.sum
+
+      # proxy.golang.org failed this job in the queue on 3 Oct ("TLS handshake
+      # timeout", operator module) and 20 Oct ("stream error ... INTERNAL_ERROR",
+      # root module). Fetch both modules up front with a bounded retry that
+      # fires on network errors only (scripts/ci/retry-net.sh: max 3 attempts,
+      # never on a go.sum mismatch). go mod download verifies every module
+      # against go.sum exactly as before; the diff check fails the job if it
+      # had to add or change a hash.
+      - name: Download Go modules (root + operator; retry on network errors only)
+        run: |
+          scripts/ci/retry-net.sh go mod download
+          (cd operator && GOWORK=off ../scripts/ci/retry-net.sh go mod download)
+          git diff --exit-code -- go.sum operator/go.sum
 
       # Keyed on the resolved Go version too (not just GO_LICENSES_VERSION): a
       # go-licenses binary built under one Go toolchain and then reused as-is

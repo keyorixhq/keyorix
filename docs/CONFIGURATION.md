@@ -447,6 +447,38 @@ validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
 `storage.database.insecure_disable_database_tls` whatever `ssl_mode` says.
 
+**`PGSSLMODE` overrides the `prefer` default, and nothing else.** The
+environment variable is read only when a `dsn` is set, the dsn has no
+`sslmode`, and `ssl_mode` is not set. In order, the first rule that applies
+wins:
+
+1. `dsn` set, with `sslmode` in it: that value. `PGSSLMODE` is ignored.
+2. `dsn` set, no `sslmode` in it, `ssl_mode` set: refused at start-up (the dsn
+   must state `sslmode` itself, see above). `PGSSLMODE` does not rescue this.
+3. `dsn` set, no `sslmode` in it, no `ssl_mode`: `PGSSLMODE` if it is set (an
+   invalid value is refused), otherwise `prefer`.
+4. No `dsn` (connection built from the `host`/`port`/... fields): `ssl_mode`,
+   or `require` when it is empty. `PGSSLMODE` is **not** consulted.
+
+So `prefer`, which falls back to plaintext when the TLS attempt fails, is what
+a dsn without `sslmode` gets unless the process environment says otherwise:
+
+```yaml
+storage:
+  database:
+    dsn: "host=db user=keyorix dbname=keyorix"   # no sslmode
+```
+
+```
+# no PGSSLMODE:                 prefer       (may run in plaintext)
+PGSSLMODE=verify-full           verify-full  (also needs sslrootcert, see above)
+PGSSLMODE=verify_full           refused: not a valid sslmode
+# dsn: "... sslmode=require":   require      whatever PGSSLMODE says
+```
+
+Prefer writing `sslmode` into the dsn: a value in the file cannot be changed
+by the environment of whoever starts the process.
+
 **Connection-service files are refused.** `service=` or `servicefile=` in the
 `dsn`, or the `PGSERVICE` environment variable, make the PostgreSQL driver read
 `sslmode`, `sslrootcert` and `host` from a `pg_service.conf` that Keyorix does
@@ -2082,6 +2114,26 @@ scim:
 > low-variety value, a placeholder such as `changeme`, or the same value as another
 > configured secret); see
 > [startup-refusals.md](operator/startup-refusals.md#weak-scim-token).
+
+### Status codes on a failed SCIM user request
+
+The status tells the IdP whether to retry, so a failed deactivation (PATCH or PUT
+with `active:false`) or DELETE is never answered `404` unless the user really is
+absent. A storage failure rolls the whole change back: the account is still active
+and its sessions and tokens are still valid until the IdP's retry succeeds.
+
+| Status | `scimType` | Meaning | IdP should |
+|---|---|---|---|
+| `404` | — | No such user, or an account SCIM does not manage | treat it as gone |
+| `409` | `uniqueness` | The email or `externalId` belongs to another user | fix the data |
+| `409` | — | Refused: the user is the install's last administrator | fix the role assignment |
+| `400` | `invalidValue` | An attribute value is not acceptable | fix the data |
+| `503` + `Retry-After` | — | Write contention or a concurrent change to the same user; nothing was written | retry after the delay |
+| `500` | — | Any other server-side failure (database unavailable, deadlock, rolled-back transaction); nothing was written | retry |
+| `503` (Keyorix `PartialMutation` extension) | — | The deactivation was applied, the rest of the request was not (see the body) | retry the request |
+
+The `500` body carries a generic `detail`; the cause is in the server log with the
+request id.
 
 ## crypto_inventory
 

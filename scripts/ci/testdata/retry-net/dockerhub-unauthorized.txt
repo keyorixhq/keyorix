@@ -1,0 +1,2 @@
+[command]/usr/bin/docker pull moby/buildkit:buildx-stable-1
+Error response from daemon: unauthorized: authentication required
