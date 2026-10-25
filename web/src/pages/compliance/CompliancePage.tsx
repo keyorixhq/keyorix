@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { complianceApi, type CompliancePosture } from '../../services/compliance';
 import { apiClient } from '../../services/client';
 import { triggerBlobDownload } from '../../utils';
+import { CryptoInventoryPanel } from './CryptoInventoryPanel';
 
 // LegalHoldBanner surfaces the deployment legal-hold state (A.5.34) and lets an
 // admin place or lift it. Reads status from the shared posture query; mutations
@@ -1020,6 +1021,7 @@ export const CompliancePage: React.FC = () => (
         <PosturePanel />
         <DigestPanel />
         <ControlMatrixPanel />
+        <CryptoInventoryPanel />
         <RiskRegisterPanel />
         <SoDViolationsSection />
 

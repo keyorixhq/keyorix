@@ -1,0 +1,5 @@
+### Documentation
+- **The rate-limit matrix lists change-password and profile as bounded.** `docs/security/production-hardening-matrix.d/rate-limits.md` still reported `POST /auth/change-password` and `PUT /auth/profile` (email change) as an unbounded current-password check; since #3365 both spend the `/auth/login` per-IP budget and feed the account lockout. The row moves from "Gaps" to the authenticated-routes table.
+
+### Testing
+- **The change-password / profile budget is now tested through the real router.** `TestChangePassword_CurrentPasswordBudgetThroughRouter` and `TestUpdateProfile_CurrentPasswordBudgetThroughRouter` send a real session bearer token through `NewRouter`: ten wrong current passwords answer `401`, the next request from that IP answers `429` even with the right password and changes nothing, each wrong password left an `auth.login_failed` row with `success=false` and the client IP, another IP is not throttled, and a display-name edit (no `current_password`) never is.

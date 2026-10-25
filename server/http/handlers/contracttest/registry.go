@@ -141,6 +141,7 @@ var pendingRegistry = map[string]string{ // #nosec G101 -- operationId keys, not
 	"exportComplianceControlsCSV":        reasonSchemaNotYetWritten, // get /api/v1/compliance/controls.csv
 	"getComplianceCredentialTrends":      reasonSchemaNotYetWritten, // get /api/v1/compliance/credential-trends
 	"getComplianceDigest":                reasonSchemaNotYetWritten, // get /api/v1/compliance/digest
+	"getCryptoInventory":                 reasonSchemaNotYetWritten, // get /api/v1/compliance/crypto-inventory
 	"getCompliancePermissionBaseline":    reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline
 	"getCompliancePermissionBaselineCSV": reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-baseline.csv
 	"getCompliancePermissionChanges":     reasonSchemaNotYetWritten, // get /api/v1/compliance/permission-changes

@@ -78,6 +78,9 @@ credential_delivery.smtp.password
 credential_delivery.smtp.port
 credential_delivery.smtp.tls
 credential_delivery.smtp.username
+crypto_inventory.migration_years
+crypto_inventory.quantum_horizon
+crypto_inventory.unbounded_lifetime_years
 data_retention.anomaly_alerts_days
 data_retention.anomaly_alerts_unacked_ceiling_days
 data_retention.break_glass_days
