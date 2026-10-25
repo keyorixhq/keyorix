@@ -12,7 +12,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
-// RELEASE-PREP-2: docs/UPGRADING.md numbers its sections (6a ... 6x) and every other
+// RELEASE-PREP-2: docs/UPGRADING.md numbers its sections (6a ... 6z, then 6aa) and every other
 // document, and every changelog fragment, points at them by that number. Three pull
 // requests each took "the next free letter" in parallel and shipped two 6g and three 6j,
 // one of them an empty heading; every reference to "6g" then meant two sections.
@@ -25,15 +25,19 @@ import (
 //     (in any docs/ file, changelog.d/ fragment, SECURITY.md or README.md), and every "§6q"
 //     inside UPGRADING.md itself, names a heading that exists.
 //
+// 6a to 6z are all taken, so the next section is 6aa: the reference pattern accepts any
+// run of letters after the 6 ("§6aa", "section 6ab"), the same ids the heading pattern
+// accepts, so a section past 6z gets its references checked too.
+//
 // What this does NOT check: that the section a reference points at is the RIGHT one (only
-// that it exists and is unique), sections other than 6a-6z (§2, §7 are also used for
-// other documents' sections; every lettered UPGRADING section is a 6x, and "§5b" on a
+// that it exists and is unique), lettered sections other than 6 (§2, §7 are also used for
+// other documents' sections; every lettered UPGRADING section is a 6<letters>, and "§5b" on a
 // UPGRADING line names the hardening guide), a reference whose "UPGRADING" and "§6q" sit
 // on different lines of a wrapped paragraph, and bare "6j" without a "§" or "section".
 
 var (
 	upgradingHeading = regexp.MustCompile(`^## (\d+[a-z]*(?:\.\d+)?)[. ]`)
-	letteredSection  = regexp.MustCompile(`(?:§|[Ss]ections? )(6[a-z](?:\.\d+)?)\b`)
+	letteredSection  = regexp.MustCompile(`(?:§|[Ss]ections? )(6[a-z]+(?:\.\d+)?)\b`)
 )
 
 // upgradingHeadings returns the section id of every heading, in order, and the ids of
@@ -151,6 +155,10 @@ func TestUpgradingSectionCheckCatchesPlantedErrors(t *testing.T) {
 	}
 	if m := letteredSection.FindStringSubmatch("see UPGRADING.md §6q and section 6v"); m == nil || m[1] != "6q" {
 		t.Fatalf("reference pattern did not match: %v", m)
+	}
+	// Past 6z: a reference to 6aa must be read as 6aa (and so checked), not skipped or cut to 6a.
+	if got := letteredSection.FindAllStringSubmatch("UPGRADING §6aa and section 6ab.1", -1); len(got) != 2 || got[0][1] != "6aa" || got[1][1] != "6ab.1" {
+		t.Fatalf("references past 6z must be matched whole, got %v", got)
 	}
 	if got := letteredSection.FindAllStringSubmatch("UPGRADING §2, §7 and section 4", -1); len(got) != 0 {
 		t.Fatalf("numeric-only sections must be ignored, got %v", got)
