@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -17,11 +18,24 @@ func flushLastUsedOnShutdown(coreService *core.KeyorixCore) {
 	coreService.FlushLastUsed(ctx)
 }
 
+// secretReadDenialFlushTimeout bounds flushSecretReadDenialsOnShutdown, like
+// the 10 s of flushLastUsedOnShutdown: up to 10000 summary rows are written one
+// by one, and a slow database must not hold shutdown until SIGKILL.
+const secretReadDenialFlushTimeout = 10 * time.Second
+
 // flushSecretReadDenialsOnShutdown writes the secret-read denial summary rows
 // for aggregation windows still open at shutdown (#3377). Without it the counts
-// of refusals after each window's first row are lost on SIGTERM.
+// of refusals after each window's first row are lost on SIGTERM. Rows not
+// written within the timeout are counted in a SECURITY log line. A window
+// opened after this runs (a request still served past the HTTP drain timeout)
+// is lost.
 func flushSecretReadDenialsOnShutdown(coreService *core.KeyorixCore) {
-	coreService.FlushSecretReadDenials()
+	ctx, cancel := context.WithTimeout(context.Background(), secretReadDenialFlushTimeout)
+	defer cancel()
+	if n := coreService.FlushSecretReadDenialsWithin(ctx); n > 0 {
+		log.Printf("SECURITY: shutdown: %d refused-secret-read summary row(s) NOT written to the audit trail within %s (%v); those refusal counts are lost",
+			n, secretReadDenialFlushTimeout, ctx.Err())
+	}
 }
 
 // closeAuditForwarder flushes/closes the wired SIEM audit forwarder (if any) on
