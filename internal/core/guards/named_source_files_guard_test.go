@@ -48,7 +48,7 @@ var namedFileScanRoots = []string{"internal/core", "server/http", "internal/stat
 // fault wrapper, rotation backends).
 var namedFileSearchDirs = []string{
 	"server/http", "server/http/handlers",
-	"internal/core/storage", "internal/storage/store", "internal/faultstorage", "internal/rotation", "server/proto/pb",
+	"internal/core/storage", "internal/core/storage/storagetest", "internal/storage/store", "internal/faultstorage", "internal/rotation", "server/proto/pb",
 }
 
 // namedFileAllowlist: "<test file>:<literal>" -> why the named file does not

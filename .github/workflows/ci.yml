@@ -861,13 +861,24 @@ jobs:
           fi
           ./actionlint
 
-  # Fast compile gate (~30s). Catches redeclarations, type errors, and build
-  # failures before the expensive test-suite/static-analysis jobs start -- those
-  # declare `needs: [preflight]`. Cheaper jobs (lint, licenses, fuzz-targets,
-  # operator, gitleaks, helm-*, openapi-lint) run their own independent
-  # compile/analysis and so run fully in parallel with preflight instead of
-  # waiting on it -- on a broken build they each fail on their own terms
-  # instead of via the shared gate, but nothing waits an extra ~30s to start.
+  # Compile gate and `go vet ./...`: UTF-8 check, go mod verify, go build, go
+  # vet. Not a required context itself; build-and-test fails unless it
+  # succeeded, so it is required through that aggregator.
+  #
+  # test-suite does NOT wait for it any more (CI-VETGATE-1, 2026-10-25). The
+  # job takes ~4-6 min, of which go vet is ~3.5 min (merge-queue run
+  # 40124088586: go vet 214 s of a 254 s job), and every test leg started
+  # only after it, 19% of a merge-queue round (CI-PARETO-1). The legs now
+  # start right after changes+select, like lint, and this job runs beside
+  # them. On a broken build each leg fails at its own `go test` compile.
+  # go vet stays here: golangci-lint's govet (lint job) is not the same
+  # check (its default analyzer set differs from go vet's and it drops
+  # findings in generated files), see the CI-VETGATE-1 PR.
+  #
+  # test-quick-root/test-quick-cli, static-analysis, exclusion-freshness
+  # and assert-leg-completeness still declare `needs: [preflight]`. Cheaper
+  # jobs (lint, licenses, fuzz-targets, operator, gitleaks, helm-*,
+  # openapi-lint) run their own compile/analysis in parallel with it.
   preflight:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
@@ -898,11 +909,14 @@ jobs:
       - name: go mod verify
         run: go mod verify
 
-      - name: go vet
-        run: go vet ./...
-
+      # go build before go vet: a compile error turns this job red in about a
+      # minute instead of after the full vet pass, and vet reuses the build
+      # cache this step fills.
       - name: go build
         run: go build ./...
+
+      - name: go vet
+        run: go vet ./...
 
   # Quick-tier feedback for a pull_request push: `go test -short`, no -race,
   # SQLite only, on just the packages the PR's diff can plausibly affect
@@ -1024,11 +1038,12 @@ jobs:
   # aggregates both legs' results and does the coverage-floor check, keeping
   # that exact job name for branch protection's required status check.
   test-suite:
-    needs: [preflight, changes, select]
-    # A custom `if:` replaces the implicit "only run if needs succeeded"
-    # default, so preflight's success must be checked explicitly here too --
-    # otherwise a docs_only-unrelated broken build would no longer be
-    # fast-failed by preflight before this (expensive) job starts.
+    # Not gated on preflight (CI-VETGATE-1, 2026-10-25): waiting for its
+    # go vet delayed every leg by ~4-6 min. A broken build now fails in each
+    # leg's own `go test` compile instead of in preflight, and build-and-test
+    # still requires preflight=success (its gate step), so nothing that was
+    # required before is optional now. See the preflight job's comment.
+    needs: [changes, select]
     #
     # CI quick-tier split: this 18-shard -race matrix no longer runs on every
     # pull_request push -- it runs on merge_group (the merge queue proves the
@@ -1043,7 +1058,7 @@ jobs:
     # needs.select.result: on merge_group the `select` job decides which legs
     # run (each leg's first step below); if it did not succeed, test-suite is
     # skipped and build-and-test fails closed on that.
-    if: needs.preflight.result == 'success' && needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    if: needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
     strategy:
       # Merge queue: one red leg already fails the round (build-and-test needs
       # test-suite=success), so stop the other legs instead of letting them hold
@@ -1233,6 +1248,25 @@ jobs:
           - leg: faultops-3
             timeout: 3300
             coverage-file: coverage_faultops3.out
+          # faultops 3 -> 5 (2026-10-25, CI-CUTPOLES-1): faultops was the slowest
+          # leg in 5 of 8 full merge-queue rounds (19.5-27.8 min). At 5 shards the
+          # largest test (TestOwedAuditOracle_SweepEveryScopedOp) sets the floor.
+          - leg: faultops-4
+            timeout: 3300
+            coverage-file: coverage_faultops4.out
+          - leg: faultops-5
+            timeout: 3300
+            coverage-file: coverage_faultops5.out
+          # server/admin out of root-4's catch-all into two test-name shards
+          # (2026-10-25, CI-CUTPOLES-1): 1121 s of root-4's 1340 s go test step on
+          # run 40133720073, root-4 the slowest leg in 2 of 8 full rounds. See
+          # admin_pkg in scripts/ci-test-legs.sh.
+          - leg: admin-1
+            timeout: 1800
+            coverage-file: coverage_admin1.out
+          - leg: admin-2
+            timeout: 1800
+            coverage-file: coverage_admin2.out
           # handlers (server/http/handlers, one package, 167 test files, 5151
           # top-level tests, all already t.Parallel()) measured at 911s in CI
           # -- vs. 15s wall / 37s summed-per-test locally without -race. That
@@ -1397,10 +1431,29 @@ jobs:
         if: steps.leg.outputs.run == 'true'
 
       - name: Set up Go
+        id: setup-go
         if: steps.leg.outputs.run == 'true'
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.3'
+
+      # The -race -cover build cache go-race-cache.yml seeds from main once a
+      # day (setup-go's go.sum cache above holds no -race object: 0 of ~1,000
+      # build actions hit, CI-CACHE-SPIKE-1). Restored on top of setup-go's,
+      # newest entry first; the key never matches exactly, only the prefixes
+      # do. Restore only, never saved here (only main writes it). A miss or a
+      # cache-service error just means a cold compile, as before; a stale
+      # entry cannot change what is tested, since GOCACHE is content-addressed
+      # and -coverprofile disables test-result caching.
+      - name: Restore -race -cover build cache
+        if: steps.leg.outputs.run == 'true'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-restore-only
+          restore-keys: |
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-${{ hashFiles('go.sum') }}-
+            go-race-cover-v1-${{ runner.os }}-go${{ steps.setup-go.outputs.go-version }}-
 
       - name: go test (${{ matrix.leg }})
         if: steps.leg.outputs.run == 'true'
@@ -1453,8 +1506,8 @@ jobs:
               run_filter=$(leg_run_filter "$leg")
               pkgs=./server/http
               ;;
-            core-*|server-*)
-              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server).
+            core-*|server-*|admin-*)
+              # $pkgs stays as pkgs_for_leg gave it (internal/core, ./server, server/admin).
               run_filter=$(leg_run_filter "$leg")
               ;;
             encryption-*)
@@ -1516,19 +1569,6 @@ jobs:
           # shellcheck disable=SC2086
           go test -race $verbose_flag -timeout ${{ matrix.timeout }}s -run "$run_filter" $shuffle_flag -coverprofile=${{ matrix.coverage-file }} -covermode=atomic $pkgs
 
-      # This job is the ONLY one with a Postgres service container (see this
-      # job's own KEYORIX_TEST_PG_DSN comment above), so it is the only place
-      # a pg-gated docs/security-closures.d/ row can ever be genuinely
-      # proven rather than gate-skipped. Restricted to ONE leg, core-1 (exactly one
-      # of core-1/core-2): every pg-gated row today lives in ./internal/core,
-      # and running the full ledger sweep once per leg would just repeat the
-      # same ~17-row check 15 times for no new coverage. adr-numbers already runs this same script
-      # without a DSN (every pg-gated row gate-skips there, by design) --
-      # this is the run that actually counts as evidence for those rows.
-      - name: Verify pg-gated security closures with a real Postgres DSN available (core-1 leg only)
-        if: matrix.leg == 'core-1' && steps.leg.outputs.run == 'true'
-        run: ./scripts/check-closures.sh
-
       - name: Upload coverage artifact
         if: steps.leg.outputs.run == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1536,6 +1576,76 @@ jobs:
           name: coverage-${{ matrix.leg }}
           path: ${{ matrix.coverage-file }}
           retention-days: 1
+
+  # pg-gated security closures, proven with a real Postgres DSN. This job and
+  # test-suite are the only ones with a Postgres service container, so this is
+  # the only place a pg-gated docs/security-closures.d/ row can be genuinely
+  # proven rather than gate-skipped. adr-numbers runs the same script without a
+  # DSN (every pg-gated row gate-skips there, by design); this run is the one
+  # that counts as evidence for those rows.
+  #
+  # Until CI-CUTPOLES-1 (2026-10-25) this was the last step of test-suite's
+  # core-1 leg: 8-15 min of check-closures.sh after 5-7 min of core-1's tests,
+  # which made core-1 a 14-23 min leg. Same script, same Postgres service and
+  # DSN, same condition (it runs exactly when the core-1 leg runs; a change to
+  # the ledger or the checker selects internal/core in select-affected.py), so
+  # what it proves is unchanged; it now runs beside the matrix instead of after
+  # one leg. build-and-test requires closures-pg=success wherever it requires
+  # test-suite=success.
+  closures-pg:
+    needs: [preflight, changes, select]
+    if: needs.preflight.result == 'success' && needs.select.result == 'success' && needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'merge_group' || github.event_name == 'push' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full')))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: keyorix
+          POSTGRES_PASSWORD: keyorix123
+          POSTGRES_DB: keyorix
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      KEYORIX_TEST_PG_DSN: "host=localhost port=5432 dbname=keyorix user=keyorix sslmode=disable password=keyorix123"
+    steps:
+      - name: Merge-queue selection (runs when the core-1 leg runs)
+        id: leg
+        env:
+          MODE: ${{ needs.select.outputs.mode }}
+          LEGS: ${{ needs.select.outputs.legs }}
+        run: |
+          if [ "$MODE" != "selected" ]; then
+            echo "Full run (mode=$MODE): verifying every closure row."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$(jq -r '.["core-1"] // ""' <<<"$LEGS")" ]; then
+            echo "Merge-queue selection: the core-1 leg does not run for this group (internal/core, the closure ledger and its checker are unaffected); skipping (the job reports success)."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "Merge-queue selection: the core-1 leg runs for this group; verifying every closure row."
+          echo "run=true" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.leg.outputs.run == 'true'
+
+      - name: Set up Go
+        if: steps.leg.outputs.run == 'true'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+
+      - name: Verify pg-gated security closures with a real Postgres DSN available
+        if: steps.leg.outputs.run == 'true'
+        run: ./scripts/check-closures.sh
 
   # G80 C5: fails (does not warn) when a TEMPORARY exclusion in
   # scripts/ci-test-legs.sh has sat unreviewed for more than 30 days. Cheap
@@ -1664,7 +1774,7 @@ jobs:
   # status-check context by name -- a matrix or renamed job would report as
   # e.g. "build-and-test (root)" and never satisfy it.
   build-and-test:
-    needs: [preflight, test-suite, test-quick-root, test-quick-cli, static-analysis, changes, select, repo-guards]
+    needs: [preflight, test-suite, closures-pg, test-quick-root, test-quick-cli, static-analysis, changes, select, repo-guards]
     # always() so this still runs (and reports the failure below) even when
     # test-suite/test-quick-root/test-quick-cli/static-analysis genuinely
     # fail, not just when they're skipped -- combined with the docs_only/
@@ -1701,7 +1811,7 @@ jobs:
       # | pull_request                              | present        | test-suite                        |
       # | merge_group / push / workflow_dispatch / schedule | n/a     | test-suite                        |
       #
-      # static-analysis is required in every row. Fail CLOSED: the tier that
+      # preflight and static-analysis are required in every row. Fail CLOSED: the tier that
       # SHOULD have run reporting anything other than 'success' -- including
       # 'skipped' -- is a failure here, not a silent pass. A required check
       # that never runs is indistinguishable from one still pending, and
@@ -1746,6 +1856,14 @@ jobs:
           fi
           echo "full_tier=$is_full_tier" >> "$GITHUB_OUTPUT"
 
+          # preflight (go build + go vet) is required in every row. test-suite
+          # no longer needs it (CI-VETGATE-1), so a red preflight would no
+          # longer show up here as test-suite=skipped; check it directly.
+          if [ "${{ needs.preflight.result }}" != "success" ]; then
+            echo "::error::preflight=${{ needs.preflight.result }} (go build / go vet)"
+            exit 1
+          fi
+
           if [ "${{ needs.static-analysis.result }}" != "success" ]; then
             echo "::error::static-analysis=${{ needs.static-analysis.result }}"
             exit 1
@@ -1754,6 +1872,11 @@ jobs:
           if [ "$is_full_tier" = "true" ]; then
             if [ "${{ needs.test-suite.result }}" != "success" ]; then
               echo "::error::full tier (event=${{ github.event_name }}) requires test-suite=success, got test-suite=${{ needs.test-suite.result }}"
+              exit 1
+            fi
+            # Was a step of test-suite's core-1 leg until CI-CUTPOLES-1.
+            if [ "${{ needs.closures-pg.result }}" != "success" ]; then
+              echo "::error::full tier (event=${{ github.event_name }}) requires closures-pg=success (pg-gated security closures), got closures-pg=${{ needs.closures-pg.result }}"
               exit 1
             fi
           else
@@ -1813,7 +1936,7 @@ jobs:
           # floor). The coverage_storage_store*.out files below are included: they are THIS
           # leg's own new file, and omitting it would just be reproducing that
           # same gap in new code rather than inheriting an unrelated one.
-          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
+          tail -q -n +2 coverage_root1.out coverage_root2.out coverage_root4.out coverage_server1.out coverage_server2.out coverage_storage_store1.out coverage_encryption1.out coverage_encryption2.out coverage_faultops1.out coverage_faultops2.out coverage_faultops3.out coverage_faultops4.out coverage_faultops5.out coverage_admin1.out coverage_admin2.out coverage_handlers1.out coverage_handlers2.out coverage_http1.out coverage_http2.out coverage_http3.out coverage_http4.out coverage_http5.out coverage_http6.out | grep -v "${grep_args[@]}" >> coverage_merged.out
           mv coverage_merged.out coverage.out
 
       - name: Check coverage floor (≥${{ env.COVERAGE_FLOOR }}%)

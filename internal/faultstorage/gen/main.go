@@ -35,6 +35,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 )
@@ -152,7 +153,7 @@ func generate(root string) (formatted, raw []byte, genCount, total int, err erro
 
 	localTypes := map[string]bool{}
 	importsByName := map[string]string{} // package identifier -> import path
-	var ifaceFile *ast.File
+	ifaces := map[string]*ast.InterfaceType{}
 
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
@@ -162,9 +163,6 @@ func generate(root string) (formatted, raw []byte, genCount, total int, err erro
 		f, perr := parser.ParseFile(fset, path, nil, parser.ParseComments)
 		if perr != nil {
 			return nil, nil, 0, 0, fmt.Errorf("parsing %s: %w", path, perr)
-		}
-		if e.Name() == "interface.go" {
-			ifaceFile = f
 		}
 		for _, decl := range f.Decls {
 			gd, ok := decl.(*ast.GenDecl)
@@ -177,6 +175,9 @@ func generate(root string) (formatted, raw []byte, genCount, total int, err erro
 					continue
 				}
 				localTypes[ts.Name.Name] = true
+				if it, ok := ts.Type.(*ast.InterfaceType); ok {
+					ifaces[ts.Name.Name] = it
+				}
 			}
 		}
 		for _, imp := range f.Imports {
@@ -188,11 +189,8 @@ func generate(root string) (formatted, raw []byte, genCount, total int, err erro
 			importsByName[name] = p
 		}
 	}
-	if ifaceFile == nil {
-		return nil, nil, 0, 0, fmt.Errorf("interface.go not found under %s", storagePkgDir)
-	}
 
-	iface, err := findInterface(ifaceFile, interfaceName)
+	fields, err := expandInterface(ifaces, interfaceName)
 	if err != nil {
 		return nil, nil, 0, 0, err
 	}
@@ -200,11 +198,13 @@ func generate(root string) (formatted, raw []byte, genCount, total int, err erro
 	used := map[string]bool{} // package qualifiers actually emitted, e.g. "context", "storage", "models"
 
 	var methods []methodInfo
-	for _, m := range iface.Methods.List {
-		if len(m.Names) != 1 {
-			return nil, nil, 0, 0, fmt.Errorf("interface method with %d names (expected 1): %v", len(m.Names), m.Names)
-		}
+	seen := map[string]bool{}
+	for _, m := range fields {
 		name := m.Names[0].Name
+		if seen[name] {
+			return nil, nil, 0, 0, fmt.Errorf("method %s is declared by more than one embedded interface of %s", name, interfaceName)
+		}
+		seen[name] = true
 		ft, ok := m.Type.(*ast.FuncType)
 		if !ok {
 			return nil, nil, 0, 0, fmt.Errorf("method %s: expected *ast.FuncType, got %T", name, m.Type)
@@ -247,25 +247,48 @@ func generate(root string) (formatted, raw []byte, genCount, total int, err erro
 	return formatted, nil, genCount, len(methods), nil
 }
 
-func findInterface(f *ast.File, name string) (*ast.InterfaceType, error) {
-	for _, decl := range f.Decls {
-		gd, ok := decl.(*ast.GenDecl)
-		if !ok || gd.Tok != token.TYPE {
+// expandInterface returns the method fields of the named interface, with every
+// embedded interface (an identifier naming another interface type of the same
+// package) replaced, recursively and in place, by that interface's methods. An
+// embedded name that is not an interface of the package, a non-identifier embed
+// (a qualified or constraint type) and an embedding cycle are errors: the
+// generator must never silently drop methods.
+func expandInterface(ifaces map[string]*ast.InterfaceType, name string) ([]*ast.Field, error) {
+	return expandInterfaceChain(ifaces, name, nil)
+}
+
+func expandInterfaceChain(ifaces map[string]*ast.InterfaceType, name string, chain []string) ([]*ast.Field, error) {
+	if slices.Contains(chain, name) {
+		return nil, fmt.Errorf("interface embedding cycle: %s", strings.Join(append(chain, name), " -> "))
+	}
+	it, ok := ifaces[name]
+	if !ok {
+		if len(chain) == 0 {
+			return nil, fmt.Errorf("interface %s not found", name)
+		}
+		return nil, fmt.Errorf("interface %s embeds unknown interface %s", chain[len(chain)-1], name)
+	}
+	chain = append(chain, name)
+	var out []*ast.Field
+	for _, m := range it.Methods.List {
+		if len(m.Names) == 0 {
+			id, ok := m.Type.(*ast.Ident)
+			if !ok {
+				return nil, fmt.Errorf("interface %s: unsupported embedded type %T (only same-package interface names are followed)", name, m.Type)
+			}
+			sub, err := expandInterfaceChain(ifaces, id.Name, chain)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, sub...)
 			continue
 		}
-		for _, spec := range gd.Specs {
-			ts, ok := spec.(*ast.TypeSpec)
-			if !ok || ts.Name.Name != name {
-				continue
-			}
-			it, ok := ts.Type.(*ast.InterfaceType)
-			if !ok {
-				return nil, fmt.Errorf("%s is not declared as an interface type", name)
-			}
-			return it, nil
+		if len(m.Names) != 1 {
+			return nil, fmt.Errorf("interface method with %d names (expected 1): %v", len(m.Names), m.Names)
 		}
+		out = append(out, m)
 	}
-	return nil, fmt.Errorf("interface %s not found", name)
+	return out, nil
 }
 
 func extractFields(fl *ast.FieldList, local, used map[string]bool, prefix string) ([]field, error) {
@@ -418,8 +441,8 @@ func buildImportBlock(used map[string]bool, importsByName map[string]string) str
 		path, ok := importsByName[n]
 		if !ok {
 			// Should not happen: every non-storage qualifier we emit came from a
-			// SelectorExpr in interface.go, so it must be one of interface.go's
-			// own imports. Fail loudly rather than emit unresolvable code.
+			// SelectorExpr in the storage package, so it must be one of that
+			// package's own imports. Fail loudly rather than emit unresolvable code.
 			panic(fmt.Sprintf("genfaultystorage: no known import path for package qualifier %q", n))
 		}
 		b.WriteString("\t\"" + path + "\"\n")

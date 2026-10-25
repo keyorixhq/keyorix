@@ -1,6 +1,14 @@
 import { apiClient } from './client';
 import { ApiResponse } from '../types';
-import { Permission, Role, RoleWithPermissions, GroupRoles, GroupSharedSecret, Group } from '../types/rbac';
+import {
+    Permission,
+    Role,
+    RoleAssignableScope,
+    RoleWithPermissions,
+    GroupRoles,
+    GroupSharedSecret,
+    Group,
+} from '../types/rbac';
 
 /** Where a role grant applies: no project = global (every project). */
 export interface RoleGrantScope {
@@ -8,13 +16,26 @@ export interface RoleGrantScope {
     environmentId?: number;
 }
 
-/** ADR-021 project roles: only grantable with a project (exact names, as the server checks). */
-export const PROJECT_TIER_ROLE_NAMES = new Set([
-    'project_admin',
-    'project_developer',
-    'project_viewer',
-    'project_auditor',
-]);
+const ASSIGNABLE_SCOPES: readonly RoleAssignableScope[] = ['global', 'project', 'any'];
+
+/** An unknown or missing value is read as 'project', the most restrictive for a global grant. */
+export function normalizeAssignableScope(s: unknown): RoleAssignableScope {
+    return ASSIGNABLE_SCOPES.includes(s as RoleAssignableScope) ? (s as RoleAssignableScope) : 'project';
+}
+
+/**
+ * The reason the server would refuse granting role with (projectId) or without a project, or null.
+ * Mirrors the server's check (#3546) so the form can say what to change before sending.
+ */
+export function roleScopeRefusal(role: Pick<Role, 'name' | 'assignable_scope'>, projectId?: number): string | null {
+    if (role.assignable_scope === 'project' && !projectId) {
+        return `${role.name} is a project role: choose a project above, then check it again.`;
+    }
+    if (role.assignable_scope === 'global' && projectId) {
+        return `${role.name} is install-wide: choose "All projects (global)" above, then check it again.`;
+    }
+    return null;
+}
 
 // Normalize a role object. The server always sends snake_case now (fixed via
 // rbac_wire.go's roleWire/roleWithPermissionsWire as part of the API-hygiene
@@ -26,6 +47,7 @@ function normalizeRole(r: any): RoleWithPermissions {
         name: r.name ?? '',
         description: r.description ?? '',
         bypasses_permission_checks: r.bypasses_permission_checks ?? false,
+        assignable_scope: normalizeAssignableScope(r.assignable_scope),
         permissions: (r.permissions ?? []).map((p: any) =>
             typeof p === 'string'
                 ? { id: 0, name: p, description: '', resource: p.split('.')[0] ?? '', action: p.split('.')[1] ?? '' }
@@ -53,7 +75,12 @@ export const rbacApi = {
         return normalizeRole(res.data.data);
     },
 
-    async createRole(body: { name: string; description: string; permissions?: string[] }): Promise<Role> {
+    async createRole(body: {
+        name: string;
+        description: string;
+        permissions?: string[];
+        assignable_scope?: RoleAssignableScope;
+    }): Promise<Role> {
         const res = await apiClient.post<ApiResponse<Role>>('/api/v1/roles', {
             ...body,
             permissions: body.permissions ?? [],
@@ -61,7 +88,10 @@ export const rbacApi = {
         return res.data.data;
     },
 
-    async updateRole(id: number, body: { name: string; description: string; permissions?: string[] }): Promise<Role> {
+    async updateRole(
+        id: number,
+        body: { name: string; description: string; permissions?: string[]; assignable_scope?: RoleAssignableScope }
+    ): Promise<Role> {
         const res = await apiClient.put<ApiResponse<Role>>(`/api/v1/roles/${id}`, {
             ...body,
             permissions: body.permissions ?? [],

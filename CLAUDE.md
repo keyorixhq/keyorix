@@ -368,8 +368,8 @@ same idea applied to a mechanism already in front of you.
   — a skip is always a failure), `pg-gated` (needs `KEYORIX_TEST_PG_DSN`, e.g.
   a cross-replica race only real Postgres can demonstrate — a skip is
   expected and NOT a failure when the checker itself has no DSN, but IS one
-  the moment it does; `.github/workflows/ci.yml`'s `test-suite` job, `core-1`
-  leg, is the one job that actually proves these), or `manual` (no automated
+  the moment it does; `.github/workflows/ci.yml`'s `closures-pg` job (until
+  2026-10-25 a step of the `test-suite` `core-1` leg) is the one job that actually proves these), or `manual` (no automated
   test can exist — `note` must cite a specific artefact; this is an escape
   hatch, not a shortcut, and CI cannot verify it). Added 2026-09-08 after
   #1646 and #1780 — both real, both Postgres-race closures — sat with no row

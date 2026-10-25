@@ -2785,15 +2785,17 @@ func (x *Permission) GetAction() string {
 }
 
 type Role struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Description   string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
-	Permissions   []*Permission          `protobuf:"bytes,4,rep,name=permissions,proto3" json:"permissions,omitempty"`
-	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
-	UpdatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Description string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
+	Permissions []*Permission          `protobuf:"bytes,4,rep,name=permissions,proto3" json:"permissions,omitempty"`
+	CreatedAt   *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	UpdatedAt   *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	// Where the role may be granted (#3546): "global", "project" or "any".
+	AssignableScope string `protobuf:"bytes,7,opt,name=assignable_scope,json=assignableScope,proto3" json:"assignable_scope,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Role) Reset() {
@@ -2868,14 +2870,23 @@ func (x *Role) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Role) GetAssignableScope() string {
+	if x != nil {
+		return x.AssignableScope
+	}
+	return ""
+}
+
 type CreateRoleRequest struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Description string                 `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
 	// Named permission strings, e.g. "secrets.read".
-	Permissions   []string `protobuf:"bytes,3,rep,name=permissions,proto3" json:"permissions,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Permissions []string `protobuf:"bytes,3,rep,name=permissions,proto3" json:"permissions,omitempty"`
+	// "global", "project" or "any"; empty = "project" (#3546).
+	AssignableScope string `protobuf:"bytes,4,opt,name=assignable_scope,json=assignableScope,proto3" json:"assignable_scope,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *CreateRoleRequest) Reset() {
@@ -2929,6 +2940,13 @@ func (x *CreateRoleRequest) GetPermissions() []string {
 	return nil
 }
 
+func (x *CreateRoleRequest) GetAssignableScope() string {
+	if x != nil {
+		return x.AssignableScope
+	}
+	return ""
+}
+
 type GetRoleRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Id            uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -2978,9 +2996,12 @@ type UpdateRoleRequest struct {
 	Id          uint32                 `protobuf:"varint,1,opt,name=id,proto3" json:"id,omitempty"`
 	Description *string                `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
 	// If provided, replaces the entire permission set.
-	Permissions   []string `protobuf:"bytes,3,rep,name=permissions,proto3" json:"permissions,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Permissions []string `protobuf:"bytes,3,rep,name=permissions,proto3" json:"permissions,omitempty"`
+	// If provided, changes where the role may be granted (#3546); existing
+	// grants are not changed.
+	AssignableScope *string `protobuf:"bytes,4,opt,name=assignable_scope,json=assignableScope,proto3,oneof" json:"assignable_scope,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *UpdateRoleRequest) Reset() {
@@ -3032,6 +3053,13 @@ func (x *UpdateRoleRequest) GetPermissions() []string {
 		return x.Permissions
 	}
 	return nil
+}
+
+func (x *UpdateRoleRequest) GetAssignableScope() string {
+	if x != nil && x.AssignableScope != nil {
+		return *x.AssignableScope
+	}
+	return ""
 }
 
 type DeleteRoleRequest struct {
@@ -11433,7 +11461,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x12\x1a\n" +
 	"\bresource\x18\x04 \x01(\tR\bresource\x12\x16\n" +
-	"\x06action\x18\x05 \x01(\tR\x06action\"\xfc\x01\n" +
+	"\x06action\x18\x05 \x01(\tR\x06action\"\xa7\x02\n" +
 	"\x04Role\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12 \n" +
@@ -11442,18 +11470,22 @@ const file_keyorix_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\"k\n" +
+	"updated_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12)\n" +
+	"\x10assignable_scope\x18\a \x01(\tR\x0fassignableScope\"\x96\x01\n" +
 	"\x11CreateRoleRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12 \n" +
-	"\vpermissions\x18\x03 \x03(\tR\vpermissions\" \n" +
+	"\vpermissions\x18\x03 \x03(\tR\vpermissions\x12)\n" +
+	"\x10assignable_scope\x18\x04 \x01(\tR\x0fassignableScope\" \n" +
 	"\x0eGetRoleRequest\x12\x0e\n" +
-	"\x02id\x18\x01 \x01(\rR\x02id\"|\n" +
+	"\x02id\x18\x01 \x01(\rR\x02id\"\xc1\x01\n" +
 	"\x11UpdateRoleRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12%\n" +
 	"\vdescription\x18\x02 \x01(\tH\x00R\vdescription\x88\x01\x01\x12 \n" +
-	"\vpermissions\x18\x03 \x03(\tR\vpermissionsB\x0e\n" +
-	"\f_description\"#\n" +
+	"\vpermissions\x18\x03 \x03(\tR\vpermissions\x12.\n" +
+	"\x10assignable_scope\x18\x04 \x01(\tH\x01R\x0fassignableScope\x88\x01\x01B\x0e\n" +
+	"\f_descriptionB\x13\n" +
+	"\x11_assignable_scope\"#\n" +
 	"\x11DeleteRoleRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\"C\n" +
 	"\x10ListRolesRequest\x12\x12\n" +
