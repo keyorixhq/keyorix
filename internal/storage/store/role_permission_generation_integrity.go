@@ -128,6 +128,14 @@ type rolePermGenerationIntegrityChecker struct {
 	ls       *LocalStorage
 	logf     func(string, ...any)
 	baseline string
+	// pending is set when a tick has seen a change and cleared only once the
+	// repair and generation bump have committed and the definition reads as
+	// this release's again. While it is set every tick repairs and bumps,
+	// whatever the catalog now shows: a failed repair must not let the next
+	// tick adopt whatever it reads as a fresh baseline, or a replace that is
+	// restored after the failed attempt leaves every warm cache stale with
+	// nothing left to see (fail closed).
+	pending bool
 }
 
 // check runs one tick and reports whether it invalidated the caches. The
@@ -138,17 +146,19 @@ func (c *rolePermGenerationIntegrityChecker) check(ctx context.Context) (bool, e
 	if err != nil {
 		return false, fmt.Errorf("read the role-permission generation triggers: %w", err)
 	}
-	first := c.baseline == ""
 	switch {
 	case st.problem != "":
 		c.logf("SECURITY: role-permission generation triggers changed outside this server: %s. Restoring them and invalidating every replica's permission cache; find who has DDL on this schema.", st.problem)
-	case first || st.version == c.baseline:
+	case c.pending:
+		c.logf("SECURITY: retrying the role-permission cache invalidation after a failed attempt (catalog row versions %s, last good %s).", st.version, c.baseline)
+	case c.baseline == "" || st.version == c.baseline:
 		c.baseline = st.version
 		return false, nil
 	default:
 		c.logf("SECURITY: role-permission generation trigger or function rewritten outside this server (catalog row versions %s, were %s), now matching this release again. Invalidating every replica's permission cache; find who has DDL on this schema.", st.version, c.baseline)
 	}
 	rolePermGenerationTamperTotal.Inc()
+	c.pending = true
 	if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if st.problem != "" {
 			if err := ensurePostgresRolePermGenerationTriggers(tx); err != nil {
@@ -157,16 +167,19 @@ func (c *rolePermGenerationIntegrityChecker) check(ctx context.Context) (bool, e
 		}
 		return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
 	}); err != nil {
-		c.baseline = ""
+		// pending stays set and the baseline is left alone: the next tick
+		// repairs and bumps again, never adopts the current reading.
 		return false, fmt.Errorf("restore the role-permission generation triggers: %w", err)
 	}
 	// The repair rewrote catalog rows: the next tick compares against them.
 	after, err := readRolePermGenerationIntegrity(ctx, c.ls.db)
 	if err != nil || after.problem != "" {
-		c.baseline = ""
+		// The bump committed, but the state after it is not known good: keep
+		// pending, so the next tick bumps and re-reads again.
 		return true, fmt.Errorf("role-permission generation triggers still not this release's after the repair: %q %v", after.problem, err)
 	}
 	c.baseline = after.version
+	c.pending = false
 	return true, nil
 }
 

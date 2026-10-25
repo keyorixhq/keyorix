@@ -87,7 +87,7 @@ func TestRolePermGenerationIntegrity_ReplaceThenRestoreIsFlushed_Postgres(t *tes
 	db := w.writer.db
 	require.NoError(t, db.Exec("CREATE OR REPLACE FUNCTION "+rolePermGenerationFunc+"() RETURNS trigger LANGUAGE plpgsql AS $x$BEGIN RETURN NULL; END;$x$").Error)
 	revokeDirect(t, db, w)
-	require.NoError(t, db.Exec("CREATE OR REPLACE FUNCTION "+rolePermGenerationFunc+"() RETURNS trigger LANGUAGE plpgsql AS $keyorix$"+postgresRolePermGenerationFuncBody+"$keyorix$").Error)
+	require.NoError(t, db.Exec("CREATE OR REPLACE FUNCTION "+rolePermGenerationFunc+"() RETURNS trigger LANGUAGE plpgsql "+pgTriggerFuncSetClause+" AS $keyorix$"+postgresRolePermGenerationFuncBody+"$keyorix$").Error)
 	st, err := readRolePermGenerationIntegrity(context.Background(), db)
 	require.NoError(t, err)
 	require.Empty(t, st.problem, "premise: the original body is back")
@@ -129,7 +129,8 @@ func TestRolePermGenerationIntegrity_FunctionSettingsAreRestored_Postgres(t *tes
 	}
 	require.NoError(t, db.Raw("SELECT proconfig::text AS proconfig, prosecdef FROM pg_proc WHERE oid = ?::regprocedure", rolePermGenerationFunc+"()").Scan(&cfg).Error)
 	require.Len(t, cfg, 1)
-	require.Nil(t, cfg[0].Proconfig, "CREATE OR REPLACE clears the per-function settings")
+	require.NotNil(t, cfg[0].Proconfig)
+	require.Equal(t, `{"search_path=pg_catalog, pg_temp"}`, *cfg[0].Proconfig, "CREATE OR REPLACE resets the per-function settings to the pinned search_path alone")
 	require.False(t, cfg[0].Prosecdef)
 }
 

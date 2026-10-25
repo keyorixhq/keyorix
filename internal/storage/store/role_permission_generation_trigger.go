@@ -134,12 +134,31 @@ BEGIN
 END;
 `
 
+// pgTriggerFuncSearchPath is the search_path pinned on the trigger functions
+// this package installs (the generation function here, the cache-epoch
+// function in secret_node_cache_epoch.go), as in internal/solewriter: what
+// the body's functions and operators resolve to does not depend on the
+// writing session's search_path, so a writer whose path puts a schema before
+// pg_catalog cannot shadow them, and the integrity check's body comparison
+// describes what actually runs. Every relation the bodies touch is already
+// qualified (TG_TABLE_SCHEMA, or NEW/OLD).
+const pgTriggerFuncSearchPath = "pg_catalog, pg_temp"
+
+// pgTriggerFuncSetClause is the CREATE FUNCTION clause that pins it.
+const pgTriggerFuncSetClause = "SET search_path = " + pgTriggerFuncSearchPath
+
+// pgTriggerFuncConfigOK is true, over pg_proc p, when p's per-function
+// settings are exactly the pinned search_path and nothing else (never NULL,
+// so it scans into a bool).
+const pgTriggerFuncConfigOK = "p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=" + pgTriggerFuncSearchPath + "']::pg_catalog.text[]"
+
 // pgRolePermGenerationFuncOK is true, over pg_proc p joined to pg_language l,
 // when p is exactly the function this file installs: the body bound to its
-// one placeholder (postgresRolePermGenerationFuncBody), plpgsql, no
-// per-function settings (ALTER FUNCTION ... SET search_path would change what
-// the body's names resolve to), not SECURITY DEFINER.
-const pgRolePermGenerationFuncOK = "p.proname = '" + rolePermGenerationFunc + "' AND p.pronargs = 0 AND p.prosrc = ? AND l.lanname = 'plpgsql' AND p.proconfig IS NULL AND NOT p.prosecdef"
+// one placeholder (postgresRolePermGenerationFuncBody), plpgsql, the pinned
+// search_path and no other per-function setting (ALTER FUNCTION ... SET
+// search_path would change what the body's names resolve to), not SECURITY
+// DEFINER.
+const pgRolePermGenerationFuncOK = "p.proname = '" + rolePermGenerationFunc + "' AND p.pronargs = 0 AND p.prosrc = ? AND l.lanname = 'plpgsql' AND " + pgTriggerFuncConfigOK + " AND NOT p.prosecdef"
 
 // pgRolePermGenerationTriggerDefOK is true, over pg_trigger t, when t has the
 // shape this file creates: AFTER, FOR EACH STATEMENT, on INSERT, UPDATE,
@@ -169,7 +188,7 @@ WHERE p.proname = '`+rolePermGenerationFunc+`' AND p.pronargs = 0
 			log.Printf("role-permission generation: replacing a %s() whose definition differs from this release's (an upgrade from an older release, or tampering)", rolePermGenerationFunc)
 		}
 		if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + rolePermGenerationFunc + `() RETURNS trigger
-LANGUAGE plpgsql AS $keyorix$` + postgresRolePermGenerationFuncBody + `$keyorix$`).Error; err != nil {
+LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + postgresRolePermGenerationFuncBody + `$keyorix$`).Error; err != nil {
 			return fmt.Errorf("failed to create %s(): %w", rolePermGenerationFunc, err)
 		}
 	}
