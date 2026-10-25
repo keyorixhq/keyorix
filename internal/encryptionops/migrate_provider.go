@@ -347,7 +347,9 @@ func RestoreBackup(baseDir, backupRel, dekPath string, ks *keyfiles.SetWriter) {
 		return
 	}
 	files := map[string][]byte{filepath.Join(baseDir, dekPath): data}
+	staged := true
 	if err := ks.StageManifest(keyfiles.OpRewrapRollback, files); err != nil {
+		staged = false
 		fmt.Fprintf(os.Stderr, "⚠️  could not stage the key-set manifest before restoring the DEK backup (%v)\n", err)
 	}
 	if err := CopyFile(baseDir, backupRel, dekPath); err != nil {
@@ -355,7 +357,13 @@ func RestoreBackup(baseDir, backupRel, dekPath string, ks *keyfiles.SetWriter) {
 		return
 	}
 	if err := ks.CommitManifest(keyfiles.OpRewrapRollback, files); err != nil {
-		fmt.Fprintf(os.Stderr, "⚠️  the DEK backup was restored but the key-set manifest was not updated (%v); the next server start records it\n", err)
+		if staged {
+			fmt.Fprintf(os.Stderr, "⚠️  the DEK backup was restored but the key-set manifest was not updated (%v); the rollback is staged in it, so the next server start records it\n", err)
+			return
+		}
+		fmt.Fprintf(os.Stderr, "❌ the DEK backup was restored but the key-set manifest %s was neither staged nor updated (%v): it still records the re-wrapped DEK, so the next server start refuses %s as not matching the manifest.\n"+
+			"  Before restarting, fix the cause and re-run migrate-provider, or, once you have confirmed %s is the backup %s, remove %s so the next start adopts the current key files (with a WARN and an audit event).\n",
+			ks.Path(), err, dekPath, dekPath, backupRel, ks.Path())
 	}
 }
 
