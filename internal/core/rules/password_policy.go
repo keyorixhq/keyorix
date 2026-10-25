@@ -44,25 +44,76 @@ func DefaultPasswordPolicy() PasswordPolicy {
 	}
 }
 
-// Validate checks pw against the policy. user may be nil (personal-info checks
-// are skipped when it is). It returns a single error listing every unmet
-// requirement, so the caller can surface all of them at once.
-func (p PasswordPolicy) Validate(pw string, user *models.User) error { // NOSONAR -- cognitive complexity 19, suppress go:S3776
-	var failures []string
+// Requirement names one stateless rule of the policy. Callers that must show the
+// caller WHICH rule failed take the Requirements from Unmet and the wording from
+// Describe, so the text is assembled from fixed strings and never from a returned
+// error.
+type Requirement int
 
-	// A non-positive MinLength means "no length floor", which would accept even an
-	// empty password. That is never a safe intent on a secrets product and is
-	// reachable by a partial password_policy config block: setting any single field
-	// (e.g. reject_common_passwords) copies the rest as zero, collapsing MinLength to
-	// 0. Fall back to the conservative built-in default so the floor cannot be
-	// silently disabled. An explicit positive MinLength (incl. relaxed lab values) is
-	// honored as-is.
-	minLength := p.MinLength
-	if minLength <= 0 {
-		minLength = DefaultPasswordPolicy().MinLength
+const (
+	ReqMinLength Requirement = iota + 1
+	ReqUppercase
+	ReqLowercase
+	ReqDigit
+	ReqSpecial
+	ReqNoPersonalInfo
+	ReqNotCommon
+)
+
+// effectiveMinLength is the length floor Validate enforces.
+//
+// A non-positive MinLength means "no length floor", which would accept even an
+// empty password. That is never a safe intent on a secrets product and is
+// reachable by a partial password_policy config block: setting any single field
+// (e.g. reject_common_passwords) copies the rest as zero, collapsing MinLength to
+// 0. Fall back to the conservative built-in default so the floor cannot be
+// silently disabled. An explicit positive MinLength (incl. relaxed lab values) is
+// honored as-is.
+func (p PasswordPolicy) effectiveMinLength() int {
+	if p.MinLength <= 0 {
+		return DefaultPasswordPolicy().MinLength
 	}
-	if len(pw) < minLength {
-		failures = append(failures, fmt.Sprintf("be at least %d characters", minLength))
+	return p.MinLength
+}
+
+// Describe is the fixed wording of r, completing "password must ...". It depends
+// on the policy configuration only.
+func (p PasswordPolicy) Describe(r Requirement) string {
+	switch r {
+	case ReqMinLength:
+		return fmt.Sprintf("be at least %d characters", p.effectiveMinLength())
+	case ReqUppercase:
+		return "contain an uppercase letter"
+	case ReqLowercase:
+		return "contain a lowercase letter"
+	case ReqDigit:
+		return "contain a digit"
+	case ReqSpecial:
+		return "contain a special character"
+	case ReqNoPersonalInfo:
+		return "not contain your username, email, or display name"
+	case ReqNotCommon:
+		return "not be a commonly-used password"
+	}
+	return ""
+}
+
+// DescribeAll joins the wording of reqs: "be at least 16 characters, contain a digit".
+func (p PasswordPolicy) DescribeAll(reqs []Requirement) string {
+	parts := make([]string, 0, len(reqs))
+	for _, r := range reqs {
+		parts = append(parts, p.Describe(r))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// Unmet returns the rules pw breaks, in a fixed order. user may be nil (the
+// personal-info check is skipped when it is).
+func (p PasswordPolicy) Unmet(pw string, user *models.User) []Requirement { // NOSONAR -- cognitive complexity 19, suppress go:S3776
+	var unmet []Requirement
+
+	if len(pw) < p.effectiveMinLength() {
+		unmet = append(unmet, ReqMinLength)
 	}
 
 	var hasUpper, hasLower, hasDigit, hasSpecial bool
@@ -79,28 +130,34 @@ func (p PasswordPolicy) Validate(pw string, user *models.User) error { // NOSONA
 		}
 	}
 	if p.RequireUppercase && !hasUpper {
-		failures = append(failures, "contain an uppercase letter")
+		unmet = append(unmet, ReqUppercase)
 	}
 	if p.RequireLowercase && !hasLower {
-		failures = append(failures, "contain a lowercase letter")
+		unmet = append(unmet, ReqLowercase)
 	}
 	if p.RequireDigit && !hasDigit {
-		failures = append(failures, "contain a digit")
+		unmet = append(unmet, ReqDigit)
 	}
 	if p.RequireSpecial && !hasSpecial {
-		failures = append(failures, "contain a special character")
+		unmet = append(unmet, ReqSpecial)
 	}
 
 	if p.RejectPersonalInfo && user != nil && containsPersonalInfo(pw, user) {
-		failures = append(failures, "not contain your username, email, or display name")
+		unmet = append(unmet, ReqNoPersonalInfo)
 	}
 
 	if p.RejectCommonPasswords && isCommonPassword(pw) {
-		failures = append(failures, "not be a commonly-used password")
+		unmet = append(unmet, ReqNotCommon)
 	}
+	return unmet
+}
 
-	if len(failures) > 0 {
-		return fmt.Errorf("password must %s", strings.Join(failures, ", "))
+// Validate checks pw against the policy. user may be nil (personal-info checks
+// are skipped when it is). It returns a single error listing every unmet
+// requirement, so the caller can surface all of them at once.
+func (p PasswordPolicy) Validate(pw string, user *models.User) error {
+	if unmet := p.Unmet(pw, user); len(unmet) > 0 {
+		return fmt.Errorf("password must %s", p.DescribeAll(unmet))
 	}
 	return nil
 }

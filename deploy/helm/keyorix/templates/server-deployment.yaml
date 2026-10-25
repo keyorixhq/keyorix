@@ -8,18 +8,18 @@ metadata:
     app.kubernetes.io/component: server
   annotations:
     # kube-score (helm-chart-policy CI job): deployment-strategy/deployment-replicas
-    # both assume a horizontally-scalable Deployment -- server is pinned to exactly
-    # 1 replica with Recreate (see the replicas/strategy comments right below):
-    # RollingUpdate would briefly run 2 pods against the same ReadWriteOnce keys
-    # volume, which can't work, and >1 replica would mean 2 processes racing the
-    # same per-instance KEK. Not a compromise to relax later -- structurally
-    # required by the ReadWriteOnce ownership model.
+    # both assume a horizontally-scalable Deployment -- by default the server is
+    # exactly 1 replica with Recreate (see the replicas/strategy comments right
+    # below): RollingUpdate would briefly run 2 pods against the same ReadWriteOnce
+    # keys volume, which can't work. More replicas need Secret mode
+    # (server.keysSecret), where every pod reads the keys read-only.
     kube-score/ignore: "deployment-strategy,deployment-replicas"
 spec:
   {{- $replicas := int (include "keyorix.server.replicas" .) }}
-  # One replica (default): the keys volume is ReadWriteOnce and the KEK is
-  # per-instance. More replicas are the ADR-039 HA topology and render only on a
-  # shared ReadWriteMany keys volume (keyorix.server.replicas refuses the rest).
+  {{- $keysSecret := include "keyorix.server.keysSecretMode" . }}
+  # One replica (default): the keys volume is ReadWriteOnce. More replicas are the
+  # ADR-039 HA topology and render only in Secret mode, every replica reading the
+  # same key files read-only (keyorix.server.replicas refuses the rest).
   replicas: {{ $replicas }}
   strategy:
     {{- if gt $replicas 1 }}
@@ -73,8 +73,10 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
-      {{- if .Values.secureBaseline.enabled }}
+      {{- if or .Values.secureBaseline.enabled $keysSecret }}
       initContainers:
+      {{- end }}
+      {{- if .Values.secureBaseline.enabled }}
         # secureBaseline (SECURE-DEFAULT-1, #2922): the startup audit and
         # `admin validate --posture` require the config, TLS certificate/key and
         # metrics token to be 0600 and owned by the server's uid. ConfigMap and
@@ -109,6 +111,49 @@ spec:
               readOnly: true
             - name: run
               mountPath: /app/run
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+              ephemeral-storage: 1Mi
+            limits:
+              cpu: 100m
+              memory: 16Mi
+              ephemeral-storage: 1Mi
+      {{- end }}
+      {{- if $keysSecret }}
+        # Secret mode (server.keysSecret, docs/multi-replica-keys.md): the key
+        # files must be 0600 and owned by the server's uid (the startup key-file
+        # permission check), which a Secret volume (root-owned) is not. Copy them
+        # into the memory emptyDir the server then mounts READ-ONLY. A missing
+        # data.key or kek.salt fails this container, so the pod never starts and
+        # no replica can generate keys of its own. Prints nothing.
+        - name: prepare-keys
+          image: {{ include "keyorix.server.image" . }}
+          imagePullPolicy: {{ .Values.server.image.pullPolicy }}
+          command:
+            - sh
+            - -c
+            - |
+              set -eu
+              umask 077
+              cp /mnt/keys-secret/data.key /app/keys/data.key
+              cp /mnt/keys-secret/kek.salt /app/keys/kek.salt
+              if [ -f /mnt/keys-secret/keyset.manifest.json ]; then
+                cp /mnt/keys-secret/keyset.manifest.json /app/keys/keyset.manifest.json
+              fi
+              chmod 600 /app/keys/*
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: keys-secret
+              mountPath: /mnt/keys-secret
+              readOnly: true
+            - name: keys
+              mountPath: /app/keys
           resources:
             requests:
               cpu: 10m
@@ -185,6 +230,9 @@ spec:
               readOnly: true
             - name: keys
               mountPath: /app/keys
+              {{- if $keysSecret }}
+              readOnly: true
+              {{- end }}
             - name: tmp
               mountPath: /tmp
             {{- if .Values.secureBaseline.enabled }}
@@ -275,7 +323,17 @@ spec:
           configMap:
             name: {{ include "keyorix.server.fullname" . }}-config
         - name: keys
-          {{- if .Values.server.keysPersistence.enabled }}
+          {{- if $keysSecret }}
+          # Filled by prepare-keys from keys-secret; memory-backed, so the key files
+          # never reach the node's disk.
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        - name: keys-secret
+          secret:
+            secretName: {{ .Values.server.keysSecret.name }}
+            defaultMode: 0440
+          {{- else if .Values.server.keysPersistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "keyorix.server.fullname" . }}-keys
           {{- else }}

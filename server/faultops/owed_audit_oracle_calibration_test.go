@@ -55,10 +55,16 @@ const owedCalTwoRowOp = "REST POST /api/v1/projects/{id}/break-glass/{activation
 // owedAuditDepsFor). The caller then runs the oracle (owedCalFindings) itself.
 func owedCalDriveRaw(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string) {
 	t.Helper()
+	return owedCalDriveRawIn(t, nil, nil, op, method, nth, kind)
+}
+
+// owedCalDriveRawIn is owedCalDriveRaw on a reused world pair (driveFaultCaseIn).
+func owedCalDriveRawIn(t *testing.T, ref, w *faultWorld, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string) {
+	t.Helper()
 	saved := owedAuditDepsFor
 	owedAuditDepsFor = func(*faultWorld) owedAuditDeps { return owedAuditDeps{} }
 	defer func() { owedAuditDepsFor = saved }()
-	return driveFaultCase(t, op, method, nth, kind)
+	return driveFaultCaseIn(t, ref, w, op, method, nth, kind)
 }
 
 func owedCalDrive(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) oracleInput {
@@ -501,16 +507,14 @@ func TestOwedAuditOracle_ScopeIsExact(t *testing.T) {
 // fault (error kind, first call, WithTransaction up to the second; KEYORIX_OWED_SWEEP_WIDE=1
 // widens to three kinds and more call ordinals) through the real oracle: none may be reported. A fault that never
 // fires for an op is counted, not failed.
+//
+// Each op's cases run on ONE reference + faulted world pair, reset in place before
+// every case (owedSweepReusedDrive) instead of two fresh worlds per case: on Postgres
+// a fresh world is a new schema plus a full AutoMigrate, most of this sweep's time.
+// TestOwedAuditOracle_SweepReuseMatchesFreshWorlds proves the reused drive reaches
+// the same verdict as fresh worlds case by case.
 func TestOwedAuditOracle_SweepEveryScopedOp(t *testing.T) {
-	kinds := []faultstorage.FaultKind{faultstorage.KindError}
-	// WithTransaction#2 is the settle transaction (claim + append) of most ops
-	// (MERGE-FIX-3482J); #1/effect-then-error, the owing transaction committing and
-	// reporting an error, is pinned by the calibration's e-rows and swept wide.
-	nths := map[string]int{"LogAuditEvent": 1, "ClaimPendingAuditEvent": 1, "CreatePendingAuditEvent": 1, "WithTransaction": 2}
-	if owedSweepWide() {
-		kinds = []faultstorage.FaultKind{faultstorage.KindError, faultstorage.KindPanic, faultstorage.KindEffectThenError}
-		nths = map[string]int{"LogAuditEvent": 3, "ClaimPendingAuditEvent": 2, "CreatePendingAuditEvent": 2, "WithTransaction": 3}
-	}
+	kinds, nths := owedSweepGrid()
 	ops := owedAuditScopedOps()
 	var accepted, same, neverFired, notSuccess int
 	var multiOwed []string
@@ -529,7 +533,7 @@ func TestOwedAuditOracle_SweepEveryScopedOp(t *testing.T) {
 		// Postgres each world holds a connection pool and a schema until its test ends, so
 		// the whole sweep on one t outlived max_connections (SQLSTATE 53300).
 		t.Run(op, func(t *testing.T) {
-			owedCalSweepOp(t, op, kinds, nths, &accepted, &same, &neverFired, &notSuccess, &multiOwed)
+			owedCalSweepOp(t, op, kinds, nths, owedSweepReusedDrive(t), nil, &accepted, &same, &neverFired, &notSuccess, &multiOwed)
 		})
 	}
 	t.Logf("sweep: %d ops; cases with no finding: %d (of which state == reference: %d, reported errors: %d); fault never fired: %d",
@@ -537,8 +541,56 @@ func TestOwedAuditOracle_SweepEveryScopedOp(t *testing.T) {
 	t.Logf("ops owing more than one audit row: %v", multiOwed)
 }
 
-// owedCalSweepOp is TestOwedAuditOracle_SweepEveryScopedOp for one op.
+// owedSweepGrid is the sweep's fault grid: the kinds and, per audit-path method, the
+// highest call ordinal faulted.
+func owedSweepGrid() ([]faultstorage.FaultKind, map[string]int) {
+	kinds := []faultstorage.FaultKind{faultstorage.KindError}
+	// WithTransaction#2 is the settle transaction (claim + append) of most ops
+	// (MERGE-FIX-3482J); #1/effect-then-error, the owing transaction committing and
+	// reporting an error, is pinned by the calibration's e-rows and swept wide.
+	nths := map[string]int{"LogAuditEvent": 1, "ClaimPendingAuditEvent": 1, "CreatePendingAuditEvent": 1, "WithTransaction": 2}
+	if owedSweepWide() {
+		kinds = []faultstorage.FaultKind{faultstorage.KindError, faultstorage.KindPanic, faultstorage.KindEffectThenError}
+		nths = map[string]int{"LogAuditEvent": 3, "ClaimPendingAuditEvent": 2, "CreatePendingAuditEvent": 2, "WithTransaction": 3}
+	}
+	return kinds, nths
+}
+
+// owedSweepDrive drives one sweep case without convergence (owedCalDriveRaw's contract).
+type owedSweepDrive func(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string)
+
+// owedSweepFreshDrive builds a fresh reference and faulted world for every case.
+func owedSweepFreshDrive(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string) {
+	t.Helper()
+	return owedCalDriveRaw(t, op, method, nth, kind)
+}
+
+// owedSweepReusedDrive builds one reference and one faulted world on t (one op's
+// subtest, so on Postgres their pools and schemas end with it) and resets both in
+// place before every case. A case's oracleInput world is valid until the next drive.
+func owedSweepReusedDrive(t *testing.T) owedSweepDrive {
+	t.Helper()
+	ref, w := buildReusableFaultWorld(t, nil), buildReusableFaultWorld(t, nil)
+	return func(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string) {
+		t.Helper()
+		return owedCalDriveRawIn(t, ref, w, op, method, nth, kind)
+	}
+}
+
+// owedSweepCase is one case the sweep evaluated, for observers
+// (TestOwedAuditOracle_SweepReuseMatchesFreshWorlds).
+type owedSweepCase struct {
+	name     string // "<method>#<nth>/<kind>"; the owed-types probe case is "probe:" + that
+	outcome  driveOutcome
+	why      string
+	in       oracleInput
+	findings []string
+}
+
+// owedCalSweepOp is TestOwedAuditOracle_SweepEveryScopedOp for one op. drive runs each
+// case; observe, when non-nil, receives every case after the sweep judged it.
 func owedCalSweepOp(t *testing.T, op string, kinds []faultstorage.FaultKind, nths map[string]int,
+	drive owedSweepDrive, observe func(owedSweepCase),
 	accepted, same, neverFired, notSuccess *int, multiOwed *[]string) {
 	// Every scoped op must OWE at least one row. The rule takes the owed event types
 	// from a probe (owedAuditProbeFor); a revocation regressed to a plain best-effort
@@ -549,7 +601,10 @@ func owedCalSweepOp(t *testing.T, op string, kinds []faultstorage.FaultKind, nth
 	// Every drive is its own subtest (owedCalCase): an op drives up to ~30 cases in
 	// the wide sweep, two worlds each.
 	owedCalCase(t, "owed-types", func(t *testing.T) {
-		in, outcome, why := owedCalDriveRaw(t, op, "LogAuditEvent", 1, faultstorage.KindError)
+		in, outcome, why := drive(t, op, "LogAuditEvent", 1, faultstorage.KindError)
+		if observe != nil {
+			observe(owedSweepCase{name: "probe:LogAuditEvent#1/" + faultstorage.KindError.String(), outcome: outcome, why: why, in: in})
+		}
 		if outcome != driveObserved {
 			t.Errorf("%s: LogAuditEvent#1 case not observed: %s", op, why)
 		} else if types, err := owedAuditProbeFor(in.world)(op); err != nil {
@@ -577,7 +632,11 @@ func owedCalSweepOp(t *testing.T, op string, kinds []faultstorage.FaultKind, nth
 		for nth := 1; nth <= maxNth; nth++ {
 			for _, kind := range kinds {
 				owedCalCase(t, fmt.Sprintf("%s#%d/%s", method, nth, kind), func(t *testing.T) {
-					in, outcome, why := owedCalDriveRaw(t, op, method, nth, kind)
+					in, outcome, why := drive(t, op, method, nth, kind)
+					c := owedSweepCase{name: fmt.Sprintf("%s#%d/%s", method, nth, kind), outcome: outcome, why: why, in: in}
+					if observe != nil {
+						defer func() { observe(c) }()
+					}
 					switch outcome {
 					case driveFaultNeverFired:
 						*neverFired++
@@ -593,8 +652,8 @@ func owedCalSweepOp(t *testing.T, op string, kinds []faultstorage.FaultKind, nth
 					if in.after.Hash == in.refAfter.Hash {
 						*same++
 					}
-					if f := owedCalFindings(t, in); len(f) > 0 {
-						t.Errorf("%s %s#%d/%s: %v", op, method, nth, kind, f)
+					if c.findings = owedCalFindings(t, in); len(c.findings) > 0 {
+						t.Errorf("%s %s#%d/%s: %v", op, method, nth, kind, c.findings)
 						return
 					}
 					*accepted++

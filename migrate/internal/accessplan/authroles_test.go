@@ -8,7 +8,7 @@ import (
 
 func TestBuildAppRoleItems_MachineIdentityPlusGrant(t *testing.T) {
 	roles := []healthscan.AppRoleRoleConfig{{Mount: "auth/approle", Name: "ci-deploy", TokenPolicies: []string{"default", "team-a-ro"}}}
-	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{block("secret/data/team-a/prod/db", "read")}}}
+	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{block("secret/data/team-a/prod/*", "read")}}}
 	items := BuildAppRoleItems(roles, policies, testPolicyMapper(t))
 
 	var identities, grants int
@@ -50,7 +50,7 @@ func TestBuildKubernetesItems_ExactBinding(t *testing.T) {
 		BoundServiceAccountNamespaces: []string{"prod"},
 		TokenPolicies:                 []string{"team-a-ro"},
 	}}
-	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{block("secret/data/team-a/prod/db", "read")}}}
+	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{block("secret/data/team-a/prod/*", "read")}}}
 	items := BuildKubernetesItems(roles, policies, testPolicyMapper(t), "https://k8s.example.com")
 
 	var binding *Item
@@ -98,7 +98,7 @@ func TestBuildKubernetesItems_MultipleBoundSAs_OneIdentityEach(t *testing.T) {
 		BoundServiceAccountNamespaces: []string{"prod"},
 		TokenPolicies:                 []string{"team-a-ro"},
 	}}
-	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{block("secret/data/team-a/prod/db", "read")}}}
+	policies := []healthscan.Policy{{Name: "team-a-ro", Blocks: []healthscan.PolicyPathBlock{block("secret/data/team-a/prod/*", "read")}}}
 	items := BuildKubernetesItems(roles, policies, testPolicyMapper(t), "https://k8s.example.com")
 	var identities int
 	for _, it := range items {

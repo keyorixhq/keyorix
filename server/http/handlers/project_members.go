@@ -170,6 +170,9 @@ func (h *CatalogHandler) AddProjectMember(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err := h.coreService.AddProjectMember(r.Context(), userCtx.UserID, id, body.UserID, body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -215,6 +218,13 @@ func (h *CatalogHandler) UpdateProjectMember(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if err := h.coreService.SetProjectMemberRole(r.Context(), userCtx.UserID, id, uint(userID), body.Role, userCtx.ActorKind() == core.ActorTypeMachine); err != nil {
+		if sendPartialMutation(w, err) {
+			log.Printf("Member role change for %d on project %d partially applied: %v", userID, id, err)
+			return // the other roles were removed, the new one was not granted (#3488)
+		}
+		if sendRoleScopeError(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

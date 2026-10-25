@@ -9,6 +9,7 @@ import (
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/bcrypt"
@@ -40,7 +41,7 @@ func newWebAuthnTestCore(t *testing.T, withRP bool) (*KeyorixCore, *gorm.DB) {
 			RPID: "localhost", RPDisplayName: "Keyorix", RPOrigins: []string{"https://localhost"},
 		})
 		require.NoError(t, err)
-		c.SetWebAuthn(rp)
+		c.SetWebAuthn(webauthnrp.Wrap(rp))
 	}
 	return c, db
 }
@@ -141,7 +142,7 @@ func TestWebAuthn_RegistrationBeginIssuesSingleUseSession(t *testing.T) {
 	creation, token, err := c.BeginWebAuthnRegistration(ctx, 1)
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
-	require.NotEmpty(t, creation.Response.Challenge)
+	require.NotEmpty(t, creationOpts(t, creation).Challenge)
 
 	// The ceremony session is stored hashed and is single-use.
 	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(token), c.now())
@@ -169,8 +170,8 @@ func TestWebAuthn_BeginLoginResolvesUserFromChallenge(t *testing.T) {
 	assertion, token, err := c.BeginWebAuthnLogin(ctx, ch)
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
-	require.NotEmpty(t, assertion.Response.Challenge)
-	require.Len(t, assertion.Response.AllowedCredentials, 1, "the user's passkey is in allowCredentials")
+	require.NotEmpty(t, assertionOpts(t, assertion).Challenge)
+	require.Len(t, assertionOpts(t, assertion).AllowedCredentials, 1, "the user's passkey is in allowCredentials")
 
 	// Begin does NOT consume the challenge (finish does).
 	_, err = c.storage.GetActiveMFAChallenge(ctx, sha256Hex(ch), c.now())
@@ -339,11 +340,11 @@ func TestWebAuthn_PasswordlessBeginIssuesSession(t *testing.T) {
 	assertion, token, err := c.BeginWebAuthnPasswordlessLogin(ctx)
 	require.NoError(t, err)
 	require.NotEmpty(t, token)
-	require.NotEmpty(t, assertion.Response.Challenge)
+	require.NotEmpty(t, assertionOpts(t, assertion).Challenge)
 	// Usernameless: no specific credential is pre-listed (the authenticator picks).
-	assert.Empty(t, assertion.Response.AllowedCredentials)
+	assert.Empty(t, assertionOpts(t, assertion).AllowedCredentials)
 	// User verification is required so the single gesture is MFA-grade.
-	assert.Equal(t, protocol.VerificationRequired, assertion.Response.UserVerification)
+	assert.Equal(t, protocol.VerificationRequired, assertionOpts(t, assertion).UserVerification)
 
 	// The ceremony session is stored single-use with the passwordless purpose.
 	sess, err := c.storage.ConsumeWebAuthnSession(ctx, sha256Hex(token), c.now())
@@ -444,7 +445,7 @@ func TestWebAuthn_PersistUpdatedCredential_ZeroCounterAuthenticatorAlwaysPersist
 	// Simulate two logins in a row from a zero-counter authenticator.
 	for i := range 2 {
 		c.now = func() time.Time { return time.Date(2026, 6, 12, 10, i, 0, 0, time.UTC) }
-		c.persistUpdatedCredential(ctx, 1, &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{SignCount: 0}})
+		c.persistUpdatedCredential(ctx, 1, verifiedFrom(&webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{SignCount: 0}}))
 	}
 
 	var after models.WebAuthnCredential
@@ -487,7 +488,7 @@ func TestWebAuthn_RejectIfCloned_DisablesCredentialAndRejects(t *testing.T) {
 	seedCredential(t, c, db, 1, "cred-1")
 
 	cred := &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{CloneWarning: true}}
-	err := c.rejectIfCloned(ctx, 1, cred, "203.0.113.9")
+	err := c.rejectIfCloned(ctx, 1, verifiedFrom(cred), "203.0.113.9")
 	require.Error(t, err, "a regressed signature counter must refuse the authentication")
 
 	var row models.WebAuthnCredential
@@ -514,7 +515,7 @@ func TestWebAuthn_RejectIfCloned_NormalCounterPasses(t *testing.T) {
 	seedCredential(t, c, db, 1, "cred-1")
 
 	cred := &webauthn.Credential{ID: []byte("cred-1"), Authenticator: webauthn.Authenticator{CloneWarning: false, SignCount: 42}}
-	err := c.rejectIfCloned(ctx, 1, cred, "203.0.113.9")
+	err := c.rejectIfCloned(ctx, 1, verifiedFrom(cred), "203.0.113.9")
 	require.NoError(t, err, "a normal incrementing counter must not be rejected")
 
 	var row models.WebAuthnCredential

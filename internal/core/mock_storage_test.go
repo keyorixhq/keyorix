@@ -1345,6 +1345,11 @@ func (m *MockStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleI
 	return args.Error(0)
 }
 
+func (m *MockStorage) SetRoleAssignableScope(ctx context.Context, roleID uint, scope string) error {
+	args := m.Called(ctx, roleID, scope)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetRole(ctx context.Context, id uint) (*models.Role, error) {
 	if !m.mockHasExpectation("GetRole") {
 		return nil, errMockLookupNotStubbed
@@ -1674,6 +1679,11 @@ func (m *MockStorage) RecordPendingAuditEventFailure(ctx context.Context, id uin
 func (m *MockStorage) CountPendingAuditEvents(ctx context.Context) (int64, error) {
 	args := m.Called(ctx)
 	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockStorage) OldestPendingAuditEventAt(ctx context.Context) (time.Time, bool, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(time.Time), args.Bool(1), args.Error(2)
 }
 
 func (m *MockStorage) GetRecoveryKeyRecord(ctx context.Context) (*models.RecoveryKeyRecord, bool, error) {

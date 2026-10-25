@@ -63,6 +63,8 @@ var candidateDirs = []string{
 	"server/admin",
 	"internal/config",
 	"internal/storage/factory.go",
+	"internal/storage/factory_local.go",
+	"internal/storage/factory_postgres.go",
 	"internal/storage/postgres_open.go",
 	"internal/serverguard",
 	"internal/solewriter",

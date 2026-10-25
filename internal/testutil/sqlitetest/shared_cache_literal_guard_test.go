@@ -48,11 +48,7 @@ var deliberateSharedCacheLiterals = map[string]string{
 // (TestPendingSharedCacheEntriesNameAnOpenPR), so an entry cannot linger without an
 // owner. This list only shrinks: an entry whose file no longer has a literal fails the
 // guard until it is removed. Goal: empty.
-var pendingSharedCacheLiterals = map[string]string{
-	// Both are edited by AUTH-2 (#3365): convert with openLoginBudgetMemDB once it merges.
-	"server/http/handlers/auth_budget_routes_guard_test.go":            "AUTH-2 #3365",
-	"server/http/handlers/login_completion_identical_response_test.go": "AUTH-2 #3365",
-}
+var pendingSharedCacheLiterals = map[string]string{}
 
 // skipDirs are never Go source of this repository.
 var skipDirs = map[string]bool{".git": true, "node_modules": true, ".scratch": true, ".gopath": true, "vendor": true}

@@ -1,0 +1,2 @@
+### Documentation
+- **SDK install lines match what is published.** `README.md` and `docs/sdks.md` no longer show `pip install keyorix`, `npm install @keyorixhq/sdk` or the `com.keyorix:keyorix-sdk` Maven dependency: none of those packages is on PyPI, npm or Maven Central. They now state that, keep the Go install, and give a verified from-source install for Node.js. Python and Java from-source installs are marked not yet verified.

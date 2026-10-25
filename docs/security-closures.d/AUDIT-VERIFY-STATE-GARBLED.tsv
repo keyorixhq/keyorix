@@ -1,0 +1,1 @@
+AUDIT-VERIFY-STATE-GARBLED	./internal/core	TestAuditVerifyStateFailClosed_RowGarbled	default-ci	pending	-	a garbled, truncated or re-signed audit verification state row was replaced by a fresh state that read valid after one rolling cycle; it is now a sticky discontinuity

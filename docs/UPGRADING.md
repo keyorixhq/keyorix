@@ -140,6 +140,15 @@ same `sslmode=` in the dsn, or remove `ssl_mode`. Check with `keyorix-server adm
 --posture` after updating the binary. See
 [CONFIGURATION.md](CONFIGURATION.md#postgresql-tls).
 
+**PostgreSQL: a CA with `ssl_mode` allow/prefer refuses to start**
+(PG-SSL-ROOT-CERT-1). The driver loaded the CA but never checked the server's
+certificate against it. A CA file in `ssl_root_cert` (or `sslrootcert=` in a
+dsn) with an effective sslmode of `disable`, `allow` or `prefer` (a dsn with no
+`sslmode` is `prefer`) is refused, and so is `system` with `disable`. Before
+upgrading, set `ssl_mode: verify-full` (or `sslmode=verify-full` in the dsn).
+Helm: the same `externalDatabase.sslRootCert`/`sslMode` shapes fail `helm
+template`. Walk-through: [operator/postgres-tls.md](operator/postgres-tls.md).
+
 **Server image: `entrypoint.sh` is now the image's ENTRYPOINT** (it was its
 CMD). `docker run <image> <command>` and `docker compose run backend <command>`
 still run `<command>`, after the optional config copy (`KEYORIX_CONFIG_SOURCE`);
@@ -1088,30 +1097,120 @@ before upgrading the CLI:
   "an internal error occurred". Behaviour is unchanged: the target is still refused unless a
   server operator sets that option.
 
+## 6w. SECURITY: audit Vault access migrated with keyorix-migrate v0.96.0–v0.96.3
+
+If you ran `keyorix-migrate vault apply-access` with v0.96.0, v0.96.1, v0.96.2 or v0.96.3,
+some migrated machine identities may hold grants wider than their Vault policy: a policy
+path narrower than the project/environment it was mapped to (one secret, a sub-folder, part
+of a `--path-map` prefix) was granted on the whole environment, and `list` was mapped to
+`secrets.read` in every stanza: `list`-only and KV v2 `metadata/` stanzas, and also write
+stanzas that list (`["create", "update", "list"]`, `["delete", "list"]`), whose identity
+could then read every secret value in its environment (`list-as-read`). Upgrading `keyorix-migrate` does not change
+grants that already exist. With the new `keyorix-migrate`, run (read-only, same flags as the
+original `apply-access`; the Keyorix token must see every project, i.e. hold `secrets.read`
+at the global scope and not be a project-restricted PAT):
+
+```sh
+keyorix-migrate vault audit-access --vault-addr https://vault.example.com:8200 \
+  --server https://keyorix.example.com --token-file ./pat.txt \
+  --k8s-issuer https://k8s.example.com --path-map <the same --path-map values>
+```
+
+It lists each grant that is wider than its Vault policy, why, and the API call that revokes
+exactly that grant. It exits 1 when it finds any, and also when the audit is incomplete
+because a Vault input (`sys/mounts`, the policy list, a policy, an auth role list or role)
+could not be read, or because the Keyorix token cannot see every project (the project list
+holds only the projects a token may read, so grants into the others would be missed): grant the
+Vault token the `healthscan-policy.hcl` stanzas, use a Keyorix token with global `secrets.read`,
+and re-run until it exits 0. `--json` prints `{"complete", "warnings", "findings"}`. Kubernetes roles are audited
+only with `--k8s-issuer` (it warns when they exist and the flag is missing). Revoke the
+findings, then re-run `plan-access`: the narrow stanzas are now reported for review instead
+of widened.
+
+Two more shapes, both in every release that shipped `plan-access`:
+
+- **Cross-mount scopes** (`cross-mount-scope`): under the default convention a policy on one KV
+  mount (`secret/data/team-a/prod/*`) was granted on `team-a/prod` even when another KV mount
+  also holds `team-a/prod/` paths that land there. `audit-access` now lists every KV mount
+  (names only) and reports such grants. It sees today's Vault tree: a mount emptied since the
+  migration is not reported, and a mount it cannot list counts as holding paths (reported).
+  A `plan-access` file written before this release is refused by `apply-access`: re-run
+  `plan-access`.
+- **`secrets.read` implies listing** (known residual, not revocable by an upgrade): a migrated
+  `secrets.read` grant also lists secret names and reads version metadata in its scope, which
+  a Vault policy with `read` on `data/` but no `list`/`read` on `metadata/` did not allow.
+  Never values. `plan-access` now names every such policy ("Access added beyond Vault" in the
+  report, `implied_access` in the JSON); if names must stay hidden for one of them, revoke its
+  grant and grant the secrets by hand.
+
+## 6x. Roles carry an assignable scope (schema epoch 7, #3546)
+
+The first boot adds `roles.assignable_scope` (schema epoch 7; the compatibility floor stays
+3, so an epoch-6 replica keeps running during a rolling upgrade) and sets it once:
+`project_*` roles `project`, `system_*` and `alert_operator` `global`, the legacy
+`admin`/`editor`/`viewer`/`auditor`/`super_admin` roles and **every existing custom role
+`any`** (nothing that worked before breaks). Roles created after the upgrade default to
+`project`.
+
+The legacy roles stay `any` on purpose: they are granted per project today, to machine
+identities and to users (`keyorix machine grant-role <name> --project default --role viewer`,
+`keyorix rbac assign-role --user <email> --role admin --project payments`), and those grants
+keep working, as do install-wide grants of them.
+
+What to check:
+
+- **API clients that create roles and then grant them without `project_id`** now get 400:
+  send `"assignable_scope": "any"` (or `"global"`) on `POST /api/v1/roles`, or change the
+  role with `PUT /api/v1/roles/{id}`.
+- **A `system_*` role granted with a `project_id`** (for example through project members or a
+  project invitation) is now refused; grant it without a project.
+- **The startup `WARNING` lists** existing grants outside their role's scope and pending
+  invitations that can no longer be accepted. Nothing is changed or removed automatically.
+- **Mixed versions and rolling back the binary.** An epoch-5 binary (allowed by the
+  compatibility floor) ignores `assignable_scope`: it refuses only the four `project_*`
+  built-ins without a project. While it runs, a custom role set to `project` or `global`, or a
+  `system_*` role offered on a project, is not refused by that binary. Roles it creates get
+  the column default, `project`. Finish the rollout (or the rollback) promptly and read the
+  startup `WARNING` on the new version afterwards.
+
 ## 7. Rollback
 
-If an upgrade goes wrong:
+The step-by-step version, with the commands verified on 0.96.1 → 0.96.3 (Docker
+Compose, SQLite and PostgreSQL), is [operator/upgrade-rollback.md](operator/upgrade-rollback.md).
 
-1. Stop the new version.
-2. Restore the backup you took in step 1, using a binary matching the
-   version that backup came from (an `admin restore` binary can read
-   older-format archives, but restoring into a *newer* schema than the
-   backup's own binary understands is not the supported direction — restore
-   with the matching or a newer binary, then let migrations run forward
-   again, not backward). **Expect `admin restore` to refuse this by
-   default** with a message about the archive being behind the host's own
-   audit high-water mark — that's the intended rollback-protection
-   behavior, not a malfunction, for exactly this scenario (the target has
-   moved on since the backup). Pass `--allow-rollback` to proceed; it
-   prints a loud warning and records the override to the audit trail.
-3. `admin verify-audit` after restore, on whichever binary you rolled back
-   to, to confirm the audit chain is intact.
-4. If the new version's database has already advanced the recorded schema
-   epoch (ADR-097), a straight downgrade of the *binary* while keeping the
-   already-migrated database is refused at startup by design (`database
-   schema epoch N is newer than this binary's schema epoch M`) — this is
-   why step 2 restores data from before the failed upgrade rather than
-   attempting to run the new binary's data on the old binary.
+**First decide which rollback is possible.** A server refuses to start when the
+database records a compatibility floor above its own schema epoch (ADR-101).
+
+- **Same floor (e.g. within v0.96.x, all epoch 2): put the old binary or image back.**
+  Stop the new version, put back the old binary (or set the Compose pins back), and
+  start. Data written on the new version is kept. Checked for 0.96.3 → 0.96.1: the old
+  release read and wrote the upgraded data, and `admin verify-audit` stayed VALID with
+  both binaries.
+- **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
+  binary refuses with `database declares a minimum compatible schema epoch of 3`, and
+  nothing lowers the floor. A database written by a binary with a newer epoch but
+  without a recorded floor is refused with `database schema epoch N is newer than this
+  binary's schema epoch M` (ADR-097).
+
+Restoring the backup you took in step 1:
+
+1. Stop the new version and put back the old binary or image. Restore with that old
+   binary, the version the backup came from. `admin restore` refuses an archive
+   whose schema epoch is newer than its own.
+2. Restoring over the upgraded install on the same host needs `--allow-rollback`.
+   Without it, restore refuses with a message about the archive being behind the
+   host's own audit high-water mark. That refusal is the intended rollback protection:
+   the restore un-revokes anything revoked after the backup. With the flag it prints a
+   loud warning and records the override to the audit trail.
+3. SQLite: `admin restore ... --overwrite-existing --allow-rollback` moves the existing
+   database and key files aside (`*.pre-restore-<timestamp>`). **PostgreSQL: empty the
+   database first** (`DROP SCHEMA public CASCADE; CREATE SCHEMA public;`, or drop and
+   recreate the database), then restore with the same two flags.
+   `--overwrite-existing` does not empty a PostgreSQL database: over existing rows the
+   restore fails on a duplicate key *after* it has already replaced the key files
+   (SELF_HOSTING.md §5).
+4. Run `admin verify-audit` after the restore, with the binary you rolled back to, and
+   check that the chain is intact.
 
 ## 8. See also
 

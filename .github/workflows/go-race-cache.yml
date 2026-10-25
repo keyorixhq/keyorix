@@ -1,0 +1,98 @@
+# Seeds the -race -cover Go build cache that ci.yml's test-suite legs restore.
+#
+# Why: setup-go caches on go.sum only, and what it restores holds no object
+# built with -race, so every leg rebuilt ~1,000 packages (third-party, std and
+# repo) before its first test. CI-CACHE-SPIKE-1 measured on four legs (core-2,
+# faultops-3, server-2, root-4): 0 of ~1,000 build actions hit today; with a
+# seed from main 24 h older, 89-97% hit and the restore + compile phase was
+# 54-116 s shorter per leg than cold, restore time included.
+#
+# Once per UTC day per (Go version, go.sum): the first push to main of the day
+# (or the 01:41 UTC schedule, or a manual run) compiles every distinct leg
+# command (scripts/ci/seed-race-cache.sh) and saves ~0.55 GB. Later runs that
+# day find the key and stop after one lookup. A day-old seed measured as
+# good as a 6 h old one, so one entry a day is the whole cost against the
+# repository's 10 GB cache cap; the previous day's entry is no longer
+# restored and is the first thing LRU eviction drops.
+#
+# Safety: GOCACHE is content-addressed (action ID = hash of Go version, flags
+# and every input), so an object from an older tree is never used for a
+# changed package, and -coverprofile already disables test-result caching.
+# A cached object is NOT re-verified against its inputs, though, so only
+# trusted code may write the cache: this workflow saves only on push to main,
+# schedule and workflow_dispatch (all on main); PR and merge-queue runs only
+# restore. Same trust model as the setup-go cache the legs restore today.
+name: Go race build cache
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '41 1 * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+# One seed at a time; a burst of merges queues at most one more run, which
+# then finds the day's key and stops.
+concurrency:
+  group: go-race-cache
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Same Go as ci.yml's test-suite (keep in step with its go-version pins:
+      # the key carries the installed version, so a mismatch only means the
+      # legs find no entry, never a wrong one). No setup-go cache: the seed
+      # starts from an empty GOCACHE so it saves only what the legs use.
+      - name: Set up Go
+        id: setup-go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+          cache: false
+
+      - name: Cache key for today
+        id: key
+        env:
+          GO_VERSION: ${{ steps.setup-go.outputs.go-version }}
+          GO_SUM: ${{ hashFiles('go.sum') }}
+        run: |
+          key="go-race-cover-v1-${RUNNER_OS}-go${GO_VERSION}-${GO_SUM}-$(date -u +%Y%m%d)"
+          echo "Cache key: $key"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+
+      - name: Look up today's entry
+        id: lookup
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ${{ steps.key.outputs.key }}
+          lookup-only: true
+
+      - name: Already seeded today
+        if: steps.lookup.outputs.cache-hit == 'true'
+        run: echo "Today's -race -cover cache (${{ steps.key.outputs.key }}) already exists; nothing to do."
+
+      - name: Download modules
+        if: steps.lookup.outputs.cache-hit != 'true'
+        run: go mod download
+
+      - name: Compile every test-suite leg (-race -cover, no tests run)
+        if: steps.lookup.outputs.cache-hit != 'true'
+        run: scripts/ci/seed-race-cache.sh
+
+      - name: Save
+        if: steps.lookup.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/go-build
+          key: ${{ steps.key.outputs.key }}

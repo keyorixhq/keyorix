@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/go-webauthn/webauthn/webauthn"
+	"github.com/keyorixhq/keyorix/internal/webauthnrp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -58,7 +59,7 @@ func setupWebAuthnFinishStorageErrorTest(t *testing.T) (*AuthHandler, *faultstor
 		RPID: "localhost", RPDisplayName: "Keyorix", RPOrigins: []string{"https://localhost"},
 	})
 	require.NoError(t, err)
-	coreService.SetWebAuthn(rp)
+	coreService.SetWebAuthn(webauthnrp.Wrap(rp))
 	return NewAuthHandler(coreService, false), fs, db
 }
 

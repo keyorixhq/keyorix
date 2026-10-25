@@ -1,0 +1,1 @@
+AUDIT-VERIFY-STATE-DELETED	./internal/core	TestAuditVerifyStateFailClosed_RowDeletedWithLaunder	default-ci	pending	-	a deleted audit verification state row (with a relabelled checkpoint trail and a truncated tail) let the next tick start verification over and report valid; it is now a sticky discontinuity (subtests run on SQLite and, with KEYORIX_TEST_PG_DSN, PostgreSQL)

@@ -24,8 +24,9 @@ var PinnedLockPingTimeout = 5 * time.Second
 // when it finds its lock gone (WatchPinnedLockConnGated, and the single_writer
 // poller, which checks the lock itself): who names the holder, err is what
 // showed the loss. One wording, so an operator can search for every kind of
-// lock loss at once.
+// lock loss at once. It also counts the loss in keyorix_advisory_lock_lost_total.
 func ReportAdvisoryLockLost(who string, err error) {
+	advisoryLockLost.WithLabelValues(lockLossKind(who)).Inc()
 	log.Printf("%s: the connection holding the advisory lock is gone, so the lock is lost: %v", who, err)
 }
 

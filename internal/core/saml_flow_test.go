@@ -305,7 +305,7 @@ func TestCompleteSAML_JITProvisionDoesNotReuseUnverifiedEmailMatch(t *testing.T)
 	var created *models.User
 	store.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool { created = u; return true })).
 		Return(&models.User{ID: 99, IsActive: true, AccountState: AccountActive}, nil)
-	store.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 3}, nil)
+	store.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 3, Name: "system_viewer", AssignableScope: models.RoleAssignableGlobal}, nil)
 	store.On("AssignRole", mock.Anything, uint(99), uint(3), mock.Anything).Return(nil)
 	store.On("CreateSession", mock.Anything, mock.Anything).Return(&models.Session{ID: 1, UserID: 99, SessionToken: "tok"}, nil)
 	store.On("UpdateLastLogin", mock.Anything, uint(99), mock.Anything).Return(nil)

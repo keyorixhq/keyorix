@@ -40,7 +40,7 @@ keyorix-migrate vault apply-access --plan access-plan.json \
 |---|---|
 | An AppRole role → a machine identity | `plan-access` proposes it; the AppRole's own `role_id`/`secret_id` is never copied — the machine identity gets a **freshly issued** Keyorix credential instead, shown once, written to `--credentials-out` |
 | A Kubernetes auth role bound to one exact service account + namespace → a machine identity with an OIDC binding | Same — no stored secret, the workload's own cluster-issued token authenticates it |
-| A policy path scoped to one project+environment, with ordinary read/write/delete capabilities → a Keyorix role + grant | Exact when the scope resolves cleanly; narrower (never wider) when it doesn't resolve exactly — see below |
+| A policy path that covers a whole project or environment (`<project>/*`, `<project>/<env>/*`, or a `--path-map` prefix followed by `/*`), with read/write/delete capabilities → a Keyorix role + grant | Exact. Any narrower path is reported, never widened to the whole environment — see below |
 
 **The governing rule, every time a mapping is approximate: narrower than Vault, never
 wider.** A migrated grant is proven never to exceed what Vault actually allowed — an
@@ -56,6 +56,8 @@ dropped or guessed at:**
 | userpass users, and any directly-issued Vault token | Passwords aren't portable, and tokens are **never** migrated by design — re-provision via a machine identity instead |
 | A Kubernetes auth role bound to a wildcard service account or namespace | A Keyorix binding names one exact workload identity; there's no cluster API this tool can use to enumerate which service accounts actually exist |
 | A policy path that doesn't cleanly resolve to one of your Keyorix projects/environments | Reported with the exact path and reason — point it at the right project/environment with `--path-map`, or migrate it by hand |
+| A policy path narrower than the environment it maps to (one secret, a sub-folder, part of a `--path-map` prefix) | A Keyorix grant covers the whole environment, so migrating it would let the identity read secrets Vault never allowed. Import that sub-folder into its own environment and map it with `--path-map`, or grant by hand |
+| `list`-only or KV v2 `metadata/` stanzas | They let Vault list key names or read version metadata, not values; Keyorix has no permission that narrow, and a read grant would expose the values |
 
 ## Doesn't move today — plan for this before cutover
 

@@ -350,7 +350,7 @@ func init() {
 	f.StringSliceVar(&encMPToExecCommand, "to-exec-command", nil, "resolver argv whose stdout supplies the KEK (exec type)")
 	f.StringSliceVar(&encMPToShareFiles, "to-shamir-share-files", nil, "paths to >=threshold Shamir share files (shamir type)")
 	f.StringSliceVar(&encMPToShareEnv, "to-shamir-share-env", nil, "env var names holding Shamir shares (shamir type)")
-	f.StringVar(&encMPToShareCommitment, "to-shamir-commitment", "", "hex KEK commitment printed by `shamir-split` for these shares")
+	f.StringVar(&encMPToShareCommitment, "to-shamir-commitment", "", "hex KEK commitment printed by `shamir-split` for these shares (required with --to-type shamir)")
 	f.StringVar(&encMPToTPMDevice, "to-tpm-device", "", "TPM 2.0 device path (tpm type; default /dev/tpmrm0)")
 	f.StringVar(&encMPToSaltPath, "to-salt-path", "", "salt path for the target password provider (default: current salt_path)")
 	f.BoolVar(&encMPConfirm, "confirm", false, "required acknowledgement before re-wrapping the DEK")

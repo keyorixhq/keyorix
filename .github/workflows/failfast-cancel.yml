@@ -1,0 +1,37 @@
+name: Fail fast (merge queue)
+
+# Called by ci.yml's failfast-* jobs, each of which runs only on merge_group and
+# only right after one job whose failure already fails the round (see ci.yml's
+# "Merge-queue fail fast" comment). Cancels every run still going for this
+# merge-group commit; scripts/ci/failfast-cancel.sh has the scope and the
+# reasoning. No repository code runs here besides that script, which is why the
+# actions: write grant lives in this job and not in the jobs that run tests.
+on:
+  workflow_call:
+    inputs:
+      failed-job:
+        description: The ci.yml job whose failure triggered the cancel (for the log)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci/failfast-cancel.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Cancel the rest of this merge-queue round
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FAILED_JOB: ${{ inputs.failed-job }}
+        run: scripts/ci/failfast-cancel.sh "$FAILED_JOB"

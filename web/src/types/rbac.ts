@@ -6,6 +6,18 @@ export interface Permission {
     action: string;
 }
 
+/**
+ * Where a role may be granted (#3546): global = only with no project (install-wide),
+ * project = only on a project (optionally one environment), any = either.
+ */
+export type RoleAssignableScope = 'global' | 'project' | 'any';
+
+export const ROLE_ASSIGNABLE_SCOPE_LABELS: Record<RoleAssignableScope, string> = {
+    project: 'Per project only',
+    global: 'Install-wide only',
+    any: 'Install-wide or per project',
+};
+
 export interface Role {
     id: number;
     name: string;
@@ -13,6 +25,8 @@ export interface Role {
     // Always sent by the server (roleWire); true for the built-in roles that skip
     // per-permission checks.
     bypasses_permission_checks: boolean;
+    // Always sent by the server (roleWire); normalized to 'project' if absent.
+    assignable_scope: RoleAssignableScope;
 }
 
 export interface RoleWithPermissions extends Role {

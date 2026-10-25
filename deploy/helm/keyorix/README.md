@@ -116,7 +116,7 @@ existing release or `existingSecret` keeps working on upgrade.
 | `postgresql.auth.password` | — | Required when bundled DB is enabled. |
 | `postgresql.settings` | `{}` | Extra bundled-Postgres settings (`postgres -c key=value`). Durability and secure-baseline settings are refused; see `values.yaml` and docs/PERFORMANCE.md. |
 | `externalDatabase.*` | — | Used when `postgresql.enabled=false` (managed/HA Postgres). |
-| `externalDatabase.sslRootCert` | `""` | CA for the database's certificate (`storage.database.ssl_root_cert`): `system` (OS CA store, for a publicly issued certificate) or the path of a PEM file you mount into the server pod yourself. With `externalDatabase.sslMode: verify-full`/`verify-ca` either this or `externalDatabase.caSecret.name` is **required**: without one `helm template`/`install` fails (and the server would refuse to start). Not together with `caSecret`. |
+| `externalDatabase.sslRootCert` | `""` | CA for the database's certificate (`storage.database.ssl_root_cert`): `system` (OS CA store, for a publicly issued certificate) or the path of a PEM file you mount into the server pod yourself. With `externalDatabase.sslMode: verify-full`/`verify-ca` either this or `externalDatabase.caSecret.name` is **required**: without one `helm template`/`install` fails (and the server would refuse to start). A path with `sslMode` `disable`, `allow` or `prefer` (and `system` with `disable`) fails the render too: the driver would never check the certificate against it. Not together with `caSecret`. Walk-through: [docs/operator/postgres-tls.md](../../../docs/operator/postgres-tls.md). |
 | `externalDatabase.caSecret.name` | `""` | A Secret (release namespace) holding the database CA's PEM. The chart mounts it read-only, mode 0440, at `/app/db-ca/ca.crt` in the server pod and renders that path as `ssl_root_cert`. The server reads the CA once, when it opens its database pool: after rotating the Secret, restart the server (`kubectl rollout restart`). Needs `externalDatabase.sslMode` `verify-full` (recommended), `verify-ca` or `require`. Example: `kubectl create secret generic pg-ca --from-file=ca.crt=./pg-ca.pem` then `--set externalDatabase.sslMode=verify-full --set externalDatabase.caSecret.name=pg-ca`. |
 | `externalDatabase.caSecret.key` | `ca.crt` | The key in that Secret holding the PEM. |
 | `auditDurability` | `""` | Server `storage.database.audit_durability`: `strict` (an audit entry's commit waits for the disk sync) or `standard` (it does not). Empty leaves it unset, so the backend default applies. Any other value fails `helm template`/`install` (`values.schema.json`). |
@@ -217,10 +217,17 @@ replace each `CHANGE-ME`.
 - **Single server instance (default):** `server.replicas: 1` with Recreate rollouts
   — the server owns a ReadWriteOnce keys volume and a per-instance KEK.
 - **More than one server replica (ADR-039 HA):** `server.replicas: N` renders only
-  when it can work, and the render fails otherwise: the keys volume must be
-  persistent and `ReadWriteMany` (every replica reads the same wrapped DEK and KEK
-  salt), and `server.singleWriter` must be false (single-writer mode allows exactly
-  one server). Use an external PostgreSQL (the bundled one is a single pod); the chart
+  when it can work, and the render fails otherwise. The keys must come from a key
+  Secret (**Secret mode**: `server.keysSecret.enabled=true`,
+  `server.keysSecret.name`, `server.keysPersistence.enabled=false`): an init
+  container copies `data.key` and `kek.salt` into a memory volume the server mounts
+  read-only, and the server runs with `key_dir_lock: database`, so no replica
+  generates keys. Create the Secret before installing, with
+  `keyorix-server admin encryption key-secret generate --name <Secret> --out <file>`
+  and `kubectl create -f <file>`; the chart never sees key material. A ReadWriteMany
+  keys volume is refused for N > 1. `server.singleWriter` must be false
+  (single-writer mode allows exactly one server). Rotation and recovery:
+  [docs/multi-replica-keys.md](../../../docs/multi-replica-keys.md#secret-mode-helm-serverkeyssecret). Use an external PostgreSQL (the bundled one is a single pod); the chart
   renders PostgreSQL only, so SQLite cannot be combined with replicas. With N > 1 the
   chart adds a PodDisruptionBudget (`server.podDisruptionBudget`), node/zone
   `topologySpreadConstraints` (`server.topologySpreadConstraints` to override),
@@ -228,8 +235,10 @@ replace each `CHANGE-ME`.
   rolling upgrade across a schema-epoch bump can briefly crash-loop an old replica
   (ADR-039, ADR-101). The web Deployment spreads the same way when
   `web.replicas > 1`. Not covered by a live multi-replica test in this chart.
-- **Backups:** back up both the database and the `*-server-keys` PVC. You need
-  both (plus the master password) to recover.
+- **Backups:** back up both the database and the keys: the `*-server-keys` PVC, or
+  in Secret mode the key Secret's manifest. Keep the keys **apart** from the
+  database backups (another store, other access) and the master password in a
+  third place: you need all three to recover, and none opens a secret alone.
 - **TLS:** terminate at the ingress (`ingress.tls` + cert-manager annotations).
 - **Secure baseline (`secureBaseline.enabled=true`):** Helm generates a
   `<fullname>-secure-baseline` Secret (e.g. `kx-keyorix-secure-baseline`) on first install, kept across upgrades:

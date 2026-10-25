@@ -1,0 +1,1 @@
+AUDIT-VERIFY-STATE-PAST-HEAD	./internal/core	TestAuditVerifyStateFailClosed_RowPastChainHead	default-ci	pending	-	the posture kept reading valid from an authentic state row that certified rows the chain no longer has; it is now a sticky discontinuity

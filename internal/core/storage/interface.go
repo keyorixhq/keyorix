@@ -1352,6 +1352,10 @@ type Storage interface {
 	// other production caller should exist; this is the one narrow, storage-
 	// internal write path the ADR names, not a general role-mutation primitive.
 	SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error
+	// SetRoleAssignableScope writes models.Role.AssignableScope (#3546 Phase 2)
+	// for roleID, that column only (no full-row write). Callers: role seeding
+	// (built-in scopes) and internal/core's CreateRoleWithScope.
+	SetRoleAssignableScope(ctx context.Context, roleID uint, scope string) error
 
 	// RBAC Operations.
 	// AssignRole/RemoveRole bind a role to a user at the given Scope
@@ -1539,6 +1543,8 @@ type Storage interface {
 	// AssignRoleToGroupWithExpiry binds a time-bound role to a group; see
 	// AssignRoleWithExpiry.
 	AssignRoleToGroupWithExpiry(ctx context.Context, groupID, roleID uint, scope Scope, expiresAt time.Time) error
+	// RemoveRoleFromGroup returns ErrRoleNotAssigned (wrapped) if the group
+	// holds no such grant at scope.
 	RemoveRoleFromGroup(ctx context.Context, groupID, roleID uint, scope Scope) error
 	// DeleteExpiredRoleGrants removes user/group role grants whose ExpiresAt is at
 	// or before `before`, returning the removed grants so the caller can audit each
@@ -1767,6 +1773,10 @@ type Storage interface {
 	ClaimPendingAuditEvent(ctx context.Context, id uint) (claimed bool, err error)
 	RecordPendingAuditEventFailure(ctx context.Context, id uint, reason string) error
 	CountPendingAuditEvents(ctx context.Context) (int64, error)
+	// OldestPendingAuditEventAt is the created_at of the oldest owed audit event; found
+	// is false when none is pending. A plain read on the created_at index (no lock, no
+	// scan), cheap enough to run on every metrics scrape.
+	OldestPendingAuditEventAt(ctx context.Context) (at time.Time, found bool, err error)
 	// GetRecoveryKeyRecord returns the local admin recovery key's verifier
 	// record (docs/design-b2-recover-admin.md §2); found is false on an
 	// install that predates this feature or has never generated one.

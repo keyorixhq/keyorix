@@ -79,15 +79,6 @@ func RegisterCheck(chk Check) {
 	registry = append(registry, chk)
 }
 
-// Checks returns every registered check, in registration order. Exported for tests (own-package
-// tests use registry directly; report_test.go's redaction test uses this to run the skeleton
-// end to end without a check list of its own).
-func Checks() []Check {
-	out := make([]Check, len(registry))
-	copy(out, registry)
-	return out
-}
-
 // Run executes every registered check against c. See RunChecks — Run is just
 // RunChecks(ctx, c, addr, generatedBy, registry), split out so tests can exercise a specific,
 // hermetic check list without depending on (or polluting) the global registry.

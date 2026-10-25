@@ -11,9 +11,6 @@ import "github.com/keyorixhq/keyorix/internal/core/rules"
 // SecretValuePolicy is rules.SecretValuePolicy.
 type SecretValuePolicy = rules.SecretValuePolicy
 
-// DefaultSecretValuePolicy returns the disabled (no-op) policy.
-func DefaultSecretValuePolicy() SecretValuePolicy { return rules.DefaultSecretValuePolicy() }
-
 // PasswordPolicy is rules.PasswordPolicy (ADR-025).
 type PasswordPolicy = rules.PasswordPolicy
 
