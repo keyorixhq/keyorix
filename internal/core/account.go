@@ -622,12 +622,34 @@ func (c *KeyorixCore) enforcePasswordExpiryGate(ctx context.Context, user *model
 		return nil
 	}
 	now := c.now()
-	if err := c.storage.SetAccountState(ctx, user.ID, AccountPasswordResetRequired, now); err != nil {
+	if err := c.setPasswordResetRequiredAfterMatch(ctx, user.ID, now); err != nil {
 		return fmt.Errorf("failed to enforce password expiry: %w", err)
 	}
 	user.AccountState = AccountPasswordResetRequired
 	user.UpdatedAt = now
 	return nil
+}
+
+// setPasswordResetRequiredAfterMatch is the gate's SetAccountState write. Every
+// caller runs the gate after the credential matched, so a PANIC in the write
+// comes back as an error wrapping ErrLoginWritePanicked (#3557), and each login
+// path denies it through the gate's existing post-verdict error branch: the
+// wrong-credential response, the lockout counted as that path counts, the slot
+// kept, auth.login_error. It used to reach the Recovery middleware instead: a
+// 500 that a wrong credential never gets (it never reaches the gate).
+//
+// Commit-aware: if the state change landed before the panic the account is now
+// password_reset_required, the state the gate exists to set, and the login is
+// refused anyway.
+func (c *KeyorixCore) setPasswordResetRequiredAfterMatch(ctx context.Context, userID uint, now time.Time) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: password-expiry gate write for user %d panicked after the credential matched; "+
+				"denying it as a post-verdict fault: %v\n%s", userID, r, debug.Stack())
+			err = fmt.Errorf("%w: password-expiry state write for user %d: %v", ErrLoginWritePanicked, userID, r)
+		}
+	}()
+	return c.storage.SetAccountState(ctx, userID, AccountPasswordResetRequired, now)
 }
 
 // CurrentSessionID returns the session ID backing a session token, or 0 if the
