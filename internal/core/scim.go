@@ -119,7 +119,7 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	// deactivate or delete it again) and pre-bind an SSO identity. Refused before the
 	// dedup lookup, so the answer does not depend on whether that binding exists.
 	if strings.HasPrefix(externalID, ssoExternalIDScheme) {
-		return nil, fmt.Errorf("externalId must not use the reserved %q scheme", ssoExternalIDScheme)
+		return nil, fmt.Errorf("%w: externalId must not use the reserved %q scheme", ErrInvalidInput, ssoExternalIDScheme)
 	}
 	// ADR-022: the domain allowlist is an install-wide boundary on who may hold an
 	// account at all, not just an invite-flow check — a SCIM directory sync from an
@@ -137,7 +137,7 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		return nil, fmt.Errorf("failed to check for an existing user: %w", ferr)
 	}
 	if existing != nil {
-		return nil, fmt.Errorf("a user already exists for this externalId/email")
+		return nil, ErrSCIMUserExists
 	}
 	username, err := c.deriveSCIMUsername(ctx, userName)
 	if err != nil {
@@ -162,11 +162,11 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 	// below would catch.
 	foldedUsername, ferr := identity.NewFoldedName(username)
 	if ferr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorValidation", nil), ErrInvalidInput, ferr)
 	}
 	foldedEmail, ferr := identity.NewFoldedName(email)
 	if ferr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorValidation", nil), ErrInvalidInput, ferr)
 	}
 	// The user row and its baseline role grant run in one transaction — the same
 	// "user created, then role assign fails, leaves a user with zero roles" bootstrap
@@ -206,7 +206,7 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 		// ErrDuplicateEmail; surface the same clean error the dedup check above already
 		// returns for the sequential case, instead of a raw constraint-violation message.
 		if errors.Is(err, storage.ErrDuplicateEmail) {
-			return nil, fmt.Errorf("a user already exists for this externalId/email")
+			return nil, ErrSCIMUserExists
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
@@ -236,6 +236,17 @@ func (c *KeyorixCore) ProvisionSCIMUser(ctx context.Context, actorID uint, userN
 // created keep their bare externalId and are unaffected.
 func scimOwned(user *models.User) bool {
 	return user.ExternalID != "" && !strings.HasPrefix(user.ExternalID, ssoExternalIDScheme)
+}
+
+// scimLookupErr wraps a failed read of a SCIM target: "not found" only when the user
+// positively does not exist (storage.ErrUserNotFound, kept in the chain), "retrieval
+// failed" otherwise. The SCIM transport maps the first to 404 and the second to 500 by
+// errors.Is (#3494); the text only has to be honest in the server log.
+func scimLookupErr(err error) error {
+	if storage.IsUserNotFound(err) {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+	}
+	return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 }
 
 // IsSCIMManaged is scimOwned for callers outside this package (the SCIM HTTP handler's
@@ -274,10 +285,10 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 	// race-free decision.
 	target, err := c.storage.GetUser(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+		return nil, scimLookupErr(err)
 	}
 	if !scimOwned(target) {
-		return nil, fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), ErrNotSCIMManaged)
 	}
 	// Refuse an email that collides with a DIFFERENT user (#336). Checked up front
 	// (against id, not a pre-fetched struct) since it targets a DIFFERENT user's row
@@ -376,7 +387,7 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		// #120/#218: email-uniqueness check races with a concurrent update — DB partial
 		// unique index catches the loser and wraps it in ErrDuplicateEmail.
 		if errors.Is(lockErr, storage.ErrDuplicateEmail) {
-			return nil, fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrEmailInUse)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), lockErr)
 	}
@@ -420,7 +431,7 @@ func (c *KeyorixCore) checkSCIMEmailCollision(ctx context.Context, id uint, emai
 	switch {
 	case eerr == nil:
 		if existing != nil && existing.ID != id {
-			return fmt.Errorf("%s: email already in use by another user", i18n.T("ErrorValidation", nil))
+			return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrEmailInUse)
 		}
 	case storage.IsUserNotFound(eerr):
 		// Genuinely unused — proceed.
@@ -454,7 +465,7 @@ func (c *KeyorixCore) scimUpdateUserTx(ctx context.Context, tx storage.Storage, 
 		// GetUserByEmail keep resolving to the user's OLD address forever.
 		folded, ferr := identity.NewFoldedName(*email)
 		if ferr != nil {
-			return nil, false, nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+			return nil, false, nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorValidation", nil), ErrInvalidInput, ferr)
 		}
 		user.Email = *email
 		user.EmailFolded = folded.Folded()
@@ -604,7 +615,7 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to deactivate the last install administrator")
+		return ErrLastAdminDeactivation
 	}
 	return nil
 }
@@ -636,10 +647,10 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	// lock-guarded read inside the transaction, not this struct.
 	precheck, err := c.storage.GetUser(ctx, id)
 	if err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+		return scimLookupErr(err)
 	}
 	if !scimOwned(precheck) {
-		return fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+		return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), ErrNotSCIMManaged)
 	}
 	// #G03: guardLastAdminDeactivation's read is serialized against every other
 	// accountStateMu-guarded admin-deactivation path (UpdateSCIMUser, DeleteUser,
@@ -771,7 +782,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	}
 	if lockErr != nil {
 		if errors.Is(lockErr, storage.ErrUserNotFound) {
-			return fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+			return fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), ErrNotSCIMManaged)
 		}
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), lockErr)
 	}
@@ -798,10 +809,10 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 func (c *KeyorixCore) GetSCIMUser(ctx context.Context, id uint) (*models.User, error) {
 	user, err := c.storage.GetUser(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), err)
+		return nil, scimLookupErr(err)
 	}
 	if !scimOwned(user) {
-		return nil, fmt.Errorf("%s: not a SCIM-managed account", i18n.T("ErrorUserNotFound", nil))
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorUserNotFound", nil), ErrNotSCIMManaged)
 	}
 	return user, nil
 }

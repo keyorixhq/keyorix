@@ -2083,6 +2083,26 @@ scim:
 > configured secret); see
 > [startup-refusals.md](operator/startup-refusals.md#weak-scim-token).
 
+### Status codes on a failed SCIM user request
+
+The status tells the IdP whether to retry, so a failed deactivation (PATCH or PUT
+with `active:false`) or DELETE is never answered `404` unless the user really is
+absent. A storage failure rolls the whole change back: the account is still active
+and its sessions and tokens are still valid until the IdP's retry succeeds.
+
+| Status | `scimType` | Meaning | IdP should |
+|---|---|---|---|
+| `404` | — | No such user, or an account SCIM does not manage | treat it as gone |
+| `409` | `uniqueness` | The email or `externalId` belongs to another user | fix the data |
+| `409` | — | Refused: the user is the install's last administrator | fix the role assignment |
+| `400` | `invalidValue` | An attribute value is not acceptable | fix the data |
+| `503` + `Retry-After` | — | Write contention or a concurrent change to the same user; nothing was written | retry after the delay |
+| `500` | — | Any other server-side failure (database unavailable, deadlock, rolled-back transaction); nothing was written | retry |
+| `503` (Keyorix `PartialMutation` extension) | — | The deactivation was applied, the rest of the request was not (see the body) | retry the request |
+
+The `500` body carries a generic `detail`; the cause is in the server log with the
+request id.
+
 ## sso
 
 Human single-sign-on login via **OIDC** (authorization-code flow). When enabled, the
