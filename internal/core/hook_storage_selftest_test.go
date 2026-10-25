@@ -168,6 +168,7 @@ var storageEmbedNames = map[string]bool{
 	"LocalStorage": true, // *store.LocalStorage
 	"MockStorage":  true, // testify mock with ~480 methods
 	"hookStore":    true,
+	"HookStore":    true, // storagetest.HookStore, the kit's one allowed embedding
 }
 
 // wholeStorageEmbeddingViolations returns "file: Type embeds X" for every struct type
@@ -266,11 +267,17 @@ func TestNoWholeStorageEmbeddingInCoreTests(t *testing.T) {
 		require.NoError(t, rerr)
 		files[e.Name()] = src
 	}
-	require.Contains(t, files, "hook_storage_test.go", "the scan must cover hookStore itself")
+	// hookStore itself moved to the storagetest kit (CORE-TESTKIT-1): pin that the one
+	// allowed whole-Storage embedding still exists there, and that core reaches it
+	// only through the alias file.
+	kit, kerr := os.ReadFile("storage/storagetest/hookstore.go") // #nosec G304 -- fixed path inside this repo
+	require.NoError(t, kerr)
+	require.Contains(t, string(kit), "type HookStore struct", "the kit must still hold the one allowed whole-Storage embedding")
+	require.Contains(t, files, "storagetest_aliases_test.go", "the scan must cover the alias file that exposes hookStore to core's tests")
 	assert.Empty(t, wholeStorageEmbeddingViolations(t, files),
 		"a test double must not embed the whole storage.Storage (or *store.LocalStorage, MockStorage, hookStore): "+
 			"each embedding costs ~2.6 MB of wrapper code in the [internal/core.test] archive. "+
-			"Build it with hooked(inner, &storeHooks{...}) instead (hook_storage_test.go)")
+			"Build it with hooked(inner, &storeHooks{...}) instead (storage/storagetest/hookstore.go)")
 }
 
 // Calibration: the guard flags a direct embedding in each of its spellings and a
@@ -286,9 +293,11 @@ type b struct {
 type c struct{ *MockStorage }
 type d struct{ *hookStore }
 type e struct{ a }
+type f struct{ *storagetest.HookStore }
 type hookStore struct{ storage.Storage }
 type fine struct{ inner storage.Storage }
 type alsoFine struct{ *captureStore }
+type aliased = storagetest.HookStore
 `)
 	assert.Equal(t, []string{
 		"x_test.go: a embeds Storage",
@@ -296,7 +305,8 @@ type alsoFine struct{ *captureStore }
 		"x_test.go: c embeds MockStorage",
 		"x_test.go: d embeds hookStore",
 		"x_test.go: e embeds a",
-	}, wholeStorageEmbeddingViolations(t, map[string][]byte{"x_test.go": bad}))
+		"x_test.go: f embeds HookStore",
+	},wholeStorageEmbeddingViolations(t, map[string][]byte{"x_test.go": bad}))
 	assert.Empty(t, wholeStorageEmbeddingViolations(t, map[string][]byte{"y_test.go": []byte("package core_test\ntype z struct{ storage.Storage }\n")}),
 		"the external test package has its own archive")
 }
