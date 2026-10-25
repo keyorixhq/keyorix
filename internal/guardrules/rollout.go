@@ -134,7 +134,7 @@ func (r *reportOnly) summary() {
 	if path == "" {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- path set by CI
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 G703 -- path set by CI
 	if err != nil {
 		r.TB.Logf("guard rollout: cannot open %s: %v", path, err)
 		return

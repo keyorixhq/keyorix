@@ -95,7 +95,7 @@ func appendReport(t testing.TB, line string) {
 	if path == "" {
 		return
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 -- path set by the nightly job
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600) // #nosec G304 G703 -- path set by the nightly job
 	if err != nil {
 		t.Fatalf("open %s: %v", path, err)
 	}
