@@ -21,6 +21,19 @@
 // already-wired OIDCVerifier -- that's the seam's own implementation, not a
 // violation). Scoped repo-wide, not just internal/core: SetClockForTesting is
 // exported, so any package could in principle call it.
+//
+// What this guard silently skips (known gaps, deliberately not fixed here):
+//   - It matches by NAME on the selector. A reflective lookup such as
+//     reflect.ValueOf(c).MethodByName("StorageForTesting") carries the name in a
+//     string literal, not a SelectorExpr, so it is not seen.
+//   - Any FuncDecl named SetClockForTesting, setClock or StorageForTesting, in
+//     any package, is exempt inside its own body. A same-named wrapper elsewhere
+//     therefore hides nothing it calls from this scan, but it only matters if the
+//     wrapper is itself called from production, and that call IS caught.
+//   - Only .go files outside _test.go are scanned, and the walk skips the
+//     directories in clockSeamGuardSkipDirs (web/, vendor/, ...). It does not
+//     skip .claude-worktrees/, so a local run in a checkout containing that
+//     folder can flag other worktrees' files; CI is unaffected.
 package guards
 
 import (
