@@ -77,6 +77,10 @@ WHERE NOT t.tgisinternal AND (` + strings.Join(conds, " OR ") + `)
 ORDER BY t.tgname`
 }()
 
+// rolePermGenerationIntegrityRawSQL is the same statement with a native $1
+// bind, for the read that goes around GORM (see readRolePermGenerationIntegrity).
+var rolePermGenerationIntegrityRawSQL = strings.Replace(rolePermGenerationIntegritySQL, "?", "$1", 1)
+
 // rolePermGenerationIntegrityState is one reading: problem is "" when the
 // definition is this binary's, version the concatenated row versions.
 type rolePermGenerationIntegrityState struct {
@@ -84,15 +88,33 @@ type rolePermGenerationIntegrityState struct {
 	version string
 }
 
+// The read goes through the underlying *sql.DB, not GORM: the background job
+// would otherwise run GORM's callback chain concurrently with anything that
+// registers a callback on the shared *gorm.DB (tests count queries that way),
+// a data race inside GORM. Only the repair path, which is rare, uses GORM.
 func readRolePermGenerationIntegrity(ctx context.Context, db *gorm.DB) (rolePermGenerationIntegrityState, error) {
-	var rows []struct {
-		Name    string
-		State   string
-		DefOK   bool
-		FuncOK  bool
-		Version string
+	type triggerRow struct {
+		Name, State, Version string
+		DefOK, FuncOK        bool
 	}
-	if err := db.WithContext(ctx).Raw(rolePermGenerationIntegritySQL, postgresRolePermGenerationFuncBody).Scan(&rows).Error; err != nil {
+	var rows []triggerRow
+	sqlDB, err := db.DB()
+	if err != nil {
+		return rolePermGenerationIntegrityState{}, err
+	}
+	rs, err := sqlDB.QueryContext(ctx, rolePermGenerationIntegrityRawSQL, postgresRolePermGenerationFuncBody)
+	if err != nil {
+		return rolePermGenerationIntegrityState{}, err
+	}
+	defer rs.Close()
+	for rs.Next() {
+		var r triggerRow
+		if err := rs.Scan(&r.Name, &r.State, &r.DefOK, &r.FuncOK, &r.Version); err != nil {
+			return rolePermGenerationIntegrityState{}, err
+		}
+		rows = append(rows, r)
+	}
+	if err := rs.Err(); err != nil {
 		return rolePermGenerationIntegrityState{}, err
 	}
 	var st rolePermGenerationIntegrityState
