@@ -1345,6 +1345,11 @@ func (m *MockStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleI
 	return args.Error(0)
 }
 
+func (m *MockStorage) SetRoleAssignableScope(ctx context.Context, roleID uint, scope string) error {
+	args := m.Called(ctx, roleID, scope)
+	return args.Error(0)
+}
+
 func (m *MockStorage) GetRole(ctx context.Context, id uint) (*models.Role, error) {
 	if !m.mockHasExpectation("GetRole") {
 		return nil, errMockLookupNotStubbed

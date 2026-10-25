@@ -116,7 +116,7 @@ func TestConcurrency_RestoreGroup_AdminGrantRace_TOCTOU_Deterministic(t *testing
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "roles.assign"}).Error)
 	// adminRole has the structural bypass flag -- roleSetContainsAdmin's one
 	// real signal (ADR-084), independent of its name or bundled permissions.
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "sneaky_admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "sneaky_admin", BypassesPermissionChecks: true, AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "nonadmin", UsernameFolded: "nonadmin", AccountState: core.AccountActive}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "g1", NameFolded: "g1", DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}).Error)
 
