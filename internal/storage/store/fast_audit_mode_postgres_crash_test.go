@@ -102,7 +102,7 @@ func runPostgresAuditCrash(t *testing.T, standard bool, schema string) {
 			}
 			time.Sleep(500 * time.Millisecond)
 		}
-		t.Fatalf("could not connect to %q within 60s: %v", dsn, err)
+		t.Fatalf("could not connect to KEYORIX_TEST_PG_DSN within 60s (DSN not printed: it carries the password): %v", err)
 		return nil
 	}
 

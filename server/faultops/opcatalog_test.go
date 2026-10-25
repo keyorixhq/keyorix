@@ -147,7 +147,7 @@ func httpResult(st int, body []byte) opResult {
 // AssignRole operations.
 func createRoleForFuzz(ctx context.Context, w *faultWorld) (uint, error) {
 	status, body, err := httpJSON(ctx, w, http.MethodPost, "/api/v1/roles/", map[string]any{
-		"name": "fuzz-role", "description": "fuzz role", "permissions": []string{"secrets.read"},
+		"name": "fuzz-role", "description": "fuzz role", "permissions": []string{"secrets.read"}, "assignable_scope": "any",
 	})
 	if err != nil {
 		return 0, err
@@ -3854,7 +3854,7 @@ var opCatalog = []operation{
 				return nil, err
 			}
 			st, body, err = httpJSON(ctx, w, http.MethodPost, "/api/v1/roles/", map[string]any{
-				"name": "fuzz-b18-syswrite-role", "description": "fuzz global admin role", "permissions": []string{"system.write"},
+				"name": "fuzz-b18-syswrite-role", "description": "fuzz global admin role", "permissions": []string{"system.write"}, "assignable_scope": "any",
 			})
 			if err != nil {
 				return nil, err

@@ -66,7 +66,7 @@ func newGVOWorld(t *testing.T, backend string) *gvoWorld {
 	var cfg *config.Config
 	switch backend {
 	case "sqlite":
-		cfg = &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqlitetest.DSN("kxgvo_")}}}
+		cfg = &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqlitetest.FactoryPath(t, "kxgvo_")}}}
 	case "postgres":
 		pgDSN := os.Getenv("KEYORIX_TEST_PG_DSN")
 		if pgDSN == "" {

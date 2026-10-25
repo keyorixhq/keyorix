@@ -527,6 +527,24 @@ belong together (the second message is a heuristic), `touch` them to a common ti
 "Remove the partial files and let first boot recreate them" is only right on an install that
 has **no data yet**. **In place:** no.
 
+### Interrupted restore — from code
+
+```
+an interrupted `admin restore` left its journal at <dir>/.keyorix-restore-journal.json: the key files and the database may not match until it is resolved. Stop every server on this data, then run `keyorix-server admin restore --recover` (it finishes the restore if its data was committed, and undoes it otherwise)
+```
+
+**Match:** `left its journal at`
+
+**Cause.** An `admin restore` was killed (or failed to install a file) after it staged the
+archive's key files and data, so the key files and the data may be from different points in
+time. `admin backup` and a new `admin restore` refuse with the same message. **Fix.** Stop
+every server on this data and run `keyorix-server admin restore --recover`: it rolls the
+restore forward if its data was committed and back otherwise, and refuses (changing
+nothing) when a staged key file is missing or altered
+([restore-failure-modes.md](restore-failure-modes.md)). Run it with the same config and
+working directory as the restore. Do not delete the journal by hand.
+**In place:** yes, `--recover`.
+
 ### Key files readable by others, or owned by another account — from code
 
 ```
@@ -888,6 +906,24 @@ an admin operation is running against this database; retry when it finishes
 
 **Cause.** A server start collided with a running `admin` command (backup, restore,
 rotation). **Fix.** Wait for the command to finish, then start. **In place:** yes.
+
+### The SQLite server lock file cannot be locked or watched — from code
+
+```
+lock server lock file "<datadir>/keyorix.db.server.lock": operation not supported: the filesystem holding it does not support file locks (flock), so a server and an admin command cannot exclude each other; put the SQLite database on a local filesystem, or use storage.type: postgres
+```
+
+**Match:** `the filesystem holding it does not support file locks`
+`the filesystem reports no inode numbers`
+`between opening and locking it`
+
+**Cause.** The SQLite database (and its `.server.lock` beside it) is on a filesystem
+without `flock` support or without inode numbers (some network and FUSE mounts), or a
+process keeps deleting or replacing `.server.lock`. The server and every `admin` command
+refuse rather than run without the server/admin exclusion. **Fix.** Move the database to a
+local filesystem, or use PostgreSQL; never delete `.server.lock`
+([j7-troubleshooting.md](j7-troubleshooting.md#an-admin-command-while-the-server-is-still-running)).
+**In place:** no.
 
 ---
 

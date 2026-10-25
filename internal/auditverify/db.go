@@ -204,10 +204,19 @@ func nonNegativeUint64(v sql.NullInt64, column string) (*uint64, error) {
 // LatestCheckpoint returns the most recently written audit_checkpoints row,
 // or (nil, nil) when none exists.
 func (d *DB) LatestCheckpoint(ctx context.Context) (*Checkpoint, error) {
-	q := d.rebind(`SELECT id, chained_events, head_id, head_hash, key_version, signature, ` +
-		`anchor_token, anchored_at, anchor_provider FROM audit_checkpoints ORDER BY id DESC LIMIT 1`)
-	row := d.sql.QueryRowContext(ctx, q)
+	return d.scanCheckpoint(d.sql.QueryRowContext(ctx, d.rebind(checkpointColumns+`ORDER BY id DESC LIMIT 1`)))
+}
 
+// CheckpointByID returns the audit_checkpoints row with the given id, or
+// (nil, nil) when none exists.
+func (d *DB) CheckpointByID(ctx context.Context, id uint64) (*Checkpoint, error) {
+	return d.scanCheckpoint(d.sql.QueryRowContext(ctx, d.rebind(checkpointColumns+`WHERE id = ?`), id))
+}
+
+const checkpointColumns = `SELECT id, chained_events, head_id, head_hash, key_version, signature, ` +
+	`anchor_token, anchored_at, anchor_provider FROM audit_checkpoints `
+
+func (d *DB) scanCheckpoint(row *sql.Row) (*Checkpoint, error) {
 	var cp Checkpoint
 	var anchorToken []byte
 	var anchoredAt sql.NullTime

@@ -13,7 +13,14 @@
   with cause `store.ErrAdvisoryLockLost` and return that error joined with fn's own.
   Process-wide locks fail closed: `serverguard.Presence.Lost` and `solewriter.Guard.Lost` (the
   holder poller, which checks the lock itself every 250 ms, closes it) end `server/main.go`'s wait
-  (`awaitShutdown`), and the server shuts down gracefully and exits 1. Why: before
+  (`awaitShutdown`), and the server shuts down gracefully and exits 1. The admin command lock
+  (`serverguard.Exclusive`, held by every `acquireDatabaseLock` caller in `server/admin`) is
+  watched the same way: `Exclusive.Lost` closes and `stopOnLostDatabaseLock` stops the command
+  with exit 1. The key-initialisation lock (`serverguard.WithKeyInitLock`) is watched while fn
+  runs and pinged once more when fn returns; a loss returns `errKeyInitLockLost`, so start-up is
+  refused. Every loss is counted in `keyorix_advisory_lock_lost_total{lock}`
+  (`config.ReportAdvisoryLockLost`; `config` `TestLockLossKind_EveryHolderIsNamed` fails on a
+  holder without its own label). Why: before
   LOCKLOSS-SESSION-1 only the transaction shape was watched, so after a backend kill on the most
   common install two schedulers or two single-writer servers ran at once. Guard: pg-gated,
   `pg_terminate_backend`, red without the watcher and green with it:
@@ -22,12 +29,17 @@
   audit-checkpoint: a second replica takes the lock, the first one's ctx is cancelled),
   `TestWithNamedLock_SessionLock_NestedWaitIsNotALoss` (red without the gate),
   `internal/serverguard` `TestPostgres_ServerGuard_LostSessionPresenceLockIsReported`,
-  `internal/solewriter` `TestGuard_KilledHolderBackend_ClosesLost`, `server`
+  `internal/solewriter` `TestGuard_KilledHolderBackend_ClosesLost`, `internal/serverguard`
+  `TestPostgres_ServerGuard_LostExclusiveLockIsReported`,
+  `TestPgBouncer_ServerGuard_LostExclusiveLockIsReported`,
+  `TestPostgres_WithKeyInitLock_LostLockFailsTheHolder` (red on the base, both lock shapes),
+  `server/admin` `TestAcquireDatabaseLock_LostLockStopsTheCommand`,
+  `TestAcquireDatabaseLock_ReleasedLockNeverStopsTheCommand`, `server`
   `TestAwaitShutdown_LostProcessLockEndsTheServer` and `TestSingleWriter_Postgres_OperatorJourney`
   (exit 1), `scripts/e2e` `TestLockLoss_Postgres` (real server, presence and single_writer, exit
   status 1). **Not covered**: the overlap itself (detection takes up to one ping interval plus
   its timeout, 10 s by default; the error makes the overlap visible, it does not prevent it); a
   pooler that reconnects a client to a new backend unseen (only PgBouncer is supported,
   docs/postgresql-poolers.md); the audit list index build lock has no fn hook, so its loss case
-  is covered only through the shared `advisoryLockSession.watch`; `serverguard.Exclusive` (held
-  only by the test hook `admin __hold-lock-for-test`) is not watched.
+  is covered only through the shared `advisoryLockSession.watch`; a live `admin backup` holds the
+  presence lock shared and does not act on `Presence.Lost` (docs/design/pooler-lock-loss.md).

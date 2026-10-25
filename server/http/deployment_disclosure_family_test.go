@@ -49,7 +49,7 @@ func newFullSchemaTestCore(t *testing.T) *core.KeyorixCore {
 		Storage: config.StorageConfig{
 			Type: "local",
 			Database: config.DatabaseConfig{
-				Path: sqlitetest.DSN("kxtest_"),
+				Path: sqlitetest.FactoryPath(t, "kxtest_"),
 			},
 		},
 	}

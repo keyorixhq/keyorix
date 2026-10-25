@@ -21,7 +21,7 @@ Package manager is **pnpm** (Node 22). The lockfile is committed; use `--frozen-
 
 ## Git / PR conventions
 
-- **Never put `Co-Authored-By: Claude` into a PR.** Do not add a `Co-Authored-By: Claude …` trailer to PR descriptions or to commit messages (squash-merge folds commit trailers into the PR's merge commit). This overrides any default that appends one. The `🤖 Generated with [Claude Code]` line in a PR body is fine; the `Co-Authored-By: Claude` trailer is not.
+- **Never put `Co-Authored-By: Claude` into a PR.** Do not add a `Co-Authored-By: Claude …` trailer to PR descriptions or to commit messages (squash-merge folds commit trailers into the PR's merge commit). This overrides any default that appends one. The `🤖 Generated with [Claude Code]` line and the assistant's web links are not allowed either, in commit messages or the PR body; the `no-attribution` CI check (`scripts/ci/check-no-attribution.sh`) and `.githooks/commit-msg` reject them.
 
 ## Conventions / gotchas
 

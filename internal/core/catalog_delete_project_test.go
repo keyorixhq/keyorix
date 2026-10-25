@@ -13,6 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/dynamic/dynamictest"
 	"github.com/keyorixhq/keyorix/internal/encryption"
@@ -42,14 +43,29 @@ import (
 // loudly instead of silently passing.
 
 type deleteProjectSpy struct {
-	storage.Storage     // left nil: any method besides the ones below panics if reached
 	blockingSecretCount int
 	deleteIfEmptyErr    error
 	deleteErr           error
 	callOrder           []string
 }
 
-func (s *deleteProjectSpy) DeleteProjectIfEmpty(_ context.Context, id uint) (int, error) {
+// store returns the spy as a storage.Storage: a storagetest.Hooked over a nil inner
+// store, so any method besides the ones hooked below panics if reached.
+func (s *deleteProjectSpy) store() storage.Storage {
+	var hs *storagetest.HookStore
+	hs = storagetest.Hooked(nil, &storagetest.StoreHooks{
+		DeleteProjectIfEmpty: s.DeleteProjectIfEmpty,
+		DeleteProject:        s.DeleteProject,
+		WithTransaction: func(_ storage.Storage, ctx context.Context, fn func(storage.Storage) error) error {
+			return s.WithTransaction(ctx, fn, hs)
+		},
+		SuspendMachineIdentitiesForDeletedProject: s.SuspendMachineIdentitiesForDeletedProject,
+		ListDynamicSecretConfigs:                  s.ListDynamicSecretConfigs,
+	})
+	return hs
+}
+
+func (s *deleteProjectSpy) DeleteProjectIfEmpty(_ storage.Storage, _ context.Context, id uint) (int, error) {
 	s.callOrder = append(s.callOrder, "DeleteProjectIfEmpty")
 	if id != 7 {
 		return 0, fmt.Errorf("unexpected project id %d", id)
@@ -57,7 +73,7 @@ func (s *deleteProjectSpy) DeleteProjectIfEmpty(_ context.Context, id uint) (int
 	return s.blockingSecretCount, s.deleteIfEmptyErr
 }
 
-func (s *deleteProjectSpy) DeleteProject(_ context.Context, id uint) error {
+func (s *deleteProjectSpy) DeleteProject(_ storage.Storage, _ context.Context, id uint) error {
 	s.callOrder = append(s.callOrder, "DeleteProject")
 	if id != 7 {
 		return fmt.Errorf("unexpected project id %d", id)
@@ -68,13 +84,13 @@ func (s *deleteProjectSpy) DeleteProject(_ context.Context, id uint) error {
 // WithTransaction runs fn on the spy itself: DeleteProject wraps the cascade and its
 // #3433 machine-identity step in one transaction. The guard+cascade is still ONE call
 // inside it, which is what callOrder pins.
-func (s *deleteProjectSpy) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
-	return fn(s)
+func (s *deleteProjectSpy) WithTransaction(_ context.Context, fn func(storage.Storage) error, self storage.Storage) error {
+	return fn(self)
 }
 
 // SuspendMachineIdentitiesForDeletedProject records the #3433 step: it must follow a
 // cascade that deleted, and never a guard that refused.
-func (s *deleteProjectSpy) SuspendMachineIdentitiesForDeletedProject(_ context.Context, id uint) ([]*models.MachineIdentity, error) {
+func (s *deleteProjectSpy) SuspendMachineIdentitiesForDeletedProject(_ storage.Storage, _ context.Context, id uint) ([]*models.MachineIdentity, error) {
 	s.callOrder = append(s.callOrder, "SuspendMachineIdentitiesForDeletedProject")
 	if id != 7 {
 		return nil, fmt.Errorf("unexpected project id %d", id)
@@ -86,14 +102,14 @@ func (s *deleteProjectSpy) SuspendMachineIdentitiesForDeletedProject(_ context.C
 // cascade (see revokeProjectDynamicSecretLeases's doc comment), deliberately after the
 // delete itself. Returns none: these tests aren't exercising the dynamic-secrets
 // cascade itself (see TestDeleteProject_RealStorage_DisablesDynamicSecretConfigsAndRevokesLeases).
-func (s *deleteProjectSpy) ListDynamicSecretConfigs(_ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
+func (s *deleteProjectSpy) ListDynamicSecretConfigs(_ storage.Storage, _ context.Context, _, _ uint) ([]*models.DynamicSecretConfig, error) {
 	return nil, nil
 }
 
 func TestDeleteProject_EmptyProjectDeletesAtomically(t *testing.T) {
 	t.Parallel()
 	spy := &deleteProjectSpy{blockingSecretCount: 0}
-	c := core.NewKeyorixCore(spy)
+	c := core.NewKeyorixCore(spy.store())
 
 	require.NoError(t, c.DeleteProject(context.Background(), 0, 7, false))
 	assert.Equal(t, []string{"DeleteProjectIfEmpty", "SuspendMachineIdentitiesForDeletedProject"}, spy.callOrder,
@@ -103,7 +119,7 @@ func TestDeleteProject_EmptyProjectDeletesAtomically(t *testing.T) {
 func TestDeleteProject_RejectsWhenSecretsExist(t *testing.T) {
 	t.Parallel()
 	spy := &deleteProjectSpy{blockingSecretCount: 3}
-	c := core.NewKeyorixCore(spy)
+	c := core.NewKeyorixCore(spy.store())
 
 	err := c.DeleteProject(context.Background(), 0, 7, false)
 	require.Error(t, err)
@@ -117,7 +133,7 @@ func TestDeleteProject_ForceSkipsGuardEntirely(t *testing.T) {
 	// blockingSecretCount would reject if the guard ran; deleteIfEmptyErr would fail
 	// the test if DeleteProjectIfEmpty were reached at all.
 	spy := &deleteProjectSpy{blockingSecretCount: 99, deleteIfEmptyErr: fmt.Errorf("must not be called")}
-	c := core.NewKeyorixCore(spy)
+	c := core.NewKeyorixCore(spy.store())
 
 	require.NoError(t, c.DeleteProject(context.Background(), 0, 7, true))
 	assert.Equal(t, []string{"DeleteProject", "SuspendMachineIdentitiesForDeletedProject"}, spy.callOrder, "force=true must skip the guard entirely")

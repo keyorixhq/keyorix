@@ -1,0 +1,1 @@
+internal/restorejournal	none	-	new in RESTORE-OVERWRITE-FIX-1: restore-interrupted journal; no package-specific adversarial pass yet; unit-tested in journal_test.go	pending

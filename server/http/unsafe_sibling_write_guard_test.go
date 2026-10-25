@@ -13,7 +13,7 @@
 // the full method): commit-message search (G42, 8ba2109d, #518, #517,
 // #260/#519, #528, #525/#340, #303/#304 each name their own complete scope)
 // cross-checked against an exhaustive structural scan of
-// internal/core/storage/interface.go for the (bool, error) CAS-return
+// internal/core/storage/iface_*.go for the (bool, error) CAS-return
 // signature or a conditional|atomically|CAS doc comment. Both derivations
 // agree on the same population below. Stated residual gap: a conditional-
 // write method with neither a telltale name, nor that signature, nor such a

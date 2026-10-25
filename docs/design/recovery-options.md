@@ -318,3 +318,16 @@ or the new state verifies, never BROKEN.
 Not verified here (pending e2e VM or not run): container and Kubernetes variants of every host
 command; F2 re-run on current main (code path read only); whether notification channels can address
 one user's email; behaviour across a mixed-version HA cluster during the MFA-reset rollout.
+
+---
+
+## 6. Recovery-key delivery: hybrid age recipients
+
+`admin recovery-key rotate --recipient` encrypts the new recovery key with age. A classical recipient
+(X25519 `age1...`, `ssh-ed25519`) protects the delivered ciphertext only against classical attackers:
+a copy harvested today opens to a future quantum attacker. The command therefore accepts hybrid
+ML-KEM-768 + X25519 recipients (`age1pq1...`, `age.ParseHybridRecipient` in `filippo.io/age`, already in
+go.mod) and prints a one-time warning on stderr, naming the hybrid alternative, when the recipient is
+classical. It warns rather than refuses: classical recipients keep working, and a malformed recipient of
+either kind is still refused before the old key is touched. `ssh-rsa` keys were already refused and stay
+refused. This is independent of the post-quantum key-wrapping design (RD-PQWRAP-1).

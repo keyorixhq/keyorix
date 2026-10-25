@@ -421,11 +421,11 @@ def decide(base, head, changed=None):
             if test_hit:
                 seed(imp, False, f"its tests name {test_hit}")
 
-    # security-closure rows: the pg-gated ones are only proven in the core-1
-    # leg's check-closures step (ci.yml test-suite), so a change to the ledger
-    # or its checker must run that leg.
+    # security-closure rows: the pg-gated ones are only proven by ci.yml's
+    # closures-pg job, which runs when the core-1 leg runs, so a change to the
+    # ledger or its checker must select that leg.
     if any(f.startswith("docs/security-closures.d/") or f == "scripts/check-closures.sh" for f in changed):
-        seed(MODULE + "/internal/core", False, "security-closure ledger or checker changed (core-1 leg proves pg-gated rows)")
+        seed(MODULE + "/internal/core", False, "security-closure ledger or checker changed (closures-pg proves pg-gated rows when core-1 runs)")
 
     seeds = code_seeds | test_seeds
     affected = set(seeds)
