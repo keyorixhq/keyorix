@@ -106,7 +106,7 @@ func readRolePermGenerationIntegrity(ctx context.Context, db *gorm.DB) (rolePerm
 	if err != nil {
 		return rolePermGenerationIntegrityState{}, err
 	}
-	defer rs.Close()
+	defer func() { _ = rs.Close() }()
 	for rs.Next() {
 		var r triggerRow
 		if err := rs.Scan(&r.Name, &r.State, &r.DefOK, &r.FuncOK, &r.Version); err != nil {
