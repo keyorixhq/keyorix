@@ -68,8 +68,8 @@ var auditWriteContextAllowlist = map[string]string{
 	// (no production file may import the package: ADR-121 R3, test_only_packages_guard_test.go) and
 	// neither does I/O: HookStore runs the test's hook or delegates to the wrapped store, MockStorage
 	// records the call on a testify mock.
-	"hookstore_methods.go:HookStore": "test-only double (storagetest); runs the test's hook or forwards ctx unmodified to the wrapped store, never does I/O itself",
-	"mockstorage.go:MockStorage":     "test-only testify mock (storagetest); records the call and returns the stubbed result, never does I/O",
+	"hook_audit.go:HookStore":   "test-only double (storagetest); runs the test's hook or forwards ctx unmodified to the wrapped store, never does I/O itself",
+	"mock_audit.go:MockStorage": "test-only testify mock (storagetest); records the call and returns the stubbed result, never does I/O",
 }
 
 func TestLogAuditEventImplementations_DetachFromCallerCancellation(t *testing.T) {
