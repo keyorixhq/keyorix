@@ -1,0 +1,1 @@
+internal/anomaly	none	-	CORE-ANOMALY-LEAF-1 (#3710): Isolation Forest pass (anomaly_ml.go, isolation_forest.go) moved unchanged out of internal/core as a pure leaf (no core import, no storage, no network); no package-specific review pass yet, it was covered only by the internal/core passes before the move	pending
