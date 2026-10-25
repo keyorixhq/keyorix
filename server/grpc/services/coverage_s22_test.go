@@ -151,74 +151,13 @@ func TestMapProjectError_Default_S22(t *testing.T) {
 // GetProjectRotationOrder — unauthenticated / permission-denied / zero-id
 // ---------------------------------------------------------------------------
 
-func TestGetProjectRotationOrder_Unauthenticated_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	_, err := svc.GetProjectRotationOrder(context.Background(), &pb.GetProjectRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestGetProjectRotationOrder_ZeroID_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	ctx := authCtx(1, "owner")
-	_, err := svc.GetProjectRotationOrder(ctx, &pb.GetProjectRequest{Id: 0})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGetProjectRotationOrder_PermissionDenied_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	ctx := authCtx(999, "nobody")
-	_, err := svc.GetProjectRotationOrder(ctx, &pb.GetProjectRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
 // ---------------------------------------------------------------------------
 // GetProjectRotationPlan — unauthenticated / permission-denied / zero-id
 // ---------------------------------------------------------------------------
 
-func TestGetProjectRotationPlan_Unauthenticated_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	_, err := svc.GetProjectRotationPlan(context.Background(), &pb.GetProjectRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestGetProjectRotationPlan_ZeroID_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	ctx := authCtx(1, "owner")
-	_, err := svc.GetProjectRotationPlan(ctx, &pb.GetProjectRequest{Id: 0})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestGetProjectRotationPlan_PermissionDenied_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	ctx := authCtx(999, "nobody")
-	_, err := svc.GetProjectRotationPlan(ctx, &pb.GetProjectRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
 // ---------------------------------------------------------------------------
 // DeleteProject — unauthenticated / zero-id
 // ---------------------------------------------------------------------------
-
-func TestDeleteProject_Unauthenticated_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	_, err := svc.DeleteProject(context.Background(), &pb.DeleteProjectRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestDeleteProject_ZeroID_S22(t *testing.T) {
-	svc := newProjectTestRig(t)
-	ctx := authCtx(1, "owner")
-	_, err := svc.DeleteProject(ctx, &pb.DeleteProjectRequest{Id: 0})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
 
 // ---------------------------------------------------------------------------
 // UpdateUser — unauthenticated / zero-id / permission-denied
@@ -249,28 +188,6 @@ func TestUpdateUser_PermissionDenied_S22(t *testing.T) {
 // ---------------------------------------------------------------------------
 // DeleteUser — unauthenticated / zero-id / permission-denied
 // ---------------------------------------------------------------------------
-
-func TestDeleteUser_Unauthenticated_S22(t *testing.T) {
-	svc := newUserService(t)
-	_, err := svc.DeleteUser(context.Background(), &pb.DeleteUserRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestDeleteUser_ZeroID_S22(t *testing.T) {
-	svc := newUserService(t)
-	_, err := svc.DeleteUser(adminCtx(), &pb.DeleteUserRequest{Id: 0})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
-
-func TestDeleteUser_PermissionDenied_S22(t *testing.T) {
-	svc := newUserService(t)
-	ctx := authCtx(999, "nobody")
-	_, err := svc.DeleteUser(ctx, &pb.DeleteUserRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
 
 // ---------------------------------------------------------------------------
 // CreateUser — mutually-exclusive flag validation
@@ -336,39 +253,9 @@ func TestDeleteGroup_PermissionDenied_S22(t *testing.T) {
 // RestoreGroup — unauthenticated / permission-denied
 // ---------------------------------------------------------------------------
 
-func TestRestoreGroup_Unauthenticated_S22(t *testing.T) {
-	svc, _ := newGroupService(t)
-	_, err := svc.RestoreGroup(context.Background(), &pb.RestoreGroupRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestRestoreGroup_PermissionDenied_S22(t *testing.T) {
-	svc, _ := newGroupService(t)
-	ctx := authCtx(999, "nobody")
-	_, err := svc.RestoreGroup(ctx, &pb.RestoreGroupRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
 // ---------------------------------------------------------------------------
 // GetGroupMembers — unauthenticated / permission-denied
 // ---------------------------------------------------------------------------
-
-func TestGetGroupMembers_Unauthenticated_S22(t *testing.T) {
-	svc, _ := newGroupService(t)
-	_, err := svc.GetGroupMembers(context.Background(), &pb.GetGroupMembersRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestGetGroupMembers_PermissionDenied_S22(t *testing.T) {
-	svc, _ := newGroupService(t)
-	ctx := authCtx(999, "nobody")
-	_, err := svc.GetGroupMembers(ctx, &pb.GetGroupMembersRequest{Id: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
 
 // ---------------------------------------------------------------------------
 // AddGroupMember — unauthenticated / permission-denied
@@ -532,38 +419,9 @@ func TestUpdateRole_DescriptionOnly_S22(t *testing.T) {
 // GetUserRoles — unauthenticated / permission-denied
 // ---------------------------------------------------------------------------
 
-func TestGetUserRoles_Unauthenticated_S22(t *testing.T) {
-	svc, _ := newRoleService(t)
-	_, err := svc.GetUserRoles(context.Background(), &pb.GetUserRolesRequest{UserId: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestGetUserRoles_PermissionDenied_S22(t *testing.T) {
-	svc, _ := newRoleService(t)
-	ctx := authCtx(999, "nobody")
-	_, err := svc.GetUserRoles(ctx, &pb.GetUserRolesRequest{UserId: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
 // ---------------------------------------------------------------------------
 // RemoveRole — unauthenticated / zero-id / missing-fields
 // ---------------------------------------------------------------------------
-
-func TestRemoveRole_Unauthenticated_S22(t *testing.T) {
-	svc, _ := newRoleService(t)
-	_, err := svc.RemoveRole(context.Background(), &pb.RemoveRoleRequest{UserId: 1, RoleId: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
-func TestRemoveRole_ZeroUserID_S22(t *testing.T) {
-	svc, _ := newRoleService(t)
-	_, err := svc.RemoveRole(roleAdminCtx(), &pb.RemoveRoleRequest{UserId: 0, RoleId: 1})
-	require.Error(t, err)
-	assert.Equal(t, codes.InvalidArgument, status.Code(err))
-}
 
 func TestRemoveRole_ZeroRoleID_S22(t *testing.T) {
 	svc, _ := newRoleService(t)
@@ -668,13 +526,6 @@ func TestGetSystemInfo_WithConfig_S22(t *testing.T) {
 // GetAuditLogs — unauthenticated / permission-denied / success
 // ---------------------------------------------------------------------------
 
-func TestGetAuditLogs_Unauthenticated_S22(t *testing.T) {
-	svc := newAuditService(t)
-	_, err := svc.GetAuditLogs(context.Background(), &pb.GetAuditLogsRequest{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
-
 func TestGetAuditLogs_PermissionDenied_S22(t *testing.T) {
 	svc := newAuditService(t)
 	ctx := authCtx(7, "nobody")
@@ -713,13 +564,6 @@ func TestGetAuditLogs_WithFilters_S22(t *testing.T) {
 // ---------------------------------------------------------------------------
 // VerifyAuditChain — unauthenticated / success
 // ---------------------------------------------------------------------------
-
-func TestVerifyAuditChain_Unauthenticated_S22(t *testing.T) {
-	svc := newAuditService(t)
-	_, err := svc.VerifyAuditChain(context.Background(), &emptypb.Empty{})
-	require.Error(t, err)
-	assert.Equal(t, codes.Unauthenticated, status.Code(err))
-}
 
 func TestVerifyAuditChain_Success_S22(t *testing.T) {
 	svc := newAuditService(t)

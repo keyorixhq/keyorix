@@ -20,7 +20,7 @@ are listed on the [releases page](https://github.com/keyorixhq/keyorix/releases)
 Work in an empty directory; everything is created in it.
 
 ```bash
-V=v0.96.1   # the release you want; this one has `admin generate-secrets` and `mfa enroll`
+V=v0.96.3   # the release you want; v0.96.1 and later have `admin generate-secrets` and `mfa enroll`
 P=darwin_arm64   # your platform
 BASE=https://github.com/keyorixhq/keyorix/releases/download/$V
 curl -fsSLO $BASE/keyorix-server_$P
@@ -34,7 +34,7 @@ chmod +x keyorix-server keyorix
 Create the secrets, then the config, keys and schema. The `*_FILE` variables make every
 `keyorix-server` command read the secret from its file. The files must be `0600` (or
 `0400`): `generate-secrets` creates them that way, and the server refuses to start with a
-more open file. The `admin` commands of the v0.96.1 release accept such a file and only the
+more open file. The `admin` commands of the v0.96.1 to v0.96.3 releases accept such a file and only the
 server then refuses it; on `main` they refuse it first, with the same message. The server also
 generates its own one-time bootstrap token if you give it none, but logs it masked, so it
 cannot be exported: keep using the file.
@@ -79,7 +79,7 @@ The `secret get` command prints `my first secret`. That is the first secret read
 `keyorix status` is the connection check; for host-side checks stop the server and run
 `./keyorix-server admin diagnose`.
 
-Two details of the **released** v0.96.1 CLI that cost a first-time user a minute each:
+Two details of the **released** CLI (checked in v0.96.1 and v0.96.3) that cost a first-time user a minute each:
 
 - `login` and `mfa activate` have no `KEYORIX_PASSWORD_FILE` / `KEYORIX_MFA_CODE` form in
   that release (main has them). You type the password at the prompt; open

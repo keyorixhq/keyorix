@@ -81,7 +81,12 @@ Rules (all enforced at startup; the server refuses to start rather than guess):
 - **File missing, unreadable, empty, not a regular file, or larger than 1 MiB:**
   error. The server does not fall back to `X` or to a value in `keyorix.yaml`.
 - **Nothing is logged:** errors and warnings name the variable and the path, never
-  the value or the file contents.
+  the value or the file contents. A relative path (`KEYORIX_TOKEN_FILE=./token`)
+  works, but errors do not show it, because it may be the secret itself (someone
+  who set `X_FILE` to the value instead of `X`):
+  `KEYORIX_DB_PASSWORD_FILE (a relative path, not shown: it may be the secret itself): cannot open secret file: no such file or directory`.
+  An absolute path is shown. The server, the CLI, `keyorix-k8s-sync` and the
+  container entrypoint all behave this way.
 - **File permissions -- key material is refused, other secrets follow the
   file-permission policy.** The rule is the one the KEK file and
   `--passphrase-file` already follow: `0600` or `0400`. One exception exists for
@@ -421,7 +426,12 @@ With `dsn:` instead of fields, put the CA in the connection string
 `verify-full`/`verify-ca`. `ssl_root_cert` together with `dsn` is refused,
 because the dsn is used as-is and the key would be ignored. `ssl_root_cert`
 with `ssl_mode: disable` is refused too: the connection would be neither
-encrypted nor verified.
+encrypted nor verified. So is a CA file with `ssl_mode: allow` or `prefer`
+(or a `dsn` with `sslrootcert=<file>` whose effective sslmode is
+disable/allow/prefer, including a dsn with no `sslmode`): the driver loads the
+CA but never checks the server's certificate against it, and may fall back to
+plaintext. `sslrootcert=system` with allow/prefer is accepted, because the
+driver then runs `verify-full`.
 
 **`ssl_mode` together with `dsn`.** The dsn is used as-is, so `ssl_mode` used
 to be silently ignored next to it: `ssl_mode: verify-full` with a dsn saying
@@ -437,6 +447,38 @@ validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
 `storage.database.insecure_disable_database_tls` whatever `ssl_mode` says.
 
+**`PGSSLMODE` overrides the `prefer` default, and nothing else.** The
+environment variable is read only when a `dsn` is set, the dsn has no
+`sslmode`, and `ssl_mode` is not set. In order, the first rule that applies
+wins:
+
+1. `dsn` set, with `sslmode` in it: that value. `PGSSLMODE` is ignored.
+2. `dsn` set, no `sslmode` in it, `ssl_mode` set: refused at start-up (the dsn
+   must state `sslmode` itself, see above). `PGSSLMODE` does not rescue this.
+3. `dsn` set, no `sslmode` in it, no `ssl_mode`: `PGSSLMODE` if it is set (an
+   invalid value is refused), otherwise `prefer`.
+4. No `dsn` (connection built from the `host`/`port`/... fields): `ssl_mode`,
+   or `require` when it is empty. `PGSSLMODE` is **not** consulted.
+
+So `prefer`, which falls back to plaintext when the TLS attempt fails, is what
+a dsn without `sslmode` gets unless the process environment says otherwise:
+
+```yaml
+storage:
+  database:
+    dsn: "host=db user=keyorix dbname=keyorix"   # no sslmode
+```
+
+```
+# no PGSSLMODE:                 prefer       (may run in plaintext)
+PGSSLMODE=verify-full           verify-full  (also needs sslrootcert, see above)
+PGSSLMODE=verify_full           refused: not a valid sslmode
+# dsn: "... sslmode=require":   require      whatever PGSSLMODE says
+```
+
+Prefer writing `sslmode` into the dsn: a value in the file cannot be changed
+by the environment of whoever starts the process.
+
 **Connection-service files are refused.** `service=` or `servicefile=` in the
 `dsn`, or the `PGSERVICE` environment variable, make the PostgreSQL driver read
 `sslmode`, `sslrootcert` and `host` from a `pg_service.conf` that Keyorix does
@@ -448,8 +490,10 @@ is not refused.
 
 The Helm chart passes `externalDatabase.sslRootCert` through as
 `ssl_root_cert` (it does not mount the file; mount it yourself, or use
-`system`). `admin validate --posture` prints one informational line saying
-what is encrypted and what is verified against which CA.
+`system`), or mounts `externalDatabase.caSecret` for you. `admin validate
+--posture` prints one informational line saying what is encrypted and what is
+verified against which CA. A worked example with a private CA, including a
+wrong-CA check: [operator/postgres-tls.md](operator/postgres-tls.md).
 
 ### PostgreSQL DSN forms
 
@@ -715,7 +759,8 @@ storage:
   reconstruct; with it, the reconstructed KEK is verified against a real HMAC-SHA256
   commitment computed at split time. `KEYORIX_MASTER_PASSWORD` is **not** required.
   Move an existing install onto it with `keyorix-server admin encryption migrate-provider
-  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`. ⚠️ Losing
+  --to-type shamir --to-shamir-share-files … --to-shamir-commitment …`
+  (the commitment is required there: the migration refuses without it). ⚠️ Losing
   more than N-K shares makes the KEK — and all data — permanently unrecoverable;
   store and back up shares separately.
 - **`tpm`**: the KEK is **sealed to the host TPM 2.0** (`tpm_device`, default
@@ -772,12 +817,8 @@ acceptable only for local development.
 
 ```yaml
 secrets:
-  chunking:
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 100
   limits:
-    max_secrets_per_user: 10000
+    max_secret_size: 65536   # bytes per value on create/update/rotate; default 64 KiB, max 1 MiB
 ```
 
 ## security
@@ -1649,10 +1690,10 @@ evidence_delivery:
 When **encryption is enabled**, each exported pack is **signed**: a detached
 `<file>.json.sig` is written next to it (and the webhook delivery carries the
 signature in the `X-Keyorix-Evidence-Signature` header). The signature is an HMAC
-keyed by a DEK-derived key the database/DBA does not hold, so an archived pack's
+keyed by a KEK-derived key (`deriveEvidenceSignKey`) the database/DBA does not hold, so an archived pack's
 authenticity is provable later — verify with `keyorix compliance verify --file
 <pack>` (it asks the server, which recomputes the HMAC; a signature made under a
-pre-rotation DEK is reported as unverifiable rather than tampered).
+pre-KEK-rotation key is reported as unverifiable rather than tampered).
 
 ### Who "the project's admins" are (all project-level alerts)
 
@@ -1714,7 +1755,8 @@ checkpoint with an HMAC keyed by a KEK-derived key (`deriveAuditCheckpointKey`, 
 `keyorix audit verify` (and `GET /audit/verify`) then enforce the live chain
 against the latest checkpoint. Single-replica-gated (ADR-039).
 
-**Requires encryption enabled** — the signing key is derived from the DEK, so with
+**Requires encryption enabled** — the signing key is derived from the KEK (not the
+DEK, so a DEK rotation does not change it; a KEK rotation does), so with
 encryption off the scheduler logs a warning and does nothing.
 
 ```yaml
@@ -1968,9 +2010,9 @@ permanently unreadable the moment you enable this.
 
 When enabled, reading a "restricted" secret's **value** (not its metadata —
 `GetSecret`/listing are unaffected) requires an approved, **secret-scoped**
-access request: `keyorix request secret-access --secret-id <id> --user
-<email>` to request it, `keyorix request review --id <id> --action approve
---by <admin-email>` to approve it (an administrator at the secret's project).
+access request: `keyorix request secret-access --secret-id <id> --reason
+<why>` to request it, `keyorix request review --id <id> --action approve` to
+approve it (an administrator at the secret's project).
 This reuses the same `AccessRequest` model/flow as `dual_control` above
 (ADR-024), narrowed with a `SecretID` rather than granting a role. A read whose
 acting principal cannot be identified as a specific user — a machine/service
@@ -2072,6 +2114,26 @@ scim:
 > low-variety value, a placeholder such as `changeme`, or the same value as another
 > configured secret); see
 > [startup-refusals.md](operator/startup-refusals.md#weak-scim-token).
+
+### Status codes on a failed SCIM user request
+
+The status tells the IdP whether to retry, so a failed deactivation (PATCH or PUT
+with `active:false`) or DELETE is never answered `404` unless the user really is
+absent. A storage failure rolls the whole change back: the account is still active
+and its sessions and tokens are still valid until the IdP's retry succeeds.
+
+| Status | `scimType` | Meaning | IdP should |
+|---|---|---|---|
+| `404` | — | No such user, or an account SCIM does not manage | treat it as gone |
+| `409` | `uniqueness` | The email or `externalId` belongs to another user | fix the data |
+| `409` | — | Refused: the user is the install's last administrator | fix the role assignment |
+| `400` | `invalidValue` | An attribute value is not acceptable | fix the data |
+| `503` + `Retry-After` | — | Write contention or a concurrent change to the same user; nothing was written | retry after the delay |
+| `500` | — | Any other server-side failure (database unavailable, deadlock, rolled-back transaction); nothing was written | retry |
+| `503` (Keyorix `PartialMutation` extension) | — | The deactivation was applied, the rest of the request was not (see the body) | retry the request |
+
+The `500` body carries a generic `detail`; the cause is in the server log with the
+request id.
 
 ## sso
 

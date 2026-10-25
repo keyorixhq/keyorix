@@ -758,6 +758,15 @@ func isOutcomeLogTable(t string) bool {
 // here used to cost.
 func driveFaultCase(t *testing.T, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string) {
 	t.Helper()
+	return driveFaultCaseIn(t, nil, nil, op, method, nth, kind)
+}
+
+// driveFaultCaseIn is driveFaultCase on a reused world pair: ref and w nil build a
+// fresh pair (driveFaultCase); non-nil are reset in place by resetForReuse, the
+// same reuse FuzzStorageFaultOperations runs under TestWorldReuseSoundness. The
+// returned oracleInput's world is w, valid until w's next reset.
+func driveFaultCaseIn(t *testing.T, ref, w *faultWorld, op, method string, nth int, kind faultstorage.FaultKind) (oracleInput, driveOutcome, string) {
+	t.Helper()
 	opIdx := -1
 	for i, entry := range opCatalog {
 		if entry.Key == op {
@@ -788,7 +797,7 @@ func driveFaultCase(t *testing.T, op, method string, nth int, kind faultstorage.
 		// driveAborted means the sink recorded the reason in notEvaluated;
 		// anything else is a real panic and is re-thrown, never swallowed.
 		defer func() { rethrowUnlessDriveAbort(recover()) }()
-		runOneFuzzIterationReporting(t, sink, data, nil, nil, func(in oracleInput) {
+		runOneFuzzIterationReporting(t, sink, data, ref, w, func(in oracleInput) {
 			seen = in
 			got = true
 		})

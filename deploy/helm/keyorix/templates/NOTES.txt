@@ -26,24 +26,45 @@ Keyorix has been deployed as release "{{ .Release.Name }}".
     termination is in place.
 {{- end }}
 
-{{- if .Values.auth.adminPassword }}
+{{- if include "keyorix.hasAdminPassword" . }}
 
-3. Log in with the admin you configured (auth.adminUsername="{{ .Values.auth.adminUsername }}").
+3. Log in with the admin you configured (auth.adminUsername="{{ .Values.auth.adminUsername }}"{{ if .Values.auth.existingSecret }}; its password is the KEYORIX_ADMIN_PASSWORD key of the "{{ .Values.auth.existingSecret }}" Secret{{ end }}).
 {{- else }}
 
-3. No admin password was set. Initialise the first admin manually, over the
-   network, against the address from step 2 (e.g. the port-forwarded address),
-   using the bootstrap token this release generated:
+3. This render could not see an admin password: auth.adminPassword is empty and
+   neither auth.existingSecretKeys.adminPassword nor a KEYORIX_ADMIN_PASSWORD key in
+   the existing Secret was visible (helm template, --dry-run and GitOps renderers
+   cannot read a live Secret).
 
-   kubectl -n {{ .Release.Namespace }} get secret {{ include "keyorix.fullname" . }} \
+   If your Secret does carry KEYORIX_ADMIN_PASSWORD, the server created the first
+   admin on its first start: log in as auth.adminUsername="{{ .Values.auth.adminUsername }}" with that password, and skip
+   the rest of this step.
+
+   Otherwise initialise the first admin manually, over the network, against the
+   server itself (not the web UI), using the bootstrap token. In a second terminal:
+
+   kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "keyorix.server.fullname" . }} 8080:{{ .Values.server.service.port }}
+{{- if .Values.secureBaseline.enabled }}
+
+   The server speaks TLS only (secureBaseline.enabled), so the CLI must use https
+   and trust the server certificate (the CLI has no skip-verify flag):
+
+   kubectl -n {{ .Release.Namespace }} get secret {{ include "keyorix.secureBaseline.secretName" . }} \
+     -o jsonpath='{.data.server\.crt}' | base64 -d > keyorix-server.crt
+   chmod 600 keyorix-server.crt
+   keyorix config set ca_file "$PWD/keyorix-server.crt"
+{{- end }}
+
+   kubectl -n {{ .Release.Namespace }} get secret {{ include "keyorix.secretName" . }} \
      -o jsonpath='{.data.KEYORIX_BOOTSTRAP_TOKEN}' | base64 -d; echo
 
    read -r -s -p 'Bootstrap token: ' KEYORIX_BOOTSTRAP_TOKEN; echo
    export KEYORIX_BOOTSTRAP_TOKEN
-   keyorix system init --server http://localhost:8080
+   keyorix system init --server http{{ if .Values.secureBaseline.enabled }}s{{ end }}://localhost:8080 --admin-username {{ .Values.auth.adminUsername }} --admin-email admin@example.com
 
-   (The CLI reads the token from KEYORIX_BOOTSTRAP_TOKEN and prompts for the admin
-   password; neither belongs on the command line.)
+   (Use your own address for --admin-email: init is rejected without a valid one.
+   The CLI reads the token from KEYORIX_BOOTSTRAP_TOKEN and prompts for
+   the admin password; neither belongs on the command line.)
 {{- end }}
 
 {{- if .Values.secureBaseline.enabled }}

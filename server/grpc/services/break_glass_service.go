@@ -145,6 +145,10 @@ func breakGlassToProto(a *models.BreakGlassActivation) *pb.BreakGlassActivation 
 // PermissionDenied/NotFound silently became Internal. An error that carries no
 // sentinel is Internal whatever its words say.
 func breakGlassError(err error) error {
+	// #3546: a role-scope refusal is the caller's to fix (fixed, client-safe text).
+	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
+		return status.Error(codes.InvalidArgument, scopeMsg)
+	}
 	switch {
 	case errors.Is(err, core.ErrRestrictedPATCannotBreakGlass):
 		// PAT-GUARD-2: fixed text, the sentinel's own wording; names no resource.

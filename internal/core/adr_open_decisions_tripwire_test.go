@@ -1,7 +1,7 @@
 // adr_open_decisions_tripwire_test.go — general mechanism for "an ADR records
 // a security-relevant decision, declines to resolve it, and nothing forces
 // that resolution to happen." ADR-101 already proves the specific shape works
-// (TestCurrentSchemaEpoch_Is5_SeeADR101, internal/storage/schema_epoch_
+// (TestCurrentSchemaEpoch_Is7_SeeADR101, internal/storage/schema_epoch_
 // tripwire_test.go) — this generalizes it to an explicit, extensible registry
 // rather than one bespoke test per ADR, after a 2026-09-07 review
 // (keyorix-private/adversarial-review/ADR-CORPUS-REVIEW-2026-09-07.md,
@@ -69,6 +69,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -262,7 +263,15 @@ func checkADROpenDecisionNotStale(t *testing.T, adr string) {
 		if d.adr != adr {
 			continue
 		}
-		if err := evaluateOpenDecision(d, time.Now()); err != nil {
+		// The age fallback is a calendar check, so it runs only in the nightly
+		// job (TestADROpenDecisions_NotExpired), never at PR time. Evaluating
+		// at the opened date makes the age zero: this call checks the premise
+		// and the date's format.
+		opened, err := time.Parse(guardrules.DateLayout, d.openedDate)
+		if err != nil {
+			t.Fatalf("%s: openedDate %q does not parse as YYYY-MM-DD: %v", d.adr, d.openedDate, err)
+		}
+		if err := evaluateOpenDecision(d, opened); err != nil {
 			t.Fatal(err.Error())
 		}
 		return
@@ -270,6 +279,26 @@ func checkADROpenDecisionNotStale(t *testing.T, adr string) {
 	t.Fatalf("no registry entry found for %s in adrOpenDecisionRegistry -- this test's own "+
 		"name promises to check that ADR; the registry entry was removed without removing "+
 		"the test, or renamed without updating it", adr)
+}
+
+// TestADROpenDecisions_NotExpired is the age fallback of every registry entry:
+// a decision still open past openedDate+threshold. The nightly job on main
+// evaluates it (guardrules.CheckExpiry, 7 days' warning, one issue); at PR
+// time only the date's format is checked.
+func TestADROpenDecisions_NotExpired(t *testing.T) {
+	for _, d := range adrOpenDecisionRegistry {
+		opened, err := time.Parse(guardrules.DateLayout, d.openedDate)
+		if err != nil {
+			t.Errorf("%s: openedDate %q does not parse as YYYY-MM-DD: %v", d.adr, d.openedDate, err)
+			continue
+		}
+		guardrules.CheckExpiry(t, guardrules.Expiry{
+			Source:  "internal/core/adr_open_decisions_tripwire_test.go adrOpenDecisionRegistry",
+			Key:     d.adr + " open decision",
+			Expires: opened.Add(d.threshold).Format(guardrules.DateLayout),
+			Note:    d.decision + " (resolve it and update the ADR's Status, or extend the threshold with a stated reason)",
+		})
+	}
 }
 
 // evaluateOpenDecision is the pure logic behind checkADROpenDecisionNotStale,

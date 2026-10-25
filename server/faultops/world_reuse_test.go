@@ -31,14 +31,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
-	"github.com/keyorixhq/keyorix/internal/delivery"
-	"github.com/keyorixhq/keyorix/internal/dynamic"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 	grpcserver "github.com/keyorixhq/keyorix/server/grpc"
@@ -101,20 +97,7 @@ func buildReusableFaultWorld(tb tbLite, spec *faultstorage.FaultSpec) *faultWorl
 	}
 
 	db, backend := openWorldDBTB(tb)
-	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
-		tb.Fatal(err)
-	}
-	if err := db.AutoMigrate(&models.AuditCheckpoint{}); err != nil {
-		tb.Fatal(err)
-	}
-	mustExecTB(tb, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_project_memberships_active "+
-		"ON project_memberships (project_id, user_id) WHERE state <> 'revoked'")
-	mustExecTB(tb, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_legal_holds_active "+
-		"ON legal_holds (released) WHERE released = false")
-	mustExecTB(tb, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_break_glass_active_project_user "+
-		"ON break_glass_activations (project_id, user_id) WHERE state = 'active'")
-	mustExecTB(tb, db, "CREATE UNIQUE INDEX IF NOT EXISTS uniq_users_email_active "+
-		"ON users (LOWER(email)) WHERE deleted_at IS NULL AND email <> ''")
+	migrateWorldSchema(tb, db)
 
 	real := store.NewLocalStorage(db)
 	faulty := faultstorage.NewFaultyStorage(real, spec)
@@ -123,6 +106,7 @@ func buildReusableFaultWorld(tb tbLite, spec *faultstorage.FaultSpec) *faultWorl
 	w := &faultWorld{
 		db: db, backend: backend, core: testCore, faulty: faulty,
 		httpClient: &http.Client{Timeout: 10 * time.Second},
+		scimToken:  faultopsSCIMToken,
 	}
 	w.rebuildTransport(tb)
 	tb.Cleanup(func() {
@@ -137,52 +121,6 @@ func buildReusableFaultWorld(tb tbLite, spec *faultstorage.FaultSpec) *faultWorl
 		}
 	})
 	return w
-}
-
-// newWorldCore builds a fresh KeyorixCore over faulty with every
-// content-independent setting buildReusableFaultWorld used to apply once.
-// resetForReuse calls it on EVERY reset: KeyorixCore carries in-memory state
-// (permission/RBAC caches keyed by user ID, login-throttle and MFA-lockout
-// counters, audit-chain head, bootstrap token, encryption wiring) that
-// resetWorldTables can't see, and IDs restart at 1 each iteration, so a
-// surviving core would hand one iteration's cached state to the next.
-// Rebuilding it is cheap (no I/O); only the DB, schema and servers are reused.
-func newWorldCore(tb tbLite, faulty *faultstorage.FaultyStorage) *core.KeyorixCore {
-	tb.Helper()
-	testCore := core.NewKeyorixCore(faulty)
-
-	deliverer, err := delivery.New(delivery.Config{})
-	if err != nil {
-		tb.Fatalf("delivery.New: %v", err)
-	}
-	testCore.SetCredentialDelivery(deliverer, "https://fuzz-world.invalid")
-
-	// Session FI2: RPID/RPOrigins match newFaultWorld's identical change in
-	// world_test.go (see that comment for why "example.org" / "https://example.org",
-	// the W3C spec test vectors' own baked-in RP identity, replaced "localhost").
-	rp, err := webauthn.New(&webauthn.Config{
-		RPID: "example.org", RPDisplayName: "Keyorix", RPOrigins: []string{"https://example.org"},
-	})
-	if err != nil {
-		tb.Fatalf("webauthn.New: %v", err)
-	}
-	testCore.SetWebAuthn(rp)
-
-	if err := wireSSOProviders(testCore); err != nil {
-		tb.Fatalf("wireSSOProviders: %v", err)
-	}
-
-	testCore.SetBootstrapToken("fault-fuzz-bootstrap")
-
-	testCore.SetBreakGlassPolicy(core.BreakGlassPolicy{
-		Enabled: true, EmergencyRole: "project_developer",
-		DefaultTTL: 4 * time.Hour, MaxTTL: 24 * time.Hour,
-	})
-
-	testCore.SetDynamicEngineFactory(func(backendType string) (dynamic.CredentialEngine, error) {
-		return dynamic.New(backendType, false, false)
-	})
-	return testCore
 }
 
 // rebuildTransport (re)builds w's REST router + httptest.Server + gRPC
@@ -221,8 +159,7 @@ func (w *faultWorld) rebuildTransport(tb tbLite) {
 		w.grpcSrv.Stop()
 	}
 
-	cfg := &config.Config{Server: config.ServerConfig{HTTP: config.ServerInstanceConfig{Enabled: true, Port: "8080"}}}
-	handler, err := httpserver.NewRouter(cfg, w.core)
+	handler, err := httpserver.NewRouter(faultWorldRouterConfig(), w.core)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -255,6 +192,7 @@ func (w *faultWorld) rebuildTransport(tb tbLite) {
 // runs don't exhaust Postgres's max_connections.
 func openWorldDBTB(tb tbLite) (*gorm.DB, string) {
 	tb.Helper()
+	trackWorldDB(tb) // world_db_budget_test.go: SQLSTATE 53300
 	dsn := os.Getenv(pgDSNEnv)
 	if dsn == "" {
 		db, err := gorm.Open(sqlite.Open(uniqueMemDSN()), &gorm.Config{})
@@ -410,17 +348,36 @@ func (w *faultWorld) resetForReuse(t *testing.T, spec *faultstorage.FaultSpec) {
 	// tables we're about to wipe (or after the wipe, in this iteration's state).
 	drainAllBackgroundGoroutines()
 
-	// Disarm/re-arm BEFORE BootstrapSystem/Login below, not after: a fault
-	// left armed from a PRIOR iteration (this same faulty wrapper, and its
-	// spec, persist across reuse) would otherwise still be live while
-	// BootstrapSystem/Login run, injecting a stale failure into calls that
-	// have nothing to do with the current iteration's input. Found by
-	// TestWorldReuseSoundness itself: BootstrapSystem's CreateEnvironment
-	// call failed with a PRIOR iteration's injected fault before this fix
-	// (see the M5 PR body).
-	w.faulty.Arm(spec)
+	// The previous iteration's core also holds deferred writes that fire on its
+	// own timers, which the drain above does not see: last-used / last-seen
+	// stamps (lastUsedCoalescer) and secret-read denial summaries (an audit row
+	// when the aggregation window closes). In a fresh world they would land in
+	// that world's own, discarded DB; here, in the next iteration's freshly wiped
+	// tables. Flush them now, unfaulted, so they land before the wipe.
+	if w.core != nil {
+		w.faulty.Arm(nil)
+		w.core.FlushLastUsed(context.Background())
+		w.core.FlushSecretReadDenials()
+		drainAllBackgroundGoroutines()
+	}
 
-	// Fresh core, fresh lazy encryption (see this function's doc comment).
+	// Fresh storage wrappers, fresh core, fresh lazy encryption (see this
+	// function's doc comment). The LocalStorage must be new as well, not only the
+	// core: it caches by row id (audit-chain head, secret metadata, role
+	// permissions, clock watermarks), and ids restart at 1 after the wipe. A kept
+	// LocalStorage started BootstrapSystem's first audit append from the previous
+	// iteration's chain head, failed it and retried, so on Postgres the reset
+	// world's first audit row had id 2 (a sequence value burnt), about 1 reset in
+	// 150; TestOwedAuditOracle_SweepReuseMatchesFreshWorlds found it, and
+	// TestWorldReuseSoundness cannot, as it does not compare the outcome-log
+	// tables. The new FaultyStorage is armed with spec on construction, BEFORE
+	// BootstrapSystem/Login below, not after: a fault left armed from a PRIOR
+	// iteration would otherwise still be live while BootstrapSystem/Login run,
+	// injecting a stale failure into calls that have nothing to do with the
+	// current iteration's input. Found by TestWorldReuseSoundness itself:
+	// BootstrapSystem's CreateEnvironment call failed with a PRIOR iteration's
+	// injected fault before the M5 fix (see the M5 PR body).
+	w.faulty = faultstorage.NewFaultyStorage(store.NewLocalStorage(w.db), spec)
 	w.core = newWorldCore(t, w.faulty)
 	w.encryptOnce = sync.Once{}
 	w.encryptErr = nil

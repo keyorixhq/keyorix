@@ -9,6 +9,20 @@ var (
 	// request supplies the wrong current password.
 	ErrIncorrectCurrentPassword = errors.New("incorrect current password")
 
+	// ErrPasswordPolicy is matched (errors.Is) by ChangePassword's refusal of a new
+	// password that breaks the password policy or reuses a recent password. The error
+	// text is the policy's own message ("password must not contain your username,
+	// ...") and is safe to show the caller, who needs it to pick another password;
+	// any other ChangePassword failure may carry storage detail and is not.
+	ErrPasswordPolicy = errors.New("password policy refused the new password")
+
+	// ErrPasswordReused is matched by the refusal of a new password found in the
+	// account's password HISTORY. It also matches ErrPasswordPolicy. The refusal
+	// tells the caller something about past passwords, so ChangePassword counts it
+	// against the account lockout and the HTTP layer keeps the login-budget slot,
+	// exactly as for a wrong current password.
+	ErrPasswordReused = errors.New("new password matches a previous password")
+
 	// ErrUserAlreadyExists is returned when a user-creation or update request
 	// collides with an existing username or email.
 	ErrUserAlreadyExists = errors.New("user already exists")
@@ -46,6 +60,27 @@ var (
 	// retries against the current state (C-RACE-FIX-B2, follow-up to
 	// #2653/#2654).
 	ErrUserAccountStateConflict = errors.New("user's account state changed concurrently")
+
+	// ErrNotSCIMManaged is returned (wrapped) by the SCIM user operations for an
+	// existing account SCIM does not own (scimOwned). The SCIM transport answers it
+	// exactly like a missing id (404), so the response never confirms the account
+	// exists (#120, #G85). Matched with errors.Is, never by text (#3494).
+	ErrNotSCIMManaged = errors.New("not a SCIM-managed account")
+
+	// ErrEmailInUse is returned (wrapped) by UpdateSCIMUser when the requested email
+	// belongs to a different user, from the up-front check or from the unique index
+	// catching a concurrent writer (storage.ErrDuplicateEmail). SCIM: 409 uniqueness.
+	ErrEmailInUse = errors.New("email already in use by another user")
+
+	// ErrSCIMUserExists is returned by ProvisionSCIMUser when a user with the same
+	// externalId or email already exists. SCIM: 409 uniqueness.
+	ErrSCIMUserExists = errors.New("a user already exists for this externalId/email")
+
+	// ErrLastAdminDeactivation is guardLastAdminDeactivation's refusal: the target
+	// is the install's last administrator. A deliberate, permanent refusal, unlike a
+	// storage failure while the guard reads roles (that one stays a server error so
+	// the caller retries). SCIM: 409.
+	ErrLastAdminDeactivation = errors.New("refusing to deactivate the last install administrator")
 
 	// ErrNotProjectMember is returned by RemoveProjectMember when the target
 	// user holds no role grant in the project — a benign no-op distinguishable

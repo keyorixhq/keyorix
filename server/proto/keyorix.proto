@@ -568,6 +568,8 @@ message Role {
   repeated Permission permissions = 4;
   google.protobuf.Timestamp created_at = 5;
   google.protobuf.Timestamp updated_at = 6;
+  // Where the role may be granted (#3546): "global", "project" or "any".
+  string assignable_scope = 7;
 }
 
 message CreateRoleRequest {
@@ -575,6 +577,8 @@ message CreateRoleRequest {
   string description = 2;
   // Named permission strings, e.g. "secrets.read".
   repeated string permissions = 3;
+  // "global", "project" or "any"; empty = "project" (#3546).
+  string assignable_scope = 4;
 }
 
 message GetRoleRequest {
@@ -586,6 +590,9 @@ message UpdateRoleRequest {
   optional string description = 2;
   // If provided, replaces the entire permission set.
   repeated string permissions = 3;
+  // If provided, changes where the role may be granted (#3546); existing
+  // grants are not changed.
+  optional string assignable_scope = 4;
 }
 
 message DeleteRoleRequest {

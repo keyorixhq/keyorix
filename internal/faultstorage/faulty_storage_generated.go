@@ -6043,6 +6043,24 @@ func (w *FaultyStorage) MostAccessedSecrets(ctx context.Context, projectID *uint
 	return w.real.MostAccessedSecrets(ctx, projectID, environmentID, since, limit)
 }
 
+func (w *FaultyStorage) OldestPendingAuditEventAt(ctx context.Context) (time.Time, bool, error) {
+	fire, kind, injected := w.check("OldestPendingAuditEventAt")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 time.Time
+			var zero2 bool
+			return zero1, zero2, injected
+		case KindEffectThenError:
+			rv1, rv2, _ := w.real.OldestPendingAuditEventAt(ctx)
+			return rv1, rv2, injected
+		}
+	}
+	return w.real.OldestPendingAuditEventAt(ctx)
+}
+
 func (w *FaultyStorage) PrincipalSecretFirstSeen(ctx context.Context, since time.Time) (map[string]map[uint]time.Time, error) {
 	fire, kind, injected := w.check("PrincipalSecretFirstSeen")
 	if fire {
@@ -6980,6 +6998,22 @@ func (w *FaultyStorage) SetRetentionOverride(ctx context.Context, secretID uint,
 		}
 	}
 	return w.real.SetRetentionOverride(ctx, secretID, days)
+}
+
+func (w *FaultyStorage) SetRoleAssignableScope(ctx context.Context, roleID uint, scope string) error {
+	fire, kind, injected := w.check("SetRoleAssignableScope")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.SetRoleAssignableScope(ctx, roleID, scope)
+			return injected
+		}
+	}
+	return w.real.SetRoleAssignableScope(ctx, roleID, scope)
 }
 
 func (w *FaultyStorage) SetRoleBypassesPermissionChecks(ctx context.Context, roleID uint, value bool) error {

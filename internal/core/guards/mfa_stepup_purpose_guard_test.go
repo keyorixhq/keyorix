@@ -12,7 +12,7 @@
 // non-test *.go file in the repository for a call to HasActiveMFAStepUp,
 // GetActiveMFAStepUpGrant, or ConsumeMFAStepUpGrant -- the functions that turn
 // a stored grant row into an authorization decision (see
-// internal/core/mfa_stepup.go and internal/core/storage/interface.go). All
+// internal/core/mfa_stepup.go and internal/core/storage/iface_*.go). All
 // three share the same argument shape (ctx, userID, purpose, ...), so the
 // purpose argument is always the third (index 2).
 //

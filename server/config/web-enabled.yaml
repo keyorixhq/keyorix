@@ -70,14 +70,6 @@ storage:
     dek_path: ""
     salt_path: ""
 
-secrets:
-  chunking:
-    enabled: true
-    max_chunk_size_kb: 64
-    max_chunks_per_secret: 100
-  limits:
-    max_secrets_per_user: 1000
-
 security:
   enable_file_permission_check: true
   auto_fix_file_permissions: true

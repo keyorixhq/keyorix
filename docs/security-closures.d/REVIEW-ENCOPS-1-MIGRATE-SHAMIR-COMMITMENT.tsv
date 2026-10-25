@@ -1,0 +1,1 @@
+REVIEW-ENCOPS-1-MIGRATE-SHAMIR-COMMITMENT	./internal/encryptionops	TestMigrateProviderWithConfig_Shamir_ForgedShareWithoutCommitmentRefused	default-ci	pending-merge	-	migrate-provider --to-type shamir accepted shares without a commitment, so a holder of threshold-1 shares could forge a share and get the DEK wrapped under a KEK they chose (#429); the commitment is now required.

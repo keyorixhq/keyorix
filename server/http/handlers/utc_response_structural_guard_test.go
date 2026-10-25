@@ -51,7 +51,7 @@ const modulePath = "github.com/keyorixhq/keyorix"
 var reviewedResponseMarshalers = map[string]struct{ policy, why string }{
 	"gorm.io/gorm.DeletedAt":                                            {"walk", "MarshalJSON emits its Time field when Valid; utcTimes converts that field"},
 	"github.com/keyorixhq/keyorix/internal/storage/models.JSON":         {"no-time", "raw stored JSON bytes passed through verbatim (metadata blobs); not a time value"},
-	"encoding/json.RawMessage":                                          {"no-time", "raw JSON passed through verbatim; in responses this is the stored, hash-covered audit diff (ADR-029), never rewritten"},
+	"encoding/json.RawMessage":                                          {"no-time", "raw JSON passed through verbatim; in responses this is the stored, hash-covered audit diff (ADR-029), never rewritten, or the WebAuthn publicKey options internal/webauthnrp marshals (challenge, ids, enums; no time values)"},
 	"github.com/go-webauthn/webauthn/protocol.AuthenticationExtensions": {"no-time", "WebAuthn client extension map (credProps etc.) in a registration/login challenge; no time values"},
 	"github.com/go-webauthn/webauthn/protocol.URLEncodedBase64":         {"no-time", "bytes rendered as base64url (challenge, credential ids)"},
 	"math/big.Int": {"no-time", "an integer rendered as a JSON number"},

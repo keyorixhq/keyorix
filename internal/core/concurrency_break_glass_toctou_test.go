@@ -69,11 +69,11 @@ func TestConcurrency_RevokeBreakGlassActivationAtomic_TOCTOU_Deterministic(t *te
 	require.NoError(t, err)
 
 	wrapped := &delayedRemoveRoleStorage{
-		Storage:      realStorage,
+		inner:        realStorage,
 		targetUserID: 1, targetRoleID: 10,
 		blocked: make(chan struct{}), release: make(chan struct{}),
 	}
-	c := core.NewKeyorixCore(wrapped)
+	c := core.NewKeyorixCore(wrapped.store())
 
 	var errA, errB error
 	doneA, doneB := make(chan struct{}), make(chan struct{})

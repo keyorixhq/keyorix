@@ -42,6 +42,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // atomicityWriteVerbRe decides which called method names count as writes. It is
@@ -102,24 +104,19 @@ type atomicityHit struct {
 	writes []string
 }
 
-// scanAtomicityHits walks every non-test, non-generated *.go file directly
-// under internal/core (not subpackages — storage/, ports/, rules/ have their
-// own concerns) for funcs on *KeyorixCore or *AnomalyDetector with 2+
+// scanAtomicityHits walks every non-test, non-generated *.go file of the core
+// family (internal/core and the packages extracted from it, ADR-121; not other
+// subpackages — storage/, ports/, rules/ have their own concerns) for funcs on *KeyorixCore or *AnomalyDetector with 2+
 // storage-write or core-to-core-write calls outside WithTransaction.
-func scanAtomicityHits(t *testing.T, root string) []atomicityHit {
+func scanAtomicityHits(t *testing.T, files []string) []atomicityHit {
 	t.Helper()
 	var hits []atomicityHit
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("atomicity guard: cannot read %s: %v", root, err)
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || strings.Contains(name, "generated") {
+	for _, p := range files {
+		name := srcpath.CoreFamilyRel(p)
+		if strings.Contains(filepath.Base(p), "generated") {
 			continue
 		}
-		p := filepath.Join(root, name)
 		f, perr := parser.ParseFile(fset, p, nil, 0)
 		if perr != nil {
 			t.Fatalf("atomicity guard: cannot parse %s: %v", p, perr)
@@ -229,7 +226,7 @@ func loadAtomicityExemptions(t *testing.T, path string) map[string]bool {
 // (classify it per SESSION-O's A/B/C/D rubric and add the line) — never
 // silently ignored.
 func TestAtomicityGuard_UnclassifiedMultiWriteFunction(t *testing.T) {
-	hits := scanAtomicityHits(t, "..")
+	hits := scanAtomicityHits(t, coreFamilySources(t))
 	exempt := loadAtomicityExemptions(t, "../../../docs/atomicity-exempt.tsv")
 
 	var unclassified []string
@@ -272,20 +269,15 @@ type escapeHit struct {
 // SAME tx handle (a savepoint) is fine and not flagged — this only matches
 // a literal `.storage.` selector, which a correctly-written closure never
 // uses (it uses the `tx` parameter).
-func scanEscapeHits(t *testing.T, root string) []escapeHit {
+func scanEscapeHits(t *testing.T, files []string) []escapeHit {
 	t.Helper()
 	var hits []escapeHit
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("atomicity guard: cannot read %s: %v", root, err)
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || strings.Contains(name, "generated") {
+	for _, p := range files {
+		name := srcpath.CoreFamilyRel(p)
+		if strings.Contains(filepath.Base(p), "generated") {
 			continue
 		}
-		p := filepath.Join(root, name)
 		f, perr := parser.ParseFile(fset, p, nil, 0)
 		if perr != nil {
 			t.Fatalf("atomicity guard: cannot parse %s: %v", p, perr)
@@ -347,7 +339,7 @@ func scanEscapeHits(t *testing.T, root string) []escapeHit {
 // no reviewed-and-safe version of this to list in the exempt TSV. Fix the
 // call site (use the `tx` parameter) instead.
 func TestAtomicityGuard_TransactionEscape(t *testing.T) {
-	hits := scanEscapeHits(t, "..")
+	hits := scanEscapeHits(t, coreFamilySources(t))
 	if len(hits) == 0 {
 		return
 	}
@@ -383,20 +375,15 @@ type auditBeforeWriteHit struct {
 // call in the same function body. This is control-flow-blind, same caveat as
 // scanAtomicityHits: an audit on one branch and a write on a different,
 // mutually exclusive branch is flagged exactly like a true sequential case.
-func scanAuditBeforeWriteHits(t *testing.T, root string) []auditBeforeWriteHit {
+func scanAuditBeforeWriteHits(t *testing.T, files []string) []auditBeforeWriteHit {
 	t.Helper()
 	var hits []auditBeforeWriteHit
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("atomicity guard: cannot read %s: %v", root, err)
-	}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || strings.Contains(name, "generated") {
+	for _, p := range files {
+		name := srcpath.CoreFamilyRel(p)
+		if strings.Contains(filepath.Base(p), "generated") {
 			continue
 		}
-		p := filepath.Join(root, name)
 		f, perr := parser.ParseFile(fset, p, nil, 0)
 		if perr != nil {
 			t.Fatalf("atomicity guard: cannot parse %s: %v", p, perr)
@@ -498,7 +485,7 @@ func loadAuditExemptions(t *testing.T, path string) map[string]bool {
 // an event describing a fact that's already true regardless of the later
 // write's outcome), or the event should move after the write/commit.
 func TestAtomicityGuard_AuditBeforeWrite(t *testing.T) {
-	hits := scanAuditBeforeWriteHits(t, "..")
+	hits := scanAuditBeforeWriteHits(t, coreFamilySources(t))
 	exempt := loadAuditExemptions(t, "../../../docs/atomicity-exempt.tsv")
 
 	var unclassified []string

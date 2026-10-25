@@ -11,7 +11,7 @@ vi.mock('../client', () => ({
 }));
 
 import { apiClient } from '../client';
-import { rbacApi } from '../rbac';
+import { rbacApi, roleScopeRefusal } from '../rbac';
 
 const mocked = apiClient as unknown as {
     get: ReturnType<typeof vi.fn>;
@@ -200,8 +200,33 @@ describe('rbacApi.getRoles', () => {
             name: '',
             description: '',
             bypasses_permission_checks: false,
+            assignable_scope: 'project',
             permissions: [{ id: 0, name: '', description: '', resource: '', action: '' }],
         });
+    });
+
+    // #3546: an absent or unknown scope reads as 'project' (fail closed for a global grant).
+    it('normalizes assignable_scope, keeping valid values and defaulting the rest to project', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: [
+                    { id: 1, assignable_scope: 'global' },
+                    { id: 2, assignable_scope: 'any' },
+                    { id: 3, assignable_scope: 'bogus' },
+                ],
+            },
+        });
+        const roles = await rbacApi.getRoles();
+        expect(roles.map((r) => r.assignable_scope)).toEqual(['global', 'any', 'project']);
+    });
+
+    it('roleScopeRefusal mirrors the server check', () => {
+        expect(roleScopeRefusal({ name: 'p', assignable_scope: 'project' })).toMatch(/project role/);
+        expect(roleScopeRefusal({ name: 'p', assignable_scope: 'project' }, 2)).toBeNull();
+        expect(roleScopeRefusal({ name: 'g', assignable_scope: 'global' }, 2)).toMatch(/install-wide/);
+        expect(roleScopeRefusal({ name: 'g', assignable_scope: 'global' })).toBeNull();
+        expect(roleScopeRefusal({ name: 'a', assignable_scope: 'any' })).toBeNull();
+        expect(roleScopeRefusal({ name: 'a', assignable_scope: 'any' }, 2)).toBeNull();
     });
 
     it('returns [] when data.data is neither an array nor a {roles} wrapper', async () => {

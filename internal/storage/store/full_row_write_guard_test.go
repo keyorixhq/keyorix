@@ -52,11 +52,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -576,23 +576,26 @@ func TestFullRowWriteGuard_NoStaleFullRowWriteOnSecurityStateModels(t *testing.T
 var fullRowArrivesRe = regexp.MustCompile(`arrives with #\d+`)
 
 // TestFullRowWriteGuard_PendingRowsNotExpired: a row whose reason says
-// "pending: #NNNN" carries an expiry; past it, the row fails, so a stuck fix PR
-// cannot leave the exemption in place forever. (Whether the PR has already merged is
-// checked by scripts/check-pending-exemptions.sh, which needs network.)
+// "pending: #NNNN" carries an expiry, so a stuck fix PR cannot leave the
+// exemption in place forever. At PR time only the date's format is checked
+// (an expired row going red for every PR on one day was the 18 Oct queue
+// stall); the nightly job on main evaluates the date through
+// guardrules.CheckExpiry, warns 7 days ahead and keeps one issue open.
+// (Whether the PR has already merged is checked by
+// scripts/check-pending-exemptions.sh, which needs network.)
 func TestFullRowWriteGuard_PendingRowsNotExpired(t *testing.T) {
-	now := time.Now().UTC()
 	for _, r := range loadFullRowExempt(t) {
 		if r.Expires == "-" {
 			require.NotContainsf(t, r.Reason, "pending: #", "%s:%d a pending row must carry an expiry date", fullRowExemptPath, r.Line)
 			require.Falsef(t, fullRowArrivesRe.MatchString(r.Reason), "%s:%d an \"arrives with\" row must carry an expiry date", fullRowExemptPath, r.Line)
 			continue
 		}
-		exp, err := time.Parse("2006-01-02", r.Expires)
-		require.NoErrorf(t, err, "%s:%d expires must be YYYY-MM-DD or -", fullRowExemptPath, r.Line)
-		require.Truef(t, now.Before(exp.Add(24*time.Hour)), "%s:%d exemption for %s %s expired on %s: %s", fullRowExemptPath, r.Line, r.Func, r.Model, r.Expires, r.Reason)
-		if days := int(exp.Sub(now.Truncate(24*time.Hour)).Hours() / 24); days <= 3 {
-			t.Logf("WARNING: %s:%d exemption for %s %s expires in %d days (%s): resolve or renew it now, it fails hard the day after", fullRowExemptPath, r.Line, r.Func, r.Model, days, r.Expires)
-		}
+		guardrules.CheckExpiry(t, guardrules.Expiry{
+			Source:  fmt.Sprintf("%s:%d", fullRowExemptPath, r.Line),
+			Key:     r.Func + " " + r.Model,
+			Expires: r.Expires,
+			Note:    r.Reason,
+		})
 	}
 }
 

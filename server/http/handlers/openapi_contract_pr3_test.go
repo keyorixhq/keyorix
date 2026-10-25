@@ -151,7 +151,7 @@ func TestContractPR3_AssignRoleToGroup(t *testing.T) {
 	h := NewRBACHandler(cs)
 	g := &models.Group{Name: "contract-pr3-assign-role-group"}
 	require.NoError(t, db.Create(g).Error)
-	role := &models.Role{Name: "contract-pr3-group-role", Description: "d"}
+	role := &models.Role{Name: "contract-pr3-group-role", Description: "d", AssignableScope: models.RoleAssignableAny}
 	require.NoError(t, db.Create(role).Error)
 
 	body, _ := json.Marshal(map[string]any{"role_id": role.ID})
@@ -189,7 +189,7 @@ func TestContractPR3_CreateProjectInvitation(t *testing.T) {
 	h := NewCatalogHandler(cs)
 	proj := &models.Project{Name: "contract-pr3-invite-create-proj"}
 	require.NoError(t, db.Create(proj).Error)
-	role := &models.Role{Name: "contract-pr3-invite-role", Description: "d"}
+	role := &models.Role{Name: "contract-pr3-invite-role", Description: "d", AssignableScope: models.RoleAssignableAny}
 	require.NoError(t, db.Create(role).Error)
 
 	body, _ := json.Marshal(map[string]any{"email": "invitee@example.test", "role": role.Name})
@@ -298,7 +298,7 @@ func TestContractPR3_GetUserRolesForUser(t *testing.T) {
 func TestContractPR3_ListRoles(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	h := NewRBACHandler(cs)
-	require.NoError(t, db.Create(&models.Role{Name: "contract-pr3-list-role", Description: "d"}).Error)
+	require.NoError(t, db.Create(&models.Role{Name: "contract-pr3-list-role", Description: "d", AssignableScope: models.RoleAssignableAny}).Error)
 
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/roles", nil))
 	w := httptest.NewRecorder()
@@ -311,7 +311,7 @@ func TestContractPR3_ListRoles(t *testing.T) {
 func TestContractPR3_GetRolePermissions(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	h := NewRBACHandler(cs)
-	role := &models.Role{Name: "contract-pr3-role-perms", Description: "d"}
+	role := &models.Role{Name: "contract-pr3-role-perms", Description: "d", AssignableScope: models.RoleAssignableAny}
 	require.NoError(t, db.Create(role).Error)
 
 	req := withUserCtx(withChiParamsPR2(
@@ -330,7 +330,7 @@ func TestContractPR3_AssignUserRole(t *testing.T) {
 	h := NewRBACHandler(cs)
 	u := &models.User{Username: "contract-pr3-assign-user", Email: "contract-pr3-assign-user@example.test", DisplayName: "U"}
 	require.NoError(t, db.Create(u).Error)
-	role := &models.Role{Name: "contract-pr3-assign-role", Description: "d"}
+	role := &models.Role{Name: "contract-pr3-assign-role", Description: "d", AssignableScope: models.RoleAssignableAny}
 	require.NoError(t, db.Create(role).Error)
 
 	body, _ := json.Marshal(map[string]any{"user_id": u.ID, "role_id": role.ID})

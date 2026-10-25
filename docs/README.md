@@ -5,6 +5,7 @@
 | Step | Document |
 |------|----------|
 | The one supported pilot install, step by step | [operations/pilot-install.md](./operations/pilot-install.md) |
+| PostgreSQL with the single binary (config, password file, database TLS) | [operations/postgres-single-binary.md](./operations/postgres-single-binary.md) |
 | Binaries, first admin, first secret | [QUICK_START.md](../QUICK_START.md) |
 | Install with an AI assistant, no secret typed or shown | [INSTALL-WITH-AI.md](../INSTALL-WITH-AI.md) |
 | Docker Compose + PostgreSQL, TLS, backups, metrics, troubleshooting | [SELF_HOSTING.md](./SELF_HOSTING.md) |
@@ -19,6 +20,7 @@
 | Audit chain reports BROKEN or INDETERMINATE: triage, evidence | [operator/audit-chain-break-runbook.md](./operator/audit-chain-break-runbook.md) |
 | Troubleshooting | [operator/j7-troubleshooting.md](./operator/j7-troubleshooting.md) |
 | PostgreSQL tuning, audit durability | [PERFORMANCE.md](./PERFORMANCE.md) |
+| PostgreSQL TLS with your own CA (`verify-full`, `ssl_root_cert`) | [operator/postgres-tls.md](./operator/postgres-tls.md) |
 | Hardware sizing: what decides it, tiers, how to measure your own | [SIZING.md](./SIZING.md) |
 | Edge and industrial devices | [edge-deployment.md](./edge-deployment.md) |
 | A guided tour of the CLI | [operator/demo.md](./operator/demo.md) |

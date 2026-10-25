@@ -37,6 +37,12 @@ func RotateKEKWithConfig(cfg *config.Config, confirm bool, oldSrc, newSrc crypto
 	if !confirm {
 		return fmt.Errorf("this changes the master passphrase and re-wraps the DEK. Re-run with --confirm")
 	}
+	// Only the password provider has a passphrase to rotate. With any other
+	// provider this used to open the database and key files and then fail on an
+	// empty old passphrase (REVIEW-ENCRYPTIONOPS-1 F4).
+	if t := cfg.Storage.Encryption.KeyProvider.Type; t != "" && t != "password" {
+		return fmt.Errorf("rotate-kek changes the master passphrase of the password key provider; this install uses key_provider.type %q. Use `migrate-provider` to move the DEK to a new KEK", t)
+	}
 
 	oldPassphrase, err := MasterPassphrase(cfg, oldSrc)
 	if err != nil {
@@ -66,10 +72,19 @@ func RotateKEKWithConfig(cfg *config.Config, confirm bool, oldSrc, newSrc crypto
 	defer service.Shutdown()
 	closeGormDB(db)
 
+	// The audit checkpoint key is KEK-derived, so it changes too: the audit
+	// verification state is carried over under both keys (prepared before the
+	// key files are written, completed after they commit).
+	audit, err := openAuditKeyChange(cfg, service)
+	if err != nil {
+		return err
+	}
+
 	fmt.Println("Rotating KEK — re-wrapping DEK under new passphrase...")
-	if err := service.RotateKEKPassphrase(oldPassphrase, newPassphrase); err != nil {
+	if err := service.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, audit.prepare); err != nil {
 		return fmt.Errorf("KEK rotation failed: %w", err)
 	}
+	audit.complete(service)
 
 	// EvidenceSignKey/AuditCheckpointKey return fresh copies of the raw 32-byte
 	// HMAC key material (KeyManager.GetEvidenceSignKey/GetAuditCheckpointKey) —
@@ -93,7 +108,33 @@ func RotateKEKWithConfig(cfg *config.Config, confirm bool, oldSrc, newSrc crypto
 	fmt.Println()
 	fmt.Println("Update the master passphrase in your deployment configuration to the new value before restarting the server.")
 	fmt.Println()
-	fmt.Println("Note: evidence packs and audit checkpoints signed before this rotation will")
-	fmt.Println("report as 'superseded key version' (not tampered) under `compliance verify`.")
+	fmt.Println("Note: evidence packs signed before this rotation will report as 'superseded")
+	fmt.Println("key version' (not tampered) under `compliance verify`. Audit checkpoints signed")
+	fmt.Println("before it stay verifiable with the previous checkpoint key; export the new one")
+	fmt.Println("with `admin audit export-checkpoint-key`.")
+	warnLeftoverMigrateBackups(cfg, baseDir)
 	return nil
+}
+
+// warnLeftoverMigrateBackups names the <dek_path>.migrate-backup.* files left by
+// earlier migrate-provider runs. Each is the DEK wrapped under an older KEK, so
+// whoever holds the old passphrase (or old provider) and such a file still
+// unwraps the live DEK: rotating the KEK does not retire them (F3).
+func warnLeftoverMigrateBackups(cfg *config.Config, baseDir string) {
+	backups, err := FindMigrateBackups(baseDir, cfg.Storage.Encryption.DEKPath)
+	if err != nil {
+		fmt.Printf("⚠️  Could not check for leftover migrate-backup files: %v\n", err)
+		return
+	}
+	if len(backups) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("⚠️  %d migrate-backup file(s) still hold the DEK wrapped under an OLDER KEK:\n", len(backups))
+	for _, b := range backups {
+		fmt.Printf("     %s\n", b)
+	}
+	fmt.Println("   The old passphrase (or old provider) plus any of these still unwraps the DEK.")
+	fmt.Println("   If you rotated because the old passphrase leaked, run")
+	fmt.Println("   `migrate-provider cleanup --confirm` now.")
 }

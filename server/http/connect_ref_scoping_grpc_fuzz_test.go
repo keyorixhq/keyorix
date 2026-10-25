@@ -149,14 +149,14 @@ func buildCRSWorlds(f *testing.F) []crsWorld {
 			}
 		}
 
-		roleScoped := models.Role{Name: "crs-fuzz-scoped-" + w.backend, NameFolded: "crs-fuzz-scoped-" + w.backend}
+		roleScoped := models.Role{Name: "crs-fuzz-scoped-" + w.backend, NameFolded: "crs-fuzz-scoped-" + w.backend, AssignableScope: models.RoleAssignableAny} // granted globally below
 		if e := w.db.Create(&roleScoped).Error; e != nil {
 			f.Fatalf("[%s] seed roleScoped: %v", w.backend, e)
 		}
 		if e := w.db.Create(&models.RolePermission{RoleID: roleScoped.ID, PermissionID: permConnRead.ID}).Error; e != nil {
 			f.Fatalf("[%s] seed roleScoped permission: %v", w.backend, e)
 		}
-		rolePlain := models.Role{Name: "crs-fuzz-plain-" + w.backend, NameFolded: "crs-fuzz-plain-" + w.backend}
+		rolePlain := models.Role{Name: "crs-fuzz-plain-" + w.backend, NameFolded: "crs-fuzz-plain-" + w.backend, AssignableScope: models.RoleAssignableAny}
 		if e := w.db.Create(&rolePlain).Error; e != nil {
 			f.Fatalf("[%s] seed rolePlain: %v", w.backend, e)
 		}

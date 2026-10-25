@@ -1,0 +1,50 @@
+{
+  "case": "testbed-templated",
+  "description": "Testbed policy mig1-templated ({{identity.entity.id}} path).",
+  "constructed": false,
+  "policy_sources": [
+    {
+      "file": "scripts/vault-migration-testbed/seed.sh",
+      "policy": "mig1-templated"
+    }
+  ],
+  "kv_mounts": [
+    {
+      "Path": "secret/",
+      "KVVersion": 2
+    },
+    {
+      "Path": "team-b/",
+      "KVVersion": 2
+    },
+    {
+      "Path": "kv1-legacy/",
+      "KVVersion": 1
+    }
+  ],
+  "projects": [
+    {
+      "ID": 1,
+      "Name": "mig1-access-equiv"
+    }
+  ],
+  "environments": {
+    "1": [
+      {
+        "ID": 11,
+        "Name": "production"
+      }
+    ]
+  },
+  "path_map": [
+    "secret/data=1:11"
+  ],
+  "imports": [
+    {
+      "mount": "secret/",
+      "path_prefix": "",
+      "project_id": 1,
+      "environment_id": 11
+    }
+  ]
+}

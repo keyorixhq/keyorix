@@ -1,0 +1,5 @@
+# sso: SSO, OIDC, JWKS
+# One glob per line, matched against the file name (README.md).
+sso.go
+oidc.go
+oidc_jwks.go

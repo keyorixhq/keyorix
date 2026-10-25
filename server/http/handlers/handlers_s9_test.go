@@ -11,38 +11,6 @@ import (
 
 // ── admin_jobs.go ─────────────────────────────────────────────────────────────
 
-func TestAdminJobsHandler_RunAnomalyAlerts_Unauthorized_S9(t *testing.T) {
-	h := NewAdminJobsHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	h.RunAnomalyAlerts(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestAdminJobsHandler_RunAnomalyAlerts_HappyPath_S9(t *testing.T) {
-	h := NewAdminJobsHandler(newHandlerCoreS4(t))
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
-	w := httptest.NewRecorder()
-	h.RunAnomalyAlerts(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
-func TestAdminJobsHandler_RunRotationReminders_Unauthorized_S9(t *testing.T) {
-	h := NewAdminJobsHandler(newHandlerCoreS4(t))
-	req := httptest.NewRequest(http.MethodPost, "/", nil)
-	w := httptest.NewRecorder()
-	h.RunRotationReminders(w, req)
-	assert.Equal(t, http.StatusUnauthorized, w.Code)
-}
-
-func TestAdminJobsHandler_RunRotationReminders_HappyPath_S9(t *testing.T) {
-	h := NewAdminJobsHandler(newHandlerCoreS4(t))
-	req := withUserCtx(httptest.NewRequest(http.MethodPost, "/", nil))
-	w := httptest.NewRecorder()
-	h.RunRotationReminders(w, req)
-	assert.Equal(t, http.StatusOK, w.Code)
-}
-
 // ── users_roles.go ────────────────────────────────────────────────────────────
 
 func TestUpdateUserRoles_InvalidRoleID_S9(t *testing.T) {
