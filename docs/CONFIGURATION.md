@@ -447,6 +447,38 @@ validation, the insecure-settings warnings and `admin validate --posture` all
 read this effective value, so a dsn with `sslmode=disable` is reported as
 `storage.database.insecure_disable_database_tls` whatever `ssl_mode` says.
 
+**`PGSSLMODE` overrides the `prefer` default, and nothing else.** The
+environment variable is read only when a `dsn` is set, the dsn has no
+`sslmode`, and `ssl_mode` is not set. In order, the first rule that applies
+wins:
+
+1. `dsn` set, with `sslmode` in it: that value. `PGSSLMODE` is ignored.
+2. `dsn` set, no `sslmode` in it, `ssl_mode` set: refused at start-up (the dsn
+   must state `sslmode` itself, see above). `PGSSLMODE` does not rescue this.
+3. `dsn` set, no `sslmode` in it, no `ssl_mode`: `PGSSLMODE` if it is set (an
+   invalid value is refused), otherwise `prefer`.
+4. No `dsn` (connection built from the `host`/`port`/... fields): `ssl_mode`,
+   or `require` when it is empty. `PGSSLMODE` is **not** consulted.
+
+So `prefer`, which falls back to plaintext when the TLS attempt fails, is what
+a dsn without `sslmode` gets unless the process environment says otherwise:
+
+```yaml
+storage:
+  database:
+    dsn: "host=db user=keyorix dbname=keyorix"   # no sslmode
+```
+
+```
+# no PGSSLMODE:                 prefer       (may run in plaintext)
+PGSSLMODE=verify-full           verify-full  (also needs sslrootcert, see above)
+PGSSLMODE=verify_full           refused: not a valid sslmode
+# dsn: "... sslmode=require":   require      whatever PGSSLMODE says
+```
+
+Prefer writing `sslmode` into the dsn: a value in the file cannot be changed
+by the environment of whoever starts the process.
+
 **Connection-service files are refused.** `service=` or `servicefile=` in the
 `dsn`, or the `PGSERVICE` environment variable, make the PostgreSQL driver read
 `sslmode`, `sslrootcert` and `host` from a `pg_service.conf` that Keyorix does
