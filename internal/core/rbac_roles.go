@@ -126,6 +126,13 @@ func (c *KeyorixCore) CreateRoleWithScope(ctx context.Context, actorID uint, nam
 	if err := validateRoleNameLength(name); err != nil {
 		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err))
 	}
+	// The HTTP decoder's `identifier` tag already enforced this; gRPC did not
+	// (IDENTITY-FOLD-SPACE-WIDTH: " ops", "ops team", fullwidth names).
+	// Create only: role names are immutable (no rename path), and lookups by
+	// name never validate, so a stored role that fails this keeps working.
+	if err := validateIdentifier(name); err != nil {
+		return nil, nil, WrapRoleValidation(err)
+	}
 	foldedName, ferr := identity.NewFoldedName(name)
 	if ferr != nil {
 		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
