@@ -34,7 +34,8 @@ var roleScopeMappers = map[string]bool{"sendRoleScopeError": true, "ssoRoleScope
 // mapping the refusal, each for a stated reason.
 var roleScopeMappingExempt = map[string]string{
 	"ConsumeSetup": "unauthenticated setup-link endpoint: every refusal is the same generic 400 by design " +
-		"(no account-existence or internal-error oracle); the reason is audited by LogSetupConsumeFailure",
+		"(no account-existence or internal-error oracle); the role-scope reason is audited as " +
+		"setup_token.consume_failed by core's completeInvitationAccept (v0.96 has no LogSetupConsumeFailure)",
 }
 
 func readRoleScopeReachingMethods(t *testing.T) map[string]bool {

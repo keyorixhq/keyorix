@@ -583,6 +583,21 @@ func (c *KeyorixCore) requireInvitationGrantScopesValid(ctx context.Context, inv
 	return nil
 }
 
+// logInvitationScopeRefused writes setup_token.consume_failed (Success=false)
+// for an invitation refused by requireInvitationGrantScopesValid. Same event
+// type and description as main's LogSetupConsumeFailure writes for this
+// refusal, so the row reads the same on both lines. No account exists yet, so
+// there is no actor.
+func (c *KeyorixCore) logInvitationScopeRefused(ctx context.Context, inv *models.ProjectInvitation, ip string, err error) {
+	var projectID *uint
+	if inv.ProjectID != 0 {
+		pid := inv.ProjectID
+		projectID = &pid
+	}
+	c.writeAuditEventFailed(ctx, "setup_token.consume_failed", nil, projectID, ip,
+		fmt.Sprintf("setup link consume refused: %v", err))
+}
+
 // revokeInvitationGrants best-effort undoes applyInvitationGrants for userID. Used
 // exclusively by completeInvitationAccept when it discovers, only after granting,
 // that the invitation was concurrently revoked (#412): the conditional

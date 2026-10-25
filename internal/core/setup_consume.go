@@ -211,8 +211,11 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	// Refuse it HERE, before the account is created and the token spent: failing
 	// in applyInvitationGrants below would burn the link and create (then delete)
 	// an account for an invitation that can never be accepted. The client still
-	// gets the generic setup-link answer; the reason is in the audit row.
+	// gets the generic setup-link answer; the reason is in the audit row written
+	// here (v0.96's ConsumeSetup handler audits no generic refusal: main's
+	// LogSetupConsumeFailure does not exist on this branch).
 	if err := c.requireInvitationGrantScopesValid(ctx, inv); err != nil {
+		c.logInvitationScopeRefused(ctx, inv, ip, err)
 		return nil, err
 	}
 	username, err := c.deriveUsername(ctx, inv.Email)
