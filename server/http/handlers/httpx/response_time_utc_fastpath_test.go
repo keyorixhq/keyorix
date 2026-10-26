@@ -1,4 +1,4 @@
-package handlers
+package httpx
 
 import (
 	"bytes"
@@ -38,7 +38,7 @@ func TestUTCTimes_FastPathBytesMatchFullWalk(t *testing.T) {
 		}
 		for pname, v := range payloads {
 			var fast, full bytes.Buffer
-			if err := json.NewEncoder(&fast).Encode(utcTimes(v)); err != nil {
+			if err := json.NewEncoder(&fast).Encode(UTCTimes(v)); err != nil {
 				t.Fatalf("%s/%s: %v", zname, pname, err)
 			}
 			ref := any(v)
@@ -63,7 +63,7 @@ func BenchmarkEncodeJSONResponse_UTCData(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		buf.Reset()
-		_ = encodeJSONResponse(&buf, v)
+		_ = EncodeJSONResponse(&buf, v)
 	}
 }
 

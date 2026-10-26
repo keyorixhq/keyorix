@@ -311,21 +311,6 @@ func (h *RotationPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// parseOptionalUintQuery parses an optional uint query parameter; returns (nil, nil)
-// when absent and (nil, err) when present but not a valid uint.
-func parseOptionalUintQuery(r *http.Request, key string) (*uint, error) {
-	v := r.URL.Query().Get(key)
-	if v == "" {
-		return nil, nil
-	}
-	id, err := strconv.ParseUint(v, 10, 32)
-	if err != nil {
-		return nil, err
-	}
-	uid := uint(id)
-	return &uid, nil
-}
-
 // Evaluate handles GET /api/v1/rotation-policies/evaluate
 func (h *RotationPolicyHandler) Evaluate(w http.ResponseWriter, r *http.Request) {
 	userCtx := middleware.GetUserFromContext(r.Context())

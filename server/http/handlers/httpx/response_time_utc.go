@@ -1,4 +1,4 @@
-package handlers
+package httpx
 
 import (
 	"encoding/json"
@@ -10,17 +10,17 @@ import (
 )
 
 // Every JSON response this package writes carries UTC RFC 3339 times
-// (docs/API_REFERENCE.md, "Timestamps"). encodeJSONResponse is the one place a
-// handler encodes JSON onto an http.ResponseWriter, and it runs utcTimes first.
+// (docs/API_REFERENCE.md, "Timestamps"). EncodeJSONResponse is the one place a
+// handler encodes JSON onto an http.ResponseWriter, and it runs UTCTimes first.
 // Guards: server/faultops TestUTCResponseGuard (every GET route, seeded world,
 // non-UTC process zone) and utc_response_structural_guard_test.go (no encoder
-// bypasses encodeJSONResponse; every json.Marshaler a response can reach is
+// bypasses EncodeJSONResponse; every json.Marshaler a response can reach is
 // reviewed).
 //
 // Times read back from the database carry whatever zone they were stored in
 // (gorm stamps CreatedAt/UpdatedAt in the server's local zone, SQLite hands the
 // offset back), so one response could mix "+02:00" and "Z" for the same kind of
-// field (#2951). sendSuccess/sendCreated pass their payload through utcTimes so
+// field (#2951). SendSuccess/SendCreated pass their payload through UTCTimes so
 // every time.Time in a response is emitted in UTC. This is display only: it
 // returns a converted COPY, never mutates the caller's data, and nothing stored
 // (including anything hashed, such as audit event_time) changes.
@@ -31,7 +31,7 @@ var (
 )
 
 // utcTimesWalkMarshalers are json.Marshaler types whose MarshalJSON renders
-// their own exported time fields, so utcTimes converts those fields like a plain
+// their own exported time fields, so UTCTimes converts those fields like a plain
 // struct's. Any other Marshaler is left alone (its wire format is its own); the
 // structural guard requires every Marshaler a response can reach to be either
 // listed here or reviewed as carrying no local time.
@@ -39,20 +39,20 @@ var utcTimesWalkMarshalers = map[reflect.Type]bool{
 	reflect.TypeFor[gorm.DeletedAt](): true, // MarshalJSON emits .Time when .Valid
 }
 
-// encodeJSONResponse writes v as the JSON body of w, with every time.Time in it
+// EncodeJSONResponse writes v as the JSON body of w, with every time.Time in it
 // converted to UTC. Every JSON response in this package goes through here
 // (TestUTCStructural_EveryResponseEncoderIsEncodeJSONResponse).
-func encodeJSONResponse(w io.Writer, v any) error {
-	return json.NewEncoder(w).Encode(utcTimes(v))
+func EncodeJSONResponse(w io.Writer, v any) error {
+	return json.NewEncoder(w).Encode(UTCTimes(v))
 }
 
 const utcTimesMaxDepth = 12
 
-// utcTimes returns v with every time.Time (and *time.Time) reachable through
+// UTCTimes returns v with every time.Time (and *time.Time) reachable through
 // exported struct fields, slices, arrays, maps, pointers and interfaces
 // converted to UTC. Values that carry their own json.Marshaler (other than
 // time.Time) are left alone so custom wire formats are not second-guessed.
-func utcTimes(v any) any {
+func UTCTimes(v any) any {
 	if v == nil {
 		return nil
 	}

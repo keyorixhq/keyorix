@@ -6,7 +6,7 @@
 // midnight UTC). Optional project_id/environment_id query params narrow the
 // result to that scope; the route itself gates the required permission scope
 // accordingly (see router.go's use of RequireScopedPermission + ScopeFromQuery).
-package handlers
+package reports
 
 import (
 	"log"
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/http/handlers/httpx"
 )
 
 // RotationCalendarHandler serves GET /api/v1/rotation-calendar.
@@ -31,45 +32,45 @@ func (h *RotationCalendarHandler) Get(w http.ResponseWriter, r *http.Request) {
 	fromStr := r.URL.Query().Get("from")
 	toStr := r.URL.Query().Get("to")
 	if fromStr == "" || toStr == "" {
-		sendError(w, "MissingParameter", "both 'from' and 'to' query parameters are required", http.StatusBadRequest, nil)
+		httpx.SendError(w, "MissingParameter", "both 'from' and 'to' query parameters are required", http.StatusBadRequest, nil)
 		return
 	}
 	from, err := parseCalendarDate(fromStr)
 	if err != nil {
-		sendError(w, "InvalidParameter", "'from' must be RFC 3339 or YYYY-MM-DD", http.StatusBadRequest, nil)
+		httpx.SendError(w, "InvalidParameter", "'from' must be RFC 3339 or YYYY-MM-DD", http.StatusBadRequest, nil)
 		return
 	}
 	to, err := parseCalendarDate(toStr)
 	if err != nil {
-		sendError(w, "InvalidParameter", "'to' must be RFC 3339 or YYYY-MM-DD", http.StatusBadRequest, nil)
+		httpx.SendError(w, "InvalidParameter", "'to' must be RFC 3339 or YYYY-MM-DD", http.StatusBadRequest, nil)
 		return
 	}
 	if from.After(to) {
-		sendError(w, "InvalidParameter", "'from' must not be after 'to'", http.StatusBadRequest, nil)
+		httpx.SendError(w, "InvalidParameter", "'from' must not be after 'to'", http.StatusBadRequest, nil)
 		return
 	}
 
 	// Optional scoping filter (see router.go: the route requires global secrets.read
 	// when neither is supplied, and project/environment-scoped secrets.read otherwise).
-	projectID, perr := parseOptionalUintQuery(r, "project_id")
+	projectID, perr := httpx.ParseOptionalUintQuery(r, "project_id")
 	if perr != nil {
-		sendError(w, "InvalidParameter", errInvalidProjectIDField, http.StatusBadRequest, nil)
+		httpx.SendError(w, "InvalidParameter", httpx.ErrInvalidProjectIDField, http.StatusBadRequest, nil)
 		return
 	}
-	environmentID, perr := parseOptionalUintQuery(r, "environment_id")
+	environmentID, perr := httpx.ParseOptionalUintQuery(r, "environment_id")
 	if perr != nil {
-		sendError(w, "InvalidParameter", errInvalidEnvIDField, http.StatusBadRequest, nil)
+		httpx.SendError(w, "InvalidParameter", httpx.ErrInvalidEnvIDField, http.StatusBadRequest, nil)
 		return
 	}
 
 	entries, err := h.coreService.GetRotationCalendar(r.Context(), from, to, projectID, environmentID)
 	if err != nil {
 		log.Printf("Error fetching rotation calendar [%s, %s]: %v", from.Format(time.DateOnly), to.Format(time.DateOnly), err)
-		sendError(w, "InternalError", "Failed to fetch rotation calendar", http.StatusInternalServerError, nil)
+		httpx.SendError(w, "InternalError", "Failed to fetch rotation calendar", http.StatusInternalServerError, nil)
 		return
 	}
 
-	sendSuccess(w, entries, "")
+	httpx.SendSuccess(w, entries, "")
 }
 
 func parseCalendarDate(s string) (time.Time, error) {

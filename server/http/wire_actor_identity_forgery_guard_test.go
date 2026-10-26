@@ -79,19 +79,15 @@ func handlerBodyText(t *testing.T, dir, handlerName string) string {
 	t.Helper()
 	funcRe := regexp.MustCompile(`^func \([a-zA-Z]+ \*[A-Za-z]+\) ` + regexp.QuoteMeta(handlerName) + `\(`)
 
-	entries, err := os.ReadDir(dir)
+	paths, err := handlerFamilyGoPaths(dir)
 	if err != nil {
-		t.Fatalf("reading server/http/handlers: %v", err)
+		t.Fatal(err)
 	}
 	var out strings.Builder
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, name))
+	for _, path := range paths {
+		b, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("reading %s: %v", name, err)
+			t.Fatalf("reading %s: %v", path, err)
 		}
 		inFunc := false
 		depth := 0

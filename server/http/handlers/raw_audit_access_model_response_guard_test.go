@@ -39,14 +39,18 @@ var sensitiveRawModelTypes = map[string]bool{
 	"github.com/keyorixhq/keyorix/internal/storage/models.SecretAccessLog": true,
 }
 
-// responseSendFuncNames are every function/method this package uses to
-// write a success response body — see helpers.go's sendSuccess/sendCreated
-// and the per-handler-struct re-implementations (FolderHandler,
-// RotationPolicyHandler, SecretHandler, ShareHandler) that shadow them with
-// the identical (w, data, message) signature.
+// responseSendFuncNames are every function/method the handler family uses to
+// write a success response body — httpx's SendSuccess/SendCreated (called
+// qualified, httpx.SendSuccess, from the handler subpackages), their
+// sendSuccess/sendCreated aliases in this package (httpx_aliases.go), and the
+// per-handler-struct re-implementations (FolderHandler, RotationPolicyHandler,
+// SecretHandler, ShareHandler) that shadow them with the identical
+// (w, data, message) signature.
 var responseSendFuncNames = map[string]bool{
 	"sendSuccess": true,
 	"sendCreated": true,
+	"SendSuccess": true,
+	"SendCreated": true,
 }
 
 // unwrapToNamed strips pointer/slice/array/map-value layers to reach the
@@ -80,27 +84,53 @@ func namedTypeFullName(n *types.Named) string {
 }
 
 // TestNoRawAuditOrAccessModelInHandlerResponse type-checks
-// server/http/handlers and fails if any expression reaching a
-// sendSuccess/sendCreated call has a static type (after stripping
+// server/http/handlers and every handlerFamilySubdirs subpackage (httpx,
+// reports) and fails if any expression reaching a sendSuccess/sendCreated
+// (or httpx.SendSuccess/SendCreated) call has a static type (after stripping
 // pointer/slice/array/map layers) matching sensitiveRawModelTypes.
 func TestNoRawAuditOrAccessModelInHandlerResponse(t *testing.T) {
 	cfg := &packages.Config{
 		Mode: packages.NeedName | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedSyntax,
 		Dir:  ".",
 	}
-	pkgs, err := packages.Load(cfg, ".")
+	patterns := []string{"."}
+	for _, sub := range handlerFamilySubdirs {
+		patterns = append(patterns, "./"+sub)
+	}
+	pkgs, err := packages.Load(cfg, patterns...)
 	if err != nil {
 		t.Fatalf("packages.Load: %v", err)
 	}
 	if packages.PrintErrors(pkgs) > 0 {
 		t.Fatalf("package %v failed to type-check", pkgs)
 	}
-	if len(pkgs) != 1 {
-		t.Fatalf("expected exactly 1 package, got %d", len(pkgs))
+	if len(pkgs) != len(patterns) {
+		t.Fatalf("expected %d packages (%v), got %d", len(patterns), patterns, len(pkgs))
 	}
-	pkg := pkgs[0]
 
 	var violations []string
+	sendCalls := 0
+	for _, pkg := range pkgs {
+		sendCalls += rawModelResponseViolations(pkg, &violations)
+	}
+	// Population tripwire: the handler family writes hundreds of success
+	// responses; a scan that sees almost none is looking in the wrong place.
+	t.Logf("checked %d sendSuccess/sendCreated calls across %v", sendCalls, patterns)
+	if sendCalls < 100 {
+		t.Fatalf("saw only %d sendSuccess/sendCreated calls across %v: the scan is broken", sendCalls, patterns)
+	}
+
+	sort.Strings(violations)
+	for _, v := range violations {
+		t.Error(v)
+	}
+}
+
+// rawModelResponseViolations appends to violations each response-send call in
+// pkg with an argument whose static type is in sensitiveRawModelTypes, and
+// returns how many response-send calls it saw.
+func rawModelResponseViolations(pkg *packages.Package, violations *[]string) int {
+	sendCalls := 0
 	for _, file := range pkg.Syntax {
 		fset := pkg.Fset
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -118,6 +148,7 @@ func TestNoRawAuditOrAccessModelInHandlerResponse(t *testing.T) {
 			if !responseSendFuncNames[fname] {
 				return true
 			}
+			sendCalls++
 			for _, arg := range call.Args {
 				ast.Inspect(arg, func(sub ast.Node) bool {
 					expr, ok := sub.(ast.Expr)
@@ -134,7 +165,7 @@ func TestNoRawAuditOrAccessModelInHandlerResponse(t *testing.T) {
 					}
 					if sensitiveRawModelTypes[namedTypeFullName(named)] {
 						pos := fset.Position(call.Pos())
-						violations = append(violations, pos.String()+": "+fname+"(...) argument has static type "+namedTypeFullName(named))
+						*violations = append(*violations, pos.String()+": "+fname+"(...) argument has static type "+namedTypeFullName(named))
 					}
 					return true
 				})
@@ -142,9 +173,5 @@ func TestNoRawAuditOrAccessModelInHandlerResponse(t *testing.T) {
 			return true
 		})
 	}
-
-	sort.Strings(violations)
-	for _, v := range violations {
-		t.Error(v)
-	}
+	return sendCalls
 }

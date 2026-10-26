@@ -7,7 +7,6 @@ import (
 	"go/token"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -31,10 +30,7 @@ var rawErrorTextExempt = map[string]string{}
 // fmt.Sprintf first (none exist today: rg for `%v", err), http.StatusInternalServerError`
 // and `err.Error(), http.StatusInternalServerError` finds nothing).
 func TestNoRawErrorTextOnServerErrors(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	files := handlerFamilyGoFiles(t)
 	seen := map[string]bool{}
 	calls := 0
 	for _, path := range files {
@@ -94,9 +90,9 @@ func TestNoRawErrorTextOnServerErrors(t *testing.T) {
 func isSendErrorCall(call *ast.CallExpr) bool {
 	switch fn := call.Fun.(type) {
 	case *ast.Ident:
-		return fn.Name == "sendError"
+		return fn.Name == "sendError" || fn.Name == "SendError"
 	case *ast.SelectorExpr:
-		return fn.Sel.Name == "sendError"
+		return fn.Sel.Name == "sendError" || fn.Sel.Name == "SendError"
 	}
 	return false
 }

@@ -29,8 +29,6 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
-	"strings"
 	"testing"
 )
 
@@ -40,25 +38,16 @@ var headerMutatingCallNames = map[string]bool{
 	"sendSuccess": true,
 	"sendError":   true,
 	"sendCreated": true,
+	"SendSuccess": true,
+	"SendError":   true,
+	"SendCreated": true,
 }
 
 // handlerSourceFiles returns every non-test .go file directly in this
-// package's directory.
+// package's directory and in its handler subpackages (handlerFamilyGoFiles).
 func handlerSourceFiles(t *testing.T) []string {
 	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading handlers dir: %v", err)
-	}
-	var files []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		files = append(files, name)
-	}
-	return files
+	return handlerFamilyGoFiles(t)
 }
 
 // callName returns the identifier a call expression invokes: "foo" for

@@ -611,20 +611,16 @@ func handlerStorageCalls(t *testing.T, handlerName string) []string {
 // per-call behavior exactly).
 func buildHandlerStorageCallsIndex() (map[string][]string, error) {
 	dir := filepath.Join("..", "..", "server", "http", "handlers")
-	entries, err := os.ReadDir(dir)
+	paths, err := handlerFamilyGoPaths(dir)
 	if err != nil {
-		return nil, fmt.Errorf("reading server/http/handlers: %w", err)
+		return nil, err
 	}
 	fset := token.NewFileSet()
 	index := map[string][]string{}
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
+	for _, path := range paths {
+		f, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
-			return nil, fmt.Errorf("parsing %s: %w", name, err)
+			return nil, fmt.Errorf("parsing %s: %w", path, err)
 		}
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)

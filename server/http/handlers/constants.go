@@ -1,5 +1,7 @@
 package handlers
 
+import "github.com/keyorixhq/keyorix/server/http/handlers/httpx"
+
 const (
 	errAccessDenied              = "Access denied"
 	errAlreadyExists             = "already exists"
@@ -17,7 +19,7 @@ const (
 	errInvalidCampaignIDLower    = "invalid campaign id"
 	errInvalidConfigID           = "invalid config id"
 	errInvalidCredentialID       = "invalid credential id" // #nosec G101 -- error message string, not a hardcoded credential
-	errInvalidEnvIDField         = "Invalid environment_id"
+	errInvalidEnvIDField         = httpx.ErrInvalidEnvIDField
 	errInvalidEnvironmentID      = "invalid environment ID"
 	errInvalidExceptionID        = "invalid exception id"
 	errInvalidGroupID            = "Invalid group ID"
@@ -26,10 +28,10 @@ const (
 	errInvalidTemplateID         = "Invalid template ID"
 	errInvalidMachineID          = "Invalid machine identity ID"
 	errInvalidMachineIDLower     = "invalid machine identity id"
-	errInvalidProjectID          = "Invalid project ID"
-	errInvalidProjectIDField     = "Invalid project_id"
+	errInvalidProjectID          = httpx.ErrInvalidProjectID
+	errInvalidProjectIDField     = httpx.ErrInvalidProjectIDField
 	errInvalidProjectIDLower     = "invalid project ID"
-	errInvalidRequestBody        = "Invalid request body"
+	errInvalidRequestBody        = httpx.ErrInvalidRequestBody
 	errInvalidRequestData        = "Invalid request data"
 	errInvalidRoleID             = "Invalid role ID"
 	errInvalidRotationPolicyID   = "Invalid rotation policy ID"
@@ -50,8 +52,8 @@ const (
 	errUnknownRole               = "unknown role"
 	errUnknownSSOProvider        = "unknown SSO provider"
 	errUserAlreadyExists         = "User already exists"
-	errUserContext               = "User context not found"
-	errUserOnlyEndpoint          = "This endpoint is only available to user accounts"
+	errUserContext               = httpx.ErrUserContext
+	errUserOnlyEndpoint          = httpx.ErrUserOnlyEndpoint
 	errUserHandlerNotInit        = "User handler not initialised"
 	errUserNotFound              = "User not found"
 	errWebAuthnCredNotFound      = "webauthn credential not found" // #nosec G101 -- error message string, not a hardcoded credential

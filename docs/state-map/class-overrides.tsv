@@ -163,7 +163,7 @@ rest	GET /api/v1/projects/{id}/secrets/inventory.csv	D	server/http/handlers/secr
 rest	GET /api/v1/rbac/permission-matrix	D	RBACHandler.GetPermissionMatrix (server/http/handlers/rbac.go:1023) is read-only: one GetPermissionMatrix read, then branches on format to write a CSV or JSON body; flagged "writes" are w.Header().Set calls.
 rest	GET /api/v1/roles/	D	RBACHandler.ListRoles (server/http/handlers/rbac.go:117) only calls coreService.ListRolesWithPermissions (read) then sendSuccess; no storage write calls.
 rest	GET /api/v1/roles/{id}	D	RBACHandler.GetRole (server/http/handlers/rbac.go:223) only calls coreService.GetRoleWithPermissions (read) then sendSuccess; purely read-only.
-rest	GET /api/v1/rotation-calendar	D	RotationCalendarHandler.Get (server/http/handlers/rotation_calendar_handler.go:30) parses query params and calls coreService.GetRotationCalendar (read) once, then sendSuccess; no writes.
+rest	GET /api/v1/rotation-calendar	D	RotationCalendarHandler.Get (server/http/handlers/reports/rotation_calendar_handler.go:30) parses query params and calls coreService.GetRotationCalendar (read) once, then sendSuccess; no writes.
 rest	GET /api/v1/rotation-policies/	D	RotationPolicyHandler.List (server/http/handlers/rotation_policies_handler.go:86) calls coreService.ListRotationPolicies (read) once then sendSuccess; no writes.
 rest	GET /api/v1/rotation-policies/{id}	D	RotationPolicyHandler.Get (server/http/handlers/rotation_policies_handler.go:199) calls coreService.GetRotationPolicy (read) once then sendSuccess; no writes.
 rest	GET /api/v1/secret-templates/	D	SecretTemplateHandler.List (server/http/handlers/secret_templates.go:85) calls coreService.ListSecretTemplates (read) once then sendSuccess; no writes.

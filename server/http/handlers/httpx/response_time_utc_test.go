@@ -1,4 +1,4 @@
-package handlers
+package httpx
 
 import (
 	"encoding/json"
@@ -40,8 +40,8 @@ func TestSendSuccessAndCreated_EmitEveryTimeInUTC(t *testing.T) {
 	}
 
 	for name, send := range map[string]func(w *httptest.ResponseRecorder, d any){
-		"sendSuccess": func(w *httptest.ResponseRecorder, d any) { sendSuccess(w, d, "") },
-		"sendCreated": func(w *httptest.ResponseRecorder, d any) { sendCreated(w, d, "") },
+		"sendSuccess": func(w *httptest.ResponseRecorder, d any) { SendSuccess(w, d, "") },
+		"sendCreated": func(w *httptest.ResponseRecorder, d any) { SendCreated(w, d, "") },
 	} {
 		p := build()
 		w := httptest.NewRecorder()
@@ -79,9 +79,9 @@ type utcOuter struct {
 	Raw     json.RawMessage
 }
 
-// AUDIT-UX-2: the encoders that bypassed utcTimes (the secret, folder, share and
-// rotation-policy handlers' own helpers) now go through encodeJSONResponse, and
-// utcTimes now converts a gorm.DeletedAt (a json.Marshaler that renders its own
+// AUDIT-UX-2: the encoders that bypassed UTCTimes (the secret, folder, share and
+// rotation-policy handlers' own helpers) now go through EncodeJSONResponse, and
+// UTCTimes now converts a gorm.DeletedAt (a json.Marshaler that renders its own
 // Time field) and the fields of an exported embedded struct. A raw JSON value
 // (the stored audit diff) is passed through untouched.
 func TestEncodeJSONResponse_ConvertsDeletedAtAndEmbeddedLeavesRawJSON(t *testing.T) {
@@ -91,7 +91,7 @@ func TestEncodeJSONResponse_ConvertsDeletedAtAndEmbeddedLeavesRawJSON(t *testing
 	v := utcOuter{UTCEmbeddedExported: UTCEmbeddedExported{UpdatedAt: local}, Deleted: gorm.DeletedAt{Time: local, Valid: true}, Raw: raw}
 
 	var b strings.Builder
-	if err := encodeJSONResponse(&b, SuccessResponse{Success: true, Data: v}); err != nil {
+	if err := EncodeJSONResponse(&b, SuccessResponse{Success: true, Data: v}); err != nil {
 		t.Fatal(err)
 	}
 	body := b.String()
@@ -105,14 +105,14 @@ func TestEncodeJSONResponse_ConvertsDeletedAtAndEmbeddedLeavesRawJSON(t *testing
 	}
 }
 
-// utcTimes cannot rewrite an unexported embedded struct (reflection cannot set
+// UTCTimes cannot rewrite an unexported embedded struct (reflection cannot set
 // it, while encoding/json still promotes its fields): this pins that limit, which
 // is why TestUTCStructural_ResponseTypesAreSeenByUTCTimes forbids the shape.
 func TestUTCTimes_UnexportedEmbeddedIsALimitTheStructuralGuardCovers(t *testing.T) {
 	type outer struct{ utcEmbedded }
 	local := time.Date(2026, 10, 10, 3, 53, 40, 0, time.FixedZone("", 2*3600))
 	var b strings.Builder
-	if err := encodeJSONResponse(&b, outer{utcEmbedded{CreatedAt: local}}); err != nil {
+	if err := EncodeJSONResponse(&b, outer{utcEmbedded{CreatedAt: local}}); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(b.String(), "+02:00") {

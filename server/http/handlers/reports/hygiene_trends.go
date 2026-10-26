@@ -9,7 +9,7 @@
 //
 //	Triggers RecordHygieneTrendPoint: computes today's counts and persists a
 //	HygieneTrendSnapshot row. Gated on system.write in the router.
-package handlers
+package reports
 
 import (
 	"log"
@@ -17,6 +17,7 @@ import (
 	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/http/handlers/httpx"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -34,7 +35,7 @@ func NewHygieneTrendsHandler(coreService *core.KeyorixCore) *HygieneTrendsHandle
 // Returns a HygieneTrendsReport with per-day stale/expired PAT and stale machine counts.
 func (h *HygieneTrendsHandler) GetCredentialTrends(w http.ResponseWriter, r *http.Request) {
 	if middleware.GetUserFromContext(r.Context()) == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		httpx.SendError(w, "Unauthorized", httpx.ErrUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
@@ -49,10 +50,10 @@ func (h *HygieneTrendsHandler) GetCredentialTrends(w http.ResponseWriter, r *htt
 	report, err := h.coreService.GetHygieneTrends(r.Context(), days)
 	if err != nil {
 		log.Printf("Error computing credential hygiene trends: %v", err)
-		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		httpx.SendError(w, "Error", httpx.ClientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, report, "")
+	httpx.SendSuccess(w, report, "")
 }
 
 // RecordHygieneSnapshot handles POST /api/v1/system/admin/jobs/record-hygiene-snapshot.
@@ -60,15 +61,15 @@ func (h *HygieneTrendsHandler) GetCredentialTrends(w http.ResponseWriter, r *htt
 func (h *HygieneTrendsHandler) RecordHygieneSnapshot(w http.ResponseWriter, r *http.Request) {
 	u := middleware.GetUserFromContext(r.Context())
 	if u == nil {
-		sendError(w, "Unauthorized", errUserContext, http.StatusUnauthorized, nil)
+		httpx.SendError(w, "Unauthorized", httpx.ErrUserContext, http.StatusUnauthorized, nil)
 		return
 	}
 
 	point, err := h.coreService.RecordHygieneTrendPoint(core.WithAuditActor(r.Context(), u.UserID))
 	if err != nil {
 		log.Printf("Error recording hygiene trend snapshot: %v", err)
-		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
+		httpx.SendError(w, "Error", httpx.ClientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, point, "")
+	httpx.SendSuccess(w, point, "")
 }

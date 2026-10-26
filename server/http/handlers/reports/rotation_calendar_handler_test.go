@@ -1,6 +1,6 @@
 // rotation_calendar_handler_test.go — HTTP handler tests for
 // GET /api/v1/rotation-calendar.
-package handlers
+package reports
 
 import (
 	"encoding/json"

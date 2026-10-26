@@ -11,7 +11,7 @@
 // core.GenerateBillingReport — the license check is a deployment capability
 // gate, not a per-caller authorization check, so it does not substitute for
 // the audit.read requirement.
-package handlers
+package reports
 
 import (
 	"log"
@@ -22,6 +22,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/license"
+	"github.com/keyorixhq/keyorix/server/http/handlers/httpx"
 )
 
 // AdminBillingHandler serves GET /api/v1/admin/billing/report.
@@ -47,24 +48,24 @@ func (h *AdminBillingHandler) GetBillingReport(w http.ResponseWriter, r *http.Re
 	// Parse required "from" param
 	fromStr := q.Get("from")
 	if fromStr == "" {
-		sendError(w, "BadRequest", "Missing required query parameter: from", http.StatusBadRequest, nil)
+		httpx.SendError(w, "BadRequest", "Missing required query parameter: from", http.StatusBadRequest, nil)
 		return
 	}
 	from, err := time.Parse(time.RFC3339, fromStr)
 	if err != nil {
-		sendError(w, "BadRequest", "Invalid 'from' parameter: must be RFC3339 (e.g. 2026-01-01T00:00:00Z)", http.StatusBadRequest, nil)
+		httpx.SendError(w, "BadRequest", "Invalid 'from' parameter: must be RFC3339 (e.g. 2026-01-01T00:00:00Z)", http.StatusBadRequest, nil)
 		return
 	}
 
 	// Parse required "to" param
 	toStr := q.Get("to")
 	if toStr == "" {
-		sendError(w, "BadRequest", "Missing required query parameter: to", http.StatusBadRequest, nil)
+		httpx.SendError(w, "BadRequest", "Missing required query parameter: to", http.StatusBadRequest, nil)
 		return
 	}
 	to, err := time.Parse(time.RFC3339, toStr)
 	if err != nil {
-		sendError(w, "BadRequest", "Invalid 'to' parameter: must be RFC3339 (e.g. 2026-02-01T00:00:00Z)", http.StatusBadRequest, nil)
+		httpx.SendError(w, "BadRequest", "Invalid 'to' parameter: must be RFC3339 (e.g. 2026-02-01T00:00:00Z)", http.StatusBadRequest, nil)
 		return
 	}
 
@@ -78,7 +79,7 @@ func (h *AdminBillingHandler) GetBillingReport(w http.ResponseWriter, r *http.Re
 			}
 			n, err := strconv.ParseUint(part, 10, 32)
 			if err != nil {
-				sendError(w, "BadRequest", "Invalid project_id value: "+part, http.StatusBadRequest, nil)
+				httpx.SendError(w, "BadRequest", "Invalid project_id value: "+part, http.StatusBadRequest, nil)
 				return
 			}
 			projectIDs = append(projectIDs, uint(n))
@@ -90,15 +91,15 @@ func (h *AdminBillingHandler) GetBillingReport(w http.ResponseWriter, r *http.Re
 	// clientSafe() masks every other error behind — a caller building a billing UI
 	// needs to tell "not licensed" apart from "server broke" to render correctly.
 	if !h.coreService.HasLicensedFeature(license.FeatureBilling) {
-		sendError(w, "Forbidden", "FinOps billing reports require a commercial license (feature: billing)", http.StatusForbidden, nil)
+		httpx.SendError(w, "Forbidden", "FinOps billing reports require a commercial license (feature: billing)", http.StatusForbidden, nil)
 		return
 	}
 
 	report, err := h.coreService.GenerateBillingReport(r.Context(), from, to, projectIDs)
 	if err != nil {
 		log.Printf("GetBillingReport: %v", err)
-		sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
+		httpx.SendError(w, "InternalError", httpx.ClientSafe(err), http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, report, "")
+	httpx.SendSuccess(w, report, "")
 }
