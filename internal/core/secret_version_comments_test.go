@@ -12,7 +12,7 @@ import (
 )
 
 func newVersionCommentsCore(store *MockStorage) *KeyorixCore {
-	return &KeyorixCore{storage: store}
+	return NewKeyorixCore(store)
 }
 
 // expectSecretWithVersion wires up the GetSecret + GetSecretVersions calls

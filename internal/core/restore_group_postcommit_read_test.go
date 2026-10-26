@@ -31,22 +31,21 @@ func TestRestoreGroup_PostCommitGetGroupErrorRollsBackTheRestore(t *testing.T) {
 	require.NoError(t, db.Create(&models.GroupRole{GroupID: g.ID, RoleID: 2}).Error)
 	require.NoError(t, c.DeleteGroup(ctx, 1, g.ID))
 
-	st := c.storage
+	st := c.StorageForTesting()
 	faulty := faultstorage.NewFaultyStorage(st, nil)
-	c.storage = faulty
+	fc := NewKeyorixCore(faulty)
 	faulty.Arm(&faultstorage.FaultSpec{
 		Method: "GetGroup", NthCall: 1, Kind: faultstorage.KindError,
 		Err: assert.AnError,
 	})
 
-	restored, err := c.RestoreGroup(ctx, 1, g.ID)
+	restored, err := fc.RestoreGroup(ctx, 1, g.ID)
 	require.Error(t, err, "a failed read-back must be reported as an error")
 	assert.Nil(t, restored)
 
 	// Confirm via a fresh, unfaulted read: the group is STILL soft-deleted --
 	// the transaction genuinely rolled back the restore too, it did not
 	// half-apply (restore committed while the caller was told it failed).
-	c.storage = st
 	_, getErr := c.GetGroup(ctx, g.ID)
 	assert.Error(t, getErr, "a rolled-back restore must leave the group soft-deleted")
 }
@@ -74,17 +73,16 @@ func TestRestoreGroup_PostCommitGetGroupErrorRollsBackTheRestore_Postgres(t *tes
 	require.NoError(t, c.DeleteGroup(ctx, 1, g.ID))
 
 	faulty := faultstorage.NewFaultyStorage(st, nil)
-	c.storage = faulty
+	fc := NewKeyorixCore(faulty)
 	faulty.Arm(&faultstorage.FaultSpec{
 		Method: "GetGroup", NthCall: 1, Kind: faultstorage.KindError,
 		Err: assert.AnError,
 	})
 
-	restored, err := c.RestoreGroup(ctx, 1, g.ID)
+	restored, err := fc.RestoreGroup(ctx, 1, g.ID)
 	require.Error(t, err)
 	assert.Nil(t, restored)
 
-	c.storage = st
 	_, getErr := c.GetGroup(ctx, g.ID)
 	assert.Error(t, getErr, "a rolled-back restore must leave the group soft-deleted (Postgres)")
 }

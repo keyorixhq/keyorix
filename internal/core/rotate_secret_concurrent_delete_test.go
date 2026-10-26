@@ -64,9 +64,9 @@ func TestRotateSecret_ConcurrentDelete_LeavesNoOrphanVersion(t *testing.T) {
 		EnvironmentID: 1, Type: "password", Classification: "internal", OwnerID: 1, CreatedBy: "owner"})
 	require.NoError(t, err)
 
-	c.storage = (&afterFirstGetSecret{inner: c.storage, hook: func() {
+	c = NewKeyorixCore((&afterFirstGetSecret{inner: c.StorageForTesting(), hook: func() {
 		require.NoError(t, db.Delete(&models.SecretNode{}, sec.ID).Error) // a concurrent DeleteSecret commits
-	}}).store()
+	}}).store())
 	_, rerr := c.RotateSecret(ctx, sec.ID, []byte("rotated-value-2"), 0, "rotator")
 	require.Error(t, rerr, "the rotation of a secret deleted under it must fail")
 
