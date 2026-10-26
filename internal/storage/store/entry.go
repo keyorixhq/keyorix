@@ -327,11 +327,10 @@ type backgroundJob struct {
 // The build lock takes ls's advisory lock shape (SetTransactionPooling), and db
 // must allow two open connections (BuildAuditListIndexesPostgres).
 func (ls *LocalStorage) StartAuditListIndexBuild(db *sql.DB, logf func(string, ...any)) {
-	ctx, cancel := context.WithCancel(context.Background())
-	job := &backgroundJob{cancel: cancel, done: make(chan struct{})}
+	ctx, job := newBackgroundJob()
 	ls.auditIndexBuild = job
 	go func() {
-		defer close(job.done)
+		defer job.exit()
 		defer func() { _ = db.Close() }()
 		start := time.Now()
 		for attempt := 0; ; attempt++ {

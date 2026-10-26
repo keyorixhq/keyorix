@@ -22,7 +22,7 @@ func TestSecretSuspendMarker_ClearedByOldBinaryResume_Postgres(t *testing.T) {
 	cfg := &config.Config{}
 	cfg.Storage.Type = "postgres"
 	cfg.Storage.Database.DSN = dsn
-	_, err := NewStorageFactory().CreateStorage(cfg)
+	_, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 
 	db := pgRawOpen(t, dsn)
@@ -50,7 +50,7 @@ VALUES (1, 1, 'marker-probe', true, 'suspended', true, now(), now())`).Error)
 	require.NoError(t, db.Exec("DROP TRIGGER "+store.SecretSuspendMarkerTrigger+" ON secret_nodes").Error)
 	require.NoError(t, db.Exec("UPDATE secret_nodes SET status = 'active' WHERE name = 'marker-probe'").Error)
 	require.True(t, marker(), "fixture: without the trigger the marker survives the resume")
-	_, err = NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	require.False(t, marker(), "the next start must clear a marker left on an active secret")
 	var n int64
@@ -69,7 +69,7 @@ func TestAuditRetentionAnchor_OlderLayoutCannotReplaceV2_Postgres(t *testing.T) 
 	cfg := &config.Config{}
 	cfg.Storage.Type = "postgres"
 	cfg.Storage.Database.DSN = dsn
-	_, err := NewStorageFactory().CreateStorage(cfg)
+	_, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	db := pgRawOpen(t, dsn)
 	upsert := func(key, value string) error {

@@ -244,12 +244,11 @@ func (ls *LocalStorage) StartRolePermissionsGenerationIntegrityCheck(logf func(s
 	if ls.db.Dialector.Name() != "postgres" || ls.rolePermIntegrity != nil {
 		return
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	job := &backgroundJob{cancel: cancel, done: make(chan struct{})}
+	ctx, job := newBackgroundJob()
 	ls.rolePermIntegrity = job
 	c := &rolePermGenerationIntegrityChecker{ls: ls, logf: logf}
 	go func() {
-		defer close(job.done)
+		defer job.exit()
 		tick := time.NewTicker(rolePermGenerationIntegrityInterval)
 		defer tick.Stop()
 		for {

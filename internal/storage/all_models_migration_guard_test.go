@@ -276,7 +276,7 @@ func TestMigrateDatabase_EveryModelGetsATable_Postgres_Fresh(t *testing.T) {
 
 	// The real production migration path -- same factory call
 	// TestCreateStorage_Postgres_Success drives.
-	st, err := NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, st)
 

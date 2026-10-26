@@ -11,7 +11,6 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
-	storagefactory "github.com/keyorixhq/keyorix/internal/storage"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 	"github.com/keyorixhq/keyorix/internal/testutil/sqlitetest"
@@ -60,7 +59,7 @@ func TestBackendDifferentialHarnessSchema_MatchesProduction(t *testing.T) {
 	// The factory migrates it and sdb below must reach the SAME database, so only
 	// the DSN comes from sqlitetest; sdb caps its own pool to one connection.
 	sqliteDSN := sqlitetest.DSN("schemaguard_")
-	if _, err := storagefactory.NewStorageFactory().CreateStorage(&config.Config{
+	if err := createStorageClosedAtCleanup(t, &config.Config{
 		Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqliteDSN}},
 	}); err != nil {
 		t.Fatalf("sqlite production migration: %v", err)
@@ -91,7 +90,7 @@ func TestBackendDifferentialHarnessSchema_MatchesProduction(t *testing.T) {
 		}
 	})
 	pgTargetDSN := pgdsn.PGSearchPathDSN(pgDSN, schema)
-	if _, err := storagefactory.NewStorageFactory().CreateStorage(&config.Config{
+	if err := createStorageClosedAtCleanup(t, &config.Config{
 		Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: pgTargetDSN}},
 	}); err != nil {
 		t.Fatalf("pg production migration: %v", err)

@@ -66,7 +66,7 @@ func TestMigrateDatabase_OneTimePasswordExpiry_UpgradeBackfill(t *testing.T) {
 
 			// Boot 1: a database as the previous release left it. Create the full
 			// schema, add the legacy users, then take the new column away again.
-			_, err := NewStorageFactory().CreateStorage(cfg)
+			_, err := createStorageClosedAtCleanup(t, cfg)
 			require.NoError(t, err)
 			db := open(t)
 			for _, u := range []*models.User{
@@ -83,7 +83,7 @@ func TestMigrateDatabase_OneTimePasswordExpiry_UpgradeBackfill(t *testing.T) {
 
 			// Boot 2: the upgrade.
 			before := time.Now().UTC()
-			_, err = NewStorageFactory().CreateStorage(cfg)
+			_, err = createStorageClosedAtCleanup(t, cfg)
 			require.NoError(t, err)
 			after := time.Now().UTC()
 			db = open(t)
@@ -101,7 +101,7 @@ func TestMigrateDatabase_OneTimePasswordExpiry_UpgradeBackfill(t *testing.T) {
 			// force-reset, expired-password gate) keeps its own, non-expiring
 			// password. The backfill must not run again and stamp it.
 			require.NoError(t, db.Create(otpMigrationUser("forced_later", "password_reset_required")).Error)
-			_, err = NewStorageFactory().CreateStorage(cfg)
+			_, err = createStorageClosedAtCleanup(t, cfg)
 			require.NoError(t, err)
 			db = open(t)
 			assert.Nil(t, otpExpiryOf(t, db, "forced_later"), "the legacy backfill is one-shot: a later boot must not expire a post-upgrade forced reset")

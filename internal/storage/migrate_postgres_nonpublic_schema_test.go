@@ -30,11 +30,11 @@ func migrateViaFactory(t *testing.T, dsn string) {
 	cfg := &config.Config{}
 	cfg.Storage.Type = "postgres"
 	cfg.Storage.Database.DSN = dsn
-	st, err := NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, st)
 	// Second boot must be an idempotent no-op in either schema.
-	_, err = NewStorageFactory().CreateStorage(cfg)
+	_, err = createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err, "re-running the migration must be idempotent")
 }
 
