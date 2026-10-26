@@ -1,0 +1,1 @@
+github.com/digitorus/timestamp@v0.0.0-20260914073129-b4b58b92aa51: read "https://proxy.golang.org/github.com/digitorus/timestamp/@v/v0.0.0-20260914073129-b4b58b92aa51.zip": stream error: stream ID 413; INTERNAL_ERROR; received from peer

@@ -52,6 +52,9 @@ func pinTestCore(t *testing.T, stateVal string, stateFound bool, stateErr error)
 	ms.On("LatestAuditCheckpoint", mock.Anything).Return(nil, nil)
 	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).Return("", false, nil)
 	ms.On("GetSystemMetadata", mock.Anything, auditVerifyStateKey).Return(stateVal, stateFound, stateErr)
+	// No key transition record (a row that fails its signature is first checked
+	// against one, audit_key_transition.go).
+	ms.On("GetSystemMetadata", mock.Anything, auditKeyTransitionsKey).Return("", false, nil).Maybe()
 	ms.On("CreateAuditCheckpoint", mock.Anything, mock.Anything).Return(nil).Maybe()
 	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.Anything).Return(nil).Maybe()
 	c := NewKeyorixCore(ms)

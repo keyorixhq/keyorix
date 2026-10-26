@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 )
 
 // wireSecretEncryption is a core wiring step (coreWiringSteps in main.go).
@@ -27,6 +28,14 @@ func wireSecretEncryption(cw *coreWiring) error {
 		// when encryption is off (no DEK).
 		if key, keyVer, ok := encSvc.AuditCheckpointKey(); ok {
 			coreService.SetAuditCheckpointKey(key, keyVer)
+			// Finish carrying the audit verification state over after a key change
+			// interrupted between its key-file commit and its database step
+			// (docs/design-audit-key-transition.md). A no-op otherwise; a record
+			// that cannot be trusted is left alone and reported as a
+			// discontinuity by the next verification.
+			if _, err := coreService.CompleteAuditKeyTransition(context.Background()); err != nil {
+				log.Printf("SECURITY: audit key transition not completed at startup: %v", err)
+			}
 			// Restore the in-memory anti-rollback watermark from the persisted high-water
 			// mark so a process restart cannot reset it to zero (ADR-029).
 			coreService.SeedAuditWatermark(context.Background())

@@ -138,8 +138,11 @@ func (f *samlReconcileFixture) group(id uint, name string) {
 	require.NoError(f.t, f.db.Create(&models.Group{ID: id, Name: name, NameFolded: strings.ToLower(name)}).Error)
 }
 
+// role creates a role the IdP mappings grant at the global scope, so it is
+// global-assignable (#3546 Phase 2: a new role's default, project, is refused there).
 func (f *samlReconcileFixture) role(id uint, name string, bypass bool) {
-	require.NoError(f.t, f.db.Create(&models.Role{ID: id, Name: name, NameFolded: strings.ToLower(name), BypassesPermissionChecks: bypass}).Error)
+	require.NoError(f.t, f.db.Create(&models.Role{ID: id, Name: name, NameFolded: strings.ToLower(name), BypassesPermissionChecks: bypass,
+		AssignableScope: models.RoleAssignableAny}).Error)
 }
 
 func (f *samlReconcileFixture) member(userID, groupID uint) {

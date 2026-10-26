@@ -241,3 +241,75 @@ func TestDown_ForceDefaultAloneIsRejected(t *testing.T) {
 		t.Fatalf("--force-default without --wipe must be rejected, got %d", code)
 	}
 }
+
+// DEMO-WALK-4 finding 6: the footer of an up.sh build read "v0.96.0-1284-gecd5ce7c1-dirty"
+// on a pristine checkout. up.sh runs `make populate-webui-dist` BEFORE it computes the build
+// stamp, and that target replaces the committed placeholder server/webui/dist/index.html with
+// the real bundle, so `git describe --dirty` saw a modified tracked file. The generated dist
+// is not a source change; the stamp must ignore it and still say -dirty for a real edit.
+
+// shimPopulateWebUIDist makes the fake `make populate-webui-dist` overwrite the committed
+// placeholder the way the real target does, then commits a placeholder to overwrite.
+func (e *env) shimPopulateWebUIDist(t *testing.T) {
+	t.Helper()
+	dist := filepath.Join(e.root, "server", "webui", "dist", "index.html")
+	if err := os.MkdirAll(filepath.Dir(dist), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dist, []byte("<!-- placeholder -->\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, e.root, "add", "-A")
+	git(t, e.root, "commit", "-q", "-m", "placeholder")
+	shim := "#!/bin/sh\necho make \"$@\" >> \"$FAKE/calls\"\n" +
+		"case \"$*\" in *populate-webui-dist*) echo '<html>real bundle</html>' > \"$2/server/webui/dist/index.html\";; esac\n"
+	if err := os.WriteFile(filepath.Join(filepath.SplitList(e.path)[0], "make"), []byte(shim), 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// buildVersion returns the VERSION build-arg of the recorded `docker build`.
+func (e *env) buildVersion(t *testing.T) string {
+	t.Helper()
+	for line := range strings.SplitSeq(e.calls(t), "\n") {
+		if !strings.HasPrefix(line, "build ") {
+			continue
+		}
+		_, after, ok := strings.Cut(line, "--build-arg VERSION=")
+		if !ok {
+			t.Fatalf("docker build carries no VERSION stamp:\n%s", line)
+		}
+		return strings.Fields(after)[0]
+	}
+	t.Fatalf("no docker build was recorded:\n%s", e.calls(t))
+	return ""
+}
+
+func TestUp_BuildStampIgnoresTheGeneratedWebUIDist(t *testing.T) {
+	e := newEnv(t)
+	e.shimPopulateWebUIDist(t)
+	e.setImage(t, "0123456789ab") // stale, so up.sh rebuilds
+	e.run(t, "up.sh", nil)
+	if v := e.buildVersion(t); strings.Contains(v, "dirty") {
+		t.Fatalf("a pristine checkout whose only change is the regenerated web UI must not be stamped dirty, got VERSION=%s", v)
+	}
+	// up.sh restores the placeholder after the build, so the premise (the stamp was computed
+	// after the real bundle replaced it) is shown by the order of the recorded calls.
+	calls := e.calls(t)
+	if i, j := strings.Index(calls, "populate-webui-dist"), strings.Index(calls, "build -f server/Dockerfile"); i < 0 || j < i {
+		t.Fatalf("test premise: populate-webui-dist must run before the docker build:\n%s", calls)
+	}
+}
+
+func TestUp_BuildStampStillSaysDirtyForARealEdit(t *testing.T) {
+	e := newEnv(t)
+	e.shimPopulateWebUIDist(t)
+	e.setImage(t, "0123456789ab")
+	if err := os.WriteFile(filepath.Join(e.root, "server", "main.go"), []byte("package main\n// edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	e.run(t, "up.sh", nil)
+	if v := e.buildVersion(t); !strings.HasSuffix(v, "-dirty") {
+		t.Fatalf("an edited source file must still be stamped -dirty, got VERSION=%s", v)
+	}
+}

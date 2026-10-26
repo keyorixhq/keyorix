@@ -1,0 +1,2 @@
+### Testing
+- **`TestOwedAuditOracle_SweepEveryScopedOp` reuses one world pair per op instead of two fresh worlds per case.** Same cases, same assertions; `TestOwedAuditOracle_SweepReuseMatchesFreshWorlds` checks case by case that the reused worlds reach the same verdict as fresh ones. Two soundness gaps in the shared world reuse (also used by `FuzzStorageFaultOperations`) are fixed on the way: reused worlds had no SCIM routes, and a reset kept the previous iteration's `LocalStorage` caches (audit-chain head, row-id caches) across the table wipe.

@@ -474,7 +474,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   (`TestProjectMembership_OneDefinition_StorageIsProjectMemberHasOneCaller`,
   `..._JournalReadsAreAllowlisted`, `..._NoCoreWrapperForJournalPerUserRead` — all default-ci,
   all red/green-proved against a planted second definition);
-  behaviour: `project_membership_definition_test.go`,
+  behaviour: `coretests/project_membership_definition_test.go`,
   `server/http/handlers/users_memberships_2781_test.go`.
 - **INV-CORE-46** Every surface that answers "what can this caller READ" answers it from one
   place, and the number agrees with the list: `VisibleProjects` (project_visibility.go) is the
@@ -502,7 +502,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   (a) a GLOBAL grant holder sees EVERYTHING, not their owned/shared/ACL subset — the
   tier that returns the personal set is tier 3 (no role-granted scope at all), and
   collapsing tiers 1/2 onto it is the #2780 defect
-  (`secret_readable_listing_global_test.go`);
+  (`coretests/secret_readable_listing_global_test.go`);
   (b) a project-restricted PAT (ADR-042) sees its restricted project even when its
   OWNER is granted only globally — neither the global check nor the owner's
   project-scoped grants can produce it, so `VisibleProjects` adds the restriction's
@@ -558,7 +558,7 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   the index at all (hard-deleted, stale row) is likewise not counted and never errors. Why:
   the counts included soft-deleted projects, and the list reported them with an EMPTY name
   (`ListProjects` is soft-delete-scoped), so an auditor got a row they could not identify.
-  Guard: `project_membership_soft_delete_test.go` — each half asserts the OTHER surface's
+  Guard: `coretests/project_membership_soft_delete_test.go` — each half asserts the OTHER surface's
   behaviour too, so a later change that collapses them together fails. Same file pins that a
   SUSPENDED user still holds their grants (suspension blocks login, not RBAC — the same
   live-holders-vs-grant-rows distinction as INV-CORE-15) and that a soft-deleted GROUP

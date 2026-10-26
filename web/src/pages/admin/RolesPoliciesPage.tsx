@@ -11,16 +11,57 @@ import {
     useRemovePermissionFromRole,
 } from '../../features/admin';
 import type { Role, RoleWithPermissions, Permission } from '../../types/rbac';
-import { BUILT_IN_ROLES } from '../../types/rbac';
+import { BUILT_IN_ROLES, ROLE_ASSIGNABLE_SCOPE_LABELS, type RoleAssignableScope } from '../../types/rbac';
 
 type Tab = 'roles' | 'permissions';
 
 interface RoleFormData {
     name: string;
     description: string;
+    assignable_scope: RoleAssignableScope;
 }
 
+const emptyRoleForm: RoleFormData = { name: '', description: '', assignable_scope: 'project' };
+
 const isBuiltIn = (name: string): boolean => (BUILT_IN_ROLES as readonly string[]).includes(name);
+
+interface AssignableScopeSelectProps {
+    id: string;
+    value: RoleAssignableScope;
+    onChange: (value: RoleAssignableScope) => void;
+}
+
+// Where the role may be granted (#3546). A new role defaults to per project; widening it
+// lets it be granted install-wide, where it applies in EVERY project.
+const AssignableScopeSelect: React.FC<AssignableScopeSelectProps> = ({ id, value, onChange }) => (
+    <div>
+        <label htmlFor={id} className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+            Can be granted
+        </label>
+        <select
+            id={id}
+            value={value}
+            onChange={(e) => onChange(e.target.value as RoleAssignableScope)}
+            className="w-full px-3 py-2 rounded-md border text-sm"
+            style={{
+                backgroundColor: 'var(--bg-app)',
+                borderColor: 'var(--border-strong)',
+                color: 'var(--text-primary)',
+            }}
+        >
+            {(Object.keys(ROLE_ASSIGNABLE_SCOPE_LABELS) as RoleAssignableScope[]).map((s) => (
+                <option key={s} value={s}>
+                    {ROLE_ASSIGNABLE_SCOPE_LABELS[s]}
+                </option>
+            ))}
+        </select>
+        <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+            {value === 'project'
+                ? 'Grants must name a project. Recommended for most roles.'
+                : 'An install-wide grant applies in every project. Changing this does not change existing grants.'}
+        </p>
+    </div>
+);
 
 const groupByResource = (perms: Permission[]): Record<string, Permission[]> =>
     perms.reduce<Record<string, Permission[]>>((acc, p) => {
@@ -77,6 +118,9 @@ const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage })
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                     {role.permissions.length} permission{role.permissions.length !== 1 ? 's' : ''}
                 </p>
+                <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    {ROLE_ASSIGNABLE_SCOPE_LABELS[role.assignable_scope]}
+                </p>
             </div>
             <div className="px-5 py-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border)' }}>
                 <Button size="sm" variant="outline" onClick={() => onManage(role)} className="flex-1">
@@ -117,7 +161,7 @@ const RoleCard: React.FC<RoleCardProps> = ({ role, onEdit, onDelete, onManage })
 
 export const RolesPoliciesPage: React.FC = () => {
     const [tab, setTab] = useState<Tab>('roles');
-    const [formData, setFormData] = useState<RoleFormData>({ name: '', description: '' });
+    const [formData, setFormData] = useState<RoleFormData>(emptyRoleForm);
     const [createOpen, setCreateOpen] = useState(false);
     const [editRole, setEditRole] = useState<Role | null>(null);
     const [deleteRole, setDeleteRole] = useState<Role | null>(null);
@@ -136,13 +180,13 @@ export const RolesPoliciesPage: React.FC = () => {
     const isMutatingPerm = assignMutation.isPending || removeMutation.isPending;
 
     const openCreate = () => {
-        setFormData({ name: '', description: '' });
+        setFormData(emptyRoleForm);
         createMutation.reset();
         setCreateOpen(true);
     };
 
     const openEdit = (role: Role) => {
-        setFormData({ name: role.name, description: role.description });
+        setFormData({ name: role.name, description: role.description, assignable_scope: role.assignable_scope });
         updateMutation.reset();
         setEditRole(role);
     };
@@ -369,6 +413,11 @@ export const RolesPoliciesPage: React.FC = () => {
                             placeholder="What this role is for"
                         />
                     </div>
+                    <AssignableScopeSelect
+                        id="create-role-assignable-scope"
+                        value={formData.assignable_scope}
+                        onChange={(assignable_scope) => setFormData((d) => ({ ...d, assignable_scope }))}
+                    />
                     {createMutation.isError && (
                         <p className="text-sm text-red-600">Failed to create role. Please try again.</p>
                     )}
@@ -416,6 +465,11 @@ export const RolesPoliciesPage: React.FC = () => {
                             }}
                         />
                     </div>
+                    <AssignableScopeSelect
+                        id="edit-role-assignable-scope"
+                        value={formData.assignable_scope}
+                        onChange={(assignable_scope) => setFormData((d) => ({ ...d, assignable_scope }))}
+                    />
                     {updateMutation.isError && (
                         <p className="text-sm text-red-600">Failed to update role. Please try again.</p>
                     )}

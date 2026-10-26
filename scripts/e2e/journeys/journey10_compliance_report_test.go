@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -101,7 +100,7 @@ func TestJourney_ComplianceReport(t *testing.T) {
 func backdateSecretCreatedAtN10(t *testing.T, dbPath string, secretID int) {
 	t.Helper()
 	stmt := fmt.Sprintf("UPDATE secret_nodes SET created_at = datetime('now', '-15 days') WHERE id = %d;", secretID)
-	cmd := exec.Command("sqlite3", dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived path, secretID is an int this test itself created, never attacker input
+	cmd := sqliteCLI(dbPath, stmt) // #nosec G204 -- dbPath is this test's own tempdir-derived path, secretID is an int this test itself created, never attacker input
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("sqlite3 backdate UPDATE failed: %v\n%s", err, out)
 	}

@@ -39,6 +39,7 @@ package store
 
 import (
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 
@@ -114,16 +115,16 @@ func EnsureRolePermissionsGenerationTriggers(db *gorm.DB) error {
 	})
 }
 
-func ensurePostgresRolePermGenerationTriggers(tx *gorm.DB) error {
-	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(postgresRolePermGenerationLockKey)).Error; err != nil {
-		return fmt.Errorf("acquire role-permission generation trigger advisory lock: %w", err)
-	}
-	// The table is qualified with the schema of the table that fired
-	// (TG_TABLE_SCHEMA), not resolved through the writer's search_path: an
-	// operator's session with a different search_path must still bump THIS
-	// schema's generation, never another schema's or fail on a missing table.
-	if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + rolePermGenerationFunc + `() RETURNS trigger
-LANGUAGE plpgsql AS $keyorix$
+// postgresRolePermGenerationFuncBody is the PL/pgSQL body of
+// rolePermGenerationFunc, exactly as pg_proc.prosrc stores it: the installer
+// creates it and the integrity check (role_permission_generation_integrity.go)
+// compares the installed function against it, so the two cannot drift.
+//
+// The table is qualified with the schema of the table that fired
+// (TG_TABLE_SCHEMA), not resolved through the writer's search_path: an
+// operator's session with a different search_path must still bump THIS
+// schema's generation, never another schema's or fail on a missing table.
+const postgresRolePermGenerationFuncBody = `
 BEGIN
   EXECUTE format('INSERT INTO %I.system_metadata (key, value, updated_at) VALUES ($1, ''0'', now()) ON CONFLICT (key) DO NOTHING', TG_TABLE_SCHEMA)
     USING '` + rolePermissionsGenerationKey + `';
@@ -131,14 +132,84 @@ BEGIN
     USING '` + rolePermissionsGenerationKey + `';
   RETURN NULL;
 END;
-$keyorix$`).Error; err != nil {
-		return fmt.Errorf("failed to create %s(): %w", rolePermGenerationFunc, err)
+`
+
+// pgTriggerFuncSearchPath is the search_path pinned on the trigger functions
+// this package installs (the generation function here, the cache-epoch
+// function in secret_node_cache_epoch.go), as in internal/solewriter: what
+// the body's functions and operators resolve to does not depend on the
+// writing session's search_path, so a writer whose path puts a schema before
+// pg_catalog cannot shadow them, and the integrity check's body comparison
+// describes what actually runs. Every relation the bodies touch is already
+// qualified (TG_TABLE_SCHEMA, or NEW/OLD).
+const pgTriggerFuncSearchPath = "pg_catalog, pg_temp"
+
+// pgTriggerFuncSetClause is the CREATE FUNCTION clause that pins it.
+const pgTriggerFuncSetClause = "SET search_path = " + pgTriggerFuncSearchPath
+
+// pgTriggerFuncConfigOK is true, over pg_proc p, when p's per-function
+// settings are exactly the pinned search_path and nothing else (never NULL,
+// so it scans into a bool).
+const pgTriggerFuncConfigOK = "p.proconfig IS NOT DISTINCT FROM ARRAY['search_path=" + pgTriggerFuncSearchPath + "']::pg_catalog.text[]"
+
+// pgRolePermGenerationFuncOK is true, over pg_proc p joined to pg_language l,
+// when p is exactly the function this file installs: the body bound to its
+// one placeholder (postgresRolePermGenerationFuncBody), plpgsql, the pinned
+// search_path and no other per-function setting (ALTER FUNCTION ... SET
+// search_path would change what the body's names resolve to), not SECURITY
+// DEFINER.
+const pgRolePermGenerationFuncOK = "p.proname = '" + rolePermGenerationFunc + "' AND p.pronargs = 0 AND p.prosrc = ? AND l.lanname = 'plpgsql' AND " + pgTriggerFuncConfigOK + " AND NOT p.prosecdef"
+
+// pgRolePermGenerationTriggerDefOK is true, over pg_trigger t, when t has the
+// shape this file creates: AFTER, FOR EACH STATEMENT, on INSERT, UPDATE,
+// DELETE and TRUNCATE (tgtype 4|8|16|32), no UPDATE OF column list, no WHEN
+// clause, no arguments, not a constraint trigger. A trigger of the same name
+// re-created with fewer events (AFTER INSERT only) passes the presence proof
+// but leaves a DELETE unseen.
+const pgRolePermGenerationTriggerDefOK = "t.tgtype = 60 AND t.tgnargs = 0 AND t.tgqual IS NULL AND t.tgconstraint = 0 AND COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) = 0"
+
+func ensurePostgresRolePermGenerationTriggers(tx *gorm.DB) error {
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", int64(postgresRolePermGenerationLockKey)).Error; err != nil {
+		return fmt.Errorf("acquire role-permission generation trigger advisory lock: %w", err)
+	}
+	// Rewrite the function only when it is missing or differs. A rewrite of a
+	// correct function would give its pg_proc row a new xmin on every boot of
+	// every replica, which the integrity check reads as tampering and answers
+	// with a cache flush on every replica.
+	var current []bool
+	if err := tx.Raw(`SELECT `+pgRolePermGenerationFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+WHERE p.proname = '`+rolePermGenerationFunc+`' AND p.pronargs = 0
+  AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = pg_catalog.current_schema())`,
+		postgresRolePermGenerationFuncBody).Scan(&current).Error; err != nil {
+		return fmt.Errorf("failed to read %s() definition: %w", rolePermGenerationFunc, err)
+	}
+	if len(current) == 0 || !current[0] {
+		if len(current) > 0 {
+			log.Printf("role-permission generation: replacing a %s() whose definition differs from this release's (an upgrade from an older release, or tampering)", rolePermGenerationFunc)
+		}
+		if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + rolePermGenerationFunc + `() RETURNS trigger
+LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + postgresRolePermGenerationFuncBody + `$keyorix$`).Error; err != nil {
+			return fmt.Errorf("failed to create %s(): %w", rolePermGenerationFunc, err)
+		}
 	}
 	for _, t := range rolePermGenerationTables {
-		var state []string
-		if err := tx.Raw("SELECT tgenabled::text FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = ?::regclass AND tgname = ?",
+		var state []struct {
+			State string
+			DefOK bool
+		}
+		if err := tx.Raw(`SELECT t.tgenabled::text AS state, (`+pgRolePermGenerationTriggerDefOK+` AND t.tgfoid = '`+rolePermGenerationFunc+`()'::regprocedure) AS def_ok
+FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = ?::regclass AND t.tgname = ?`,
 			t.table, t.trigger).Scan(&state).Error; err != nil {
 			return fmt.Errorf("failed to read %s state: %w", t.trigger, err)
+		}
+		if len(state) > 0 && !state[0].DefOK {
+			// Same name, different trigger: replaced inside this transaction, so
+			// no other session sees the table without it.
+			log.Printf("role-permission generation: re-creating %s on %s, whose definition differs from this release's", t.trigger, t.table)
+			if err := tx.Exec("DROP TRIGGER " + t.trigger + " ON " + t.table).Error; err != nil {
+				return fmt.Errorf("failed to drop outdated %s: %w", t.trigger, err)
+			}
+			state = nil
 		}
 		if len(state) == 0 {
 			// Statement-level: one bump per statement, TRUNCATE included.
@@ -147,7 +218,7 @@ $keyorix$`).Error; err != nil {
 				return fmt.Errorf("failed to create %s: %w", t.trigger, err)
 			}
 		}
-		if len(state) == 0 || state[0] != "A" {
+		if len(state) == 0 || state[0].State != "A" {
 			if err := tx.Exec("ALTER TABLE " + t.table + " ENABLE ALWAYS TRIGGER " + t.trigger).Error; err != nil {
 				return fmt.Errorf("failed to enable %s: %w", t.trigger, err)
 			}

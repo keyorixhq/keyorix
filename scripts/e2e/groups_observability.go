@@ -184,6 +184,7 @@ func groupCompliance(ctx *smokeCtx) {
 		"credential-trends", "posture", "rotation-by-backend", "controls",
 		"controls.csv", "digest", "evidence", "permission-baseline",
 		"permission-baseline.csv", "permission-changes", "snapshots",
+		"crypto-inventory",
 	}
 	for _, seg := range reads {
 		c.call("GET", fmt.Sprintf("GET /api/v1/compliance/%s", seg), "/api/v1/compliance/"+seg, nil)

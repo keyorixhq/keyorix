@@ -50,12 +50,13 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
-	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 // txClosureOuterCallRe matches receiver methods that write an audit/log/notify
@@ -164,17 +165,13 @@ func txClosureExprString(e ast.Expr) string {
 
 func TestNoOuterStorageInTransactionClosure(t *testing.T) {
 	fset := token.NewFileSet()
-	entries, err := os.ReadDir("..")
-	if err != nil {
-		t.Fatal(err)
-	}
 	var hits []txClosureHit
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") || strings.Contains(name, "generated") {
+	for _, path := range coreFamilySources(t) {
+		name := srcpath.CoreFamilyRel(path)
+		if strings.Contains(filepath.Base(path), "generated") {
 			continue
 		}
-		f, perr := parser.ParseFile(fset, filepath.Join("..", name), nil, 0)
+		f, perr := parser.ParseFile(fset, path, nil, 0)
 		if perr != nil {
 			t.Fatalf("cannot parse %s: %v", name, perr)
 		}

@@ -21,6 +21,14 @@ export KEYORIX_MASTER_PASSWORD_FILE=./secrets/master_password   # or KEYORIX_MAS
 keyorix-server admin recovery-key rotate --config ./keyorix.yaml
 ```
 
+To get the key age-encrypted instead of printed, add `--recipient` (and optionally `--output <file>`).
+Use a **hybrid post-quantum recipient** (`age1pq1...`, made with `age-keygen -pq`): an
+age-encrypted recovery key can be copied and stored today, then opened years later by a quantum
+attacker if it was encrypted to a classical key. A classical `age1...` or `ssh-ed25519` recipient
+still works, but the command prints a `WARNING` on stderr and carries on. A malformed recipient is
+refused before anything changes, so the old key stays valid. Decrypt with `age -d -i <identity file> <output>`
+(age 1.3 or newer for hybrid identities).
+
 Expected:
 
 ```

@@ -335,6 +335,25 @@ describe('response interceptor (error): 401 handling', () => {
         expect(store.setError).toHaveBeenCalledWith('Your session has expired. Please log in again.');
         expect(mockRequest).not.toHaveBeenCalled();
     });
+
+    it('does not log out again when a logout finished while the refresh was in flight', async () => {
+        // The request's 401 found the session signed in; by the time its refresh failed, a logout
+        // (the inactivity timer's) had revoked the session and was redirecting. A second logout
+        // would POST /auth/logout on the revoked session and redirect again, cutting off the first
+        // (web-e2e run 39329908362: page.waitForURL net::ERR_ABORTED).
+        const before = makeAuthStore({ isAuthenticated: true });
+        const after = makeAuthStore({ isAuthenticated: false });
+        before.refreshToken.mockImplementationOnce(async () => {
+            mockGetState.mockReturnValue(after);
+            throw new Error('refresh failed');
+        });
+        mockGetState.mockReturnValue(before);
+        const err = axiosErr({ config: { url: '/secrets' }, response: { status: 401, data: {} } });
+
+        await expect(responseOnRejected(err)).rejects.toBe(err);
+        expect(before.logout).not.toHaveBeenCalled();
+        expect(after.logout).not.toHaveBeenCalled();
+    });
 });
 
 describe('response interceptor: the server ended the session (reauthentication_required, #3024)', () => {

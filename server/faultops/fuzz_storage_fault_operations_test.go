@@ -31,6 +31,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	grpcservices "github.com/keyorixhq/keyorix/server/grpc/services"
 	resthandlers "github.com/keyorixhq/keyorix/server/http/handlers"
 	"github.com/stretchr/testify/assert"
@@ -68,7 +69,7 @@ func storageInterfaceMethodNames() []string {
 
 // authzReadMethods back core.Authorize / permission resolution / scope
 // discovery (confirmed by reading their doc comments in
-// internal/core/storage/interface.go, not guessed — "Together they back
+// internal/core/storage/iface_*.go, not guessed — "Together they back
 // core.Authorize"). Oracle (c): a fault on any of these must never let an
 // operation SUCCEED — error or deny only, regardless of what the reference
 // (fault-free) run would have done.
@@ -1022,9 +1023,12 @@ func matchingKnownOpen(in oracleInput, oracle string, diff []string) *knownOpenT
 //     non-empty tables. This is the entire safety argument for wildcards: the
 //     dimension that decides what gets swallowed is tables, and a wildcard row
 //     without one would tolerate ANY divergence on its op.
-//   - An EXPIRED row fails the build. Until now `expires` was checked for
+//   - An EXPIRED row is enforced. Before #2844 `expires` was checked for
 //     presence and format only, so nothing happened when the date passed and the
-//     field was documentation. A date nobody enforces is not a deadline.
+//     field was documentation. A date nobody enforces is not a deadline. Since
+//     GUARD-CONTRACT-1 the date is enforced by TestKnownOpenTolerances_NotExpired
+//     in the nightly job on main, not here: a PR-time calendar check turns every
+//     PR red on one day (docs/guard-rollout-contract.md rule 1).
 //
 // Deliberately NOT checked here: whether the cited issue is still open. That
 // needs the network, which a unit test must not. It is
@@ -1053,25 +1057,36 @@ func TestKnownOpenTolerances_CarryIssueAndExpiry(t *testing.T) {
 			t.Errorf("knownOpenTolerance %s: expires is empty -- every tolerance must carry an explicit \"YYYY-MM-DD\" expiry", label)
 			continue
 		}
-		exp, err := time.Parse("2006-01-02", k.expires)
-		if err != nil {
+		if _, err := time.Parse(guardrules.DateLayout, k.expires); err != nil {
 			t.Errorf("knownOpenTolerance %s: expires %q does not parse as YYYY-MM-DD: %v", label, k.expires, err)
-			continue
 		}
-		// #2844 (b): an expiry that does not fail the build is documentation.
-		// Compared against the END of the named day (UTC) so a row expiring
-		// today is still valid today, rather than going red at 00:00 in a
-		// timezone nobody chose.
-		if deadline := exp.AddDate(0, 0, 1).UTC(); time.Now().UTC().After(deadline) {
-			t.Errorf("knownOpenTolerance %s EXPIRED on %s (issue %s) and is still suppressing an oracle "+
-				"violation.\n\n"+
-				"Re-triage it, do not just push the date out: by now either (1) the bug is fixed and the row "+
-				"must be DELETED (TestKnownOpenTolerances_AreLoadBearing will already be calling it dead), "+
-				"(2) the behaviour is intended and the row belongs in oracleAByDesignErrors with a design "+
-				"citation and a proving test, or (3) it is still a real open bug, in which case say so on "+
-				"%s and set a new date with a reason. Silently extending the expiry is how a bounded "+
-				"carve-out becomes a permanent one.", label, k.expires, k.issue, k.issue)
+	}
+}
+
+// TestKnownOpenTolerances_NotExpired: #2844 (b), an expiry that does not fail
+// anything is documentation. The date is evaluated by the nightly job on main
+// (guardrules.CheckExpiry; warns 7 days ahead, keeps one issue open), never at
+// PR time: one calendar day must not turn every PR red (18 Oct 2026). A row is
+// valid through the end of the named day (UTC).
+//
+// When the nightly issue names a row, re-triage it, do not just push the date
+// out: by now either (1) the bug is fixed and the row must be DELETED
+// (TestKnownOpenTolerances_AreLoadBearing will already be calling it dead), (2)
+// the behaviour is intended and the row belongs in oracleAByDesignErrors with a
+// design citation and a proving test, or (3) it is still a real open bug, in
+// which case say so on the issue and set a new date with a reason. Silently
+// extending the expiry is how a bounded carve-out becomes a permanent one.
+func TestKnownOpenTolerances_NotExpired(t *testing.T) {
+	for _, k := range knownOpenTolerances {
+		if k.expires == "" {
+			continue // TestKnownOpenTolerances_CarryIssueAndExpiry reports it
 		}
+		guardrules.CheckExpiry(t, guardrules.Expiry{
+			Source:  "server/faultops knownOpenTolerances",
+			Key:     fmt.Sprintf("%s/%s/%s#%d", k.op, k.method, k.kind, k.nth),
+			Expires: k.expires,
+			Note:    "issue " + k.issue + "; re-triage, do not just push the date out",
+		})
 	}
 }
 

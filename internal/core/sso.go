@@ -310,6 +310,9 @@ func (c *KeyorixCore) CompleteSSO(ctx context.Context, providerName, code, state
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
 		return nil, nil, "", err
 	}
+	if err := c.completeIdPFirstLogin(ctx, user); err != nil {
+		return nil, nil, "", err
+	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, "", err
@@ -502,6 +505,9 @@ func (c *KeyorixCore) CompleteSAML(ctx context.Context, name string, r *http.Req
 	if err := c.enforcePasswordExpiryGate(ctx, user); err != nil {
 		return nil, nil, "", err
 	}
+	if err := c.completeIdPFirstLogin(ctx, user); err != nil {
+		return nil, nil, "", err
+	}
 	session, err := c.mintSession(ctx, user.ID, userAgent, ip)
 	if err != nil {
 		return nil, nil, "", err
@@ -645,6 +651,56 @@ func (c *KeyorixCore) ensureSSOUser(ctx context.Context, p *SSOProvider, existin
 	return c.provisionSSOUser(ctx, p, sub, email, emailVerified, name)
 }
 
+// completeIdPFirstLogin moves a SCIM-provisioned account out of pending_first_login
+// on its first successful IdP sign-in (#3655). ProvisionSCIMUser creates the account
+// there with a random, discarded password, so a restricted change-password-only
+// session could never be cleared: the change needs a current password nobody knows.
+// The IdP is the account's credential, and it just authenticated the user.
+//
+// Scoped to scimOwned accounts. A local-password account keeps the restriction even
+// after an SSO login claimed it by email, because the claim stamps the "sso:" scheme,
+// which scimOwned refuses; no SSO flow can therefore skip a local first login.
+//
+// Callers run it after every login gate (suspended/deprovisioned, lockout, group and
+// role reconcile, password expiry) and before mintSession. The write is conditional on
+// the state still being pending_first_login (INV-STORE-21): if it moved meanwhile, the
+// fresh row decides, and a blocked account is refused. A failure refuses the login,
+// so the account is never left half-way. Session and MFA rules are unchanged.
+func (c *KeyorixCore) completeIdPFirstLogin(ctx context.Context, user *models.User) error {
+	if NormalizeAccountState(user.AccountState) != AccountPendingFirstLogin || !scimOwned(user) {
+		return nil
+	}
+	err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		matched, serr := tx.SetAccountStateIfMatches(ctx, user.ID, AccountPendingFirstLogin, AccountActive, c.now())
+		if serr != nil {
+			return serr
+		}
+		if !matched {
+			return ErrUserAccountStateConflict
+		}
+		// Granting access (restricted -> active), so the row commits with the change.
+		c.writeAuditEventFullOn(ctx, tgt, EventSCIMFirstLoginCompleted, actorPtr(user.ID), nil, nil, "",
+			fmt.Sprintf("SCIM-provisioned user %d completed first login via the IdP; account state pending_first_login -> active", user.ID))
+		return nil
+	})
+	if errors.Is(err, ErrUserAccountStateConflict) {
+		fresh, gerr := c.storage.GetUser(ctx, user.ID)
+		if gerr != nil || fresh == nil {
+			return fmt.Errorf("account state changed during sign-in; try again")
+		}
+		if !fresh.IsActive || AccountLoginBlocked(fresh.ID, fresh.AccountState) {
+			return fmt.Errorf("account suspended")
+		}
+		user.AccountState = fresh.AccountState
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+	}
+	user.AccountState = AccountActive
+	return nil
+}
+
 // provisionSSOUser JIT-creates a Keyorix account for a verified SSO identity that
 // matches no existing user (auto_provision must be enabled — the caller gates this).
 // The identity has already passed full id_token verification (signature, issuer,
@@ -704,18 +760,26 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 	if roleName == "" {
 		roleName = ssoDefaultRole
 	}
-	// #3546: the default role is granted at the global scope, so a project-tier
-	// default_role would make every JIT user a member of every project. Refuse
-	// the provision (fail closed, like an unknown default_role) before writing.
-	if err := validateRoleScope(roleName, Scope{}); err != nil {
-		return nil, fmt.Errorf("SSO provider %q default_role: %w", p.Name, err)
-	}
 	// The user row and its baseline role grant run in one transaction — identical
 	// bootstrap shape to ProvisionSCIMUser (scim.go) and #2295's first-boot fix: a
 	// role-assign failure after a best-effort create used to leave a JIT-provisioned
 	// SSO user with zero roles, unable to do anything until an admin noticed.
 	var created *models.User
 	err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+		// #3546: the default role is granted at the global scope, so a
+		// default_role that may not be held install-wide (a project role, a new
+		// custom role) would make every JIT user a member of every project.
+		// The role is resolved and scope-checked on the transaction's own read,
+		// before any write and on the same row the grant uses: a failed read
+		// refuses the provision (fail closed, never "skip the check"), and a
+		// role narrowed since an earlier read is checked as it is now.
+		r, rerr := tx.GetRoleByName(ctx, roleName)
+		if rerr != nil {
+			return fmt.Errorf("failed to resolve default role %q: %w", roleName, rerr)
+		}
+		if serr := validateRoleScope(r, Scope{}); serr != nil {
+			return fmt.Errorf("SSO provider %q default_role: %w", p.Name, serr)
+		}
 		var cerr error
 		created, cerr = tx.CreateUser(ctx, &models.User{
 			Username: username, UsernameFolded: foldedUsername.Folded(),
@@ -726,13 +790,12 @@ func (c *KeyorixCore) provisionSSOUser(ctx context.Context, p *SSOProvider, sub,
 		if cerr != nil {
 			return cerr
 		}
-		r, rerr := tx.GetRoleByName(ctx, roleName)
-		if rerr != nil {
-			return fmt.Errorf("failed to resolve default role %q: %w", roleName, rerr)
-		}
 		return tx.AssignRole(ctx, created.ID, r.ID, Scope{})
 	})
 	if err != nil {
+		if errors.Is(err, ErrRoleScopeInvalid) {
+			return nil, err
+		}
 		// #117: the FindSCIMUser reuse-check above races with a concurrent JIT-provision
 		// (or any other create) for the identical email — both can pass it before either
 		// commits. The DB-level partial unique index catches the loser here and CreateUser
@@ -1210,11 +1273,11 @@ func (c *KeyorixCore) applySSOManagedRole(ctx context.Context, userID uint, r *m
 			rep.blocked++
 			return
 		}
-		// #3546: the mapping grants at the global scope, where a project-tier role
-		// would apply in every project. Not granted (the fail-closed direction) and
-		// not an error: like the escalation block above, a mapping the grant guard
-		// refuses must not refuse the user's login.
-		if validateRoleScope(r.Name, Scope{}) != nil {
+		// #3546: the mapping grants at the global scope, where a
+		// project-assignable role would apply in every project. Not granted (the
+		// fail-closed direction) and not an error: like the escalation block
+		// above, a mapping the grant guard refuses must not refuse the user's login.
+		if validateRoleScope(r, Scope{}) != nil {
 			rep.scopeBlocked++
 			return
 		}

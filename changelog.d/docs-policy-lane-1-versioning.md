@@ -1,0 +1,2 @@
+### Documentation
+- **Versioning and deprecation policy (draft).** New `docs/VERSIONING.md`: SemVer rules before and after 1.0, what counts as breaking (API, CLI, config, schema, audit, key-wrapping and backup formats), the deprecation process (changelog and `UPGRADING.md`, runtime warning, at least two minor releases before removal), the table of current deprecations derived from the code, and the upgrade-path promise versus what is tested. A docsdrift test fails if a deprecated config alias is missing from the table.

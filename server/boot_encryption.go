@@ -103,6 +103,12 @@ func initializeEncryption(cfg *config.Config, auditSink encryption.AuditSink) (*
 	// bootKeys returns the database handle the DEK epoch guard keeps (nil for
 	// remote storage).
 	bootKeys := func() (*gorm.DB, error) {
+		// The key-set manifest step first, under the same lock (#2900): finish an
+		// interrupted rotate-kek the manifest proves finishable, so recovery and
+		// Initialize below load a coherent set; refuse one it cannot finish.
+		if err := svc.ReconcileKeySet(); err != nil {
+			return nil, fmt.Errorf("key file consistency: %w", err)
+		}
 		if cfg.Storage.Type == "remote" {
 			svc.CleanPendingDEK()
 			return nil, initializeKeys(svc, passphrase, providerType)

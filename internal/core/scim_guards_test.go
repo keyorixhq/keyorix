@@ -300,7 +300,7 @@ func TestProvisionSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
 
 	group, err := c.ProvisionSCIMGroup(ctx, 9, "Engineering", []uint{1})
 	require.NoError(t, err)
-	members, err := c.storage.ListGroupMembers(ctx, group.ID)
+	members, err := c.StorageForTesting().ListGroupMembers(ctx, group.ID)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Equal(t, uint(1), members[0].ID)
@@ -333,7 +333,7 @@ func TestReplaceSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
 
 	_, err := c.ReplaceSCIMGroup(ctx, 9, 5, "", []uint{1})
 	require.NoError(t, err)
-	members, err := c.storage.ListGroupMembers(ctx, 5)
+	members, err := c.StorageForTesting().ListGroupMembers(ctx, 5)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Equal(t, uint(1), members[0].ID)
@@ -350,7 +350,7 @@ func TestReplaceSCIMGroup_RefusesNonSCIMManagedMember(t *testing.T) {
 	require.Error(t, err, "SCIM must not add a non-SCIM-managed native user via PUT")
 	assert.Contains(t, err.Error(), "SCIM-managed")
 
-	members, err := c.storage.ListGroupMembers(ctx, 5)
+	members, err := c.StorageForTesting().ListGroupMembers(ctx, 5)
 	require.NoError(t, err)
 	assert.Empty(t, members, "the refused member must not have been added")
 }
@@ -364,7 +364,7 @@ func TestPatchSCIMGroup_AllowsSCIMManagedMember(t *testing.T) {
 
 	_, err := c.PatchSCIMGroup(ctx, 9, 5, nil, []uint{1}, nil)
 	require.NoError(t, err)
-	members, err := c.storage.ListGroupMembers(ctx, 5)
+	members, err := c.StorageForTesting().ListGroupMembers(ctx, 5)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Equal(t, uint(1), members[0].ID)
@@ -381,7 +381,7 @@ func TestPatchSCIMGroup_RefusesNonSCIMManagedMember(t *testing.T) {
 	require.Error(t, err, "SCIM must not add a non-SCIM-managed native user via PATCH")
 	assert.Contains(t, err.Error(), "SCIM-managed")
 
-	members, err := c.storage.ListGroupMembers(ctx, 5)
+	members, err := c.StorageForTesting().ListGroupMembers(ctx, 5)
 	require.NoError(t, err)
 	assert.Empty(t, members, "the refused member must not have been added")
 }

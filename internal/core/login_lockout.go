@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -374,7 +375,7 @@ func (lc *LoginCompletion) Succeeded(ctx context.Context) {
 		return
 	}
 	lc.done = true
-	lc.c.clearLoginFailures(ctx, lc.user)
+	lc.c.clearLoginFailures(ctx, lc.user) // panic-safe (#3556)
 	// #2936 item 4: the flow delivered a session, so the slots its earlier
 	// steps kept were not failures. Best-effort (ReleaseLoginAttempt): a
 	// release that fails leaves the slot counted, the strict side.
@@ -432,12 +433,31 @@ func (c *KeyorixCore) RecordPostVerdictLoginFailure(ctx context.Context, user *m
 // It writes only when there is something to clear, so the happy path adds no extra
 // write on every login. Persists via the narrow UpdateLoginLockoutState, not the
 // generic UpdateUser.
+//
+// Panic-safe (#3556). Every caller runs it AFTER the authentication's effect
+// committed: LoginCompletion.Succeeded after the session insert and the
+// transport's Set-Cookie, VerifyMFAStepUp and FinishWebAuthnReauth after the
+// step-up grant, requireReauth after the grant consume, SSO/SAML after the mint,
+// ChangePassword/UpdateOwnProfile after their change. A panic escaping here
+// answered the Recovery 500 over a session cookie, or a grant, the client
+// nevertheless held, unaudited, and a 500 a wrong credential never gets. A clear
+// that does not happen leaves the counter where the credential check found it,
+// the strict side. Recovering here rather than at each call site keeps every
+// future caller covered.
 func (c *KeyorixCore) clearLoginFailures(ctx context.Context, user *models.User) {
 	c.budgetFallbackClear(c.accountBudget(), accountBudgetKey(user.ID))
 	if user.FailedLoginAttempts == 0 && user.LoginLockedUntil == nil && user.LoginLockoutCount == 0 {
 		return
 	}
-	if err := c.storage.UpdateLoginLockoutState(ctx, user.ID, 0, nil, nil, 0); err != nil {
+	cleared := false
+	besteffort.Run(ctx, "login.clearLoginFailures", func() error {
+		if err := c.storage.UpdateLoginLockoutState(ctx, user.ID, 0, nil, nil, 0); err != nil {
+			return err
+		}
+		cleared = true
+		return nil
+	})
+	if !cleared {
 		return
 	}
 	user.FailedLoginAttempts = 0
@@ -470,16 +490,28 @@ func (c *KeyorixCore) UnlockUser(ctx context.Context, adminID, userID uint) erro
 	if err != nil {
 		return fmt.Errorf("user not found: %w", err)
 	}
-	if err := c.storage.UpdateLoginLockoutState(ctx, userID, 0, nil, nil, 0); err != nil {
-		return fmt.Errorf("failed to unlock user: %w", err)
+	// UNLOCK-AUDIT-1: lifting a brute-force refusal is a security action, so it
+	// must never happen without a record (server/admin's clear-login-lockout
+	// audits first for the same reason). The clear and the account.unlocked row
+	// commit in one transaction: an audit write that errors or panics rolls the
+	// clear back (ErrMutationAuditUnavailable), and a clear that fails leaves no
+	// row claiming an unlock that did not happen. The audit write is the last
+	// statement of the transaction (mutation_audit_tx.go).
+	aid := adminID
+	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := tx.UpdateLoginLockoutState(ctx, userID, 0, nil, nil, 0); err != nil {
+			return fmt.Errorf("failed to unlock user: %w", err)
+		}
+		c.writeAuditEventFullOn(ctx, tgt, EventAccountUnlocked, &aid, nil, nil, "",
+			fmt.Sprintf("user %d login lockout cleared by admin %d", userID, adminID))
+		return nil
+	}); err != nil {
+		return err
 	}
 	c.budgetFallbackClear(c.accountBudget(), accountBudgetKey(userID))
 	user.FailedLoginAttempts = 0
 	user.LastFailedLoginAt = nil
 	user.LoginLockedUntil = nil
 	user.LoginLockoutCount = 0
-	aid := adminID
-	c.writeAuditEventFull(ctx, EventAccountUnlocked, &aid, nil, nil, "",
-		fmt.Sprintf("user %d login lockout cleared by admin %d", userID, adminID))
 	return nil
 }

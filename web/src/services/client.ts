@@ -92,6 +92,17 @@ const sessionEndFlag = (body: unknown): boolean => {
     return b?.reauthentication_required === true || b?.data?.reauthentication_required === true;
 };
 
+// logoutIfStillSignedIn reads the store afresh: handle401's authStore is a snapshot
+// from before its awaits, and a logout that finished meanwhile already revoked the
+// session and is redirecting; a second one would redirect again (authStore.ts,
+// inFlightLogout). A logout still running reads as signed in, and is joined.
+const logoutIfStillSignedIn = async (): Promise<void> => {
+    const current = useAuthStore.getState();
+    if (current.isAuthenticated) {
+        await current.logout();
+    }
+};
+
 const handle401 = async (
     error: AxiosError,
     authStore: ReturnType<typeof useAuthStore.getState>
@@ -105,7 +116,7 @@ const handle401 = async (
         return;
     }
     if (error.config?.url?.includes('/auth/refresh')) {
-        await authStore.logout();
+        await logoutIfStillSignedIn();
         authStore.setError('Your session has expired. Please log in again.');
         return;
     }
@@ -128,7 +139,7 @@ const handle401 = async (
             return apiClient.request(error.config);
         }
     } catch {
-        await authStore.logout();
+        await logoutIfStillSignedIn();
         authStore.setError('Your session has expired. Please log in again.');
     }
 };

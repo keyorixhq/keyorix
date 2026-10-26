@@ -318,7 +318,7 @@ func TestProvisionSSOUser(t *testing.T) {
 			created = u
 			return true
 		})).Return(&models.User{ID: 42}, nil)
-		store.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 3}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_viewer").Return(&models.Role{ID: 3, Name: "system_viewer"}, nil)
 		store.On("AssignRole", mock.Anything, uint(42), uint(3), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
@@ -371,7 +371,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		var created *models.User
 		store.On("CreateUser", mock.Anything, mock.MatchedBy(func(u *models.User) bool { created = u; return true })).
 			Return(&models.User{ID: 99}, nil)
-		store.On("GetRoleByName", mock.Anything, mock.Anything).Return(&models.Role{ID: 3}, nil)
+		store.On("GetRoleByName", mock.Anything, mock.Anything).Return(&models.Role{ID: 3, Name: "system_viewer"}, nil)
 		store.On("AssignRole", mock.Anything, uint(99), uint(3), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
@@ -403,7 +403,7 @@ func TestProvisionSSOUser(t *testing.T) {
 		store.On("GetUserByEmail", mock.Anything, "ada@x.io").Return((*models.User)(nil), notFound())
 		store.On("GetUserByUsername", mock.Anything, "ada").Return((*models.User)(nil), notFound())
 		store.On("CreateUser", mock.Anything, mock.Anything).Return(&models.User{ID: 7}, nil)
-		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 9}, nil)
+		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 9, Name: "system_auditor"}, nil)
 		store.On("AssignRole", mock.Anything, uint(7), uint(9), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 
@@ -585,7 +585,7 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("GetUserRoles", mock.Anything, uint(7)).Return([]*models.Role{
 			{ID: 20, Name: "system_auditor"}, {ID: 30, Name: "system_viewer"},
 		}, nil)
-		store.On("GetRoleByName", mock.Anything, "secrets_writer").Return(&models.Role{ID: 10, Name: "secrets_writer"}, nil)
+		store.On("GetRoleByName", mock.Anything, "secrets_writer").Return(&models.Role{ID: 10, Name: "secrets_writer", AssignableScope: models.RoleAssignableAny}, nil)
 		store.On("GetRoleByName", mock.Anything, "system_auditor").Return(&models.Role{ID: 20, Name: "system_auditor"}, nil)
 		// RemoveUserRole's last-global-admin guard (unrelated to this test's role, but
 		// exercised on every removal) looks up every install-admin role name
@@ -601,7 +601,7 @@ func TestSyncSSORoles(t *testing.T) {
 		store.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{10}).Return(false, nil)
 		store.On("GetRolePermissions", mock.Anything, uint(10)).Return([]*models.Permission{{Name: "secrets.write"}}, nil)
 		// GetRole: the #3546 role-scope check before the grant write.
-		store.On("GetRole", mock.Anything, uint(10)).Return(&models.Role{ID: 10, Name: "secrets_writer"}, nil)
+		store.On("GetRole", mock.Anything, uint(10)).Return(&models.Role{ID: 10, Name: "secrets_writer", AssignableScope: models.RoleAssignableAny}, nil)
 		store.On("AssignRole", mock.Anything, uint(7), uint(10), mock.Anything).Return(nil)
 		store.On("RemoveRole", mock.Anything, uint(7), uint(20), mock.Anything).Return(nil)
 		store.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)

@@ -1,0 +1,1 @@
+internal/core/storage/storagetest	none	-	PR CORE-TESTKIT-1: test-only kit (HookStore, MockStorage, authz stubs) moved verbatim from internal/core _test.go files; imported only from _test.go files (ADR-121 R3 guard), never linked into a shipped binary, no auth or storage decisions of its own	test-helper

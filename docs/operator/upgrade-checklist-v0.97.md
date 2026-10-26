@@ -1,17 +1,18 @@
 # Upgrade checklist: v0.96.x to v0.97.0
 
 For operators moving a running install (a pilot, a production instance) from
-v0.96.1 or v0.96.2 to v0.97.0. It orders the steps; the reasons and exact
+v0.96.1 or v0.96.3 to v0.97.0 (v0.96.2 has a tag but no published images). It orders the steps; the reasons and exact
 settings are in [UPGRADING.md](../UPGRADING.md) (section numbers below). Work
 through it top to bottom and write down the result of every check.
 
-**Status of this page.** Written from the merged changes and from the open pull
-requests that will ship in v0.97.0. Anything tagged **(pending #NNNN)** describes
-a PR that is not merged yet; re-read it when that PR merges. Nothing here has been
-run against a v0.97.0 release build, and nothing has been run in a container, in
-Kubernetes or on a second replica (**pending e2e VM**). The single-node procedure
-is the one `scripts/drills/upgrade.sh` rehearses on SQLite and PostgreSQL
-([drill-upgrade.md](drill-upgrade.md)); rehearse on a copy of your data first.
+**Status of this page.** Every change it names is merged on main, and each was
+re-checked against the merged code and its test (RELEASE-PREP-2). Nothing here has
+been run against a v0.97.0 release build, and nothing has been run in a container,
+with Helm or in Kubernetes (**pending e2e VM**). The multi-replica procedure was run
+natively on one PostgreSQL database with a v0.96.1 binary and a current server
+(`scripts/e2e/mixed_version_test.go`), not on separate hosts or pods. The
+single-node procedure is the one `scripts/drills/upgrade.sh` rehearses on SQLite and
+PostgreSQL ([drill-upgrade.md](drill-upgrade.md)); rehearse on a copy of your data first.
 
 ## 1. Pre-checks (before you touch anything)
 
@@ -46,9 +47,9 @@ server or an `admin` command at start-up with a message that names the key.
 | Check | Refused when | Fix | UPGRADING |
 |---|---|---|---|
 | PostgreSQL TLS | `ssl_mode` is `verify-full`/`verify-ca` with no `ssl_root_cert`; `ssl_mode` outside the allowed list; `ssl_mode` next to a `dsn` with a different or missing `sslmode`; a `service=`/`PGSERVICE` file | set `ssl_root_cert` (a PEM path, or `system`); make `dsn` and `ssl_mode` agree | §2 |
-| PostgreSQL `session_replication_role` **(pending #3366)** | the server's sessions report anything but `origin` (server default, database, role, `PGOPTIONS`, DSN option) | run the two queries in §6n and `RESET` the setting | §6n |
-| Bootstrap token **(pending #3341)** | `KEYORIX_BOOTSTRAP_TOKEN` (or `_FILE`) is set and shorter than 32 characters | `openssl rand -hex 32`, or unset it on an initialised install | section in #3341 |
-| gRPC `auto_cert` **(pending #3365)** | `server.grpc.tls.auto_cert: true` | remove the line; give gRPC `cert_file`/`key_file` | section in #3365 |
+| PostgreSQL `session_replication_role` | the server's sessions report anything but `origin` (server default, database, role, `PGOPTIONS`, DSN option) | run the two queries in §6n and `RESET` the setting | §6n |
+| Bootstrap token | `KEYORIX_BOOTSTRAP_TOKEN` (or `_FILE`) is set and shorter than 32 characters | `openssl rand -hex 32`, or unset it on an initialised install | §6g |
+| gRPC `auto_cert` | `server.grpc.tls.auto_cert: true` | remove the line; give gRPC `cert_file`/`key_file` | §6t |
 | Audit durability | `audit_durability: standard` on SQLite; `audit_durability` and the old `insecure_audit_skip_durable_sync` set to different levels | remove one, or use `strict` on SQLite | §6c |
 | Multi-replica | `single_writer: true` with several replicas; `pooler: pgbouncer-transaction` with `single_writer` | leave `single_writer` off | §6f |
 | Non-regular files | a FIFO or device at a key, CA, license or backup path | point it at a regular file | §6p |
@@ -61,18 +62,24 @@ deviation. Fix refusals before the real start. (Run it after the binary swap in 
 
 ### 1.4 Behaviour that changes for your clients and scripts
 
-- [ ] Scripts that call `keyorix` with `--password`, `--value`, `--mfa-code` or the other 13
-  refused flags **(pending #3325)** (§6l). Move them, or set
+- [ ] Scripts that call `keyorix` with `--password`, `--value`, `--mfa-code`, `--url` (notification
+  channels) or the other refused flags, 15 in all (§6l, §6x). Move them, or set
   `KEYORIX_ALLOW_INSECURE_SECRET_FLAGS=1` as a temporary bridge.
 - [ ] Scripts that test the CLI exit status for exactly `1` (§6m). Codes 2 to 6 now exist.
 - [ ] Anything that pages the audit log by `offset` past 10,000 events (§6p): use `cursor`.
 - [ ] Clients that retry on 503 but stop on 401, or that match a 500 on a refused
   secret read (§6p).
 - [ ] SIEM rules and reports that filter on `success` for `mfa.failed` and the other
-  `*_failed` events **(pending #3365)** (section in #3365). Old rows keep `success=true`.
-- [ ] Automation that grants access, and your break-glass procedure, can cope with
-  `could not record the change in the audit log; nothing was changed, retry`
-  **(pending #3367)** (§6o).
+  `*_failed` events (§6u). Old rows keep `success=true`.
+- [ ] Automation that grants access (roles, shares, tokens, users, project members) retries a
+  **500**: the audit row is written in the same transaction, and when it cannot be written nothing
+  changes and the client sees a generic 500, not a 503 (checked for `POST /api/v1/user-roles`;
+  the other endpoints use their handler's default error branch). The reason,
+  `could not record the change in the audit log; nothing was changed, retry`, is only in the
+  server log (§6o). Before retrying, it checks that the object or grant does not already exist
+  (list the roles, tokens or users): a different 500 on a call that creates a credential may
+  have committed, and a blind retry can create a second one. Break-glass does not fail on an audit outage: it commits degraded with
+  a 15-minute expiry (§6o.1); `verify-audit` answers exit 2 while one is unsettled.
 - [ ] If PostgreSQL is the audit store and you want the v0.96 behaviour, decide on
   `audit_durability: strict` now (§6c). The default becomes `standard`.
 
@@ -83,7 +90,9 @@ deviation. Fix refusals before the real start. (Run it after the binary swap in 
   "Upgrading Docker Compose from v0.96.x").
 - **Helm:** no value was renamed or removed. `helm template` / `helm upgrade --dry-run`
   with your values and the new chart first. Use `--reset-then-reuse-values`, not plain
-  `--reuse-values` (§2, §5). The chart runs one server replica today.
+  `--reuse-values` (§2, §5). The chart's default is one server replica; more than one is allowed
+  now, and the render fails unless the keys volume is `ReadWriteMany` and `singleWriter` is false
+  (rendering and a multi-pod install: **pending e2e VM**).
 - **Reverse proxy or load balancer in front of the server:** if it terminates TLS and talks to the
   server directly, list it in `server.http.trusted_proxies` (Helm `server.trustedProxies`) so
   cookies are `Secure` and HSTS is sent (§6p).
@@ -105,11 +114,13 @@ deviation. Fix refusals before the real start. (Run it after the binary swap in 
    `audit durability: ...` (§6c).
 7. Post-checks (section 4). Re-enable clients one at a time.
 
-### 2.2 Several replicas (PostgreSQL) **(pending #3364, HA-READY-1)**
+### 2.2 Several replicas (PostgreSQL)
 
-The procedure below is the one #3364 writes into SELF_HOSTING.md ("Running more than one
-replica"). It was tested natively with one v0.96.1 and one current server on one database;
-the Kubernetes version is **pending e2e VM**.
+The procedure below is the one #3364 (HA-READY-1) wrote into SELF_HOSTING.md ("Running more
+than one replica"). It was run natively with one v0.96.1 and one current server on one
+PostgreSQL database (`scripts/e2e/mixed_version_test.go`, `e2e` build tag, re-run for this
+page; CI does not run it yet). The Kubernetes version, with Helm and several pods, is
+**pending e2e VM**.
 
 1. Section 1 complete. Back up. Confirm every replica has an identical configuration and the
    same key set, and that `single_writer` is off.
@@ -119,18 +130,19 @@ the Kubernetes version is **pending e2e VM**.
    replica migrates the schema.
 4. While old and new replicas run together, expect: a few 500s from an old replica right after
    the migration (`cached plan must not change result type`, once per pooled connection and
-   query); an old replica that restarts is **refused** at start-up once the schema epoch floor is
-   3, and stays down until replaced by the new image (that is intended); `GET /audit/verify` on an
-   old replica may report the chain broken after a purge.
+   query; the test saw 1 of 43 requests); an old replica that restarts is **refused** at
+   start-up once the schema compatibility floor is 3, and stays down until replaced by the new
+   image (that is intended); `GET /audit/verify` on an old replica may report the chain broken
+   after a purge.
 5. Add new configuration keys (for example `key_dir_lock`) only **after** every replica runs
    v0.97.0, in a second rollout. An older binary refuses a config with a key it does not know,
    and a pod of the old ReplicaSet that is rescheduled mid-rollout reads the new ConfigMap.
 6. When the last old replica is gone, run the post-checks (section 4) against the service and
    against each replica.
 
-Until #3364 merges, the supported statement is the one in UPGRADING §2: schema migrations run on
-boot, and a rolling multi-replica upgrade that reports `database schema epoch N is newer than this
-binary's schema epoch M` is expected mid-rollout.
+In a rolling upgrade from v0.96.x, an old replica that restarts reports `database declares a
+minimum compatible schema epoch of 3 (database schema epoch 7)` and stays down until the rollout
+replaces it (UPGRADING §6q). That is expected, not a fault.
 
 ## 3. Rollback limits
 
@@ -141,14 +153,16 @@ binary's schema epoch M` is expected mid-rollout.
   deliberate override is `--allow-rollback`, which is logged to the audit trail.
 - **Everything written after the upgrade is lost by a restore:** secrets, audit rows, sessions,
   tokens. Decide how long you can afford that before you start, and keep the post-checks fast.
-- **Schema epoch.** On main today the schema epoch is 2 and the compatibility floor is 2, the same
-  as v0.96.1, so a v0.96.x binary can still start on a migrated database. It must not be run on
-  it: v0.97.0 writes a v2 audit retention anchor (#3258) and a `suspend_clear_synced_copies`
+- **Schema epoch.** The schema epoch is 7 and the compatibility floor is 3 (UPGRADING §6q), so a
+  v0.96.x binary (epoch 2) **refuses to start** on a database this release has migrated:
+  `database declares a minimum compatible schema epoch of 3 (database schema epoch 7)`. It must not
+  be run on one: v0.97.0 writes a v2 audit retention anchor (#3258) and a `suspend_clear_synced_copies`
   marker (#3215) that v0.96.x mishandles (a purge loses the purged-event count for good; a plain
-  suspend can empty the synced Kubernetes copies). **(pending #3364)** raises the epoch and the
-  floor to 3, after which a v0.96.x binary refuses to start on an upgraded database
-  (`database declares a minimum compatible schema epoch of 3`) and PostgreSQL triggers protect the
-  two cases from still-running old replicas. Plan as if that is already true.
+  suspend can empty the synced Kubernetes copies). The floor is recorded in the database and is never
+  lowered, so the refusal stays; do not edit the epoch by hand. PostgreSQL triggers protect the two
+  cases from v0.96.x replicas that are still running during a rollout. Checked with a real v0.96.1
+  binary against a migrated PostgreSQL database (`mixed_version_test.go`) and, on SQLite, by a unit
+  test over the compiled-in constants. A v0.96.x container or Helm release is **pending e2e VM**.
 - **The old config.** The previous release refuses a config file that has a key it does not know,
   so restore the config file that matches the binary you roll back to.
 - **Keys.** Do not run a DEK or KEK rotation until the upgrade is accepted; a rotation changes the
@@ -166,8 +180,8 @@ Run all of them against the upgraded server and write down the output.
   for your deployment): the deviations match what you accepted before, and none is new.
 - [ ] `GET /api/v1/system/info`: the version, `security.audit_durability`, and
   `database.single_writer` are what you set. `GET /readyz` is 200.
-- [ ] `keyorix doctor` **(pending #3319; not on main)**: a read-only health checklist of the CLI's
-  connection to the server. Until then, `keyorix status` and the next item.
+- [ ] `keyorix doctor`: a read-only health checklist of the CLI's connection to the server (#3319).
+  Then the next item.
 - [ ] A real round trip: log in as a human, read a known secret and compare its value, create
   and delete a test secret, read one as a machine identity or PAT. Each read appears in
   `keyorix audit logs` with the right actor.

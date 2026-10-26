@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"runtime/debug"
@@ -143,7 +144,18 @@ func (c *KeyorixCore) ChangePassword(ctx context.Context, userID uint, current, 
 	}
 	// Enforce policy + history after the current-password check so an attacker can't
 	// probe the policy without already holding valid credentials (ADR-025).
-	if err := c.validateNewPassword(ctx, user, newPassword); err != nil {
+	if err := c.validateNewPasswordAs(ctx, user, newPassword, true); err != nil {
+		if errors.Is(err, ErrPasswordReused) {
+			// The refusal tells the caller the candidate is one of the account's
+			// PAST passwords, which a stolen session could use to test guesses
+			// against the history for free. Charge it like a wrong current
+			// password: the same per-account counter here, and the transport keeps
+			// the per-IP slot (settleCredentialCheck). The candidate itself is
+			// never logged or audited.
+			c.recordFailedLogin(ctx, user)
+			c.writeAuditEventFailed(ctx, "auth.password_reuse_refused", actorPtr(userID), nil, "",
+				fmt.Sprintf("user %d submitted a candidate the history refused", userID))
+		}
 		return err
 	}
 	if err := c.applyNewPassword(ctx, user, newPassword); err != nil {
@@ -373,15 +385,80 @@ func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID,
 // the password-history rule, without mutating anything. Split from applyNewPassword
 // so callers (e.g. the setup-token consume flow) can reject a weak password BEFORE
 // spending a single-use token, rather than burning the link on a policy failure.
+//
+// It is for callers that have NOT verified the account's current password (the
+// setup/reset link holder): a candidate equal to the current password or found in the
+// history gets the same generic refusal, so the answer discloses neither. ChangePassword
+// verified the current password first and uses validateNewPasswordAs(..., true).
 func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User, newPassword string) error {
-	if err := c.passwordPolicy.Validate(newPassword, user); err != nil {
-		return fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	return c.validateNewPasswordAs(ctx, user, newPassword, false)
+}
+
+// validateNewPasswordAs is validateNewPassword with currentVerified stating whether the
+// caller has just proven it knows the current password. Only then may the refusal name
+// "must differ from the current password": for any other caller that wording would
+// confirm a guess at the current password for free.
+func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.User, newPassword string, currentVerified bool) error {
+	// The refusal text is assembled from the policy's fixed wording for each broken
+	// rule. It is never built from, or wrapping, an error returned by a check that
+	// was handed the candidate: the text must not be derivable from the password.
+	if unmet := c.passwordPolicy.Unmet(newPassword, user); len(unmet) > 0 {
+		return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": password must " + c.passwordPolicy.DescribeAll(unmet)}
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
-	if c.passwordReused(ctx, user, newPassword) {
-		return fmt.Errorf("%s: password must not reuse a recent password", i18n.T("ErrorValidation", nil))
+	if c.passwordHistoryEnabled() {
+		if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
+			if currentVerified {
+				// The caller already knows the current password (ChangePassword verified
+				// it first), so naming it discloses nothing and costs nothing.
+				return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": new password must differ from the current password"}
+			}
+			return newHistoryRefusal()
+		}
+		// A PAST password is account history the caller may not know: the wording
+		// stays generic and ChangePassword charges the attempt (ErrPasswordReused).
+		if c.passwordInHistory(ctx, user, newPassword) {
+			return newHistoryRefusal()
+		}
 	}
 	return nil
+}
+
+// PolicyRefusalMessage returns the fixed, caller-facing text of a refused new
+// password (ErrPasswordPolicy). The HTTP layer shows it and logs a fixed line instead
+// of the error, so no log call receives a value that came out of a password check.
+func PolicyRefusalMessage(err error) (string, bool) {
+	var r interface{ RefusalMessage() string }
+	if errors.As(err, &r) {
+		return r.RefusalMessage(), true
+	}
+	return "", false
+}
+
+func newHistoryRefusal() error {
+	return historyRefusal{policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": this password cannot be used; choose a different password"}}
+}
+
+// historyRefusal is a policyRefusal that also matches ErrPasswordReused.
+type historyRefusal struct{ policyRefusal }
+
+func (e historyRefusal) Is(target error) bool {
+	return target == ErrPasswordReused || e.policyRefusal.Is(target)
+}
+
+// policyRefusal is the refusal of a new password. Its text (msg) is fixed wording
+// naming the rule, shown to the caller who needs it to pick another password; it
+// matches ErrPasswordPolicy so the HTTP layer can tell it from an internal failure
+// without comparing strings. It wraps no other error on purpose: see
+// validateNewPasswordAs.
+type policyRefusal struct{ msg string }
+
+func (e policyRefusal) Error() string { return e.msg }
+
+// RefusalMessage is the caller-facing text; see PolicyRefusalMessage.
+func (e policyRefusal) RefusalMessage() string { return e.msg }
+func (e policyRefusal) Is(target error) bool {
+	return target == ErrPasswordPolicy
 }
 
 // applyNewPassword hashes newPassword, stamps it on the user (clearing a restricted
@@ -483,12 +560,20 @@ const EventPasswordChangePATRevokeFailed = "user.password_change_pat_revoke_fail
 // or any of the most recent HistoryCount stored hashes (ADR-025 history_count).
 // Returns false when the history rule is disabled.
 func (c *KeyorixCore) passwordReused(ctx context.Context, user *models.User, newPassword string) bool {
-	if c.passwordPolicy.HistoryCount <= 0 {
+	if !c.passwordHistoryEnabled() {
 		return false
 	}
 	if bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(newPassword)) == nil {
 		return true
 	}
+	return c.passwordInHistory(ctx, user, newPassword)
+}
+
+func (c *KeyorixCore) passwordHistoryEnabled() bool { return c.passwordPolicy.HistoryCount > 0 }
+
+// passwordInHistory reports whether newPassword matches one of the most recent
+// HistoryCount stored hashes (not the current one). A lookup failure reports false.
+func (c *KeyorixCore) passwordInHistory(ctx context.Context, user *models.User, newPassword string) bool {
 	hashes, err := c.storage.RecentPasswordHashes(ctx, user.ID, c.passwordPolicy.HistoryCount)
 	if err != nil {
 		return false // best-effort: a history lookup failure must not block a change
@@ -537,12 +622,34 @@ func (c *KeyorixCore) enforcePasswordExpiryGate(ctx context.Context, user *model
 		return nil
 	}
 	now := c.now()
-	if err := c.storage.SetAccountState(ctx, user.ID, AccountPasswordResetRequired, now); err != nil {
+	if err := c.setPasswordResetRequiredAfterMatch(ctx, user.ID, now); err != nil {
 		return fmt.Errorf("failed to enforce password expiry: %w", err)
 	}
 	user.AccountState = AccountPasswordResetRequired
 	user.UpdatedAt = now
 	return nil
+}
+
+// setPasswordResetRequiredAfterMatch is the gate's SetAccountState write. Every
+// caller runs the gate after the credential matched, so a PANIC in the write
+// comes back as an error wrapping ErrLoginWritePanicked (#3557), and each login
+// path denies it through the gate's existing post-verdict error branch: the
+// wrong-credential response, the lockout counted as that path counts, the slot
+// kept, auth.login_error. It used to reach the Recovery middleware instead: a
+// 500 that a wrong credential never gets (it never reaches the gate).
+//
+// Commit-aware: if the state change landed before the panic the account is now
+// password_reset_required, the state the gate exists to set, and the login is
+// refused anyway.
+func (c *KeyorixCore) setPasswordResetRequiredAfterMatch(ctx context.Context, userID uint, now time.Time) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SECURITY: password-expiry gate write for user %d panicked after the credential matched; "+
+				"denying it as a post-verdict fault: %v\n%s", userID, r, debug.Stack())
+			err = fmt.Errorf("%w: password-expiry state write for user %d: %v", ErrLoginWritePanicked, userID, r)
+		}
+	}()
+	return c.storage.SetAccountState(ctx, userID, AccountPasswordResetRequired, now)
 }
 
 // CurrentSessionID returns the session ID backing a session token, or 0 if the

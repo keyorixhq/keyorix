@@ -32,6 +32,7 @@ Exit codes:
 - [`keyorix completion`](#keyorix-completion) — Generate the autocompletion script for the specified shell
 - [`keyorix compliance`](#keyorix-compliance) — Deployment controls-posture report (ISO 27001 / SOC 2 / NIS2 / DORA)
 - [`keyorix config`](#keyorix-config) — Show or change CLI settings stored with your credentials
+- [`keyorix crypto`](#keyorix-crypto) — Cryptographic inventory and quantum-risk reporting
 - [`keyorix docs`](#keyorix-docs) — Print the CLI reference (Markdown) or its man page
 - [`keyorix doctor`](#keyorix-doctor) — Diagnose the connection to the server: reachability, TLS, login, clock, version, audit chain
 - [`keyorix dynamic-secret`](#keyorix-dynamic-secret) — Issue and manage on-demand database credentials (dynamic secrets)
@@ -1244,6 +1245,48 @@ Remove a stored CLI setting (key: ca_file)
 keyorix config unset ca_file
 ```
 
+## `keyorix crypto`
+
+Cryptographic inventory and quantum-risk reporting
+
+**Usage:** `keyorix crypto [command]`
+
+**Subcommands:**
+
+- [`keyorix crypto inventory`](#keyorix-crypto-inventory) — List every key and certificate the server holds, with a quantum-risk score
+
+## `keyorix crypto inventory`
+
+List every key and certificate the server holds, with a quantum-risk score
+
+List every key and certificate the server holds or depends on (KEK, DEK, recovery
+key verifier, TLS certificates, derived signing/HMAC keys, WebAuthn and OIDC
+verification keys): algorithm, size, expiry, where it is stored, and a quantum-risk
+score (0-100) from its remaining lifetime against the configured quantum horizon.
+Classical public-key keys (RSA, ECDSA, Ed25519) are flagged QUANTUM-VULNERABLE.
+
+The output holds metadata only, never key material. --format cbom emits a CycloneDX
+1.6 cryptographic bill of materials. Requires the audit.read permission; each read is
+recorded in the audit log.
+
+**Usage:** `keyorix crypto inventory [flags]`
+
+**Examples:**
+
+```sh
+keyorix crypto inventory
+keyorix crypto inventory --format json
+keyorix crypto inventory --format cbom --output keyorix.cbom.json
+```
+
+**Flags:**
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--force` | — | — | with --output: overwrite an existing file |
+| `--format` | `string` | `table` | output format: table, json or cbom (CycloneDX 1.6) |
+| `-o`, `--output` | `string` | — | write the json or cbom output to this file (mode 0600) instead of stdout |
+
 ## `keyorix docs`
 
 Print the CLI reference (Markdown) or its man page
@@ -1839,7 +1882,7 @@ Invite an email address to a project with an intended role (admin-driven, ADR-02
 **Examples:**
 
 ```sh
-keyorix invite send --project payments --email bob@example.com --role developer
+keyorix invite send --project payments --email bob@example.com --role project_developer
 ```
 
 **Flags:**
@@ -2200,7 +2243,7 @@ Grant a machine identity a role at its project's scope, so tokens it issues can 
 **Examples:**
 
 ```sh
-keyorix machine grant-role ci-deployer --project payments --role developer
+keyorix machine grant-role ci-deployer --project payments --role project_developer
 ```
 
 **Flags:**
@@ -2302,7 +2345,7 @@ Revoke a previously granted project-scoped role (distinct from `machine revoke`,
 **Examples:**
 
 ```sh
-keyorix machine revoke-role ci-deployer --project payments --role developer
+keyorix machine revoke-role ci-deployer --project payments --role project_developer
 ```
 
 **Flags:**
@@ -3105,7 +3148,7 @@ contractor access. Example: --ttl 4h grants the role for four hours.
 **Examples:**
 
 ```sh
-keyorix rbac assign-role --user alice@example.com --role developer --project payments
+keyorix rbac assign-role --user alice@example.com --role project_developer --project payments
 # Time-bound grant
 keyorix rbac assign-role --user alice@example.com --role admin --project payments --ttl 4h
 ```
@@ -3137,7 +3180,7 @@ With --ttl, the grant is time-bound (just-in-time access).
 **Examples:**
 
 ```sh
-keyorix rbac assign-role-to-group --group platform-team --role developer --project payments
+keyorix rbac assign-role-to-group --group platform-team --role project_developer --project payments
 ```
 
 **Flags:**
@@ -3324,7 +3367,7 @@ the project (--project must also be supplied).
 **Examples:**
 
 ```sh
-keyorix rbac remove-role --user alice@example.com --role developer --project payments
+keyorix rbac remove-role --user alice@example.com --role project_developer --project payments
 ```
 
 **Flags:**
@@ -3351,7 +3394,7 @@ the project (--project must also be supplied).
 **Examples:**
 
 ```sh
-keyorix rbac remove-role-from-group --group platform-team --role developer --project payments
+keyorix rbac remove-role-from-group --group platform-team --role project_developer --project payments
 ```
 
 **Flags:**
@@ -3393,7 +3436,7 @@ Create a pending access request for the caller to a project, optionally suggesti
 **Examples:**
 
 ```sh
-keyorix request access --project payments --role developer --reason "on-call this week"
+keyorix request access --project payments --role project_developer --reason "on-call this week"
 ```
 
 **Flags:**
@@ -5967,7 +6010,6 @@ keyorix user create --username bob --email bob@example.com --setup-link
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--by` | `string` | — | Acting admin email (unused in this REST-only CLI -- kept for flag compatibility; the session behind your bearer token is always the acting admin) |
 | `--display-name` | `string` | — | Display name (defaults to username) |
 | `--email` | `string` | — | Email (required) |
 | `--one-time-password` | — | — | Generate a one-time password instead of an admin-set password (ADR-028 Part E); must be changed on first login |

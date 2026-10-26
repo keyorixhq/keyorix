@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -28,6 +29,13 @@ import (
 // happens before the DEK file is touched, so a failure here leaves the active DEK
 // untouched and the old provider still working.
 func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
+	return km.RewrapDEKWithPrepare(newProvider, nil)
+}
+
+// RewrapDEKWithPrepare is RewrapDEK calling prepare (when non-nil) with the
+// audit-checkpoint key the new KEK derives, after the staleness check and
+// before the new wrapped DEK is written (see AuditKeyChangePrepare).
+func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepare AuditKeyChangePrepare) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
@@ -85,6 +93,17 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	if err != nil {
 		return fmt.Errorf("re-wrap DEK: wrap DEK with new KEK: %w", err)
 	}
+	if prepare != nil {
+		ack, ackID, err := deriveAuditCheckpointKey(newKEK)
+		if err != nil {
+			return fmt.Errorf("re-wrap DEK: derive the new audit-checkpoint key: %w", err)
+		}
+		err = prepare(ack, ackID)
+		wipeBytes(ack)
+		if err != nil {
+			return fmt.Errorf("re-wrap DEK: aborted before any key file was written: %w", err)
+		}
+	}
 
 	// Durability is load-bearing here: this is the one operation where the OLD
 	// wrapping key is about to be retired, so the new wrapped DEK must be on disk
@@ -100,6 +119,11 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	rotationCheckpointHook("rewrap:after-write-dek-pending")
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
 	activePath := filepath.Join(km.baseDir, km.dekPath)
+	newFiles := map[string][]byte{activePath: wrapped}
+	if err := km.stageKeySet(keyfiles.OpRewrapDEK, newFiles); err != nil {
+		_ = os.Remove(pendingPath)
+		return fmt.Errorf("re-wrap DEK: stage the key-set manifest (the active DEK was not changed): %w", err)
+	}
 	if err := durableRename(pendingPath, activePath, "rewrap:rename-dek"); err != nil {
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("re-wrap DEK: promote pending DEK to active: %w", err)
@@ -112,6 +136,7 @@ func (km *KeyManager) RewrapDEK(newProvider crypto.KeyProvider) error {
 	}
 	// Crash-consistency checkpoint (nil in production): the rewrap is fully durable.
 	rotationCheckpointHook("rewrap:after-syncdir")
+	km.commitKeySet(keyfiles.OpRewrapDEK, newFiles)
 	km.dekSnapshot = append([]byte(nil), wrapped...)
 	return nil
 }

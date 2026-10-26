@@ -20,6 +20,7 @@ import (
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -34,6 +35,21 @@ import (
 //
 // The manager must already be Initialized (currentDEK in memory).
 func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) error {
+	return km.RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase, nil)
+}
+
+// AuditKeyChangePrepare is called by a KEK change once the new KEK is known and
+// before any key file is written, with the audit-checkpoint key and key version
+// the new KEK derives (the caller must not keep the key). An error aborts the
+// change with every file untouched. rotate-kek and migrate-provider use it to
+// prepare the audit key transition record under both keys
+// (docs/design-audit-key-transition.md).
+type AuditKeyChangePrepare func(newAuditCheckpointKey []byte, newKeyVersion string) error
+
+// RotateKEKPassphraseWithPrepare is RotateKEKPassphrase calling prepare (when
+// non-nil) after the old passphrase is verified and before the key files are
+// written.
+func (km *KeyManager) RotateKEKPassphraseWithPrepare(oldPassphrase, newPassphrase string, prepare AuditKeyChangePrepare) error {
 	km.mu.Lock()
 	defer km.mu.Unlock()
 
@@ -105,12 +121,10 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 		return fmt.Errorf("rotate KEK: wrap DEK with new KEK: %w", err)
 	}
 
-	if err := km.commitNewKEKFiles(newSalt, newWrappedDEK); err != nil {
-		return err
-	}
-
 	// Derive new evidence-signing and audit-checkpoint keys from the new KEK,
-	// matching Initialize's derivation exactly, before wiping the new KEK.
+	// matching Initialize's derivation exactly, before wiping the new KEK. They
+	// are derived before the files commit so prepare can use the new
+	// audit-checkpoint key while the old one is still the active one.
 	newESK, newESKID, err := deriveEvidenceSignKey(newKEK)
 	if err != nil {
 		return fmt.Errorf("rotate KEK: re-derive evidence-signing key: %w", err)
@@ -125,6 +139,21 @@ func (km *KeyManager) RotateKEKPassphrase(oldPassphrase, newPassphrase string) e
 		wipeBytes(newESK)
 		wipeBytes(newACK)
 		return fmt.Errorf("rotate KEK: re-derive backup-manifest key: %w", err)
+	}
+	if prepare != nil {
+		if err := prepare(newACK, newACKID); err != nil {
+			wipeBytes(newESK)
+			wipeBytes(newACK)
+			wipeBytes(newBMK)
+			return fmt.Errorf("rotate KEK: aborted before any key file was written: %w", err)
+		}
+	}
+
+	if err := km.commitNewKEKFiles(newSalt, newWrappedDEK); err != nil {
+		wipeBytes(newESK)
+		wipeBytes(newACK)
+		wipeBytes(newBMK)
+		return err
 	}
 
 	// Update in-memory state under the already-held mu.Lock.
@@ -167,6 +196,18 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 	rotationCheckpointHook("kek:after-write-dek-pending")
 	pendingDEKFull := filepath.Join(km.baseDir, pendingDEKPath)
 	activeDEKFull := filepath.Join(km.baseDir, km.dekPath)
+	// Stage the next generation in the key-set manifest before the first
+	// active file changes: from here a crash leaves a state boot classifies
+	// from the recorded hashes alone (keyfiles.ReconcileKeySet) — harmless
+	// staging while both active files are old, a rotation boot can finish
+	// once the DEK is renamed. A failure aborts with nothing changed.
+	newFiles := map[string][]byte{km.saltFullPath(): newSalt, activeDEKFull: newWrappedDEK}
+	if err := km.stageKeySet(keyfiles.OpRotateKEK, newFiles); err != nil {
+		_ = os.Remove(filepath.Join(km.baseDir, pendingSaltPath))
+		_ = os.Remove(pendingDEKFull)
+		return fmt.Errorf("rotate KEK: stage the key-set manifest (no key file was changed): %w", err)
+	}
+	rotationCheckpointHook("kek:after-stage-manifest")
 	if err := durableRename(pendingDEKFull, activeDEKFull, "kek:rename-dek"); err != nil {
 		// Do not assume the rename didn't happen: an error here can be reported
 		// AFTER the rename actually applied (e.g. an NFS lost-reply/retransmit
@@ -225,6 +266,8 @@ func (km *KeyManager) commitNewKEKFiles(newSalt, newWrappedDEK []byte) error {
 		return fmt.Errorf("rotate KEK: fsync key directory after promoting salt (the rotation itself already fully applied on disk — its durability is unconfirmed; retry to confirm): %w", err)
 	}
 	rotationCheckpointHook("kek:after-rename-salt")
+	km.commitKeySet(keyfiles.OpRotateKEK, newFiles)
+	rotationCheckpointHook("kek:after-commit-manifest")
 	return nil
 }
 

@@ -139,9 +139,6 @@ J6_FULL="${J6_REL}-keyorix"
 J6_SECRET="keyorix-secure-baseline"
 J6_SEL="app.kubernetes.io/instance=${J6_REL}"
 J6_SETS=(
-    --set auth.masterPassword="k8s-e2e-master-password"
-    --set postgresql.auth.password="k8s-e2e-db-password"
-    --set auth.adminPassword="K8sE2e-Run-Passw0rd!"
     --set server.image.repository=keyorix-server --set server.image.tag="$IMAGE_TAG"
     --set web.image.repository=keyorix-web --set web.image.tag="$IMAGE_TAG"
 )
@@ -166,6 +163,9 @@ j6_run() {
 
     local d="$WORK_DIR/j6"
     mkdir -p "$d"
+    # Credentials go in a 0600 values file (-f), never --set: argv is visible in ps.
+    (umask 077 && printf 'auth:\n  masterPassword: "k8s-e2e-master-password"\n  adminPassword: "K8sE2e-Run-Passw0rd!"\npostgresql:\n  auth:\n    password: "k8s-e2e-db-password"\n' \
+        >"$d/secret-values.yaml")
     local srv="${J6_FULL}-server" pg="${J6_FULL}-postgresql"
     openssl req -x509 -newkey rsa:2048 -nodes -keyout "$d/server.key" -out "$d/server.crt" -days 30 \
         -subj "/CN=${srv}" \
@@ -181,7 +181,7 @@ j6_run() {
         --from-file=metrics_token="$d/metrics_token" >/dev/null
 
     log "J6: helm install with the pre-created Secret"
-    helm install "$J6_REL" "$REPO_ROOT/deploy/helm/keyorix" -n "$J6_NS" "${J6_SETS[@]}" \
+    helm install "$J6_REL" "$REPO_ROOT/deploy/helm/keyorix" -n "$J6_NS" "${J6_SETS[@]}" -f "$d/secret-values.yaml" \
         --set secureBaseline.existingSecret="$J6_SECRET" --wait --timeout 240s >/dev/null \
         || fail "J6: helm install with secureBaseline.existingSecret failed"
 
@@ -199,7 +199,7 @@ j6_run() {
     local n
     for n in 1 2; do
         log "J6: helm upgrade #$n (same values)"
-        helm upgrade "$J6_REL" "$REPO_ROOT/deploy/helm/keyorix" -n "$J6_NS" "${J6_SETS[@]}" \
+        helm upgrade "$J6_REL" "$REPO_ROOT/deploy/helm/keyorix" -n "$J6_NS" "${J6_SETS[@]}" -f "$d/secret-values.yaml" \
             --set secureBaseline.existingSecret="$J6_SECRET" --wait --timeout 240s >/dev/null \
             || fail "J6: helm upgrade #$n failed"
         j6_state >"$d/state$n"
@@ -221,7 +221,7 @@ $(diff "$d/state0" "$d/state$n" | head -20)"
         --from-file=postgres.crt="$d/postgres.crt" --from-file=postgres.key="$d/postgres.key" \
         --from-file=metrics_token="$d/metrics_token" >/dev/null
     local out rc=0
-    out="$(helm upgrade "$J6_REL" "$REPO_ROOT/deploy/helm/keyorix" -n "$J6_NS" "${J6_SETS[@]}" \
+    out="$(helm upgrade "$J6_REL" "$REPO_ROOT/deploy/helm/keyorix" -n "$J6_NS" "${J6_SETS[@]}" -f "$d/secret-values.yaml" \
         --set secureBaseline.existingSecret="$bad" --wait --timeout 60s 2>&1)" || rc=$?
     [ "$rc" -ne 0 ] || fail "J6: upgrade with a Secret missing server.key succeeded"
     # Print only the sanitized message line, never the raw helm output.

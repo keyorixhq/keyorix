@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/logging"
@@ -108,8 +107,8 @@ type KeyorixCore struct {
 	// to a private or link-local address. Set via SetDynamicAllowPrivateTargets.
 	dynamicAllowPrivateTargets bool
 	// webauthnRP is the WebAuthn relying party (ADR-036); nil = WebAuthn disabled.
-	// Set from config at startup via SetWebAuthn.
-	webauthnRP *webauthn.WebAuthn
+	// Set from config at startup via SetWebAuthn (internal/webauthnrp).
+	webauthnRP ports.WebAuthnRelyingParty
 	// auditHighWaterWitnessPath is where advanceAuditHighWater (audit_checkpoint.go)
 	// mirrors the signed audit high-water mark it just persisted to
 	// system_metadata (design-b3-backup-v2.md §6.3's rollback-protection witness
@@ -456,6 +455,12 @@ type KeyorixCore struct {
 	// publish (audit_verify_metrics.go) cannot overwrite a newer one.
 	auditVerifyPubMu        sync.Mutex
 	auditVerifyGenPublished uint64
+	// auditVerifyEvidence caches the in-chain verification-state events seen so
+	// far (audit_verify_state.go), so a load scans only new rows.
+	auditVerifyEvidence auditVerifyEvidenceIndex
+	// auditKeyTransitionHook, when set (tests only), runs after each step of
+	// CompleteAuditKeyTransition; an error stops it there, as a crash would.
+	auditKeyTransitionHook func(step string) error
 	// checkpointNotary, when set, anchors each freshly-written audit checkpoint to
 	// an external authority (RFC 3161 TSA) for a forge-proof proof-of-existence
 	// (ADR-029). nil = no external anchoring. Set at startup via SetCheckpointNotary.
@@ -973,6 +978,18 @@ func (c *KeyorixCore) SetClockForTesting(now func() time.Time) {
 	}
 }
 
+// StorageForTesting returns the raw storage handle behind every authorization
+// check this KeyorixCore makes (ADR-121 decision 2). It exists so tests that
+// live outside package core (internal/core/coretests) can seed and inspect
+// rows the way in-package tests do through c.storage; export_test.go is not
+// visible to them, so the method must be exported. Production code never
+// calls this: a caller gets the store with every authorization check in core
+// bypassed. Only _test.go files may use it; clock_seam_guard_test.go
+// (internal/core/guards) fails on any other use, including a method value.
+func (c *KeyorixCore) StorageForTesting() storage.Storage {
+	return c.storage
+}
+
 // SetWebhookURLValidator replaces the SSRF guard applied to notification channel
 // URLs on create and update. The default (nil) uses validateWebhookURL which
 // enforces https-only and rejects private/loopback destinations via a live DNS
@@ -1127,9 +1144,10 @@ func (c *KeyorixCore) defaultTrustRegistry() (*trust.KeyRegistry, error) {
 	return trust.DefaultRegistry()
 }
 
-// SetWebAuthn wires the WebAuthn relying party (ADR-036). The server calls this
-// at startup when the install configures a webauthn block. nil disables passkeys.
-func (c *KeyorixCore) SetWebAuthn(rp *webauthn.WebAuthn) {
+// SetWebAuthn wires the WebAuthn relying party (ADR-036; internal/webauthnrp).
+// The server calls this at startup when the install configures a webauthn
+// block. nil disables passkeys.
+func (c *KeyorixCore) SetWebAuthn(rp ports.WebAuthnRelyingParty) {
 	c.webauthnRP = rp
 }
 

@@ -423,9 +423,17 @@ describe('GroupsPage — manage roles', () => {
         expect(mocks.removeMutate).toHaveBeenCalledWith({ groupId: 1, roleId: 10, scope: {} });
     });
 
-    // #3546: a project role granted with no project applied in EVERY project.
+    // #3546: a project role granted with no project applied in EVERY project. The
+    // role's assignable_scope (always sent by the server) decides, not its name.
     it('refuses a project role at the global scope and sends nothing', () => {
-        const devRole = { id: 12, name: 'project_developer', description: '', created_at: '', updated_at: '' };
+        const devRole = {
+            id: 12,
+            name: 'project_developer',
+            description: '',
+            assignable_scope: 'project',
+            created_at: '',
+            updated_at: '',
+        };
         state.roles.data = [devRole];
         render(<GroupsPage />);
         fireEvent.click(screen.getByTitle('Manage roles'));
@@ -437,6 +445,54 @@ describe('GroupsPage — manage roles', () => {
         expect(within(dialog).getByRole('alert')).toHaveTextContent(
             'project_developer is a project role: choose a project above'
         );
+    });
+
+    it('refuses a custom project-scoped role at the global scope too', () => {
+        state.roles.data = [
+            { id: 13, name: 'deployers', description: '', assignable_scope: 'project', created_at: '', updated_at: '' },
+        ];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: /deployers/i }));
+
+        expect(mocks.assignMutate).not.toHaveBeenCalled();
+        expect(within(dialog).getByRole('alert')).toHaveTextContent('deployers is a project role');
+    });
+
+    it('refuses an install-wide role at a project and sends nothing', () => {
+        state.roles.data = [
+            {
+                id: 14,
+                name: 'system_admin',
+                description: '',
+                assignable_scope: 'global',
+                created_at: '',
+                updated_at: '',
+            },
+        ];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Project'), { target: { value: '2' } });
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: /system_admin/i }));
+
+        expect(mocks.assignMutate).not.toHaveBeenCalled();
+        expect(within(dialog).getByRole('alert')).toHaveTextContent('system_admin is install-wide');
+    });
+
+    it('grants a role assignable anywhere at the global scope', () => {
+        state.roles.data = [
+            { id: 15, name: 'ops-all', description: '', assignable_scope: 'any', created_at: '', updated_at: '' },
+        ];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('checkbox', { name: /ops-all/i }));
+
+        expect(mocks.assignMutate).toHaveBeenCalledWith({ groupId: 1, roleId: 15, scope: {} });
     });
 
     it('grants a project role at the chosen project and environment', () => {

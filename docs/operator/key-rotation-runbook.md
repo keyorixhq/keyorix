@@ -81,7 +81,8 @@ or your provider's equivalent) **before** the next start, and update your offlin
 
 With several replicas on one PostgreSQL database, follow [j6](j6-key-rotation.md) "Several
 server replicas": stop all, rotate on one host, copy `dek.key` (and `kek.salt` for the password
-provider) to the others, start. A replica holding an old `dek.key` refuses to start.
+provider) with `keyset.manifest.json` to the others, start. A replica holding an old `dek.key`,
+or the new one without the new manifest, refuses to start.
 
 ## 4. Verify
 
@@ -99,32 +100,46 @@ archive restores only with the passphrase that was current when it was taken.
 
 ## 5. After `rotate-kek`: the audit chain
 
-Checkpoints signed before the rotation were signed under the old KEK-derived key.
+`rotate-kek` and `migrate-provider` carry the audit verification state over to the new key
+(`docs/design-audit-key-transition.md`):
 
-- Online, `keyorix audit verify` reports the latest checkpoint as not verifying under the current
-  signing key until a fresh one exists. Write one (the scheduler does it on its next tick, or
-  run it now) and the state clears, provided the chain itself is sound:
+- Before any key file is written, they verify the chain under the old key and record a key
+  transition signed by both keys.
+- After the commit, they re-sign the state, the high-water mark and the retention anchor
+  under the new key, append a `system.audit_key_transition` event and write a fresh
+  checkpoint.
+
+The command prints each step. If the command is interrupted after the key files commit, the
+server finishes the transition at its next start. A recorded break or discontinuity is
+carried over, not cleared.
+
+- Online, `keyorix audit verify` reads `VALID` straight after an honest rotation. Check it:
 
   ```bash
-  keyorix audit checkpoint
   keyorix audit verify --full
   ```
 
-- Offline, `verify-audit --checkpoint-key-file` with a key exported **after** the rotation reports
-  an older checkpoint as BROKEN ("does not verify under the supplied checkpoint key"). That is the
-  key change, not tampering: compare the key version on the report's `Checkpoint:` line with
-  the date of your rotation, take a checkpoint, then export a **new** key and a **new** anchor
-  and use those from now on:
+  `audit verification state discontinuity (key transition)` means the transition record is
+  missing, forged or for another key epoch. A key change by an older binary after a recorded
+  one also reads this way. Treat it like any discontinuity
+  ([audit-chain-break-runbook.md](audit-chain-break-runbook.md) sections 1 and 2).
+- Offline, export the **new** key and a **new** anchor, and keep the old key:
 
   ```bash
   keyorix-server admin audit export-checkpoint-key --output /secure/checkpoint-<date>.key --config ./keyorix.yaml
   keyorix-server admin audit export-checkpoint --output /media/anchor/checkpoint-<date>.json --config ./keyorix.yaml
+  keyorix-server admin verify-audit --checkpoint-key-file /secure/checkpoint-<date>.key \
+    --previous-checkpoint-key-file /secure/checkpoint-<old-date>.key --config ./keyorix.yaml
   ```
 
-- `compliance verify` reports evidence packs and checkpoints signed before the rotation as
-  "superseded key version", not tampered (the command says so itself).
+  With the new key alone, `verify-audit` reads `VALID` and lists the transition's old-key
+  signature under "not proven". With the previous key it also proves that a holder of the
+  new key alone did not forge the pre-rotation state.
+- `compliance verify` still reports evidence packs signed before the rotation as "superseded
+  key version", not tampered (the evidence-signing key is not carried over).
 
-Keep the old anchors and the note of which key version signed them; do not overwrite them.
+Rotate with the new binary only. Keep the old anchors, the old checkpoint keys and the note
+of which key version signed them; do not overwrite them.
 
 ## 6. Rollback
 
@@ -134,7 +149,7 @@ Keep the old anchors and the note of which key version signed them; do not overw
 | `rotate-kek` done, the server will not start (`wrong passphrase or corrupted key file`) | The configured passphrase is still the old one. Set the new one; nothing is lost. |
 | `rotate-kek` done, and you want the old passphrase back | Rotate again with the sources swapped: `--passphrase-file ./new_master_password --new-passphrase-file ./old_master_password`. This re-wraps the same DEK under a fresh salt and again changes the checkpoint key (section 5). |
 | A DEK rotation you want to undo | There is no reverse command. Roll forward if you can. Otherwise restore the pre-rotation archive (below). It loses every write made since the backup, and resurrects any revocation made since (SELF_HOSTING.md §5). |
-| A replica was left with the old `dek.key` | Copy the current key files to it and start it ([j6](j6-key-rotation.md)). Nothing was written under the old DEK. |
+| A replica was left with the old `dek.key` | Copy the current key files, `keyset.manifest.json` included, to it and start it ([j6](j6-key-rotation.md)). Nothing was written under the old DEK. |
 | `migrate-provider` was interrupted after the re-wrap | The previous wrapped DEK is on disk as `<dek_path>.migrate-backup.*` for a human to restore; the DEK's plaintext value did not change. Keep it until you have verified. |
 
 Restoring the archive (server stopped, same config and key paths, passphrase current when the
@@ -158,8 +173,10 @@ depends on whether the rotation advanced the witness; be ready for either.
 - **Do not skip the backup**, and do not keep it only on the host that is being rotated.
 - **Do not lose the old passphrase** while any archive taken before a `rotate-kek` is still one
   you may need.
-- **Do not copy `dek.key` alone** to another replica with the password provider: copy `kek.salt`
-  with it, or confirm the replicas share the keys volume.
+- **Do not copy `dek.key` alone** to another replica: copy `keyset.manifest.json` with it (and
+  `kek.salt` with the password provider), or confirm the replicas share the keys volume. Without
+  the manifest the replica refuses to start; do not remove its manifest to get past that, which
+  turns off the mixed-set check for that start.
 - **Do not delete `*.migrate-backup.*` or `*.pre-restore-*` files** until the result is verified.
   `admin encryption migrate-provider cleanup --dry-run`, then `--confirm`, is the supported
   deletion.
@@ -182,5 +199,7 @@ Gaps in the product today:
 
 - No online rotation: the window is the servers being stopped.
 - No command to reverse a DEK rotation other than restoring an archive.
-- `verify-audit` has no key-version awareness, so a pre-rotation checkpoint reads BROKEN offline
-  once the key has changed (section 5).
+- `verify-audit` checks the latest checkpoint and the key transition records, not every older
+  checkpoint: older-epoch checkpoints other than the one each transition names are not
+  re-verified (section 5).
+- No command accepts a real audit loss (seal) yet: AUDIT-ACCEPT-LOSS-1.

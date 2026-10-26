@@ -68,6 +68,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -91,17 +92,23 @@ import (
 // complete" — a pass manufactured by the fixture, for a reason unrelated to
 // the lock.
 type delayedRestoreGroupStorage struct {
-	storage.Storage
+	inner            storage.Storage
 	arm              atomic.Bool
 	blocked, release chan struct{}
 }
 
-func (d *delayedRestoreGroupStorage) WithTransaction(ctx context.Context, fn func(tx storage.Storage) error) error {
+// store returns d.inner decorated with d's WithTransaction pause (no WrapTx: the
+// callback gets the inner store's raw transaction handle, as before).
+func (d *delayedRestoreGroupStorage) store() storage.Storage {
+	return storagetest.Hooked(d.inner, &storagetest.StoreHooks{WithTransaction: d.WithTransaction})
+}
+
+func (d *delayedRestoreGroupStorage) WithTransaction(next storage.Storage, ctx context.Context, fn func(tx storage.Storage) error) error {
 	if d.arm.CompareAndSwap(true, false) {
 		close(d.blocked)
 		<-d.release
 	}
-	return d.Storage.WithTransaction(ctx, fn)
+	return next.WithTransaction(ctx, fn)
 }
 
 func TestConcurrency_RestoreGroup_AdminGrantRace_TOCTOU_Deterministic(t *testing.T) {
@@ -116,17 +123,17 @@ func TestConcurrency_RestoreGroup_AdminGrantRace_TOCTOU_Deterministic(t *testing
 	require.NoError(t, db.Create(&models.Permission{ID: 1, Name: "roles.assign"}).Error)
 	// adminRole has the structural bypass flag -- roleSetContainsAdmin's one
 	// real signal (ADR-084), independent of its name or bundled permissions.
-	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "sneaky_admin", BypassesPermissionChecks: true}).Error)
+	require.NoError(t, db.Create(&models.Role{ID: 10, Name: "sneaky_admin", BypassesPermissionChecks: true, AssignableScope: models.RoleAssignableAny}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "nonadmin", UsernameFolded: "nonadmin", AccountState: core.AccountActive}).Error)
 	require.NoError(t, db.Create(&models.Group{ID: 1, Name: "g1", NameFolded: "g1", DeletedAt: gorm.DeletedAt{Time: time.Now(), Valid: true}}).Error)
 
 	realStorage := store.NewLocalStorage(db)
 	wrapped := &delayedRestoreGroupStorage{
-		Storage: realStorage,
+		inner:   realStorage,
 		blocked: make(chan struct{}), release: make(chan struct{}),
 	}
 	wrapped.arm.Store(true)
-	c := core.NewKeyorixCore(wrapped)
+	c := core.NewKeyorixCore(wrapped.store())
 	ctx := context.Background()
 
 	var errA, errB error

@@ -15,6 +15,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -30,14 +31,19 @@ import (
 // — no goroutine-scheduling luck required — while still exercising the exact
 // interleaving the bug allowed.
 type raceInjectingStorage struct {
-	storage.Storage
+	inner     storage.Storage
 	db        *gorm.DB
 	injected  bool
 	lockUntil time.Time
 }
 
-func (s *raceInjectingStorage) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
-	user, err := s.Storage.GetUserByUsername(ctx, username)
+// store returns s.inner decorated with s's GetUserByUsername override.
+func (s *raceInjectingStorage) store() storage.Storage {
+	return storagetest.Hooked(s.inner, &storagetest.StoreHooks{GetUserByUsername: s.GetUserByUsername})
+}
+
+func (s *raceInjectingStorage) GetUserByUsername(next storage.Storage, ctx context.Context, username string) (*models.User, error) {
+	user, err := next.GetUserByUsername(ctx, username)
 	if err != nil {
 		return nil, err
 	}
@@ -80,11 +86,11 @@ func TestLogin_TOCTOU_ConcurrentLockTripBeforeMintIsRefused(t *testing.T) {
 	}).Error)
 
 	wrapped := &raceInjectingStorage{
-		Storage:   store.NewLocalStorage(db),
+		inner:     store.NewLocalStorage(db),
 		db:        db,
 		lockUntil: time.Now().Add(time.Hour),
 	}
-	c := core.NewKeyorixCore(wrapped)
+	c := core.NewKeyorixCore(wrapped.store())
 	c.SetLoginLockoutPolicy(core.LoginLockoutPolicy{
 		Enabled: true, MaxAttempts: 5,
 		Window: 15 * time.Minute, BaseCooldown: 5 * time.Minute, MaxCooldown: time.Hour,
