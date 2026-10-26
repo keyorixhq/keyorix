@@ -130,12 +130,45 @@ func TestParseEnvelope_SealedLengthBounds(t *testing.T) {
 	for _, n := range []int{0, aeadOverhead, aeadOverhead + MaxKeySize + 1} {
 		bad := *e
 		bad.Sealed = make([]byte, n)
-		if _, err := ParseEnvelope(bad.Marshal()); err == nil {
+		if _, err := ParseEnvelope(bad.encode()); err == nil {
 			t.Errorf("sealed length %d accepted", n)
 		}
 	}
-	if !bytes.Equal(e.Marshal(), env) {
+	got, err := e.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, env) {
 		t.Fatal("parse/marshal does not round-trip a genuine envelope")
+	}
+}
+
+// Marshal refuses exactly the sealed lengths ParseEnvelope refuses, instead of
+// writing them (a length above 65535 would be truncated in the 2-byte field).
+// Every length it accepts parses back.
+func TestMarshal_RefusesOutOfBoundSealedLength(t *testing.T) {
+	_, _, env := wrapFor(t, SuiteX25519MLKEM768, "marshal-len")
+	e, err := ParseEnvelope(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []int{0, 1, aeadOverhead, aeadOverhead + MaxKeySize + 1, 0xffff, 0x10000, 0x10000 + aeadOverhead + 1} {
+		bad := *e
+		bad.Sealed = make([]byte, n)
+		if out, err := bad.Marshal(); err == nil {
+			t.Errorf("sealed length %d: Marshal returned %d bytes, want an error", n, len(out))
+		}
+	}
+	for n := aeadOverhead + 1; n <= aeadOverhead+MaxKeySize; n++ {
+		ok := *e
+		ok.Sealed = make([]byte, n)
+		out, err := ok.Marshal()
+		if err != nil {
+			t.Fatalf("sealed length %d: %v", n, err)
+		}
+		if _, err := ParseEnvelope(out); err != nil {
+			t.Errorf("sealed length %d: Marshal output does not parse: %v", n, err)
+		}
 	}
 }
 

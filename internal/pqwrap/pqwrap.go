@@ -324,12 +324,29 @@ func (e *Envelope) header() []byte {
 	return append(h, e.KeyID[:]...)
 }
 
-// Marshal encodes e. It does not validate; ParseEnvelope does.
-func (e *Envelope) Marshal() []byte {
+// sealedLenOK reports whether n is a sealed-key length an envelope may carry:
+// the AEAD overhead plus 1..MaxKeySize key bytes. Marshal and ParseEnvelope
+// both use it, so neither writes what the other refuses.
+func sealedLenOK(n int) bool {
+	return n > aeadOverhead && n <= aeadOverhead+MaxKeySize
+}
+
+// Marshal encodes e. It refuses a sealed key whose length ParseEnvelope would
+// refuse (which also keeps the length within its 2-byte field) and otherwise
+// does not validate; ParseEnvelope does.
+func (e *Envelope) Marshal() ([]byte, error) {
+	if !sealedLenOK(len(e.Sealed)) {
+		return nil, fmt.Errorf("pqwrap: sealed key length %d out of range", len(e.Sealed))
+	}
+	return e.encode(), nil
+}
+
+// encode writes e without any check. Callers bound len(e.Sealed) first.
+func (e *Envelope) encode() []byte {
 	out := e.header()
 	out = append(out, e.X25519Ephemeral...)
 	out = append(out, e.MLKEMCiphertext...)
-	out = binary.BigEndian.AppendUint16(out, uint16(len(e.Sealed))) // #nosec G115 -- Wrap bounds the key to MaxKeySize, so len(Sealed) <= aeadOverhead+MaxKeySize (92); ParseEnvelope rejects anything longer
+	out = binary.BigEndian.AppendUint16(out, uint16(len(e.Sealed))) // #nosec G115 -- Marshal checks sealedLenOK first, so len(Sealed) <= aeadOverhead+MaxKeySize (92); only tests call encode directly, to build out-of-range input for the parser
 	return append(out, e.Sealed...)
 }
 
@@ -370,7 +387,7 @@ func ParseEnvelope(b []byte) (*Envelope, error) {
 	rest = rest[params.ctSize:]
 	n := int(binary.BigEndian.Uint16(rest))
 	rest = rest[lenFieldSize:]
-	if n <= aeadOverhead || n > aeadOverhead+MaxKeySize {
+	if !sealedLenOK(n) {
 		return nil, fmt.Errorf("pqwrap: sealed key length %d out of range", n)
 	}
 	if len(rest) != n {
@@ -443,7 +460,11 @@ func seal(pub *PublicKey, p Purpose, context, key []byte, enc encapsulation, new
 		return nil, nil, nil, nil, fmt.Errorf("pqwrap: AEAD: %w", err)
 	}
 	e.Sealed = a.Seal(nil, nil, key, aad(header, context)) // #nosec G407 -- the nil nonce is deliberate: newAEAD supplies the nonce (Wrap passes randomNonceGCM, which draws a fresh one and prepends it; only the known-answer vectors fix it)
-	return e.Marshal(), ssX, th, wk, nil
+	env, err = e.Marshal()
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	return env, ssX, th, wk, nil
 }
 
 // Wrap wraps key (1..MaxKeySize bytes) to pub for purpose p. context is bound

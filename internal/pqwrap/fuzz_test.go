@@ -33,7 +33,11 @@ func FuzzParseEnvelope(f *testing.F) {
 	f.Fuzz(func(t *testing.T, data []byte) {
 		e, err := ParseEnvelope(data)
 		if err == nil {
-			if !bytes.Equal(e.Marshal(), data) {
+			out, err := e.Marshal()
+			if err != nil {
+				t.Fatalf("Marshal refused a parsed envelope %x: %v", data, err)
+			}
+			if !bytes.Equal(out, data) {
 				t.Fatalf("parse/marshal not canonical for %x", data)
 			}
 		}

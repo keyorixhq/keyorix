@@ -27,6 +27,7 @@ func TestDeriveWrapKey_BindsEveryComponent(t *testing.T) {
 			base := in.derive(t)
 
 			flip := func(b []byte) []byte { c := bytes.Clone(b); c[len(c)-1] ^= 1; return c }
+			flipAt := func(b []byte, i int) []byte { c := bytes.Clone(b); c[i] ^= 1; return c }
 			withX := *pub
 			withX.x = other.x
 			withEK := *pub
@@ -38,7 +39,12 @@ func TestDeriveWrapKey_BindsEveryComponent(t *testing.T) {
 				"ML-KEM recipient key": func(b bindInputs) bindInputs { b.pub = &withEK; return b },
 				"ML-KEM shared secret": func(b bindInputs) bindInputs { b.ssM = flip(b.ssM); return b },
 				"X25519 shared secret": func(b bindInputs) bindInputs { b.ssX = flip(b.ssX); return b },
-				"header (purpose)":     func(b bindInputs) bindInputs { b.header = flip(b.header); return b },
+				// One case per header field, each flipping a byte inside that field.
+				"header (magic)":   func(b bindInputs) bindInputs { b.header = flipAt(b.header, 0); return b },
+				"header (version)": func(b bindInputs) bindInputs { b.header = flipAt(b.header, offVersion); return b },
+				"header (suite)":   func(b bindInputs) bindInputs { b.header = flipAt(b.header, offSuite+1); return b },
+				"header (purpose)": func(b bindInputs) bindInputs { b.header = flipAt(b.header, offPurpose); return b },
+				"header (key id)":  func(b bindInputs) bindInputs { b.header = flipAt(b.header, offKeyID); return b },
 			}
 			for name, mutate := range cases {
 				if got := mutate(in).derive(t); bytes.Equal(got, base) {
