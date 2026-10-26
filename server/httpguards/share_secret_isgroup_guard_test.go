@@ -15,7 +15,7 @@
 //
 // What it does NOT cover: a request built in one function and passed through another
 // (reported as opaque, not followed), and the cli module (it speaks HTTP only).
-package http
+package httpguards
 
 import (
 	"go/ast"

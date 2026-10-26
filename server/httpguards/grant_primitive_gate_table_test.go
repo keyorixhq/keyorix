@@ -19,7 +19,7 @@
 // middleware's own tests and the per-primitive authz tests); grants that do not go through
 // these primitives (invitation acceptance, SSO reconciliation: assignUserRoleSystemGrant
 // and grantBaselineRoleBackfill skip the ceiling by design and are unexported).
-package http
+package httpguards
 
 import (
 	"go/ast"

@@ -4,4 +4,4 @@
   check is the one thing that keeps a group from another project out of a secret
   (`CheckGroupPermissions` checks membership only, never project affiliation). Why: #3422.
   Guard: `sharing_test.go` (`TestKeyorixCore_ShareSecret_RejectsGroupShare`); no caller passes
-  a group: `server/http/share_secret_isgroup_guard_test.go` (`TestNoShareSecretCaller_PassesIsGroup`).
+  a group: `server/httpguards/share_secret_isgroup_guard_test.go` (`TestNoShareSecretCaller_PassesIsGroup`).
