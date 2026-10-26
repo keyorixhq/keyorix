@@ -59,6 +59,7 @@ never change the exit code. Currently one finding is reported there:
 | KMS install binding | `storage.encryption.key_provider.kms_encryption_context` | Set to a value unique to this install (e.g. `{keyorix-install: <id>}`) if multiple Keyorix installs share one cloud CMK — prevents a different install's wrapped KEK from being planted and decrypting under this install's identity. Not supported for `azure-kms` (hard startup error if attempted, not a silent no-op). |
 | Fallback chain | `storage.encryption.key_provider.fallbacks`, `.insecure_allow_weaker_kek_fallback` (deprecated alias: `allow_weaker_fallback`) | Do not set `insecure_allow_weaker_kek_fallback: true` in production unless actively migrating — it is what allows a transient KMS/TPM outage to silently downgrade the deployment's real security floor. |
 | Key-material file ownership | `KEYORIX_MASTER_PASSWORD_FILE`, `key_provider.env_var` + `_FILE`, `shamir_share_env` + `_FILE`, `--passphrase-file`, `key_provider.file_path`, `storage.encryption.dek_path` / `salt_path`, `server.*.tls.key_file` | Own every secret and key file by root or by the server's user, never by another account: whoever owns the file can replace the KEK, master password, wrapped DEK or TLS key, so the server refuses any other owner at boot and names the uid (#3393, #3410). The passphrase and KEK files are refused outright; the DEK, salt and TLS key follow `security.enable_file_permission_check` (refuse when it is on, warn in the ADR-112 upgrade grace or when it is off). |
+| Key-set integrity | `keyset.manifest.json` next to `storage.encryption.dek_path` | Leave it alone and keep it with the key files: every start compares each key file with the hash the manifest records and refuses a set mixed from different generations (#2900). Run every key operation (`rotate`, `rotate-kek`, `migrate-provider`, `restore`) with the same `keyorix-server` version as the server: an N-1 admin binary does not update the manifest (or the PostgreSQL DEK epoch), and the next start refuses the keys it wrote. Alert on the `encryption.keyset_manifest_adopted` and `encryption.keyset_rotation_finished` audit events outside an upgrade or a known interrupted rotation. The hashes are unkeyed: this guards against accidents, not against someone who can write the key directory. |
 | Shamir split custody | `storage.encryption.key_provider.type: shamir`, `.shamir_share_files`/`.shamir_share_env`, `.shamir_commitment` | If splitting KEK custody across people/systems, always set `shamir_commitment` (from `keyorix-server admin encryption shamir-split`'s own output) — without it, reconstruction is checked only by a forgeable 4-byte magic value. |
 
 ## 3. Recovery key custody
@@ -279,6 +280,14 @@ option there, but it does not bundle the key-material files.
 - **`--output` must not already exist** — each backup is a distinct,
   timestamped artifact by construction, not something a schedule can
   accidentally overwrite.
+- **Restore key files as a whole set, never one at a time** — `admin restore`
+  installs every key file from one archive and records a new key-set manifest;
+  a single file copied in from another backup is refused at the next start
+  ("does not match the key-set manifest"). A restore interrupted between its
+  file installs leaves its restore journal behind, and the server refuses to
+  start until `admin restore --recover` resolves it; if the journal itself is
+  lost, the half-installed set is refused as not matching the key-set manifest,
+  so neither case boots into a decrypt failure.
 - **Move the archive OFF this host** — a backup that never leaves the machine
   it was taken on protects against nothing that machine itself could lose.
 - **Export a checkpoint anchor too, held separately from the backup archive**

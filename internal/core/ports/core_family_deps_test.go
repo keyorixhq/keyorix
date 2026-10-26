@@ -29,6 +29,7 @@ import (
 // and registers it in internal/testutil/srcpath/corefamily.d
 // (TestCoreDepsAfterSplitAreRegisteredLeavesGuard).
 var coreProductionKeyorixDeps = []string{
+	"internal/anomaly",
 	"internal/besteffort",
 	"internal/core/certparse",
 	"internal/core/dsn",
@@ -40,6 +41,7 @@ var coreProductionKeyorixDeps = []string{
 	"internal/identity",
 	"internal/logging",
 	"internal/netutil",
+	"internal/oidcverify",
 	"internal/protectedmetrics",
 	"internal/secretenv",
 	"internal/secrettemplate",

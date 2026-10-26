@@ -52,7 +52,7 @@ func TestMigrateDatabase_SecretNodeUniqueIndex_ExistsAfterSingleFreshBoot(t *tes
 	t.Run("sqlite", func(t *testing.T) {
 		dsn := firstBootSQLiteDSN(t)
 		cfg := &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: dsn}}}
-		_, err := NewStorageFactory().CreateStorage(cfg)
+		_, err := createStorageClosedAtCleanup(t, cfg)
 		require.NoError(t, err)
 
 		db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
@@ -64,7 +64,7 @@ func TestMigrateDatabase_SecretNodeUniqueIndex_ExistsAfterSingleFreshBoot(t *tes
 	t.Run("postgres", func(t *testing.T) {
 		dsn := firstBootPostgresDSN(t)
 		cfg := &config.Config{Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: dsn}}}
-		_, err := NewStorageFactory().CreateStorage(cfg)
+		_, err := createStorageClosedAtCleanup(t, cfg)
 		require.NoError(t, err)
 
 		db := pgRawOpen(t, dsn)
@@ -89,7 +89,7 @@ func TestMigrateDatabase_ConcurrentCreateSecret_SameNameOnFirstBoot_ExactlyOneSu
 	t.Run("sqlite", func(t *testing.T) {
 		dsn := firstBootSQLiteDSN(t)
 		cfg := &config.Config{Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: dsn}}}
-		_, err := NewStorageFactory().CreateStorage(cfg)
+		_, err := createStorageClosedAtCleanup(t, cfg)
 		require.NoError(t, err)
 
 		db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{Logger: logger.Discard})
@@ -100,7 +100,7 @@ func TestMigrateDatabase_ConcurrentCreateSecret_SameNameOnFirstBoot_ExactlyOneSu
 	t.Run("postgres", func(t *testing.T) {
 		dsn := firstBootPostgresDSN(t)
 		cfg := &config.Config{Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: dsn}}}
-		_, err := NewStorageFactory().CreateStorage(cfg)
+		_, err := createStorageClosedAtCleanup(t, cfg)
 		require.NoError(t, err)
 
 		db := pgRawOpen(t, dsn)

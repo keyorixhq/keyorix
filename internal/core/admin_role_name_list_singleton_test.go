@@ -147,6 +147,23 @@ var adminRoleNameLiteralAllowlist = map[string]adminNameUse{
 			"permissions it BUNDLES (which is the right question for dormant-grant review), " +
 			"never by what the role is called.",
 	},
+	// internal/core/rules became a registered core-family leaf in
+	// CORE-PURE-AUTH-LEAVES-1, so this scan reads its #2001 files for the first time.
+	"internal/core/rules/common_passwords.go:commonPasswords": {
+		kindNotAdminness,
+		"\"admin\" is a weak PASSWORD in a deny-list of common passwords (ADR-025 policy). " +
+			"It decides whether a password is too guessable, never which role is administrative.",
+	},
+	"internal/core/rules/scim_token.go:scimPlaceholderWords": {
+		kindNotAdminness,
+		"\"admin\" is a placeholder WORD a non-random SCIM bearer token is built from (#3397 " +
+			"shape check). It rejects a token value, never decides a role.",
+	},
+	"internal/core/rules/secret_value_policy.go:commonWeakValues": {
+		kindNotAdminness,
+		"\"admin\" is a weak secret VALUE in the deny-list a strict secret-value policy " +
+			"refuses. It judges a stored value, never a role.",
+	},
 }
 
 // adminRoleNameLiteralRe matches one of the four canonical admin role names as

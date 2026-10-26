@@ -66,9 +66,7 @@ func ffRepair(t *testing.T, e *fcEnv, id uint) {
 // honest way a repaired failure is cleared).
 func ffClear(t *testing.T, e *fcEnv, c *KeyorixCore) {
 	t.Helper()
-	id, started, err := c.StartAuditFullVerification(context.Background())
-	require.NoError(t, err)
-	require.True(t, started)
+	id := startFullJobWhenFree(t, c)
 	waitAuditJob(t, c, id)
 	for range 4 {
 		if incrVerify(t, c).Status == AuditVerifyStatusValid {

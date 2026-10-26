@@ -86,16 +86,17 @@ on it). Callers that discard the total pass `CountNone`.
 | `idx_audit_events_event_time_id` | `(event_time, id)` | — |
 | `idx_audit_events_project_event_time` | `(project_id, event_time)` | `idx_audit_events_project_id` |
 | `idx_audit_events_secret_event_time` | `(secret_node_id, event_time)` | — |
-| `idx_audit_events_machine_event_time` | `(machine_identity_id, event_time)` | `idx_audit_events_machine_identity_id` |
+| `idx_audit_events_machine_identity_id` | dropped, not replaced: no query filters on `machine_identity_id` | — |
+| `idx_audit_events_machine_event_time` | dropped (PERF-INDEX-1): built by earlier releases, no consumer | — |
 
 The keys grow with time, so inserts append at the right edge of each b-tree.
-`models.AuditEvent` drops the two single-column `gorm:"index"` tags, and the four indexes
+`models.AuditEvent` drops the two single-column `gorm:"index"` tags, and the three indexes
 are declared once (`store.AuditListIndexes`) and created by code, not by gorm tags. A gorm
 tag would be a plain `CREATE INDEX` inside the migration transaction.
 
 **Postgres.** This runs after the migration transaction has committed, never inside it.
-1. Read `pg_index` for the four names.
-2. If all four exist and are `indisvalid`, finish now (the cost of every boot after the first).
+1. Read `pg_index` for the three names.
+2. If all three exist and are `indisvalid`, finish now (the cost of every boot after the first).
 3. Otherwise take the build advisory lock on one connection (so one replica builds while the
    others skip; a session lock, or with `storage.database.pooler: pgbouncer-transaction` a
    transaction-scoped one in a pinned transaction that holds no snapshot,
@@ -104,7 +105,7 @@ tag would be a plain `CREATE INDEX` inside the migration transaction.
      `DROP INDEX CONCURRENTLY IF EXISTS`;
    - then `CREATE INDEX CONCURRENTLY IF NOT EXISTS`;
    - validity is re-checked.
-4. When all four are valid, the replaced indexes are dropped with `DROP INDEX CONCURRENTLY
+4. When all three are valid, the replaced indexes are dropped with `DROP INDEX CONCURRENTLY
    IF EXISTS`.
 
 Every statement is a single autocommit statement. `CONCURRENTLY` takes `SHARE UPDATE
@@ -142,6 +143,10 @@ single-column indexes again during a rolling upgrade, the next start of this ver
 them again. On the upgrade path it does not recreate the dropped single-column indexes;
 those are only created by a fresh-install AutoMigrate. Nothing here changes the schema
 epoch.
+
+## 4a. secret_access_logs (PERF-INDEX-1)
+
+The same build step (same advisory lock, `CREATE/DROP INDEX CONCURRENTLY`, replaced indexes dropped only after the new ones are valid) maintains `secret_access_logs`: `idx_secret_access_logs_secret_time_action (secret_node_id, access_time, action)` on both backends; `idx_secret_access_logs_access_time_brin` (BRIN on `access_time`) on Postgres, the btree `idx_secret_access_logs_access_time` on SQLite. Replaced: `_secret_time`, `_secret_action` (and the btree `_access_time` on Postgres).
 
 ## 5. Acceptance criteria
 
@@ -205,9 +210,9 @@ epoch.
 
 - Secret listing keyset (AUDIT-SCALE-1 §4 #5), incremental chain verification (#3), chunked
   purge (#4), `/audit/retention` estimate (#6).
-- No audit query filters on `machine_identity_id` today. The composite replaces the
-  single-column index so that "everything this identity did" stays index-served when such a
-  filter is added.
+- No audit query filters on `machine_identity_id` today, so no index on it is
+  kept (PERF-INDEX-1: each index costs every audit INSERT). When such a filter is added, build
+  `(machine_identity_id, event_time)` CONCURRENTLY with it.
 - Internal offset pagers (`pat_restriction_listing`, `user_baseline_role_reconcile`) keep
   `OFFSET`. They now walk the time index instead of sorting, and they are not reachable with
   caller-chosen depths.

@@ -182,7 +182,7 @@ not blanket coverage:
   previously forge one additional share reconstructing to an attacker-chosen
   KEK; fixed with an HMAC commitment verified outside the interpolated
   payload).
-- **`FuzzOIDCVerifierVerify`** (`internal/core`) — JWT parsing for machine-
+- **`FuzzOIDCVerifierVerify`** (`internal/oidcverify`) — JWT parsing for machine-
   identity OIDC federation, the most attacker-exposed token-parsing boundary
   (validated by decoding, not just a DB lookup like session/PAT/machine
   tokens).

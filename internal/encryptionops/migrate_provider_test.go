@@ -11,6 +11,8 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 )
 
 // --- TargetEncryptionConfig ----------------------------------------------
@@ -199,7 +201,7 @@ func TestRestoreBackup_RestoresExactBytes(t *testing.T) {
 		t.Fatalf("write active: %v", err)
 	}
 
-	RestoreBackup(dir, "backup.bin", "active.bin")
+	RestoreBackup(dir, "backup.bin", "active.bin", nil)
 
 	got, err := os.ReadFile(filepath.Join(dir, "active.bin"))
 	if err != nil {
@@ -207,6 +209,37 @@ func TestRestoreBackup_RestoresExactBytes(t *testing.T) {
 	}
 	if !bytes.Equal(got, original) {
 		t.Fatalf("RestoreBackup did not restore exact bytes: got %q, want %q", got, original)
+	}
+}
+
+// migrate-provider's rollback replaces the active DEK the re-wrap had already
+// committed to the key-set manifest; the rollback must record the restored
+// bytes, or the next boot refuses its own DEK as foreign (#2900).
+func TestRestoreBackup_RecordsTheRestoredDEKInTheManifest(t *testing.T) {
+	dir := chdirTemp(t)
+	original := []byte("original-wrapped-dek-bytes-0123456789")
+	if err := os.WriteFile(filepath.Join(dir, "backup.bin"), original, 0o600); err != nil {
+		t.Fatalf("write backup: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "active.bin"), []byte("re-wrapped-bytes"), 0o600); err != nil {
+		t.Fatalf("write active: %v", err)
+	}
+	ks := keyfiles.NewSetWriterForFiles(dir, filepath.Join(dir, "active.bin"))
+	if err := ks.CommitManifestFromDisk(keyfiles.OpRewrapDEK, filepath.Join(dir, "active.bin")); err != nil {
+		t.Fatal(err)
+	}
+
+	RestoreBackup(dir, "backup.bin", "active.bin", ks)
+
+	m, err := keyfiles.LoadManifest(filepath.Join(dir, keyfiles.ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Files["active.bin"]; got.SHA256 != keyfiles.HashBytes(original) || got.Operation != keyfiles.OpRewrapRollback {
+		t.Fatalf("manifest entry after rollback = %+v, want the restored bytes recorded by %s", got, keyfiles.OpRewrapRollback)
+	}
+	if m.Next != nil {
+		t.Fatalf("rollback left a staged %q operation", m.Next.Operation)
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 var _ storage.Storage = (*hookStore)(nil)
@@ -172,22 +173,22 @@ var storageEmbedNames = map[string]bool{
 }
 
 // wholeStorageEmbeddingViolations returns "file: Type embeds X" for every struct type
-// declared in a `package core` file of files (path -> source) that anonymously embeds a
-// whole-Storage type, directly or through another such struct. hookStore itself is the
-// one allowed embedding.
+// declared in a `package core` or `package coretests` file of files (path -> source) that
+// anonymously embeds a whole-Storage type, directly or through another such struct in the
+// same package. core's hookStore itself is the one allowed embedding.
 func wholeStorageEmbeddingViolations(t *testing.T, files map[string][]byte) []string {
 	t.Helper()
 	type decl struct {
-		file   string
-		embeds []string
+		file, pkg, name string
+		embeds          []string
 	}
-	structs := map[string]decl{}
+	structs := map[string]decl{} // keyed "<package>.<type>": core and coretests may reuse a name
 	fset := token.NewFileSet()
 	for path, src := range files {
 		f, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
 		require.NoError(t, err, path)
-		if f.Name.Name != "core" {
-			continue // internal/core_test is a separate archive
+		if f.Name.Name != "core" && f.Name.Name != "coretests" {
+			continue // internal/core_test is a separate archive; coretests is core's black-box test package (ADR-121)
 		}
 		for _, d := range f.Decls {
 			gd, ok := d.(*ast.GenDecl)
@@ -203,7 +204,7 @@ func wholeStorageEmbeddingViolations(t *testing.T, files map[string][]byte) []st
 				if !ok {
 					continue
 				}
-				dd := decl{file: filepath.Base(path)}
+				dd := decl{file: path, pkg: f.Name.Name, name: ts.Name.Name}
 				for _, field := range st.Fields.List {
 					if len(field.Names) != 0 {
 						continue
@@ -219,7 +220,7 @@ func wholeStorageEmbeddingViolations(t *testing.T, files map[string][]byte) []st
 						dd.embeds = append(dd.embeds, x.Sel.Name)
 					}
 				}
-				structs[ts.Name.Name] = dd
+				structs[dd.pkg+"."+dd.name] = dd
 			}
 		}
 	}
@@ -227,46 +228,63 @@ func wholeStorageEmbeddingViolations(t *testing.T, files map[string][]byte) []st
 	heavy := map[string]string{}
 	for changed := true; changed; {
 		changed = false
-		for name, d := range structs {
-			if _, done := heavy[name]; done {
+		for key, d := range structs {
+			if _, done := heavy[key]; done {
 				continue
 			}
 			for _, e := range d.embeds {
 				if storageEmbedNames[e] {
-					heavy[name], changed = e, true
+					heavy[key], changed = e, true
 					break
 				}
-				if _, ok := heavy[e]; ok {
-					heavy[name], changed = e, true
+				if _, ok := heavy[d.pkg+"."+e]; ok {
+					heavy[key], changed = e, true
 					break
 				}
 			}
 		}
 	}
 	var out []string
-	for name, via := range heavy {
-		if name == "hookStore" {
+	for key, via := range heavy {
+		if key == "core.hookStore" {
 			continue
 		}
-		out = append(out, structs[name].file+": "+name+" embeds "+via)
+		out = append(out, structs[key].file+": "+structs[key].name+" embeds "+via)
 	}
 	sort.Strings(out)
 	return out
 }
 
+// coreTestFiles reads the _test.go files directly in internal/core (keyed by base
+// name) and in each of testOnlyDirs (keyed by repository-relative path), all
+// relative to root. The test-only dirs are srcpath.CoreTestOnlyDirs in the real
+// guard, so a double that moves to internal/core/coretests stays in the scan
+// (ADR-121 R5).
+func coreTestFiles(t *testing.T, root string, testOnlyDirs []string) map[string][]byte {
+	t.Helper()
+	files := map[string][]byte{}
+	for i, dir := range append([]string{srcpath.CoreDir}, testOnlyDirs...) {
+		entries, err := os.ReadDir(filepath.Join(root, filepath.FromSlash(dir)))
+		require.NoError(t, err, dir)
+		for _, e := range entries {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			key := dir + "/" + e.Name()
+			if i == 0 {
+				key = e.Name()
+			}
+			src, rerr := os.ReadFile(filepath.Join(root, filepath.FromSlash(dir), e.Name())) // #nosec G304 -- directory listing of core's own test files
+			require.NoError(t, rerr)
+			files[key] = src
+		}
+	}
+	return files
+}
+
 func TestNoWholeStorageEmbeddingInCoreTests(t *testing.T) {
 	t.Parallel()
-	entries, err := os.ReadDir(".")
-	require.NoError(t, err)
-	files := map[string][]byte{}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), "_test.go") {
-			continue
-		}
-		src, rerr := os.ReadFile(e.Name()) // #nosec G304 -- directory listing of this package's own test files
-		require.NoError(t, rerr)
-		files[e.Name()] = src
-	}
+	files := coreTestFiles(t, srcpath.RepoRoot(), srcpath.CoreTestOnlyDirs)
 	// hookStore itself moved to the storagetest kit (CORE-TESTKIT-1): pin that the one
 	// allowed whole-Storage embedding still exists there, and that core reaches it
 	// only through the alias file.
@@ -274,6 +292,7 @@ func TestNoWholeStorageEmbeddingInCoreTests(t *testing.T) {
 	require.NoError(t, kerr)
 	require.Contains(t, string(kit), "type HookStore struct", "the kit must still hold the one allowed whole-Storage embedding")
 	require.Contains(t, files, "storagetest_aliases_test.go", "the scan must cover the alias file that exposes hookStore to core's tests")
+	require.Contains(t, files, "internal/core/coretests/main_test.go", "the scan must cover the black-box test package internal/core/coretests")
 	assert.Empty(t, wholeStorageEmbeddingViolations(t, files),
 		"a test double must not embed the whole storage.Storage (or *store.LocalStorage, MockStorage, hookStore): "+
 			"each embedding costs ~2.6 MB of wrapper code in the [internal/core.test] archive. "+
@@ -309,4 +328,35 @@ type aliased = storagetest.HookStore
 	}, wholeStorageEmbeddingViolations(t, map[string][]byte{"x_test.go": bad}))
 	assert.Empty(t, wholeStorageEmbeddingViolations(t, map[string][]byte{"y_test.go": []byte("package core_test\ntype z struct{ storage.Storage }\n")}),
 		"the external test package has its own archive")
+}
+
+// Calibration for the test-only dirs (ADR-121 R5): a whole-storage embedding in
+// a package coretests file under internal/core/coretests is found through the
+// same file listing the real guard uses, next to one in internal/core itself;
+// non-test files and the kit's own HookStore are not scanned.
+func TestNoWholeStorageEmbeddingInCoreTests_CalibrationTestOnlyDirs(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	for rel, body := range map[string]string{
+		"internal/core/a_test.go":           "package core\ntype a struct{ storage.Storage }\ntype dup struct{ n int }\n",
+		"internal/core/coretests/b_test.go": "package coretests\ntype b struct{ *storagetest.MockStorage }\n",
+		"internal/core/coretests/c_test.go": "package coretests\ntype c struct{ *storagetest.HookStore }\ntype fine struct{ inner storage.Storage }\n" +
+			"type dup struct{ storage.Storage }\ntype hookStore struct{ storage.Storage }\ntype g struct{ c }\n",
+		"internal/core/coretests/helper.go":              "package coretests\ntype notATest struct{ storage.Storage }\n",
+		"internal/core/storage/storagetest/hookstore.go": "package storagetest\ntype HookStore struct{ storage.Storage }\n",
+	} {
+		p := filepath.Join(root, filepath.FromSlash(rel))
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o750))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o600))
+	}
+	files := coreTestFiles(t, root, []string{"internal/core/coretests", "internal/core/storage/storagetest"})
+	assert.Equal(t, []string{
+		"a_test.go: a embeds Storage",
+		"internal/core/coretests/b_test.go: b embeds MockStorage",
+		"internal/core/coretests/c_test.go: c embeds HookStore",
+		"internal/core/coretests/c_test.go: dup embeds Storage",
+		"internal/core/coretests/c_test.go: g embeds c",
+		"internal/core/coretests/c_test.go: hookStore embeds Storage",
+	}, wholeStorageEmbeddingViolations(t, files),
+		"only core's own hookStore is exempt, and a name reused across the two packages must not hide either type")
 }

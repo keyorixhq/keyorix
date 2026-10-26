@@ -1,0 +1,1 @@
+internal/oidcverify	none	-	CORE-PURE-AUTH-LEAVES-1: OIDC federated-JWT verifier (OIDCVerifier, OIDCTrustedIssuer, JWKSResolver, HTTPJWKSResolver; oidc.go verifier part and oidc_jwks.go) moved unchanged out of internal/core as a pure leaf (no core import, no storage); no package-specific review pass yet, it was covered only by the internal/core passes before the move	pending

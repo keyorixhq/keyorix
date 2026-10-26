@@ -81,7 +81,8 @@ or your provider's equivalent) **before** the next start, and update your offlin
 
 With several replicas on one PostgreSQL database, follow [j6](j6-key-rotation.md) "Several
 server replicas": stop all, rotate on one host, copy `dek.key` (and `kek.salt` for the password
-provider) to the others, start. A replica holding an old `dek.key` refuses to start.
+provider) with `keyset.manifest.json` to the others, start. A replica holding an old `dek.key`,
+or the new one without the new manifest, refuses to start.
 
 ## 4. Verify
 
@@ -148,7 +149,7 @@ of which key version signed them; do not overwrite them.
 | `rotate-kek` done, the server will not start (`wrong passphrase or corrupted key file`) | The configured passphrase is still the old one. Set the new one; nothing is lost. |
 | `rotate-kek` done, and you want the old passphrase back | Rotate again with the sources swapped: `--passphrase-file ./new_master_password --new-passphrase-file ./old_master_password`. This re-wraps the same DEK under a fresh salt and again changes the checkpoint key (section 5). |
 | A DEK rotation you want to undo | There is no reverse command. Roll forward if you can. Otherwise restore the pre-rotation archive (below). It loses every write made since the backup, and resurrects any revocation made since (SELF_HOSTING.md §5). |
-| A replica was left with the old `dek.key` | Copy the current key files to it and start it ([j6](j6-key-rotation.md)). Nothing was written under the old DEK. |
+| A replica was left with the old `dek.key` | Copy the current key files, `keyset.manifest.json` included, to it and start it ([j6](j6-key-rotation.md)). Nothing was written under the old DEK. |
 | `migrate-provider` was interrupted after the re-wrap | The previous wrapped DEK is on disk as `<dek_path>.migrate-backup.*` for a human to restore; the DEK's plaintext value did not change. Keep it until you have verified. |
 
 Restoring the archive (server stopped, same config and key paths, passphrase current when the
@@ -172,8 +173,10 @@ depends on whether the rotation advanced the witness; be ready for either.
 - **Do not skip the backup**, and do not keep it only on the host that is being rotated.
 - **Do not lose the old passphrase** while any archive taken before a `rotate-kek` is still one
   you may need.
-- **Do not copy `dek.key` alone** to another replica with the password provider: copy `kek.salt`
-  with it, or confirm the replicas share the keys volume.
+- **Do not copy `dek.key` alone** to another replica: copy `keyset.manifest.json` with it (and
+  `kek.salt` with the password provider), or confirm the replicas share the keys volume. Without
+  the manifest the replica refuses to start; do not remove its manifest to get past that, which
+  turns off the mixed-set check for that start.
 - **Do not delete `*.migrate-backup.*` or `*.pre-restore-*` files** until the result is verified.
   `admin encryption migrate-provider cleanup --dry-run`, then `--confirm`, is the supported
   deletion.

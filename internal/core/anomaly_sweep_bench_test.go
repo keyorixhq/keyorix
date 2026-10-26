@@ -35,10 +35,20 @@ func BenchmarkAnomalySweep(b *testing.B) {
 			b.Run(dialect+"/"+mode, func(b *testing.B) {
 				db := benchSweepDB(b, dialect)
 				if mode == "before" {
-					for _, idx := range []string{"idx_anomaly_alerts_dedup", "idx_secret_access_logs_secret_time", "idx_secret_access_logs_access_time"} {
-						if err := db.Exec("DROP INDEX " + idx).Error; err != nil {
+					if err := db.Exec("DROP INDEX idx_anomaly_alerts_dedup").Error; err != nil {
+						b.Fatal(err)
+					}
+					for _, idx := range store.SecretAccessLogIndexes {
+						if err := db.Exec("DROP INDEX " + idx.Name).Error; err != nil {
 							b.Fatal(err)
 						}
+					}
+					timeIdx := "idx_secret_access_logs_access_time"
+					if dialect == "postgres" {
+						timeIdx = store.SecretAccessLogIndexesPostgres[0].Name
+					}
+					if err := db.Exec("DROP INDEX " + timeIdx).Error; err != nil {
+						b.Fatal(err)
 					}
 				}
 				secrets := benchSweepSeed(b, db)
@@ -102,6 +112,18 @@ func benchSweepDB(b *testing.B, dialect string) *gorm.DB {
 	if err := db.AutoMigrate(&models.SecretNode{}, &models.SecretAccessLog{}, &models.AnomalyAlert{},
 		&models.AuditEvent{}, &models.SystemMetadata{}); err != nil {
 		b.Fatal(err)
+	}
+	// secret_access_logs' indexes are built by code, not by tags.
+	if dialect == "sqlite" {
+		if err := store.EnsureAuditListIndexesSQLite(db, b.Logf); err != nil {
+			b.Fatal(err)
+		}
+	} else {
+		for _, ix := range append(append([]store.AuditListIndex{}, store.SecretAccessLogIndexes...), store.SecretAccessLogIndexesPostgres...) {
+			if err := db.Exec(ix.CreateSQL(false)).Error; err != nil {
+				b.Fatal(err)
+			}
+		}
 	}
 	return db
 }

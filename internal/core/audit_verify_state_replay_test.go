@@ -207,8 +207,7 @@ func TestIncrementalVerify_FailureSurvivesUnrelatedCycleCompletion(t *testing.T)
 	_, err = c.RunAuditVerificationTick(ctx)
 	require.ErrorIs(t, err, ErrAuditCheckpointRefused)
 
-	id, _, err := c.StartAuditFullVerification(ctx)
-	require.NoError(t, err)
+	id := startFullJobWhenFree(t, c)
 	require.True(t, waitAuditJob(t, c, id).Result.Valid)
 	assert.Equal(t, AuditVerifyStatusValid, incrVerify(t, c).Status, "a full job started after the failure clears it")
 }

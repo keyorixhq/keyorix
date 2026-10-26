@@ -118,7 +118,7 @@ Two checks keep a fuzz harness honest, not just present:
   see at all, and the same class of bug the 2026-09 security review's
   multi-replica-safety findings belong to (see `security-review-2026-09.md`).
 - **PAT lifecycle metamorphic testing** — `internal/core/pat_validate_lifecycle_fuzz_test.go`,
-  `internal/core/pat_authz_metamorphic_fuzz_test.go` — checks that a PAT
+  `internal/core/rules/pat_authz_metamorphic_fuzz_test.go` — checks that a PAT
   restriction (ADR-042) only ever narrows access relative to its owner across
   fuzzed permission/scope combinations, not just the hand-picked examples a
   unit test would cover.

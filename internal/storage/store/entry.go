@@ -303,6 +303,10 @@ type LocalStorage struct {
 	// (StartAuditListIndexBuild), cancelled and awaited by Close. nil when none
 	// was started.
 	auditIndexBuild *backgroundJob
+	// rolePermIntegrity is the periodic role-permission generation trigger
+	// check (StartRolePermissionsGenerationIntegrityCheck), cancelled and
+	// awaited by Close. nil when none was started.
+	rolePermIntegrity *backgroundJob
 }
 
 // backgroundJob is a goroutine Close cancels and waits for.
@@ -323,11 +327,10 @@ type backgroundJob struct {
 // The build lock takes ls's advisory lock shape (SetTransactionPooling), and db
 // must allow two open connections (BuildAuditListIndexesPostgres).
 func (ls *LocalStorage) StartAuditListIndexBuild(db *sql.DB, logf func(string, ...any)) {
-	ctx, cancel := context.WithCancel(context.Background())
-	job := &backgroundJob{cancel: cancel, done: make(chan struct{})}
+	ctx, job := newBackgroundJob()
 	ls.auditIndexBuild = job
 	go func() {
-		defer close(job.done)
+		defer job.exit()
 		defer func() { _ = db.Close() }()
 		start := time.Now()
 		for attempt := 0; ; attempt++ {
@@ -479,14 +482,18 @@ func (ls *LocalStorage) DB() *gorm.DB {
 	return ls.db
 }
 
-// Close closes the native read pool (SetNativeReadPool), the lock pools
+// Close stops the background jobs (StartAuditListIndexBuild,
+// StartRolePermissionsGenerationIntegrityCheck), then closes the native read
+// pool (SetNativeReadPool), the lock pools
 // (SetSchedulerLockDB, SetNamedLockDB) and the request pool, releasing every
 // Postgres connection this storage opened. Call it once, after everything using
 // the storage (requests, schedulers) has stopped.
 func (ls *LocalStorage) Close() error {
-	if job := ls.auditIndexBuild; job != nil {
-		job.cancel()
-		<-job.done
+	for _, job := range []*backgroundJob{ls.auditIndexBuild, ls.rolePermIntegrity} {
+		if job != nil {
+			job.cancel()
+			<-job.done
+		}
 	}
 	if ls.nativeReads != nil {
 		ls.nativeReads.Close()

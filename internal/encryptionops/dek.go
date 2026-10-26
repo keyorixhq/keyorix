@@ -24,6 +24,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/restorejournal"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"gorm.io/gorm"
@@ -98,6 +99,11 @@ func missingKeysError(cfg *config.Config, baseDir string) error {
 func InitLocalKeyOpService(cfg *config.Config, baseDir, passphrase string, createKeys bool) (*encryption.Service, error) {
 	service := encryption.NewService(&cfg.Storage.Encryption, baseDir)
 	if createKeys {
+		// Generating missing key files beside an unresolved restore would
+		// complete a half-installed set with keys that never wrapped its data.
+		if err := restorejournal.RefuseIfPresent(cfg); err != nil {
+			return nil, err
+		}
 		if err := service.AcquireExclusiveKeyLock(); err != nil {
 			return nil, fmt.Errorf("%w — a live server or an in-progress key operation is using this key directory; stop it or wait for it to finish, then retry", err)
 		}
@@ -141,6 +147,23 @@ func openKeyWriter(cfg *config.Config, baseDir, passphrase, what string) (*encry
 	if err != nil {
 		service.Shutdown()
 		return nil, nil, fmt.Errorf("failed to open database to %s: %w", what, err)
+	}
+	// An interrupted restore first (its journal names the fix, --recover): while
+	// one is unresolved the key files may be half the archive's, which the
+	// key-set check below would report as a mixed set with the wrong remedy,
+	// and a key write would land on files --recover is about to replace.
+	if err := restorejournal.RefuseIfPresent(cfg); err != nil {
+		closeGormDB(db)
+		service.Shutdown()
+		return nil, nil, fmt.Errorf("refusing to %s: %w", what, err)
+	}
+	// The key-set manifest step (#2900) under the same lock: refuse a partial,
+	// mixed or incoherent set before writing to it, and finish an interrupted
+	// rotate-kek the manifest proves finishable, exactly as server boot does.
+	if err := service.ReconcileKeySet(); err != nil {
+		closeGormDB(db)
+		service.Shutdown()
+		return nil, nil, fmt.Errorf("refusing to %s: %w", what, err)
 	}
 	// Heal an interrupted PRIOR rotation BEFORE Initialize, so Initialize loads the
 	// correct (possibly just-promoted) active DEK: promote dek.key.pending when the

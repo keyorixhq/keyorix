@@ -39,9 +39,9 @@ func TestProvisionSCIMGroup_PartialMemberFailureRollsBackGroup(t *testing.T) {
 	require.NoError(t, db.Create(&models.User{ID: 1, Username: "alice", IsActive: true, AccountState: AccountActive, ExternalID: "okta|alice"}).Error)
 	require.NoError(t, db.Create(&models.User{ID: 2, Username: "bob", IsActive: true, AccountState: AccountActive, ExternalID: "okta|bob"}).Error)
 
-	base := c.storage
+	base := c.StorageForTesting()
 	armed := true
-	c.storage = failOnceAddUserToGroupStorage(base, 2, &armed)
+	c = NewKeyorixCore(failOnceAddUserToGroupStorage(base, 2, &armed))
 
 	_, err := c.ProvisionSCIMGroup(ctx, 9, "Engineering", []uint{1, 2})
 	require.Error(t, err)

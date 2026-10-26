@@ -19,40 +19,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/rules"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
-
-// PATRestriction bounds what a request authenticated by a personal access token
-// (ADR-042) may do, independent of — and intersected with — the owning user's own
-// permissions. It is a least-privilege FILTER: it can only narrow a token below
-// its owner, never grant the owner anything extra. The owner's live role
-// resolution still runs after this check, so a restriction listing a permission
-// the owner has since lost grants nothing.
-type PATRestriction struct {
-	// Permissions, when non-empty, is the exhaustive allowlist of permission
-	// strings the token may exercise. Empty = inherit the owner's full set. An
-	// entry may be an exact permission ("secrets.read"), the catch-all "*", or a
-	// prefix wildcard ("secrets.*").
-	Permissions []string
-	// ProjectID, when non-zero, restricts the token to that project's scope;
-	// any check at a different project — or at global/system scope (project 0) —
-	// is denied. Zero = any scope the owner can reach.
-	ProjectID uint
-	// EnvironmentID, when non-zero, further restricts the token to that one
-	// environment: any check whose resolved scope is a different environment — or a
-	// project-level/global scope (environment 0) — is denied. Environment ids are
-	// globally unique, so this confines the token to that env's project too. Zero =
-	// any environment. (Secret-level checks carry the secret's environment; broader
-	// project-level operations resolve environment 0 and so are denied for an
-	// environment-scoped token — correct least privilege for, e.g., a staging-only
-	// CI credential.)
-	EnvironmentID uint
-	// AllowedCIDRs, when non-empty, restricts the token to requests whose source IP falls
-	// within one of the listed CIDR blocks. Enforced at the auth boundary (fail-closed: an
-	// undeterminable/unparseable source IP is denied). Empty = no network restriction.
-	AllowedCIDRs []string
-}
 
 // MachineTokenRestriction carries the network-level constraints a machine
 // identity credential may impose. When AllowedCIDRs is non-empty, the
@@ -77,37 +47,6 @@ func IPInCIDRs(ip string, cidrs []string) bool {
 			continue
 		}
 		if network.Contains(addr) {
-			return true
-		}
-	}
-	return false
-}
-
-// Allows reports whether this restriction permits exercising permission at scope.
-// A nil restriction (no PAT, or an unrestricted PAT) is handled by the caller.
-func (r *PATRestriction) Allows(permission string, scope Scope) bool {
-	if r == nil {
-		return true
-	}
-	// A project-scoped token may act ONLY within its project. A check at global
-	// scope (ProjectID 0 — system-wide actions like users.read) is therefore
-	// denied for a project-scoped token: it is not a system credential.
-	if r.ProjectID != 0 && scope.ProjectID != r.ProjectID {
-		return false
-	}
-	// An environment-scoped token may act ONLY within its environment; a check at a
-	// different (or project-level/global) environment is denied.
-	if r.EnvironmentID != 0 && scope.EnvironmentID != r.EnvironmentID {
-		return false
-	}
-	if len(r.Permissions) == 0 {
-		return true
-	}
-	for _, p := range r.Permissions {
-		if p == "*" || p == permission {
-			return true
-		}
-		if strings.HasSuffix(p, ".*") && strings.HasPrefix(permission, strings.TrimSuffix(p, "*")) {
 			return true
 		}
 	}
@@ -161,9 +100,9 @@ func sessionAuthFromContext(ctx context.Context) bool {
 }
 
 // Scope identifies the project/environment an authorization check or a role
-// assignment applies to. It aliases storage.Scope so the same 0 = global
+// assignment applies to. It aliases rules.Scope (= storage.Scope) so the same 0 = global
 // sentinel flows from the HTTP layer through to the queries unchanged.
-type Scope = storage.Scope
+type Scope = rules.Scope
 
 // adminRoleNames are roles that bypass the per-permission check at the scope
 // they are assigned. A global (project 0) admin therefore bypasses everywhere;

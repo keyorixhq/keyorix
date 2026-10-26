@@ -188,6 +188,12 @@ const (
 	N90 GetComplianceCredentialTrendsParamsDays = 90
 )
 
+// Defines values for GetCryptoInventoryParamsFormat.
+const (
+	Cbom GetCryptoInventoryParamsFormat = "cbom"
+	Json GetCryptoInventoryParamsFormat = "json"
+)
+
 // Defines values for CreateDynamicSecretConfigJSONBodyClassification.
 const (
 	CreateDynamicSecretConfigJSONBodyClassificationConfidential CreateDynamicSecretConfigJSONBodyClassification = "confidential"
@@ -1648,6 +1654,14 @@ type GetComplianceCredentialTrendsParams struct {
 
 // GetComplianceCredentialTrendsParamsDays defines parameters for GetComplianceCredentialTrends.
 type GetComplianceCredentialTrendsParamsDays int
+
+// GetCryptoInventoryParams defines parameters for GetCryptoInventory.
+type GetCryptoInventoryParams struct {
+	Format *GetCryptoInventoryParamsFormat `form:"format,omitempty" json:"format,omitempty"`
+}
+
+// GetCryptoInventoryParamsFormat defines parameters for GetCryptoInventory.
+type GetCryptoInventoryParamsFormat string
 
 // VerifyComplianceEvidenceJSONBody defines parameters for VerifyComplianceEvidence.
 type VerifyComplianceEvidenceJSONBody struct {

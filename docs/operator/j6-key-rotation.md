@@ -60,8 +60,11 @@ fingerprint in `system_metadata`, not key material), and every replica checks it
    it first fences encrypted writes on every replica, waits about 10 seconds,
    then re-encrypts with the encrypted tables locked against writes (reads
    continue) and records the new epoch in the same transaction.
-4. Copy the new `dek.key` (and `kek.salt` with the password provider) from that
-   host to every other replica's key directory. With the Helm chart's Secret mode,
+4. Copy the new `dek.key` (and `kek.salt` with the password provider) **and
+   `keyset.manifest.json`** from that host to every other replica's key directory,
+   or copy the whole key directory. The manifest records the new DEK; a replica that
+   gets the key files without it refuses to start ("key material does not match the
+   key-set manifest"). With the Helm chart's Secret mode,
    rotate in a workspace and publish the result as a new key Secret instead
    (`admin encryption key-secret unpack` / `export`; procedure and crash recovery in
    [multi-replica-keys.md, "Rotation in Secret mode"](../multi-replica-keys.md#rotation-in-secret-mode)).
@@ -77,8 +80,8 @@ refusing to start: this server's DEK is not the DEK the database is encrypted un
 the database's DEK epoch is "…", this server's DEK fingerprint is "…". …
 ```
 
-Copy the current key files to it and start it again. Nothing was written under
-the old DEK. A replica that was left running (`rotate --force`, or a lost presence
+Copy the current key files, `keyset.manifest.json` included (or the whole key
+directory), to it and start it again. Nothing was written under the old DEK. A replica that was left running (`rotate --force`, or a lost presence
 lock) refuses encrypted writes (`encryption refused: this server cannot confirm
 that its DEK is the database's current DEK …`) within a few seconds of the
 fence and keeps serving reads and revocations; restart it with the new key files.

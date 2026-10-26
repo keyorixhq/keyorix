@@ -42,7 +42,8 @@ Client IP is the TCP peer unless `server.http.trusted_proxies` names the peer
 | Endpoint | Limiter | Setting | Default | Test |
 |---|---|---|---|---|
 | Any `/api/v1/*` bearer credential (session, PAT, machine token, OIDC/Kubernetes JWT) | failed-token budget | fixed | 10, then 1/s | `server/http/failure_budget_routes_test.go:TestBearerTokenGuessingThrottledThroughRouter`, `server/middleware/rate_limit_test.go:TestIPFailureLimiter_StillEnforcesBudget` |
-| OIDC federation: unknown-`kid` JWKS refetch (outbound amplification) | per issuer | fixed `jwksMinRefetchInterval` | 1/min | `internal/core/oidc_jwks_test.go:TestHTTPJWKSResolver_UnknownKidRefetchRateLimited`, `internal/core/oidc_jwks_test.go:TestHTTPJWKSResolver_ColdCacheRefetchRateLimited` |
+| OIDC federation: unknown-`kid` JWKS refetch (outbound amplification) | per issuer | fixed `jwksMinRefetchInterval` | 1/min | `internal/oidcverify/oidc_jwks_test.go:TestHTTPJWKSResolver_UnknownKidRefetchRateLimited`, `internal/oidcverify/oidc_jwks_test.go:TestHTTPJWKSResolver_ColdCacheRefetchRateLimited` |
+| `POST /auth/change-password`, `PUT /auth/profile` (email change; current password re-checked) | login budget (shared with `/auth/login`) + account lockout | as login | 10 failures per 15 min per IP; lockout on | `server/http/account_current_password_budget_router_test.go:TestChangePassword_CurrentPasswordBudgetThroughRouter`, `server/http/account_current_password_budget_router_test.go:TestUpdateProfile_CurrentPasswordBudgetThroughRouter`, `internal/core/account_current_password_lockout_test.go:TestCurrentPassword_WrongGuessesLockTheAccount` |
 | `POST /auth/mfa/stepup`, WebAuthn re-auth, MFA disable / recovery-code regenerate (second factor re-checked) | account lockout | `security.login_lockout.*` | on | `internal/core/mfa_stepup_test.go:TestVerifyMFAStepUp_AccountLocked`, `internal/core/mfa_test.go:TestDisableMFA_FailedCodesFeedAccountLockout`, `internal/core/mfa_test.go:TestRegenerateMFARecoveryCodes_FailedCodesFeedAccountLockout` |
 | Real server: bearer guessing gets 429; idempotent `/system/init` after init never throttled | built `keyorix-server`, SQLite | as above | as above | `scripts/e2e/rate_limits_test.go:TestRateLimits_SQLite` |
 | Per-principal request budget (nuisance backstop, not an authz boundary) | `PrincipalRateLimit` | `server.http.ratelimit.*` | off | `server/middleware/rate_limit_test.go:TestPrincipalRateLimit_EnforcesPerPrincipalBudget` |
@@ -56,12 +57,6 @@ Client IP is the TCP peer unless `server.http.trusted_proxies` names the peer
 
 ## Gaps (reported, not changed here)
 
-- **`POST /auth/change-password` and `PUT /auth/profile` (email change)** check the
-  caller's current password with `bcrypt.CompareHashAndPassword` and feed neither the
-  account lockout nor a budget (`internal/core/account.go` `ChangePassword`,
-  `UpdateProfile`). Someone holding a stolen session can guess the account's password
-  at the per-principal budget's rate, which is off by default. Owned by the auth
-  handler work (FIX-3277); recorded in the HARDEN-HTTP-1 session report.
 - The per-principal budgets (`server.http.ratelimit`, `server.grpc.ratelimit`) are off
   by default; the server warns at start. The failed-token and failure budgets are in
   memory and per replica: N replicas allow N times the budget (the login budget and

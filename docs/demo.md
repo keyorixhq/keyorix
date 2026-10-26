@@ -124,6 +124,12 @@ off-hours setting, and revokes or deletes the actors the scenarios created.
 Check it works: `scripts/demo/anomaly-check.sh` asserts that the seed is calm, that each scenario
 produces its evidence, and that each reset returns to zero open anomalies.
 
+Readiness walk of the running native demo: `scripts/demo/check.sh --url http://127.0.0.1:18490 --no-ui`.
+It finds `.demo-native/state.env` by itself (the file whose `DEMO_URL` matches `--url`), or take
+`--state FILE`. On a fresh demo it is strict: any open anomaly alert, or a second compliance gap,
+fails. After reads or scenarios have run, add `--used`: open `new_user`/`new_ip` alerts from those
+reads are then a printed WARN (exit 0), while any other alert still fails.
+
 ## 4. Scenario catalogue
 
 Each scenario is a repeatable script (`scripts/demo/scenario-<name>.sh`, secrets never on a command

@@ -515,17 +515,43 @@ on a config without the key reports the same state as "looks like a brand-new in
 
 ```
 key file consistency: key material is an incomplete set: present (<files>); missing (<files>) — this is not a state any provisioning path produces; restore the full set from one backup, or remove the partial files and let first-boot generation recreate them
-key file consistency: key material group looks mixed from different generations: <files> — this is a BEST-EFFORT mtime heuristic ...
+key file consistency: key material does not match the key-set manifest <dir>/keyset.manifest.json: <file> (recorded by <operation> at generation <n>) — these files come from a different generation than the rest of the set ...
 ```
 
-**Match:** `key material is an incomplete set`, `key material group looks mixed from different generations`
+**Match:** `key material is an incomplete set`, `key material does not match the key-set manifest`
 
-**Cause.** Only some files of one key set are present, or their modification times differ by
-more than the tolerance (typically a partial restore, or a backup of one file taken
-before a rotation). **Fix.** Restore the whole set from one backup. If the files really
-belong together (the second message is a heuristic), `touch` them to a common time.
-"Remove the partial files and let first boot recreate them" is only right on an install that
-has **no data yet**. **In place:** no.
+**Cause.** Only some files of one key set are present, or a file's content matches neither the
+hash the key-set manifest (`keyset.manifest.json`, next to the DEK) records for it nor a staged
+one: it comes from another backup or generation (typically a partial restore, one file copied in
+from an older backup, or a key operation run with an older `keyorix-server` binary that does not
+maintain the manifest). The check compares content, so how the files were copied (`cp`, `kubectl
+cp`, `rsync`) and their modification times play no part. **Fix.** Restore the whole set from one
+backup with `keyorix-server admin restore` (it records a new manifest). If you replaced the named
+files deliberately and they do belong together, remove `keyset.manifest.json`: the next start
+adopts the current files with a WARN and an `encryption.keyset_manifest_adopted` audit event. "Remove the
+partial files and let first boot recreate them" is only right on an install that has **no data
+yet**. **In place:** no.
+
+### Key operation interrupted mid-commit — from code
+
+```
+key file consistency: key material is incoherent: an interrupted <operation> (generation <n> in the key-set manifest <dir>/keyset.manifest.json) already replaced <files> but not <files>, and no staging file holds the content it was about to write ...
+```
+
+**Match:** `key material is incoherent`
+
+**Cause.** A key operation (rotate-kek, rotate, migrate-provider) was interrupted after it had replaced
+some of the active key files and before the rest, and boot cannot complete it: the key-set
+manifest records the content each file was about to get, and no staging file holds it. The
+active files belong to two generations, so the first decrypt would fail. (An interrupted
+rotate-kek whose `kek.salt.pending` is intact is **not** refused: the server finishes the
+rename at boot, logs a WARN, records an `encryption.keyset_rotation_finished` audit event,
+and from then on the master passphrase is the **new** one given to rotate-kek. A rotation
+interrupted before it changed any active file only logs that its staging files can be
+deleted.) An interrupted `admin restore` is not reported here: it installs its key files and
+the key-set manifest through its restore journal, and the journal check below runs first.
+**Fix.** Re-run the operation, or restore the whole set from one backup with `keyorix-server
+admin restore --overwrite-existing`. **In place:** no.
 
 ### Interrupted restore — from code
 
@@ -537,11 +563,15 @@ an interrupted `admin restore` left its journal at <dir>/.keyorix-restore-journa
 
 **Cause.** An `admin restore` was killed (or failed to install a file) after it staged the
 archive's key files and data, so the key files and the data may be from different points in
-time. `admin backup` and a new `admin restore` refuse with the same message. **Fix.** Stop
+time. `admin backup`, a new `admin restore` and the key operations that write key files
+(`admin encryption rotate`, `rotate-kek`, `upgrade-aad`, `migrate-provider`, `init`) refuse with
+the same message. This check runs before the key-set checks above, so a half-installed restore
+is reported here, not as a mixed or incomplete key set. **Fix.** Stop
 every server on this data and run `keyorix-server admin restore --recover`: it rolls the
 restore forward if its data was committed and back otherwise, and refuses (changing
 nothing) when a staged key file is missing or altered
-([restore-failure-modes.md](restore-failure-modes.md)). Run it with the same config and
+([restore-failure-modes.md](restore-failure-modes.md)). Rolling forward also installs the
+restored set's `keyset.manifest.json`, so the next start's key-set check passes. Run it with the same config and
 working directory as the restore. Do not delete the journal by hand.
 **In place:** yes, `--recover`.
 

@@ -663,9 +663,9 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if err := alterAnomalyAlerts(db, exec); err != nil {
 		return err
 	}
-	if err := alterSecretAccessLogIndexes(db, exec); err != nil {
-		return err
-	}
+	// models.SecretAccessLog's indexes (store.SecretAccessLogIndexes) are built by
+	// the audit index step after this migration (SQLite: migrateSQLite;
+	// Postgres: ensureAuditListIndexesPostgres, CONCURRENTLY), not here.
 
 	if err := alterUsers(db, exec); err != nil {
 		return err

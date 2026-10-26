@@ -194,7 +194,7 @@ func TestAuditCheckpointLaunder_TailPathRefusesAfterNewerCheckpointsDeleted(t *t
 
 func newLaunderPG(t *testing.T) (*KeyorixCore, *gorm.DB, *incrClock, string) {
 	t.Helper()
-	dsn := pgIsolatedSchemaDSN(t, pgTestDSN(t))
+	dsn := pgJobLockDSN(t)
 	db := pgOpen(t, dsn)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.AuditCheckpoint{}, &models.SystemMetadata{}, &models.LegalHold{},

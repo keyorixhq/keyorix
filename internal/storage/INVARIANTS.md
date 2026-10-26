@@ -14,9 +14,16 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   explicitly covers the older binary (INV-STORAGE-04). With no floor recorded, the refusal is
   unconditional. Why: ADR-097, ADR-101. Guard: `TestSchemaEpoch_NewerRecordedEpoch_RefusesToStart`,
   `TestSchemaEpochFloor_RefusesOutsideSupportedRange/db_epoch_above_binary,_no_floor_recorded`.
-- **INV-STORAGE-02** `currentSchemaEpoch` (now 3: 2 for `secret_nodes.purge_at`, #3021, floor raised to 2; 3 for the additive `pending_audit_events`, floor stays 2) has not silently bumped without the
-  accompanying ADR-101 compatibility-floor work landing — this is a deliberate tripwire, not a
-  claim that raising the epoch is wrong. Guard: `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_Is7_SeeADR101`.
+- **INV-STORAGE-02** `currentSchemaEpoch` and `minCompatibleSchemaEpoch` (now epoch 7, floor 3) have not
+  silently changed without the accompanying ADR-101 compatibility-floor work landing — this is a
+  deliberate tripwire, not a claim that raising the epoch is wrong. History: 2 for
+  `secret_nodes.purge_at` (#3021, floor raised to 2); 3 for `pending_audit_events` and the HA-READY-1
+  formats, one epoch (floor raised to 3: a v0.96.x binary refuses to start); 4 for the machine-identity
+  cascade marker (#3433, floor stays 3); 5 for the break-glass degraded columns (floor stays 3); 6 for `audit_events.request_id` (floor stays 3); 7 for `roles.assignable_scope` (#3546, floor stays 3). The
+  numbers in the parentheses are checked against the constants, not trusted. Guard:
+  `schema_epoch_tripwire_test.go:TestCurrentSchemaEpoch_Is7_SeeADR101` (pins both constants),
+  `invariants_schema_epoch_text_test.go:TestInvariantsStorage02_QuotesTheCodesEpochAndFloor` (this
+  sentence says what the constants say).
 - **INV-STORAGE-03** A corrupt (non-integer) `schema_epoch` value in `system_metadata` fails
   closed (refuses boot), not proceed silently. Why: ADR-097 "Corrupt value" section. Guard:
   `factory_schema_epoch_corrupt_test.go` (`TestSchemaEpoch_CorruptValueShapes_MigrateDatabaseRefuses`,
@@ -93,15 +100,18 @@ Format: `INV-STORAGE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue
   created by migration. Guard: `factory_break_glass_index_test.go:TestBreakGlassActiveIndex_CreatedByMigration`.
 - **INV-STORAGE-14** Companion/sibling indexes are created on upgrade, not only fresh install.
   Guard: `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade`.
-- **INV-STORAGE-36** The anomaly hot-path indexes — `idx_anomaly_alerts_dedup` (matching
-  `CreateAnomalyAlert`'s dedup predicate), `idx_secret_access_logs_secret_time`,
-  `idx_secret_access_logs_access_time` — exist on a fresh install (struct tags) AND converge on
-  an upgraded one (`CREATE INDEX IF NOT EXISTS` in `migrateDatabase`), on both dialects. They
-  are additive, so no schema-epoch bump. Why: PERF-2 performance study (the dedup count was
-  the single most expensive query; per-secret access-log reads full-scanned). Guard:
-  `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade` (SQLite),
-  `factory_anomaly_index_postgres_test.go:TestAnomalyIndexes_Postgres_CreatedOnUpgrade`
-  (pg-gated).
+- **INV-STORAGE-36** The anomaly hot-path index `idx_anomaly_alerts_dedup` (matching
+  `CreateAnomalyAlert`'s dedup predicate) exists on a fresh install (struct tags) AND converges on
+  an upgraded one (`CREATE INDEX IF NOT EXISTS` in `migrateDatabase`), on both dialects. The
+  `secret_access_logs` indexes (`idx_secret_access_logs_secret_time_action`; plus the BRIN
+  `idx_secret_access_logs_access_time_brin` on Postgres, the btree `idx_secret_access_logs_access_time`
+  on SQLite) are built by the audit index step (`store.SecretAccessLogIndexes*`), `CREATE INDEX
+  CONCURRENTLY` on Postgres, and the three older ones are dropped once the new ones are valid
+  (PERF-INDEX-1). All additive for an older binary, so no schema-epoch bump. Why: PERF-2
+  performance study (the dedup count was the single most expensive query; per-secret access-log
+  reads full-scanned). Guard: `factory_companion_index_test.go:TestCompanionIndexes_CreatedOnUpgrade`
+  (SQLite), `factory_anomaly_index_postgres_test.go:TestAnomalyIndexes_Postgres_CreatedOnUpgrade`
+  (pg-gated), `factory_secret_access_log_indexes_test.go` (both dialects).
 
 ## Backfills and fatal-migration discipline
 

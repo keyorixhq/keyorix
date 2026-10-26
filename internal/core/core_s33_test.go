@@ -139,7 +139,7 @@ func TestRevokeAssignmentGrants_ValidJSON_RemoveFails(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	// RemoveProjectMember calls GetUserRoleIDsExact.
-	ms.On("GetUserRoleIDsExact", mock.Anything, uint(5), mock.AnythingOfType("storage.Scope")).Return([]uint{}, nil)
+	ms.On("GetUserRoleIDsExact", mock.Anything, uint(5), mock.AnythingOfType("rules.Scope")).Return([]uint{}, nil)
 	// With empty existing roles, RemoveProjectMember returns "user is not a member"
 	// which feeds the auditProjectScoped path.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
@@ -170,7 +170,7 @@ func TestAssignGroupRoleWithExpiry_Success(t *testing.T) {
 	ms.On("GetRole", mock.Anything, uint(2)).Return(role, nil)
 	// requireGroupGrantNoSoDViolation: ListSoDPolicies stub returns nil → OK
 	ms.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
-	ms.On("AssignRoleToGroupWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope"), mock.AnythingOfType("time.Time")).Return(nil)
+	ms.On("AssignRoleToGroupWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope"), mock.AnythingOfType("time.Time")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 	err := c.AssignGroupRoleWithExpiry(context.Background(), 0, 1, 2, Scope{}, time.Now().Add(time.Hour), false)
@@ -220,7 +220,7 @@ func TestAssignRoleToUser_Success(t *testing.T) {
 	// requireNoSoDViolation: ListSoDPolicies smart stub = nil → OK
 	// assignUserRoleSystemGrant calls AssignRole
 	ms.On("GetRole", mock.Anything, uint(3)).Return(&models.Role{ID: 3, Name: "test-role-3", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
-	ms.On("AssignRole", mock.Anything, uint(5), uint(3), mock.AnythingOfType("storage.Scope")).Return(nil)
+	ms.On("AssignRole", mock.Anything, uint(5), uint(3), mock.AnythingOfType("rules.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 	// AssignRoleToUser(ctx, userEmail, roleName) — no actorID
@@ -249,7 +249,7 @@ func TestRemoveRoleFromUser_Success(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "viewer").Return(&models.Role{ID: 3, Name: "viewer"}, nil)
 	// RemoveUserRole: adminIDs is empty → calls RemoveRole
-	ms.On("RemoveRole", mock.Anything, uint(5), uint(3), mock.AnythingOfType("storage.Scope")).Return(nil)
+	ms.On("RemoveRole", mock.Anything, uint(5), uint(3), mock.AnythingOfType("rules.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	// evictUserSessionCache: evicts the removed-role user's cached sessions.
 	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(5)).Return([]string{}, nil)

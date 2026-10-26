@@ -29,7 +29,7 @@ integrity; ENS).
 - **Signing primitives.** Internal integrity uses **HMAC** (DEK-derived, `<keyVersion>:<hmac>`)
   for evidence packs and audit checkpoints (`internal/core/evidence_signing.go`,
   `audit_checkpoint.go`) — symmetric, server-held. `ed25519` is already a dependency
-  (OIDC JWKS, `internal/core/oidc_jwks.go`).
+  (OIDC JWKS, `internal/oidcverify/oidc_jwks.go`).
 - **Offline awareness.** `internal/cli/offline` detects connectivity but does not handle
   bundles or licensing.
 - **Release pipeline.** `release.yml` already emits `checksums.txt` (SHA-256) and packages

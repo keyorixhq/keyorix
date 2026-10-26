@@ -342,18 +342,18 @@ which restore refuses without `--overwrite-existing`).
 
 Restore refuses a non-empty target by default — the normal flow is restoring
 into a fresh database, not overwriting a live one. `--overwrite-existing` lets it
-proceed past that check, and what it then does depends on the backend: on SQLite
-the existing database file and key files are moved aside
-(`*.pre-restore-<timestamp>`); on PostgreSQL only the key files are, and the rows
-are loaded into the tables that already exist, so over a database that holds data
-the restore fails on a duplicate key (`duplicate key value violates unique constraint
-"permissions_pkey"`) and leaves the rows unchanged. **By then the key files have
-already been replaced by the archive's**: if the DEK was rotated after that backup,
-the running install can no longer decrypt (reproduced: MFA logins fail with HTTP 503).
-Move the newest `dek.key.pre-restore-*` and `kek.salt.pre-restore-*` back over
-`dek.key` and `kek.salt` to recover. To restore over a used PostgreSQL database, empty
-it first and then restore with `--overwrite-existing`, which the existing key files
-still need:
+proceed past that check: the existing key files and `keyset.manifest.json` (and, on
+SQLite, the database file) are moved aside as `*.pre-restore-<timestamp>`; on
+PostgreSQL the target's tables are emptied inside the load transaction and the
+archive's rows loaded in their place. **The replaced PostgreSQL rows are not kept
+anywhere**: take an `admin backup` of the target first if you may want them back. The
+key files and the data are installed together or not at all: a load that fails leaves
+the old rows, key files and manifest as they were ("If the restore is interrupted"
+below). Builds without #3583 (v0.96.x among them) did neither: they loaded into the
+existing tables, failed on the first duplicate key, and had already replaced the key
+files (move the newest `dek.key.pre-restore-*` and `kek.salt.pre-restore-*` back to
+recover). With such a binary, for example in a rollback, empty the database first and
+then restore with `--overwrite-existing`, which the existing key files still need:
 
 ```sh
 docker compose stop backend

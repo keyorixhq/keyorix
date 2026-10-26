@@ -1,46 +1,23 @@
 // consistency.go — the boot-time key-file-set consistency check (ADR-112,
-// follow-up from #2400). #2400 made a single RESTORE operation atomic: every
-// file in the key-material set it installs is either all written or none
-// are. What it does not (and cannot) catch is a set assembled across
-// MULTIPLE operations — a second, partial restore; a manually copied-in
-// file; one file restored from an older backup than its neighbors. This
-// file adds the missing boot-time check for exactly that.
+// follow-up from #2400, completed by #2900). #2400 made a single RESTORE
+// operation stage its whole file set before installing any of it. What it
+// does not (and cannot) catch is a set assembled across MULTIPLE operations —
+// a second, partial restore; a manually copied-in file; one file restored
+// from an older backup than its neighbors. This file is the boot-time check
+// for exactly that: presence/absence from os.Stat, generation membership from
+// the key-set manifest (manifest.go).
 package keyfiles
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/keyorixhq/keyorix/internal/config"
 )
-
-// keySetMtimeTolerance is how far apart two files WITHIN THE SAME key-file
-// group (see keyEstablishingGroups) may be modified before
-// VerifyKeySetConsistency flags the group as mixed from different
-// generations. Generous on purpose: every legitimate path that writes a whole
-// group together writes it within one operation, seconds apart at most.
-//
-// BEST-EFFORT, and deliberately not claimed as a guarantee anywhere —
-// docs/adr-conformance-enforced.d/ only asserts the presence/absence half.
-// An mtime gap is weak evidence in BOTH directions:
-//
-//   - A set genuinely assembled from two different backups usually shows NO
-//     gap. `cp`, `install`, `docker cp` and `kubectl cp` all stamp the
-//     destination with the current time, so the most common ways an operator
-//     hand-assembles a key directory erase exactly the signal this looks for.
-//     (`cp -p`, `rsync -a` and `tar -xp` do preserve mtimes, which is the
-//     narrow case where it helps.)
-//   - mtime is freely writable by anyone who can write the file, so it is no
-//     evidence at all against a deliberate attacker.
-//
-// So this catches an honest mistake in a preserving-copy workflow, and
-// nothing more. The real fix is an atomically written key-set manifest
-// (generation id plus per-file hash) verified at boot — see #2900 — which
-// does not depend on filesystem metadata at all.
-const keySetMtimeTolerance = 24 * time.Hour
 
 // allProviders returns the primary key provider followed by its fallbacks.
 // It deliberately appends without a precomputed capacity: a `1+len(...)`
@@ -112,226 +89,262 @@ func RequiredKeyFilePaths(enc *config.EncryptionConfig, baseDir string) ([]strin
 	return paths, nil
 }
 
-// keyFileGroup is a set of key files that one provisioning operation writes
-// TOGETHER, and whose members therefore have no legitimate reason to differ
-// in age. label names the group for the error message.
-type keyFileGroup struct {
-	label string
-	paths []string
+// KeySetFile is one present required key file as boot sees it.
+type KeySetFile struct {
+	Path string // full path
+	Key  string // its name in the manifest
+	// Recorded: the manifest has an entry for it. MatchesRecorded: its content
+	// hashes to that entry. MatchesStaged: it hashes to the staged intent's
+	// hash for it (an operation that replaced it but did not commit).
+	Recorded, MatchesRecorded, MatchesStaged bool
+	Entry                                    ManifestEntry
 }
 
-// keyEstablishingGroups partitions the required key files into the groups a
-// single operation actually writes, which is what the mtime check compares
-// within.
-//
-// Grouping per OPERATION, not across the whole set, is the correction to this
-// check's first shape. Comparing every KEK-establishing file against the
-// oldest one in the set produced a false refusal on an ordinary, documented
-// rotation: commitNewKEKFiles (`keyorix-server admin encryption rotate-kek`) rewrites only
-// the salt and the DEK, so a deployment with a passphrase KEK plus a
-// KMS/TPM/Shamir fallback leaves that fallback's wrapped-key blob at its
-// original age. Weeks later the gap exceeds any tolerance and the server
-// refuses to boot, having been asked to do nothing unusual. A check that
-// fails closed on an intended operation does not make a deployment safer; it
-// gets switched off.
-//
-// The groups, and why each is one operation:
-//
-//   - the KEK salt, alone. It is written by first-boot ensureSaltExists and
-//     rewritten by commitNewKEKFiles, neither of which touches any provider
-//     blob. One member, so nothing to compare — correct, not a gap: the
-//     salt's age genuinely carries no information about any other file's.
-//   - each write-capable provider's wrapped-KEK blob, alone. Each provider
-//     re-wraps its own blob on its own schedule.
-//   - each Shamir provider's share files, together. The split writes all
-//     shares in one operation, so shares from different generations in one
-//     provider really is an inconsistent set — and this is the only group
-//     with more than one member, i.e. the only place the mtime check can
-//     still say anything.
-//
-// The DEK is excluded entirely: RotateDEKWithSweep re-wraps it under the SAME
-// KEK on its own schedule (ADR-046, or a manual `rotate-dek`) without
-// touching anything else, so its age is independent by design.
-func keyEstablishingGroups(enc *config.EncryptionConfig, baseDir string) ([]keyFileGroup, error) {
-	if enc == nil {
-		return nil, nil
-	}
-	resolveOne := func(label, path string) (string, error) {
-		if path == "" {
-			return "", nil
-		}
-		clean, err := SafePath(label, path)
-		if err != nil {
-			return "", err
-		}
-		return resolve(baseDir, clean), nil
-	}
-
-	var groups []keyFileGroup
-	saltFull, err := resolveOne("KEK salt", enc.SaltPath)
-	if err != nil {
-		return nil, err
-	}
-	if saltFull != "" {
-		groups = append(groups, keyFileGroup{label: "KEK salt", paths: []string{saltFull}})
-	}
-
-	providers := allProviders(enc)
-	for i := range providers {
-		kp := &providers[i]
-		if writeCapableProviderTypes[kp.Type] {
-			full, rerr := resolveOne(kp.Type+" wrapped KEK", kp.WrappedKeyPath)
-			if rerr != nil {
-				return nil, rerr
-			}
-			if full != "" {
-				groups = append(groups, keyFileGroup{
-					label: fmt.Sprintf("%s wrapped KEK (provider %d)", kp.Type, i),
-					paths: []string{full},
-				})
-			}
-		}
-		if kp.Type == "shamir" && len(kp.ShamirShareFiles) > 0 {
-			shares := make([]string, 0, len(kp.ShamirShareFiles))
-			for j, share := range kp.ShamirShareFiles {
-				full, rerr := resolveOne(fmt.Sprintf("shamir share file [%d]", j), share)
-				if rerr != nil {
-					return nil, rerr
-				}
-				if full != "" {
-					shares = append(shares, full)
-				}
-			}
-			if len(shares) > 0 {
-				groups = append(groups, keyFileGroup{
-					label: fmt.Sprintf("shamir share set (provider %d)", i),
-					paths: shares,
-				})
-			}
-		}
-	}
-	return groups, nil
+// KeySetState is what InspectKeySet found.
+type KeySetState struct {
+	ManifestPath string
+	// Fresh: no required file exists (a first boot is about to create them).
+	Fresh bool
+	// Manifest is nil when ManifestErr is set (it wraps ErrManifestMissing or
+	// ErrManifestInvalid).
+	Manifest    *Manifest
+	ManifestErr error
+	Files       []KeySetFile
+	// Intent classifies the manifest's staged operation (IntentNone when there
+	// is none); Finish lists the renames that complete a finishable one.
+	Intent IntentState
+	Finish []FinishRename
+	// Leftovers are "<required file>.pending" staging files present on disk.
+	Leftovers []string
+	// Unrecorded are present required files the manifest has no entry for and
+	// no staged hash matching (a provider added to the config after the
+	// manifest was written). ReconcileKeySet adopts them.
+	Unrecorded []string
 }
 
-// VerifyKeySetConsistency is the boot-time key-file-set consistency check.
-// Two checks, with deliberately different strengths — and the difference is
-// the point, because only one of them is sound enough to be claimed in
-// docs/adr-conformance-enforced.d/:
+// IntentState is what boot concludes about a staged (not committed) operation.
+type IntentState int
+
+const (
+	// IntentNone: nothing is staged.
+	IntentNone IntentState = iota
+	// IntentAbandoned: the operation stopped before any active file changed
+	// (every file it names still has its recorded content). Harmless: any
+	// staging file it left (kek.salt.pending after an interrupted rotate-kek)
+	// is garbage.
+	IntentAbandoned
+	// IntentCompleted: every file it names already has the staged content;
+	// only the manifest commit is missing.
+	IntentCompleted
+	// IntentFinishable: some files have the new content and the others are
+	// still old, but each old one has a "<file>.pending" staging file holding
+	// exactly the staged content (rotate-kek interrupted between the DEK and
+	// the salt rename). Boot completes the renames.
+	IntentFinishable
+)
+
+func (s IntentState) String() string {
+	switch s {
+	case IntentAbandoned:
+		return "abandoned before it changed the active set"
+	case IntentCompleted:
+		return "completed, manifest commit missing"
+	case IntentFinishable:
+		return "interrupted mid-commit, finishable from its staging files"
+	}
+	return "none"
+}
+
+// FinishRename is one staging file boot renames into place to finish an
+// interrupted operation.
+type FinishRename struct{ From, To string }
+
+// InspectKeySet reads the key set enc describes and classifies every present
+// required file against the manifest, without writing anything and without a
+// passphrase. It returns an error — the boot refusal — for a set no
+// legitimate operation leaves behind:
 //
-//  1. PRESENCE/ABSENCE (the real guarantee). The installed key files must
-//     either ALL be present (an already-provisioned deployment) or ALL be
-//     absent (a fresh install, about to generate them) — never a PARTIAL set,
-//     which no legitimate provisioning path produces. Decidable from os.Stat
-//     alone, and unfoolable by how the files were put there.
+//   - a PARTIAL set: some required files present, some missing. Decidable
+//     from os.Stat alone, and unaffected by how the files got there.
+//   - a MIXED set: a present file whose content matches neither its recorded
+//     hash nor a staged one. The file comes from a different generation than
+//     the manifest describes (restored from another backup, copied in, or
+//     rewritten by a tool that does not maintain the manifest), whatever its
+//     mtime — cp, install, docker cp and kubectl cp all stamp the current time,
+//     which is why the mtime heuristic this replaces could not see it.
 //
-//  2. SAME-GROUP MTIME (best-effort only, NOT a guarantee). Within each group
-//     of files one operation writes together (keyEstablishingGroups), ages
-//     must fall within keySetMtimeTolerance of the group's oldest. See
-//     keySetMtimeTolerance for why this is weak evidence in both directions:
-//     plain cp/install/docker cp/kubectl cp erase the signal, and mtime is
-//     writable by anyone who can write the file. It is kept because it costs
-//     nothing and does catch an honest mistake in a preserving-copy workflow.
-//     The mixed-generation guarantee it used to be presented as is gone from
-//     the ledger (Andrei, 2026-10-06); #2900 tracks the manifest that can
-//     actually provide one.
+// A complete set with no manifest, or an unparseable one, is NOT refused:
+// every install that predates #2900 is in that state after the upgrade, and
+// refusing would brick it. ReconcileKeySet adopts it (warn-and-adopt). A
+// PARTIAL set is refused whatever the manifest says.
 //
-// A leftover "*.pending" rotation-staging sibling is deliberately NOT part of
-// the required set (RequiredKeyFilePaths never adds one, unlike Registry), so
-// an interrupted rotation cannot be misread as a partial set. The converse —
-// detecting that an interrupted rotation left the ACTIVE set incoherent, e.g.
-// commitNewKEKFiles crashing after the DEK rename but before the salt rename —
-// is out of scope here and is explicitly part of #2900: the two on-disk states
-// that matter (harmless abandoned staging vs. a DEK that no longer unwraps
-// under the on-disk salt) are indistinguishable from file presence and mtimes
-// alone, and need the manifest's per-file hashes to tell apart. Guarded by
-// TestVerifyKeySetConsistency_LeftoverPendingFiles_AreNotAPartialSet.
-//
-// Both checks fail closed, with every file path named — the ADR's own
-// wording ("fail closed with a clear message naming the files"). Called
-// unconditionally at boot (server/main.go), not gated behind
-// security.enable_file_permission_check: a partial key set is not a "weaker
-// but working" state the way that flag's other checks guard — it is already
-// broken, just not yet in a way that has surfaced.
-func VerifyKeySetConsistency(enc *config.EncryptionConfig, baseDir string) error {
+// A leftover "*.pending" rotation-staging file is never part of the required
+// set (RequiredKeyFilePaths does not add one), so it cannot make a set
+// partial.
+func InspectKeySet(enc *config.EncryptionConfig, baseDir string) (*KeySetState, error) {
 	if enc == nil {
-		return nil
+		return &KeySetState{Fresh: true}, nil
 	}
 	paths, err := RequiredKeyFilePaths(enc, baseDir)
 	if err != nil {
-		return err
+		return nil, err
 	}
+	manifestPath, err := ManifestPath(enc, baseDir)
+	if err != nil {
+		return nil, err
+	}
+	st := &KeySetState{ManifestPath: manifestPath}
 	if len(paths) == 0 {
-		return nil
+		st.Fresh = true
+		return st, nil
 	}
 
-	infos := make(map[string]os.FileInfo, len(paths))
 	var present, missing []string
 	for _, p := range paths {
-		info, statErr := os.Stat(p)
-		if statErr != nil {
+		if _, statErr := os.Stat(p); statErr != nil {
 			missing = append(missing, p)
 			continue
 		}
 		present = append(present, p)
-		infos[p] = info
 	}
-
 	if len(missing) > 0 && len(present) > 0 {
 		sort.Strings(present)
 		sort.Strings(missing)
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"key material is an incomplete set: present (%s); missing (%s) — this is not a state any "+
 				"provisioning path produces; restore the full set from one backup, or remove the partial "+
 				"files and let first-boot generation recreate them",
 			strings.Join(present, ", "), strings.Join(missing, ", "))
 	}
 	if len(present) == 0 {
-		return nil // fresh install — first-boot generation will create these shortly
+		st.Fresh = true // first-boot generation will create these shortly
+		return st, nil
 	}
 
-	groups, err := keyEstablishingGroups(enc, baseDir)
+	m, err := LoadManifest(manifestPath)
 	if err != nil {
-		return err
+		st.ManifestErr = err
+		return st, nil
 	}
-	var mismatched []string
-	for _, g := range groups {
-		if len(g.paths) < 2 {
-			continue // one file's age says nothing about any other's
+	st.Manifest = m
+
+	mdir := filepath.Dir(manifestPath)
+	var foreign []string
+	for _, p := range present {
+		h, herr := hashKeyFile(p)
+		if herr != nil {
+			return nil, fmt.Errorf("key material %s cannot be read to check it against the key-set manifest: %w", p, herr)
 		}
-		var oldestPath string
-		var oldest time.Time
-		for _, p := range g.paths {
-			info, ok := infos[p]
-			if !ok {
-				continue // not in the fully-present set checked above (defensive)
-			}
-			if oldest.IsZero() || info.ModTime().Before(oldest) {
-				oldest = info.ModTime()
-				oldestPath = p
-			}
+		f := KeySetFile{Path: p, Key: manifestKey(mdir, p)}
+		f.Entry, f.Recorded = m.Files[f.Key]
+		f.MatchesRecorded = f.Recorded && f.Entry.SHA256 == h
+		if m.Next != nil {
+			f.MatchesStaged = m.Next.Files[f.Key] == h
 		}
-		if oldestPath == "" {
+		if f.Recorded && !f.MatchesRecorded && !f.MatchesStaged {
+			foreign = append(foreign, fmt.Sprintf("%s (recorded by %s at generation %d)", p, f.Entry.Operation, f.Entry.Generation))
+		}
+		if !f.Recorded && !f.MatchesStaged {
+			st.Unrecorded = append(st.Unrecorded, p)
+		}
+		st.Files = append(st.Files, f)
+	}
+	for _, p := range paths {
+		if _, err := os.Stat(p + ".pending"); err == nil {
+			st.Leftovers = append(st.Leftovers, p+".pending")
+		}
+	}
+	if len(foreign) == 0 && m.Next != nil {
+		if err := st.classifyIntent(); err != nil {
+			return nil, err
+		}
+	}
+	if len(foreign) > 0 {
+		sort.Strings(foreign)
+		return nil, fmt.Errorf(
+			"key material does not match the key-set manifest %s: %s — these files come from a different "+
+				"generation than the rest of the set (for example restored or copied from another backup); "+
+				"restore the whole set from one backup with `keyorix-server admin restore`, which records a new "+
+				"manifest. If you replaced them deliberately with a tool that does not maintain the manifest "+
+				"(an older keyorix-server binary, see docs/UPGRADING.md), remove %s and the next start adopts "+
+				"the current files with a warning and an audit event",
+			manifestPath, strings.Join(foreign, "; "), manifestPath)
+	}
+	return st, nil
+}
+
+// VerifyKeySetConsistency is the boot-time key-file-set consistency check:
+// InspectKeySet's refusals, nothing written. Called unconditionally at boot
+// (server/main.go's bootRefusals), before initializeEncryption can generate
+// anything, and not gated behind security.enable_file_permission_check: a
+// partial or mixed key set is not a "weaker but working" state the way that
+// flag's other checks guard — it is already broken, just not yet in a way
+// that has surfaced. Every message names the files, as ADR-112 asks.
+func VerifyKeySetConsistency(enc *config.EncryptionConfig, baseDir string) error {
+	_, err := InspectKeySet(enc, baseDir)
+	return err
+}
+
+// IsManifestMissing reports whether st found no manifest at all (as opposed
+// to an unparseable one).
+func (st *KeySetState) IsManifestMissing() bool {
+	return st != nil && errors.Is(st.ManifestErr, ErrManifestMissing)
+}
+
+// classifyIntent decides what the staged operation left behind. Each file the
+// intent names is "new" when it has the staged content and "old" when it has
+// its recorded content (or has no entry and no staged match, i.e. it was never
+// recorded). All old: abandoned. All new: completed. Mixed: finishable when
+// every old file's "<file>.pending" holds exactly the staged content, and
+// otherwise refused — the active set is incoherent (some files from the new
+// generation, some from the old) and boot cannot complete it on its own.
+func (st *KeySetState) classifyIntent() error {
+	next := st.Manifest.Next
+	var newFiles, oldFiles []KeySetFile
+	for _, f := range st.Files {
+		if _, named := next.Files[f.Key]; !named {
 			continue
 		}
-		for _, p := range g.paths {
-			info, ok := infos[p]
-			if !ok {
-				continue
-			}
-			if gap := info.ModTime().Sub(oldest); gap > keySetMtimeTolerance {
-				mismatched = append(mismatched, fmt.Sprintf("%s: %s (modified %s, %s after %s)",
-					g.label, p, info.ModTime().Format(time.RFC3339), gap.Round(time.Minute), oldestPath))
-			}
+		if f.MatchesStaged {
+			newFiles = append(newFiles, f)
+		} else {
+			oldFiles = append(oldFiles, f)
 		}
 	}
-	if len(mismatched) > 0 {
-		sort.Strings(mismatched)
-		return fmt.Errorf(
-			"key material group looks mixed from different generations: %s — this is a BEST-EFFORT mtime "+
-				"heuristic (see keySetMtimeTolerance): if these files genuinely belong together, it is a "+
-				"false positive and you can touch(1) them to a common time; otherwise restore the whole "+
-				"group from a single backup",
-			strings.Join(mismatched, "; "))
+	switch {
+	case len(oldFiles) == 0:
+		st.Intent = IntentCompleted
+		return nil
+	case len(newFiles) == 0:
+		st.Intent = IntentAbandoned
+		return nil
 	}
+	var stuck []string
+	var plan []FinishRename
+	for _, f := range oldFiles {
+		staged := f.Path + ".pending"
+		h, err := hashKeyFile(staged)
+		if err != nil || h != next.Files[f.Key] {
+			stuck = append(stuck, f.Path)
+			continue
+		}
+		plan = append(plan, FinishRename{From: staged, To: f.Path})
+	}
+	if len(stuck) > 0 {
+		var done []string
+		for _, f := range newFiles {
+			done = append(done, f.Path)
+		}
+		sort.Strings(done)
+		sort.Strings(stuck)
+		return fmt.Errorf(
+			"key material is incoherent: an interrupted %s (generation %d in the key-set manifest %s) already "+
+				"replaced %s but not %s, and no staging file holds the content it was about to write — the active "+
+				"files no longer belong to one generation, so the first decrypt would fail. Re-run the operation, "+
+				"or restore the whole set from one backup with `keyorix-server admin restore --overwrite-existing`",
+			next.Operation, next.Generation, st.ManifestPath, strings.Join(done, ", "), strings.Join(stuck, ", "))
+	}
+	st.Intent = IntentFinishable
+	st.Finish = plan
 	return nil
 }

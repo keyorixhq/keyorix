@@ -133,13 +133,14 @@ func (ls *LocalStorage) PrincipalSecretFirstSeen(ctx context.Context, since time
 // filter: the anomaly detector uses this to decide which secrets to evaluate at all,
 // and its off_hours/frequency_spike/cumulative_rate rules fire on rows regardless of
 // accessor, so narrowing it here would silently drop detections. Served by
-// idx_secret_access_logs_access_time.
+// the access_time index (idx_secret_access_logs_access_time on SQLite, the BRIN
+// idx_secret_access_logs_access_time_brin on Postgres).
 func (ls *LocalStorage) ListSecretIDsAccessedSince(ctx context.Context, since time.Time) ([]uint, error) {
 	// G81 (SecretAccessLog.AccessTime): normalize internally — see GetAuditLogs.
 	//
 	// The unary plus in `DISTINCT +secret_node_id` is deliberate (a no-op on both
 	// dialects): with a bare `DISTINCT secret_node_id`, SQLite's stats-less planner
-	// prefers a full scan of idx_secret_access_logs_secret_time (already ordered by
+	// prefers a full scan of idx_secret_access_logs_secret_time_action (already ordered by
 	// secret_node_id, so DISTINCT needs no sort) over a range scan of
 	// idx_secret_access_logs_access_time — reading the whole append-only table every
 	// pass. The expression hides that ordering, so the range scan wins.

@@ -17,7 +17,7 @@ package notary
 //     a CA-chain decision. No x509.VerifyOptions/CertPool anywhere in internal/saml.
 //   - TPM/attestation: internal/crypto/tpm_provider.go seals/unseals a KEK to a TPM
 //     2.0 device — no x509 certificate of any kind involved.
-//   - OIDC/JWKS x5c: internal/core/oidc_jwks.go's parseJWK builds an *rsa.PublicKey /
+//   - OIDC/JWKS x5c: internal/oidcverify/oidc_jwks.go's parseJWK builds an *rsa.PublicKey /
 //     *ecdsa.PublicKey directly from JWK n/e or x/y coordinates. Zero "x5c" hits
 //     anywhere in the repo — no certificate chain is ever built from a JWKS.
 //   - "existing FuzzValidateWithCert": no such function exists (grepped the repo and
