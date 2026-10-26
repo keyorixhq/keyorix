@@ -23,8 +23,9 @@ import { ADMIN_USERNAME, ADMIN_PASSWORD, BACKEND_URL, apiLogin, realLogin } from
 const WEB_PORT = process.env.KEYORIX_E2E_WEB_PORT || '18190';
 const WEB_URL = `http://localhost:${WEB_PORT}`;
 
-// Seconds the fixtures stay valid. Long enough for the UI suspend, short enough to wait out.
-const EXPIRY_SECONDS = 25;
+// Seconds the fixtures stay valid, counted from after the UI login: long enough for the UI
+// suspend on a slow VM, short enough to wait out.
+const EXPIRY_SECONDS = 60;
 
 const stamp = Date.now();
 const suspendedName = `expired-suspended-${stamp}`;
@@ -96,6 +97,12 @@ test.beforeAll(async ({ browser }) => {
     const envs = await mustBearer('GET', `/api/v1/projects/${projectId}/environments`);
     const envId = envs.data.environments[0].id as number;
     envName = envs.data.environments[0].name as string;
+
+    const ctx = await browser.newContext({ baseURL: WEB_URL, viewport: { width: 1280, height: 2600 } });
+    page = await ctx.newPage();
+    await realLogin(page, ADMIN_USERNAME as string, ADMIN_PASSWORD as string);
+
+    // Created after the UI login so the login's time does not eat into the expiry window.
     const expiration = new Date(Date.now() + EXPIRY_SECONDS * 1000).toISOString();
     for (const name of [suspendedName, controlName]) {
         ids[name] = (
@@ -109,10 +116,6 @@ test.beforeAll(async ({ browser }) => {
             })
         ).data.id as number;
     }
-
-    const ctx = await browser.newContext({ baseURL: WEB_URL, viewport: { width: 1280, height: 2600 } });
-    page = await ctx.newPage();
-    await realLogin(page, ADMIN_USERNAME as string, ADMIN_PASSWORD as string);
 });
 
 test.afterEach(async () => {
