@@ -65,4 +65,6 @@ with its test when the implementation lands (design note §8).
 | TPMK-P5 | Information disclosure | An old v1 blob (no policy) in a backup bypasses PCR mode on the same TPM | Cannot be revoked; reseal into PCR mode warns and offers the DEK sweep (D9) | none possible; runbook and posture |
 | TPMK-P6 | Denial of service | PCR 7 moves after a vendor dbx update; unplanned recovery | `status` drift check with software policy prediction; runbook | TestTPMStatus_PredictedDigestMatchesTrial |
 | TPMK-P7 | Repudiation | Recovery used silently | Audit event `encryption.tpm_recovery_used` from the host command; sticky posture | TestTPMRecoveryAudit_EventAndStickyPosture |
-| TPMK-P8 | Information disclosure | Same-authority signed OS (same distro's live image) gives the same PCR 7 | Stated limit; signed-policy designs deferred | none; documented |
+| TPMK-P8 | Information disclosure | Same-authority signed OS (same distro's live image) gives the same PCR 7 | Stated limit of `secure-boot`; ADR-117 Amendment A (D10, Proposed) prefers `signed-uki` / `pcrlock`, which refuse it | none; documented |
+| TPMK-P9 | Elevation of privilege | `signed-uki`: an older signed UKI (vulnerable kernel) still unseals | Stated limit (ADR-117 D10 table); key rotation or dbx/SBAT revocation outside Keyorix; `pcrlock` revokes | none; documented |
+| TPMK-P10 | Tampering | `signed-uki`/`pcrlock` input missing or unparsable leads to sealing without policy | Refusal with the file named; no downgrade (ADR-117 D11.4) | planned with the signed modes |

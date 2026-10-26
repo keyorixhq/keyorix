@@ -22,7 +22,8 @@ In: the `tpm` key provider. Optional PCR policy, an off-TPM recovery slot, a fai
 classified unseal, recovery and reseal commands, alerting, a swtpm-based test plan, and docs.
 
 Out: remote attestation (a separate R&D item, e.g. a Keylime comparison); signed or authorized PCR policies
-(PolicyAuthorize); TPM-backed audit signing; NV-index rollback counters; Windows TPM (TBS).
+(PolicyAuthorize; now proposed in ADR-117 Amendment A and
+[design/tpm-signed-pcr-policy.md](design/tpm-signed-pcr-policy.md)); TPM-backed audit signing; NV-index rollback counters; Windows TPM (TBS).
 Where they would plug in is noted in §12.
 
 ## 2. What main does, and what a throwaway prototype showed
