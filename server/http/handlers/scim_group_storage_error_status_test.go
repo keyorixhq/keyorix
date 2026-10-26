@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"testing"
 
@@ -135,10 +136,8 @@ func (o scimGroupOp) uses(method string) bool {
 		if s.method != method {
 			continue
 		}
-		for _, n := range s.ops {
-			if n == o.name {
-				return true
-			}
+		if slices.Contains(s.ops, o.name) {
+			return true
 		}
 	}
 	return false
