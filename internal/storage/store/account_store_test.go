@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
 	"time"
@@ -16,13 +17,24 @@ import (
 )
 
 // TestMain initialises i18n once for the store test package so error paths that
-// call i18n.T (e.g. not-found lookups) do not panic.
+// call i18n.T (e.g. not-found lookups) do not panic. It also fails the package
+// when a test leaves a background job running (a storage never closed): see
+// LiveBackgroundJobs and internal/storage's TestMain (FIX-3631-RACE-1).
 func TestMain(m *testing.M) {
 	if err := i18n.InitializeForTesting(); err != nil {
 		panic(err)
 	}
 	code := m.Run()
 	i18n.ResetForTesting()
+	if leaked := LiveBackgroundJobs(); len(leaked) > 0 {
+		fmt.Fprintf(os.Stderr, "FAIL: %d storage background job(s) still running after every test returned; the test that built the storage must Close it. Started at:\n", len(leaked))
+		for _, stack := range leaked {
+			fmt.Fprintln(os.Stderr, stack)
+		}
+		if code == 0 {
+			code = 1
+		}
+	}
 	os.Exit(code)
 }
 

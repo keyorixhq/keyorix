@@ -37,7 +37,7 @@ func TestWithSchedulerLock_Postgres_SmallPool_JobsAndReadsComplete(t *testing.T)
 	cfg.Storage.Database.DSN = pgIsolatedDatabaseDSN(t, pgTestDSN(t))
 	const pool = 5
 	cfg.Storage.Database.MaxOpenConns = pool
-	st, err := NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 
 	// Bounded: on the broken shape every waiter parks in database/sql until this

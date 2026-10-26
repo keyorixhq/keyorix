@@ -1,0 +1,2 @@
+### Fixed
+- **Storage tests no longer leak the role-permission integrity check.** Tests in `internal/storage` and `internal/storage/store` that built a Postgres storage without closing it left the integrity-check goroutine running and logging for the rest of the test binary, which raced with a later test that captures log output (`-race` merge-group failure). Each such storage is now closed at test cleanup, and both packages' `TestMain` fail the run if any storage background job is still running after the last test (`store.LiveBackgroundJobs`).
