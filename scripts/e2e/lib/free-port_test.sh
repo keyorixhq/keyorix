@@ -26,8 +26,10 @@ check() { # check DESC CONDITION-EXIT-CODE
     fi
 }
 
-# listen FAMILY PORT: hold a listener in the background until cleanup.
+# listen FAMILY PORT: hold a listener in the background until cleanup. Returns 1,
+# with the listener's own error on stderr, if it cannot bind.
 listen() {
+    local pid
     python3 -I -c '
 import socket, sys, time
 fam = socket.AF_INET6 if sys.argv[1] == "6" else socket.AF_INET
@@ -37,24 +39,50 @@ s.listen(8)
 print("up", flush=True)
 time.sleep(120)
 ' "$1" "$2" >"$TMPDIR_T/listen.$1.$2" 2>&1 &
-    PIDS+=("$!")
+    pid=$!
+    PIDS+=("$pid")
     for _ in $(seq 1 50); do
         grep -q '^up' "$TMPDIR_T/listen.$1.$2" 2>/dev/null && return 0
+        kill -0 "$pid" 2>/dev/null || break # it exited: the bind failed
         sleep 0.1
     done
+    echo "listener on family $1 port $2 did not start:" >&2
+    cat "$TMPDIR_T/listen.$1.$2" >&2 || true
     return 1
 }
 
 TMPDIR_T="$(mktemp -d)"
 trap 'cleanup; rm -rf "$TMPDIR_T"' EXIT
 
-# A base well away from anything else; tests pin it so they are deterministic.
-BASE=41000
-v6_ok=0
-listen 6 $((BASE + 1)) || v6_ok=1
+# The tests pin a base so their expected ports are deterministic. It used to be a
+# fixed 41000, inside Linux's ephemeral range (32768-60999): an outgoing connection
+# of a test running in parallel could own BASE+2 as its source port, the listener
+# could not bind, and `set -e` ended the script with no output (#3353, run
+# 39745883015 root-4). The base is now drawn like a real run's (below every ephemeral
+# range), and a base whose ports some other process holds is replaced by another.
+TEST_SPAN=60 # the tests below use BASE+1..BASE+52
+BASE=""
+v6_ok=1
+for _ in 1 2 3 4 5; do
+    try="$(KEYORIX_E2E_PORT_BASE='' pick_port_base)"
+    v6_ok=0
+    listen 6 $((try + 1)) 2>/dev/null || v6_ok=1
+    if listen 4 $((try + 2)); then
+        BASE=$try
+        break
+    fi
+    echo "base $try is not usable, drawing another" >&2
+    cleanup
+    PIDS=()
+done
+[ -n "$BASE" ] || { echo "FAIL - no usable test base in 5 draws" >&2; exit 1; }
+echo "test base $BASE"
+
+# 0. #3353: the test's own ports stay below every OS ephemeral range.
+rc=0; [ $((BASE + TEST_SPAN)) -lt "$EPHEMERAL_FLOOR" ] || rc=1
+check "test ports $BASE..$((BASE + TEST_SPAN)) are below the ephemeral floor $EPHEMERAL_FLOOR" "$rc"
 
 # 1. An IPv4-only listener is seen.
-listen 4 $((BASE + 2))
 rc=0; port_in_use $((BASE + 2)) || rc=$?
 check "port_in_use sees a 127.0.0.1 listener" "$rc"
 
@@ -117,6 +145,23 @@ for _ in $(seq 1 200); do
     [ $((b + 2100)) -lt "$EPHEMERAL_FLOOR" ] || rc=1
 done
 check "200 default bases all keep the whole run below 32768" "$rc"
+
+# 9. #3353 against the host's REAL ephemeral range, where the host says what it is
+# (Linux /proc, macOS sysctl): a runner configured with a lower floor than the
+# constants assume must fail here, not as an "already in use" flake later.
+host_floor=""
+if [ -r /proc/sys/net/ipv4/ip_local_port_range ]; then
+    read -r host_floor _ </proc/sys/net/ipv4/ip_local_port_range
+elif command -v sysctl >/dev/null 2>&1; then
+    host_floor="$(sysctl -n net.inet.ip.portrange.first 2>/dev/null || true)"
+fi
+case "$host_floor" in
+'' | *[!0-9]*) echo "skip - this host does not report its ephemeral range" ;;
+*)
+    rc=0; [ "$worst" -lt "$host_floor" ] || rc=1
+    check "highest default port ($worst) is below this host's ephemeral floor $host_floor" "$rc"
+    ;;
+esac
 
 [ "$fails" = 0 ] || { echo "$fails check(s) failed" >&2; exit 1; }
 echo "all free-port checks passed"

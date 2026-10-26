@@ -4743,6 +4743,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/compliance/crypto-inventory": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Crypto inventory and quantum-risk score, optionally as a CycloneDX 1.6 CBOM (RD-CBOM-1)
+         * @description Metadata-only inventory of every key and certificate Keyorix holds or depends on (KEK, DEK, admin recovery key verifier, TLS certificates, the HKDF-derived audit-checkpoint / evidence / backup-manifest HMAC keys, WebAuthn and OIDC verification keys): type, algorithm, size, created, expiry and where it is stored. Never key material. Each asset carries a quantum-risk score (0-100) from its remaining lifetime plus migration time against the configured quantum horizon (config crypto_inventory). Requires audit.read; every successful read is audited (compliance.crypto_inventory_read). format=json (default) returns the {data} envelope; format=cbom returns a bare CycloneDX 1.6 JSON document (application/vnd.cyclonedx+json).
+         */
+        get: operations["getCryptoInventory"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/compliance/digest": {
         parameters: {
             query?: never;
@@ -5889,6 +5909,11 @@ export interface components {
             name?: string;
             description?: string;
             bypasses_permission_checks?: boolean;
+            /**
+             * @description Where the role may be granted (#3546): global = no project only, project = a project (optionally an environment of it) only, any = either.
+             * @enum {string}
+             */
+            assignable_scope?: "global" | "project" | "any";
         };
         /** @description A permission (internal/storage/models.Permission), via the handler-level permissionWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak as part of the API-hygiene casing campaign. */
         Permission: {
@@ -5904,6 +5929,8 @@ export interface components {
             name?: string;
             description?: string;
             bypasses_permission_checks?: boolean;
+            /** @enum {string} */
+            assignable_scope?: "global" | "project" | "any";
             permissions?: components["schemas"]["Permission"][];
         };
         /** @description A user's identity plus their assigned roles (internal/core.UserRoleAssignment), via the handler-level userRoleAssignmentWire type (server/http/handlers/rbac_wire.go) -- fixed from the previous bare-Go-field-name leak on the nested Roles field (its own UserID/Username/Email were already correctly tagged) as part of the API-hygiene casing campaign. */
@@ -7872,6 +7899,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
+            409: components["responses"]["Error"];
             503: components["responses"]["Error"];
         };
     };
@@ -13239,6 +13267,11 @@ export interface operations {
                     description: string;
                     /** @description Permission names. */
                     permissions: string[];
+                    /**
+                     * @description Where the role may be granted. Default project.
+                     * @enum {string}
+                     */
+                    assignable_scope?: "global" | "project" | "any";
                 };
             };
         };
@@ -13306,6 +13339,11 @@ export interface operations {
                     description?: string;
                     /** @description Replaces the role's permissions by name. */
                     permissions?: string[];
+                    /**
+                     * @description Changes where the role may be granted; existing grants are not changed.
+                     * @enum {string}
+                     */
+                    assignable_scope?: "global" | "project" | "any";
                 };
             };
         };
@@ -14456,6 +14494,29 @@ export interface operations {
                 };
                 content?: never;
             };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    getCryptoInventory: {
+        parameters: {
+            query?: {
+                format?: "json" | "cbom";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description format=json: envelope {data}. data: {generated_at, policy {horizon, migration_years, unbounded_lifetime_years}, assets[] {id, name, class, primitive, algorithm, key_size_bits, asymmetric, post_quantum, created_at, expires_at, storage, notes, risk {score, level, quantum_vulnerable, reasons[]}}, summary {total, high, medium, low, quantum_vulnerable}, warnings[], notes[]}. format=cbom: a bare CycloneDX 1.6 document. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
         };

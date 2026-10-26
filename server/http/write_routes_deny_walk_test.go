@@ -128,11 +128,8 @@ var awReadOnlyPosts = map[string]string{
 // awKnownOpen: findings the walk reports that are already fixed in an open PR. Keyed
 // "persona METHOD route", scoped to a 5xx from that one persona on that one route.
 // An entry that no longer fires is logged as stale: remove it when the fix merges.
-var awKnownOpen = map[string]string{
-	"machine_zero DELETE /api/v1/auth/tokens/expired":     "#3416 (machine token -> 403 on user-only routes)",
-	"machine_zero DELETE /api/v1/secrets/{id}/self-share": "#3416",
-	"machine_zero POST /api/v1/auth/end-impersonation":    "#3416 (impersonation handler: FIX-3277's area, fixed there)",
-}
+// Empty since #3416 (machine token -> 403 on user-only routes) merged: every 5xx is a finding.
+var awKnownOpen = map[string]string{}
 
 // awMinControlHits is the floor of routes the unrestricted admin must get a 2xx on.
 const awMinControlHits = 60

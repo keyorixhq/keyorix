@@ -1,7 +1,7 @@
 // schema_epoch_snapshot_test.go — a schema change cannot land without a
 // schema-epoch decision (ADR-097, ADR-101; REVIEW-COVERAGE-2).
 //
-// TestCurrentSchemaEpoch_Is6_SeeADR101 only fires when someone changes the
+// TestCurrentSchemaEpoch_Is7_SeeADR101 only fires when someone changes the
 // epoch constant. It is silent when the schema changes and the constant does
 // not, which is exactly how the class happened: #3215 added
 // secret_nodes.suspend_clear_synced_copies at epoch 2 (9b8fd490a) and the N-1

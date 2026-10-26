@@ -89,12 +89,6 @@ var awDeadContract = map[string]int{}
 // suspends the machine identities whose only live roles are in it.
 var awDeadOpen = map[string]string{}
 
-// awKnownOpenMachineGET: the GET routes #3416 (open) also fixes for a machine token;
-// the write walk's awKnownOpen lists the mutating ones. Remove with #3416.
-var awKnownOpenMachineGET = map[string]bool{
-	"GET /api/v1/auth/sessions": true, "GET /api/v1/auth/tokens": true, "GET /api/v1/auth/tokens/expired": true,
-}
-
 // awDeadSideTables: tables a dead-credential request may legitimately add rows to.
 var awDeadSideTables = map[string][]string{
 	"pat_expired": {"notifications"}, // the owner is told once that an expired token was presented
@@ -366,8 +360,6 @@ func awDeadWalk(t *testing.T, backend string, group int) {
 				key := fmt.Sprintf("%s/%s %s", st.name, variant, rt.key())
 				switch {
 				case awFeatureOff(code, resp):
-				case code >= 500 && st.kind == "machine" && (awKnownOpen["machine_zero "+rt.key()] != "" || awKnownOpenMachineGET[rt.key()]):
-					// #3416 (open) fixes the machine 5xx on these user-only routes.
 				case code >= 500:
 					note(key, fmt.Sprintf("%d (a 5xx is a finding by itself): %.160s", code, resp))
 				case public:

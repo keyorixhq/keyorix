@@ -106,6 +106,7 @@ var notKeyMaterialCallees = map[string]string{
 	"NewKeyProviderFromConfig": "provider object, not key bytes",
 	"newKeyProviderFromConfig": "provider object, not key bytes",
 	"NewKeyManager":            "KeyManager object",
+	"ReconcileKeySet":          "key-set manifest result (warnings, renamed paths), not key bytes",
 }
 
 // retainingCallees keep the key slice they are passed: passing v to one hands

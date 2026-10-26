@@ -22,7 +22,8 @@ Rule (same shape as test-quick's scripts/ci-test-quick.py and sbin/kaffected,
 made more conservative because this one gates main):
 
 1. FULL when any changed path is: a go.mod/go.sum/go.work/go.work.sum of any
-   module; internal/testutil/**; .github/workflows/ci.yml; scripts/ci/** (this
+   module; internal/testutil/** except _test.go files (those are test seeds,
+   rule 4); .github/workflows/ci.yml; scripts/ci/** (this
    script and the guard runner); scripts/ci-test-legs.sh or
    scripts/ci-test-quick.py (leg definitions); a generated-code input (*.proto,
    buf*.yaml, a generator program directory named gen or *gen, or a .go file
@@ -33,7 +34,8 @@ made more conservative because this one gates main):
    seed when compiled code changed (a non-test .go file, or a file the
    package's //go:embed patterns cover) and a TEST seed otherwise (a _test.go
    file, testdata/, INVARIANTS.md, ...).
-3. Every changed file is also matched against the string literals of every
+3. Every changed file is also matched against the string literals (go_literals:
+   not comments, rune literals or import paths) of every
    package's Go files: a package whose literals name the file's basename (not
    for .go files: main.go names nothing), its path, or a
    directory above it (a one-word directory such as "docs" only for files
@@ -82,8 +84,6 @@ FULL_EXACT = {
 GENERATOR_DIR = re.compile(r"(^|/)[a-z0-9_-]*gen/")
 # Separate Go modules: their files never belong to a root-module package.
 OTHER_MODULES = ("cli/", "operator/", "migrate/", "devtools/vacuum/")
-# Go string literals: interpreted "..." (with escapes) and raw `...`.
-LITERAL = re.compile(r'"((?:[^"\\\n]|\\.)*)"|`([^`]*)`')
 GLOB_CHARS = set("*?[")
 
 
@@ -122,13 +122,20 @@ def changed_files(base, head):
     return sorted({line.strip() for line in out.splitlines() if line.strip()})
 
 
+def is_testutil_test_file(f):
+    """A _test.go file under internal/testutil/ compiles into its own package's
+    test binary only (nothing imports a _test.go), so it is a test seed like
+    any other _test.go (rule 4), not a shared-helper change."""
+    return f.startswith("internal/testutil/") and f.endswith("_test.go")
+
+
 def full_reason(changed, base, head):
     for f in changed:
         if os.path.basename(f) in FULL_BASENAMES:
             return f"{f} changed (dependency graph)"
         if f in FULL_EXACT:
             return f"{f} changed (CI selection/leg definition or generated-code input)"
-        if f.startswith(FULL_PREFIXES):
+        if f.startswith(FULL_PREFIXES) and not is_testutil_test_file(f):
             return f"{f} changed (shared test helpers or CI scripts)"
         if f.endswith(".proto"):
             return f"{f} changed (generated-code input)"
@@ -176,6 +183,70 @@ def normalize(lit):
     return parts
 
 
+def go_literals(text):
+    """The string literals of a Go source file, as the raw text between the
+    quotes (interpreted "..." with its escapes unprocessed, and raw `...`).
+
+    Scanned the way the Go lexer does, so that what cannot be read at run time
+    is not a literal: comments (a `// reads "docs/x.md"` note is not a read),
+    rune literals (the '"' that a bare quote regexp mistook for the start of
+    a string) and import paths. Anything else stays: every literal in code
+    may be a path the program opens.
+    scripts/ci/select_affected_test.go checks this against go/scanner over
+    every Go file of the module."""
+    out, i, n = [], 0, len(text)
+    in_import_block = skip_next = False
+    while i < n:
+        c = text[i]
+        if c == "/" and text.startswith("//", i):
+            j = text.find("\n", i)
+            i = n if j < 0 else j
+        elif c == "/" and text.startswith("/*", i):
+            j = text.find("*/", i + 2)
+            i = n if j < 0 else j + 2
+        elif c == '"':
+            j = i + 1
+            while j < n and text[j] not in '"\n':
+                j += 2 if text[j] == "\\" else 1
+            if not (in_import_block or skip_next):
+                out.append(text[i + 1:j])
+            skip_next = False
+            i = j + 1
+        elif c == "`":
+            j = text.find("`", i + 1)
+            j = n if j < 0 else j
+            if not (in_import_block or skip_next):
+                out.append(text[i + 1:j])
+            skip_next = False
+            i = j + 1
+        elif c == "'":
+            j = i + 1
+            while j < n and text[j] not in "'\n":
+                j += 2 if text[j] == "\\" else 1
+            i = j + 1
+        elif c.isalpha() or c == "_" or ord(c) > 127:
+            j = i + 1
+            while j < n and (text[j].isalnum() or text[j] == "_" or ord(text[j]) > 127):
+                j += 1
+            word = text[i:j]
+            if word == "import":
+                k = j
+                while k < n and text[k] in " \t\r\n":
+                    k += 1
+                if k < n and text[k] == "(":
+                    in_import_block = True
+                    j = k + 1
+                else:
+                    skip_next = True
+            i = j
+        elif c == ")" and in_import_block:
+            in_import_block = False
+            i += 1
+        else:
+            i += 1
+    return out
+
+
 def literal_index(files):
     """(components, paths) for the string literals of the given files.
 
@@ -190,8 +261,7 @@ def literal_index(files):
                 text = fh.read()
         except OSError:
             continue
-        for m in LITERAL.finditer(text):
-            lit = m.group(1) if m.group(1) is not None else m.group(2)
+        for lit in go_literals(text):
             if not lit or len(lit) > 300 or "\n" in lit:
                 continue
             parts = normalize(lit)
@@ -351,11 +421,11 @@ def decide(base, head, changed=None):
             if test_hit:
                 seed(imp, False, f"its tests name {test_hit}")
 
-    # security-closure rows: the pg-gated ones are only proven in the core-1
-    # leg's check-closures step (ci.yml test-suite), so a change to the ledger
-    # or its checker must run that leg.
+    # security-closure rows: the pg-gated ones are only proven by ci.yml's
+    # closures-pg job, which runs when the core-1 leg runs, so a change to the
+    # ledger or its checker must select that leg.
     if any(f.startswith("docs/security-closures.d/") or f == "scripts/check-closures.sh" for f in changed):
-        seed(MODULE + "/internal/core", False, "security-closure ledger or checker changed (core-1 leg proves pg-gated rows)")
+        seed(MODULE + "/internal/core", False, "security-closure ledger or checker changed (closures-pg proves pg-gated rows when core-1 runs)")
 
     seeds = code_seeds | test_seeds
     affected = set(seeds)
@@ -438,10 +508,20 @@ def main():
     # Testing hook: raise this message as if decide() had failed, to pin the
     # fail-safe path (mode=full) and the single-line GITHUB_OUTPUT contract.
     ap.add_argument("--inject-failure")
+    # Testing hook: print go_literals() of each file as JSON and exit.
+    ap.add_argument("--literals", nargs="+")
     ap.add_argument("--github-output")
     ap.add_argument("--summary")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
+
+    if args.literals:
+        found = {}
+        for path in args.literals:
+            with open(path, encoding="utf-8", errors="replace") as fh:
+                found[path] = go_literals(fh.read())
+        print(json.dumps(found))
+        return
 
     if args.changed is not None:
         args.base, args.head = None, None

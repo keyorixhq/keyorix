@@ -3,7 +3,10 @@
   fallible-and-reported read a login needs (the response identity) runs BEFORE the session
   insert (`resolveLoginIdentityBeforeMint`; `LoginWithIdentity(Pending)` for the password login, the
   MFA and WebAuthn logins since #2841); (2) everything after the insert is panic-safe
-  best-effort (`besteffort.Run`, never a bare `_ =`, which drops an error but not a panic);
+  best-effort (`besteffort.Run`, never a bare `_ =`, which drops an error but not a panic),
+  including the delivery-time lockout clear `LoginCompletion.Succeeded` runs after the
+  transport has set the session cookie (`clearLoginFailures` recovers its own write, #3556:
+  a panic there used to answer 500 over a live cookie);
   (3) a session write that reports an error is read back by its token
   (`createSession`, `sessionWriteLanded` in `session_undelivered.go`): a row that landed is
   delivered, an absent one keeps the error, a lookup that fails keeps the error and is audited

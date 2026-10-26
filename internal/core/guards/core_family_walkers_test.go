@@ -23,8 +23,9 @@ import (
 //
 //   - TestNoAdHocCoreDirListing: every directory-listing call (ReadDir, Glob,
 //     ParseDir, Readdir, Readdirnames on any receiver) in a _test.go file of those
-//     two directories is on dirListingAllowlist with the reason it does not list
-//     core sources. A new call is red until it is either re-pointed or listed.
+//     two directories or of srcpath.CoreTestOnlyDirs (coretests, storagetest) is
+//     on dirListingAllowlist with the reason it does not list core sources. A new
+//     call is red until it is either re-pointed or listed.
 //   - TestCoreWalkersSeeEveryCoreFamilyFile: a directory added to the family
 //     shows up in coreFamilySources next to every internal/core source file.
 //
@@ -32,8 +33,8 @@ import (
 // internal/core (or the repo) already see subpackages of internal/core; one
 // rooted at internal/core does NOT see a leaf extracted to internal/<leaf>, which
 // is why srcpath's registry comment asks the first such extraction to re-point
-// them. Guards outside these two directories (server/http, internal/statemap)
-// are not scanned.
+// them. Guards outside these directories (server/http, internal/statemap) are
+// not scanned.
 
 // dirListingAllowlist: "<dir>/<file>:<enclosing func>" -> why the listing there
 // is not a listing of core sources. Exact: a stale entry fails.
@@ -45,8 +46,8 @@ var dirListingAllowlist = map[string]string{
 	"internal/core/exempt_ledger_review_test.go:discoverExemptLedgers":        "ledger *.tsv files under docs/",
 	"internal/core/fuzz_cross_replica_invariants_pending_seeds_test.go:TestPendingSeedsPromotedAfterFix": "fuzz " +
 		"seed dirs under testdata/fuzz-pending",
-	"internal/core/hook_storage_selftest_test.go:TestNoWholeStorageEmbeddingInCoreTests": "lists core's TEST files, not its sources " +
-		"(CORE-TESTKIT-1 re-points it when the doubles move)",
+	"internal/core/hook_storage_selftest_test.go:coreTestFiles": "lists the TEST files of internal/core and of " +
+		"srcpath.CoreTestOnlyDirs (re-pointed when the black-box tests moved to coretests), not core's sources",
 	"internal/core/secret_nodes_soft_delete_guard_test.go:TestSecretNodesSoftDelete_MutationKillsPredicate": "copies " +
 		"internal/storage/store, not core",
 	"internal/core/guards/core_clusters_guard_test.go:readClusters":                          "CLUSTERS.d/*.txt",
@@ -121,7 +122,7 @@ func dirListingViolations(sites map[string]int, allow map[string]string) []strin
 
 func TestNoAdHocCoreDirListing(t *testing.T) {
 	t.Parallel()
-	sites, err := dirListingSites(srcpath.RepoRoot(), []string{"internal/core", "internal/core/guards"})
+	sites, err := dirListingSites(srcpath.RepoRoot(), append([]string{"internal/core", "internal/core/guards"}, srcpath.CoreTestOnlyDirs...))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -221,6 +221,9 @@ type ClientInterface interface {
 	// GetComplianceCredentialTrends request
 	GetComplianceCredentialTrends(ctx context.Context, params *GetComplianceCredentialTrendsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCryptoInventory request
+	GetCryptoInventory(ctx context.Context, params *GetCryptoInventoryParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetComplianceDigest request
 	GetComplianceDigest(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1553,6 +1556,18 @@ func (c *Client) ExportComplianceControlsCSV(ctx context.Context, reqEditors ...
 
 func (c *Client) GetComplianceCredentialTrends(ctx context.Context, params *GetComplianceCredentialTrendsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetComplianceCredentialTrendsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCryptoInventory(ctx context.Context, params *GetCryptoInventoryParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCryptoInventoryRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -6780,6 +6795,55 @@ func NewGetComplianceCredentialTrendsRequest(server string, params *GetComplianc
 		if params.Days != nil {
 
 			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "days", runtime.ParamLocationQuery, *params.Days); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCryptoInventoryRequest generates requests for GetCryptoInventory
+func NewGetCryptoInventoryRequest(server string, params *GetCryptoInventoryParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/compliance/crypto-inventory")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Format != nil {
+
+			if queryFrag, err := runtime.StyleParamWithLocation("form", true, "format", runtime.ParamLocationQuery, *params.Format); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -15887,6 +15951,9 @@ type ClientWithResponsesInterface interface {
 	// GetComplianceCredentialTrendsWithResponse request
 	GetComplianceCredentialTrendsWithResponse(ctx context.Context, params *GetComplianceCredentialTrendsParams, reqEditors ...RequestEditorFn) (*GetComplianceCredentialTrendsResponse, error)
 
+	// GetCryptoInventoryWithResponse request
+	GetCryptoInventoryWithResponse(ctx context.Context, params *GetCryptoInventoryParams, reqEditors ...RequestEditorFn) (*GetCryptoInventoryResponse, error)
+
 	// GetComplianceDigestWithResponse request
 	GetComplianceDigestWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceDigestResponse, error)
 
@@ -17567,6 +17634,30 @@ func (r GetComplianceCredentialTrendsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetComplianceCredentialTrendsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCryptoInventoryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *Error
+	JSON401      *Error
+	JSON403      *Error
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCryptoInventoryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCryptoInventoryResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -19264,6 +19355,7 @@ type ActivateBreakGlassResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON403 *Error
+	JSON409 *Error
 	JSON503 *Error
 }
 
@@ -23651,6 +23743,15 @@ func (c *ClientWithResponses) GetComplianceCredentialTrendsWithResponse(ctx cont
 	return ParseGetComplianceCredentialTrendsResponse(rsp)
 }
 
+// GetCryptoInventoryWithResponse request returning *GetCryptoInventoryResponse
+func (c *ClientWithResponses) GetCryptoInventoryWithResponse(ctx context.Context, params *GetCryptoInventoryParams, reqEditors ...RequestEditorFn) (*GetCryptoInventoryResponse, error) {
+	rsp, err := c.GetCryptoInventory(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCryptoInventoryResponse(rsp)
+}
+
 // GetComplianceDigestWithResponse request returning *GetComplianceDigestResponse
 func (c *ClientWithResponses) GetComplianceDigestWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetComplianceDigestResponse, error) {
 	rsp, err := c.GetComplianceDigest(ctx, reqEditors...)
@@ -27500,6 +27601,46 @@ func ParseGetComplianceCredentialTrendsResponse(rsp *http.Response) (*GetComplia
 	return response, nil
 }
 
+// ParseGetCryptoInventoryResponse parses an HTTP response from a GetCryptoInventoryWithResponse call
+func ParseGetCryptoInventoryResponse(rsp *http.Response) (*GetCryptoInventoryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCryptoInventoryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetComplianceDigestResponse parses an HTTP response from a GetComplianceDigestWithResponse call
 func ParseGetComplianceDigestResponse(rsp *http.Response) (*GetComplianceDigestResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -30338,6 +30479,13 @@ func ParseActivateBreakGlassResponse(rsp *http.Response) (*ActivateBreakGlassRes
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Error

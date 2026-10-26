@@ -239,3 +239,39 @@ func TestUserService_ListUsers(t *testing.T) {
 	assert.GreaterOrEqual(t, len(resp.GetUsers()), 1)
 	assert.GreaterOrEqual(t, resp.GetTotal(), uint32(1))
 }
+
+// TestUserService_CreateUser_InstallWideRoleInAProjectAssignmentIsRefused is
+// REVIEW-3585-DEEP-1 F2 over gRPC: an install-wide role (system_viewer) in a
+// project assignment is InvalidArgument, and neither the user nor a grant is
+// written. A project role in the same position is still granted.
+func TestUserService_CreateUser_InstallWideRoleInAProjectAssignmentIsRefused(t *testing.T) {
+	h := testhelper.NewRBACTestHelper(t)
+	t.Cleanup(h.Cleanup)
+	h.CreateTestUser(t, "admin", 1)
+	h.AssignUserRole(t, 1, 1, nil)
+	svc := NewUserService(h.CoreService)
+	count := func(query string, args ...any) int {
+		var n int
+		require.NoError(t, h.SqlDB.QueryRow(query, args...).Scan(&n))
+		return n
+	}
+	usersBefore := count(`SELECT COUNT(*) FROM users`)
+	grantsBefore := count(`SELECT COUNT(*) FROM user_roles`)
+
+	_, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
+		Username: "frank", Email: "frank@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
+		ProjectAssignments: []*pb.ProjectAssignment{{ProjectId: 1, Role: "system_viewer"}},
+	})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, status.Convert(err).Message(), "role system_viewer is install-wide")
+	require.Equal(t, usersBefore, count(`SELECT COUNT(*) FROM users`), "no user behind a refused assignment")
+	require.Equal(t, grantsBefore, count(`SELECT COUNT(*) FROM user_roles`), "no grant behind a refused assignment")
+
+	resp, err := svc.CreateUser(adminCtx(), &pb.CreateUserRequest{
+		Username: "frank", Email: "frank@example.com", Password: strPtr("Qr7#Kp2$Lm5@Vn9!"),
+		ProjectAssignments: []*pb.ProjectAssignment{{ProjectId: 1, Role: "editor"}},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, count(`SELECT COUNT(*) FROM user_roles WHERE user_id = ? AND role_id = 3 AND project_id = 1`, resp.GetUser().GetId()))
+}

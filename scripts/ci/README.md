@@ -15,6 +15,7 @@ Helpers used by CI workflows, or run locally next to them.
 | `failfast-cancel.sh` | CI (`failfast-cancel.yml`, called by `ci.yml`'s `failfast-*` jobs on merge_group) | Merge-queue fail fast: after a job whose failure already fails the round, cancels every run still queued or in progress for that merge-group commit (ci.yml, CodeQL, ...), its own run last. Never touches another commit's runs and never fails its caller. Pinned by `failfast_cancel_test.go` against a recorded API response. |
 | `check-no-attribution.sh` | CI (`no-attribution.yml`, on pull_request and merge_group), `.githooks/commit-msg` | Fails when a commit message in the PR range, the PR title or the PR body carries AI-assistant attribution (co-author or session trailers, "generated with" footers; `--patterns` lists them). Only messages and PR text are checked, never file contents. Offline tests: `check-no-attribution-test.sh` (also run by the workflow and by `no_attribution_test.go`). |
 | `install-gosec.sh` | CI (`ci.yml`: static-analysis, operator, cli, migrate) | Installs gosec in a throwaway module that also requires a newer `golang.org/x/tools`, so MVS picks that instead of gosec's own (older) requirement -- see the script header for why. |
+| `retry-net.sh` | CI (`ci.yml`: licenses) | Runs a command and retries it (max 3 attempts, back-off) only when it failed on a transient network error from a remote proxy or registry (proxy.golang.org, Docker Hub); never on a go.sum mismatch or any other failure. Pinned by `retry_net_test.go` against real queue failure lines (`testdata/retry-net`). |
 
 ## Coverage floor on selected merge-queue runs
 
@@ -73,3 +74,29 @@ exit or Ctrl-C. The script header covers the full method: how changed
 packages map to the repo's several Go modules, why a replay conflict falls
 back to a 3-way merge, how the test-compile timing was measured, and how it
 relates to `scripts/git-write-guard.sh`.
+
+## footprint-check.sh: the edge footprint tripwire
+
+`scripts/ci/footprint-check.sh` keeps the edge advantage (small, light) from
+regressing silently. It compares the release server binary, the CLI binary and
+the idle peak RSS of a secure-baseline SQLite server (healthy, 30 s idle, run
+3 times, the maximum is compared) with the limits in
+`scripts/ci/footprint-budget.json`, and exits 1 with "current vs budget" for
+every metric over its limit. Size limits are the measured value plus 10%, the
+RSS limit the measured value plus 25% (the headroom absorbs run-to-run noise).
+
+```
+scripts/ci/footprint-check.sh                      # host platform: sizes + RSS
+scripts/ci/footprint-check.sh --platform linux/arm64 --skip-rss   # cross-built sizes
+scripts/ci/footprint-check.sh --print              # current values + suggested limits
+scripts/ci/footprint-check.sh --self-test          # red/green proof the check fires
+```
+
+A missing size budget fails (fail closed). A `null` RSS budget (no baseline
+measured on that platform yet) skips with a message, or fails under
+`--require-rss`. RSS is only measured for the host platform. When growth is
+intended, raise the limit in the PR that causes it and say why. It is
+on-demand/nightly, not a merge-queue gate. It complements
+`scripts/edge/footprint.sh` (server only, per build profile, four platforms):
+that one has the air-gapped profile and the ARM targets, this one adds the CLI,
+the secure baseline, the multi-run RSS protocol and a self-test.

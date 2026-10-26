@@ -143,7 +143,10 @@ func seedFuzzSSOGroup(w *faultWorld, name string) error {
 }
 
 func seedFuzzSSORole(w *faultWorld, name string) error {
-	return w.db.Create(&models.Role{Name: name, NameFolded: strings.ToLower(name), Description: "fuzz SSO mapped role"}).Error
+	// group_role_map grants at the global scope, so the mapped role must be
+	// global-assignable (#3546 Phase 2: a new role's default, project, is not).
+	return w.db.Create(&models.Role{Name: name, NameFolded: strings.ToLower(name), Description: "fuzz SSO mapped role",
+		AssignableScope: models.RoleAssignableAny}).Error
 }
 
 type oidcFuzzState struct {

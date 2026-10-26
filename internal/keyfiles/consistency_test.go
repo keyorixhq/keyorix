@@ -92,124 +92,22 @@ func TestVerifyKeySetConsistency_PartialSet_MissingWrappedKey(t *testing.T) {
 	}
 }
 
-// The DEK is EXCLUDED from the mtime-consistency check: RotateDEKWithSweep
-// legitimately rewrites only the DEK, on its own schedule, without touching
-// the salt. A DEK rotated long after the salt was established must NOT be
-// flagged as mixed-generation.
-func TestVerifyKeySetConsistency_DEKRotatedIndependently_NotFlagged(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-	writeFileAt(t, filepath.Join(dir, "salt.key"), now.Add(-90*24*time.Hour)) // established 90 days ago
-	writeFileAt(t, filepath.Join(dir, "dek.key"), now)                        // rotated just now
-	enc := &config.EncryptionConfig{SaltPath: "salt.key", DEKPath: "dek.key"}
-	if err := VerifyKeySetConsistency(enc, dir); err != nil {
-		t.Fatalf("an independently-rotated DEK must not be flagged as mixed-generation: %v", err)
-	}
-}
-
-// A provider's wrapped-KEK blob being much older than the salt is NOT
-// flagged, and this is the correction the coordinator's review asked for
-// rather than a relaxation.
-//
-// The previous shape of this check compared every KEK-establishing file
-// against the oldest in the whole set, and asserted (in this test's former
-// body) that "there is no legitimate operation that rewraps the KEK
-// provider's own blob without also touching the salt". There is:
-// commitNewKEKFiles -- `keyorix encryption rotate-kek`, a documented,
-// intended operation -- rewrites ONLY the salt and the DEK. A deployment with
-// a passphrase KEK plus a KMS/TPM/Shamir fallback therefore leaves that
-// fallback's blob at its original age, and some weeks later the server
-// refuses to boot having been asked to do nothing unusual. The old assertion
-// locked that false refusal in.
-//
-// RED on the pre-fix whole-set comparison: this test fails with
-// "key material set looks mixed from different generations: .../wrapped.key".
-func TestVerifyKeySetConsistency_KEKRotationLeavesProviderBlobOlder_NotFlagged(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-	// rotate-kek just rewrote salt + DEK; the KMS fallback's blob is untouched.
-	writeFileAt(t, filepath.Join(dir, "salt.key"), now)
-	writeFileAt(t, filepath.Join(dir, "dek.key"), now)
-	writeFileAt(t, filepath.Join(dir, "wrapped.key"), now.Add(-90*24*time.Hour))
-	enc := &config.EncryptionConfig{
-		SaltPath: "salt.key", DEKPath: "dek.key",
-		KeyProvider: config.KeyProviderConfig{Type: "aws-kms", WrappedKeyPath: "wrapped.key"},
-	}
-	if err := VerifyKeySetConsistency(enc, dir); err != nil {
-		t.Fatalf("an ordinary rotate-kek must not make the server refuse to boot: %v", err)
-	}
-}
-
-// The one case the mtime heuristic can still legitimately speak about: a
-// single Shamir provider's share files. The split writes every share in ONE
-// operation, so shares of different ages within one provider really are an
-// inconsistent set -- and this is the only group with more than one member,
-// i.e. the only place the check is not comparing a file against itself.
-func TestVerifyKeySetConsistency_ShamirSharesFromDifferentGenerations_Flagged(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-	writeFileAt(t, filepath.Join(dir, "salt.key"), now)
-	writeFileAt(t, filepath.Join(dir, "dek.key"), now)
-	writeFileAt(t, filepath.Join(dir, "share1.key"), now)
-	writeFileAt(t, filepath.Join(dir, "share2.key"), now.Add(48*time.Hour))
-	enc := &config.EncryptionConfig{
-		SaltPath: "salt.key", DEKPath: "dek.key",
-		KeyProvider: config.KeyProviderConfig{
-			Type: "shamir", ShamirShareFiles: []string{"share1.key", "share2.key"},
-		},
-	}
-	err := VerifyKeySetConsistency(enc, dir)
-	if err == nil {
-		t.Fatal("two shares of one Shamir provider 48h apart must fail closed")
-	}
-	if !strings.Contains(err.Error(), "share2.key") {
-		t.Errorf("error must name the mismatched file, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), "shamir share set") {
-		t.Errorf("error must name the GROUP, so the operator knows which operation to re-run, got: %v", err)
-	}
-}
-
-// Two DIFFERENT Shamir providers (a primary and a fallback) are separate
-// operations, so shares that are old in one and new in the other are not a
-// finding -- the companion that stops the grouping being implemented as
-// "all shamir shares anywhere, together".
-func TestVerifyKeySetConsistency_ShamirSharesAcrossProviders_NotFlagged(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-	writeFileAt(t, filepath.Join(dir, "salt.key"), now)
-	writeFileAt(t, filepath.Join(dir, "dek.key"), now)
-	writeFileAt(t, filepath.Join(dir, "a1.key"), now)
-	writeFileAt(t, filepath.Join(dir, "a2.key"), now)
-	writeFileAt(t, filepath.Join(dir, "b1.key"), now.Add(-120*24*time.Hour))
-	writeFileAt(t, filepath.Join(dir, "b2.key"), now.Add(-120*24*time.Hour))
-	enc := &config.EncryptionConfig{
-		SaltPath: "salt.key", DEKPath: "dek.key",
-		KeyProvider: config.KeyProviderConfig{
-			Type: "shamir", ShamirShareFiles: []string{"a1.key", "a2.key"},
-			Fallbacks: []config.KeyProviderConfig{
-				{Type: "shamir", ShamirShareFiles: []string{"b1.key", "b2.key"}},
-			},
-		},
-	}
-	if err := VerifyKeySetConsistency(enc, dir); err != nil {
-		t.Fatalf("two independently-provisioned Shamir providers must not be compared against each other: %v", err)
-	}
-}
+// The mtime-based cases that used to sit here (an independently rotated DEK,
+// rotate-kek leaving an older provider blob, Shamir shares of different ages,
+// the tolerance boundary) went with the mtime heuristic (#2900). Their
+// manifest-based replacements are in manifest_consistency_test.go:
+// TestVerifyKeySetConsistency_DEKRotatedAlone_Passes,
+// TestVerifyKeySetConsistency_RotateKEKWithOlderFallbackBlob_Passes and
+// TestVerifyKeySetConsistency_ShamirShareFromAnotherSplit_Refused.
 
 // A leftover "*.pending" rotation-staging sibling must NOT be read as a
 // partial set. RequiredKeyFilePaths never adds one (unlike Registry, which
 // includes it when present for permission checks), so an interrupted rotation
 // cannot turn into a refusal to boot on the presence/absence check.
 //
-// Deliberately NOT asserting that this state is detected: whether a leftover
-// kek.salt.pending is harmless (commitNewKEKFiles crashed after writing it,
-// active salt+DEK still coherent) or fatal (it crashed after the DEK rename,
-// so the active DEK no longer unwraps under the active salt) is
-// indistinguishable from presence and mtimes alone -- both states have the
-// identical file layout. Telling them apart needs the per-file hashes of the
-// manifest tracked in #2900, which is why this check's ledger claim is scoped
-// to presence/absence only.
+// Whether such a leftover is harmless or the active set is incoherent is
+// decided from the manifest's staged hashes, not from presence: see
+// manifest_rotation_test.go (#2900).
 func TestVerifyKeySetConsistency_LeftoverPendingFiles_AreNotAPartialSet(t *testing.T) {
 	dir := t.TempDir()
 	now := time.Now()
@@ -231,22 +129,5 @@ func TestVerifyKeySetConsistency_LeftoverPendingFiles_AreNotAPartialSet(t *testi
 		if strings.HasSuffix(p, ".pending") {
 			t.Errorf("RequiredKeyFilePaths must not treat a rotation-staging file as REQUIRED (it would make every completed rotation a partial set): %s", p)
 		}
-	}
-}
-
-// Exactly at the tolerance boundary (just under) must still pass -- no
-// off-by-one flakiness.
-func TestVerifyKeySetConsistency_JustUnderTolerance_Passes(t *testing.T) {
-	dir := t.TempDir()
-	now := time.Now()
-	writeFileAt(t, filepath.Join(dir, "salt.key"), now)
-	writeFileAt(t, filepath.Join(dir, "wrapped.key"), now.Add(keySetMtimeTolerance-time.Minute))
-	writeFileAt(t, filepath.Join(dir, "dek.key"), now)
-	enc := &config.EncryptionConfig{
-		SaltPath: "salt.key", DEKPath: "dek.key",
-		KeyProvider: config.KeyProviderConfig{Type: "aws-kms", WrappedKeyPath: "wrapped.key"},
-	}
-	if err := VerifyKeySetConsistency(enc, dir); err != nil {
-		t.Fatalf("a gap just under the tolerance must pass: %v", err)
 	}
 }
