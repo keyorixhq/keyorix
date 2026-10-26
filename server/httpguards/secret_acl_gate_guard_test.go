@@ -24,7 +24,7 @@
 // assigned elsewhere; the behavioural proof that the gate itself denies (see
 // TestEverySecretRPC_UsesShareAwareGate and the router's own permission tests). It also
 // stops at the root module: cli/ is a separate module that only speaks HTTP.
-package http
+package httpguards
 
 import (
 	"go/ast"
@@ -314,7 +314,7 @@ func TestEverySecretACLCaller_SitsBehindSecretsManageGate(t *testing.T) {
 // transports; otherwise "permSecretsManage" would be a name with no content.
 func TestSecretACLGuard_PermSecretsManageIsSecretsManage(t *testing.T) {
 	for _, file := range []string{
-		filepath.Join("router.go"),
+		filepath.Join("..", "http", "router.go"),
 		filepath.Join("..", "grpc", "services", "constants.go"),
 	} {
 		f, err := parser.ParseFile(token.NewFileSet(), file, nil, 0)

@@ -40,7 +40,7 @@ import (
 // parts, Sprintf), names inside comments, and which of several same-named
 // files a bare name meant.
 
-var namedFileScanRoots = []string{"internal/core", "server/http", "internal/statemap"}
+var namedFileScanRoots = []string{"internal/core", "server/http", "server/httpguards", "internal/statemap"}
 
 // namedFileSearchDirs: where bare names are looked up besides the test file's
 // own directory and internal/core. Beyond the handler dirs these are the
@@ -79,9 +79,9 @@ var namedFileAllowlist = map[string]string{
 	"internal/statemap/rest_composition_test.go:fixture.go":                                    synthetic,
 	"internal/statemap/test_tempdir_cleanup_guard_test.go:x_test.go":                           synthetic,
 	"server/http/full_row_overwrite_guard_test.go:overwrite_fixture.go":                        synthetic,
-	"server/http/secret_acl_gate_guard_test.go:server/http/handlers/zz_third.go":               synthetic,
-	"server/http/secret_acl_gate_guard_test.go:x.go":                                           synthetic,
-	"server/http/share_secret_isgroup_guard_test.go:x.go":                                      synthetic,
+	"server/httpguards/secret_acl_gate_guard_test.go:server/http/handlers/zz_third.go":         synthetic,
+	"server/httpguards/secret_acl_gate_guard_test.go:x.go":                                     synthetic,
+	"server/httpguards/share_secret_isgroup_guard_test.go:x.go":                                synthetic,
 }
 
 const synthetic = "synthetic fixture name in a self-test"
