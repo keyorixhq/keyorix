@@ -2245,25 +2245,35 @@ jobs:
   # purpose, ...) scan the WHOLE codebase, so a PR can break one without
   # touching the guarded package. The quick tier only runs affected packages,
   # so these failures used to surface first inside the merge queue, where each
-  # one restarts every group behind it (~40 min each). They take ~1 min, so
-  # they run on every non-docs PR here. The package list is derived at run
-  # time, so a new guard test is picked up automatically. Not a required check:
+  # one restarts every group behind it (~40 min each). Not a required check:
   # the coordinator's merge script holds back PRs whose repo-guards failed, and
   # merge_group still runs the full suite as the real gate.
   #
-  # Merge-queue selection (CI-SELECT-1): on a SELECTED merge_group run (the
-  # `select` job's mode=selected) this job also runs, and runs every
-  # repo-wide guard instead (scripts/ci/run-guards.sh: the named guards in
+  # One guard set on every event (MQ-ROUNDS-1, 2026-10-24): PRs and selected
+  # merge-queue runs both run scripts/ci/run-guards.sh (the named guards in
   # every root-module package, every source-scanning test, and the packages
-  # in scripts/ci/global-guards.txt, the coordinator preflight's list). The
-  # test-suite legs that normally carry these may have been skipped, so
-  # selection must never decide whether a guard runs; build-and-test
-  # (required) requires this job's success on a selected run. A full run gets
-  # the same tests through test-suite, so the job stays skipped there, as
-  # before. Same docs/web/go-unaffected/operator-only skips as test-suite.
+  # in scripts/ci/global-guards.txt, the coordinator preflight's list). The PR
+  # step used to run only Test*(Guard|Sweep|Completeness) under internal/ and
+  # server/, and 27 of 29 failed queue runs on 23-24 Oct were guards it never
+  # ran (TestSecretFileReadsGoThroughOpenRegular, TestDirectLogAuditEventCallersAreSafe:
+  # both fail on the origin PR's own head while its PR repo-guards was green).
+  # On pull_request, actions/checkout checks out refs/pull/N/merge, so this is
+  # the PR merged with main as of the push. It also runs on docs-only PRs: a
+  # docs change can break a docs-scanning guard (#3616 vs
+  # TestDocsShowNoLiteralSecretOnCommandLine), and docs-only PRs skip every
+  # other Go job.
+  #
+  # Merge-queue selection (CI-SELECT-1): on a SELECTED merge_group run (the
+  # `select` job's mode=selected) this job also runs. The test-suite legs that
+  # normally carry these guards may have been skipped, so selection must never
+  # decide whether a guard runs; build-and-test (required) requires this job's
+  # success on a selected run. A full run gets the same tests through
+  # test-suite, so the job stays skipped there, as before. Same
+  # docs/web/go-unaffected/operator-only skips as test-suite outside
+  # pull_request (merge_group behaviour is unchanged).
   repo-guards:
     needs: [changes, select]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'pull_request' || needs.select.outputs.mode == 'selected')
+    if: needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (github.event_name == 'pull_request' || (needs.select.outputs.mode == 'selected' && needs.changes.outputs.docs_only != 'true'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -2276,17 +2286,8 @@ jobs:
         with:
           go-version: '1.27.3'
 
-      - name: Every repo-wide guard (selected merge-queue run)
-        if: needs.select.outputs.mode == 'selected'
+      - name: Every repo-wide guard
         run: scripts/ci/run-guards.sh
-
-      - name: Run repo-wide guard tests
-        if: github.event_name == 'pull_request'
-        run: |
-          pkgs=$(grep -rlE --include='*_test.go' 'func Test[A-Za-z0-9_]*(Guard|Sweep|Completeness)' ./internal ./server | xargs -n1 dirname | sort -u)
-          echo "guard packages:"; echo "$pkgs"
-          # shellcheck disable=SC2086
-          go test -count=1 -timeout 600s -run '^Test[A-Za-z0-9_]*(Guard|Sweep|Completeness)' $pkgs
 
   # Guards whose inputs are not Go code (CI-GUARD-TRIGGERS-1). Every Go job
   # above skips a docs_only / web_only / go_unaffected / operator_only change,

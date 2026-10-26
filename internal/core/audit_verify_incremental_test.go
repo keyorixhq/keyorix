@@ -409,6 +409,29 @@ func waitAuditJob(t *testing.T, c *KeyorixCore, id string) *AuditVerifyJobStatus
 	return j
 }
 
+// startFullJobWhenFree starts a full verification, retrying while the
+// cross-replica job lock is held by something else. On Postgres that lock is an
+// advisory lock scoped to the whole database, not to the per-test schema, so
+// parallel tests that each run a full job against one DSN contend on it.
+// Retrying is faithful to production, where a second replica is told to try
+// again; every other error, and a start that never frees up, still fails.
+func startFullJobWhenFree(t *testing.T, c *KeyorixCore) string {
+	t.Helper()
+	const busy = "another replica is running a full audit verification"
+	var (
+		id      string
+		started bool
+		err     error
+	)
+	require.Eventually(t, func() bool {
+		id, started, err = c.StartAuditFullVerification(context.Background())
+		return err == nil || err.Error() != busy
+	}, 60*time.Second, 25*time.Millisecond, "the full-job lock never freed up")
+	require.NoError(t, err)
+	require.True(t, started)
+	return id
+}
+
 // ?full=true: the background job proves the chain at once (no wait for a
 // cycle), and a failing job records the failure.
 func TestIncrementalVerify_FullJob(t *testing.T) {
