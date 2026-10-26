@@ -33,6 +33,8 @@ internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir()
 internal/core/upgrading_scim_sso_check_query_test.go	docs/UPGRADING.md	the SCIM/SSO check query in UPGRADING.md
 internal/docsdrift/env_and_secrets_test.go	**/*.md,**/*.go,**/*.sh,**/*.yml,**/*.yaml,**/*.tpl,**/*.conf,**/*.txt,**/*.toml,**/Dockerfile*,**/Makefile	documented env vars and secret flags against every source kind envVarSourceFile accepts
 internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
+internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
+internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
 internal/metricsdoc/metricsdoc_test.go	docs/operations/metrics.md,operator/**/*.go	metrics doc against metric registrations, operator/ included
 internal/metricsdoc/observability_assets_test.go	deploy/observability/**	alerts, dashboard and runbook
 internal/refusaldocs/refusaldocs_test.go	docs/operator/startup-refusals.md,!operator/**	startup-refusals doc against server/ and internal/ sources only
@@ -72,6 +74,7 @@ scripts/ci/select_affected_test.go	scripts/ci/select-affected.py,scripts/ci-test
 scripts/demo/demo_scripts_test.go	scripts/demo/**/*.sh	demo shell scripts
 scripts/demo/native_up_helpers_test.go	scripts/demo/**/*.sh	native-up helpers
 server/container_bind_configs_test.go	scripts/dast/keyorix-dast.yaml,scripts/demo/up.sh	container bind configs used by DAST and the demo
+scripts/demo/check_state_test.go	scripts/demo/check.sh,scripts/demo/lib.sh,!scripts/demo/**	copies only check.sh and lib.sh into a temp root and runs check.sh there; no other demo script is read
 #
 # --- operator/ Go code (root walkers that do not skip the operator module) --------
 internal/besteffort/besteffort_tx_guard_test.go	operator/**/*.go,!operator/go.mod	walks every .go file from the repo root
@@ -91,6 +94,8 @@ internal/storage/store/secret_nodes_soft_delete_sweep_test.go	operator/**/*.go	r
 internal/storage/store/secret_version_cache_epoch_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
 internal/testutil/sqlitetest/shared_cache_literal_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
 internal/secretenv/describe_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files; skips no module
+internal/guardrules/calendar_guard_test.go	operator/**/*.go,docs/guard-rollout.d/*.tsv	repo-root walk over _test.go files (all modules); also reads every docs/guard-rollout.d row
+internal/testutil/sqlitetest/factory_path_guard_test.go	operator/**/*.go	repo-root walk over .go files; skips no module
 operator/api/v1alpha1/keyorixsecret_types_test.go	operator/config/crd/bases/*.yaml	generated CRD against the Go types (the operator job runs it too)
 #
 # --- reviewed: does not read operator/ (subtree walk, or skips it / nested modules) --
@@ -130,3 +135,4 @@ internal/core/guards/test_only_packages_guard_test.go	operator/**/*.go	repo-root
 internal/docsdrift/gitattributes_union_test.go	.gitattributes,docs/atomicity-exempt.tsv,docs/besteffort-exempt.tsv,docs/child-parent-liveness-exempt.tsv,docs/full-row-write-exempt.tsv,docs/state-map/class-overrides.tsv	merge=union attribute against the five ledgers it lists
 migrate/internal/accessplan/implied_test.go	scripts/vault-migration-testbed/seed.sh	checks the HCL stanza literals against scripts/vault-migration-testbed/seed.sh
 server/pq_transport_guard_test.go	operator/**/*.go,!**/*.md	repo-root walk over every non-Markdown, non-test file; reads operator/ Go, skips Markdown
+internal/cryptoinventory/cbom_test.go	internal/cryptoinventory/testdata/**,!LICENSE	the vendored CycloneDX schema under its own testdata/cyclonedx-1.6 (with its LICENSE); the root LICENSE is not read
