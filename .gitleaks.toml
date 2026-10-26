@@ -32,6 +32,10 @@ paths = [
   '''internal/cli/secret/import_parsers\.go''',
   '''internal/cli/secret/source_vault\.go''',
   '''internal/core/setup_consume\.go''',
+  # Known-answer vectors for the post-quantum key-wrap PoC: published test inputs and
+  # outputs (x25519_eph_secret, wrap_key, key ...), generated for the vectors, never used
+  # for a real key. The generic-api-key rule flags the JSON field names.
+  '''internal/pqwrap/testdata/vectors\.json''',
   # web/ (ADR-070) test fixtures and mock values — merged in from web/'s own
   # (now-superseded) .gitleaks.toml. Path-based, not the SHA-fingerprinted
   # .gitleaksignore entries web/ also had: this repo's gitleaks job scans

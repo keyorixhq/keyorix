@@ -1,0 +1,1 @@
+internal/pqwrap	none	-	new in RD-PQWRAP-1: hybrid X25519+ML-KEM-768/1024 key-wrap proof of concept, not wired into any server, CLI or storage path; known-answer vectors and round-trip/tamper tests in pqwrap_test.go and vectors_test.go	pending
