@@ -164,12 +164,15 @@ func TestInitSecrets_WarnsWhenFilesAreOwnedByTheServerUID(t *testing.T) {
 	if err == nil {
 		t.Fatalf("files owned by the server uid must fail the script, got success:\n%s", out)
 	}
-	if !strings.Contains(out, "owned by uid "+u.Uid) || !strings.Contains(out, "chown root:") {
-		t.Errorf("error should name the uid and the chown fix: %q", out)
+	if !strings.Contains(out, "owned by uid "+u.Uid) || !strings.Contains(out, "different regular user") || !strings.Contains(out, "Nothing was written") {
+		t.Errorf("error should name the uid, say nothing was written and the fix: %q", out)
 	}
-	// The files were still written (and kept on the re-run): nothing is lost or regenerated.
-	if _, statErr := os.Stat(filepath.Join(sec, "master_password")); statErr != nil {
-		t.Errorf("master_password should exist after the failed check: %v", statErr)
+	// The refusal comes before anything is written (#3522): no half-initialised dir.
+	if entries, _ := os.ReadDir(sec); len(entries) != 0 {
+		t.Errorf("a refused run must leave %s empty or absent, found %d entries", sec, len(entries))
+	}
+	if _, statErr := os.Stat(envFile); statErr == nil {
+		t.Errorf("a refused run must not create or edit the env file")
 	}
 	// Any other server uid is fine.
 	if out, err := cmdEnv(notTheProcessUID()); err != nil {
