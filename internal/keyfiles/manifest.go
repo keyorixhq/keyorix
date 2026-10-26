@@ -45,9 +45,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/sys/unix"
-
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -166,20 +165,16 @@ func HashBytes(data []byte) string {
 // readKeyFile reads a key file for hashing. Symlinks are followed (Kubernetes
 // Secret volumes mount key files through them); a non-regular file (a FIFO
 // planted at a key path would otherwise block open(2) and hang boot) is
-// refused, as securefiles.SafeReadFile does.
+// refused, as securefiles.SafeReadFile does (secretenv.OpenRegular).
 func readKeyFile(full string) ([]byte, error) {
-	f, err := os.OpenFile(full, os.O_RDONLY|unix.O_NONBLOCK, 0) // #nosec G304 -- a config-derived key path, already SafePath-checked
+	f, _, err := secretenv.OpenRegular(full, 0)
 	if err != nil {
+		if errors.Is(err, secretenv.ErrNotRegular) {
+			return nil, fmt.Errorf("%s is not a regular file", full)
+		}
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("%s is not a regular file", full)
-	}
 	return io.ReadAll(f)
 }
 
