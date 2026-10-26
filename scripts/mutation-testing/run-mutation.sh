@@ -81,7 +81,10 @@ internal/netutil|netutil||100
 # internal/auditverify (the run includes internal/auditverify/anchorbundle): efficacy 99.55% (223 killed, 1 equivalent survivor,
 # db.go:56 sql.Open("pgx") never errors at open), 16 not covered (switch case expressions and string-constant concatenations that
 # gremlins cannot instrument), 4 timed out (high-water mutants in verify.go that hang, counted as neither killed nor lived)
-internal/auditverify|auditverify||99.55"
+internal/auditverify|auditverify||99.55
+# internal/serverguard: efficacy 100% (35 killed, measured without KEYORIX_TEST_PG_DSN), 31 not covered: the PostgreSQL-only
+# paths (keyinit.go and the advisory-lock/pooler code), whose tests need a real Postgres
+internal/serverguard|serverguard||100"
 
 cd "$KEYORIX_REPO"
 
