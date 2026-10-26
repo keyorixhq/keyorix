@@ -183,9 +183,12 @@ func ensurePostgresCacheEpochTrigger(tx *gorm.DB) error {
 		return fmt.Errorf("acquire cache_epoch migration advisory lock: %w", err)
 	}
 	// Dollar-quoted with a NAMED tag rather than bare $$, so the body can never
-	// be mistaken for a pgx $N placeholder.
+	// be mistaken for a pgx $N placeholder. The search_path is pinned
+	// (pgTriggerFuncSetClause): the body's operator then resolves the same way
+	// whatever the writing session's search_path is. CREATE OR REPLACE on
+	// every boot converges an older release's unpinned function.
 	if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + secretNodeCacheEpochFunc + `() RETURNS trigger
-LANGUAGE plpgsql AS $keyorix$
+LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$
 BEGIN
   NEW.cache_epoch := OLD.cache_epoch + 1;
   RETURN NEW;
