@@ -28,6 +28,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/encryptionops"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/restorejournal"
 	"github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -46,9 +47,34 @@ type overwriteFixture struct {
 	archive     string
 	archiveKeys map[string][]byte // key files as the archive holds them
 	liveKeys    map[string][]byte // key files on disk right before the restore
+	// liveManifest is the key-set manifest (#2900) right before the restore.
+	liveManifest []byte
 }
 
 var overwriteKeyNames = []string{"dek.key", "kek.salt"}
+
+func readKeySetManifest(t *testing.T, dir string) []byte {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, keyfiles.ManifestFileName)) // #nosec G304 -- t.TempDir() path
+	require.NoError(t, err)
+	return b
+}
+
+// requireManifestRecordsArchiveKeys is the success-path contract for the
+// key-set manifest: it records exactly the archive's key files (installed by
+// the journal with them), nothing is left staged, and the boot-time key-set
+// check accepts the restored set.
+func (f *overwriteFixture) requireManifestRecordsArchiveKeys(t *testing.T) {
+	t.Helper()
+	m, err := keyfiles.LoadManifest(filepath.Join(f.dir, keyfiles.ManifestFileName))
+	require.NoError(t, err)
+	require.Nil(t, m.Next, "a restore leaves no staged intent in the manifest")
+	for name, data := range f.archiveKeys {
+		require.Equal(t, keyfiles.HashBytes(data), m.Files[name].SHA256, "the manifest must record the archive's %s", name)
+		require.Equal(t, keyfiles.OpRestore, m.Files[name].Operation, name)
+	}
+	require.NoError(t, keyfiles.VerifyKeySetConsistency(&f.config(t).Storage.Encryption, "."), "the restored key set must boot")
+}
 
 func readOverwriteKeys(t *testing.T, dir string) map[string][]byte {
 	t.Helper()
@@ -110,6 +136,7 @@ func newOverwriteFixture(t *testing.T, backend string, danglingRef bool) *overwr
 		require.NoError(t, db.Create(&models.Project{Name: "after-backup"}).Error)
 	})
 	f.liveKeys = readOverwriteKeys(t, f.dir)
+	f.liveManifest = readKeySetManifest(t, f.dir)
 	require.NotEqual(t, f.archiveKeys["dek.key"], f.liveKeys["dek.key"], "sanity: rotation must change dek.key")
 
 	restoreInput = f.archive
@@ -178,6 +205,7 @@ func (f *overwriteFixture) restoreLeftovers(t *testing.T) []string {
 func (f *overwriteFixture) requirePreRestoreStateIntact(t *testing.T, auditBefore int64) {
 	t.Helper()
 	require.Equal(t, f.liveKeys, readOverwriteKeys(t, f.dir), "a failed restore must leave the live key files byte-identical")
+	require.Equal(t, f.liveManifest, readKeySetManifest(t, f.dir), "a failed restore must leave the key-set manifest byte-identical")
 	require.Equal(t, []string{"after-backup", "in-backup"}, f.projectNames(t), "a failed restore must leave the live rows")
 	require.Equal(t, auditBefore, f.auditEventCount(t), "a failed restore must not change the audit trail")
 	require.Empty(t, f.restoreLeftovers(t), "a failed restore must leave nothing beside the live files")
@@ -226,6 +254,13 @@ func TestAdminRestore_Overwrite_PopulatedTarget_ReplacesKeysAndData(t *testing.T
 			got, err := os.ReadFile(aside[0]) // #nosec G304 -- t.TempDir() path
 			require.NoError(t, err)
 			require.Equal(t, f.liveKeys["dek.key"], got)
+			f.requireManifestRecordsArchiveKeys(t)
+			asideManifest, err := filepath.Glob(filepath.Join(f.dir, keyfiles.ManifestFileName+".pre-restore-*"))
+			require.NoError(t, err)
+			require.Len(t, asideManifest, 1, "the replaced manifest is kept aside with the key files it recorded")
+			got, err = os.ReadFile(asideManifest[0]) // #nosec G304 -- t.TempDir() path
+			require.NoError(t, err)
+			require.Equal(t, f.liveManifest, got)
 
 			journal, err := filepath.Glob(filepath.Join(f.dir, restorejournal.FileName))
 			require.NoError(t, err)
@@ -364,7 +399,8 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 		{"sqlite", "journal-written", true, true},
 		{"sqlite", "moved-aside", true, true},
 		{"sqlite", "installed-1", true, true},
-		{"sqlite", "installed-3", true, true}, // the last entry: the database
+		{"sqlite", "installed-3", true, true}, // the key-set manifest
+		{"sqlite", "installed-4", true, true}, // the last entry: the database
 		{"sqlite", "finishing", true, true},
 		{"postgres", "staged", false, false},
 		{"postgres", "journal-written", true, false},
@@ -373,6 +409,7 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 		{"postgres", "moved-aside", true, true},
 		{"postgres", "installed-1", true, true},
 		{"postgres", "installed-2", true, true}, // the last key file
+		{"postgres", "installed-3", true, true}, // the key-set manifest, the last entry
 		{"postgres", "finishing", true, true},
 	}
 	for _, tc := range cases {
@@ -386,6 +423,7 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 			if !tc.journal {
 				require.NoError(t, bootErr)
 				require.Equal(t, f.liveKeys, readOverwriteKeys(t, f.dir))
+				require.Equal(t, f.liveManifest, readKeySetManifest(t, f.dir))
 				require.Equal(t, []string{"after-backup", "in-backup"}, f.projectNames(t))
 				require.Equal(t, auditBefore, f.auditEventCount(t))
 				// The staged copies the killed process left are removed by
@@ -434,6 +472,7 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 				require.Contains(t, out, "Rolled forward")
 				require.Contains(t, out, "verify-audit on the restored database: VALID")
 				require.Equal(t, f.archiveKeys, readOverwriteKeys(t, f.dir))
+				f.requireManifestRecordsArchiveKeys(t)
 				require.Equal(t, []string{"in-backup"}, f.projectNames(t))
 				leftovers, gerr := filepath.Glob(filepath.Join(f.dir, "*.restoring-*"))
 				require.NoError(t, gerr)
@@ -442,6 +481,7 @@ func TestAdminRestore_Overwrite_KillPoints(t *testing.T) {
 			}
 			require.Contains(t, out, "Rolled back")
 			require.Equal(t, f.liveKeys, readOverwriteKeys(t, f.dir))
+			require.Equal(t, f.liveManifest, readKeySetManifest(t, f.dir))
 			require.Equal(t, []string{"after-backup", "in-backup"}, f.projectNames(t))
 			require.Equal(t, auditBefore+1, f.auditEventCount(t), "only the recovery's own audit event is new")
 			require.Empty(t, f.restoreLeftovers(t))

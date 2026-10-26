@@ -15,6 +15,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -35,6 +36,12 @@ func interruptedRotationFixture(t *testing.T) (cfg *config.Config, plaintext str
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The key-set manifest as it was before the rotation: a real crash between
+	// the sweep commit and the rename leaves it describing the old DEK (#2900).
+	oldManifest, err := os.ReadFile(keyfiles.ManifestFileName)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if _, err := captureOutput(t, func() error { return RotateWithConfig(cfg, true, false, zeroPassSrc()) }); err != nil {
 		t.Fatalf("RotateWithConfig: %v", err)
 	}
@@ -42,6 +49,9 @@ func interruptedRotationFixture(t *testing.T) (cfg *config.Config, plaintext str
 		t.Fatal(err)
 	}
 	if err := os.WriteFile("dek.key", oldWrapped, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyfiles.ManifestFileName, oldManifest, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	db := migrateEncOpsTables(t, testDBFile)

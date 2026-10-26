@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -125,6 +126,14 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 
 	activePath := filepath.Join(km.baseDir, km.dekPath)
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
+	// Stage the new DEK in the key-set manifest before it becomes active. The
+	// sweep has committed, so a failure here keeps the pending file exactly as
+	// a failed rename does (recovery stages again and promotes it).
+	newFiles := map[string][]byte{activePath: wrapped}
+	if err := km.stageKeySet(keyfiles.OpRotateDEK, newFiles); err != nil {
+		wipeBytes(newDEK)
+		return fmt.Errorf("failed to stage the key-set manifest after the re-encryption sweep committed: %w — %s was kept; fix the cause, then start the server or run `admin encryption rotate`, which finish the promotion", err, pendingDEKPath)
+	}
 	if err := os.Rename(pendingPath, activePath); err != nil {
 		wipeBytes(newDEK)
 		// The sweep committed: the rows and the redo marker are under the new DEK
@@ -143,6 +152,7 @@ func (km *KeyManager) RotateDEKWithSweep(passphrase string, sweepFn func(oldSvc,
 	}
 	// Crash-consistency seam (nil in prod): on-disk rotation complete.
 	rotationCheckpointHook("sweep:after-syncdir")
+	km.commitKeySet(keyfiles.OpRotateDEK, newFiles)
 
 	wipeBytes(km.currentDEK)
 	km.currentDEK = newDEK
@@ -194,12 +204,24 @@ func (km *KeyManager) PromotePendingDEK() error {
 		}
 		return fmt.Errorf("stat pending DEK during recovery: %w", err)
 	}
+	// Bracket the promotion in the key-set manifest like every other DEK
+	// replacement: the sweep that wrote this file may have crashed before it
+	// staged it, and an unstaged new DEK would read as foreign at boot.
+	pending, err := securefiles.SafeReadFile(km.baseDir, km.dekPath+".pending")
+	if err != nil {
+		return fmt.Errorf("read pending DEK during recovery: %w", err)
+	}
+	newFiles := map[string][]byte{activePath: pending}
+	if err := km.stageKeySet(keyfiles.OpRotateDEK, newFiles); err != nil {
+		return fmt.Errorf("stage the key-set manifest before promoting the pending DEK during recovery: %w", err)
+	}
 	if err := os.Rename(pendingPath, activePath); err != nil {
 		return fmt.Errorf("promote pending DEK during recovery: %w", err)
 	}
 	if err := securefiles.SyncDir(filepath.Dir(activePath)); err != nil {
 		return fmt.Errorf("fsync key dir after promoting pending DEK during recovery: %w", err)
 	}
+	km.commitKeySet(keyfiles.OpRotateDEK, newFiles)
 	return nil
 }
 

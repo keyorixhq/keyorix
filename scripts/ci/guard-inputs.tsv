@@ -1,0 +1,138 @@
+# guard-inputs.tsv -- guard test file -> the repo paths it reads (CI-GUARD-TRIGGERS-1).
+#
+# Every Go job in ci.yml skips a docs_only / web_only / go_unaffected /
+# operator_only change. The docs-guards job runs, for each changed path, the Test
+# funcs of every file below with an input glob matching it
+# (scripts/ci/run-input-guards.sh, scripts/ci/guardinputs). Columns, tab-separated:
+#   file    the _test.go file (all its top-level Test funcs run)
+#   globs   comma-separated. glob = an input; !glob = reviewed: the read
+#           estimate points at these paths but the file does not read them.
+#           '**' is any number of path segments, '*' and '?' stay in one.
+#   note    what the file reads, or why a !glob is not read.
+# scripts/ci/guardinputs TestGuardInputsCoverSkippedPaths fails a PR that adds a
+# guard reading a path whose change alone runs none of its tests, and names the
+# globs to add. Over-selecting costs only run time; under-selecting reds main.
+#
+# --- the docs-guards selection's own inputs --------------------------------------
+scripts/ci/guardinputs/guardinputs_test.go	**	the map checker reads every test file, ci.yml and the tracked file list (a deleted or renamed input makes a row dead), so it runs on every change
+#
+# --- Markdown, docs/ and other documentation ---------------------------------------
+cli/cmd/docs_no_literal_secrets_test.go	**/*.md,**/NOTES.txt,scripts/**/*.sh,deploy/**/*.sh,operator/**/*.go,!**	#3616: every *.md, Helm NOTES.txt, non-test Go incl. operator/, shell under scripts/ and deploy/ only
+cli/cmd/docs_j5_errors_test.go	docs/operator/j5-lost-admin.md	the J5 lost-admin runbook
+cli/cmd/docs_test.go	docs/cli-reference.md,docs/man/keyorix.1,!docs/**	generated CLI reference and man page
+cli/cmd/quickstart_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,!cli/**/*.md	commands in QUICK_START.md and INSTALL-WITH-AI.md resolve; cli/ Markdown is not read
+cmd/statemapgen/main_test.go	docs/state-map/**	checked-in state-map TSVs
+deploy/compose_pins_test.go	CHANGELOG.md	compose image pins are named in CHANGELOG.md
+deploy/demo-hosted/demo_hosted_test.go	deploy/demo-hosted/**,README.md,scripts/demo/seed-demo.sh,!**	walks only its own kit directory (".") plus the root README and the demo seed script
+deploy/security_txt_test.go	docs/security/security.txt	security.txt contents
+internal/config/insecure_settings_aliases_test.go	docs/CONFIGURATION.md	documented insecure-setting aliases
+internal/core/exempt_ledger_review_test.go	docs/*exempt*.tsv,docs/*exempt*.d/**,!docs/**	exemption ledgers (flat files and fragments)
+internal/core/guards/atomicity_guard_test.go	docs/atomicity-exempt.tsv	atomicity exemption ledger
+internal/core/guards/check_then_act_lock_guard_test.go	docs/check-then-act-lock-exempt.tsv,docs/check-then-act-lock-exempt.d/**	check-then-act exemption ledger and fragments
+internal/core/guards/ledger_fragments_test.go	!README.md	fixtures in t.TempDir() only; "README.md" is a fixture name
+internal/core/upgrading_scim_sso_check_query_test.go	docs/UPGRADING.md	the SCIM/SSO check query in UPGRADING.md
+internal/docsdrift/env_and_secrets_test.go	**/*.md,**/*.go,**/*.sh,**/*.yml,**/*.yaml,**/*.tpl,**/*.conf,**/*.txt,**/*.toml,**/Dockerfile*,**/Makefile	documented env vars and secret flags against every source kind envVarSourceFile accepts
+internal/docsdrift/links_test.go	**/*.md	relative links in every Markdown file
+internal/docsdrift/upgrading_sections_test.go	docs/**/*.md,changelog.d/**/*.md,SECURITY.md,README.md,!**	UPGRADING.md section numbers, and references to them in every .md under docs/ and changelog.d/ plus SECURITY.md and README.md; nothing else is walked
+internal/docsdrift/versioning_deprecations_test.go	docs/VERSIONING.md	deprecated config aliases (Go source) against the VERSIONING.md deprecations table
+internal/metricsdoc/metricsdoc_test.go	docs/operations/metrics.md,operator/**/*.go	metrics doc against metric registrations, operator/ included
+internal/metricsdoc/observability_assets_test.go	deploy/observability/**	alerts, dashboard and runbook
+internal/refusaldocs/refusaldocs_test.go	docs/operator/startup-refusals.md,!operator/**	startup-refusals doc against server/ and internal/ sources only
+internal/statemap/completeness_test.go	docs/state-map/**	state-map entrypoints/stores/class-overrides TSVs
+internal/statemap/generated_drift_guard_test.go	docs/state-map/**	generated state-map files
+internal/statemap/invariants_fragments_guard_test.go	**/INVARIANTS.md,**/INVARIANTS.d/**,!**	every INVARIANTS.md, INVARIANTS.d fragment and docs/INVARIANTS.md
+internal/statemap/statemap_test.go	!cli/**/*.md,!internal/**/*.md	"cli"/"internal" name Go packages here; no Markdown is read
+internal/storage/store/child_parent_liveness_registry_test.go	docs/child-parent-liveness-exempt.tsv	exemption ledger
+internal/storage/store/full_row_write_guard_test.go	docs/full-row-write-exempt.tsv,!operator/**	exemption ledger; walks internal/storage/store and internal/core only
+internal/threatmodelcheck/evidence_test.go	**/*.go,**/*.md,**/*.tsv,**/*.yaml,**/*.yml,**/*.sh,**/*.sql,**/*.proto,**/*.json,**/*.toml	threat-model evidence: every cited path (pathExts) must exist, every cited test must exist in a *_test.go
+server/admin/docs_commands_test.go	QUICK_START.md,docs/CONFIGURATION.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	documented server admin commands; "operator" names docs/operator only
+server/admin/docs_container_admin_test.go	QUICK_START.md,README.md,docs/SELF_HOSTING.md,docs/UPGRADING.md	container admin commands in the docs
+server/admin/quickstart_commands_test.go	QUICK_START.md,INSTALL-WITH-AI.md,docs/install/offline-install.sh,!server/**/*.md	quick-start commands; server/entrypoint.sh is read, server/ Markdown is not
+server/faultops/consume_first_oracle_test.go	docs/atomicity-exempt.tsv	atomicity exemption ledger
+server/faultops/oracle_d_pure_read_by_design_test.go	!server/**/*.md	globs *_test.go in named package dirs only
+server/hardening_matrix_test.go	docs/security/production-hardening-matrix.d/**	hardening matrix fragments
+server/http/g80_triage_doc_closure_guard_test.go	!server/**/*.md	reads the cited Go files only
+server/middleware/j5_doc_messages_test.go	docs/operator/j5-lost-admin.md	J5 messages quoted in the runbook
+#
+# --- web/ ---------------------------------------------------------------------------
+deploy/hsts_nginx_behaviour_test.go	web/nginx.conf,web/nginx-hsts.conf,web/keyorix-backend.conf,web/docker-entrypoint.d/**	nginx configs and the HSTS entrypoint hook (runs nginx in Docker when available)
+server/http/suspend_audit_refusal_message_drift_test.go	web/src/features/secrets/__tests__/SuspendAuditRefusal.test.tsx,web/src/features/secrets/__tests__/SuspendSecretModal.test.tsx,cli/cmd/suspend_audit_refusal_test.go	the refusal text quoted by the web and CLI tests
+server/middleware/nginx_conf_header_scope_test.go	web/nginx.conf	nginx header scoping
+server/middleware/nginx_conf_security_test.go	web/nginx.conf,web/nginx-hsts.conf	nginx security headers
+server/webui/dockerfile_embed_test.go	server/Dockerfile,.dockerignore,!web/**	Dockerfile and .dockerignore; "web" strings are expected .dockerignore entries
+#
+# --- scripts/, .github/ and other go_unaffected paths ------------------------------
+deploy/compose_postgres_tls_test.go	scripts/selfhost/init-secrets.sh	runs init-secrets.sh
+deploy/dockerfile_go_toolchain_test.go	**/Dockerfile*,go.mod,!**	every Dockerfile's golang tag against go.mod's toolchain
+deploy/hardening/init_secrets_test.go	scripts/selfhost/init-secrets.sh	runs init-secrets.sh
+deploy/shipped_environment_test.go	scripts/demo/up.sh	demo up.sh environment
+scripts/ci/codeql_gate_test.go	.github/workflows/codeql.yml,scripts/ci/codeql-gate.sh	the CodeQL queue gate and its workflow
+scripts/ci/codeql_web_gate_test.go	.github/workflows/codeql.yml,!web/**,!README.md,!docs/**/*.md,!scripts/ci/codeql-gate.sh,!scripts/ci/select-affected.py	codeql.yml's filter step; web/, docs, README and script paths are fake changed-file inputs in its tables
+scripts/ci/codeql_gate_realdata_test.go	scripts/ci/codeql-gate.sh,scripts/ci/testdata/codeql/**,!demo/app.js	the gate script against recorded SARIF in testdata/codeql; demo/app.js is a finding location inside the recorded data, not a file read
+scripts/ci/global_guards_test.go	scripts/ci/global-guards.txt,!scripts/**	every listed guard package exists
+scripts/ci/select_affected_test.go	scripts/ci/select-affected.py,scripts/ci-test-legs.sh,scripts/ci-test-quick.py,!**	the selection script; other paths are fake changed-file inputs
+scripts/demo/demo_scripts_test.go	scripts/demo/**/*.sh	demo shell scripts
+scripts/demo/native_up_helpers_test.go	scripts/demo/**/*.sh	native-up helpers
+server/container_bind_configs_test.go	scripts/dast/keyorix-dast.yaml,scripts/demo/up.sh	container bind configs used by DAST and the demo
+scripts/demo/check_state_test.go	scripts/demo/check.sh,scripts/demo/lib.sh,!scripts/demo/**	copies only check.sh and lib.sh into a temp root and runs check.sh there; no other demo script is read
+#
+# --- operator/ Go code (root walkers that do not skip the operator module) --------
+internal/besteffort/besteffort_tx_guard_test.go	operator/**/*.go,!operator/go.mod	walks every .go file from the repo root
+internal/core/guards/clock_seam_guard_test.go	operator/**/*.go	walks every non-test .go file; skips web/.github/... not operator/
+internal/core/guards/g80_1530_machine_actor_attribution_guard_test.go	operator/**/*.go	repo-root walk
+internal/core/guards/interleave_production_purity_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
+internal/core/guards/mfa_stepup_purpose_guard_test.go	operator/**/*.go	repo-root walk
+internal/core/guards/role_read_wrapper_forwarding_guard_test.go	operator/**/*.go	repo-root walk
+internal/core/guards/session_auth_read_wrapper_forwarding_guard_test.go	operator/**/*.go	repo-root walk
+internal/crypto/password_provider_iterations_guard_test.go	operator/**/*.go	repo-root walk
+internal/statemap/no_time_local_assignment_guard_test.go	operator/**/*.go	repo-root walk over _test.go files
+internal/statemap/test_tempdir_cleanup_guard_test.go	operator/**/*.go	repo-root walk over _test.go files
+internal/storage/models/g1619_beforesave_bypass_guard_test.go	operator/**/*.go	repo-root walk
+internal/storage/sqlite_open_paths_guard_test.go	operator/**/*.go	repo-root walk
+internal/storage/store/remote_storage_importer_allowlist_test.go	operator/**/*.go	repo-root walk
+internal/storage/store/secret_nodes_soft_delete_sweep_test.go	operator/**/*.go	repo-root walk
+internal/storage/store/secret_version_cache_epoch_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
+internal/testutil/sqlitetest/shared_cache_literal_guard_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
+internal/secretenv/describe_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files; skips no module
+internal/guardrules/calendar_guard_test.go	operator/**/*.go,docs/guard-rollout.d/*.tsv	repo-root walk over _test.go files (all modules); also reads every docs/guard-rollout.d row
+internal/testutil/sqlitetest/factory_path_guard_test.go	operator/**/*.go	repo-root walk over .go files; skips no module
+operator/api/v1alpha1/keyorixsecret_types_test.go	operator/config/crd/bases/*.yaml	generated CRD against the Go types (the operator job runs it too)
+#
+# --- reviewed: does not read operator/ (subtree walk, or skips it / nested modules) --
+cli/internal/clientguard/clientguard_test.go	!operator/**	walks the cli module only
+cli/internal/regularfile/guard_test.go	!operator/**	walks the cli module only
+internal/config/audit_durability_reachability_test.go	!operator/**,!**/*.yaml	skips cli/ and operator/; reads .go only
+internal/config/insecure_settings_messages_guard_test.go	!operator/**	walks internal/, server/, cli/
+internal/config/keyless_mode_reachability_test.go	!operator/**	skips cli/ and operator/
+internal/core/guards/actor_kind_literal_completeness_test.go	!operator/**	walks internal/core and server/
+internal/core/guards/csv_writer_completeness_test.go	!operator/**	skips operator/
+internal/core/guards/dynamic_secret_column_scoped_guard_test.go	!operator/**	walks internal/core, internal/storage/store, server/
+internal/core/guards/project_membership_definition_guard_test.go	!operator/**	skips operator/
+internal/core/guards/secret_read_audit_call_sites_test.go	!operator/**	skips operator/
+internal/core/guards/secret_undelete_column_scoped_guard_test.go	!operator/**	walks internal/core, internal/storage/store, server/
+internal/core/guards/update_secret_column_scoped_guard_test.go	!operator/**	walks internal/core, internal/storage/store, server/
+internal/core/secret_nodes_soft_delete_guard_test.go	!operator/**	walks named internal/ roots
+internal/encryption/pending_dek_cleanup_guard_test.go	!operator/**	skips nested modules (go.mod)
+internal/envflag/envflag_review_test.go	!operator/**	skips nested modules (go.mod)
+internal/secretenv/fileread_guard_test.go	!operator/**	walks guardedDirs (root module only)
+internal/secretenv/owner_guard_test.go	!operator/**	walks guardedDirs (root module only)
+internal/storage/explicit_columns_guard_test.go	!operator/**	walks internal/ and server/
+internal/storage/store/audit_write_context_completeness_test.go	!operator/**	skips operator/
+internal/storage/store/pg_trigger_registry_guard_test.go	!operator/**	skips nested modules (go.mod)
+internal/testutil/pgdsn/shared_database_lock_guard_test.go	!operator/**	walks internal/ and server/
+internal/testutil/srcpath/runtime_caller_guard_test.go	!operator/**	skips nested modules (go.mod)
+server/http/grant_primitive_gate_table_test.go	!operator/**	skipSecretACLDir skips nested modules
+server/http/secret_acl_gate_guard_test.go	!operator/**	skipSecretACLDir skips nested modules
+server/http/share_secret_isgroup_guard_test.go	!operator/**	skipSecretACLDir skips nested modules
+internal/securefiles/securefiles_s21_test.go	!internal/**	t.TempDir() fixtures only
+server/secret_file_relative_echo_test.go	!**	Go walk skips nested modules; also reads server/entrypoint.sh, which no skip covers
+migrate/internal/accessplan/smt_model_export_test.go	docs/formal/smt/cases/**/*.json	RD-SMT-FIX-1 (#3658): TestSMTModels_MatchAccessplanOnRealPolicies reads the SMT case input/model JSON under docs/formal/smt/cases
+configs/template_keys_read_test.go	configs/dev.yaml,configs/test.yaml,!operator/**,!web/**,!demo/**,!**/*.yaml	reads configs/dev.yaml and test.yaml and every non-test .go file of the root module; skips operator/, web/ and cli/, so other yaml and operator Go are not read
+internal/config/lock_loss_metrics_test.go	!operator/**/*.go	walks internal/ and server/ only; operator/ Go is not read
+internal/core/guards/named_source_files_guard_test.go	!operator/**/*.go	reads _test.go files under internal/core and its family dirs; operator/ is not walked
+internal/core/guards/secret_ownership_guard_test.go	!internal/core/**/*.md	reads only the core family's non-test .go files; the Markdown under internal/core is not read
+internal/core/guards/test_only_packages_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for imports of test-only packages; operator/ included
+internal/docsdrift/gitattributes_union_test.go	.gitattributes,docs/atomicity-exempt.tsv,docs/besteffort-exempt.tsv,docs/child-parent-liveness-exempt.tsv,docs/full-row-write-exempt.tsv,docs/state-map/class-overrides.tsv	merge=union attribute against the five ledgers it lists
+migrate/internal/accessplan/implied_test.go	scripts/vault-migration-testbed/seed.sh	checks the HCL stanza literals against scripts/vault-migration-testbed/seed.sh
+server/pq_transport_guard_test.go	operator/**/*.go,!**/*.md	repo-root walk over every non-Markdown, non-test file; reads operator/ Go, skips Markdown
+internal/cryptoinventory/cbom_test.go	internal/cryptoinventory/testdata/**,!LICENSE	the vendored CycloneDX schema under its own testdata/cyclonedx-1.6 (with its LICENSE); the root LICENSE is not read

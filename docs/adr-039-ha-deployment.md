@@ -44,8 +44,9 @@ Run each background scheduler on **one replica at a time**, gated by a PostgreSQ
 - **DEK epoch (#3337).** Every replica must hold the same DEK. The database records
   which DEK it is encrypted under (`system_metadata["dek.epoch"]`, ADR-010 addendum); a
   replica with another DEK refuses to start, and a DEK rotation fences encrypted writes on
-  every replica until it commits. After a rotation, copy the new `dek.key` to every
-  replica that does not share the key volume before starting it.
+  every replica until it commits. After a rotation, copy the new `dek.key` and
+  `keyset.manifest.json` (and `kek.salt` with the password provider) to every replica
+  that does not share the key volume before starting it.
 - **PostgreSQL is required for HA.** SQLite is a single-file, single-process store;
   it is supported only for single-instance / development. HA = PostgreSQL (itself
   made HA by the operator: managed Postgres, Patroni, or similar).

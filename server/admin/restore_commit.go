@@ -3,7 +3,8 @@
 // `admin restore --recover` resolves a restore that was killed in between.
 //
 // The order, on both backends:
-//  1. Stage: every key file is written and fsynced next to its target as
+//  1. Stage: every key file, and the key-set manifest recording them
+//     (prepareRestoredKeySet), is written and fsynced next to its target as
 //     <path>.restoring-<rand>; nothing live is touched. SQLite also builds
 //     the whole restored database at <db>.restoring-<ts> and loads it there.
 //  2. Journal: restorejournal.Write fsyncs every staged file's directory,
@@ -50,6 +51,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/auditverify"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/restorejournal"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
@@ -82,6 +84,49 @@ func newRestoreToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// keySetManifestPath is where cfg's key-set manifest lives (#2900), "" when
+// cfg configures no DEK path. Relative, like expectedKeyFilePaths.
+func keySetManifestPath(cfg *config.Config) (string, error) {
+	return keyfiles.ManifestPath(&cfg.Storage.Encryption, ".")
+}
+
+// prepareRestoredKeySet stages a restored key set: every key file
+// (prepareRestoredFileSet) and, as one more entry of the same set, the
+// key-set manifest that records them (keyfiles.SetWriter.PlanCommit: the
+// restored hashes at the next generation, nothing staged). It is the only way
+// restore stages key material, so a journal that installs key files always
+// installs the manifest that matches them, in the same install step
+// (installJournalEntries) and under the same roll-forward/roll-back decision.
+// The manifest is not written through its own .pending/rename two-phase
+// commit: the journal already is the commit protocol for this set, and a
+// second one could disagree with it about whether the restore happened.
+//
+// The manifest entry comes after the key files, so while a killed install is
+// unresolved the manifest still describes the replaced set and the boot-time
+// manifest check refuses the half-installed one (if the journal were lost);
+// with the journal present the server refuses earlier, naming --recover.
+func prepareRestoredKeySet(cfg *config.Config, paths []string, data [][]byte) ([]restorejournal.Entry, error) {
+	ks, err := keyfiles.NewSetWriter(&cfg.Storage.Encryption, ".")
+	if err != nil {
+		return nil, fmt.Errorf("key-set manifest: %w", err)
+	}
+	if ks == nil || len(paths) == 0 {
+		return prepareRestoredFileSet(paths, data)
+	}
+	if len(paths) != len(data) {
+		return nil, fmt.Errorf("internal error: %d paths but %d data buffer(s) for a restored key set", len(paths), len(data))
+	}
+	restored := make(map[string][]byte, len(paths))
+	for i, p := range paths {
+		restored[p] = data[i]
+	}
+	manifest, err := ks.PlanCommit(keyfiles.OpRestore, restored)
+	if err != nil {
+		return nil, fmt.Errorf("key-set manifest for the restored key files: %w", err)
+	}
+	return prepareRestoredFileSet(append(slices.Clone(paths), ks.Path()), append(slices.Clone(data), manifest))
+}
+
 // prepareRestoredFileSet stages every file of a set (prepareRestoredFile)
 // without installing any; on error nothing is left behind. The entries carry
 // absolute paths and each staged file's SHA-256.
@@ -112,7 +157,7 @@ func prepareRestoredFileSet(paths []string, data [][]byte) ([]restorejournal.Ent
 // database and its sidecars) and journal temp files. Only call it holding
 // the database lock with no journal present; each removal is printed.
 func removeOrphanStagedFiles(cfg *config.Config) error {
-	targets, err := expectedKeyFilePaths(cfg)
+	targets, err := restoreKeySetTargets(cfg)
 	if err != nil {
 		return err
 	}
@@ -151,6 +196,23 @@ func removeOrphanStagedFiles(cfg *config.Config) error {
 		}
 	}
 	return nil
+}
+
+// restoreKeySetTargets is every file a restore's key set installs:
+// expectedKeyFilePaths plus the key-set manifest (prepareRestoredKeySet).
+func restoreKeySetTargets(cfg *config.Config) ([]string, error) {
+	paths, err := expectedKeyFilePaths(cfg)
+	if err != nil {
+		return nil, err
+	}
+	manifest, err := keySetManifestPath(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("key-set manifest: %w", err)
+	}
+	if manifest != "" && len(paths) > 0 {
+		paths = append(paths, manifest)
+	}
+	return paths, nil
 }
 
 // discardStagedEntries removes staged files that were never installed.
@@ -434,7 +496,8 @@ func runAdminRestoreRecover(cfg *config.Config) error {
 
 // validateJournalEntries checks a journal read from disk against cfg before
 // recovery renames anything: the backend must be cfg's, every target must be
-// one of cfg's own key files or its SQLite database, and every staged file
+// one of cfg's own key files (or their key-set manifest) or its SQLite
+// database, and every staged file
 // must be a restore staging name in its target's directory. A journal is a
 // file anyone with write access to that directory could plant; recovery must
 // not become a way to rename arbitrary files over arbitrary paths, or to
@@ -454,7 +517,7 @@ func validateJournalEntries(cfg *config.Config, j restorejournal.Journal) error 
 	if j.Backend != wantBackend {
 		return fmt.Errorf("restore journal is for backend %q, this config is %q", j.Backend, wantBackend)
 	}
-	paths, err := expectedKeyFilePaths(cfg)
+	paths, err := restoreKeySetTargets(cfg)
 	if err != nil {
 		return err
 	}

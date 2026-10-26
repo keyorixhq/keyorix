@@ -98,6 +98,9 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (_ sto
 		bdb, _, err := openPostgresSQLDB(&cfg.Storage.Database)
 		return bdb, err
 	})
+	// TRIGGER-ROWDIGEST-1: re-check the generation triggers' definition and
+	// catalog row versions every interval (docs/design/trigger-rowdigest.md).
+	ls.StartRolePermissionsGenerationIntegrityCheck(log.Printf)
 	return ls, nil
 }
 
