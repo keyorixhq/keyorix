@@ -11,6 +11,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/sqlitepath"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
@@ -119,21 +120,16 @@ func sqliteDSN(dbPath string) string {
 // and #1647.
 const secureLocalStoragePerm = 0o600
 
-// localStorageDBFile strips DSN query parameters from dbPath and reports whether the
-// result names a real on-disk file at all — false for an in-memory database ("file:
-// name?mode=memory[&cache=shared]" or ":memory:", both used throughout this package's own
-// test suite, per acquireSQLiteMigrationLock's identical check). Neither #1647 concern
-// (an insecure inherited mode, a mode left over from before this fix) applies to a
-// database that was never written to disk.
+// localStorageDBFile resolves dbPath to the file SQLite opens and reports whether there is
+// one at all: false for an in-memory database (":memory:", or "mode=memory" in the query, both
+// used throughout this package's own test suite). Neither #1647 concern (an insecure inherited
+// mode, a mode left over from before this fix) applies to a database that was never written to
+// disk. It is sqlitepath.DatabaseFile, the resolver the server lock sidecar uses, so a
+// SQLite "file:" URI names the real database here too: before, "file:/data/secrets.db" made
+// prepareLocalStorageFile pre-create a junk relative "file:/data/secrets.db" path while the real
+// database was born at the process umask until tightenExistingLocalStorageFiles fixed it.
 func localStorageDBFile(dbPath string) (path string, isRealFile bool) {
-	base := dbPath
-	if idx := strings.IndexByte(base, '?'); idx != -1 {
-		base = base[:idx]
-	}
-	if base == "" || base == ":memory:" || strings.Contains(dbPath, "mode=memory") {
-		return "", false
-	}
-	return base, true
+	return sqlitepath.DatabaseFile(dbPath)
 }
 
 // prepareLocalStorageFile ensures dbPath's parent directory exists at a safe mode and, if

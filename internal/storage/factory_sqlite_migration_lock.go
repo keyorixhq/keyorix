@@ -79,12 +79,13 @@ func (l *sqliteMigrationLock) release() {
 //     there is no second OS process that could ever share it, so no lock is
 //     needed at all and none is taken (acquireSQLiteMigrationLock returns a
 //     nil lock and a nil error; release() on a nil lock is a no-op).
+//
+// The path comes from localStorageDBFile (sqlitepath.DatabaseFile), so a
+// SQLite "file:" URI and a plain spelling of the same database meet on one lock,
+// and only the query marks a database in-memory.
 func acquireSQLiteMigrationLock(dbPath string) (*sqliteMigrationLock, error) {
-	base := dbPath
-	if idx := strings.IndexByte(base, '?'); idx != -1 {
-		base = base[:idx]
-	}
-	if base == "" || base == ":memory:" || strings.Contains(dbPath, "mode=memory") {
+	base, isRealFile := localStorageDBFile(dbPath)
+	if !isRealFile {
 		return nil, nil
 	}
 
