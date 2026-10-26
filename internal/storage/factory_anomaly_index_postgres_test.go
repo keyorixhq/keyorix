@@ -8,7 +8,7 @@ import (
 )
 
 // TestAnomalyIndexes_Postgres_CreatedOnUpgrade is the Postgres twin of
-// TestCompanionIndexes_CreatedOnUpgrade for the C-PERF-FIXES anomaly indexes: a
+// TestCompanionIndexes_CreatedOnUpgrade for the C-PERF-FIXES anomaly index (the secret_access_logs ones moved to the index build step: TestSecretAccessLogIndexes_*): a
 // fresh install gets them from AutoMigrate's struct tags, and an install that
 // predates them (simulated by dropping them) gains them on its next boot through
 // migrateDatabase's CREATE INDEX IF NOT EXISTS block. A third boot proves the
@@ -23,9 +23,6 @@ func TestAnomalyIndexes_Postgres_CreatedOnUpgrade(t *testing.T) {
 
 	indexes := []string{
 		"idx_anomaly_alerts_dedup",
-		"idx_secret_access_logs_secret_time",
-		"idx_secret_access_logs_access_time",
-		"idx_secret_access_logs_secret_action",
 	}
 	for _, idx := range indexes {
 		require.True(t, indexExists(db, idx), "fresh install must have %s", idx)

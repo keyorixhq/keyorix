@@ -1328,20 +1328,22 @@ func (l *DynamicSecretLease) BeforeSave(_ *gorm.DB) error {
 	return nil
 }
 
-// SecretAccessLog indexes: (secret_node_id, access_time) serves the anomaly
-// detector's per-secret ListSecretAccessLogs range read, and (access_time,
-// secret_node_id) its ListSecretIDsAccessedSince candidate scan (covering, so
-// SQLite range-scans it instead of full-scanning the first index for DISTINCT)
-// plus the other time-bounded aggregates in local_audit.go. Before these, each per-secret read was a full
-// table scan of an append-only table written on every secret access. Upgraded
-// installs gain them via migrateDatabase's CREATE INDEX IF NOT EXISTS block.
+// SecretAccessLog indexes are declared in store.SecretAccessLogIndexes (and the
+// Postgres-only store.SecretAccessLogIndexesPostgres), created by code and not by
+// tags: a tag is a plain CREATE INDEX inside the migration transaction, which on
+// Postgres blocks every audited read's access-log INSERT for the whole build.
+// (secret_node_id, access_time, action) serves per-secret history, the anomaly
+// detector's per-secret range read, and total_reads from the index alone;
+// access_time serves the anomaly candidate scan and the other time-bounded
+// aggregates in local_audit.go (a BRIN on Postgres, a btree on SQLite). Before
+// these, each per-secret read was a full table scan of an append-only table.
 type SecretAccessLog struct {
 	ID              uint `gorm:"primaryKey"`
-	SecretNodeID    uint `gorm:"index:idx_secret_access_logs_secret_time,priority:1;index:idx_secret_access_logs_access_time,priority:2;index:idx_secret_access_logs_secret_action,priority:1"`
+	SecretNodeID    uint
 	SecretVersionID uint
 	AccessedBy      string
-	AccessTime      time.Time `gorm:"index:idx_secret_access_logs_secret_time,priority:2;index:idx_secret_access_logs_access_time,priority:1"`
-	Action          string    `gorm:"index:idx_secret_access_logs_secret_action,priority:2"`
+	AccessTime      time.Time
+	Action          string
 	IPAddress       string
 	UserAgent       string
 }
@@ -1609,7 +1611,7 @@ type AuditEvent struct {
 	EventType    string
 	UserID       *uint
 	SecretNodeID *uint
-	// ProjectID, SecretNodeID, MachineIdentityID and EventTime are indexed by
+	// ProjectID, SecretNodeID and EventTime are indexed by
 	// store.AuditListIndexes (composites with event_time), created by code, not
 	// by tags: a tag is a plain CREATE INDEX that blocks audit writes on
 	// Postgres for the whole build (docs/specs/audit-list-keyset.md).
@@ -1649,10 +1651,10 @@ type AuditEvent struct {
 	// before this field existed, ActorType correctly recorded "a machine did
 	// this" while nothing recorded which one -- a real, structural gap, not a
 	// bug in the writer: the audit model had no field to hold a machine
-	// actor. Indexed so "everything this identity did" is a real, queryable
-	// answer, not just a per-row curiosity -- an attribution field a security
-	// review can't query is only half the control. Indexed as
-	// (machine_identity_id, event_time), see store.AuditListIndexes.
+	// actor. Deliberately NOT indexed (PERF-INDEX-1): no query filters on it,
+	// and (machine_identity_id, event_time) cost every audit INSERT a btree
+	// update. A "everything this identity did" view must build its index
+	// CONCURRENTLY (see store.AuditListIndexes) when it is added.
 	MachineIdentityID *uint
 
 	// RequestID is the server-minted id of the HTTP request that wrote the row

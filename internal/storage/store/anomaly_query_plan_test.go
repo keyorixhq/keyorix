@@ -73,7 +73,7 @@ func explainSQLite(t *testing.T, db *gorm.DB, sql string) string {
 // It does not check Postgres plans: the planner there picks a seq scan on tiny test
 // tables regardless of indexes, so a plan assertion would be meaningless; the
 // indexes themselves are created on both dialects by the same migration
-// (TestCompanionIndexes_CreatedOnUpgrade).
+// (TestSecretAccessLogIndexes_*).
 func TestAnomalyQueries_UseTheirIndexes(t *testing.T) {
 	cap := &anomalySQLCapture{Interface: logger.Discard}
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{Logger: cap})
@@ -82,6 +82,7 @@ func TestAnomalyQueries_UseTheirIndexes(t *testing.T) {
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
 	require.NoError(t, db.AutoMigrate(&models.AnomalyAlert{}, &models.SecretAccessLog{}))
+	require.NoError(t, EnsureAuditListIndexesSQLite(db, t.Logf))
 	ls := NewLocalStorage(db)
 	ctx := context.Background()
 
@@ -99,7 +100,7 @@ func TestAnomalyQueries_UseTheirIndexes(t *testing.T) {
 		wantIndex string
 	}{
 		{"CreateAnomalyAlert dedup count", []string{"count(*)", "anomaly_alerts", "alert_type"}, "idx_anomaly_alerts_dedup"},
-		{"ListSecretAccessLogs per-secret range", []string{"secret_access_logs", "secret_node_id =", "ORDER BY"}, "idx_secret_access_logs_secret_time"},
+		{"ListSecretAccessLogs per-secret range", []string{"secret_access_logs", "secret_node_id =", "ORDER BY"}, "idx_secret_access_logs_secret_time_action"},
 		{"ListSecretIDsAccessedSince candidate scan", []string{"DISTINCT +secret_node_id", "secret_access_logs"}, "idx_secret_access_logs_access_time"},
 	}
 	for _, c := range cases {
