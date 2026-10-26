@@ -3315,7 +3315,7 @@ keyorix rbac list-permissions --user alice@example.com
 
 List all available roles
 
-List all roles in the system
+List all roles in the system. [assignable: ...] says where a role may be granted: global (install-wide, no project), project (needs a project) or any.
 
 **Usage:** `keyorix rbac list-roles [flags]`
 
