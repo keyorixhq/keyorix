@@ -110,8 +110,20 @@ func roleScopeMappingViolations(t *testing.T, dir string, reaching map[string]bo
 	return violations, seen
 }
 
+// TestEveryRoleScopeReachingHandlerMapsTheRefusal scans this package and every
+// handlerFamilySubdirs subpackage (httpx, reports), so a handler moved out of
+// this directory stays covered.
 func TestEveryRoleScopeReachingHandlerMapsTheRefusal(t *testing.T) {
-	violations, seen := roleScopeMappingViolations(t, ".", readRoleScopeReachingMethods(t))
+	reaching := readRoleScopeReachingMethods(t)
+	var violations []string
+	seen := 0
+	for _, dir := range append([]string{"."}, handlerFamilySubdirs...) {
+		v, n := roleScopeMappingViolations(t, dir, reaching)
+		for _, x := range v {
+			violations = append(violations, filepath.ToSlash(filepath.Join(dir, x)))
+		}
+		seen += n
+	}
 	// Population tripwire: the grant handlers themselves must be seen.
 	if seen < 15 {
 		t.Fatalf("saw only %d coreService calls of a reaching method: the scan is broken", seen)
