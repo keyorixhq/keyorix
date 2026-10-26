@@ -77,7 +77,11 @@ internal/saml|saml|40
 # internal/secretenv: efficacy 100% (31 killed), 4 not covered (switch case expressions, pinned by a truth table)
 internal/secretenv|secretenv
 # internal/netutil (egress and SSRF guards): efficacy 100% (35 killed), no survivors, nothing not covered
-internal/netutil|netutil||100"
+internal/netutil|netutil||100
+# internal/auditverify (the run includes internal/auditverify/anchorbundle): efficacy 99.55% (223 killed, 1 equivalent survivor,
+# db.go:56 sql.Open("pgx") never errors at open), 16 not covered (switch case expressions and string-constant concatenations that
+# gremlins cannot instrument), 4 timed out (high-water mutants in verify.go that hang, counted as neither killed nor lived)
+internal/auditverify|auditverify||99.55"
 
 cd "$KEYORIX_REPO"
 
