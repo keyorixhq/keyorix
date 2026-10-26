@@ -245,8 +245,10 @@ jobs:
       web_only: ${{ steps.filter.outputs.web_only }}
       # True when every changed file is in a category verified to contain no
       # Go source and nothing any Go build/test/lint/vuln-scan step reads:
-      # scripts/ (shell/Python tooling, not part of any go.mod -- verified no
-      # .go files), .semgrep/ (rule YAML), demo/ and integrations/ (shell/
+      # scripts/ (shell/Python tooling; its Go packages -- scripts/ci,
+      # scripts/demo, scripts/metrics, ... -- are excluded by the .go rule in
+      # the filter step, and a guard test reading one of its non-Go files runs
+      # in docs-guards instead), .semgrep/ (rule YAML), demo/ and integrations/ (shell/
       # YAML/JS samples, verified no .go files), root repo-metadata files, and
       # any workflow file EXCEPT ci.yml itself (this file defines the gating
       # logic below, so a change to it must always run the full suite to
@@ -325,6 +327,21 @@ jobs:
       # nightly schedule (.github/workflows/fault-tolerance-nightly.yml) is
       # the unconditional full check; this is the narrow PR-time one.
       fault_tolerance_relevant: ${{ steps.filter.outputs.fault_tolerance_relevant }}
+      # Queue parity (CI-PARITY-1, 2026-10-25): true when the PR touches the
+      # HARNESS of a FULL-only job -- the job's own definition (ci.yml) or the
+      # scripts/files the job itself drives -- so a FAST pull_request runs that
+      # job too instead of leaving it to the merge queue. #3529 changed
+      # scripts/selfhost/init-secrets.sh and docker-boot-smoke's own step;
+      # the PR run skipped the job and the queue failed it 10 times (21-22
+      # Oct). Narrow on purpose: harness files only, never server/** or the
+      # other broad inputs (those stay FULL-only, CI-LIGHT-1). web-e2e-real-smoke
+      # has no harness gate: changed web/e2e/real specs get their own PR-time
+      # run (web-e2e-changed-specs, SMOKE-FLAKE-2 #3670).
+      harness_docker_boot: ${{ steps.filter.outputs.harness_docker_boot }}
+      harness_helm_boot: ${{ steps.filter.outputs.harness_helm_boot }}
+      harness_demo: ${{ steps.filter.outputs.harness_demo }}
+      harness_e2e: ${{ steps.filter.outputs.harness_e2e }}
+      harness_fuzz: ${{ steps.filter.outputs.harness_fuzz }}
     steps:
       - name: Detect docs-only / web-only / go-unaffected / operator-only / boot-smoke-relevant changes
         id: filter
@@ -339,7 +356,6 @@ jobs:
           REF: ${{ github.ref }}
           SHA: ${{ github.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
-          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
           MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
           HAS_CI_FULL_LABEL: ${{ github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:full') }}
           BASE_REF: ${{ github.base_ref }}
@@ -358,15 +374,28 @@ jobs:
           echo "full_profile=$full_profile" >> "$GITHUB_OUTPUT"
 
           if [ "$EVENT_NAME" = "merge_group" ]; then
-            # Merge queue (2026-09-28): classify the WHOLE group diff (main's
-            # tip .. the group commit, which includes every earlier PR in the
-            # same group), so a docs-only / web-only group skips the 18-shard
-            # test matrix exactly like the same PR already does on
-            # pull_request. Fail-safe: the compare API lists at most 300
-            # files; at or above that, or on any API error, `changed` is
-            # emptied, and every output below treats an empty list as "run":
-            # *_only false, *_relevant and *_changed true.
-            changed=$(gh api "repos/$REPO/compare/$MG_BASE_SHA...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+            # Merge queue (2026-09-28): classify the WHOLE stack (the target
+            # branch .. the group commit, which includes every earlier entry
+            # in the queue), so a docs-only / web-only stack skips the
+            # 18-shard test matrix exactly like the same PR already does on
+            # pull_request. NOT the diff against merge_group.base_sha: that
+            # is only the entry ahead of this one, and the ruleset's
+            # grouping_strategy is HEADGREEN (only the head of a batch has to
+            # pass), so a docs-only head stacked on a code entry whose own
+            # runs are still pending would merge the batch with its smoke
+            # jobs skipped. The target branch is read from the group ref
+            # (refs/heads/gh-readonly-queue/<branch>/pr-N-<sha>); if it
+            # cannot be parsed, the list stays empty (below). Fail-safe: the
+            # compare API lists at most 300 files; at or above that, or on
+            # any API error, `changed` is emptied, and every output below
+            # treats an empty list as "run": *_only false, *_relevant and
+            # *_changed true.
+            target="${REF#refs/heads/gh-readonly-queue/}"
+            target="${target%/pr-*}"
+            changed=""
+            if [ "$target" != "$REF" ] && [ -n "$target" ]; then
+              changed=$(gh api "repos/$REPO/compare/$target...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+            fi
             if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge 300 ]; then
               changed=""
             fi
@@ -429,6 +458,12 @@ jobs:
           # job that would exercise it.
           relevant web_e2e_relevant '^(web/|server/http/|scripts/e2e/web-real-smoke\.sh$)'
           relevant fault_tolerance_relevant '^server/faultops/|^scripts/check-fault-tolerance-issues\.sh$'
+          # Queue parity: the harness of each FULL-only job (see the outputs).
+          relevant harness_docker_boot '^(scripts/selfhost/|docker-compose|keyorix\.docker\.yaml$|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_helm_boot '^(deploy/helm/|\.github/testdata/helm|server/Dockerfile$|web/Dockerfile$|\.dockerignore$)'
+          relevant harness_demo '^(scripts/demo/|scripts/airgap-e2e\.sh$|scripts/totpgen/|server/Dockerfile$|\.dockerignore$)'
+          relevant harness_e2e '^(scripts/e2e/|Makefile$)'
+          relevant harness_fuzz '^scripts/fuzzing/'
           # FAST-profile path gates. operator/ and migrate/ are separate Go
           # modules with no dependency on the root module (no replace to
           # ../), so only their own tree changes them. cli/ imports the root
@@ -468,6 +503,13 @@ jobs:
           elif echo "$changed" | grep -q '^scripts/edge/'; then
             # scripts/edge/ drives Go builds (edge-builds: ARM cross-build and
             # the footprint guard), so it is not Go-free either.
+            echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
+          elif echo "$changed" | grep -q '\.go$'; then
+            # A .go file is never Go-free, wherever it lives: scripts/ci,
+            # scripts/demo, scripts/metrics and others are root-module
+            # packages with their own tests, and a change confined to them
+            # skipped every Go job (CI-GUARD-TRIGGERS-1;
+            # scripts/ci/guardinputs TestGoSourcesNeverSkipTheGoJobs).
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
           elif [ -z "$changed" ] || echo "$changed" | grep -vE '^(scripts/|\.semgrep/|demo/|integrations/|\.github/workflows/|\.gitignore$|\.gitattributes$|LICENSE$|COPYRIGHT$)' > /dev/null; then
             echo "go_unaffected=false" >> "$GITHUB_OUTPUT"
@@ -541,7 +583,10 @@ jobs:
               echo "reason=event $EVENT_NAME runs the full suite"
             } >> "$GITHUB_OUTPUT"
           elif [ "$DOCS_ONLY" = "true" ]; then
-            # Every job this selection gates already skips on docs_only.
+            # DOCS_ONLY is computed by `changes` on the whole stack against
+            # the target branch (not just this entry), and every job this
+            # selection gates skips on it (docker-boot-smoke, helm-boot-smoke
+            # and demo-up-smoke carry the condition themselves).
             echo "Docs-only change: every Go job already skips; nothing to select."
             {
               echo "select=false"
@@ -755,7 +800,14 @@ jobs:
       - name: Validate docs/security-closures.d/*.tsv fragments
         run: scripts/gen-security-closures-tsv.sh --check
 
+      # The two self-tests below (~9 of this job's ~13 minutes) run the guard
+      # scripts against synthetic ledgers and real Go tests: their inputs are
+      # scripts/*.sh and Go code, never docs/ or *.md, so they skip on a
+      # docs-only change. docs_only is computed on the whole queue stack, so a
+      # stack that also changes a script or Go file runs them. The "Verify
+      # every ... claim" steps read the real ledgers under docs/ and stay on.
       - name: Self-test the closure guard (must be able to go red)
+        if: needs.changes.outputs.docs_only != 'true'
         run: ./scripts/check-closures.sh --self-test
 
       # This job never sets KEYORIX_TEST_PG_DSN, so every pg-gated row in
@@ -767,6 +819,7 @@ jobs:
         run: ./scripts/check-closures.sh
 
       - name: Self-test the ADR conformance guard (must be able to go red)
+        if: needs.changes.outputs.docs_only != 'true'
         run: ./scripts/check-adr-conformance.sh --self-test
 
       - name: Verify every ADR conformance claim names a passing test
@@ -1976,7 +2029,7 @@ jobs:
   # e2e-nightly.yml.
   e2e-smoke:
     needs: [changes]
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && needs.changes.outputs.full_profile == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_e2e == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -2236,6 +2289,61 @@ jobs:
       - name: Every repo-wide guard
         run: scripts/ci/run-guards.sh
 
+  # Guards whose inputs are not Go code (CI-GUARD-TRIGGERS-1). Every Go job
+  # above skips a docs_only / web_only / go_unaffected / operator_only change,
+  # so a guard that reads a Markdown file, web/nginx.conf, a script or
+  # operator/ code had no runner for the one change that can break it: #3616
+  # (QUICK_START.md only) merged past TestDocsShowNoLiteralSecretOnCommandLine
+  # and turned main red. This job has none of those skips. It runs, on every
+  # pull_request and merge_group run, the Test funcs of each test file in
+  # scripts/ci/guard-inputs.tsv whose input globs match a changed path
+  # (scripts/ci/run-input-guards.sh). The map checker itself always runs; a
+  # docs-only change selects 4-6 packages (measured on the last 20 merged PRs).
+  # The changed list is read like the changes job reads it; when it cannot be
+  # read (API error, the compare API's 300-file cap) every mapped guard runs.
+  # scripts/ci/guardinputs/guardinputs_test.go fails a PR that adds a guard
+  # reading such a path without a map row, or that changes this job's `if:` or
+  # the changes step so a mapped input no longer reaches a runner.
+  docs-guards:
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27.3'
+
+      - name: Changed files
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MG_BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          MG_HEAD_SHA: ${{ github.event.merge_group.head_sha }}
+        run: |
+          if [ "$EVENT_NAME" = "merge_group" ]; then
+            changed=$(gh api "repos/$REPO/compare/$MG_BASE_SHA...$MG_HEAD_SHA" --jq '.files[].filename') || changed=""
+            if [ "$(printf '%s\n' "$changed" | grep -c .)" -ge 300 ]; then
+              echo "300 or more changed files (the compare API cap): running every mapped guard"
+              changed=""
+            fi
+          else
+            changed=$(gh api "repos/$REPO/pulls/$PR_NUMBER/files" --paginate --jq '.[].filename') || changed=""
+          fi
+          printf '%s\n' "$changed" > "$RUNNER_TEMP/changed.txt"
+          echo "Changed files:"
+          cat "$RUNNER_TEMP/changed.txt"
+
+      - name: Guards whose inputs changed
+        run: scripts/ci/run-input-guards.sh "$RUNNER_TEMP/changed.txt"
+
   lint:
     needs: [changes]
     if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.operator_only != 'true'
@@ -2324,6 +2432,9 @@ jobs:
   # computes boot_smoke_relevant from the group diff with the same regex, so
   # a group runs this exactly when one of its PRs would have.
   # demo-up-smoke and helm-boot-smoke below follow the same rule.
+  # Queue parity (CI-PARITY-1): a FAST pull_request still runs it when the PR
+  # touches its harness (changes.harness_docker_boot); same for demo-up-smoke,
+  # helm-boot-smoke, e2e-smoke and fuzz-targets/fuzz-reach.
   #
   # Merge-queue gate (CI-SELECT-1): on merge_group this runs when the
   # `select` job's gate_docker_boot is true -- the server binary (./server or
@@ -2335,7 +2446,7 @@ jobs:
   # container booting just as well. Outside merge_group the gate is true.
   docker-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_docker_boot == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.harness_docker_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_docker_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2459,7 +2570,7 @@ jobs:
   # merge_group only, like docker-boot-smoke above.
   demo-up-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_demo == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.harness_demo == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.demo_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_demo == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2550,7 +2661,7 @@ jobs:
   # merge_group only.
   helm-boot-smoke:
     needs: [changes, select]
-    if: github.event_name != 'push' && needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group') && needs.select.outputs.gate_helm_boot == 'true'
+    if: github.event_name != 'push' && needs.changes.outputs.docs_only != 'true' && (needs.changes.outputs.harness_helm_boot == 'true' || (needs.changes.outputs.full_profile == 'true' && (needs.changes.outputs.boot_smoke_relevant == 'true' || github.event_name == 'merge_group'))) && needs.select.outputs.gate_helm_boot == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -2598,7 +2709,37 @@ jobs:
           cache-from: type=gha,scope=keyorix-web
           cache-to: type=gha,mode=max,scope=keyorix-web
 
+      # Network retry (CI-PARITY-1): kind-action downloads kind and its
+      # .sha256sum from GitHub releases; on 17 Oct the checksum file came back
+      # unreadable ("sha256sum: no properly formatted checksum lines found")
+      # and failed the job. Up to 3 attempts, 20 s / 60 s back-off; the action
+      # still verifies the checksum on every attempt (nothing is installed
+      # until it matches), and a half-created cluster is deleted first.
       - name: Create kind cluster
+        id: kind1
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 1)
+        if: steps.kind1.outcome == 'failure'
+        run: |
+          sleep 20
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 2)
+        id: kind2
+        if: steps.kind1.outcome == 'failure'
+        continue-on-error: true
+        uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
+        with:
+          cluster_name: kx-ci-boot-smoke
+      - name: Create kind cluster (back off, clean up after attempt 2)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
+        run: |
+          sleep 60
+          kind delete cluster --name kx-ci-boot-smoke || true
+      - name: Create kind cluster (attempt 3)
+        if: steps.kind1.outcome == 'failure' && steps.kind2.outcome == 'failure'
         uses: helm/kind-action@06c1ae10762d3b9c1644e7fe69596ae519e015a2 # v1.15.0
         with:
           cluster_name: kx-ci-boot-smoke
@@ -2943,7 +3084,7 @@ jobs:
     # or a changed .go file (any module) that has a `func Fuzz` line before
     # or after the change (an added, removed, renamed or build-tag-moved fuzz
     # target is the only thing this job's comparison can see change).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_targets == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_targets == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -3052,7 +3193,7 @@ jobs:
     # an affected (changed or importing a changed) package among the TARGETS
     # packages of scripts/fuzzing/harness-acceptance.sh (read at run time; an
     # unreadable list opens the gate).
-    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && needs.changes.outputs.full_profile == 'true' && needs.select.outputs.gate_fuzz_reach == 'true'
+    if: needs.changes.outputs.docs_only != 'true' && needs.changes.outputs.queue_verified != 'true' && needs.changes.outputs.web_only != 'true' && needs.changes.outputs.go_unaffected != 'true' && (needs.changes.outputs.full_profile == 'true' || needs.changes.outputs.harness_fuzz == 'true') && needs.select.outputs.gate_fuzz_reach == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -3105,6 +3246,24 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.27.3'
+          # Both modules: the default key (root go.sum only) never cached the
+          # operator module's dependencies, so every run fetched them again.
+          cache-dependency-path: |
+            go.sum
+            operator/go.sum
+
+      # proxy.golang.org failed this job in the queue on 3 Oct ("TLS handshake
+      # timeout", operator module) and 20 Oct ("stream error ... INTERNAL_ERROR",
+      # root module). Fetch both modules up front with a bounded retry that
+      # fires on network errors only (scripts/ci/retry-net.sh: max 3 attempts,
+      # never on a go.sum mismatch). go mod download verifies every module
+      # against go.sum exactly as before; the diff check fails the job if it
+      # had to add or change a hash.
+      - name: Download Go modules (root + operator; retry on network errors only)
+        run: |
+          scripts/ci/retry-net.sh go mod download
+          (cd operator && GOWORK=off ../scripts/ci/retry-net.sh go mod download)
+          git diff --exit-code -- go.sum operator/go.sum
 
       # Keyed on the resolved Go version too (not just GO_LICENSES_VERSION): a
       # go-licenses binary built under one Go toolchain and then reused as-is

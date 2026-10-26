@@ -978,6 +978,18 @@ func (c *KeyorixCore) SetClockForTesting(now func() time.Time) {
 	}
 }
 
+// StorageForTesting returns the raw storage handle behind every authorization
+// check this KeyorixCore makes (ADR-121 decision 2). It exists so tests that
+// live outside package core (internal/core/coretests) can seed and inspect
+// rows the way in-package tests do through c.storage; export_test.go is not
+// visible to them, so the method must be exported. Production code never
+// calls this: a caller gets the store with every authorization check in core
+// bypassed. Only _test.go files may use it; clock_seam_guard_test.go
+// (internal/core/guards) fails on any other use, including a method value.
+func (c *KeyorixCore) StorageForTesting() storage.Storage {
+	return c.storage
+}
+
 // SetWebhookURLValidator replaces the SSRF guard applied to notification channel
 // URLs on create and update. The default (nil) uses validateWebhookURL which
 // enforces https-only and rejects private/loopback destinations via a live DNS

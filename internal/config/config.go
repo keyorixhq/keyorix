@@ -91,6 +91,8 @@ type Config struct {
 	// SCIM configures the SCIM 2.0 provisioning endpoints (RFC 7644) used by an IdP
 	// to provision/deprovision users. Disabled (zero value) = /scim/v2 is not served.
 	SCIM SCIMConfig `yaml:"scim"`
+	// CryptoInventory tunes the quantum-risk score of the crypto inventory / CBOM.
+	CryptoInventory CryptoInventoryConfig `yaml:"crypto_inventory"`
 	// SSO configures human single-sign-on login via OIDC (authorization-code flow):
 	// users sign in through their IdP and Keyorix mints a session. Disabled (zero
 	// value) = the /auth/sso endpoints are not served.
@@ -698,6 +700,7 @@ var configValidators = []func(*Config) error{
 	validateSSOSection,
 	validateWebAuthnSection,
 	validateSecuritySection,
+	validateCryptoInventorySection,
 }
 
 // Save saves the configuration to a YAML file. Mirrors Load's path handling:

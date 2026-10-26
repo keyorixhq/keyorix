@@ -115,6 +115,9 @@ internal/encryption/keymanager_rotation.go (securefiles.SecureWriteFileSync)	fil
 internal/encryptionops/key_secret.go (securefiles.SecureCreateFileSync)	file_write	internal/encryptionops	2
 internal/encryptionops/shamir_split.go (securefiles.SecureCreateFileSync)	file_write	internal/encryptionops	2
 internal/faultstorage/gen/main.go (os.WriteFile)	file_write	internal/faultstorage/gen	2
+internal/guardrules/expiry.go (os.OpenFile)	file_write	internal/guardrules	1
+internal/guardrules/rollout.go (os.OpenFile)	file_write	internal/guardrules	1
+internal/keyfiles/manifest.go (securefiles.SecureWriteFileSync)	file_write	internal/keyfiles	1
 internal/secretenv/secretenv.go (os.OpenFile)	file_write	internal/secretenv	1
 internal/securefiles/securefiles.go (os.OpenFile)	file_write	internal/securefiles	2
 internal/serverguard/serverguard.go (os.OpenFile)	file_write	internal/serverguard	1

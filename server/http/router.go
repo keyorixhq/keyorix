@@ -1207,6 +1207,11 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Control matrix as CSV — the same matrix for an auditor's spreadsheet; same gate
 		// as the JSON endpoint above (a lower-tier CSV export would just be a bypass).
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/controls.csv", dashboardHandler.ExportComplianceControlsCSV)
+		// Crypto inventory / CycloneDX CBOM (RD-CBOM-1): key locations, algorithms and
+		// expiry dates for every key and certificate Keyorix holds, scored for quantum
+		// exposure. Deployment-wide disclosure of key locations, same family as
+		// /compliance/evidence: audit.read (system_admin and system_auditor). Audited.
+		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/crypto-inventory", handlers.MakeCryptoInventoryHandler(cfg, coreService))
 		// Compliance digest — on-demand human-readable summary (the scheduled-broadcast
 		// text); restates the same posture data, same gate.
 		r.With(customMiddleware.RequirePermission(permAuditRead)).Get("/compliance/digest", dashboardHandler.GetComplianceDigest)

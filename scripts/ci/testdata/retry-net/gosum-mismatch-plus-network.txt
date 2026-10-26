@@ -1,0 +1,12 @@
+verifying github.com/pquerna/otp@v1.5.0/go.mod: checksum mismatch
+	downloaded: h1:dkJfzwRKNiegxyNb54X/3fLwhCynbMspSyWKnvi1AEg=
+	go.sum:     h1:dkJfzwRKNiegxyNb54X/3fLwhCynbMspSyWKnvi1AAA=
+
+SECURITY ERROR
+This download does NOT match an earlier download recorded in go.sum.
+The bits may have been replaced on the origin server, or an attacker may
+have intercepted the download attempt.
+
+For more information, see 'go help module-auth'.
+k8s.io/apimachinery@v0.37.1: Get "https://proxy.golang.org/k8s.io/apimachinery/@v/v0.37.1.zip": net/http: TLS handshake timeout
+google.golang.org/protobuf@v1.36.12-0.20260120151049-f2248ac996af: Get "https://proxy.golang.org/google.golang.org/protobuf/@v/v1.36.12-0.20260120151049-f2248ac996af.zip": net/http: TLS handshake timeout

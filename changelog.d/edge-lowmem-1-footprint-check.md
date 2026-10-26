@@ -1,0 +1,2 @@
+### Testing
+- **Footprint tripwire for the CLI and idle memory.** `scripts/ci/footprint-check.sh` compares the release server and CLI binary sizes and the idle peak RSS of a secure-baseline SQLite server (3 runs after 30 s idle, maximum compared) with `scripts/ci/footprint-budget.json`, exits non-zero with current vs budget on a breach, and ships a red/green `--self-test`. It complements `scripts/edge/footprint.sh`.

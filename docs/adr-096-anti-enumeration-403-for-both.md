@@ -304,15 +304,12 @@ For an authenticated caller with no grant:
 3. **A bad token stays 401.** The empty 200 is only for a token that
    authenticates.
 
-Guard, once #3403 merges: `server/http`
-`TestZeroGrantMachine_ProjectListIsEmpty200` checks parts 1 and 2 for a fresh
-machine identity on SQLite and Postgres.
+Guard: `server/http` `TestZeroGrantMachine_ProjectListIsEmpty200` checks all
+three parts for a fresh machine identity on SQLite and Postgres (part 3: the
+same token with its last character changed gets 401 on `GET /api/v1/projects`).
 `TestEveryGETRouteWithholdsDataFromZeroGrantCredentials` and
 `TestZeroGrantAfterRevocation_CachedMachineTokenReadsNothing` check that every
 GET route discloses nothing to such a caller, including just after its last
 grant is revoked. They check what is disclosed, not which code a gated route
 returns, so a route that hides a gated read behind an empty 200 would not fail
-them. **Part 3 is not yet tested end to end.** The only 401 test,
-`server/middleware` `TestHandleAuthRequest_NegativeCacheHit_Returns401`, seeds
-the token cache directly. A follow-up adds a mangled-machine-token → 401
-assertion on `GET /api/v1/projects` to `TestZeroGrantMachine_ProjectListIsEmpty200`.
+them.

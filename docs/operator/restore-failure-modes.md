@@ -16,8 +16,12 @@ journal"). Older releases (v0.96.x and earlier) installed the archive's key file
 1. **Checks.** Archive signature, schema epoch, key-file set, rollback protection. Nothing
    is written.
 2. **Stage.** Each archive key file is written and fsynced next to its target as
-   `<path>.restoring-<random>`. On SQLite the whole restored database is also built and
-   loaded at `<db>.restoring-<timestamp>`. The live files are not touched.
+   `<path>.restoring-<random>`, and so is the key-set manifest that records them
+   (`keyset.manifest.json`: their SHA-256 hashes, one generation past the replaced
+   manifest). On SQLite the whole restored database is also built and loaded at
+   `<db>.restoring-<timestamp>`. The live files are not touched. Without
+   `--overwrite-existing` an existing `keyset.manifest.json` is refused at the checks, like
+   an existing key file.
 3. **Journal.** Every directory holding a staged file is fsynced, then
    `.keyorix-restore-journal.json` is written next to the SQLite database (SQLite) or next
    to the first key file (PostgreSQL), listing every staged file by absolute path with the
@@ -28,7 +32,8 @@ journal"). Older releases (v0.96.x and earlier) installed the archive's key file
      resyncs the id sequences and records the journal's token in `system_metadata`.
    - SQLite: the journal itself. It is written only once every staged file is complete.
 5. **Install.** Every entry is checked first (see "Recovery refuses" below). Then each
-   staged file is renamed over its target; with `--overwrite-existing` the original is kept
+   staged file is renamed over its target, the key files first, then the manifest, then
+   (SQLite) the database; with `--overwrite-existing` the original is kept
    as `<path>.pre-restore-<timestamp>` (for SQLite also its `-wal` and `-shm`). The journal
    is then rewritten as `"installed": true`.
 6. **Finish.** The `admin.restore_completed` audit event (and
