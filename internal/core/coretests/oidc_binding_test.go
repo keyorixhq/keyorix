@@ -1,10 +1,12 @@
-package core
+package coretests
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -21,11 +23,11 @@ import (
 func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	machine := &models.MachineIdentity{ID: 5, ProjectID: 1, State: MachineActive}
+	machine := &models.MachineIdentity{ID: 5, ProjectID: 1, State: core.MachineActive}
 
 	t.Run("project-scoped admin (no global authority) is refused", func(t *testing.T) {
-		store := new(MockStorage)
-		c := NewKeyorixCore(store)
+		store := new(storagetest.MockStorage)
+		c := core.NewKeyorixCore(store)
 		c.SetClockForTesting(time.Now)
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
 		// Actor 2 has NO role grants at global scope (project_id=0) — only within
@@ -40,8 +42,8 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 	})
 
 	t.Run("global admin authority succeeds", func(t *testing.T) {
-		store := new(MockStorage)
-		c := NewKeyorixCore(store)
+		store := new(storagetest.MockStorage)
+		c := core.NewKeyorixCore(store)
 		c.SetClockForTesting(time.Now)
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
 		store.On("RoleSetBypassesPermissionChecks", ctx, []uint{99}).Return(true, nil)
