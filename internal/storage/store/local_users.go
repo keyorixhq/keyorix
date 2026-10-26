@@ -568,7 +568,7 @@ func (ls *LocalStorage) GetGroup(ctx context.Context, id uint) (*models.Group, e
 	var group models.Group
 	if err := ls.db.WithContext(ctx).First(&group, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorGroupNotFound", nil))
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorGroupNotFound", nil), storage.ErrGroupNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -599,6 +599,9 @@ func (ls *LocalStorage) UpdateGroupFields(ctx context.Context, id uint, name, na
 	}
 	res := ls.db.WithContext(ctx).Model(&models.Group{}).Where(sqlWhereID, id).Updates(cols)
 	if res.Error != nil {
+		if isUniqueViolation(res.Error) {
+			return false, fmt.Errorf("%w: %v", storage.ErrDuplicateGroupName, res.Error)
+		}
 		return false, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), res.Error)
 	}
 	return res.RowsAffected == 1, nil
@@ -617,7 +620,7 @@ func (ls *LocalStorage) DeleteGroup(ctx context.Context, id uint) error {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorGroupNotFound", nil))
+		return fmt.Errorf("%s: %w", i18n.T("ErrorGroupNotFound", nil), storage.ErrGroupNotFound)
 	}
 	return nil
 }

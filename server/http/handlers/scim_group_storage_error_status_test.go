@@ -32,6 +32,16 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+// setupSCIMGroupFaultTest is setupSCIMFaultTest plus the production partial unique
+// index on groups.name_folded (storage.ensureGroupNameIndex), so a duplicate name is a
+// real unique-index conflict as in a migrated database.
+func setupSCIMGroupFaultTest(t *testing.T) (*SCIMHandler, *faultstorage.FaultyStorage, *gorm.DB) {
+	t.Helper()
+	h, fs, db := setupSCIMFaultTest(t)
+	require.NoError(t, db.Exec("CREATE UNIQUE INDEX uniq_groups_name_folded_active ON groups (name_folded) WHERE deleted_at IS NULL").Error)
+	return h, fs, db
+}
+
 func scimGroupDo(h http.HandlerFunc, method, id, body string) *httptest.ResponseRecorder {
 	w := httptest.NewRecorder()
 	path := "/scim/v2/Groups"
@@ -73,9 +83,9 @@ func scimGroupState(t *testing.T, db *gorm.DB, id string) (name string, live boo
 
 type scimGroupOp struct {
 	name string
-	// do runs the operation against group gid; u2 is a second SCIM-managed user that
-	// is not yet a member.
-	do func(h *SCIMHandler, gid, u2 string) *httptest.ResponseRecorder
+	// do runs the operation against group gid, whose only member is u1; u2 is a second
+	// SCIM-managed user that is not yet a member.
+	do func(h *SCIMHandler, gid, u1, u2 string) *httptest.ResponseRecorder
 	// mutates: a failed run must leave the group exactly as provisioned.
 	mutates bool
 }
@@ -84,21 +94,21 @@ type scimGroupOp struct {
 // add or rename: that is the split path, whose failures are a PartialMutation 503, a
 // different contract tested in owed_audit_split_ops_test.go).
 var scimGroupOps = []scimGroupOp{
-	{"GET", func(h *SCIMHandler, gid, _ string) *httptest.ResponseRecorder {
+	{"GET", func(h *SCIMHandler, gid, _, _ string) *httptest.ResponseRecorder {
 		return scimGroupDo(h.GetGroup, http.MethodGet, gid, "")
 	}, false},
-	{"PUT rename", func(h *SCIMHandler, gid, _ string) *httptest.ResponseRecorder {
-		return scimGroupDo(h.ReplaceGroup, http.MethodPut, gid, `{"displayName":"Renamed"}`)
+	{"PUT rename", func(h *SCIMHandler, gid, u1, _ string) *httptest.ResponseRecorder {
+		return scimGroupDo(h.ReplaceGroup, http.MethodPut, gid, `{"displayName":"Renamed","members":[{"value":"`+u1+`"}]}`)
 	}, true},
-	{"PATCH add member", func(h *SCIMHandler, gid, u2 string) *httptest.ResponseRecorder {
+	{"PATCH add member", func(h *SCIMHandler, gid, _, u2 string) *httptest.ResponseRecorder {
 		return scimGroupDo(h.PatchGroup, http.MethodPatch, gid,
 			`{"Operations":[{"op":"add","path":"members","value":[{"value":"`+u2+`"}]}]}`)
 	}, true},
-	{"PATCH rename", func(h *SCIMHandler, gid, _ string) *httptest.ResponseRecorder {
+	{"PATCH rename", func(h *SCIMHandler, gid, _, _ string) *httptest.ResponseRecorder {
 		return scimGroupDo(h.PatchGroup, http.MethodPatch, gid,
 			`{"Operations":[{"op":"replace","path":"displayName","value":"Renamed"}]}`)
 	}, true},
-	{"DELETE", func(h *SCIMHandler, gid, _ string) *httptest.ResponseRecorder {
+	{"DELETE", func(h *SCIMHandler, gid, _, _ string) *httptest.ResponseRecorder {
 		return scimGroupDo(h.DeleteGroup, http.MethodDelete, gid, "")
 	}, true},
 }
@@ -146,14 +156,14 @@ func TestSCIM_GroupStorageError_Is500NotNotFound(t *testing.T) {
 			}
 			for kind, ferr := range scimStorageFaults {
 				t.Run(op.name+"/"+site.method+"/"+kind, func(t *testing.T) {
-					h, fs, db := setupSCIMFaultTest(t)
+					h, fs, db := setupSCIMGroupFaultTest(t)
 					u1 := provisionUser(t, h, "u1@corp.com")
 					u2 := provisionUser(t, h, "u2@corp.com")
 					gid := provisionGroup(t, h, "Engineers", u1)
 					logBuf := captureLogBuf(t)
 
 					fs.Arm(&faultstorage.FaultSpec{Method: site.method, NthCall: site.nth, Kind: faultstorage.KindError, Err: ferr})
-					w := op.do(h, gid, u2)
+					w := op.do(h, gid, u1, u2)
 					require.True(t, fs.Fired(), "the armed %s fault must have fired", site.method)
 					fs.Arm(nil)
 
@@ -190,7 +200,7 @@ func TestSCIM_CreateGroupStorageError_Is500(t *testing.T) {
 	for _, site := range []string{"CreateGroup", "AddUserToGroup", "GetUser", "WithTransaction"} {
 		for kind, ferr := range scimStorageFaults {
 			t.Run(site+"/"+kind, func(t *testing.T) {
-				h, fs, db := setupSCIMFaultTest(t)
+				h, fs, db := setupSCIMGroupFaultTest(t)
 				u1 := provisionUser(t, h, "u1@corp.com")
 				logBuf := captureLogBuf(t)
 
@@ -209,13 +219,13 @@ func TestSCIM_CreateGroupStorageError_Is500(t *testing.T) {
 		}
 	}
 	t.Run("duplicate name", func(t *testing.T) {
-		h, _, _ := setupSCIMFaultTest(t)
+		h, _, _ := setupSCIMGroupFaultTest(t)
 		require.Equal(t, http.StatusCreated, create(h, "Dup").Code)
 		body := assertSCIMErrorBody(t, create(h, "Dup"), http.StatusConflict)
 		assert.Equal(t, "uniqueness", body["scimType"])
 	})
 	t.Run("duplicate name via unique index", func(t *testing.T) {
-		h, fs, _ := setupSCIMFaultTest(t)
+		h, fs, _ := setupSCIMGroupFaultTest(t)
 		fs.Arm(&faultstorage.FaultSpec{Method: "CreateGroup", NthCall: 1, Kind: faultstorage.KindError,
 			Err: fmt.Errorf("%s: %w", scimInjectedDetail, corestorage.ErrDuplicateGroupName)})
 		w := create(h, "Race")
@@ -231,7 +241,7 @@ func TestSCIM_CreateGroupStorageError_Is500(t *testing.T) {
 func TestSCIM_GroupRenameToExistingName_Is409(t *testing.T) {
 	for _, op := range []string{"PUT", "PATCH"} {
 		t.Run(op, func(t *testing.T) {
-			h, _, _ := setupSCIMFaultTest(t)
+			h, _, _ := setupSCIMGroupFaultTest(t)
 			provisionGroup(t, h, "Taken")
 			gid := provisionGroup(t, h, "Mine")
 			var w *httptest.ResponseRecorder
@@ -253,7 +263,7 @@ func TestSCIM_GroupRenameToExistingName_Is409(t *testing.T) {
 // A storage failure while checking the member is NOT that refusal: it is a 500.
 func TestSCIM_GroupMemberNotSCIMManaged_Is400(t *testing.T) {
 	setup := func(t *testing.T) (*SCIMHandler, *faultstorage.FaultyStorage, string, string) {
-		h, fs, db := setupSCIMFaultTest(t)
+		h, fs, db := setupSCIMGroupFaultTest(t)
 		native := &models.User{Username: "native", Email: "native@corp.com", IsActive: true, AccountState: "active"}
 		require.NoError(t, db.Create(native).Error)
 		return h, fs, provisionGroup(t, h, "Engineers"), strconv.FormatUint(uint64(native.ID), 10)
@@ -298,7 +308,7 @@ func TestSCIM_GroupMemberNotSCIMManaged_Is400(t *testing.T) {
 // something to retry. A storage failure while reading the group's roles is a 500.
 func TestSCIM_GroupConfersAdmin_Is403(t *testing.T) {
 	setup := func(t *testing.T) (*SCIMHandler, *faultstorage.FaultyStorage, string, string) {
-		h, fs, db := setupSCIMFaultTest(t)
+		h, fs, db := setupSCIMGroupFaultTest(t)
 		u := provisionUser(t, h, "u@corp.com")
 		gid := provisionGroup(t, h, "Admins")
 		admin := &models.Role{Name: "admin", BypassesPermissionChecks: true}
@@ -337,7 +347,7 @@ func TestSCIM_GroupConfersAdmin_Is403(t *testing.T) {
 // administrative grant is a permanent refusal (409, like the last-admin user
 // deactivation), not a 404.
 func TestSCIM_DeleteLastAdminGroup_Is409(t *testing.T) {
-	h, _, db := setupSCIMFaultTest(t)
+	h, _, db := setupSCIMGroupFaultTest(t)
 	gid := provisionGroup(t, h, "Admins")
 	admin := &models.Role{Name: "admin", BypassesPermissionChecks: true}
 	require.NoError(t, db.Create(admin).Error)
