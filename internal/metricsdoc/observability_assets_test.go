@@ -262,6 +262,46 @@ func TestAlertRules_FileCheckIsGreenAndWatchedRed(t *testing.T) {
 	}
 }
 
+// TestAlertRules_OwedAgeThresholdsArePinned pins the numbers in the owed-audit alerts,
+// read from the rule file, so a threshold edit shows up as a diff of this table. The
+// numbers are a starting point owned by the operator, not a recommendation: changing one
+// means changing the table, deploy/observability/README.md and the metric help text.
+func TestAlertRules_OwedAgeThresholdsArePinned(t *testing.T) {
+	byName := map[string]alertRule{}
+	for _, g := range loadRules(t) {
+		for _, r := range g.Rules {
+			byName[r.Alert] = r
+		}
+	}
+	tests := []struct {
+		alert    string
+		severity string
+		expr     string
+		forDur   string
+	}{
+		{"KeyorixAuditOwedOldestPendingWarn", "warning", `max(keyorix_audit_owed_oldest_pending_age_seconds) > 3600`, "5m"},
+		{"KeyorixAuditOwedOldestPendingCritical", "critical", `max(keyorix_audit_owed_oldest_pending_age_seconds) > 86400`, "5m"},
+		{"KeyorixAuditOwedMetricUnreadable", "warning", `sum(increase(keyorix_audit_owed_metric_scrape_errors_total[15m])) > 0`, "15m"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.alert, func(t *testing.T) {
+			r, ok := byName[tc.alert]
+			if !ok {
+				t.Fatalf("alert %s is not in the rule file", tc.alert)
+			}
+			if got := strings.Join(strings.Fields(r.Expr), " "); got != tc.expr {
+				t.Errorf("expr = %q, want %q", got, tc.expr)
+			}
+			if r.Labels["severity"] != tc.severity {
+				t.Errorf("severity = %q, want %q", r.Labels["severity"], tc.severity)
+			}
+			if r.For != tc.forDur {
+				t.Errorf("for = %q, want %q", r.For, tc.forDur)
+			}
+		})
+	}
+}
+
 func TestAlertRules_StructureMetricsAndRunbooks(t *testing.T) {
 	groups := loadRules(t)
 	if len(groups) == 0 {
