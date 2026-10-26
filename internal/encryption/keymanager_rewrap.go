@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 
 	"github.com/keyorixhq/keyorix/internal/crypto"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
@@ -118,6 +119,11 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	rotationCheckpointHook("rewrap:after-write-dek-pending")
 	pendingPath := filepath.Join(km.baseDir, pendingDEKPath)
 	activePath := filepath.Join(km.baseDir, km.dekPath)
+	newFiles := map[string][]byte{activePath: wrapped}
+	if err := km.stageKeySet(keyfiles.OpRewrapDEK, newFiles); err != nil {
+		_ = os.Remove(pendingPath)
+		return fmt.Errorf("re-wrap DEK: stage the key-set manifest (the active DEK was not changed): %w", err)
+	}
 	if err := durableRename(pendingPath, activePath, "rewrap:rename-dek"); err != nil {
 		_ = os.Remove(pendingPath)
 		return fmt.Errorf("re-wrap DEK: promote pending DEK to active: %w", err)
@@ -130,6 +136,7 @@ func (km *KeyManager) RewrapDEKWithPrepare(newProvider crypto.KeyProvider, prepa
 	}
 	// Crash-consistency checkpoint (nil in production): the rewrap is fully durable.
 	rotationCheckpointHook("rewrap:after-syncdir")
+	km.commitKeySet(keyfiles.OpRewrapDEK, newFiles)
 	km.dekSnapshot = append([]byte(nil), wrapped...)
 	return nil
 }

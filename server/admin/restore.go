@@ -276,6 +276,9 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 			return err
 		}
 	}
+	if err := refuseExistingKeySetManifest(cfg); err != nil {
+		return err
+	}
 
 	archiveInfo, err := os.Stat(restoreInput)
 	if err != nil {
@@ -403,8 +406,9 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	}
 	// One set, staged before anything is installed: these key files form one
 	// encryption configuration's required set (keyfiles.Registry), and a host
-	// with only SOME of them present can never start.
-	entries, err := prepareRestoredFileSet(targetKeyPaths, keyFileData)
+	// with only SOME of them present can never start. The key-set manifest
+	// recording them is staged as part of the same set.
+	entries, err := prepareRestoredKeySet(cfg, targetKeyPaths, keyFileData)
 	if err != nil {
 		return fmt.Errorf("stage key file set: %w", err)
 	}
@@ -810,6 +814,9 @@ func runAdminRestoreV1(cfg *config.Config) error {
 			return err
 		}
 	}
+	if err := refuseExistingKeySetManifest(cfg); err != nil {
+		return err
+	}
 
 	destinationFloor, err := readExistingDatabaseAuditEventCount(dbPath)
 	if err != nil {
@@ -841,11 +848,17 @@ func runAdminRestoreV1(cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	entries, err := prepareRestoredFileSet(append(keyFilePaths, dbPath), append(keyBlobs, dbBytes))
+	entries, err := prepareRestoredKeySet(cfg, keyFilePaths, keyBlobs)
 	if err != nil {
 		return fmt.Errorf("stage restored files: %w", err)
 	}
-	entries[len(entries)-1].SQLiteDB = true
+	dbEntry, err := prepareRestoredFileSet([]string{dbPath}, [][]byte{dbBytes})
+	if err != nil {
+		discardStagedEntries(entries)
+		return fmt.Errorf("stage restored files: %w", err)
+	}
+	dbEntry[0].SQLiteDB = true
+	entries = append(entries, dbEntry[0])
 	journal := restorejournal.Journal{Backend: "sqlite", Timestamp: restoreTS, Overwrite: restoreOverwriteExisting, Entries: entries,
 		CompletedEvent: fmt.Sprintf("restored from backup archive %s (created %s, format v1)", restoreInput, manifest.CreatedAt.Format(time.RFC3339))}
 	if err := restorejournal.Write(journalPath, journal); err != nil {
@@ -1184,6 +1197,22 @@ func removeStaleSQLiteSidecars(dbPath string) error {
 	return nil
 }
 
+// refuseExistingKeySetManifest is refuseNonEmptyExisting for the key-set
+// manifest (#2900): restore installs a new one with the key files, and
+// without --overwrite-existing it is linked into place like them, which fails
+// on an existing file. Refused here, before anything is staged, rather than
+// at install, after the data has committed.
+func refuseExistingKeySetManifest(cfg *config.Config) error {
+	path, err := keySetManifestPath(cfg)
+	if err != nil {
+		return fmt.Errorf("key-set manifest: %w", err)
+	}
+	if path == "" {
+		return nil
+	}
+	return refuseNonEmptyExisting("key-set manifest", path)
+}
+
 // refuseNonEmptyExisting is the "don't trade loud failure for silent data
 // loss" guard: a missing or genuinely-empty (0-byte, e.g. `admin init
 // --database` on a fresh dir) target is fine to write, but anything with
@@ -1206,10 +1235,9 @@ func refuseNonEmptyExisting(label, path string) error {
 
 // writeRestoredFile atomically writes data to path -- see prepareRestoredFile
 // and commitRestoredFile, which this just runs back-to-back for a single
-// file. A multi-file SET (the key-material files restored together) should
-// use writeRestoredFileSet instead, which runs every file's prepare phase to
-// completion before committing any of them -- see that function's own doc
-// comment for why.
+// file. A multi-file SET (the key-material files restored together) is staged
+// with prepareRestoredKeySet and installed from the restore journal instead
+// (restore_commit.go).
 func writeRestoredFile(path string, data []byte, restoreTS string) error {
 	tmpPath, err := prepareRestoredFile(path, data)
 	if err != nil {
@@ -1218,66 +1246,10 @@ func writeRestoredFile(path string, data []byte, restoreTS string) error {
 	return commitRestoredFile(path, tmpPath, restoreTS, restoreOverwriteExisting)
 }
 
-// writeRestoredFileSet installs a SET of restored files -- the key-material
-// files a single encryption configuration needs together (KEK salt, wrapped
-// DEK, provider-specific files) -- as a tight group rather than one at a
-// time. restore.go's per-file guarantee (temp + fsync + rename/link) makes
-// EACH file crash-safe on its own, but says nothing about the SET: the
-// previous code called writeRestoredFile for each key file in a simple loop,
-// so a crash between file i and file i+1 left the target with a partial key
-// set (e.g. the KEK salt restored, the wrapped DEK not) -- a host that can
-// never start (keyfiles.Registry requires every entry), with no automatic
-// recovery. Worse, without --overwrite-existing, a retry doesn't help: the
-// already-written file(s) are now non-empty, so refuseNonEmptyExisting's
-// preflight check (which ran once, before ANY file in this restore was
-// written) fails on the very next attempt -- an operator would need to
-// manually find and delete the partially-restored file(s) first, something
-// this restore command gives no guidance about.
-//
-// This narrows that window rather than claiming to close it (true atomicity
-// across independently-pathed files isn't achievable without a filesystem
-// transaction): every file's prepare phase (write + fsync a temp copy) runs
-// to completion FIRST, for the whole set, with every target path still
-// completely untouched -- a failure here leaves nothing installed, so a
-// retry sees the exact same preflight state as the first attempt. Only once
-// every file in the set is durably staged does the commit phase begin,
-// installing each one in turn. The unsafe window shrinks from "any of N full
-// write+fsync+rename cycles, with whatever else runs between them" down to
-// "N fast rename/link syscalls run back-to-back with nothing else
-// interleaved" -- still not zero, but as tight as this per-path (not
-// per-directory) file set allows.
-func writeRestoredFileSet(paths []string, data [][]byte, restoreTS string) error {
-	if len(paths) != len(data) {
-		return fmt.Errorf("internal error: %d paths but %d data buffer(s) for a restored file set", len(paths), len(data))
-	}
-
-	type staged struct {
-		path, tmpPath string
-	}
-	var prepared []staged
-	for i, path := range paths {
-		tmpPath, err := prepareRestoredFile(path, data[i])
-		if err != nil {
-			for _, s := range prepared {
-				_ = os.Remove(s.tmpPath)
-			}
-			return err
-		}
-		prepared = append(prepared, staged{path: path, tmpPath: tmpPath})
-	}
-
-	for _, s := range prepared {
-		if err := commitRestoredFile(s.path, s.tmpPath, restoreTS, restoreOverwriteExisting); err != nil {
-			return fmt.Errorf("install %q: %w", s.path, err)
-		}
-	}
-	return nil
-}
-
 // prepareRestoredFile writes data to a temp file in path's directory and
 // fsyncs it, without touching path itself -- the half of writeRestoredFile
 // that can be run for an entire file SET before any of them commit (see
-// writeRestoredFileSet). On any error the temp file is removed and "" is
+// prepareRestoredFileSet). On any error the temp file is removed and "" is
 // returned; on success, the caller owns cleanup of the returned temp path
 // (commitRestoredFile removes it as part of installing, or the caller must
 // os.Remove it directly if abandoning the prepare).
