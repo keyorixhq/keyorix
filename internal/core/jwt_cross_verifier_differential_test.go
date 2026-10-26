@@ -60,7 +60,7 @@ func TestOIDCSSODifferential_SingleConstraintViolation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			v.setClock(func() time.Time { return now })
+			v.SetClockForTesting(func() time.Time { return now })
 			c := &KeyorixCore{now: time.Now, ssoJWKS: staticResolver{kid: trustedKid, key: &key.PublicKey}}
 			c.SetClockForTesting(func() time.Time { return now })
 

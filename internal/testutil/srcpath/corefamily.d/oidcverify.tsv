@@ -1,0 +1,2 @@
+# kind	dir	reason (README.md)
+extracted	internal/oidcverify	CORE-PURE-AUTH-LEAVES-1: OIDC/JWKS federated-JWT verifier (oidc.go part, oidc_jwks.go), pure leaf

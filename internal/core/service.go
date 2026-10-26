@@ -974,7 +974,7 @@ func (c *KeyorixCore) EffectiveNow() time.Time { return c.now() }
 func (c *KeyorixCore) SetClockForTesting(now func() time.Time) {
 	c.now = now
 	if c.oidcVerifier != nil {
-		c.oidcVerifier.setClock(now)
+		c.oidcVerifier.SetClockForTesting(now)
 	}
 }
 

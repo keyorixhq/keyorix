@@ -378,7 +378,7 @@ func FuzzOIDCIDTokenSingleConstraintViolation(f *testing.F) {
 		// jwt.WithTimeFunc) and the custom max-age check (effectiveNow) both
 		// see the same "now" Verify was called with — no construction-vs-
 		// verification clock drift left to produce a false boundary result.
-		v.setClock(func() time.Time { return now })
+		v.SetClockForTesting(func() time.Time { return now })
 		claims := oidcSingleConstraintBaseClaims(now, sub, trustedIss, trustedAud)
 		applySharedJWTViolation(kind, claims, now, trustedIss, trustedAud, leeway)
 		applyOIDCOnlyViolation(kind, claims, now, defaultOIDCMaxTokenAge, leeway)
