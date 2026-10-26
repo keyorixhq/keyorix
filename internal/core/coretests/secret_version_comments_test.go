@@ -1,23 +1,25 @@
-package core
+package coretests
 
 import (
 	"context"
 	"errors"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func newVersionCommentsCore(store *MockStorage) *KeyorixCore {
-	return &KeyorixCore{storage: store}
+func newVersionCommentsCore(store *storagetest.MockStorage) *core.KeyorixCore {
+	return core.NewKeyorixCore(store)
 }
 
 // expectSecretWithVersion wires up the GetSecret + GetSecretVersions calls
 // versionBelongsToSecret makes, for a secret that owns versionID.
-func expectSecretWithVersion(store *MockStorage, ctx context.Context, secretID, versionID uint) {
+func expectSecretWithVersion(store *storagetest.MockStorage, ctx context.Context, secretID, versionID uint) {
 	store.On("GetSecret", ctx, secretID).Return(&models.SecretNode{ID: secretID}, nil)
 	store.On("GetSecretVersions", ctx, secretID).
 		Return([]*models.SecretVersion{{ID: versionID, SecretNodeID: secretID}}, nil)
@@ -25,11 +27,11 @@ func expectSecretWithVersion(store *MockStorage, ctx context.Context, secretID, 
 
 func TestCreateSecretVersionComment_EmptyCommentReturnsError(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
-	_, err := c.CreateSecretVersionComment(ctx, CreateVersionCommentRequest{
+	_, err := c.CreateSecretVersionComment(ctx, core.CreateVersionCommentRequest{
 		SecretID:  1,
 		VersionID: 2,
 		Comment:   "",
@@ -43,7 +45,7 @@ func TestCreateSecretVersionComment_EmptyCommentReturnsError(t *testing.T) {
 
 func TestCreateSecretVersionComment_Success(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -56,7 +58,7 @@ func TestCreateSecretVersionComment_Success(t *testing.T) {
 			cm.Comment == "bumped to rotate key"
 	})).Return(nil)
 
-	got, err := c.CreateSecretVersionComment(ctx, CreateVersionCommentRequest{
+	got, err := c.CreateSecretVersionComment(ctx, core.CreateVersionCommentRequest{
 		SecretID:  1,
 		VersionID: 2,
 		Comment:   "bumped to rotate key",
@@ -70,7 +72,7 @@ func TestCreateSecretVersionComment_Success(t *testing.T) {
 
 func TestCreateSecretVersionComment_StorageError(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -78,7 +80,7 @@ func TestCreateSecretVersionComment_StorageError(t *testing.T) {
 	store.On("CreateSecretVersionComment", ctx, mock.AnythingOfType("*models.SecretVersionComment")).
 		Return(errors.New("write failed"))
 
-	_, err := c.CreateSecretVersionComment(ctx, CreateVersionCommentRequest{
+	_, err := c.CreateSecretVersionComment(ctx, core.CreateVersionCommentRequest{
 		SecretID: 1, VersionID: 2, Comment: "test", UserID: 1, Username: "u",
 	})
 	require.Error(t, err)
@@ -89,7 +91,7 @@ func TestCreateSecretVersionComment_StorageError(t *testing.T) {
 // the write must be refused before it ever reaches storage.
 func TestCreateSecretVersionComment_VersionBelongsToOtherSecret(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -97,7 +99,7 @@ func TestCreateSecretVersionComment_VersionBelongsToOtherSecret(t *testing.T) {
 	store.On("GetSecretVersions", ctx, uint(1)).
 		Return([]*models.SecretVersion{{ID: 42, SecretNodeID: 1}}, nil)
 
-	_, err := c.CreateSecretVersionComment(ctx, CreateVersionCommentRequest{
+	_, err := c.CreateSecretVersionComment(ctx, core.CreateVersionCommentRequest{
 		SecretID: 1, VersionID: 99, Comment: "cross-tenant write", UserID: 1, Username: "attacker",
 	})
 	require.Error(t, err)
@@ -106,7 +108,7 @@ func TestCreateSecretVersionComment_VersionBelongsToOtherSecret(t *testing.T) {
 
 func TestListSecretVersionComments_Success(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -126,7 +128,7 @@ func TestListSecretVersionComments_Success(t *testing.T) {
 
 func TestListSecretVersionComments_Empty(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -140,7 +142,7 @@ func TestListSecretVersionComments_Empty(t *testing.T) {
 
 func TestListSecretVersionComments_Error(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -156,7 +158,7 @@ func TestListSecretVersionComments_Error(t *testing.T) {
 // to secret 2 — must be refused, not silently walk the global VersionID space.
 func TestListSecretVersionComments_CrossSecretVersionRejected(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -171,7 +173,7 @@ func TestListSecretVersionComments_CrossSecretVersionRejected(t *testing.T) {
 
 func TestDeleteSecretVersionComment_Success(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -184,7 +186,7 @@ func TestDeleteSecretVersionComment_Success(t *testing.T) {
 
 func TestDeleteSecretVersionComment_Error(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 
@@ -200,7 +202,7 @@ func TestDeleteSecretVersionComment_Error(t *testing.T) {
 // belongs to secret 2 — must be refused before any storage delete is attempted.
 func TestDeleteSecretVersionComment_CrossSecretVersionRejected(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	c := newVersionCommentsCore(store)
 	ctx := context.Background()
 

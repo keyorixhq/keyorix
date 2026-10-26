@@ -1,4 +1,4 @@
-package core
+package coretests
 
 import (
 	"context"
@@ -6,26 +6,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func factorByKey(s *SecretRiskScore, key string) SecretRiskFactor {
+func factorByKey(s *core.SecretRiskScore, key string) core.SecretRiskFactor {
 	for _, f := range s.Factors {
 		if f.Key == key {
 			return f
 		}
 	}
-	return SecretRiskFactor{}
+	return core.SecretRiskFactor{}
 }
 
 func TestComputeSecretRiskScore_HighRisk(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	expired := now.AddDate(0, 0, -3)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	// Expired, never rotated + 400 days old, shared with a 20-member group → high on every axis.
 	store.On("GetSecret", mock.Anything, uint(1)).Return(&models.SecretNode{
@@ -39,12 +41,12 @@ func TestComputeSecretRiskScore_HighRisk(t *testing.T) {
 	}
 	store.On("ListGroupMembers", mock.Anything, uint(5)).Return(members, nil)
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScore(context.Background(), 1)
 	require.NoError(t, err)
-	require.Equal(t, RiskBandHigh, got.Band)
+	require.Equal(t, core.RiskBandHigh, got.Band)
 	require.Equal(t, 100, factorByKey(got, "expiry").Score, "expired")
 	require.Equal(t, 100, factorByKey(got, "rotation").Score, "never rotated + 400d")
 	require.Equal(t, 80, factorByKey(got, "usage").Score, "no reads")
@@ -57,7 +59,7 @@ func TestComputeSecretRiskScore_LowRisk(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	// Future expiry, freshly rotated, actively read, owner-only → low on every axis.
 	store.On("GetSecret", mock.Anything, uint(2)).Return(&models.SecretNode{
@@ -72,12 +74,12 @@ func TestComputeSecretRiskScore_LowRisk(t *testing.T) {
 	store.On("ListSecretAccessLogs", mock.Anything, uint(2), mock.Anything).Return(reads, nil)
 	store.On("ListSharesBySecret", mock.Anything, uint(2)).Return([]*models.ShareRecord{}, nil)
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScore(context.Background(), 2)
 	require.NoError(t, err)
-	require.Equal(t, RiskBandLow, got.Band)
+	require.Equal(t, core.RiskBandLow, got.Band)
 	require.Equal(t, 10, factorByKey(got, "expiry").Score)
 	require.Equal(t, 10, factorByKey(got, "rotation").Score)
 	require.Equal(t, 10, factorByKey(got, "usage").Score, "12 reads, update excluded")
@@ -95,7 +97,7 @@ func TestComputeSecretRiskScore_DegradedOnListSharesError(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	store.On("GetSecret", mock.Anything, uint(3)).Return(&models.SecretNode{
 		ID: 3, Name: "widely-shared-key", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10),
@@ -103,8 +105,8 @@ func TestComputeSecretRiskScore_DegradedOnListSharesError(t *testing.T) {
 	store.On("ListSecretAccessLogs", mock.Anything, uint(3), mock.Anything).Return([]models.SecretAccessLog{}, nil)
 	store.On("ListSharesBySecret", mock.Anything, uint(3)).Return(nil, errors.New("simulated shares query failure"))
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScore(context.Background(), 3)
 	require.NoError(t, err)
@@ -123,7 +125,7 @@ func TestComputeSecretRiskScore_DegradedOnListGroupMembersError(t *testing.T) {
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	store.On("GetSecret", mock.Anything, uint(4)).Return(&models.SecretNode{
 		ID: 4, Name: "group-shared-key", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10),
@@ -132,8 +134,8 @@ func TestComputeSecretRiskScore_DegradedOnListGroupMembersError(t *testing.T) {
 	store.On("ListSharesBySecret", mock.Anything, uint(4)).Return([]*models.ShareRecord{{IsGroup: true, RecipientID: 7}}, nil)
 	store.On("ListGroupMembers", mock.Anything, uint(7)).Return(nil, errors.New("simulated: ListGroupMembers unimplemented on this backend"))
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScore(context.Background(), 4)
 	require.NoError(t, err)
@@ -150,7 +152,7 @@ func TestComputeSecretRiskScoresBatch_MatchesSingleSecretScore(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	expired := now.AddDate(0, 0, -3)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	secret := &models.SecretNode{ID: 1, Name: "stripe-key", OwnerID: 9, Expiration: &expired, CreatedAt: now.AddDate(0, 0, -400)}
 	store.On("GetSecretsByIDs", mock.Anything, []uint{1}).Return([]*models.SecretNode{secret}, nil)
@@ -162,13 +164,13 @@ func TestComputeSecretRiskScoresBatch_MatchesSingleSecretScore(t *testing.T) {
 	}
 	store.On("ListGroupMembersByGroupIDs", mock.Anything, []uint{5}).Return(map[uint][]*models.User{5: members}, nil)
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1})
 	require.NoError(t, err)
 	require.Contains(t, got, uint(1))
-	require.Equal(t, RiskBandHigh, got[1].Band)
+	require.Equal(t, core.RiskBandHigh, got[1].Band)
 	require.Equal(t, 100, factorByKey(got[1], "expiry").Score)
 	require.Equal(t, 100, factorByKey(got[1], "rotation").Score)
 	require.Equal(t, 80, factorByKey(got[1], "usage").Score)
@@ -185,7 +187,7 @@ func TestComputeSecretRiskScoresBatch_DegradedOnSharesErrorAffectsWholeBatch(t *
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	secrets := []*models.SecretNode{
 		{ID: 1, Name: "a", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10)},
@@ -195,8 +197,8 @@ func TestComputeSecretRiskScoresBatch_DegradedOnSharesErrorAffectsWholeBatch(t *
 	store.On("CountSecretReadsBySecretIDs", mock.Anything, []uint{1, 2}, mock.Anything).Return(map[uint]int{}, nil)
 	store.On("ListSharesBySecretIDs", mock.Anything, []uint{1, 2}).Return(nil, errors.New("simulated shares query failure"))
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1, 2})
 	require.NoError(t, err)
@@ -215,7 +217,7 @@ func TestComputeSecretRiskScoresBatch_GroupMembersErrorOnlyAffectsGroupSharedSec
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
 	future := now.AddDate(0, 0, 200)
 	rotated := now.AddDate(0, 0, -5)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	secrets := []*models.SecretNode{
 		{ID: 1, Name: "group-shared", OwnerID: 9, Expiration: &future, LastRotatedAt: &rotated, CreatedAt: now.AddDate(0, 0, -10)},
@@ -229,8 +231,8 @@ func TestComputeSecretRiskScoresBatch_GroupMembersErrorOnlyAffectsGroupSharedSec
 	}, nil)
 	store.On("ListGroupMembersByGroupIDs", mock.Anything, []uint{7}).Return(nil, errors.New("simulated group-members query failure"))
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1, 2})
 	require.NoError(t, err)
@@ -248,7 +250,7 @@ func TestComputeSecretRiskScoresBatch_GroupMembersErrorOnlyAffectsGroupSharedSec
 func TestComputeSecretRiskScoresBatch_MissingSecretIsAbsentFromResult(t *testing.T) {
 	t.Parallel()
 	now := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 
 	store.On("GetSecretsByIDs", mock.Anything, []uint{1, 999}).Return([]*models.SecretNode{
 		{ID: 1, Name: "a", OwnerID: 9, CreatedAt: now.AddDate(0, 0, -10)},
@@ -256,8 +258,8 @@ func TestComputeSecretRiskScoresBatch_MissingSecretIsAbsentFromResult(t *testing
 	store.On("CountSecretReadsBySecretIDs", mock.Anything, []uint{1, 999}, mock.Anything).Return(map[uint]int{}, nil)
 	store.On("ListSharesBySecretIDs", mock.Anything, []uint{1, 999}).Return([]*models.ShareRecord{}, nil)
 
-	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return now }
+	c := core.NewKeyorixCore(store)
+	c.SetClockForTesting(func() time.Time { return now })
 
 	got, err := c.ComputeSecretRiskScoresBatch(context.Background(), []uint{1, 999})
 	require.NoError(t, err)

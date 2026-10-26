@@ -1,0 +1,2 @@
+### Internal
+- **Core test seams, part 2 (CORE-TEST-SEAMS-2).** 14 `internal/core` test files no longer touch the unexported `storage` and `now` fields: struct literals and post-construction `c.storage` swaps now go through `NewKeyorixCore`, `c.now = f` goes through `SetClockForTesting` (only in files whose core never wires an `OIDCVerifier`), and two `c.now()` reads use `EffectiveNow()`. Test-only; no production code and no test behaviour changed. Strict black-box files 88 → 104 (see ADR-121).

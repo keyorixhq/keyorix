@@ -7,7 +7,7 @@
 //   - GetGroupMembers: happy path returns members
 //   - GetGroup: ID == 0 returns validation error
 //   - ListGroups: returns all groups
-package core
+package coretests
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -26,7 +27,7 @@ import (
 
 // newGroupsS38Core returns a KeyorixCore backed by an isolated in-memory SQLite
 // DB with all tables needed for group membership tests.
-func newGroupsS38Core(t *testing.T) (*KeyorixCore, *gorm.DB) {
+func newGroupsS38Core(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 	t.Helper()
 	require.NoError(t, i18n.Initialize(&config.Config{
 		Locale: config.LocaleConfig{Language: "en", FallbackLanguage: "en"},
@@ -37,7 +38,7 @@ func newGroupsS38Core(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Role{},
 		&models.User{}, &models.UserRole{}, &models.AuditEvent{},
 	))
-	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
+	return core.NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
 // ── AddUserToGroup validation ─────────────────────────────────────────────────

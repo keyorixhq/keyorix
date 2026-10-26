@@ -206,7 +206,7 @@ func TestAssignMachineRole_Success(t *testing.T) {
 	ms.On("GetRole", mock.Anything, uint(2)).Return(role, nil)
 	// ListSoDPolicies: smart stub returns nil if not mocked.
 	// AssignMachineRole.
-	ms.On("AssignMachineRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(nil)
+	ms.On("AssignMachineRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope")).Return(nil)
 	// LogAuditEvent for logMachineEvent → writeAuditEventFull.
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	// F6 sweep (2026-09-22): the granting actor (1) now needs roles.assign at

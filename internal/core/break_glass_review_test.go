@@ -205,7 +205,7 @@ func TestListUnreviewedBreakGlassActivations_PassesCorrectCutoff(t *testing.T) {
 
 	c := NewKeyorixCore(ms)
 	window := 72 * time.Hour
-	before := c.now()
+	before := c.EffectiveNow()
 	rows, err := c.ListUnreviewedBreakGlassActivations(context.Background(), window)
 	require.NoError(t, err)
 	assert.Len(t, rows, 1)

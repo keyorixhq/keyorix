@@ -13,7 +13,7 @@
 //  4. internal/core's own isChannelDisallowedIP — the notification-channel
 //     webhook dial-time policy (loopback REFUSED, unlike #3).
 //  5. internal/connect/hardened_client.go's connectGuardedDialer and
-//     internal/core/oidc_jwks.go's jwksEgressTransport: both are UNEXPORTED,
+//     internal/oidcverify/oidc_jwks.go's jwksEgressTransport: both are UNEXPORTED,
 //     but both are, verified directly against the current tree
 //     (hardened_client.go:77-82, oidc_jwks.go:41), nothing more than
 //     `netutil.Dialer{Disallow: netutil.IsLinkLocal}` with no additional
@@ -145,7 +145,7 @@ func bracketIfIPv6(s string) string {
 
 // jwksAndConnectGuardedDialer reconstructs, byte-for-byte, the netutil.Dialer
 // value both internal/connect/hardened_client.go's connectGuardedDialer and
-// internal/core/oidc_jwks.go's jwksEgressTransport wire in -- see this file's
+// internal/oidcverify/oidc_jwks.go's jwksEgressTransport wire in -- see this file's
 // doc comment (#5) for why this is the real mechanism, not a stand-in.
 func jwksAndConnectGuardedDialer() netutil.Dialer {
 	return netutil.Dialer{Disallow: netutil.IsLinkLocal}

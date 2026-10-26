@@ -70,12 +70,12 @@ func BenchmarkLastUsedTouch_Postgres(b *testing.B) {
 			if mode == "rollover" {
 				var mu sync.Mutex
 				clock := time.Now()
-				c.now = func() time.Time {
+				c.SetClockForTesting(func() time.Time {
 					mu.Lock()
 					defer mu.Unlock()
 					clock = clock.Add(31 * time.Second)
 					return clock
-				}
+				})
 			}
 			ctx := b.Context()
 			b.SetParallelism(4) // 4 × GOMAXPROCS concurrent clients of one credential

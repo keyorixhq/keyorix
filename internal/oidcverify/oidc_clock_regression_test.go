@@ -8,7 +8,7 @@
 // the real wall clock, independent of v.now) -- so these tests now set `exp`
 // far enough past every v.now() value they inject that the library's exp
 // check never fires, isolating the max-age check exactly as before.
-package core
+package oidcverify
 
 import (
 	"context"

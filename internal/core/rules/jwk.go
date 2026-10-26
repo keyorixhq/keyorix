@@ -12,7 +12,7 @@ import (
 // JWK parsing for OIDC federation and SSO: turns one JSON Web Key from an
 // issuer's JWKS into a public key, with size and curve bounds. Moved from
 // core/oidc_jwks.go (leaf package, see doc.go); the fetching, caching and
-// egress rules stay in core.
+// egress rules stay in internal/oidcverify/oidc_jwks.go.
 
 // MaxRSABits caps the modulus size of an RSA key accepted from a JWKS. Without
 // this, a compromised/malicious OIDC provider can serve an RSA key with an

@@ -202,7 +202,7 @@ func TestRevokeSystemRoleGrant_Success(t *testing.T) {
 	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "system_admin").Return(nil, errors.New("not found"))
-	ms.On("RemoveRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(nil)
+	ms.On("RemoveRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	// evictUserSessionCache: evicts the removed-role user's cached sessions.
 	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(1)).Return([]string{}, nil)
@@ -217,7 +217,7 @@ func TestAssignUserRoleWithExpirySkipSoD_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
-	ms.On("AssignRoleWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope"), mock.AnythingOfType("time.Time")).Return(nil)
+	ms.On("AssignRoleWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope"), mock.AnythingOfType("time.Time")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 	err := c.assignUserRoleWithExpirySkipSoD(context.Background(), 0, 1, 2, Scope{}, time.Now().Add(time.Hour))
@@ -228,7 +228,7 @@ func TestAssignUserRoleWithExpirySkipSoD_StorageError(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
-	ms.On("AssignRoleWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope"), mock.AnythingOfType("time.Time")).Return(errors.New("db error"))
+	ms.On("AssignRoleWithExpiry", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope"), mock.AnythingOfType("time.Time")).Return(errors.New("db error"))
 	c := NewKeyorixCore(ms)
 	err := c.assignUserRoleWithExpirySkipSoD(context.Background(), 0, 1, 2, Scope{}, time.Now().Add(time.Hour))
 	require.Error(t, err)

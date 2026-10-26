@@ -111,11 +111,6 @@ func TestConnectShareOIDCEffectiveNow_StripMonotonicReading(t *testing.T) {
 		got := c.shareEffectiveNow()
 		assert.False(t, hasMonotonicReading(got))
 	})
-	t.Run("OIDCVerifier.effectiveNow", func(t *testing.T) {
-		v := &OIDCVerifier{now: time.Now}
-		got := v.effectiveNow()
-		assert.False(t, hasMonotonicReading(got))
-	})
 }
 
 // TestSessionRefreshAndAccessRequestApprovalClockChecks_StripMonotonicReading

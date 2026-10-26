@@ -58,7 +58,7 @@ func TestOIDCVerify_ExpNbfCheckedAgainstInjectedClock_NotRealTime(t *testing.T) 
 	// proves the library's check and the max-age check below both used
 	// v.effectiveNow().
 	v := newTestVerifier(t, key)
-	v.setClock(func() time.Time { return pinned })
+	v.SetClockForTesting(func() time.Time { return pinned })
 	_, subject, err := v.Verify(context.Background(), raw)
 	require.NoError(t, err, "a token valid only relative to the injected clock must verify once that clock is wired into the JWT library's own exp/nbf/max-age checks")
 	require.Equal(t, "system:serviceaccount:ci:deployer", subject)

@@ -62,12 +62,6 @@ func ValidateSCIMTokenStrength(token string) error { return rules.ValidateSCIMTo
 
 type jwk = rules.JWK
 
-const (
-	maxRSABits           = rules.MaxRSABits
-	minRSABits           = rules.MinRSABits
-	maxRSAPublicExponent = rules.MaxRSAPublicExponent
-)
-
 func parseJWK(k jwk) (any, error) { return rules.ParseJWK(k) }
 
 // --- SSO returnTo sanitizer (rules/return_to.go) ---
