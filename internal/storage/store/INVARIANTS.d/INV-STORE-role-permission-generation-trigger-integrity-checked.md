@@ -6,11 +6,14 @@
   `postgresRolePermGenerationFuncBody`; ENABLE ALWAYS; one shared function) and compares the
   `pg_trigger`/`pg_proc` row versions (`tgfoid`, `xmin`) with the previous reading. On any
   difference it logs a `SECURITY:` line, increments `keyorix_role_permission_generation_tamper_total`,
-  re-installs the triggers if the definition is wrong, and bumps `role_permissions_generation` in
-  the same transaction, so every replica's cache refills from the live join. A failed repair or
-  bump never resets the baseline: the checker stays `pending`, and every tick repairs and bumps
-  until one commits and the re-read is clean (a body restored after a failed repair must still
-  flush). Both trigger functions (this one and `keyorix_secret_nodes_bump_cache_epoch()`) pin
+  bumps `role_permissions_generation` in a transaction of its own (so every replica's cache
+  refills from the live join even when the repair cannot finish), then, if the definition is
+  wrong, re-installs the triggers under `SET LOCAL lock_timeout`
+  (`rolePermGenerationRepairLockTimeout`) and bumps again in that transaction. Each background
+  tick has a deadline (`rolePermGenerationIntegrityTickTimeout`). A failed repair or bump never
+  resets the baseline: the checker stays `pending`, and every tick bumps and retries the repair
+  until a repair commits and the re-read is clean (a body restored after a failed repair must
+  still flush). Both trigger functions (this one and `keyorix_secret_nodes_bump_cache_epoch()`) pin
   `search_path = pg_catalog, pg_temp` (`pgTriggerFuncSetClause`), and the check accepts exactly
   that `proconfig`, so a writer's search_path cannot shadow the operators the bodies use. The installer
   re-creates a same-named trigger whose definition differs, and never rewrites a function row
@@ -18,6 +21,9 @@
   `postgresRolePermGenerationFuncBody` is the one source of the function body. A release that
   changes it must also let the check accept the previous body during a rolling upgrade, or older
   replicas' boots read as tampering on newer ones (a cache flush each time, not a wrong decision).
+  The release that adds this check is itself such a change: older replicas re-create the function
+  without the `SET` clause on every boot, so during that rollout each of their boots raises the
+  `SECURITY:` line, the tamper counter, a repair and a fleet-wide flush on the new replicas.
   This complements INV-STORE-role-permission-generation-trigger-maintained, whose per-statement
   proof keeps the zero window for missing or disabled triggers. Why: TRIGGER-ROWDIGEST-1
   (`docs/design/trigger-rowdigest.md`). The function owner (the server's own role, no superuser
@@ -29,7 +35,7 @@
   `_DisableWriteEnableInOneTransactionIsFlushed_Postgres`, `_ReplaceThenRestoreIsFlushed_Postgres`,
   `_TriggerRecreatedOnFewerEventsIsRestored_Postgres`, `_FunctionSettingsAreRestored_Postgres`,
   `_CleanTicksAndReplicaBootsDoNotFlush_Postgres`, `_BackgroundJobFlushesAndStopsOnClose_Postgres`,
-  `_FailedRepairIsRetriedNotAdopted_Postgres`; `TestRolePermGeneration_FunctionPinsSearchPath_Postgres`,
+  `_FailedRepairIsRetriedNotAdopted_Postgres`, `_BlockedRepairStillFlushes_Postgres`; `TestRolePermGeneration_FunctionPinsSearchPath_Postgres`,
   `TestRolePermGeneration_WriterSearchPathCannotShadowTheBump_Postgres`,
   `TestSecretNodeCacheEpoch_FunctionPinsSearchPath_Postgres`,
   `TestSecretNodeCacheEpoch_WriterSearchPathCannotShadowTheBump_Postgres` (all red on the PR base);

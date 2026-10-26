@@ -92,24 +92,41 @@ A background job on each PostgreSQL server reads one catalog statement every int
    reads as before. `internal/solewriter` (`fingerprintSQL`) uses the same idea.
 
 On a failed body check, the job logs at error level, increments
-`keyorix_role_permission_generation_tamper_total`, re-runs `EnsureRolePermissionsGenerationTriggers`
-(which restores the body) and bumps the generation. On a changed fingerprint with a good body, it
-logs, increments the counter and bumps the generation. Bumping the generation invalidates every
-replica's cache, so any staleness from the tampered period is flushed fleet-wide, not just hidden
-on one replica. A false positive (an unforeseen catalog rewrite such as a `pg_upgrade`) costs one
-cache refill and changes no decision. If the repair or the bump cannot commit, the job keeps the
-previous baseline and stays pending: every later tick repairs and bumps until one commits and
-the re-read is clean. It never adopts the catalog it reads after a failed attempt as a new
-baseline, because the body may have been restored in between and nothing would be left to see.
+`keyorix_role_permission_generation_tamper_total`, bumps the generation in a transaction of its
+own, then re-runs `EnsureRolePermissionsGenerationTriggers` (which restores the body) under
+`SET LOCAL lock_timeout` and bumps again in the repair's transaction. On a changed fingerprint
+with a good body, it logs, increments the counter and bumps the generation. Bumping the
+generation invalidates every replica's cache, so any staleness from the tampered period is
+flushed fleet-wide, not just hidden on one replica. A false positive (an unforeseen catalog
+rewrite such as a `pg_upgrade`) costs one cache refill and changes no decision.
+
+The first bump never waits on the repair. The repair's `DROP TRIGGER` needs an ACCESS EXCLUSIVE
+lock on the table, which any open transaction on it (an idle session, a long `pg_dump`) blocks,
+and a superuser can make the repair fail outright. In one transaction, that failure also rolled
+back the bump, and with no deadline a queued `DROP TRIGGER` stopped every later tick and stalled
+every reader of the table queued behind it. Now the lock wait is capped
+(`rolePermGenerationRepairLockTimeout`) and each tick has a deadline
+(`rolePermGenerationIntegrityTickTimeout`). If the repair or the re-read fails, the job keeps the
+previous baseline and stays pending: every later tick bumps again and retries the repair, until
+a repair commits and the re-read is clean. It never adopts the catalog it reads after a failed
+attempt as a new baseline, because the body may have been restored in between and nothing would
+be left to see.
 
 To keep the fingerprint stable across ordinary boots, the installer stops rewriting a function
 that is already correct. It replaces the body only when the body check fails, and logs a warning
 when it replaces a body that differed (an upgrade from an older release, or tampering). Without
 this, every replica boot would rewrite the `pg_proc` row and flush every cache once.
 
-- Window: at most one interval (`rolePermGenerationIntegrityInterval`) between the tamper and the
-  flush. It applies only to deliberate DDL by the owner or a superuser. Accidental states keep the
+- Window: at most one interval (`rolePermGenerationIntegrityInterval`, plus one tick timeout)
+  between the tamper and the flush, also while a repair keeps failing (every pending tick bumps).
+  It applies only to deliberate DDL by the owner or a superuser. Accidental states keep the
   zero-window per-statement proof.
+- Rolling upgrade to this release: a replica still on an older release runs
+  `CREATE OR REPLACE FUNCTION` without the `SET search_path` clause on every boot. Each such boot
+  therefore reads as tampering on the new replicas: a `SECURITY:` log line, a
+  `keyorix_role_permission_generation_tamper_total` increment, a repair that re-pins the function
+  and a fleet-wide cache flush. No decision is wrong. Expect these alarms until every replica runs
+  this release, and treat them as tampering only after that.
 - Catches: body replacement, `ALTER FUNCTION ... SET`, `SECURITY DEFINER`, re-pointed triggers,
   the in-transaction sandwich, and tamper-then-restore between two ticks.
 - Cost: zero on the request path. One small catalog statement per replica per interval.
