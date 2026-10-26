@@ -114,7 +114,7 @@ func TestSuspendInactiveUsers_NotFooledByCallersPATRestriction(t *testing.T) {
 	ls := store.NewLocalStorage(db)
 	c := NewKeyorixCore(ls)
 
-	staleTime := c.now().AddDate(0, 0, -90)
+	staleTime := c.EffectiveNow().AddDate(0, 0, -90)
 
 	require.NoError(t, db.Create(&models.Role{ID: 1, Name: "admin", NameFolded: "admin", BypassesPermissionChecks: true}).Error)
 	require.NoError(t, db.Create(&models.User{

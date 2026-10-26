@@ -24,7 +24,7 @@ func rbDaysAgo(d int) *time.Time {
 // newRBCore returns a core with the mock store and a frozen clock.
 func newRBCore(store *MockStorage) *KeyorixCore {
 	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return rbFixed }
+	c.SetClockForTesting(func() time.Time { return rbFixed })
 	return c
 }
 

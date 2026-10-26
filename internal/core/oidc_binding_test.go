@@ -26,7 +26,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 	t.Run("project-scoped admin (no global authority) is refused", func(t *testing.T) {
 		store := new(MockStorage)
 		c := NewKeyorixCore(store)
-		c.now = time.Now
+		c.SetClockForTesting(time.Now)
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
 		// Actor 2 has NO role grants at global scope (project_id=0) — only within
 		// project 1, which requireAuthorityForRole(..., projectID=0, ...) never sees.
@@ -42,7 +42,7 @@ func TestCreateOIDCBinding_RequiresGlobalAdminAuthority(t *testing.T) {
 	t.Run("global admin authority succeeds", func(t *testing.T) {
 		store := new(MockStorage)
 		c := NewKeyorixCore(store)
-		c.now = time.Now
+		c.SetClockForTesting(time.Now)
 		store.On("GetMachineIdentity", ctx, uint(5)).Return(machine, nil)
 		store.On("RoleSetBypassesPermissionChecks", ctx, []uint{99}).Return(true, nil)
 		store.On("GetUserRoleIDsAt", ctx, uint(1), mock.Anything).Return([]uint{99}, nil)
