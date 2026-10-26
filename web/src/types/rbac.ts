@@ -33,12 +33,15 @@ export interface RoleWithPermissions extends Role {
     permissions: Permission[];
 }
 
-// A role granted to a group, with the grant's optional time-bound expiry
-// (absent = permanent).
+// A role granted to a group, with the scope it applies at (project_id /
+// environment_id, 0 = not scoped; 0/0 = global) and the grant's optional
+// time-bound expiry (absent = permanent).
 export interface GroupRoleGrant {
     id: number;
     name: string;
     description: string;
+    project_id: number;
+    environment_id: number;
     expires_at?: string;
 }
 
