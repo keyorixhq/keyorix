@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 // manifestWriterPackages are the packages that write key material into the
@@ -109,7 +111,12 @@ func callName(call *ast.CallExpr) (full, short string) {
 // down why not. What it does not prove: that the update covers the same
 // files as the write (the behavioural tests do that per writer), or anything
 // about a write form not in keyWriteForms.
+//
+// It reports through guardrules.Rollout: report-only on pull requests while
+// docs/guard-rollout.d/TestEveryKeyMaterialWriterUpdatesTheManifest.tsv exists
+// (docs/guard-rollout-contract.md rule 2).
 func TestEveryKeyMaterialWriterUpdatesTheManifest(t *testing.T) {
+	g := guardrules.Rollout(t)
 	root := repoRoot(t)
 	seen := map[string]bool{}
 	var offenders []string
@@ -117,7 +124,7 @@ func TestEveryKeyMaterialWriterUpdatesTheManifest(t *testing.T) {
 		dir := filepath.Join(root, pkg)
 		entries, err := os.ReadDir(dir)
 		if err != nil {
-			t.Fatalf("read %s: %v", dir, err)
+			g.Fatalf("read %s: %v", dir, err)
 		}
 		fset := token.NewFileSet()
 		for _, e := range entries {
@@ -127,7 +134,7 @@ func TestEveryKeyMaterialWriterUpdatesTheManifest(t *testing.T) {
 			}
 			f, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 			if err != nil {
-				t.Fatalf("parse %s/%s: %v", pkg, name, err)
+				g.Fatalf("parse %s/%s: %v", pkg, name, err)
 			}
 			for _, decl := range f.Decls {
 				fd, ok := decl.(*ast.FuncDecl)
@@ -166,11 +173,11 @@ func TestEveryKeyMaterialWriterUpdatesTheManifest(t *testing.T) {
 		}
 	}
 	for _, o := range offenders {
-		t.Errorf("%s writes a file but never updates the key-set manifest: call SetWriter.StageManifest before replacing an active key file and CommitManifest after (internal/keyfiles/manifest.go), or add it to manifestWriterExemptions with the reason it does not touch the active key set", o)
+		g.Errorf("%s writes a file but never updates the key-set manifest: call SetWriter.StageManifest before replacing an active key file and CommitManifest after (internal/keyfiles/manifest.go), or add it to manifestWriterExemptions with the reason it does not touch the active key set", o)
 	}
 	for key := range manifestWriterExemptions {
 		if !seen[key] {
-			t.Errorf("manifestWriterExemptions has %q, which no longer exists or no longer uses a recognised write form: remove the entry", key)
+			g.Errorf("manifestWriterExemptions has %q, which no longer exists or no longer uses a recognised write form: remove the entry", key)
 		}
 	}
 }
