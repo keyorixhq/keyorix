@@ -75,16 +75,15 @@ export const rbacApi = {
         return normalizeRole(res.data.data);
     },
 
+    // The server requires a non-empty description and at least one permission (by name) on
+    // create, so the caller supplies them; nothing is defaulted here.
     async createRole(body: {
         name: string;
         description: string;
-        permissions?: string[];
+        permissions: string[];
         assignable_scope?: RoleAssignableScope;
     }): Promise<Role> {
-        const res = await apiClient.post<ApiResponse<Role>>('/api/v1/roles', {
-            ...body,
-            permissions: body.permissions ?? [],
-        });
+        const res = await apiClient.post<ApiResponse<Role>>('/api/v1/roles', body);
         return res.data.data;
     },
 
@@ -92,10 +91,8 @@ export const rbacApi = {
         id: number,
         body: { name: string; description: string; permissions?: string[]; assignable_scope?: RoleAssignableScope }
     ): Promise<Role> {
-        const res = await apiClient.put<ApiResponse<Role>>(`/api/v1/roles/${id}`, {
-            ...body,
-            permissions: body.permissions ?? [],
-        });
+        // `permissions` is sent only when given: a present key must hold at least one entry.
+        const res = await apiClient.put<ApiResponse<Role>>(`/api/v1/roles/${id}`, body);
         return res.data.data;
     },
 

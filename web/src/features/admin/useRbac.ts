@@ -38,8 +38,12 @@ export const useRolePermissions = (roleId: number | null) =>
 export const useCreateRole = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (body: { name: string; description: string; assignable_scope?: RoleAssignableScope }) =>
-            rbacApi.createRole(body),
+        mutationFn: (body: {
+            name: string;
+            description: string;
+            permissions: string[];
+            assignable_scope?: RoleAssignableScope;
+        }) => rbacApi.createRole(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rbac', 'roles'] }),
     });
 };
@@ -52,7 +56,12 @@ export const useUpdateRole = () => {
             body,
         }: {
             id: number;
-            body: { name: string; description: string; assignable_scope?: RoleAssignableScope };
+            body: {
+                name: string;
+                description: string;
+                permissions?: string[];
+                assignable_scope?: RoleAssignableScope;
+            };
         }) => rbacApi.updateRole(id, body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rbac', 'roles'] }),
     });

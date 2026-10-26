@@ -1,4 +1,5 @@
 import React from 'react';
+import { AxiosError } from 'axios';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, within } from '../../../test/test-utils';
 import { RolesPoliciesPage } from '../RolesPoliciesPage';
@@ -29,8 +30,8 @@ const {
 }));
 
 const mutationState = vi.hoisted(() => ({
-    create: { isPending: false, isError: false },
-    update: { isPending: false, isError: false },
+    create: { isPending: false, isError: false, error: null as unknown },
+    update: { isPending: false, isError: false, error: null as unknown },
     delete: { isPending: false, isError: false },
     assign: { isPending: false },
     remove: { isPending: false },
@@ -69,6 +70,16 @@ const permViewRoles: Permission = {
 };
 const allPermissions: Permission[] = [permRead, permWrite, permViewRoles];
 
+// An axios error as the interceptor chain surfaces it: the server's envelope in response.data.
+const serverError = (status: number, message: string) =>
+    new AxiosError('Request failed', 'ERR_BAD_REQUEST', undefined, undefined, {
+        status,
+        statusText: '',
+        headers: {},
+        config: {} as never,
+        data: { error: 'Error', message },
+    });
+
 // 'admin' is a BUILT_IN_ROLES entry — used to exercise the built-in delete-protection UI.
 const roleDeveloper: RoleWithPermissions = {
     id: 1,
@@ -89,8 +100,8 @@ const roleAdmin: RoleWithPermissions = {
 
 beforeEach(() => {
     vi.clearAllMocks();
-    mutationState.create = { isPending: false, isError: false };
-    mutationState.update = { isPending: false, isError: false };
+    mutationState.create = { isPending: false, isError: false, error: null };
+    mutationState.update = { isPending: false, isError: false, error: null };
     mutationState.delete = { isPending: false, isError: false };
     mutationState.assign = { isPending: false };
     mutationState.remove = { isPending: false };
@@ -204,25 +215,62 @@ describe('RolesPoliciesPage — roles list states', () => {
 });
 
 describe('RolesPoliciesPage — create role', () => {
-    it('disables Create until a name is entered, and submits name + description', async () => {
+    it('disables Create until name, description and a permission are given, then submits them', () => {
         render(<RolesPoliciesPage />);
         fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
 
         const dialog = screen.getByRole('dialog');
-        expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled();
+        const create = () => within(dialog).getByRole('button', { name: 'Create' });
+        expect(create()).toBeDisabled();
 
         fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'auditor-lite' } });
+        expect(create()).toBeDisabled();
         fireEvent.change(within(dialog).getByLabelText('Description'), {
             target: { value: 'Read-only audit access' },
         });
-        expect(within(dialog).getByRole('button', { name: 'Create' })).not.toBeDisabled();
+        // Name + description alone is the payload the server refuses (permissions min=1).
+        expect(create()).toBeDisabled();
+        fireEvent.click(within(dialog).getByLabelText(/Read Secrets/));
+        expect(create()).not.toBeDisabled();
 
-        fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+        fireEvent.click(create());
         // #3546: a new role is per project unless widened.
         expect(createMutate).toHaveBeenCalledWith(
-            { name: 'auditor-lite', description: 'Read-only audit access', assignable_scope: 'project' },
+            {
+                name: 'auditor-lite',
+                description: 'Read-only audit access',
+                permissions: ['Read Secrets'],
+                assignable_scope: 'project',
+            },
             expect.anything()
         );
+    });
+
+    it('requires a non-blank description on create', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'auditor-lite' } });
+        fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: '   ' } });
+        fireEvent.click(within(dialog).getByLabelText(/Read Secrets/));
+        expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled();
+    });
+
+    it('submits several permissions and drops one that is unticked again', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'ops-all' } });
+        fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Ops' } });
+        fireEvent.click(within(dialog).getByLabelText(/Read Secrets/));
+        fireEvent.click(within(dialog).getByLabelText(/Write Secrets/));
+        fireEvent.click(within(dialog).getByLabelText(/View Roles/));
+        fireEvent.click(within(dialog).getByLabelText(/Write Secrets/));
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
+        expect(createMutate.mock.calls[0]?.[0].permissions).toEqual(['Read Secrets', 'View Roles']);
     });
 
     it('submits a widened assignable scope when one is chosen', () => {
@@ -231,6 +279,8 @@ describe('RolesPoliciesPage — create role', () => {
 
         const dialog = screen.getByRole('dialog');
         fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'ops-all' } });
+        fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Ops' } });
+        fireEvent.click(within(dialog).getByLabelText(/Read Secrets/));
         const scope = within(dialog).getByLabelText('Can be granted');
         expect(scope).toHaveValue('project');
         fireEvent.change(scope, { target: { value: 'any' } });
@@ -238,7 +288,7 @@ describe('RolesPoliciesPage — create role', () => {
 
         fireEvent.click(within(dialog).getByRole('button', { name: 'Create' }));
         expect(createMutate).toHaveBeenCalledWith(
-            { name: 'ops-all', description: '', assignable_scope: 'any' },
+            { name: 'ops-all', description: 'Ops', permissions: ['Read Secrets'], assignable_scope: 'any' },
             expect.anything()
         );
     });
@@ -260,15 +310,29 @@ describe('RolesPoliciesPage — create role', () => {
         render(<RolesPoliciesPage />);
         fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
         fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'auditor-lite' } });
+        fireEvent.change(screen.getByLabelText('Description'), { target: { value: 'Audit' } });
+        fireEvent.click(screen.getByLabelText(/Read Secrets/));
         fireEvent.click(screen.getByRole('button', { name: 'Create' }));
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
-    it('shows an error message when the create mutation fails', () => {
-        mutationState.create = { isPending: false, isError: true };
+    it('shows the generic message when the create failure carries no server reason', () => {
+        mutationState.create = { isPending: false, isError: true, error: null };
         render(<RolesPoliciesPage />);
         fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
         expect(screen.getByText('Failed to create role. Please try again.')).toBeInTheDocument();
+    });
+
+    it("shows the server's validation message when the create is refused", () => {
+        mutationState.create = {
+            isPending: false,
+            isError: true,
+            error: serverError(400, 'Key: CreateRoleRequest.Permissions failed on the min validation'),
+        };
+        render(<RolesPoliciesPage />);
+        fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
+        expect(screen.getByText(/Permissions failed on the min validation/)).toBeInTheDocument();
+        expect(screen.queryByText('Failed to create role. Please try again.')).not.toBeInTheDocument();
     });
 
     it('closes the create modal via the dialog close button without submitting', () => {
@@ -352,10 +416,39 @@ describe('RolesPoliciesPage — edit role', () => {
         fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Updated description' } });
         fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
+        // Permissions untouched: the key is omitted so the server keeps the current set.
         expect(updateMutate).toHaveBeenCalledWith(
             { id: 1, body: { name: 'developer', description: 'Updated description' } },
             expect.anything()
         );
+        expect(updateMutate.mock.calls[0]?.[0].body).not.toHaveProperty('permissions');
+    });
+
+    it('prefills the role permissions and sends them only once they change', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+
+        const dialog = screen.getByRole('dialog');
+        expect(within(dialog).getByLabelText(/Read Secrets/)).toBeChecked();
+        expect(within(dialog).getByLabelText(/Write Secrets/)).not.toBeChecked();
+
+        fireEvent.click(within(dialog).getByLabelText(/Write Secrets/));
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+        expect(updateMutate.mock.calls[0]?.[0].body.permissions).toEqual(['Read Secrets', 'Write Secrets']);
+    });
+
+    it('does not allow removing the last permission or blanking the description', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.click(within(dialog).getByLabelText(/Read Secrets/));
+        expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
+        fireEvent.click(within(dialog).getByLabelText(/Read Secrets/));
+        expect(within(dialog).getByRole('button', { name: 'Save' })).not.toBeDisabled();
+
+        fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: '' } });
+        expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
     });
 
     it('closes the modal on successful update', () => {
@@ -366,11 +459,58 @@ describe('RolesPoliciesPage — edit role', () => {
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     });
 
-    it('shows an error message when the update mutation fails', () => {
-        mutationState.update = { isPending: false, isError: true };
+    it('shows the generic message when the update failure carries no server reason', () => {
+        mutationState.update = { isPending: false, isError: true, error: null };
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+        expect(screen.getByText('Failed to update role. Please try again.')).toBeInTheDocument();
+    });
+
+    it("shows the server's message when the update is refused", () => {
+        mutationState.update = {
+            isPending: false,
+            isError: true,
+            error: serverError(403, 'built-in roles cannot be modified'),
+        };
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+        expect(screen.getByText('built-in roles cannot be modified')).toBeInTheDocument();
+        expect(screen.queryByText('Failed to update role. Please try again.')).not.toBeInTheDocument();
+    });
+
+    it('disables "Can be granted" with an explanation for a built-in role', () => {
         render(<RolesPoliciesPage />);
         fireEvent.click(within(getRoleCard('admin')).getByTitle('Edit role'));
-        expect(screen.getByText('Failed to update role. Please try again.')).toBeInTheDocument();
+
+        const dialog = screen.getByRole('dialog');
+        expect(within(dialog).getByLabelText('Can be granted')).toBeDisabled();
+        expect(within(dialog).getByText(/Built-in roles cannot change where they can be granted/)).toBeInTheDocument();
+    });
+
+    it('treats the ADR-021 named roles as built-in too (project_viewer)', () => {
+        useRoles.mockReturnValue({
+            data: [{ ...roleDeveloper, id: 9, name: 'project_viewer' }],
+            isLoading: false,
+            error: null,
+        });
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('project_viewer')).getByTitle('Edit role'));
+        expect(within(screen.getByRole('dialog')).getByLabelText('Can be granted')).toBeDisabled();
+    });
+
+    it('does not send assignable_scope when saving a built-in role (the server answers 403 to it)', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('admin')).getByTitle('Edit role'));
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Administrators' } });
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+        expect(updateMutate.mock.calls[0]?.[0].body).not.toHaveProperty('assignable_scope');
+    });
+
+    it('keeps "Can be granted" editable for a custom role', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+        expect(within(screen.getByRole('dialog')).getByLabelText('Can be granted')).not.toBeDisabled();
     });
 
     it('lets the name be edited directly and closes on Cancel without submitting', () => {
