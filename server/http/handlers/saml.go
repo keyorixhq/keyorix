@@ -80,7 +80,10 @@ func (h *AuthHandler) CompleteSAML(w http.ResponseWriter, r *http.Request) {
 		r.Context(), provider, r, relayState, r.Header.Get("User-Agent"), clientIP(r))
 	if err != nil {
 		msg := err.Error()
-		if !isSafeSSOError(msg) {
+		if scopeMsg, ok := ssoRoleScopeErrorMessage(err); ok {
+			log.Printf("SAML login via provider %q refused by the role-scope check: %v", provider, err)
+			msg = scopeMsg
+		} else if !isSafeSSOError(msg) {
 			log.Printf("Error completing SAML login via provider %q: %v", provider, err)
 			msg = clientSafe(err)
 		}
