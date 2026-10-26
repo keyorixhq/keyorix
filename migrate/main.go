@@ -19,7 +19,7 @@ func main() {
 // the cobra root command is silenced so it does not print the same error first.
 func run(args []string, stdout, stderr io.Writer) int {
 	if err := cmd.Execute(args, stdout, stderr); err != nil {
-		fmt.Fprintln(stderr, "Error:", err)
+		_, _ = fmt.Fprintln(stderr, "Error:", err)
 		return 1
 	}
 	return 0
