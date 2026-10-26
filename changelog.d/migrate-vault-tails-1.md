@@ -6,3 +6,7 @@
 ### Docs
 
 - `docs/vault-health-scan.md`: the same policy file is the token policy of the access-migration commands; a table of what they need beyond the scan, and why a KV v1 mount needs its own `list` stanza. A test over the policy parser checks that the file grants exactly the Vault calls the commands make.
+
+### Security
+
+- `keyorix-migrate vault plan-access` / `apply-access` / `audit-access` no longer report a `--path-map` scope as equivalent to a Vault policy when another KV mount holds paths the default convention names into that scope: with `--path-map secret/data=<team-a>:<dev>`, `kv1/team-a/dev/x` lands in team-a/dev by name, so a grant there reached it although the policy never allowed it. Such a policy is now unmappable (`cross-mount-scope`), the report prints the other mount's path, and `apply-access` re-checks it. A mount that cannot be listed counts as holding the path. Mapping the other mount's paths to their own scope with `--path-map` clears it.

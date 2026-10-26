@@ -69,6 +69,11 @@ func TestImpliedAccess_ReportListsJourney4AndTestbedMigrator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// What plan-access lists in the testbed's other mounts: team-b/ holds one root secret and
+	// kv1-legacy/ holds legacy/db-password, nothing named after a Keyorix project.
+	sourceHCL(t, "scripts/vault-migration-testbed/seed.sh", `team-b/data/standalone-secret`, "")
+	sourceHCL(t, "scripts/vault-migration-testbed/seed.sh", `kv1-legacy/legacy/db-password`, "")
+	mt.SetKVTree(kvTree(map[string][]string{"secret/": nil, "team-b/": nil, "kv1-legacy/": nil}))
 	plan := Build(BuildInput{
 		Policies: []healthscan.Policy{{Name: "mig1-glob-readonly", Blocks: healthscan.ParsePolicyHCL(mig)}},
 		AppRoles: []healthscan.AppRoleRoleConfig{{Mount: "approle/", Name: "mig1-migrator", TokenPolicies: []string{"mig1-glob-readonly"}}},

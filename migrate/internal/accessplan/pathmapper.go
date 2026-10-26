@@ -129,8 +129,8 @@ func parsePathOverride(raw string) (pathOverride, error) {
 type ScopeResolution struct {
 	ProjectID     int
 	EnvironmentID int // 0 = global-within-project.
-	// CrossMountEvidence is set for a default-convention resolution (also when it is refused
-	// as CategoryCrossMountScope); see Item.CrossMountEvidence.
+	// CrossMountEvidence is set for a default-convention or --path-map resolution (also when it
+	// is refused as CategoryCrossMountScope); see Item.CrossMountEvidence.
 	CrossMountEvidence []string
 }
 
@@ -161,7 +161,7 @@ func (m *PathMapper) Resolve(rawPolicyPath string) (res ScopeResolution, categor
 			if reason := m.sharedScopeReason(rawPolicyPath, res); reason != "" {
 				return ScopeResolution{}, CategoryNarrowerThanScope, reason, false
 			}
-			return res, "", "", true
+			return m.overrideScope(rawPolicyPath, ov, res)
 		}
 	}
 
@@ -210,12 +210,54 @@ func (m *PathMapper) defaultScope(rawPolicyPath string, res ScopeResolution, pro
 		return ScopeResolution{}, CategoryNarrowerThanScope, reason, false
 	}
 	own, _ := m.kvMountFor(rawPolicyPath)
-	evidence, shared := m.crossMountEvidence(own.Path, projectName, envName)
+	evidence, shared := m.crossMountEvidence(own.Path, projectName, envName, false)
 	res.CrossMountEvidence = evidence
 	if len(shared) > 0 {
 		return res, CategoryCrossMountScope, fmt.Sprintf("%q resolves to project %q%s by the default convention, but the same convention also routes another KV mount's paths there (%s): a grant there would reach that mount's imported secrets too, which this policy never allowed — import each mount into its own environment and map it with --path-map, or grant manually", rawPolicyPath, projectName, envLabel(envName), strings.Join(shared, "; ")), false
 	}
 	return res, "", "", true
+}
+
+// overrideScope returns the scope a --path-map entry maps rawPolicyPath into, unless another KV
+// mount holds paths the default convention names into the same project/environment. The override
+// declares which Vault subtree it takes into the scope, but plan-access never sees what the
+// operator imported where, and the default convention routes kv1/team-a/dev/x to team-a/dev
+// whatever the mount: so the scope is only equivalent to the Vault policy when the listing of
+// every other mount proves nothing lands there by name (a path another --path-map entry routes
+// elsewhere does not). A project or environment this mapper does not know has nothing the
+// convention could name into it.
+func (m *PathMapper) overrideScope(rawPolicyPath string, ov pathOverride, res ScopeResolution) (ScopeResolution, UnmappableCategory, string, bool) {
+	projectName, envName, known := m.scopeNames(res)
+	if !known {
+		return res, "", "", true
+	}
+	own, _ := m.kvMountFor(rawPolicyPath)
+	evidence, shared := m.crossMountEvidence(own.Path, projectName, envName, true)
+	res.CrossMountEvidence = evidence
+	if len(shared) > 0 {
+		return res, CategoryCrossMountScope, fmt.Sprintf("%q resolves to project %q%s through --path-map %q, but the default convention also routes another KV mount's paths there (%s): a grant there would reach that mount's imported secrets too, which this policy never allowed — send that mount's paths to their own scope with --path-map, import it into its own environment, or grant manually", rawPolicyPath, projectName, envLabel(envName), ov.prefix, strings.Join(shared, "; ")), false
+	}
+	return res, "", "", true
+}
+
+// scopeNames returns the names of the project and environment a resolution points at (envName ""
+// for the whole project), the names the default convention matches. ok=false: not a known scope.
+func (m *PathMapper) scopeNames(res ScopeResolution) (projectName, envName string, ok bool) {
+	for name, p := range m.projectsByName {
+		if p.ID != res.ProjectID {
+			continue
+		}
+		if res.EnvironmentID == 0 {
+			return name, "", true
+		}
+		for name2, e := range m.envsByProjectID[p.ID] {
+			if e.ID == res.EnvironmentID {
+				return name, name2, true
+			}
+		}
+		return "", "", false
+	}
+	return "", "", false
 }
 
 func envLabel(envName string) string {
@@ -231,13 +273,18 @@ const (
 	crossMountAbsent      = "absent"
 	crossMountPresent     = "present"
 	crossMountNotListed   = "not listed"
+	// crossMountMapped is followed by the --path-map prefix that routes the mount's paths at
+	// the scope to another scope, so they do not land here by name.
+	crossMountMapped = "mapped by --path-map "
 )
 
 // crossMountEvidence reports, for the default-convention scope <project>/[<env>/] of a policy
 // on ownMount, what every KV mount holds there per the listing SetKVTree gave: one sorted
 // "<mount><project>/[<env>/]: <state>" line per mount. shared lists the lines of other mounts
 // that hold paths there or could not be listed (fail closed: an unlisted mount may hold them).
-func (m *PathMapper) crossMountEvidence(ownMount, projectName, envName string) (evidence, shared []string) {
+// With honourOverrides, a mount whose whole <project>/[<env>/] directory a --path-map entry
+// routes elsewhere is not shared, whatever it holds or whether it could be listed.
+func (m *PathMapper) crossMountEvidence(ownMount, projectName, envName string, honourOverrides bool) (evidence, shared []string) {
 	scope := projectName + "/"
 	if envName != "" {
 		scope += envName + "/"
@@ -249,16 +296,41 @@ func (m *PathMapper) crossMountEvidence(ownMount, projectName, envName string) (
 	sort.Strings(mounts)
 	for _, mount := range mounts {
 		state := m.crossMountState(mount, projectName, envName)
-		if mount == ownMount {
+		switch {
+		case mount == ownMount:
 			state = crossMountPolicyMount
+		case honourOverrides:
+			if ov, routed := m.overrideRouting(mount, scope); routed {
+				state = crossMountMapped + ov.prefix
+			}
 		}
 		line := mount + scope + ": " + state
 		evidence = append(evidence, line)
-		if state != crossMountPolicyMount && state != crossMountAbsent {
+		if state != crossMountPolicyMount && state != crossMountAbsent && !strings.HasPrefix(state, crossMountMapped) {
 			shared = append(shared, line)
 		}
 	}
 	return evidence, shared
+}
+
+// overrideRouting reports the --path-map entry, if any, that takes the whole directory
+// <mount>[data/]<scope> ("team-a/prod/") to its own scope: the importer routes every path under
+// an override prefix by that override, not by name. An entry deeper than the directory takes
+// only part of it, so the rest still lands by name.
+func (m *PathMapper) overrideRouting(mount, scope string) (pathOverride, bool) {
+	dir := mount
+	for _, km := range m.kvMounts {
+		if km.Path == mount && km.KVVersion == 2 {
+			dir += "data/"
+		}
+	}
+	dir += scope
+	for _, ov := range m.overrides {
+		if strings.HasPrefix(dir, dirPrefix(ov.prefix)) {
+			return ov, true
+		}
+	}
+	return pathOverride{}, false
 }
 
 func (m *PathMapper) crossMountState(mount, projectName, envName string) string {

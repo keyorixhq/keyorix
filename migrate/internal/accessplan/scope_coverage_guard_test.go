@@ -25,10 +25,13 @@ import (
 // same corpus, as plan-access lists it: the corpus is asymmetric (kv1 holds only team-b and
 // payments paths) so that both cross-mount refusals and default-convention Creates occur.
 //
-// What it does NOT check: a scope that a --path-map entry targets is modelled as holding only
-// override subtrees (the override declares the scope's content). Nor does it know which Vault
-// paths an operator actually imported into an environment: plan-access never sees that, and
-// neither does this test.
+// A scope that a --path-map entry targets is filled by the override's subtree AND by any other
+// mount's paths the default convention names into it (kv1/team-a/dev/x lands in team-a/dev):
+// plan-access cannot tell which of them the operator imported there, so a Create must not grant
+// either. router.route models only the first; the second is the same-name check below.
+//
+// What it does NOT check: which Vault paths an operator actually imported into an environment:
+// plan-access never sees that, and neither does this test.
 func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 	mounts := []KVMountInfo{{Path: "secret/", KVVersion: 2}, {Path: "kv1/", KVVersion: 1}}
 	projects := []ProjectRef{{ID: 1, Name: "team-a"}, {ID: 2, Name: "team-b"}}
@@ -67,7 +70,9 @@ func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 			continue
 		}
 		secrets = append(secrets, "secret/data/"+rel)
-		if first, _, _ := strings.Cut(rel, "/"); first == "team-b" || first == "payments" {
+		// kv1 holds team-b, payments and team-a/dev: the last lands by name in team-a/dev, the
+		// scope "secret/data=1:10" maps the whole secret mount into.
+		if first, _, _ := strings.Cut(rel, "/"); first == "team-b" || first == "payments" || rel == "team-a/dev" || strings.HasPrefix(rel, "team-a/dev/") {
 			secrets = append(secrets, "kv1/"+rel)
 		}
 	}
@@ -101,6 +106,9 @@ func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 					}
 					for _, s := range secrets {
 						p, e, routed := router.route(s)
+						if !routed && mountOf(s) != mountOf(path) {
+							p, e, routed = router.routeByName(s)
+						}
 						if !routed || p != it.ProposedProjectID || (it.ProposedEnvironmentID != 0 && e != it.ProposedEnvironmentID) {
 							continue
 						}
@@ -215,6 +223,39 @@ func newScopeRouter(t *testing.T, projects []ProjectRef, envs map[int][]Environm
 	}
 	slices.SortFunc(r.overrides, func(a, b pathOverride) int { return len(b.prefix) - len(a.prefix) })
 	return r
+}
+
+// mountOf is the corpus mount a secret or policy path is on.
+func mountOf(path string) string {
+	if strings.HasPrefix(path, "kv1/") {
+		return "kv1/"
+	}
+	return "secret/"
+}
+
+// routeByName is where the default convention alone puts secret, whether or not a --path-map
+// entry targets that scope: the name match a grant on that scope also reaches. A secret under a
+// --path-map prefix goes where that entry says (route), not by name.
+func (r scopeRouter) routeByName(secret string) (project, env int, ok bool) {
+	for _, ov := range r.overrides {
+		if strings.HasPrefix(secret, strings.TrimSuffix(ov.prefix, "/")+"/") {
+			return 0, 0, false
+		}
+	}
+	rel := strings.TrimPrefix(strings.TrimPrefix(secret, "secret/data/"), "kv1/")
+	parts := strings.Split(rel, "/")
+	if len(parts) < 3 {
+		return 0, 0, false
+	}
+	p, found := r.projects[parts[0]]
+	if !found {
+		return 0, 0, false
+	}
+	e, found := r.envs[p.ID][parts[1]]
+	if !found {
+		return 0, 0, false
+	}
+	return p.ID, e.ID, true
 }
 
 // route places secret in a scope: the longest --path-map prefix, else the default convention on

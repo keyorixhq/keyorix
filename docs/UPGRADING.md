@@ -1198,7 +1198,11 @@ Two more shapes, both in every release that shipped `plan-access`:
   (names only) and reports such grants. It sees today's Vault tree: a mount emptied since the
   migration is not reported, and a mount it cannot list counts as holding paths (reported).
   A `plan-access` file written before this release is refused by `apply-access`: re-run
-  `plan-access`.
+  `plan-access`. The same holds for a `--path-map` scope: `--path-map secret/data=<team-a>:<dev>`
+  maps the secret mount into team-a/dev, and `kv1/team-a/dev/x` lands in team-a/dev by name, so
+  a grant there reaches it too. `plan-access` and `audit-access` now report such a policy as
+  `cross-mount-scope` and print the other mount's path; send that mount's paths to their own
+  scope with another `--path-map` entry to clear it.
 - **`secrets.read` implies listing** (known residual, not revocable by an upgrade): a migrated
   `secrets.read` grant also lists secret names and reads version metadata in its scope, which
   a Vault policy with `read` on `data/` but no `list`/`read` on `metadata/` did not allow.
