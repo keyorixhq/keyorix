@@ -283,9 +283,11 @@ option there, but it does not bundle the key-material files.
 - **Restore key files as a whole set, never one at a time** — `admin restore`
   installs every key file from one archive and records a new key-set manifest;
   a single file copied in from another backup is refused at the next start
-  ("does not match the key-set manifest"), and a restore interrupted between
-  its file installs is refused as incoherent rather than booting into a
-  decrypt failure.
+  ("does not match the key-set manifest"). A restore interrupted between its
+  file installs leaves its restore journal behind, and the server refuses to
+  start until `admin restore --recover` resolves it; if the journal itself is
+  lost, the half-installed set is refused as not matching the key-set manifest,
+  so neither case boots into a decrypt failure.
 - **Move the archive OFF this host** — a backup that never leaves the machine
   it was taken on protects against nothing that machine itself could lose.
 - **Export a checkpoint anchor too, held separately from the backup archive**
