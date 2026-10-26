@@ -29,7 +29,7 @@
 // those for the routes it drives. A time rendered to a string before it
 // reaches the writer (fmt/Format) is a string to both halves except the
 // runtime guard's RFC 3339 scan.
-package handlers
+package httpx
 
 import (
 	"go/ast"
@@ -84,44 +84,50 @@ func enclosingFuncName(file *ast.File, pos ast.Node) string {
 	return name
 }
 
+// handlerFamily are the packages whose non-test code writes (or may write) a
+// response body: the handlers package, this package (which holds the one real
+// writer) and each handler subpackage. A new subpackage is added here.
+var handlerFamily = []string{"..", ".", "../reports"}
+
 // 1. One writer.
 func TestUTCStructural_EveryResponseEncoderIsEncodeJSONResponse(t *testing.T) {
-	pkg := loadTyped(t, ".")[0]
 	found := 0
 	var violations []string
-	for _, file := range pkg.Syntax {
-		fname := pkg.Fset.Position(file.Pos()).Filename
-		if strings.HasSuffix(fname, "_test.go") {
-			continue
+	for _, pkg := range loadTyped(t, handlerFamily...) {
+		for _, file := range pkg.Syntax {
+			fname := pkg.Fset.Position(file.Pos()).Filename
+			if strings.HasSuffix(fname, "_test.go") {
+				continue
+			}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				obj := pkg.TypesInfo.Uses[sel.Sel]
+				if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "encoding/json" {
+					return true
+				}
+				switch obj.Name() {
+				case "NewEncoder", "Marshal", "MarshalIndent":
+				default:
+					return true
+				}
+				if fn := enclosingFuncName(file, call); fn == "EncodeJSONResponse" {
+					found++
+					return true
+				}
+				violations = append(violations, pkg.Fset.Position(call.Pos()).String()+": json."+obj.Name()+" outside EncodeJSONResponse (route the response through EncodeJSONResponse so UTCTimes runs)")
+				return true
+			})
 		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			obj := pkg.TypesInfo.Uses[sel.Sel]
-			if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "encoding/json" {
-				return true
-			}
-			switch obj.Name() {
-			case "NewEncoder", "Marshal", "MarshalIndent":
-			default:
-				return true
-			}
-			if fn := enclosingFuncName(file, call); fn == "encodeJSONResponse" {
-				found++
-				return true
-			}
-			violations = append(violations, pkg.Fset.Position(call.Pos()).String()+": json."+obj.Name()+" outside encodeJSONResponse (route the response through encodeJSONResponse so utcTimes runs)")
-			return true
-		})
 	}
 	if found != 1 {
-		t.Errorf("expected exactly one json.NewEncoder inside encodeJSONResponse, found %d: the guard is no longer looking at the real writer", found)
+		t.Errorf("expected exactly one json.NewEncoder inside EncodeJSONResponse, found %d: the guard is no longer looking at the real writer", found)
 	}
 	sort.Strings(violations)
 	for _, v := range violations {
@@ -132,6 +138,7 @@ func TestUTCStructural_EveryResponseEncoderIsEncodeJSONResponse(t *testing.T) {
 // responseWriterFuncs are the calls whose arguments become a response body.
 var responseWriterFuncs = map[string]bool{
 	"sendSuccess": true, "sendCreated": true, "sendError": true, "encodeJSONResponse": true,
+	"SendSuccess": true, "SendCreated": true, "SendError": true, "EncodeJSONResponse": true,
 }
 
 // typeWalker walks a static type the way encoding/json would see it.
@@ -241,42 +248,53 @@ func (w *typeWalker) walk(t types.Type, where string) {
 
 // 2. Marshalers and unexported embeds reachable from a response writer.
 func TestUTCStructural_ResponseTypesAreSeenByUTCTimes(t *testing.T) {
-	pkg := loadTyped(t, ".")[0]
+	family := loadTyped(t, handlerFamily...)
+	var pkg *packages.Package
+	for _, fp := range family {
+		if fp.PkgPath == modulePath+"/server/http/handlers" {
+			pkg = fp
+		}
+	}
+	if pkg == nil {
+		t.Fatal("the handlers package is not among the loaded handlerFamily packages")
+	}
 	w := newTypeWalker(t, pkg)
 	calls := 0
-	for _, file := range pkg.Syntax {
-		if strings.HasSuffix(pkg.Fset.Position(file.Pos()).Filename, "_test.go") {
-			continue
-		}
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
+	for _, fp := range family {
+		for _, file := range fp.Syntax {
+			if strings.HasSuffix(fp.Fset.Position(file.Pos()).Filename, "_test.go") {
+				continue
 			}
-			var name string
-			switch fn := call.Fun.(type) {
-			case *ast.Ident:
-				name = fn.Name
-			case *ast.SelectorExpr:
-				name = fn.Sel.Name
-			}
-			if !responseWriterFuncs[name] {
-				return true
-			}
-			calls++
-			where := pkg.Fset.Position(call.Pos()).String()
-			for _, arg := range call.Args {
-				ast.Inspect(arg, func(sub ast.Node) bool {
-					if e, ok := sub.(ast.Expr); ok {
-						if tv := pkg.TypesInfo.TypeOf(e); tv != nil {
-							w.walk(tv, where)
-						}
-					}
+			ast.Inspect(file, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
 					return true
-				})
-			}
-			return true
-		})
+				}
+				var name string
+				switch fn := call.Fun.(type) {
+				case *ast.Ident:
+					name = fn.Name
+				case *ast.SelectorExpr:
+					name = fn.Sel.Name
+				}
+				if !responseWriterFuncs[name] {
+					return true
+				}
+				calls++
+				where := fp.Fset.Position(call.Pos()).String()
+				for _, arg := range call.Args {
+					ast.Inspect(arg, func(sub ast.Node) bool {
+						if e, ok := sub.(ast.Expr); ok {
+							if tv := fp.TypesInfo.TypeOf(e); tv != nil {
+								w.walk(tv, where)
+							}
+						}
+						return true
+					})
+				}
+				return true
+			})
+		}
 	}
 	if calls < 500 {
 		t.Fatalf("found only %d response-writer calls; the call-name set is stale and this guard would pass vacuously", calls)
@@ -284,7 +302,7 @@ func TestUTCStructural_ResponseTypesAreSeenByUTCTimes(t *testing.T) {
 
 	// Every MarshalJSON declared in this module, reachable or not.
 	moduleMarshalers := map[string]string{}
-	packages.Visit([]*packages.Package{pkg}, nil, func(p *packages.Package) {
+	packages.Visit(family, nil, func(p *packages.Package) {
 		if p.Types == nil || !strings.HasPrefix(p.PkgPath, modulePath+"/") {
 			return
 		}
@@ -381,7 +399,7 @@ var nonHandlerJSONWriters = map[string]string{
 
 // 3. JSON writers outside this package: error envelopes only, no time-typed values.
 func TestUTCStructural_NonHandlerJSONWritersAreTimeFree(t *testing.T) {
-	pkgs := loadTyped(t, "../../middleware", "..")
+	pkgs := loadTyped(t, "../../../middleware", "../..")
 	seen := map[string]bool{}
 	var errs []string
 	for _, pkg := range pkgs {

@@ -10,7 +10,7 @@
 // disclosure-sensitive, deployment-wide report. Gating on system.read was a
 // real, fixed vulnerability, same family as CP-001/CP-008; see
 // server/http/deployment_disclosure_family_test.go.
-package handlers
+package reports
 
 import (
 	"log"
@@ -18,6 +18,7 @@ import (
 	"strconv"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/server/http/handlers/httpx"
 )
 
 // AdminUsageHandler serves GET /api/v1/admin/usage.
@@ -57,8 +58,8 @@ func (h *AdminUsageHandler) GetUsageReport(w http.ResponseWriter, r *http.Reques
 	report, err := h.coreService.GetUsageReport(r.Context(), days, projectID)
 	if err != nil {
 		log.Printf("GetUsageReport: %v", err)
-		sendError(w, "InternalError", "Failed to generate usage report", http.StatusInternalServerError, nil)
+		httpx.SendError(w, "InternalError", "Failed to generate usage report", http.StatusInternalServerError, nil)
 		return
 	}
-	sendSuccess(w, report, "")
+	httpx.SendSuccess(w, report, "")
 }

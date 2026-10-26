@@ -18,6 +18,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/http/handlers/contracttest"
+	"github.com/keyorixhq/keyorix/server/http/handlers/reports"
 )
 
 func TestContractFinishSplit_GetUsageReport(t *testing.T) {
@@ -34,7 +35,7 @@ func TestContractFinishSplit_GetBillingReport(t *testing.T) {
 	db := newBillingTestDB(t)
 	require.NoError(t, db.Create(&models.Project{Name: "acme-prod"}).Error)
 
-	h := NewAdminBillingHandler(licensedBillingCore(t, db))
+	h := reports.NewAdminBillingHandler(licensedBillingCore(t, db))
 	req := httptest.NewRequest(http.MethodGet,
 		billingReportURL("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", ""), nil)
 	w := httptest.NewRecorder()

@@ -1,0 +1,3 @@
+### Internal
+
+- Handlers split pilot (HANDLERS-SPLIT-PILOT-1): the shared response/request helpers (`SendError`, `SendSuccess`, `MustGetUser`, `ErrorResponse`, the UTC time encoder, ...) now live in `server/http/handlers/httpx`, and the admin usage, admin billing, credential-hygiene trend and rotation-calendar handlers in `server/http/handlers/reports`. Code moved verbatim; routes, request and response shapes are unchanged. The old helper names stay in `handlers` as aliases. The source-scanning guards of `server/http` and `server/http/handlers` now read the handler subpackages too, and `TestHandlerFamilyListsEverySubpackage` fails when a new subpackage is added without being listed.

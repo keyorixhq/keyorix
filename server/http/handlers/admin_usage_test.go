@@ -15,11 +15,12 @@ import (
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/server/http/handlers/reports"
 )
 
 // newUsageHandlerDB builds a LocalStorage-backed core service with the tables
 // needed by GetProjectUsageStats wired up.
-func newUsageHandlerDB(t *testing.T) *AdminUsageHandler {
+func newUsageHandlerDB(t *testing.T) *reports.AdminUsageHandler {
 	t.Helper()
 	require.NoError(t, i18n.InitializeForTesting())
 
@@ -31,7 +32,7 @@ func newUsageHandlerDB(t *testing.T) *AdminUsageHandler {
 		&models.AuditEvent{},
 	))
 	cs := core.NewKeyorixCore(store.NewLocalStorage(db))
-	return NewAdminUsageHandler(cs)
+	return reports.NewAdminUsageHandler(cs)
 }
 
 // get issues a GET request against the handler.

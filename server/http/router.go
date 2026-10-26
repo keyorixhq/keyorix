@@ -17,6 +17,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/http/handlers"
+	"github.com/keyorixhq/keyorix/server/http/handlers/reports"
 	customMiddleware "github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/webui"
 )
@@ -161,8 +162,8 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	catalogHandler := handlers.NewCatalogHandler(coreService)
 	machineAuditHandler := handlers.NewMachineAuditHandler(coreService)
 	dashboardHandler := handlers.NewDashboardHandler(coreService)
-	adminUsageHandler := handlers.NewAdminUsageHandler(coreService)
-	adminBillingHandler := handlers.NewAdminBillingHandler(coreService)
+	adminUsageHandler := reports.NewAdminUsageHandler(coreService)
+	adminBillingHandler := reports.NewAdminBillingHandler(coreService)
 	auditHandler := handlers.NewAuditHandler(coreService)
 	licenseHandler := handlers.NewLicenseHandler(coreService)
 	rotationPolicyHandler := handlers.NewRotationPolicyHandler(coreService)
@@ -173,12 +174,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 	notificationChannelHandler := handlers.NewNotificationChannelHandler(coreService)
 	connectHandler := handlers.NewConnectHandler(coreService)
 	adminJobsHandler := handlers.NewAdminJobsHandler(coreService)
-	hygieneTrendsHandler := handlers.NewHygieneTrendsHandler(coreService)
+	hygieneTrendsHandler := reports.NewHygieneTrendsHandler(coreService)
 	folderHandler := handlers.NewFolderHandler(coreService)
 	versionCommentHandler := handlers.NewSecretVersionCommentHandler(coreService)
 	secretTemplateHandler := handlers.NewSecretTemplateHandler(coreService)
 	alertEscalationHandler := handlers.NewAlertEscalationHandler(coreService)
-	rotationCalendarHandler := handlers.NewRotationCalendarHandler(coreService)
+	rotationCalendarHandler := reports.NewRotationCalendarHandler(coreService)
 
 	// Auth endpoints (no authentication middleware). Several of these mint or hand back a
 	// session token (login, refresh, MFA/WebAuthn verify, the SSO/SAML callbacks) or

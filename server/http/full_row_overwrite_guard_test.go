@@ -154,11 +154,11 @@ var fullRowOverwriteAllowlist = map[string]string{}
 // must be in fullRowOverwriteAllowlist with a reasoned exception, or the
 // test fails naming the function and the method it called unsafely.
 func TestNoUnfetchedStructIntoFullRowOverwrite(t *testing.T) {
-	dirs := []string{
-		filepath.Join("..", "http", "handlers"),
+	dirs := append([]string{filepath.Join("..", "http", "handlers")}, familySubdirPaths(filepath.Join("..", "http", "handlers"))...)
+	dirs = append(dirs,
 		filepath.Join("..", "grpc", "services"),
 		filepath.Join("..", "..", "internal", "core"),
-	}
+	)
 
 	flaggedFuncs := map[string]bool{}
 	var flagged []string

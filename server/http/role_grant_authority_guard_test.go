@@ -145,19 +145,15 @@ func roleGrantHandlerBody(t *testing.T, handlerName string) string {
 func packageFuncBodyText(t *testing.T, dir, name string) string {
 	t.Helper()
 	funcRe := regexp.MustCompile(`^func ` + regexp.QuoteMeta(name) + `\(`)
-	entries, err := os.ReadDir(dir)
+	paths, err := handlerFamilyGoPaths(dir)
 	if err != nil {
-		t.Fatalf("reading %s: %v", dir, err)
+		t.Fatal(err)
 	}
 	var out strings.Builder
-	for _, e := range entries {
-		n := e.Name()
-		if e.IsDir() || !strings.HasSuffix(n, ".go") || strings.HasSuffix(n, "_test.go") {
-			continue
-		}
-		b, err := os.ReadFile(filepath.Join(dir, n))
+	for _, path := range paths {
+		b, err := os.ReadFile(path)
 		if err != nil {
-			t.Fatalf("reading %s: %v", n, err)
+			t.Fatalf("reading %s: %v", path, err)
 		}
 		inFunc, depth, sawOpen := false, 0, false
 		for line := range strings.SplitSeq(string(b), "\n") {

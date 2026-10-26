@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,9 +12,9 @@ import (
 // Scans the non-test sources of this package, so a new handler that copies the old
 // `ip, ua := r.RemoteAddr, ...` line fails here.
 func TestStructural_HandlersNeverReadRemoteAddrDirectly(t *testing.T) {
-	files, err := filepath.Glob("*.go")
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no handler sources found (err=%v)", err)
+	files := handlerFamilyGoFiles(t)
+	if len(files) == 0 {
+		t.Fatal("no handler sources found")
 	}
 	checked := 0
 	for _, f := range files {

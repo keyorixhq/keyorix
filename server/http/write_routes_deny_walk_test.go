@@ -175,7 +175,7 @@ func awIsMutating(m string) bool {
 func awAssertNoUnrecognisedShapes(t *testing.T) {
 	t.Helper()
 	re := regexp.MustCompile(`ParseMultipartForm|MultipartReader|FormFile|websocket\.|Upgrade\(`)
-	files, err := filepath.Glob("handlers/*.go")
+	files, err := handlerFamilyGoPaths("handlers")
 	require.NoError(t, err)
 	more, err := filepath.Glob("*.go")
 	require.NoError(t, err)

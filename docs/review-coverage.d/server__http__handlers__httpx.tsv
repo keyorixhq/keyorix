@@ -1,0 +1,1 @@
+server/http/handlers/httpx	none	-	HANDLERS-SPLIT-PILOT-1: response and request helpers moved verbatim out of server/http/handlers (reviewed in baseline-2026-08-07); no package-specific pass yet	pending

@@ -596,7 +596,7 @@ rest	GET /api/v1/roles/	server/http/router.go	rbacHandler.ListRoles	D	RBACHandle
 rest	GET /api/v1/roles/by-name	server/http/router.go	rbacHandler.GetRoleByName	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/roles/{id}	server/http/router.go	rbacHandler.GetRole	D	RBACHandler.GetRole (server/http/handlers/rbac.go:223) only calls coreService.GetRoleWithPermissions (read) then sendSuccess; purely read-only.
 rest	GET /api/v1/roles/{id}/permissions	server/http/router.go	rbacHandler.GetRolePermissions	none	single/no write-shaped call found by a 1-hop scan of the handler body
-rest	GET /api/v1/rotation-calendar	server/http/router.go	rotationCalendarHandler.Get	D	RotationCalendarHandler.Get (server/http/handlers/rotation_calendar_handler.go:30) parses query params and calls coreService.GetRotationCalendar (read) once, then sendSuccess; no writes.
+rest	GET /api/v1/rotation-calendar	server/http/router.go	rotationCalendarHandler.Get	D	RotationCalendarHandler.Get (server/http/handlers/reports/rotation_calendar_handler.go:30) parses query params and calls coreService.GetRotationCalendar (read) once, then sendSuccess; no writes.
 rest	GET /api/v1/rotation-plan	server/http/router.go	secretHandler.GetDeploymentRotationPlan	none	single/no write-shaped call found by a 1-hop scan of the handler body
 rest	GET /api/v1/rotation-policies/	server/http/router.go	rotationPolicyHandler.List	D	RotationPolicyHandler.List (server/http/handlers/rotation_policies_handler.go:86) calls coreService.ListRotationPolicies (read) once then sendSuccess; no writes.
 rest	GET /api/v1/rotation-policies/evaluate	server/http/router.go	rotationPolicyHandler.Evaluate	none	single/no write-shaped call found by a 1-hop scan of the handler body

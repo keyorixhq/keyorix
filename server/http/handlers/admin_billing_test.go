@@ -12,6 +12,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/pkg/trust"
+	"github.com/keyorixhq/keyorix/server/http/handlers/reports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/sqlite"
@@ -53,7 +54,7 @@ func billingReportURL(from, to, projectID string) string {
 
 func TestAdminBillingHandler_MissingFromParam(t *testing.T) {
 	db := newBillingTestDB(t)
-	h := NewAdminBillingHandler(licensedBillingCore(t, db))
+	h := reports.NewAdminBillingHandler(licensedBillingCore(t, db))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/billing/report?to=2026-02-01T00:00:00Z", nil)
 	w := httptest.NewRecorder()
@@ -64,7 +65,7 @@ func TestAdminBillingHandler_MissingFromParam(t *testing.T) {
 
 func TestAdminBillingHandler_MissingToParam(t *testing.T) {
 	db := newBillingTestDB(t)
-	h := NewAdminBillingHandler(licensedBillingCore(t, db))
+	h := reports.NewAdminBillingHandler(licensedBillingCore(t, db))
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/billing/report?from=2026-01-01T00:00:00Z", nil)
 	w := httptest.NewRecorder()
@@ -75,7 +76,7 @@ func TestAdminBillingHandler_MissingToParam(t *testing.T) {
 
 func TestAdminBillingHandler_InvalidFromParam(t *testing.T) {
 	db := newBillingTestDB(t)
-	h := NewAdminBillingHandler(licensedBillingCore(t, db))
+	h := reports.NewAdminBillingHandler(licensedBillingCore(t, db))
 
 	req := httptest.NewRequest(http.MethodGet, billingReportURL("not-a-date", "2026-02-01T00:00:00Z", ""), nil)
 	w := httptest.NewRecorder()
@@ -86,7 +87,7 @@ func TestAdminBillingHandler_InvalidFromParam(t *testing.T) {
 
 func TestAdminBillingHandler_InvalidProjectID(t *testing.T) {
 	db := newBillingTestDB(t)
-	h := NewAdminBillingHandler(licensedBillingCore(t, db))
+	h := reports.NewAdminBillingHandler(licensedBillingCore(t, db))
 
 	req := httptest.NewRequest(http.MethodGet,
 		billingReportURL("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", "abc"), nil)
@@ -103,7 +104,7 @@ func TestAdminBillingHandler_InvalidProjectID(t *testing.T) {
 func TestAdminBillingHandler_Unlicensed(t *testing.T) {
 	db := newBillingTestDB(t)
 	// No SetLicenseGate call: nil gate → HasLicensedFeature is always false.
-	h := NewAdminBillingHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+	h := reports.NewAdminBillingHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
 
 	req := httptest.NewRequest(http.MethodGet,
 		billingReportURL("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", ""), nil)
@@ -128,7 +129,7 @@ func TestAdminBillingHandler_Licensed_ReturnsReport(t *testing.T) {
 		UserID: &userID, EventTime: inWindow,
 	}).Error)
 
-	h := NewAdminBillingHandler(licensedBillingCore(t, db))
+	h := reports.NewAdminBillingHandler(licensedBillingCore(t, db))
 	req := httptest.NewRequest(http.MethodGet,
 		billingReportURL("2026-01-01T00:00:00Z", "2026-02-01T00:00:00Z", ""), nil)
 	w := httptest.NewRecorder()
