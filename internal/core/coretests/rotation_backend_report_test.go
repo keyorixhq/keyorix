@@ -1,4 +1,4 @@
-package core
+package coretests
 
 import (
 	"context"
@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -22,8 +24,8 @@ func rbDaysAgo(d int) *time.Time {
 }
 
 // newRBCore returns a core with the mock store and a frozen clock.
-func newRBCore(store *MockStorage) *KeyorixCore {
-	c := NewKeyorixCore(store)
+func newRBCore(store *storagetest.MockStorage) *core.KeyorixCore {
+	c := core.NewKeyorixCore(store)
 	c.SetClockForTesting(func() time.Time { return rbFixed })
 	return c
 }
@@ -48,7 +50,7 @@ func policyForBackend(id uint, intervalDays int) *models.RotationPolicy {
 // slice and TotalOverdue == 0.
 func TestGetRotationBackendReport_NoPolicies(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	store.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return([]*models.RotationPolicy{}, nil)
 
@@ -65,7 +67,7 @@ func TestGetRotationBackendReport_NoPolicies(t *testing.T) {
 // → up_to_date=1, overdue=0.
 func TestGetRotationBackendReport_SinglePolicyUpToDate(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 90)
 
 	secrets := []*models.SecretNode{
@@ -94,7 +96,7 @@ func TestGetRotationBackendReport_SinglePolicyUpToDate(t *testing.T) {
 // → overdue=1.
 func TestGetRotationBackendReport_SinglePolicyOverdue(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 30)
 
 	secrets := []*models.SecretNode{
@@ -121,7 +123,7 @@ func TestGetRotationBackendReport_SinglePolicyOverdue(t *testing.T) {
 // in never_rotated.
 func TestGetRotationBackendReport_NeverRotated(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 30)
 
 	secrets := []*models.SecretNode{
@@ -148,7 +150,7 @@ func TestGetRotationBackendReport_NeverRotated(t *testing.T) {
 // and (empty = keyorix-internal). Report must group correctly.
 func TestGetRotationBackendReport_MultipleBackends(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 30)
 
 	secrets := []*models.SecretNode{
@@ -168,7 +170,7 @@ func TestGetRotationBackendReport_MultipleBackends(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, report.Backends, 3, "three distinct backends")
 
-	byBackend := make(map[string]BackendRotationStat)
+	byBackend := make(map[string]core.BackendRotationStat)
 	for _, b := range report.Backends {
 		byBackend[b.Backend] = b
 	}
@@ -195,7 +197,7 @@ func TestGetRotationBackendReport_MultipleBackends(t *testing.T) {
 // most overdue secrets must appear first; ties broken by backend name.
 func TestGetRotationBackendReport_SortedByOverdueDescending(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 30)
 
 	// vault: 3 overdue, aws_sm: 1 overdue, generic: 0 overdue
@@ -224,7 +226,7 @@ func TestGetRotationBackendReport_SortedByOverdueDescending(t *testing.T) {
 // count must be ordered alphabetically.
 func TestGetRotationBackendReport_TieBreakByName(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 30)
 
 	secrets := []*models.SecretNode{
@@ -247,7 +249,7 @@ func TestGetRotationBackendReport_TieBreakByName(t *testing.T) {
 // the sum of all per-backend Overdue counts.
 func TestGetRotationBackendReport_TotalOverdueSumsAllBackends(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 30)
 
 	secrets := []*models.SecretNode{
@@ -271,7 +273,7 @@ func TestGetRotationBackendReport_TotalOverdueSumsAllBackends(t *testing.T) {
 // must propagate to the caller.
 func TestGetRotationBackendReport_StorageError(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	store.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return(nil, errors.New("db is down"))
 
@@ -285,7 +287,7 @@ func TestGetRotationBackendReport_StorageError(t *testing.T) {
 // current time.
 func TestGetRotationBackendReport_GeneratedAtSet(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	store.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return([]*models.RotationPolicy{}, nil)
 
@@ -299,7 +301,7 @@ func TestGetRotationBackendReport_GeneratedAtSet(t *testing.T) {
 // fails, GetRotationStatus returns an error that GetRotationBackendReport propagates.
 func TestGetRotationBackendReport_ListSecretsError(t *testing.T) {
 	t.Parallel()
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	policy := policyForBackend(1, 30)
 	store.On("ListRotationPolicies", mock.Anything, (*uint)(nil), (*uint)(nil)).
 		Return([]*models.RotationPolicy{policy}, nil)

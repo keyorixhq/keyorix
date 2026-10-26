@@ -1,11 +1,13 @@
-package core
+package coretests
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -22,7 +24,7 @@ func TestGetRotationStatus_Classification(t *testing.T) {
 		return &t
 	}
 
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	projectID := uint(1)
 
 	policy := &models.RotationPolicy{
@@ -47,23 +49,23 @@ func TestGetRotationStatus_Classification(t *testing.T) {
 	store.On("ListRotationPolicies", mock.Anything, &projectID, (*uint)(nil)).Return([]*models.RotationPolicy{policy, inactive}, nil)
 	store.On("ListSecrets", mock.Anything, mock.AnythingOfType("*storage.SecretFilter")).Return(secrets, int64(len(secrets)), nil)
 
-	c := NewKeyorixCore(store)
+	c := core.NewKeyorixCore(store)
 	c.SetClockForTesting(func() time.Time { return fixed })
 
 	entries, err := c.GetRotationStatus(context.Background(), &projectID, nil)
 	require.NoError(t, err)
 	require.Len(t, entries, 4, "all covered secrets returned, inactive policy skipped")
 
-	byID := map[uint]*RotationStatusEntry{}
+	byID := map[uint]*core.RotationStatusEntry{}
 	for _, e := range entries {
 		byID[e.SecretID] = e
 	}
 
-	require.Equal(t, RotationStatusOverdue, byID[1].Status)
+	require.Equal(t, core.RotationStatusOverdue, byID[1].Status)
 	require.Equal(t, 30, byID[1].DaysOverdue) // 120 - 90
-	require.Equal(t, RotationStatusDueSoon, byID[2].Status)
-	require.Equal(t, RotationStatusOK, byID[3].Status)
-	require.Equal(t, RotationStatusOverdue, byID[4].Status, "never-rotated falls back to CreatedAt")
+	require.Equal(t, core.RotationStatusDueSoon, byID[2].Status)
+	require.Equal(t, core.RotationStatusOK, byID[3].Status)
+	require.Equal(t, core.RotationStatusOverdue, byID[4].Status, "never-rotated falls back to CreatedAt")
 	require.Equal(t, uint(7), byID[1].PolicyID)
 	require.Equal(t, 90, byID[1].IntervalDays)
 	// Auto-rotation visibility flows through: a self-rotating secret reports its backend.
@@ -79,7 +81,7 @@ func TestGetRotationStatus_Classification(t *testing.T) {
 func TestGetRotationStatus_ConfinedToEnvironment(t *testing.T) {
 	t.Parallel()
 	fixed := time.Date(2026, 6, 8, 12, 0, 0, 0, time.UTC)
-	store := new(MockStorage)
+	store := new(storagetest.MockStorage)
 	projectID := uint(1)
 	envID := uint(2)
 	otherEnv := uint(9)
@@ -95,7 +97,7 @@ func TestGetRotationStatus_ConfinedToEnvironment(t *testing.T) {
 		return f.EnvironmentID != nil && *f.EnvironmentID == envID
 	})).Return([]*models.SecretNode{{ID: 1, Name: "k", EnvironmentID: envID, LastRotatedAt: &fixed}}, int64(1), nil)
 
-	c := NewKeyorixCore(store)
+	c := core.NewKeyorixCore(store)
 	c.SetClockForTesting(func() time.Time { return fixed })
 
 	entries, err := c.GetRotationStatus(context.Background(), &projectID, &envID)
