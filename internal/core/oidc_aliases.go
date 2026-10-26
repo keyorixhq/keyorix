@@ -14,9 +14,18 @@ type JWKSResolver = oidcverify.JWKSResolver
 
 type HTTPJWKSResolver = oidcverify.HTTPJWKSResolver
 
-var NewOIDCVerifier = oidcverify.NewOIDCVerifier
+// The constructors are thin wrappers, not var aliases (same as
+// rules_compat.go): an exported var could be reassigned at run time.
 
-var NewHTTPJWKSResolver = oidcverify.NewHTTPJWKSResolver
+// NewOIDCVerifier is oidcverify.NewOIDCVerifier.
+func NewOIDCVerifier(issuers []OIDCTrustedIssuer, jwks JWKSResolver) (*OIDCVerifier, error) {
+	return oidcverify.NewOIDCVerifier(issuers, jwks)
+}
+
+// NewHTTPJWKSResolver is oidcverify.NewHTTPJWKSResolver.
+func NewHTTPJWKSResolver(jwksURIs map[string]string) (*HTTPJWKSResolver, error) {
+	return oidcverify.NewHTTPJWKSResolver(jwksURIs)
+}
 
 // Read by core's JWT tests.
 const (
