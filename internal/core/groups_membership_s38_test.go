@@ -37,7 +37,7 @@ func newGroupsS38Core(t *testing.T) (*KeyorixCore, *gorm.DB) {
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Role{},
 		&models.User{}, &models.UserRole{}, &models.AuditEvent{},
 	))
-	return &KeyorixCore{storage: store.NewLocalStorage(db)}, db
+	return NewKeyorixCore(store.NewLocalStorage(db)), db
 }
 
 // ── AddUserToGroup validation ─────────────────────────────────────────────────

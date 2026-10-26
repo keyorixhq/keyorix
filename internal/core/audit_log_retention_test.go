@@ -27,7 +27,7 @@ func newPurgeTestCore(t *testing.T) (*KeyorixCore, *gorm.DB, time.Time) {
 	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.LegalHold{}))
 	fixed := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	c := NewKeyorixCore(store.NewLocalStorage(db))
-	c.now = func() time.Time { return fixed }
+	c.SetClockForTesting(func() time.Time { return fixed })
 	return c, db, fixed
 }
 

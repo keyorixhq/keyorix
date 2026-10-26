@@ -48,7 +48,7 @@ func TestGetRotationStatus_Classification(t *testing.T) {
 	store.On("ListSecrets", mock.Anything, mock.AnythingOfType("*storage.SecretFilter")).Return(secrets, int64(len(secrets)), nil)
 
 	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return fixed }
+	c.SetClockForTesting(func() time.Time { return fixed })
 
 	entries, err := c.GetRotationStatus(context.Background(), &projectID, nil)
 	require.NoError(t, err)
@@ -96,7 +96,7 @@ func TestGetRotationStatus_ConfinedToEnvironment(t *testing.T) {
 	})).Return([]*models.SecretNode{{ID: 1, Name: "k", EnvironmentID: envID, LastRotatedAt: &fixed}}, int64(1), nil)
 
 	c := NewKeyorixCore(store)
-	c.now = func() time.Time { return fixed }
+	c.SetClockForTesting(func() time.Time { return fixed })
 
 	entries, err := c.GetRotationStatus(context.Background(), &projectID, &envID)
 	require.NoError(t, err)

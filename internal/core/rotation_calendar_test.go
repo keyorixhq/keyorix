@@ -20,7 +20,7 @@ var (
 
 func calCore(ms *MockStorage) *KeyorixCore {
 	c := NewKeyorixCore(ms)
-	c.now = func() time.Time { return calNow }
+	c.SetClockForTesting(func() time.Time { return calNow })
 	return c
 }
 
