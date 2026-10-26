@@ -47,7 +47,7 @@ func TestCreateStorage_Postgres_Success(t *testing.T) {
 	cfg.Storage.Database.MaxIdleConns = 2
 	cfg.Storage.Database.ConnMaxLifetimeMinutes = 10
 
-	st, err := NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, st)
 
@@ -86,7 +86,7 @@ func TestCreateStorage_Postgres_MigrationFailure_Propagates(t *testing.T) {
 	cfg.Storage.Type = "postgres"
 	cfg.Storage.Database.DSN = dsn
 
-	st, err := NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.Error(t, err)
 	assert.Nil(t, st)
 	// The epoch check runs before any migration (BOOT-REFUSALS-1 item 6).

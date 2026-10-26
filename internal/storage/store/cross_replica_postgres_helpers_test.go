@@ -25,6 +25,20 @@ import (
 
 var rbacCrossReplicaSchemaSeq atomic.Int64
 
+// createStorageClosedAtCleanup is the production CreateStorage with the
+// storage closed when tb ends (before cleanups registered earlier, such as
+// dropping the schema). An unclosed Postgres storage keeps its background jobs
+// running past the test; TestMain fails the package on that
+// (store.LiveBackgroundJobs, FIX-3631-RACE-1).
+func createStorageClosedAtCleanup(tb testing.TB, cfg *config.Config) error {
+	tb.Helper()
+	st, err := storagefactory.NewStorageFactory().CreateStorage(cfg)
+	if c, ok := st.(interface{ Close() error }); ok && err == nil {
+		tb.Cleanup(func() { _ = c.Close() })
+	}
+	return err
+}
+
 // newRBACCrossReplicaPair returns two independent store.LocalStorage instances
 // (own *gorm.DB pool, own in-process cache each) sharing one real Postgres
 // schema, migrated through the production path. t.Cleanup drops the schema.
@@ -47,7 +61,7 @@ func newRBACCrossReplicaPair(t *testing.T) (*store.LocalStorage, *store.LocalSto
 	})
 	targetDSN := pgdsn.PGSearchPathDSN(pgDSN, schema)
 
-	_, err = storagefactory.NewStorageFactory().CreateStorage(&config.Config{
+	err = createStorageClosedAtCleanup(t, &config.Config{
 		Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: targetDSN}},
 	})
 	require.NoError(t, err)

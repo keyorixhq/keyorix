@@ -16,7 +16,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	storagefactory "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -94,7 +93,7 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 	// The factory migrates it and sdb below must reach the SAME database, so only
 	// the DSN comes from sqlitetest; sdb caps its own pool to one connection.
 	sqliteDSN := sqlitetest.DSN("difffuzz_")
-	if _, err := storagefactory.NewStorageFactory().CreateStorage(&config.Config{
+	if err := createStorageClosedAtCleanup(f, &config.Config{
 		Storage: config.StorageConfig{Type: "local", Database: config.DatabaseConfig{Path: sqliteDSN}},
 	}); err != nil {
 		f.Fatalf("sqlite production migration: %v", err)
@@ -125,7 +124,7 @@ func FuzzStorageBackendDifferential(f *testing.F) {
 		}
 	})
 	pgTargetDSN := pgdsn.PGSearchPathDSN(pgDSN, schema)
-	if _, err := storagefactory.NewStorageFactory().CreateStorage(&config.Config{
+	if err := createStorageClosedAtCleanup(f, &config.Config{
 		Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: pgTargetDSN}},
 	}); err != nil {
 		f.Fatalf("pg production migration: %v", err)

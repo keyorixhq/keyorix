@@ -25,7 +25,6 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
-	storagefactory "github.com/keyorixhq/keyorix/internal/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
@@ -60,7 +59,7 @@ func newCrossReplicaPair(t *testing.T) (*store.LocalStorage, *store.LocalStorage
 	})
 	targetDSN := pgdsn.PGSearchPathDSN(pgDSN, schema)
 
-	_, err = storagefactory.NewStorageFactory().CreateStorage(&config.Config{
+	err = createStorageClosedAtCleanup(t, &config.Config{
 		Storage: config.StorageConfig{Type: "postgres", Database: config.DatabaseConfig{DSN: targetDSN}},
 	})
 	require.NoError(t, err)

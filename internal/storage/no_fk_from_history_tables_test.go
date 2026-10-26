@@ -113,7 +113,7 @@ func TestNoForeignKeysFromHistoryTables_Postgres(t *testing.T) {
 	cfg.Storage.Database.MaxIdleConns = 2
 	cfg.Storage.Database.ConnMaxLifetimeMinutes = 10
 	// The real production migration path, same call as TestMigrateDatabase_EveryModelGetsATable_Postgres_Fresh.
-	st, err := NewStorageFactory().CreateStorage(cfg)
+	st, err := createStorageClosedAtCleanup(t, cfg)
 	require.NoError(t, err)
 	require.NotNil(t, st)
 

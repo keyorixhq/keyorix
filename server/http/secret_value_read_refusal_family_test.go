@@ -65,6 +65,23 @@ type refusalCase struct {
 	code       string
 	message    string
 	grpcCode   codes.Code
+	// clearMarker: the REST refusal must carry details {"clear_synced_copies":true};
+	// false means it must carry no details at all (absent, not false).
+	clearMarker bool
+}
+
+// expireRow sets the secret's expiry in the past (plus whatever mutate adds)
+// through Save(), so SecretNode's BeforeSave hook runs (G1619).
+func expireRow(t *testing.T, w *guardParityWorld, sec *models.SecretNode, mutate func(*models.SecretNode)) {
+	t.Helper()
+	var row models.SecretNode
+	require.NoError(t, w.db.First(&row, sec.ID).Error)
+	past := time.Now().UTC().Add(-time.Hour)
+	row.Expiration = &past
+	if mutate != nil {
+		mutate(&row)
+	}
+	require.NoError(t, w.db.Save(&row).Error)
 }
 
 func refusalCases() []refusalCase {
@@ -75,25 +92,46 @@ func refusalCases() []refusalCase {
 				SecretNodeID: sec.ID, AllowedDays: "*", StartHour: 0, EndHour: 0, Timezone: "UTC",
 			}).Error)
 		}, http.StatusForbidden, "SecretAccessOutsideSchedule",
-			"secret access is not permitted outside the configured time window", codes.PermissionDenied},
+			"secret access is not permitted outside the configured time window", codes.PermissionDenied, false},
+		// Expired only: never suspended, so the refusal carries no details.
 		{core.ErrSecretExpired, "expired", func(t *testing.T, w *guardParityWorld, sec *models.SecretNode) {
-			// Through Save(), so SecretNode's BeforeSave hook runs (G1619).
-			var row models.SecretNode
-			require.NoError(t, w.db.First(&row, sec.ID).Error)
-			past := time.Now().UTC().Add(-time.Hour)
-			row.Expiration = &past
-			require.NoError(t, w.db.Save(&row).Error)
+			expireRow(t, w, sec, nil)
 		}, http.StatusConflict, "SecretExpired",
-			"secret has expired; its value can no longer be read", codes.FailedPrecondition},
+			"secret has expired; its value can no longer be read", codes.FailedPrecondition, false},
 		{core.ErrSecretSuspended, "suspended", func(t *testing.T, w *guardParityWorld, sec *models.SecretNode) {
 			require.NoError(t, w.db.Model(&models.SecretNode{}).Where("id = ?", sec.ID).Update("status", core.SecretStatusSuspended).Error)
 		}, http.StatusConflict, "SecretSuspended",
-			"secret is suspended; its value cannot be read until it is resumed", codes.FailedPrecondition},
+			"secret is suspended; its value cannot be read until it is resumed", codes.FailedPrecondition, false},
 		{core.ErrSecretMaxReadsExhausted, "max reads exhausted", func(t *testing.T, w *guardParityWorld, sec *models.SecretNode) {
 			require.NoError(t, w.db.Model(&models.SecretNode{}).Where("id = ?", sec.ID).
 				Updates(map[string]any{"max_reads": 1, "read_count": 1}).Error)
 		}, http.StatusConflict, "SecretMaxReadsExhausted",
-			"secret has reached its maximum number of reads", codes.FailedPrecondition},
+			"secret has reached its maximum number of reads", codes.FailedPrecondition, false},
+	}
+}
+
+// clearMarkerRefusalCases are refusals that combine states, kept out of
+// refusalCases (one row per core refusal, shared with other family tests). They
+// guard the class behind #3215 and #3568: one value-read path carried the
+// suspension's "also clear synced copies" marker on a SecretExpired refusal
+// while another dropped it. Expiry is judged before suspension, so an expired
+// secret suspended with the marker must still say so on every route.
+func clearMarkerRefusalCases() []refusalCase {
+	return []refusalCase{
+		{core.ErrSecretExpired, "expired + suspended with clear marker", func(t *testing.T, w *guardParityWorld, sec *models.SecretNode) {
+			expireRow(t, w, sec, func(row *models.SecretNode) {
+				row.Status = core.SecretStatusSuspended
+				row.SuspendClearSyncedCopies = true
+			})
+		}, http.StatusConflict, "SecretExpired",
+			"secret has expired; its value can no longer be read", codes.FailedPrecondition, true},
+		// The marker comes from the suspension's stored choice, not from the status.
+		{core.ErrSecretExpired, "expired + suspended without clear marker", func(t *testing.T, w *guardParityWorld, sec *models.SecretNode) {
+			expireRow(t, w, sec, func(row *models.SecretNode) {
+				row.Status = core.SecretStatusSuspended
+			})
+		}, http.StatusConflict, "SecretExpired",
+			"secret has expired; its value can no longer be read", codes.FailedPrecondition, false},
 	}
 }
 
@@ -105,6 +143,7 @@ type valueReadOutcome struct {
 	restBody  string
 	errCode   string // REST envelope `error`
 	errMsg    string // REST envelope `message`
+	details   string // REST envelope `details`, raw JSON, "" if absent
 	grpcCode  codes.Code
 	grpcMsg   string
 	grpcInfo  string // ErrorInfo "domain/reason", "" if none
@@ -142,9 +181,10 @@ func restValueRead(w *guardParityWorld, method, url, token string, body []byte, 
 		Data    map[string]json.RawMessage `json:"data"`
 		Error   string                     `json:"error"`
 		Message string                     `json:"message"`
+		Details json.RawMessage            `json:"details"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &env)
-	out.errCode, out.errMsg = env.Error, env.Message
+	out.errCode, out.errMsg, out.details = env.Error, env.Message, string(env.Details)
 	if rec.Code >= 200 && rec.Code < 300 {
 		out.ok = true
 		out.value = extract(env.Data)
@@ -262,6 +302,12 @@ func TestSecretValueReadRefusals_MapToClientErrorsOnEveryRoute(t *testing.T) {
 		require.Truef(t, ok, "%s: sentinel is not in core's refusal family", rc.name)
 		require.Equalf(t, rc.code, ref.Code, "%s: the stable wire code changed — it is API contract", rc.name)
 	}
+	for _, rc := range clearMarkerRefusalCases() {
+		ref, ok := family[rc.sentinel]
+		require.Truef(t, ok, "%s: sentinel is not in core's refusal family", rc.name)
+		require.Equalf(t, rc.code, ref.Code, "%s: the stable wire code changed — it is API contract", rc.name)
+		cases = append(cases, rc)
+	}
 
 	n := 0
 	for _, route := range valueReadRoutes("guardproj", "prod", w.projID) {
@@ -298,7 +344,15 @@ func TestSecretValueReadRefusals_MapToClientErrorsOnEveryRoute(t *testing.T) {
 						assert.Equal(t, rc.restStatus, got.restCode, "HTTP status (body: %s)", got.restBody)
 						assert.Equal(t, rc.code, got.errCode, "stable error code (body: %s)", got.restBody)
 						assert.Equal(t, rc.message, got.errMsg, "fixed client-safe message (body: %s)", got.restBody)
+						if rc.clearMarker {
+							assert.JSONEq(t, `{"clear_synced_copies":true}`, got.details,
+								"the refusal must carry the suspension's clear marker (body: %s)", got.restBody)
+						} else {
+							assert.Empty(t, got.details, "the refusal must carry no details (body: %s)", got.restBody)
+						}
 					case "grpc":
+						// gRPC carries only the stable code as the ErrorInfo Reason
+						// (mapSecretReadError), never the marker: checked below.
 						assert.Equal(t, rc.grpcCode, got.grpcCode, "gRPC code (message: %s)", got.grpcMsg)
 						assert.Equal(t, rc.message, got.grpcMsg, "fixed client-safe message")
 						assert.Equal(t, "keyorix.secrets/"+rc.code, got.grpcInfo, "ErrorInfo carries the stable code")

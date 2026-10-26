@@ -136,9 +136,7 @@ func assertDiscontinuitySticky(t *testing.T, e *fcEnv, c *KeyorixCore, kind stri
 	for range 4 {
 		fcTick(t, e, c)
 	}
-	id, started, err := c.StartAuditFullVerification(context.Background())
-	require.NoError(t, err)
-	require.True(t, started)
+	id := startFullJobWhenFree(t, c)
 	waitAuditJob(t, c, id)
 	assertDiscontinuity(t, e, c, kind)
 	c2 := e.restart()
