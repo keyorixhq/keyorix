@@ -1,0 +1,1 @@
+server/httpguards	none	-	CI-GUARD-LITERALS-HF1-1 (#3724): test-only package (no non-test files) holding the three go/ast ACL-gate source-scan guards moved unchanged out of server/http (secret_acl_gate_guard, grant_primitive_gate_table, share_secret_isgroup_guard); nothing here ships in a build	test-helper
