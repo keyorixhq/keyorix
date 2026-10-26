@@ -6,7 +6,12 @@
   `SecretExpired` refusal carries it too, but only when the secret is also suspended with the
   choice (expiry is judged first, so without this the agents would keep the copies; #3215); an
   expired secret that is not suspended never carries it. Guard:
-  `internal/core/secret_suspend_clear_copies_expired_test.go`. A caller who
+  `secret_value_read_refusal_family_test.go`
+  (`TestSecretValueReadRefusals_MapToClientErrorsOnEveryRoute`, rows "expired + suspended with
+  clear marker" / "expired + suspended without clear marker" / "expired": the marker, or no
+  details at all, on every value-read route x principal; #3568), with the core-level
+  `internal/core/secret_suspend_clear_copies_expired_test.go` (GetSecretValue) and
+  `internal/core/secret_read_path_expired_marker_test.go` (`unexpiredSecret` callers). A caller who
   cannot read the secret gets the same 403/404 as before and never sees the choice. The flag is
   accepted only on the suspend request (the secret-update allowlist rejects `SuspendClearSyncedCopies`)
   and is audited with the suspension. Why: SUSPEND-PURGE-1 (a state oracle would leak that a
