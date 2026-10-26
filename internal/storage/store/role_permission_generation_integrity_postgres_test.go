@@ -20,13 +20,13 @@ import (
 
 // rpgIntegrityWorld is a Postgres rpgWorld, warm, with a checker on the
 // writer whose first tick has recorded the baseline.
-func rpgIntegrityWorld(t *testing.T) (rpgWorld, *rolePermGenerationIntegrityChecker) {
+func rpgIntegrityWorld(t *testing.T) (rpgWorld, *triggerIntegrityChecker) {
 	t.Helper()
 	w := rpgPostgresWorld(t)
 	var super bool
 	require.NoError(t, w.writer.db.Raw("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super).Error)
 	t.Logf("tampering as a role with rolsuper=%v", super)
-	c := &rolePermGenerationIntegrityChecker{ls: w.writer, logf: t.Logf}
+	c := &triggerIntegrityChecker{ls: w.writer, logf: t.Logf, target: rolePermGenerationIntegrityTarget}
 	flushed, err := c.check(context.Background())
 	require.NoError(t, err)
 	require.False(t, flushed, "a fresh install is clean: the first tick only records the baseline")
@@ -37,7 +37,7 @@ func rpgIntegrityWorld(t *testing.T) (rpgWorld, *rolePermGenerationIntegrityChec
 // requireStaleThenFlushed asserts the gap (the proof still passes and the
 // warm cache still authorizes the revoked permission), then that one tick
 // flushes it.
-func requireStaleThenFlushed(t *testing.T, w rpgWorld, c *rolePermGenerationIntegrityChecker) {
+func requireStaleThenFlushed(t *testing.T, w rpgWorld, c *triggerIntegrityChecker) {
 	t.Helper()
 	require.True(t, RolePermissionsGenerationTriggersPresent(w.ls.db), "premise: the per-statement proof still passes")
 	require.True(t, w.decide(t, w.perm.Name), "premise: the revocation went unseen and the warm cache still authorizes")
@@ -164,7 +164,7 @@ func TestRolePermGenerationIntegrity_BackgroundJobFlushesAndStopsOnClose_Postgre
 	t.Cleanup(func() { rolePermGenerationIntegrityInterval = old })
 	w := rpgPostgresWorld(t)
 	require.True(t, w.decide(t, w.perm.Name), "warm")
-	w.writer.StartRolePermissionsGenerationIntegrityCheck(t.Logf)
+	w.writer.StartTriggerIntegrityCheck(t.Logf)
 	time.Sleep(3 * rolePermGenerationIntegrityInterval) // the first tick records the baseline
 	require.NoError(t, w.writer.db.Exec("CREATE OR REPLACE FUNCTION "+rolePermGenerationFunc+"() RETURNS trigger LANGUAGE plpgsql AS $x$BEGIN RETURN NULL; END;$x$").Error)
 	revokeDirect(t, w.writer.db, w)

@@ -40,7 +40,7 @@ func (job *backgroundJob) exit() {
 }
 
 // LiveBackgroundJobs returns the start stack of every background job
-// (StartAuditListIndexBuild, StartRolePermissionsGenerationIntegrityCheck)
+// (StartAuditListIndexBuild, StartTriggerIntegrityCheck)
 // whose goroutine is still running, sorted. A test package's TestMain calls it
 // after m.Run: anything listed was started by a storage some test never
 // closed. It covers only goroutines started through newBackgroundJob, not the
