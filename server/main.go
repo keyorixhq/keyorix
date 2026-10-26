@@ -320,6 +320,10 @@ func main() { // NOSONAR -- cognitive complexity 22, suppress go:S3776
 	// the shutdown wait below) and before swGuard.Close releases the
 	// single-writer hold. A crash loses at most one flush interval of stamps.
 	defer flushLastUsedOnShutdown(coreService)
+	// #3377: write the secret-read denial summary rows still open at SIGTERM.
+	// Deferred after the closers above so it runs first (LIFO): the rows go to
+	// the audit log before the forwarder drains.
+	defer flushSecretReadDenialsOnShutdown(coreService)
 
 	// single_writer: the fence goes on once the security tables exist
 	// (migrations ran in initializeCoreService). No fence, no server.

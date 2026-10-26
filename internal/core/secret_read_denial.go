@@ -68,6 +68,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -597,9 +598,12 @@ func (a *denialAggregator) expire(key denialKey, b *denialBucket) {
 	}
 }
 
-// flushAll closes every open window now and writes the due summaries. For
-// tests, and for an orderly shutdown.
-func (a *denialAggregator) flushAll() {
+// flushAll closes every open window now and writes the due summaries, until
+// ctx is done. It returns how many summary rows were not written: the ones not
+// started, plus a write still in flight at the deadline (it may yet land). The
+// writes run on their own goroutine so one stuck write cannot hold the caller
+// past ctx. For tests, and for an orderly shutdown.
+func (a *denialAggregator) flushAll(ctx context.Context) int {
 	a.mu.Lock()
 	var rows []denialRow
 	for key, b := range a.buckets {
@@ -609,17 +613,37 @@ func (a *denialAggregator) flushAll() {
 	}
 	flush := a.flush
 	a.mu.Unlock()
-	if flush == nil {
-		return
+	if flush == nil || len(rows) == 0 {
+		return 0
 	}
-	for _, row := range rows {
-		flush(row)
+	var written atomic.Int64
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for _, row := range rows {
+			if ctx.Err() != nil {
+				return
+			}
+			flush(row)
+			written.Add(1)
+		}
+	}()
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
+	return len(rows) - int(written.Load())
 }
 
 // FlushSecretReadDenials writes the summary rows of every open aggregation
-// window now instead of when the window closes. Called on an orderly shutdown so
-// counts are not lost, and by tests.
+// window now instead of when the window closes. For tests; shutdown uses
+// FlushSecretReadDenialsWithin.
 func (c *KeyorixCore) FlushSecretReadDenials() {
-	c.secretReadDenials().flushAll()
+	c.secretReadDenials().flushAll(context.Background())
+}
+
+// FlushSecretReadDenialsWithin is FlushSecretReadDenials bounded by ctx. It
+// returns the number of summary rows not written when ctx ended first.
+func (c *KeyorixCore) FlushSecretReadDenialsWithin(ctx context.Context) int {
+	return c.secretReadDenials().flushAll(ctx)
 }
