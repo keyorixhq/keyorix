@@ -21,7 +21,7 @@ export const OrgNameConformanceSection: React.FC = () => {
     return (
         <div
             className="rounded-lg border mb-4 overflow-hidden"
-            style={{ borderColor: 'var(--warning, #d97706)', backgroundColor: 'var(--warning-subtle, #fffbeb)' }}
+            style={{ borderColor: 'var(--warning)', backgroundColor: 'var(--warning-subtle, #fffbeb)' }}
         >
             <div className="flex items-center justify-between px-4 py-2.5">
                 <div className="flex items-center gap-2" style={{ color: 'var(--warning, #92400e)' }}>

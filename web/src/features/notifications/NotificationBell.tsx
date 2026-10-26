@@ -49,7 +49,7 @@ export const NotificationBell: React.FC = () => {
                 {unread > 0 && (
                     <span
                         className="absolute -top-0.5 -right-0.5 min-w-[1.1rem] h-[1.1rem] px-1 rounded-full text-[0.65rem] font-semibold flex items-center justify-center"
-                        style={{ backgroundColor: 'var(--error, #dc2626)', color: '#fff' }}
+                        style={{ backgroundColor: 'var(--error)', color: '#fff' }}
                     >
                         {unread > 9 ? '9+' : unread}
                     </span>
