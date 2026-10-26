@@ -83,7 +83,7 @@ func TestAssignMachineRole_SucceedsIfMachineLookupSomehowReturnedGlobal(t *testi
 	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), Scope{ProjectID: 0}).Return([]uint{}, nil)
 	ms.On("RoleSetBypassesPermissionChecks", mock.Anything, []uint{100}).Return(false, nil)
 	ms.On("RoleSetHasPermission", mock.Anything, []uint{100}, "roles.assign").Return(true, nil)
-	ms.On("AssignMachineRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(nil)
+	ms.On("AssignMachineRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 

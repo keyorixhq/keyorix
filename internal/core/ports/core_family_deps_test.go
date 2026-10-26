@@ -41,6 +41,7 @@ var coreProductionKeyorixDeps = []string{
 	"internal/identity",
 	"internal/logging",
 	"internal/netutil",
+	"internal/oidcverify",
 	"internal/protectedmetrics",
 	"internal/secretenv",
 	"internal/secrettemplate",

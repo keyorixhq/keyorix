@@ -1,0 +1,2 @@
+# kind	dir	reason (README.md)
+extracted	internal/core/rules	#2001 pure rules; CORE-PURE-AUTH-LEAVES-1 added PATRestriction and Scope

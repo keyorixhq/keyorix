@@ -390,15 +390,6 @@ func TestOIDCEnabled_False(t *testing.T) {
 	assert.False(t, c.OIDCEnabled())
 }
 
-func TestTrustsIssuer_TrueAndFalse(t *testing.T) {
-	t.Parallel()
-	v := &OIDCVerifier{issuers: map[string]oidcIssuerTrust{
-		"https://accounts.google.com": {},
-	}}
-	assert.True(t, v.TrustsIssuer("https://accounts.google.com"))
-	assert.False(t, v.TrustsIssuer("https://evil.com"))
-}
-
 func TestListOIDCBindings_MachineNotInProject(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)

@@ -4,7 +4,7 @@
 // signing keys, and caches them by (issuer, kid). On an unknown kid (key
 // rotation) or an expired cache entry it refetches once. The actual signature
 // check is done by golang-jwt with the key this returns.
-package core
+package oidcverify
 
 import (
 	"context"

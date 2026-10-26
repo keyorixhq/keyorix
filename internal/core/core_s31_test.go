@@ -187,8 +187,8 @@ func TestApplyRotationPosture_WithStatuses(t *testing.T) {
 func TestPrincipalHasScopedPermission_NoRoles(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{}, nil)
-	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{}, nil)
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("rules.Scope")).Return([]uint{}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("rules.Scope")).Return([]uint{}, nil)
 	c := NewKeyorixCore(ms)
 	has, err := c.principalHasScopedPermission(context.Background(), 1, "secrets.read", Scope{})
 	require.NoError(t, err)
@@ -198,7 +198,7 @@ func TestPrincipalHasScopedPermission_NoRoles(t *testing.T) {
 func TestPrincipalHasScopedPermission_StorageError(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return(nil, errors.New("db error"))
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("rules.Scope")).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
 	_, err := c.principalHasScopedPermission(context.Background(), 1, "secrets.read", Scope{})
 	require.Error(t, err)
@@ -233,8 +233,8 @@ func TestValidateEnvironmentName_Valid(t *testing.T) {
 func TestScopedRoleIDs_GroupInheritance(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
-	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{10}, nil)
-	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("storage.Scope")).Return([]uint{20}, nil)
+	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("rules.Scope")).Return([]uint{10}, nil)
+	ms.On("GetUserGroupRoleIDsAt", mock.Anything, uint(1), mock.AnythingOfType("rules.Scope")).Return([]uint{20}, nil)
 	c := NewKeyorixCore(ms)
 	ids, err := c.scopedRoleIDs(context.Background(), 1, Scope{})
 	require.NoError(t, err)

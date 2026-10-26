@@ -178,7 +178,7 @@ func TestAssignUserRoleSystemGrant_Success(t *testing.T) {
 	// requireNoSoDViolation: ListSoDPolicies is a smart stub returning nil policies → OK.
 	// AssignRole must be mocked.
 	ms.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
-	ms.On("AssignRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(nil)
+	ms.On("AssignRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope")).Return(nil)
 	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil)
 	c := NewKeyorixCore(ms)
 	err := c.assignUserRoleSystemGrant(context.Background(), 0, 1, 2, Scope{})
@@ -189,7 +189,7 @@ func TestAssignUserRoleSystemGrant_AssignRoleError(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRole", mock.Anything, uint(2)).Return(&models.Role{ID: 2, Name: "test-role-2", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
-	ms.On("AssignRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("storage.Scope")).Return(errors.New("db error"))
+	ms.On("AssignRole", mock.Anything, uint(1), uint(2), mock.AnythingOfType("rules.Scope")).Return(errors.New("db error"))
 	c := NewKeyorixCore(ms)
 	err := c.assignUserRoleSystemGrant(context.Background(), 0, 1, 2, Scope{})
 	require.Error(t, err)

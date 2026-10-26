@@ -1,4 +1,4 @@
-package core
+package rules
 
 // pat_authz_metamorphic_fuzz_test.go — FuzzPATRestrictionAllows.
 //

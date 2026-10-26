@@ -2,6 +2,8 @@ package storage
 
 import (
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/rules"
 )
 
 // PrincipalPermission is ResolveUserPermissionAt's / ResolveMachinePermissionAt's
@@ -16,20 +18,9 @@ type PrincipalPermission struct {
 	HasPermission            bool
 }
 
-// Scope identifies the project/environment a role assignment or an
-// authorization check applies to. It uses a 0 = global/unspecified sentinel,
-// matching the stored user_roles/group_roles columns:
-//
-//	{0, 0}  global — every project and environment
-//	{P, 0}  all environments in project P
-//	{P, E}  only environment E of project P
-//
-// A stored assignment authorizes a target scope when its project is global or
-// equal AND its environment is global or equal (see GetUserRoleIDsAt).
-type Scope struct {
-	ProjectID     uint
-	EnvironmentID uint
-}
+// Scope is rules.Scope (internal/core/rules/scope.go): the project/environment
+// a role assignment or an authorization check applies to, 0 = global.
+type Scope = rules.Scope
 
 // RoleGrant is a single role-to-scope grant applied atomically alongside a user
 // creation (ADR-028 atomic provisioning).
