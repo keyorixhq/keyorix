@@ -75,7 +75,9 @@ internal/evidencesink|evidencesink||100
 # internal/saml: efficacy 97.70% (85 killed, 2 equivalent survivors), 21 not covered; needs the timeout coefficient (see above)
 internal/saml|saml|40
 # internal/secretenv: efficacy 100% (31 killed), 4 not covered (switch case expressions, pinned by a truth table)
-internal/secretenv|secretenv"
+internal/secretenv|secretenv
+# internal/netutil (egress and SSRF guards): efficacy 100% (35 killed), no survivors, nothing not covered
+internal/netutil|netutil||100"
 
 cd "$KEYORIX_REPO"
 
