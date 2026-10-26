@@ -27,7 +27,8 @@ key transition records), and the code under `internal/encryption`, `internal/cry
   where a **public-key** algorithm protects key material.
 - **Two classical public-key hops exist at rest today** (§3): the Azure Key Vault provider wraps
   the KEK with RSA-OAEP-256, and that blob sits on disk and in every backup; and the recovery key
-  can be delivered age-encrypted to an X25519 or ssh-ed25519 recipient. A harvested copy of
+  can be delivered age-encrypted to an X25519 or ssh-ed25519 recipient (still accepted with a
+  warning since #3659 added hybrid `age1pq1…` recipients). A harvested copy of
   either opens to a future quantum attacker.
 - **Proposal:** one hybrid KEM-DEM envelope (X25519 + ML-KEM, concatenation combiner,
   HKDF-SHA-256, AES-256-GCM) becomes the only public-key wrap Keyorix writes. It is used inside a
@@ -80,7 +81,7 @@ recorded ciphertexts and public keys earlier; public keys are not secret.
 | KEK, TPM | sealed under the TCG ECC-P256 SRK template (`internal/crypto/tpm_provider.go`); the sealed blob's confidentiality is symmetric, from the SRK's seed inside the TPM | No Shor path to the stored blob. Its symmetric protection is the TPM's (typically AES-128): NIST category 1 against Grover |
 | KEK, Shamir | information-theoretic shares | The channel each share travels over |
 | Backup archives (v2) | carry the key files verbatim, plus a KEK-derived HMAC manifest | Inherit the KEK provider's exposure (Azure: yes) |
-| **Recovery key delivery** | `admin recovery-key rotate --recipient` age-encrypts to an `age1…` X25519 or ssh-ed25519 recipient (`server/admin/recovery_key_encrypt.go`) | **Shor.** A harvested age file gives the recovery key |
+| **Recovery key delivery** | `admin recovery-key rotate --recipient` age-encrypts to a hybrid `age1pq1…` (ML-KEM-768 + X25519) recipient since #3659, or to a classical `age1…` X25519 or ssh-ed25519 recipient, which is still accepted with a warning (`server/admin/recovery_key_encrypt.go`) | **Shor, for classical recipients only.** A harvested age file made for a classical recipient gives the recovery key |
 | Audit checkpoint, evidence and backup-manifest keys | HKDF-SHA256 from the KEK, used as HMAC keys | None |
 
 Two things follow. First, the honest claim today is "the at-rest key hierarchy is symmetric except
@@ -229,9 +230,18 @@ Therefore:
 
 - An envelope the server reads on boot (the DEK) is accepted only inside a container authenticated
   under a KEK-derived key (the keyset MAC, §7). A KEK-less writer cannot produce one.
-- An envelope opened offline by an escrow holder (no KEK available) is checked against the keyset's
-  DEK key-check value, and the DEK it yields must decrypt real data before a restore commits. A
-  substituted DEK then fails closed rather than being used.
+- An envelope opened offline by an escrow holder (no KEK available) cannot be authenticated by
+  anything in the keyset: the KEK-keyed MAC is the only thing that covers the slots, and the escrow
+  holder has no KEK. The keyset's DEK key-check value (KCV) is **not** a defence here. Whoever can
+  substitute the hybrid slot (any public-key holder can make a valid envelope) can also recompute
+  the KCV for their own DEK. The KCV is only a consistency check that catches a corrupted or
+  mismatched slot.
+- The required authenticity control for a KEK-less restore is therefore that the yielded DEK must
+  AES-256-GCM-decrypt existing data rows before the restore commits. A substituted DEK fails that
+  check and the restore stops. The same holds for the backup archive: its HMAC manifest is keyed
+  from the KEK and cannot be verified in a KEK-less restore, so what authenticates the backup's
+  content there is the same decrypt-existing-rows check, done on the restored data before it is
+  accepted.
 
 ## 7. Where the envelope is used: three options
 
@@ -257,6 +267,8 @@ mac     = HMAC-SHA256(HKDF-SHA256(KEK, info "keyorix/pqwrap/v1/keyset-mac"), all
 - Backups carry the keyset verbatim, as they carry `dek.key` now. A backup can then be restored with
   the escrow key when the KEK is gone: a forgotten passphrase, a deleted KMS key, a lost Azure
   tenant. That is a new capability, and it is PQ-safe. Today losing the KEK means losing the data.
+  Such a restore cannot check the keyset MAC or the backup's HMAC manifest (both are KEK-keyed); it
+  is authenticated only by the decrypt-existing-rows check of §6.
 - `admin backup --recipient <pq public key>` can add a backup-only slot to the archive's copy of
   the keyset, for an off-site key that the live server never holds.
 
@@ -357,11 +369,12 @@ suites now; a P-384 suite is added only when a FIPS customer needs it.
 - Today's recovery key (design-b2) is an **authenticator**, not a decryption key: a 256-bit secret
   whose SHA-256 verifier is stored, consumed by `recover-admin` and, under #3617's proposals, by
   host commands such as `admin reset-mfa`. It wraps nothing.
-- **Delivery is the quantum gap** (§3): the `--recipient` output is age X25519 or ssh-ed25519.
+- **Delivery was the quantum gap** (§3): the `--recipient` output was age X25519 or ssh-ed25519.
   `filippo.io/age` v1.3.2, already in `go.mod`, supports hybrid `mlkem768x25519` recipients
-  (`age.ParseHybridRecipient`). Accepting them, and warning on a classical recipient, is a small
-  change that does not depend on this ADR. **Decided (Q5, Andrei, 2026-10-23):** yes, as its own
-  small PR now, warning on classical recipients.
+  (`age.ParseHybridRecipient`). **Decided (Q5, Andrei, 2026-10-23):** accept them, as its own small
+  PR, warning on classical recipients. **Done in #3659:** `rotate --recipient` accepts `age1pq1…`
+  hybrid recipients; a classical recipient is still accepted and prints a warning, so the
+  remaining exposure is an operator who ignores that warning.
 - **Do not turn the recovery key into the escrow key.** Option R's escrow recipient is a separate key
   pair with a separate ceremony. If one secret both authenticated admin recovery and decrypted every
   DEK, stealing it would give both powers at once, and #3617 §1's "host root plus the recovery key
@@ -459,7 +472,7 @@ against this budget. The measured numbers are in the session report, not here.
 | Q2 | Combiner: keep the generic concatenation KDF (as built) or switch to stdlib `crypto/hpke` MLKEM768-X25519 (X-Wing) | **Decided 2026-10-23, with a condition:** keep it for the at-rest format; use age's hybrid recipients (HPKE) for operator-facing deliveries |
 | Q3 | Classical partner for ML-KEM-1024: X25519 (as built) or P-384 (approved ECDH) | **Decided 2026-10-23:** X25519; add a P-384 suite only when a FIPS customer needs it |
 | Q4 | Azure Key Vault RSA-OAEP KEK wrap | **Decided 2026-10-23:** posture warning now; Managed HSM symmetric key as follow-up; no breaking change |
-| Q5 | Accept hybrid age recipients for recovery-key delivery and warn on classical ones | **Decided 2026-10-23:** yes, as its own small PR now, warn on classical |
+| Q5 | Accept hybrid age recipients for recovery-key delivery and warn on classical ones | **Decided 2026-10-23:** yes, as its own small PR now, warn on classical. Done in #3659 |
 | Q6 | Escrow recipient separate from the recovery-key authenticator | **Decided 2026-10-23:** separate, optional, off by default |
 | Q7 | Keyorix FIPS mode: move GCM to `NewGCMWithRandomNonce`, add a startup check and a posture line | **Decided 2026-10-23:** yes, a separate backlog item, before any FIPS claim |
 | Q8 | Reword R4's acceptance from "new writes use hybrid envelopes" to "every public-key wrap at rest is hybrid; key files self-describing; legacy readable; rewrap migrates key files; backups rewrap offline" | **Decided 2026-10-23:** reworded as proposed |
@@ -491,8 +504,9 @@ What this design adds:
 3. **No runtime agility**: a closed suite registry where no classical-only suite can be expressed,
    so downgrade is a format impossibility rather than a configuration rule.
 4. **Keyset recipient slots** that give PQ-safe offline recovery of the DEK and of backups without
-   the KEK, with KEK-authenticated slot integrity and a KCV for KEK-less checks. This addresses the
-   origin-authentication gap that a bare KEM-DEM leaves (§6).
+   the KEK, with KEK-authenticated slot integrity on boot and, for a KEK-less restore, a required
+   "the DEK decrypts existing data" check (the KCV there is only a consistency check). This
+   addresses the origin-authentication gap that a bare KEM-DEM leaves (§6).
 5. **Evidence by mechanism**: known-answer vectors cross-checked by an independent implementation,
    a fuzz target with a canonical-encoding oracle, tamper and suite-confusion tests, and a test
    that pins the no-origin-authentication property.
@@ -502,7 +516,7 @@ What this design adds:
 | Risk | Mitigation |
 |---|---|
 | Own combiner: a construction mistake | Generic GHP combiner, standard primitives only, every intermediate pinned by vectors, independent re-implementation matches; external cryptographic review before GA (or Q2: switch to stdlib X-Wing) |
-| KEM-DEM has no sender authentication; DEK substitution by a key-directory writer | Keyset MAC under a KEK-derived key; KCV for offline checks; property pinned by a test (§6) |
+| KEM-DEM has no sender authentication; DEK substitution by a key-directory writer | Keyset MAC under a KEK-derived key on boot; for a KEK-less restore, the yielded DEK must decrypt existing data rows before the restore commits (the KCV is only a consistency check, not an authenticity control); property pinned by a test (§6) |
 | FIPS labs may not accept the `WithoutEnforcement` exemption for X25519 | Same pattern as Go's own HPKE; ML-KEM carries the claimed strength; P-384 suite as fallback (Q3) |
 | IETF drafts change | The format is internal and pinned by `Version`; no interoperability dependency on a draft |
 | Over-claiming "quantum-safe at rest" in evidence | §3 states the exact claim; option K rejected partly for this reason; the wording of R4's acceptance (Q8) |
