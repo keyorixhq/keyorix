@@ -184,9 +184,10 @@ offset size        field
 ```
 
 The header (the first 24 bytes) is bound twice: in the transcript and as AEAD additional data.
-Context (supplied by the reader, not stored) names where the envelope lives, for example
-`keyorix:dek:<install id>:<epoch>`. Copying an envelope to another place then fails to open, as
-ADR-077's AAD already does for secret rows.
+Context (supplied by the reader, not stored) names where the envelope lives. For the DEK, the only
+use designed here, it is the 22-byte keyset header (§7), exactly as stored; §7 is the normative
+definition. Copying an envelope to another place then fails to open, as ADR-077's AAD already does
+for secret rows.
 
 Parsing is strict: wrong magic, an unknown version, suite or purpose, a component length that does
 not match the suite, a sealed length out of bounds, or trailing bytes are all refused before any
@@ -254,7 +255,9 @@ Therefore:
     the backup manifest by an install signing key (hybrid or ML-DSA, ties into R8) whose
     verification key is recorded at the escrow ceremony, or, as the minimum, an archive digest the
     operator records out of band at backup time and the restore checks. Which one is open
-    decision Q10 (§15).
+    decision Q10 (§15). Whichever it is, it must cover the archive's keyset bytes themselves
+    (every slot and each slot's stored recipient public key), not only the data members, because
+    the recipient set carried across an escrow restore comes from that keyset (§7).
   - **(b) A mandatory DEK rotation (ADR-010 sweep) right after any escrow restore**, so a DEK
     yielded by an escrow slot is never used for new writes. This limits the damage of a
     substituted DEK to the restored data; it does not authenticate that data, so it does not
@@ -312,8 +315,29 @@ recipient's public key.
   archive. As designed today, an archive-only escrow restore has **no origin authentication**: it
   needs the archive origin control of §6 (a), open as Q10, and is followed by a mandatory DEK
   rotation (§6 (b)).
-- `admin backup --recipient <pq public key>` can add a backup-only slot to the archive's copy of
-  the keyset, for an off-site key that the live server never holds.
+- **Backup-only recipients live outside the keyset.** `admin backup --recipient <pq public key>`
+  wraps the archive's DEK to an off-site key that the live server never holds. It does **not** add
+  a slot to the archive's copy of the keyset: the keyset format has no way to mark a slot
+  backup-only, and a restore installs the archive's keyset verbatim (`server/admin/restore.go`,
+  `prepareRestoredKeySet`), so such a slot would become a live recipient and the next DEK rotation
+  would wrap the new live DEK to the off-site key. Instead the archive gets a separate member,
+  `offsite-recipients`, holding one hybrid slot per off-site key, in the same slot encoding
+  (recipient public key ‖ pqwrap envelope, purpose DEK) with context = the archive keyset's
+  header ‖ `"keyorix/pqwrap/v1/backup-only"`. The distinct context means an off-site slot copied
+  into a keyset fails to unwrap there, and the header in it binds the slot to that archive's DEK.
+  The member is covered by the archive's manifest like every other member. **No restore ever
+  installs `offsite-recipients` into the key directory, and nothing reads it except an escrow
+  restore performed with that off-site key.** Adding one is a recipient addition (§12): it is
+  host-side, needs the KEK (the command unwraps the DEK from the KEK slot) and emits
+  `encryption.keyset_recipient_added` with scope `backup-only`, the archive id, the recipient key
+  id and the suite.
+- **Ordinary restore does not change the live recipient set silently.** A KEK restore installs the
+  archive's keyset, whose recipient set is the one live when the backup was taken. Before
+  committing, the restore compares that set (recipient key ids, suites) with the current live
+  keyset's, if one exists. If they differ (for example a recipient removed after the backup), the
+  restore prints both sets and requires the same per-recipient confirmation as an escrow restore
+  (below); an unconfirmed added recipient is dropped from the installed keyset, which is rebuilt
+  and re-MACed. The restore's audit event lists the recipient key ids installed.
 
 #### DEK rotation (ADR-010) and the hybrid slots
 
@@ -330,7 +354,9 @@ exists to provide. The rule:
   `dek.key.pending` is a complete keyset for the new DEK: the new `dek_kcv` in the header, the KEK
   slot wrapped under the same KEK, and every hybrid slot of the current keyset wrapped again, to
   the recipient public key stored in that slot, in the same order. The public keys come from the
-  current keyset after its MAC has been verified, never from configuration or a request. The MAC
+  current keyset after its MAC has been verified, never from configuration or a request. (After an
+  escrow restore the MAC cannot be verified; the recipient set then comes only from the rule in
+  the last bullet of this list.) The MAC
   is recomputed. Because the whole keyset is one file in one `OpRotateDEK` commit, there is no
   state in which the KEK slot holds the new DEK and a hybrid slot the old one. Crash recovery
   (`dek.key.pending` kept or promoted, as today) needs no new case: the pending file is either the
@@ -350,12 +376,29 @@ exists to provide. The rule:
   and the compliance posture shows the number of escrow recipients, so a removal is visible. The
   rotation's own audit event lists the recipient key ids it re-wrapped.
 - **Backup-only slots and old archives are unaffected.** An archive keeps the keyset it was taken
-  with, verbatim. Its hybrid slots, including backup-only ones added by `admin backup --recipient`,
-  wrap the DEK that the archive's rows are encrypted under, which is the right DEK for restoring
-  that archive. A backup-only slot is never in the live keyset, so a rotation neither re-wraps nor
-  drops it. Archives taken after the rotation carry the new keyset.
-- The mandatory DEK rotation after an escrow restore (§6 (b)) follows the same rule, so the
-  restored install keeps its escrow recipients.
+  with, verbatim, and its `offsite-recipients` member if it has one. Both wrap the DEK that the
+  archive's rows are encrypted under, which is the right DEK for restoring that archive. A
+  backup-only slot is never in the live keyset, because it is never in any keyset and no restore
+  installs it (above), so a rotation neither re-wraps nor drops it. Archives taken after the
+  rotation carry the new keyset.
+- **The mandatory DEK rotation after an escrow restore (§6 (b)) does not inherit the recipient set
+  implicitly.** In a KEK-less restore the archived keyset's MAC cannot be verified, so the rule
+  above ("public keys from the current keyset after its MAC has been verified") has no trusted
+  input: a backup-store writer can append a hybrid slot of their own (it needs only public keys;
+  adjust the count and re-wrap the slots to the new header) and the first post-restore rotation
+  would otherwise wrap the new DEK to it and MAC it under the new KEK. A hybrid recipient of the
+  archived keyset is carried into the post-rotation keyset only if one of these holds:
+  - **(a)** the archive origin control of §6 (a) verified, and that control covers the keyset bytes
+    themselves (every slot and its stored recipient public key), not only the data members. Which
+    mechanism that is remains open decision Q10 (§15); this note does not decide it, and until it
+    is decided this path is not available; or
+  - **(b)** the operator re-confirms the recipient individually: the restore prints each recipient's
+    key id, suite and slot index, asks for each one separately (no "confirm all"), and writes one
+    `encryption.keyset_recipient_confirmed` audit event per confirmed recipient.
+
+  A recipient that satisfies neither is dropped, and the restore says so by key id. The default is
+  drop, so a non-interactive restore without (a) ends with no hybrid recipients and the operator
+  re-adds escrow recipients explicitly (§12).
 
 Tests to ask for when the keyset is built:
 
@@ -371,6 +414,19 @@ Tests to ask for when the keyset is built:
 4. An archive taken before the rotation still escrow-unwraps to its own (old) DEK.
 5. A keyset with one hybrid slot removed, with the slot count left as is or adjusted, fails to boot
    before the MAC check.
+6. After restoring (with the KEK) an archive taken with `admin backup --recipient`, the live
+   recipient set equals the pre-backup live set, no `offsite-recipients` content is in the key
+   directory, and a following `RotateDEKWithSweep` wraps the new DEK to no off-site key. An
+   off-site slot copied into a keyset as a type 2 slot fails to unwrap there (wrong context).
+7. An escrow restore of an archive whose keyset carries an appended hybrid slot (count adjusted,
+   slots re-wrapped to the new header) ends, after the mandatory rotation, with that slot absent
+   unless it was confirmed under (b) or covered under (a); each confirmation writes one
+   `encryption.keyset_recipient_confirmed` event, and a non-interactive restore without (a) keeps
+   no hybrid recipient.
+8. No HTTP or gRPC route can change the recipient set: enumerating every registered HTTP route and
+   gRPC method, none reaches recipient addition or removal (a registry test over the route and
+   service tables, not a test of one handler), and adding a recipient through the host-side
+   command writes `encryption.keyset_recipient_added` with the recipient key id and suite.
 
 Gain: every public-key path is hybrid, the symmetric path keeps its strength, and there is a real
 recovery feature. Cost: a new key-file format, an offline escrow ceremony (optional, off by
@@ -537,8 +593,29 @@ Design:
   or DR recipient is an explicit argument, the new keyset stores each recipient's public key in its
   slot (§7), and the audit event lists the recipient key ids before and after. A DEK rotation is
   not this job: it re-wraps every hybrid slot itself (§7, "DEK rotation and the hybrid slots").
+- **Who may change the recipient set.** Adding a hybrid recipient is the most sensitive keyset
+  operation: it grants offline decryption of the whole DEK to the holder of that private key.
+  Adding or removing a recipient (live keyset or, via `admin backup --recipient`, an archive's
+  `offsite-recipients`) is therefore:
+  - **host-side only**: a change to the live keyset is made by the offline `admin encryption`
+    command, run on the host under the exclusive `dek.lock`, so with the server stopped. A
+    backup-only recipient is added by the host-side `admin backup --recipient`, which writes only
+    the archive and never the key directory (so it may run beside a live server under the key-file
+    read lock `admin backup` already takes). Neither is **ever reachable from any HTTP or gRPC
+    route**, admin, step-up or otherwise; the online rewrap above keeps the recipient set
+    unchanged and takes no recipient argument. This keeps the current property that an API-admin
+    session plus read access to the backup store does not yield the DEK.
+  - **KEK-gated**: both commands unwrap the DEK from the KEK slot (and the live-keyset command
+    recomputes the keyset MAC), so they fail without the KEK.
+  - **audited**: one `encryption.keyset_recipient_added` event per added recipient (recipient key
+    id, suite, slot index, scope `live` or `backup-only`) and one `encryption.keyset_recipient_removed`
+    per removed one (§7); a run made with the server stopped records them through the
+    startup-audit path on the next boot, as other offline runs do. Never key material.
+
+  Test 8 in §7 pins the "no network route" rule.
 - **Backups.** `admin backup rewrap --input old.kxb --output new.kxb` converts an archive offline:
-  same content, new keyset and optional recipient slots, manifest re-signed under the same KEK. The
+  same content, new keyset and optional off-site recipients (the `offsite-recipients` member, §7,
+  under the host-side, KEK-gated, audited rule above), manifest re-signed under the same KEK. The
   original is never modified in place.
 
 ## 13. Legacy-readable guarantee, rollback and downgrade
@@ -586,7 +663,7 @@ against this budget. The measured numbers are in the session report, not here.
 | Q7 | Keyorix FIPS mode: move GCM to `NewGCMWithRandomNonce`, add a startup check and a posture line | **Decided 2026-10-23:** yes, a separate backlog item, before any FIPS claim |
 | Q8 | Reword R4's acceptance from "new writes use hybrid envelopes" to "every public-key wrap at rest is hybrid; key files self-describing; legacy readable; rewrap migrates key files; backups rewrap offline" | **Decided 2026-10-23:** reworded as proposed |
 | Q9 | Legacy-60 reader lifetime | **Decided 2026-10-23:** keep indefinitely |
-| Q10 | Origin authentication of a backup archive for a KEK-less (escrow) restore (§6): (a1) a signature over the backup manifest by an install signing key (hybrid or ML-DSA, with R8) whose verification key is recorded at the escrow ceremony, or (a2) an archive digest the operator records out of band at backup time. Either way, a DEK rotation (ADR-010 sweep) is mandatory right after any escrow restore | **Open.** Recommendation: (a1), with (a2) accepted as the minimum until R8 ships; the post-restore DEK rotation is mandatory in both cases. Until Q10 is decided, the archive-only escrow restore is not offered |
+| Q10 | Origin authentication of a backup archive for a KEK-less (escrow) restore (§6): (a1) a signature over the backup manifest by an install signing key (hybrid or ML-DSA, with R8) whose verification key is recorded at the escrow ceremony, or (a2) an archive digest the operator records out of band at backup time. Either way, the mechanism must cover the archive's keyset bytes (every slot and its stored recipient public key), because the recipient set carried across an escrow restore comes from it (§7), and a DEK rotation (ADR-010 sweep) is mandatory right after any escrow restore | **Open.** Recommendation: (a1), with (a2) accepted as the minimum until R8 ships; the post-restore DEK rotation is mandatory in both cases. Until Q10 is decided, the archive-only escrow restore is not offered |
 
 ## 16. New vs state of the art
 
@@ -639,6 +716,7 @@ What this design adds:
 | Side channels in ML-KEM implementations (the KyberSlash class) | Go's implementation is constant-time and Wycheproof-tested in the standard library; we add no ML-KEM code |
 | Offline escrow key handling is an operational burden | Optional, off by default, ML-KEM-1024, documented ceremony |
 | Escrow slots dropped or left on the old DEK by a DEK rotation, silently losing KEK-less recovery | Each hybrid slot stores its recipient's public key under the keyset MAC; a DEK rotation re-wraps every hybrid slot in the same `OpRotateDEK` commit, checks the recipient set before staging, and refuses to run if a slot cannot be re-wrapped; recipient removal is explicit and audited (§7, "DEK rotation and the hybrid slots") |
+| Recipient set widened without the operator noticing: an off-site slot made live by a restore, a slot appended to an archive keyset and carried through the post-escrow-restore rotation, or a recipient added over the network API | Backup-only slots live in a separate archive member that no restore installs, with a distinct context; a restore that would change the live recipient set needs per-recipient confirmation; after an escrow restore a recipient is carried only if the Q10 control covers the keyset bytes or the operator confirms it individually, otherwise dropped; recipient changes are host-side, KEK-gated and audited, never reachable from HTTP or gRPC (§7, §12) |
 | Key files and backups grow | About 1.2–1.7 KB per envelope, plus 1.2–1.6 KB for the stored recipient public key per hybrid slot; negligible |
 | ML-KEM decapsulation failure | Probability about 2⁻¹⁶⁴ (768) / 2⁻¹⁷⁴ (1024), and failure means a refused unwrap, never a wrong key |
 
