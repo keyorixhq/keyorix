@@ -978,6 +978,24 @@ With Docker Compose, run admin commands in a throwaway container while the serve
 `single_writer`, `--force` is refused outright (`--force cannot override it`, from code).
 **In place:** stop first. [j7](j7-troubleshooting.md#an-admin-command-while-the-server-is-still-running).
 
+### An admin command cannot open the server lock file — from code
+
+```
+Error: cannot open the server lock file: open server lock file "<datadir>/keyorix.db.server.lock": open <datadir>/keyorix.db.server.lock: permission denied — admin commands must not run concurrently with a server, and without this file that could not be verified; fix the file's ownership or permissions (it must be readable and writable by the user running both the server and this command; never delete it while a server runs), or pass --force if you are certain this is safe
+```
+
+**Match:** `cannot open the server lock file: `
+
+**Cause.** On SQLite, the `.server.lock` beside the database cannot be created, opened or
+locked by the user running the `admin` command: most often it belongs to the server's
+account and the command runs as another user (for example root, or a different container
+user), or the directory is read-only. Nothing was learned about a running server, so the
+command refuses. Before this wording the same refusal said `cannot connect to the database`.
+**Fix.** Run the command as the server's user, or fix the file's owner and mode (0600, owned
+by the server's user). Do not delete `.server.lock` while a server runs. `--force` skips the
+check and is only right if you know no server is running. **In place:** yes, once the
+permissions are fixed.
+
 ### Backup output already exists
 
 Real output:

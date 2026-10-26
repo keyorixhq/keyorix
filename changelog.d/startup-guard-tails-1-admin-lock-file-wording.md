@@ -1,0 +1,2 @@
+### Fixed
+- **An admin command that cannot open the SQLite `.server.lock` now says so.** A lock file the command cannot open (most often one owned by the server's user while the command runs as another) still refuses, but the message was `cannot connect to the database to check for a running server`, which sent operators to their database settings. It now reads `cannot open the server lock file: <reason>` and says to fix the file's ownership or permissions. See `docs/operator/startup-refusals.md`.
