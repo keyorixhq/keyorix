@@ -4,12 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"slices"
-	"strconv"
 	"sync"
-	"time"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -22,98 +19,6 @@ const (
 	sqlCreateUniqueIdx = "CREATE UNIQUE INDEX IF NOT EXISTS "
 	sqlWhereNotDeleted = "deleted_at IS NULL"
 )
-
-// currentSchemaEpoch (ADR-097) is this binary's compiled-in schema version.
-// Bump it by exactly one in the SAME PR as any change to migrateDatabase
-// below that adds or alters schema (a new ALTER TABLE, a new AutoMigrate
-// model, a new column) -- checkSchemaEpoch uses it to refuse startup if the
-// database was already migrated by a newer binary, closing the class of
-// silent-downgrade regression this ADR documents (an old binary writing new
-// rows via a migrated-in column's DEFAULT, blind to whatever invariant that
-// column encodes). NOT bumped for pure comment/refactor changes that don't
-// touch what gets written to the database. Every bump must also decide
-// minCompatibleSchemaEpoch below (ADR-101).
-const currentSchemaEpoch = 7
-
-// schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
-// key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
-// metadata key name, not a credential.
-const schemaEpochMetadataKey = "schema_epoch"
-
-// minCompatibleSchemaEpoch (ADR-101) is the compatibility floor this binary's
-// schema declares: the OLDEST binary schema epoch that may still safely run
-// against a database this binary has migrated. recordSchemaEpoch writes it to
-// system_metadata next to schema_epoch; checkSchemaEpoch refuses to start any
-// binary whose currentSchemaEpoch is below a recorded floor.
-//
-// When you bump currentSchemaEpoch, you must also decide this value:
-//   - an additive-and-safe migration (an older binary's writes still default
-//     in the safe direction -- ADR-097's own default-direction reasoning)
-//     leaves it UNCHANGED, so old replicas mid-rollout, and a one-release
-//     rollback, keep booting;
-//   - a migration an older binary cannot safely run against raises it to the
-//     new currentSchemaEpoch, so every older binary refuses.
-//
-// It must stay within [1, currentSchemaEpoch]
-// (TestMinCompatibleSchemaEpoch_WithinRange). A floor already recorded in the
-// database is never lowered by recordSchemaEpoch, so declaring a lower value
-// here cannot reopen a floor a newer binary raised.
-//
-// Floor 2: an epoch-1 binary's RestoreSecret/RestoreProject do not clear
-// secret_nodes.purge_at and its DeleteSecret does not re-stamp it, so a
-// restore + re-delete on an old replica would leave a stale date that the
-// epoch-2 purge job honours, hard-deleting before the date shown (#3021).
-//
-// Epoch 3 is ONE epoch (no release has shipped between its two changes): the
-// pending_audit_events table, which is additive on its own (an epoch-2 replica
-// never reads or writes it, and rows it leaves behind are drained by the next
-// epoch-3 replica's backfill), and the HA-READY-1 formats below. The floor is
-// therefore 3, HA-READY-1's value.
-//
-// Epoch 4 (machine_identities.cascade_suspended_project_id/_at, #3433) leaves it at
-// 3: an epoch-3 replica's project delete does not suspend (the pre-#3433 behaviour,
-// for the length of the rollout), its project restore re-activates nothing (fail
-// closed: the identities stay suspended), and its machine-identity writes do not clear
-// the marker but do move updated_at, which the epoch-4 restore requires unchanged
-// (LocalStorage.ReactivateMachineIdentitiesForRestoredProject). Nothing an epoch-3
-// binary does makes an epoch-4 restore re-activate an identity it should not.
-//
-// Floor 3 (HA-READY-1): epoch-2 binaries (v0.96.x) predate two formats
-// the database now holds. (1) The v2 audit retention anchor (#3258): an
-// epoch-2 binary reads it as malformed, reports the chain broken, and its
-// retention purge rewrites a v1 anchor, dropping the cumulative purged count
-// for good (verify "truncated", checkpoints 409; #3359). (2)
-// secret_nodes.suspend_clear_synced_copies (#3215): an epoch-2 binary's
-// resume/suspend never write it (#3362; the column is also reset by a
-// trigger on every status change away from suspended, which covers epoch-2
-// replicas still running during a rollout). The floor keeps epoch-2 binaries
-// from starting once this binary has migrated.
-//
-// Epoch 5 (break_glass_activations.degraded/audit_settled_at and
-// pending_audit_events.break_glass_activation_id, BREAKGLASS-OWED-1) leaves it at 3:
-// an epoch-4 replica never writes a degraded activation (it fails closed on audit, its
-// pre-epoch-5 behaviour), its writes default both new columns to "not degraded", and
-// its backfill still writes the owed rows of an epoch-5 degraded activation exactly
-// once. The only cost is that it does not mark that activation settled, so
-// verify-audit keeps reporting it as owed: loud, never silent.
-//
-// Epoch 6 (audit_events.request_id, AUDIT-REQUEST-ID-1) leaves it at 3: an epoch-5
-// replica never reads the column (QueryFields) and inserts without it, so its rows
-// have NULL, which means "no request id" -- exactly what such a row has. The column
-// is outside the hash chain, so verification is unaffected either way.
-//
-// Epoch 7 (roles.assignable_scope, GROUP-ROLE-SCOPE-1 Phase 2, #3546) leaves it at
-// 3: an epoch-6 (or older) replica never writes the column, so a role it creates
-// mid-rollout gets the column default, project (the new-role default: fail closed);
-// its grant check ignores the column and still refuses the four project_* built-ins
-// at the global scope by name (the Phase 1 rule), so for the length of the rollout
-// it accepts what epoch 6 always accepted, never more.
-const minCompatibleSchemaEpoch = 3
-
-// schemaMinCompatibleEpochMetadataKey is the system_metadata key ADR-101's
-// compatibility floor (minCompatibleSchemaEpoch) is recorded under. #nosec
-// G101 -- metadata key name, not a credential.
-const schemaMinCompatibleEpochMetadataKey = "schema_min_compatible_epoch"
 
 // migrationMu serializes migrateDatabase across goroutines IN THIS PROCESS (#266).
 // startHTTPServer and startGRPCServer each independently call CreateStorage →
@@ -248,64 +153,6 @@ func withMigrationLockPooled(db *gorm.DB, isPostgres, xactLock bool, dbPath stri
 	return withSQLiteInDBMigrationLock(db, dbPath, run)
 }
 
-// DefaultSQLiteMaxOpenConns and DefaultPostgresMaxOpenConns bound the DB connection
-// pool when the operator hasn't set max_open_conns. Go's own default is unlimited,
-// which lets a request flood exhaust the backing database's connection limit.
-// Exported so test harnesses that must mirror production's pool (e.g.
-// server/http's linearizability fuzzer) reference them instead of copying a number.
-//
-// The two dialects get different values because they fail differently (#2631,
-// Detected-by: PERF-2; measured with the real server over HTTP, 30s runs, 4 vCPU,
-// docs/CONFIGURATION.md has the tables):
-//
-//   - SQLite: 8. One writer at a time, and modernc.org/sqlite is pure Go, so every
-//     connection's query work competes for the same CPUs; past ~2x the cores, more
-//     connections only add contention. Against the old 25, in both harnesses (the
-//     real server over HTTP, and BenchmarkPoolSize through core), 8 did more total
-//     work per second and roughly halved read p99 (BenchmarkPoolSize: 469-654ms vs
-//     912-948ms). How the gain splits between reads and writes depends on the mix,
-//     so no per-side claim is made. 4 was within noise of 8 in-process but slower
-//     for reads over HTTP; 8 is the measured middle.
-//   - Postgres: 25, unchanged. 10, 25 and 50 are within run-to-run noise of each
-//     other for reads; 25 was best for writes. 100 failed requests outright
-//     (SQLSTATE 53300 "too many clients"): Postgres's own max_connections defaults
-//     to 100, and every replica brings its own pool. See warnPostgresPoolHeadroom.
-const (
-	DefaultSQLiteMaxOpenConns   = 8
-	DefaultPostgresMaxOpenConns = 25
-)
-
-// defaultMaxOpenConnsFor returns the dialect's default max_open_conns.
-func defaultMaxOpenConnsFor(dialect string) int {
-	if dialect == "postgres" {
-		return DefaultPostgresMaxOpenConns
-	}
-	return DefaultSQLiteMaxOpenConns
-}
-
-// effectiveMaxOpenConns is the pool cap applyPoolSettings sets: the operator's
-// max_open_conns when positive, else the dialect default.
-func effectiveMaxOpenConns(db *gorm.DB, dbCfg *config.DatabaseConfig) int {
-	if dbCfg.MaxOpenConns > 0 {
-		return dbCfg.MaxOpenConns
-	}
-	return defaultMaxOpenConnsFor(db.Dialector.Name())
-}
-
-// applyPoolSettings (below) matches MaxIdleConns to the EFFECTIVE MaxOpenConns
-// (whichever of the operator's own max_open_conns or the dialect default above is
-// in force) when the operator hasn't set max_idle_conns (SESSION-PERF, #2403
-// follow-up). Go's own idle default is 2 — far below any sensible open ceiling —
-// so without this, a deployment that never sets max_idle_conns (the shipped
-// keyorix.docker.yaml does not) churns connections under any concurrency above
-// ~2: each request beyond the idle cap opens a fresh connection (full TCP
-// handshake + Postgres SCRAM-SHA-256/PBKDF2 authentication) only to have it
-// closed, rather than kept warm, the moment it's returned. Measured cost of the
-// gap this closes: at c=50 concurrent reads, Postgres's own connection log showed
-// ~1 new-connection+disconnect cycle per 3.5 requests, and a CPU profile
-// attributed 5.28% of total server CPU time to PBKDF2/SCRAM connection
-// handshakes alone.
-
 // gormConfig returns the *gorm.Config shared by every gorm.Open call in this
 // package. GORM's zero-value Config leaves its default Warn-level logger active,
 // which interpolates bound query-parameter VALUES into the logged SQL statement
@@ -408,35 +255,6 @@ func runAfterMigrateHook(db *gorm.DB) error {
 	return afterMigrateHook(db)
 }
 
-// applyPoolSettings configures the connection pool on the underlying *sql.DB
-func applyPoolSettings(db *gorm.DB, dbCfg *config.DatabaseConfig) error {
-	sqlDB, err := db.DB()
-	if err != nil {
-		return fmt.Errorf("failed to get underlying sql.DB: %w", err)
-	}
-	// Always cap open connections. Go's default is UNLIMITED, so without a cap a flood of
-	// concurrent requests (even unauthenticated ones like /readyz, which pings the DB) can
-	// open connections without bound and exhaust the backing database's max_connections.
-	maxOpen := effectiveMaxOpenConns(db, dbCfg)
-	sqlDB.SetMaxOpenConns(maxOpen)
-	// Match the idle cap to the EFFECTIVE open cap by default (whether that came from the
-	// operator's own max_open_conns or the dialect default), not a separate fixed
-	// constant — see defaultMaxIdleConns' doc comment. This keeps a connection, once
-	// opened, warm for reuse rather than opened and immediately closed again under any
-	// concurrency above Go's built-in default of 2, for whatever open ceiling is actually
-	// in effect. (database/sql itself silently caps idle to open if idle is ever set
-	// higher than open, so this can never exceed maxOpen regardless.)
-	if dbCfg.MaxIdleConns > 0 {
-		sqlDB.SetMaxIdleConns(dbCfg.MaxIdleConns)
-	} else {
-		sqlDB.SetMaxIdleConns(maxOpen)
-	}
-	if dbCfg.ConnMaxLifetimeMinutes > 0 {
-		sqlDB.SetConnMaxLifetime(time.Duration(dbCfg.ConnMaxLifetimeMinutes) * time.Minute)
-	}
-	return nil
-}
-
 // columnExists reports whether table already has column, branching on the
 // dialect like indexExists below: information_schema on Postgres, but SQLite
 // has no information_schema at all — querying it there returns a "no such
@@ -507,191 +325,6 @@ func migrateError(err error) error {
 		return fmt.Errorf("database schema check failed (checked before migrating; nothing was migrated): %w", err)
 	}
 	return fmt.Errorf("failed to migrate database: %w", err)
-}
-
-// checkSchemaEpoch (ADR-097, ADR-101) refuses to let a binary run
-// migrateDatabase against a database whose schema it cannot safely run
-// against. Called BEFORE any other migration step. It applies
-// checkSchemaEpochFor with this binary's own compiled-in currentSchemaEpoch.
-func checkSchemaEpoch(db *gorm.DB) error {
-	return checkSchemaEpochFor(db, currentSchemaEpoch)
-}
-
-// checkSchemaEpochFor is checkSchemaEpoch with the binary's schema epoch as a
-// parameter, so tests can exercise binaries older and newer than this one.
-//
-// system_metadata not existing yet means a fresh install (or a database old
-// enough to predate system_metadata itself, i.e. pre-ADR-029) -- either way,
-// there is nothing recorded to compare against, so this proceeds. A missing
-// schema_epoch key means an older binary that predates this guard wrote to
-// this database last -- absence of a recorded epoch cannot itself justify
-// refusing to start, so this proceeds too.
-//
-// Otherwise it refuses (fail-closed, matching this file's #G54 discipline: a
-// corrupted marker is worse to silently ignore than to loudly refuse) when:
-//   - schema_epoch, or the ADR-101 floor, does not parse as an integer;
-//   - the recorded floor is below 1 -- not an epoch any binary writes;
-//   - the recorded floor is above binaryEpoch (ADR-101: a migration declared
-//     its schema unsafe for binaries this old -- the dangerous rollback);
-//   - schema_epoch is above binaryEpoch and NO floor is recorded (ADR-097's
-//     original refusal: no migration author ever stated that this schema is
-//     safe for an older binary, and the absence of a compatibility claim is
-//     not a claim).
-//
-// A schema_epoch above binaryEpoch WITH a recorded floor at or below
-// binaryEpoch proceeds: that is ADR-101's whole point -- the migration that
-// produced the newer schema explicitly declared it safe for this binary
-// (an old replica mid-rollout, or a rollback that does not cross the floor).
-func checkSchemaEpochFor(db *gorm.DB, binaryEpoch int) error {
-	if !tableExists(db, "system_metadata") {
-		return nil
-	}
-	m, epochFound, err := readSchemaMetadata(db, schemaEpochMetadataKey)
-	if err != nil {
-		return fmt.Errorf("failed to read schema epoch: %w", err)
-	}
-	floorRow, floorFound, err := readSchemaMetadata(db, schemaMinCompatibleEpochMetadataKey)
-	if err != nil {
-		return fmt.Errorf("failed to read minimum compatible schema epoch: %w", err)
-	}
-	// The floor is checked first and independently of schema_epoch: a floor
-	// above this binary refuses whatever the epoch row says (or whether it
-	// exists at all).
-	if floorFound {
-		floor, floorErr := strconv.Atoi(floorRow.Value)
-		if floorErr != nil {
-			return fmt.Errorf("stored minimum compatible schema epoch %q is not a valid integer -- refusing to start rather than guess whether this binary is below the database's compatibility floor (ADR-101)", floorRow.Value)
-		}
-		if floor < 1 {
-			return fmt.Errorf("stored minimum compatible schema epoch %d is below 1, which no version of Keyorix "+
-				"writes -- refusing to start rather than trust a corrupted compatibility floor (ADR-101)", floor)
-		}
-		if floor > binaryEpoch {
-			return fmt.Errorf(
-				"database declares a minimum compatible schema epoch of %d (database schema epoch %s), above this "+
-					"binary's schema epoch %d (floor recorded at %s, %s ago) -- a migration this database has already "+
-					"applied was declared unsafe for binaries this old, so this binary must not run against it. "+
-					"If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this "+
-					"binary was rolled back, roll forward to a version with schema epoch %d or later, or restore a "+
-					"backup taken before the newer version ran. Refusing to start (ADR-101)",
-				floor, m.Value, binaryEpoch, floorRow.UpdatedAt.Format(time.RFC3339),
-				time.Since(floorRow.UpdatedAt).Round(time.Second), floor)
-		}
-	}
-	if !epochFound {
-		return nil
-	}
-	dbEpoch, parseErr := strconv.Atoi(m.Value)
-	if parseErr != nil {
-		return fmt.Errorf("stored schema epoch %q is not a valid integer -- refusing to start rather than guess whether this database is ahead of this binary (ADR-097)", m.Value)
-	}
-	if floorFound {
-		// floor <= binaryEpoch (checked above): the migration(s) that produced
-		// dbEpoch declared this binary compatible (ADR-101) -- proceed even if
-		// dbEpoch is newer.
-		return nil
-	}
-	if dbEpoch > binaryEpoch {
-		// #1674 (Part 2 continuation, design decision recorded in
-		// docs/adr-101-schema-epoch-compatibility-floor.md): this refusal is NOT
-		// made conditional on how recently the newer epoch was recorded, or on
-		// how many epochs ahead it is -- from inside this process, "a sibling
-		// replica migrated moments ago mid-rollout" and "an operator just
-		// downgraded onto an already-migrated schema" are the SAME observable
-		// state (a higher epoch than this binary knows). Any arithmetic on the
-		// timestamp below to auto-proceed would legalize the second case (the
-		// most common real downgrade: roll back shortly after a bad deploy) to
-		// silence the first. The timestamp is reported to help a human tell them
-		// apart, not consulted to decide for them. The ONLY thing that lets an
-		// older binary through is ADR-101's explicitly recorded floor, handled
-		// above -- and none is recorded here.
-		return fmt.Errorf(
-			"database schema epoch %d is newer than this binary's schema epoch %d "+
-				"(recorded at %s, %s ago) -- this database was migrated by a newer "+
-				"version of Keyorix. Two things produce this, and this process cannot "+
-				"tell them apart on its own: (a) a rolling upgrade in progress -- a "+
-				"sibling replica already migrated to the new epoch, and this pod is "+
-				"still running the old binary; it is expected to be replaced by the new "+
-				"image shortly, and this failure is self-resolving once that happens "+
-				"(this repo does not orchestrate that rollout for you -- see "+
-				"docs/adr-039-ha-deployment.md for the supported multi-replica "+
-				"topology), or (b) this binary was downgraded against a schema a newer "+
-				"version already migrated -- if so, upgrade this binary to match, or "+
-				"restore a backup taken before the newer version ran. No minimum "+
-				"compatible schema epoch is recorded, so nothing declares this schema "+
-				"safe for an older binary. Refusing to start "+
-				"is the safe default in both cases (ADR-097, ADR-101)",
-			dbEpoch, binaryEpoch, m.UpdatedAt.Format(time.RFC3339), time.Since(m.UpdatedAt).Round(time.Second))
-	}
-	return nil
-}
-
-// readSchemaMetadata reads one system_metadata row; found is false (with a
-// nil error) only when the key is absent.
-func readSchemaMetadata(db *gorm.DB, key string) (m models.SystemMetadata, found bool, err error) {
-	err = db.Where("key = ?", key).Take(&m).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return m, false, nil
-	}
-	if err != nil {
-		return m, false, err
-	}
-	return m, true, nil
-}
-
-// CurrentSchemaEpoch returns this binary's compiled-in schema version
-// (ADR-097) -- design-b3-backup-v2.md §3.5/§3.6: `admin backup` records
-// this in the manifest at backup time, exactly the same value
-// checkSchemaEpoch compares a live database's own recorded epoch against.
-func CurrentSchemaEpoch() int {
-	return currentSchemaEpoch
-}
-
-// SchemaEpochTooNew reports whether epoch is newer than this binary's
-// CurrentSchemaEpoch() -- the comparison checkSchemaEpoch applies to a live
-// database's recorded epoch when no ADR-101 compatibility floor is recorded
-// (ADR-097), exposed so `admin restore` (design §3.5) can apply it to an
-// archive's manifest-declared schema_epoch instead: a backup taken by a
-// newer binary than this one is refused, for the same reason a newer-schema
-// live database with no compatibility claim is. A backup manifest carries no
-// floor, so restore keeps this strict rule.
-func SchemaEpochTooNew(epoch int) bool {
-	return epoch > currentSchemaEpoch
-}
-
-// recordSchemaEpoch (ADR-097, ADR-101) records currentSchemaEpoch and its
-// compatibility floor minCompatibleSchemaEpoch in system_metadata. Called
-// only after migrateDatabase's other steps all succeed -- never on a
-// partial/failed migration, so a crash mid-migration can't advance the
-// recorded epoch past what was actually, successfully applied.
-func recordSchemaEpoch(db *gorm.DB) error {
-	return recordSchemaEpochAs(db, currentSchemaEpoch, minCompatibleSchemaEpoch)
-}
-
-// recordSchemaEpochAs writes both keys in ONE upsert statement (so neither
-// can land without the other), and the upsert only ever RAISES a stored
-// value: an older binary that ADR-101 lets boot against a newer schema must
-// not stamp the database back down to its own epoch, and no binary may lower
-// a floor a newer migration raised. It also means an additive-safe migration
-// (one that leaves minCompatibleSchemaEpoch unchanged) never moves the floor.
-// The comparison is done in SQL, not read-then-write in Go, so two replicas
-// recording concurrently cannot interleave a lower value over a higher one.
-func recordSchemaEpochAs(db *gorm.DB, epoch, floor int) error {
-	now := time.Now()
-	keepHigher := gorm.Expr("CASE WHEN CAST(system_metadata.value AS INTEGER) >= CAST(excluded.value AS INTEGER) " +
-		"THEN system_metadata.value ELSE excluded.value END")
-	keepHigherTime := gorm.Expr("CASE WHEN CAST(system_metadata.value AS INTEGER) >= CAST(excluded.value AS INTEGER) " +
-		"THEN system_metadata.updated_at ELSE excluded.updated_at END")
-	if err := db.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "key"}},
-		DoUpdates: clause.Assignments(map[string]any{"value": keepHigher, "updated_at": keepHigherTime}),
-	}).Create(&[]models.SystemMetadata{
-		{Key: schemaEpochMetadataKey, Value: strconv.Itoa(epoch), UpdatedAt: now},
-		{Key: schemaMinCompatibleEpochMetadataKey, Value: strconv.Itoa(floor), UpdatedAt: now},
-	}).Error; err != nil {
-		return fmt.Errorf("failed to record schema epoch: %w", err)
-	}
-	return nil
 }
 
 // indexExists reports whether a database index with the given name already
@@ -995,135 +628,14 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		}
 		return nil
 	}
-	// Additive column migration for existing databases (no-op on fresh DBs).
-	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE"); err != nil {
-			return err
-		}
-	}
-	// ADR-033: secrets soft-delete. Additive deleted_at (nil = live).
-	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "deleted_at") {
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE"); err != nil {
-			return err
-		}
-	}
-	// Frozen purge date (models.SecretNode.PurgeAt). Additive, nil = live secret or one
-	// soft-deleted before this column existed. secret_nodes is NOT re-AutoMigrated on an
-	// existing database (freshInstallComplete returns early), so without this ALTER every
-	// secret create/delete on an upgraded install fails with "no column named purge_at".
-	// The type is per dialect: SQLite's driver only scans a non-NULL value into *time.Time
-	// when the declared type is DATETIME (what AutoMigrate creates on a fresh install);
-	// "TIMESTAMP WITH TIME ZONE" is stored but fails on read with "unsupported Scan,
-	// storing driver.Value type string into type *time.Time".
-	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "purge_at") {
-		purgeAtType := "DATETIME"
-		if db.Dialector.Name() == "postgres" {
-			purgeAtType = "TIMESTAMP WITH TIME ZONE"
-		}
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN purge_at " + purgeAtType); err != nil {
-			return err
-		}
-	}
-	// Data classification (ISO A.5.12). Additive classification ("" = unclassified).
-	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "classification") {
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
-			return err
-		}
-	}
-	// Companion index: models.SecretNode.Classification carries `gorm:"index"`, so a
-	// fresh AutoMigrate-created install already gets this index automatically, but an
-	// upgraded install only ever reaches the column via the raw ALTER above (AutoMigrate
-	// never re-diffs an existing table's indexes here), so it would otherwise never gain
-	// the index and classification-filtered queries would degrade to a full table scan
-	// as secret_nodes grows. Gated on tableExists only (not columnExists) so it also
-	// converges an install that already has the column from an older deploy of this
-	// migration but predates this index. CREATE INDEX IF NOT EXISTS is idempotent, so
-	// running it unconditionally on every boot (matching the ensure*Index helpers below)
-	// is cheap once the index is in place.
-	if tableExists(db, "secret_nodes") {
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_classification ON secret_nodes (classification)"); err != nil {
-			return err
-		}
-	}
-	// ADR-046: automated rotation opt-in. Additive auto_rotate (false = off).
-	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "auto_rotate") {
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN auto_rotate BOOLEAN NOT NULL DEFAULT false"); err != nil {
-			return err
-		}
-	}
-	// ADR-046: per-secret generated-value shape. Additive (0/'' = defaults).
-	if tableExists(db, "secret_nodes") {
-		if !columnExists(db, "secret_nodes", "rotation_length") {
-			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_length INTEGER NOT NULL DEFAULT 0"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "secret_nodes", "rotation_charset") {
-			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_charset TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		// ADR-047: backend rotation wiring. Additive ('' = regenerate-in-Keyorix).
-		if !columnExists(db, "secret_nodes", "rotation_backend") {
-			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_backend TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "secret_nodes", "rotation_ref") {
-			if err := exec("ALTER TABLE secret_nodes ADD COLUMN rotation_ref TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		// SUSPEND-PURGE-1: per-suspension "also clear synced Kubernetes copies"
-		// marker. Additive (false = the resource's own onSuspend setting decides).
-		if !columnExists(db, "secret_nodes", "suspend_clear_synced_copies") {
-			if err := exec("ALTER TABLE secret_nodes ADD COLUMN suspend_clear_synced_copies BOOLEAN NOT NULL DEFAULT false"); err != nil {
-				return err
-			}
-		}
-		// ADR-056: cached certificate expiry. Additive (nil = not yet evaluated).
-		if !columnExists(db, "secret_nodes", "cert_not_after") {
-			if err := exec("ALTER TABLE secret_nodes ADD COLUMN cert_not_after TIMESTAMP WITH TIME ZONE"); err != nil {
-				return err
-			}
-		}
-		// Companion index (models.SecretNode.CertNotAfter is `gorm:"index"`); see the
-		// classification companion-index comment above for why this runs unconditionally
-		// (gated on the table only) rather than nested inside the ALTER guard above.
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_secret_nodes_cert_not_after ON secret_nodes (cert_not_after)"); err != nil {
-			return err
-		}
-	}
-	// MT-006: partial unique index on (project_id, environment_id, name) WHERE
-	// deleted_at IS NULL — enforces at the DB layer the invariant the application
-	// already assumes in GetSecretByName (which scopes by project+environment+name
-	// without a parent_id qualifier). A soft-deleted secret's name is freed for reuse
-	// (the partial predicate excludes it), matching the deleted_at soft-delete pattern
-	// used for users, groups, and projects. This closes the TOCTOU window in
-	// core.CreateSecret (GetSecretByName check-then-act) the same way
-	// ensureSecretVersionIndex closes the RotateSecret race.
-	if tableExists(db, "secret_nodes") {
-		if err := ensureSecretNodeNameIndex(db); err != nil {
-			return err
-		}
-		// The UPGRADE call site for cache_epoch (the read-path cache's generation
-		// stamp — see store.EnsureSecretNodeCacheEpoch). It needs BOTH this one
-		// and the one in the transactional tail, for the same reason
-		// ensureSecretNodeNameIndex does and in the opposite direction:
-		// freshInstallComplete below returns early on EVERY boot of an
-		// already-initialised database, so the tail covers only a fresh (or
-		// half-migrated) install, while this tableExists-gated call is the only
-		// thing that reaches an existing deployment. Caught by
-		// TestSecretNodeCacheEpoch_FreshInstallAndUpgrade_{SQLite,Postgres}, which
-		// failed with "cache_epoch missing" when only the tail call existed.
-		//
-		// The two never both ALTER in one boot (on a fresh install secret_nodes
-		// does not exist yet at this point, so this call no-ops), so this cannot
-		// re-trip the pgx "insufficient arguments" hazard that re-inspecting a
-		// just-ALTERed table in the bulk AutoMigrate loop causes.
-		if err := store.EnsureSecretNodeCacheEpoch(db); err != nil {
-			return err
-		}
+	// Migration steps, part 1 (every boot, before the table snapshot below): additive
+	// changes to tables an existing database already has, each a no-op on a fresh one.
+	// How to add a migration step: write it in the domain's migrate_<domain>.go, gated on
+	// tableExists/columnExists so it is idempotent, taking db (and exec) as parameters;
+	// call it at the END of this list (never reorder existing steps); bump
+	// currentSchemaEpoch if it changes the schema.
+	if err := alterSecretNodes(db, exec); err != nil {
+		return err
 	}
 	// DEK-SWEEP-CACHE-1: secret_versions.cache_epoch, the latest-version cache
 	// generation term the DEK sweep raises. UPGRADE call site (a fresh install gets
@@ -1148,277 +660,35 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	if err := store.EnsureAuditRetentionAnchorTrigger(db); err != nil {
 		return err
 	}
-	// Anomaly alerting: additive `alerted` flag (false = not yet pushed out).
-	if tableExists(db, "anomaly_alerts") && !columnExists(db, "anomaly_alerts", "alerted") {
-		if err := exec("ALTER TABLE anomaly_alerts ADD COLUMN alerted BOOLEAN DEFAULT FALSE"); err != nil {
-			return err
-		}
-	}
-	// Companion index (models.AnomalyAlert.Alerted is `gorm:"default:false;index"`); see
-	// the secret_nodes.classification companion-index comment above for why this is
-	// gated on the table only, not on the ALTER above having just run.
-	if tableExists(db, "anomaly_alerts") {
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_alerted ON anomaly_alerts (alerted)"); err != nil {
-			return err
-		}
-		// Companion composite index for CreateAnomalyAlert's dedup count (see
-		// models.AnomalyAlert's doc comment). Every column already exists on any
-		// anomaly_alerts table this code can meet (accessed_by/ip_address/detected_at
-		// are in the table's original shape), so no column gate is needed. Purely
-		// additive: an older binary ignores an extra index, so no schema-epoch bump.
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_anomaly_alerts_dedup ON anomaly_alerts (secret_node_id, alert_type, accessed_by, ip_address, detected_at)"); err != nil {
-			return err
-		}
+	if err := alterAnomalyAlerts(db, exec); err != nil {
+		return err
 	}
 	// models.SecretAccessLog's indexes (store.SecretAccessLogIndexes) are built by
 	// the audit index step after this migration (SQLite: migrateSQLite;
 	// Postgres: ensureAuditListIndexesPostgres, CONCURRENTLY), not here.
 
-	// Track last successful login per user (nil = never logged in).
-	if tableExists(db, "users") && !columnExists(db, "users", "last_login_at") {
-		if err := exec("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP WITH TIME ZONE"); err != nil {
-			return err
-		}
+	if err := alterUsers(db, exec); err != nil {
+		return err
 	}
 
-	// Track when the current password was set, for max-age expiry (ADR-025).
-	if tableExists(db, "users") && !columnExists(db, "users", "password_changed_at") {
-		if err := exec("ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP WITH TIME ZONE"); err != nil {
-			return err
-		}
+	if err := alterSessionDeviceColumns(db, exec); err != nil {
+		return err
 	}
 
-	// Account lifecycle state (ADR-025). Existing rows default to active.
-	if tableExists(db, "users") && !columnExists(db, "users", "account_state") {
-		if err := exec("ALTER TABLE users ADD COLUMN account_state TEXT NOT NULL DEFAULT 'active'"); err != nil {
-			return err
-		}
+	if err := alterAuditEvents(db, exec); err != nil {
+		return err
 	}
 
-	// MFA/TOTP opt-in flag. Existing rows default to false (MFA off).
-	if tableExists(db, "users") && !columnExists(db, "users", "mfa_enabled") {
-		if err := exec("ALTER TABLE users ADD COLUMN mfa_enabled BOOLEAN NOT NULL DEFAULT false"); err != nil {
-			return err
-		}
+	if err := alterSessionImpersonationColumns(db, exec); err != nil {
+		return err
 	}
 
-	// SCIM external ID (RFC 7644). Additive; empty for locally-created users.
-	if tableExists(db, "users") && !columnExists(db, "users", "external_id") {
-		if err := exec("ALTER TABLE users ADD COLUMN external_id TEXT NOT NULL DEFAULT ''"); err != nil {
-			return err
-		}
+	if err := alterRoleAssignmentScope(db, exec); err != nil {
+		return err
 	}
 
-	// Per-account login lockout (brute-force protection). Additive; safe on existing DBs.
-	if tableExists(db, "users") {
-		if !columnExists(db, "users", "failed_login_attempts") {
-			if err := exec("ALTER TABLE users ADD COLUMN failed_login_attempts INTEGER NOT NULL DEFAULT 0"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "users", "last_failed_login_at") {
-			if err := exec("ALTER TABLE users ADD COLUMN last_failed_login_at TIMESTAMP WITH TIME ZONE"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "users", "login_locked_until") {
-			if err := exec("ALTER TABLE users ADD COLUMN login_locked_until TIMESTAMP WITH TIME ZONE"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "users", "login_lockout_count") {
-			if err := exec("ALTER TABLE users ADD COLUMN login_lockout_count INTEGER NOT NULL DEFAULT 0"); err != nil {
-				return err
-			}
-		}
-	}
-
-	// One-time-password expiry (OTP-EXPIRY-1). Adding the column and the one-off
-	// legacy backfill share one transaction, so a crash between them cannot leave the
-	// column present with the backfill never run (the column's absence is what
-	// gates the backfill, so it must not be re-runnable on a later boot).
-	if tableExists(db, "users") && !columnExists(db, "users", "one_time_password_expires_at") {
-		if err := db.Transaction(func(tx *gorm.DB) error {
-			// Via the Migrator, not a hand-written ALTER: it picks the dialect's own
-			// timestamp type (datetime on SQLite, timestamptz on Postgres). A literal
-			// "TIMESTAMP WITH TIME ZONE" makes the SQLite driver hand the value back as
-			// a string that cannot be scanned into the model's *time.Time, which would
-			// fail every login of an account carrying a backfilled expiry.
-			if err := tx.Migrator().AddColumn(&models.User{}, "OneTimePasswordExpiresAt"); err != nil {
-				return err
-			}
-			return backfillLegacyOneTimePasswordExpiry(tx, time.Now().UTC())
-		}); err != nil {
-			return fmt.Errorf("failed to add users.one_time_password_expires_at: %w", err)
-		}
-	}
-
-	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
-	if tableExists(db, "sessions") {
-		if !columnExists(db, "sessions", "user_agent") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN user_agent TEXT"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "sessions", "ip_address") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN ip_address TEXT"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "sessions", "last_seen_at") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN last_seen_at TIMESTAMP WITH TIME ZONE"); err != nil {
-				return err
-			}
-		}
-		// Absolute session-lifetime ceiling (short-lived tokens): set at login,
-		// carried through refresh, never extended. nil on legacy rows = uncapped.
-		if !columnExists(db, "sessions", "absolute_expires_at") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN absolute_expires_at TIMESTAMP WITH TIME ZONE"); err != nil {
-				return err
-			}
-		}
-	}
-
-	// Audit-design block: diff payload + impersonation attribution on audit rows.
-	if tableExists(db, "audit_events") {
-		if !columnExists(db, "audit_events", "diff") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN diff TEXT"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "audit_events", "impersonated_by") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN impersonated_by INTEGER"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "audit_events", "acting_as") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN acting_as INTEGER"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "audit_events", "impersonation") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN impersonation BOOLEAN NOT NULL DEFAULT false"); err != nil {
-				return err
-			}
-		}
-		// ADR-023: actor kind (user vs machine_identity) on every event.
-		if !columnExists(db, "audit_events", "actor_type") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN actor_type TEXT NOT NULL DEFAULT 'user'"); err != nil {
-				return err
-			}
-		}
-		// ADR-029: tamper-evidence hash chain. Empty on legacy rows (the chain
-		// begins at the first event written after these columns exist).
-		if !columnExists(db, "audit_events", "prev_hash") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN prev_hash TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "audit_events", "entry_hash") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN entry_hash TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		// Epoch 6 (AUDIT-REQUEST-ID-1): advisory request id, outside the hash chain.
-		// Nullable with no default, so Postgres changes only the catalog (no rewrite).
-		if !columnExists(db, "audit_events", "request_id") {
-			if err := exec("ALTER TABLE audit_events ADD COLUMN request_id TEXT"); err != nil {
-				return err
-			}
-		}
-		// DB-TUNE-1: drop the prev_hash/entry_hash indexes earlier releases
-		// created (models.AuditEvent once tagged both `gorm:"index"`). No query
-		// looks a row up by either hash: VerifyAuditChain, internal/auditverify,
-		// the chain-head read and the checkpoint/anchor code all walk or fetch
-		// audit_events by id, and the links are compared in memory. The two
-		// indexes held random 64-hex keys, most of the table's index storage,
-		// and every audit INSERT paid for both. An older binary booted against
-		// this database recreates them (CREATE INDEX IF NOT EXISTS), which is
-		// harmless. Guard: TestAuditEventHashIndexes_DroppedOnUpgrade.
-		if err := exec("DROP INDEX IF EXISTS idx_audit_events_prev_hash"); err != nil {
-			return err
-		}
-		if err := exec("DROP INDEX IF EXISTS idx_audit_events_entry_hash"); err != nil {
-			return err
-		}
-	}
-
-	// Impersonation sessions carry the initiating admin + start time.
-	if tableExists(db, "sessions") {
-		if !columnExists(db, "sessions", "impersonated_by") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN impersonated_by INTEGER"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "sessions", "impersonation_started_at") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at TIMESTAMP WITH TIME ZONE"); err != nil {
-				return err
-			}
-		}
-		// #3024: setup-only sessions (restricted, factor-less account under
-		// security.require_mfa). false on legacy rows = an ordinary session.
-		if !columnExists(db, "sessions", "setup_only") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN setup_only BOOLEAN NOT NULL DEFAULT false"); err != nil {
-				return err
-			}
-		}
-	}
-
-	// RBAC Phase 2: scope role assignments by environment as well as project.
-	// project_id already exists (nullable on pre-008 DBs); add environment_id and
-	// normalise NULL project_id rows to the 0 = global sentinel the queries expect.
-	for _, m := range []struct{ tbl, addEnvID, nullPID string }{
-		{"user_roles", "ALTER TABLE user_roles ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0", "UPDATE user_roles SET project_id = 0 WHERE project_id IS NULL"},
-		{"group_roles", "ALTER TABLE group_roles ADD COLUMN environment_id INTEGER NOT NULL DEFAULT 0", "UPDATE group_roles SET project_id = 0 WHERE project_id IS NULL"},
-	} {
-		if !tableExists(db, m.tbl) {
-			continue
-		}
-		if !columnExists(db, m.tbl, "environment_id") {
-			if err := exec(m.addEnvID); err != nil {
-				return err
-			}
-		}
-		if columnExists(db, m.tbl, "project_id") {
-			if err := exec(m.nullPID); err != nil {
-				return err
-			}
-		}
-	}
-
-	// ADR-084: structural admin-bypass flag, replacing roleSetContainsAdmin's old
-	// name-based lookup. Additive column for existing installs (a fresh install
-	// gets it via AutoMigrate's CREATE TABLE, so this is a no-op there); the
-	// backfill runs exactly once, gated on the column having just been added —
-	// a one-time SNAPSHOT of today's four reserved admin-tier names into the
-	// new flag, using the same name list this migration retires as an ongoing
-	// mechanism. After this, the flag is authoritative: renaming a role never
-	// moves it, and no future role acquires it by matching a name.
-	if tableExists(db, "roles") && !columnExists(db, "roles", "bypasses_permission_checks") {
-		if err := exec("ALTER TABLE roles ADD COLUMN bypasses_permission_checks BOOLEAN NOT NULL DEFAULT false"); err != nil {
-			return err
-		}
-		if err := exec("UPDATE roles SET bypasses_permission_checks = true " +
-			"WHERE name IN ('super_admin', 'admin', 'system_admin', 'project_admin')"); err != nil {
-			return err
-		}
-	}
-
-	// GROUP-ROLE-SCOPE-1 Phase 2 (#3546): roles.assignable_scope. The column's
-	// default is the NEW-role default (project); the one-time backfill sets every
-	// EXISTING role to any (nothing that worked before breaks), then the built-ins
-	// to their fixed scope. Column and backfill share one transaction: the
-	// column's absence gates the backfill, so a crash between them must not leave
-	// it unrun (every role, system_admin included, would read as project-only).
-	if tableExists(db, "roles") && !columnExists(db, "roles", "assignable_scope") {
-		if err := db.Transaction(func(tx *gorm.DB) error {
-			if err := tx.Migrator().AddColumn(&models.Role{}, "AssignableScope"); err != nil {
-				return err
-			}
-			return backfillRoleAssignableScope(tx)
-		}); err != nil {
-			return fmt.Errorf("failed to add roles.assignable_scope: %w", err)
-		}
+	if err := alterRoleFlags(db, exec); err != nil {
+		return err
 	}
 
 	// RBAC PK rebuild: fresh installs get the full composite PK (user_id, role_id,
@@ -1540,588 +810,124 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	secretMetadataHistoryExists := tableExists(db, "secret_metadata_histories")
 	settingExists := tableExists(db, "settings")
 
-	// Create rotation_policies if missing (additive, safe on existing DBs).
-	if !rotationExists {
-		if err := db.AutoMigrate(&models.RotationPolicy{}); err != nil {
-			return fmt.Errorf("failed to migrate rotation_policies table: %w", err)
-		}
-	}
-
-	// Create personal_access_tokens if missing (ADR-027, additive, safe on existing DBs);
-	// otherwise add only the ADR-042 per-token scoping columns via the Migrator (same
-	// pgx hazard as the notifications/invitations blocks — never full-AutoMigrate an
-	// existing table here). Defaults leave existing tokens unrestricted (back-compat).
-	if !patExists {
-		if err := db.AutoMigrate(&models.PersonalAccessToken{}); err != nil {
-			return fmt.Errorf("failed to migrate personal_access_tokens table: %w", err)
-		}
-	} else {
-		m := db.Migrator()
-		for _, col := range []string{"Scopes", "ProjectScope", "EnvironmentScope"} {
-			if !m.HasColumn(&models.PersonalAccessToken{}, col) {
-				if err := m.AddColumn(&models.PersonalAccessToken{}, col); err != nil {
-					return fmt.Errorf("failed to add personal_access_tokens.%s column: %w", col, err)
-				}
-			}
-		}
-	}
-
-	// Create the MFA tables if missing (TOTP MFA, additive, safe on existing DBs).
-	if !mfaSecretExists {
-		if err := db.AutoMigrate(&models.MFASecret{}); err != nil {
-			return fmt.Errorf("failed to migrate mfa_secrets table: %w", err)
-		}
-	}
-	if !mfaRecoveryExists {
-		if err := db.AutoMigrate(&models.MFARecoveryCode{}); err != nil {
-			return fmt.Errorf("failed to migrate mfa_recovery_codes table: %w", err)
-		}
-	}
-	if !mfaChallengeExists {
-		if err := db.AutoMigrate(&models.MFAChallenge{}); err != nil {
-			return fmt.Errorf("failed to migrate mfa_challenges table: %w", err)
-		}
-	} else if m := db.Migrator(); !m.HasColumn(&models.MFAChallenge{}, "LoginAttemptID") {
-		// #2936 item 4: the login-budget slot the password step keeps. Additive
-		// and nullable (nil = nothing to hand back), via the Migrator like the
-		// other columns added to existing tables here.
-		if err := m.AddColumn(&models.MFAChallenge{}, "LoginAttemptID"); err != nil {
-			return fmt.Errorf("failed to add mfa_challenges.login_attempt_id column: %w", err)
-		}
-	}
-	// mfa_step_up_grants. store-mfa-002 found that MFAStepUpGrant "was never
-	// migrated anywhere" and fixed it by adding the model to the bulk
-	// AutoMigrate list -- which sits AFTER `if projectsExists { return nil }`,
-	// so the fix only ever reached fresh installs. The original finding was
-	// that the table did not exist on any database; it still does not exist on
-	// any UPGRADED one. Same shape as #1642's folded columns: a fresh-DB-only
-	// remedy for an every-install problem.
-	//
-	// Consequence on an upgraded install, confirmed against the DAST rig's real
-	// Postgres volume (2026-09-11), where this table is the only one of the
-	// fresh-path models absent:
-	//
-	//   Create/GetActiveMFAStepUpGrant and PruneMFAStepUpGrants all fail with
-	//   "relation \"mfa_step_up_grants\" does not exist", so the
-	//   mfa_stepup_grant_prune scheduler errors every cycle, and -- with
-	//   classification.restricted_requires_mfa_step_up enabled --
-	//   checkRestrictedMFAGate turns that error into
-	//   "secret %q is restricted: could not verify MFA step-up: ...".
-	//
-	// That gate fails CLOSED, so this is not a bypass: restricted secrets
-	// become unreadable rather than readable without a second factor. It is
-	// still a total functional break of the protection tier meant for the most
-	// sensitive secrets, and unrecoverable in place, since minting a grant
-	// needs the same missing table.
-	if !mfaStepUpGrantExists {
-		if err := db.AutoMigrate(&models.MFAStepUpGrant{}); err != nil {
-			return fmt.Errorf("failed to migrate mfa_step_up_grants table: %w", err)
-		}
-	}
-
-	// Create the dynamic-secrets tables if missing (ADR-035, additive); otherwise add
-	// only the newer max-TTL column via the Migrator (same pgx hazard — never
-	// full-AutoMigrate an existing table here).
-	if !dynConfigExists {
-		if err := db.AutoMigrate(&models.DynamicSecretConfig{}); err != nil {
-			return fmt.Errorf("failed to migrate dynamic_secret_configs table: %w", err)
-		}
-	} else {
-		m := db.Migrator()
-		if !m.HasColumn(&models.DynamicSecretConfig{}, "MaxTTLSeconds") {
-			if err := m.AddColumn(&models.DynamicSecretConfig{}, "MaxTTLSeconds"); err != nil {
-				return fmt.Errorf("failed to add dynamic_secret_configs.max_ttl_seconds column: %w", err)
-			}
-		}
-		// Data classification (ISO A.5.12). Additive ("" = unclassified).
-		if tableExists(db, "dynamic_secret_configs") && !columnExists(db, "dynamic_secret_configs", "classification") {
-			if err := exec("ALTER TABLE dynamic_secret_configs ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		// Companion index (models.DynamicSecretConfig.Classification is `gorm:"index"`);
-		// this whole branch only runs when dynamic_secret_configs already existed (the
-		// upgrade path — a fresh install's AutoMigrate call below already creates the
-		// index), so it's safe to run unconditionally here rather than nesting inside
-		// the ALTER guard above — see the secret_nodes.classification comment for why.
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_dynamic_secret_configs_classification ON dynamic_secret_configs (classification)"); err != nil {
-			return err
-		}
-		// Disabled (#369): refuses new leases once the owning project is soft-deleted.
-		// Additive (defaults false = every pre-existing config stays enabled).
-		if !m.HasColumn(&models.DynamicSecretConfig{}, "Disabled") {
-			if err := m.AddColumn(&models.DynamicSecretConfig{}, "Disabled"); err != nil {
-				return fmt.Errorf("failed to add dynamic_secret_configs.disabled column: %w", err)
-			}
-		}
-	}
-	if !dynLeaseExists {
-		if err := db.AutoMigrate(&models.DynamicSecretLease{}); err != nil {
-			return fmt.Errorf("failed to migrate dynamic_secret_leases table: %w", err)
-		}
-	}
-	// At most one dynamic-secret config may exist per (project, environment, name)
-	// (#462), matching DynamicSecretConfig's own doc comment. The struct carries no
-	// unique-index tag (same reason as the max-TTL/Disabled columns above: this table
-	// is never re-AutoMigrated once it exists), so the index must be created
-	// explicitly here to also reach pre-existing databases. Close the gap at the DB
-	// layer regardless of whether the table pre-existed.
-	if tableExists(db, "dynamic_secret_configs") {
-		if err := ensureDynamicSecretConfigNameIndex(db); err != nil {
-			return err
-		}
-	}
-
-	// Create the WebAuthn tables if missing (ADR-036, additive, safe on existing DBs).
-	if !webauthnCredExists {
-		if err := db.AutoMigrate(&models.WebAuthnCredential{}); err != nil {
-			return fmt.Errorf("failed to migrate web_authn_credentials table: %w", err)
-		}
-	}
-	if !webauthnSessExists {
-		if err := db.AutoMigrate(&models.WebAuthnSession{}); err != nil {
-			return fmt.Errorf("failed to migrate web_authn_sessions table: %w", err)
-		}
-	} else if m := db.Migrator(); !m.HasColumn(&models.WebAuthnSession{}, "LoginAttemptID") {
-		// #2936 review: the login-budget slot a WebAuthn Begin keeps. Additive
-		// and nullable, as for mfa_challenges above.
-		if err := m.AddColumn(&models.WebAuthnSession{}, "LoginAttemptID"); err != nil {
-			return fmt.Errorf("failed to add web_authn_sessions.login_attempt_id column: %w", err)
-		}
-	}
-
-	// Create the login_attempts table if missing (ADR-040 rate limiting, additive).
-	if !loginAttemptExists {
-		if err := db.AutoMigrate(&models.LoginAttempt{}); err != nil {
-			return fmt.Errorf("failed to migrate login_attempts table: %w", err)
-		}
-	} else if m := db.Migrator(); !m.HasColumn(&models.LoginAttempt{}, "ReservationKey") {
-		// Identifiable login-budget reservations (#2956 follow-up). Additive and
-		// nullable (existing rows were never reservations), plus its unique index.
-		if err := m.AddColumn(&models.LoginAttempt{}, "ReservationKey"); err != nil {
-			return fmt.Errorf("failed to add login_attempts.reservation_key column: %w", err)
-		}
-		if err := m.CreateIndex(&models.LoginAttempt{}, "idx_login_attempt_reservation_key"); err != nil {
-			return fmt.Errorf("failed to index login_attempts.reservation_key: %w", err)
-		}
-	}
-
-	// Recovery-key verifier record (design-b2-recover-admin.md §2). Additive,
-	// safe on existing DBs: a singleton table, empty until `keyorix-server
-	// admin recovery-key rotate` (or recover-admin's own retrofit path)
-	// generates the first key.
-	if err := db.AutoMigrate(&models.RecoveryKeyRecord{}); err != nil {
-		return fmt.Errorf("failed to migrate recovery_key_records table: %w", err)
-	}
-
-	// Create the audit_checkpoints table if missing (ADR-029 signed checkpoints,
-	// additive, safe on existing DBs).
-	if !auditCkptExists {
-		if err := db.AutoMigrate(&models.AuditCheckpoint{}); err != nil {
-			return fmt.Errorf("failed to migrate audit_checkpoints table: %w", err)
-		}
-	} else {
-		// Add only the newer external-notary anchor columns on an existing table
-		// (additive; same pgx hazard as elsewhere — never full-AutoMigrate here).
-		m := db.Migrator()
-		for _, col := range []string{"AnchorToken", "AnchoredAt", "AnchorProvider"} {
-			if !m.HasColumn(&models.AuditCheckpoint{}, col) {
-				if err := m.AddColumn(&models.AuditCheckpoint{}, col); err != nil {
-					return fmt.Errorf("failed to add audit_checkpoints column %s: %w", col, err)
-				}
-			}
-		}
-	}
-
-	// Create connect_ref_grants if missing (ADR-045 per-reference Connect RBAC,
-	// additive, safe on existing DBs).
-	if !connectRefGrantExists {
-		if err := db.AutoMigrate(&models.ConnectRefGrant{}); err != nil {
-			return fmt.Errorf("failed to migrate connect_ref_grants table: %w", err)
-		}
-	}
-
-	// Create connector_project_bindings if missing (ADR-082 branch 2, additive, safe
-	// on existing DBs) — pins each Connect connector to the Keyorix project it
-	// resolved to at first boot, by ID, so a later project rename can't silently
-	// reassign ownership (see ConnectorProjectBinding's own doc comment).
-	if !connectorProjectBindingsExists {
-		if err := db.AutoMigrate(&models.ConnectorProjectBinding{}); err != nil {
-			return fmt.Errorf("failed to migrate connector_project_bindings table: %w", err)
-		}
-	}
-
-	// Create project_invitations if missing (ADR-024, additive); otherwise add only
-	// the newer global-invite columns via the Migrator (same pgx hazard as the
-	// notifications block below — never full-AutoMigrate an existing table here).
-	if !invitationsExists {
-		if err := db.AutoMigrate(&models.ProjectInvitation{}); err != nil {
-			return fmt.Errorf("failed to migrate project_invitations table: %w", err)
-		}
-	} else {
-		m := db.Migrator()
-		for _, col := range []string{"SystemRole", "AssignmentsJSON"} {
-			if !m.HasColumn(&models.ProjectInvitation{}, col) {
-				if err := m.AddColumn(&models.ProjectInvitation{}, col); err != nil {
-					return fmt.Errorf("failed to add project_invitations.%s column: %w", col, err)
-				}
-			}
-		}
-	}
-	if !accessReqExists {
-		if err := db.AutoMigrate(&models.AccessRequest{}); err != nil {
-			return fmt.Errorf("failed to migrate access_requests table: %w", err)
-		}
-	} else {
-		// SecretID was added after this table could already exist in the field (same
-		// pgx hazard as project_invitations above — never full-AutoMigrate an existing
-		// table here); add it via the Migrator so an upgraded install still gets the
-		// column the secret-scoped access-request flow needs (classification gate).
-		m := db.Migrator()
-		if !m.HasColumn(&models.AccessRequest{}, "SecretID") {
-			if err := m.AddColumn(&models.AccessRequest{}, "SecretID"); err != nil {
-				return fmt.Errorf("failed to add access_requests.secret_id column: %w", err)
-			}
-		}
-	}
-
-	// Create the access-request approvals table if missing (N-of-M dual control).
-	if !accessReqApprovalsExists {
-		if err := db.AutoMigrate(&models.AccessRequestApproval{}); err != nil {
-			return fmt.Errorf("failed to migrate access_request_approvals table: %w", err)
-		}
-	}
-
-	// Create rejection-reason templates table if missing (ADR-024 extension, additive).
-	if !rejectionReasonTemplateExists {
-		if err := db.AutoMigrate(&models.RejectionReasonTemplate{}); err != nil {
-			return fmt.Errorf("failed to migrate rejection_reason_templates table: %w", err)
-		}
-	}
-
-	// Create the access-review campaign tables if missing (A.5.18, additive).
-	if !campaignExists {
-		if err := db.AutoMigrate(&models.AccessReviewCampaign{}, &models.AccessReviewItem{}); err != nil {
-			return fmt.Errorf("failed to migrate access_review_campaign tables: %w", err)
-		}
-	} else {
-		// #483/#237: Degraded/DegradedReasons/ForcedIncomplete/ActivityWindowDays were each added to
-		// AccessReviewCampaign after this table could already exist in the field (same
-		// pgx hazard as project_invitations above — never full-AutoMigrate an existing
-		// table here); add the new columns via the Migrator so an existing deployment's
-		// campaigns table picks them up. UpdateAccessReviewCampaign does a full-column
-		// Select("*").Updates, so a missing column here isn't just a silently-unused
-		// field — it hard-fails every subsequent campaign create/update on an upgraded
-		// install that predates whichever field was added.
-		m := db.Migrator()
-		for _, col := range []string{"Degraded", "DegradedReasons", "ForcedIncomplete", "ActivityWindowDays"} {
-			if !m.HasColumn(&models.AccessReviewCampaign{}, col) {
-				if err := m.AddColumn(&models.AccessReviewCampaign{}, col); err != nil {
-					return fmt.Errorf("failed to add access_review_campaigns.%s column: %w", col, err)
-				}
-			}
-		}
-	}
-
-	// Create the break-glass activations table if missing (additive).
-	if !breakGlassExists {
-		if err := db.AutoMigrate(&models.BreakGlassActivation{}); err != nil {
-			return fmt.Errorf("failed to migrate break_glass_activations table: %w", err)
-		}
-	} else {
-		// ADR-112 §3 (break-glass review item 5): ReviewedBy/ReviewedAt/ReviewNote
-		// were added to BreakGlassActivation after this table could already exist in
-		// the field — same "never full-AutoMigrate an existing table here" constraint
-		// as AccessReviewCampaign above; add the new columns via the Migrator so an
-		// upgraded install picks them up. Without this, ReviewBreakGlassActivation's
-		// conditional UPDATE would hard-fail on every upgraded install that predates
-		// this feature (the column it sets simply wouldn't exist).
-		//
-		// BREAKGLASS-OWED-1 (epoch 5): Degraded/AuditSettledAt the same way. Without
-		// them an upgraded install's degraded commit (audit log down) would fail, and
-		// break-glass would be refused exactly when it is needed.
-		m := db.Migrator()
-		for _, col := range []string{"ReviewedBy", "ReviewedAt", "ReviewNote", "Degraded", "AuditSettledAt"} {
-			if !m.HasColumn(&models.BreakGlassActivation{}, col) {
-				if err := m.AddColumn(&models.BreakGlassActivation{}, col); err != nil {
-					return fmt.Errorf("failed to add break_glass_activations.%s column: %w", col, err)
-				}
-			}
-		}
-	}
-	// Enforce at most one ACTIVE break-glass activation per (project, user), even
-	// under a race — see ensureBreakGlassActiveIndex. Runs whether the table was just
-	// created above or already existed on an older DB (additive, idempotent).
-	if err := ensureBreakGlassActiveIndex(db); err != nil {
+	// Migration steps, part 2 (every boot, after the snapshot): create a table an
+	// existing database is missing, or add columns to one it has via the Migrator.
+	// How to add a migration step: add the table's flag to the snapshot above (never call
+	// tableExists after an AutoMigrate), write the step in migrate_<domain>.go taking db
+	// and the flags it reads as parameters, call it at the END of this list, and bump
+	// currentSchemaEpoch.
+	if err := createRotationPolicies(db, rotationExists); err != nil {
 		return err
 	}
 
-	// Create the legal-holds table if missing (additive).
-	if !legalHoldExists {
-		if err := db.AutoMigrate(&models.LegalHold{}); err != nil {
-			return fmt.Errorf("failed to migrate legal_holds table: %w", err)
-		}
-	}
-	// At most one legal hold may be active (released = false) at a time — a plain
-	// check-then-insert in core.PlaceLegalHold has a TOCTOU window (#305): two
-	// concurrent placements can both observe "no active hold" and both insert one,
-	// orphaning a row that GetActiveLegalHold's highest-id lookup never surfaces
-	// again, so lifting the hold an operator sees leaves purges permanently blocked.
-	// Close the race at the DB layer regardless of whether the table pre-existed.
-	if err := ensureLegalHoldActiveIndex(db); err != nil {
+	if err := createPersonalAccessTokens(db, patExists); err != nil {
 		return err
 	}
 
-	// Create the risk-exceptions table if missing (A.5.8 risk treatment, additive).
-	if !riskExceptionExists {
-		if err := db.AutoMigrate(&models.RiskException{}); err != nil {
-			return fmt.Errorf("failed to migrate risk_exceptions table: %w", err)
-		}
+	if err := createMFATables(db, mfaSecretExists, mfaRecoveryExists, mfaChallengeExists, mfaStepUpGrantExists); err != nil {
+		return err
 	}
 
-	// Create the SSO-login-state table if missing (OIDC human SSO, additive).
-	if !ssoLoginStateExists {
-		if err := db.AutoMigrate(&models.SSOLoginState{}); err != nil {
-			return fmt.Errorf("failed to migrate sso_login_states table: %w", err)
-		}
+	if err := createDynamicSecretTables(db, exec, dynConfigExists, dynLeaseExists); err != nil {
+		return err
 	}
 
-	// Create the scheduler-lock-lease table if missing (#530, additive). Backs
-	// TryAcquireSchedulerLock/ReleaseSchedulerLock — a TTL-bounded distributed mutex
-	// originally built for a storage.type: remote spoke's WithSchedulerLock to proxy
-	// through (RemoteStorage, since deleted, #2162), independent of (and never
-	// migrated onto) the pre-existing Postgres advisory lock local WithSchedulerLock
-	// still uses for a server's OWN scheduler ticks.
-	if !schedulerLockLeaseExists {
-		if err := db.AutoMigrate(&models.SchedulerLockLease{}); err != nil {
-			return fmt.Errorf("failed to migrate scheduler_lock_leases table: %w", err)
-		}
+	if err := createWebAuthnTables(db, webauthnCredExists, webauthnSessExists); err != nil {
+		return err
 	}
 
-	// Create the separation-of-duties policy table if missing (additive).
-	if !sodExists {
-		if err := db.AutoMigrate(&models.SoDPolicy{}); err != nil {
-			return fmt.Errorf("failed to migrate sod_policies table: %w", err)
-		}
+	if err := createLoginAttempts(db, loginAttemptExists); err != nil {
+		return err
 	}
 
-	// Create the secret-dependency edge table if missing (ADR-052, additive).
-	if !secretDepExists {
-		if err := db.AutoMigrate(&models.SecretDependency{}); err != nil {
-			return fmt.Errorf("failed to migrate secret_dependencies table: %w", err)
-		}
+	if err := createRecoveryKeyRecords(db); err != nil {
+		return err
 	}
 
-	// Create the secret-ACL table if missing (RBAC Phase 3, additive).
-	if !secretACLExists {
-		if err := db.AutoMigrate(&models.SecretACL{}); err != nil {
-			return fmt.Errorf("failed to migrate secret_acls table: %w", err)
-		}
+	if err := createAuditCheckpoints(db, auditCkptExists); err != nil {
+		return err
 	}
 
-	// Create secret_access_schedules if missing (temporal access policies, additive).
-	if !scheduleExists {
-		if err := db.AutoMigrate(&models.SecretAccessSchedule{}); err != nil {
-			return fmt.Errorf("failed to migrate secret_access_schedules table: %w", err)
-		}
+	if err := createConnectTables(db, connectRefGrantExists, connectorProjectBindingsExists); err != nil {
+		return err
 	}
 
-	// Create pending_audit_events if missing (audit rows owed by a plain secret
-	// suspend that took effect while the audit log refused writes; additive).
-	if !pendingAuditExists {
-		if err := db.AutoMigrate(&models.PendingAuditEvent{}); err != nil {
-			return fmt.Errorf("failed to migrate pending_audit_events table: %w", err)
-		}
-	} else {
-		// BREAKGLASS-OWED-1 (epoch 5): the link from an owed row to its degraded
-		// break-glass activation, added to a table an epoch-3/4 install already has
-		// (never full-AutoMigrate an existing table here, as above).
-		m := db.Migrator()
-		if !m.HasColumn(&models.PendingAuditEvent{}, "BreakGlassActivationID") {
-			if err := m.AddColumn(&models.PendingAuditEvent{}, "BreakGlassActivationID"); err != nil {
-				return fmt.Errorf("failed to add pending_audit_events.break_glass_activation_id column: %w", err)
-			}
-		}
-		if !m.HasIndex(&models.PendingAuditEvent{}, "BreakGlassActivationID") {
-			if err := m.CreateIndex(&models.PendingAuditEvent{}, "BreakGlassActivationID"); err != nil {
-				return fmt.Errorf("failed to index pending_audit_events.break_glass_activation_id: %w", err)
-			}
-		}
+	if err := createAccessRequestTables(db, invitationsExists, accessReqExists, accessReqApprovalsExists, rejectionReasonTemplateExists); err != nil {
+		return err
 	}
 
-	// Create password_histories if missing (ADR-025 history_count, additive).
-	if !pwHistExists {
-		if err := db.AutoMigrate(&models.PasswordHistory{}); err != nil {
-			return fmt.Errorf("failed to migrate password_histories table: %w", err)
-		}
+	if err := createAccessReviewCampaigns(db, campaignExists); err != nil {
+		return err
 	}
 
-	// Create machine_identities if missing (ADR-023, additive, safe on existing DBs).
-	if !machineExists {
-		if err := db.AutoMigrate(&models.MachineIdentity{}); err != nil {
-			return fmt.Errorf("failed to migrate machine_identities table: %w", err)
-		}
-	} else {
-		if !columnExists(db, "machine_identities", "classification") {
-			// Data classification (ISO A.5.12). Additive ("" = unclassified).
-			if err := exec("ALTER TABLE machine_identities ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		// Companion index (models.MachineIdentity.Classification is `gorm:"index"`);
-		// this else branch only runs on the upgrade path (a fresh install's
-		// AutoMigrate call above already creates the index) — see the
-		// secret_nodes.classification comment for why this runs unconditionally
-		// rather than nested inside the ALTER guard.
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_machine_identities_classification ON machine_identities (classification)"); err != nil {
-			return err
-		}
-		// #3433: the project soft-delete cascade's suspension marker (schema epoch 4).
-		// Additive; 0 / NULL = "not suspended by a cascade", which is what every
-		// existing row is.
-		if !columnExists(db, "machine_identities", "cascade_suspended_project_id") {
-			if err := exec("ALTER TABLE machine_identities ADD COLUMN cascade_suspended_project_id BIGINT NOT NULL DEFAULT 0"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "machine_identities", "cascade_suspended_at") {
-			// Per-dialect type for the reason given at secret_nodes.purge_at.
-			ts := "DATETIME"
-			if db.Dialector.Name() == "postgres" {
-				ts = "TIMESTAMP WITH TIME ZONE"
-			}
-			if err := exec("ALTER TABLE machine_identities ADD COLUMN cascade_suspended_at " + ts); err != nil {
-				return err
-			}
-		}
+	if err := createBreakGlassActivations(db, breakGlassExists); err != nil {
+		return err
 	}
 
-	// Create machine-token tables if missing (ADR-030, additive, safe on existing DBs).
-	if !machineCredExists {
-		if err := db.AutoMigrate(&models.MachineIdentityCredential{}); err != nil {
-			return fmt.Errorf("failed to migrate machine_identity_credentials table: %w", err)
-		}
-	} else {
-		if !columnExists(db, "machine_identity_credentials", "classification") {
-			if err := exec("ALTER TABLE machine_identity_credentials ADD COLUMN classification TEXT DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		// Companion index (models.MachineIdentityCredential.Classification is
-		// `gorm:"index"`); see the machine_identities.classification comment above
-		// for why this runs unconditionally in this (upgrade-only) branch.
-		if err := exec("CREATE INDEX IF NOT EXISTS idx_machine_identity_credentials_classification ON machine_identity_credentials (classification)"); err != nil {
-			return err
-		}
-	}
-	if !machineRoleExists {
-		if err := db.AutoMigrate(&models.MachineIdentityRole{}); err != nil {
-			return fmt.Errorf("failed to migrate machine_identity_roles table: %w", err)
-		}
-	}
-	// ADR-031: OIDC federation bindings.
-	if !machineOIDCExists {
-		if err := db.AutoMigrate(&models.MachineIdentityOIDCBinding{}); err != nil {
-			return fmt.Errorf("failed to migrate machine_identity_oidc_bindings table: %w", err)
-		}
+	if err := createLegalHolds(db, legalHoldExists); err != nil {
+		return err
 	}
 
-	// Create project_memberships if missing (ADR-022 membership lifecycle, additive).
-	if !membershipExists {
-		if err := db.AutoMigrate(&models.ProjectMembership{}); err != nil {
-			return fmt.Errorf("failed to migrate project_memberships table: %w", err)
-		}
-	}
-	if tableExists(db, "project_memberships") {
-		if err := ensureProjectMembershipIndex(db); err != nil {
-			return err
-		}
+	if err := createRiskExceptions(db, riskExceptionExists); err != nil {
+		return err
 	}
 
-	// Create setup_tokens if missing (ADR-028 credential delivery, additive).
-	if !setupTokenExists {
-		if err := db.AutoMigrate(&models.SetupToken{}); err != nil {
-			return fmt.Errorf("failed to migrate setup_tokens table: %w", err)
-		}
+	if err := createSSOLoginStates(db, ssoLoginStateExists); err != nil {
+		return err
 	}
 
-	// Notifications (ADR-024). Create the table if absent; otherwise add only the
-	// newer ProjectID/Title/Link columns via the Migrator. We must NOT run a full
-	// AutoMigrate on an already-existing table here — on Postgres that re-inspect
-	// trips the pgx "insufficient arguments" prepared-statement bug mid-boot (the
-	// same hazard handled for the other additive tables above).
-	if !notificationsExists {
-		if err := db.AutoMigrate(&models.Notification{}); err != nil {
-			return fmt.Errorf("failed to migrate notifications table: %w", err)
-		}
-	} else {
-		m := db.Migrator()
-		for _, col := range []string{"ProjectID", "Title", "Link", "Severity"} {
-			if !m.HasColumn(&models.Notification{}, col) {
-				if err := m.AddColumn(&models.Notification{}, col); err != nil {
-					return fmt.Errorf("failed to add notifications.%s column: %w", col, err)
-				}
-			}
-		}
+	if err := createSchedulerLockLeases(db, schedulerLockLeaseExists); err != nil {
+		return err
 	}
-	// Seven models with live, wired handler code (alert_escalation.go,
-	// notification_channels.go, secret_templates.go, secret_version_comments.go,
-	// mfa_stepup.go, hygiene_trends.go, compliance_snapshots_handler.go) were never
-	// reachable from ANY db.AutoMigrate call in this function -- confirmed by
-	// grepping the entire repo for AutoMigrate(&models.<each type>) and finding
-	// matches only in _test.go files, never in server/http/handlers or here. Every
-	// fresh install AND every existing install upgrading onto a binary with this
-	// handler code would hit "no such table"/"relation does not exist" the first
-	// time any of these seven features was used -- found while building
-	// storage.AllModels() for design-b3-backup-v2.md §3.2, whose whole premise is
-	// that AutoMigrate coverage and the backup table-walk share one real list;
-	// these were silently absent from both. None of the seven carries a GORM
-	// relationship tag (plain uint reference columns, not `gorm:"foreignKey"`), so
-	// each is a standalone table with no create-order dependency on another model.
-	if !secretTemplateExists {
-		if err := db.AutoMigrate(&models.SecretTemplate{}); err != nil {
-			return fmt.Errorf("failed to migrate secret_templates table: %w", err)
-		}
+
+	if err := createSoDPolicies(db, sodExists); err != nil {
+		return err
 	}
-	if !alertEscalationExists {
-		if err := db.AutoMigrate(&models.AlertEscalationPolicy{}); err != nil {
-			return fmt.Errorf("failed to migrate alert_escalation_policies table: %w", err)
-		}
+
+	if err := createSecretDependencies(db, secretDepExists); err != nil {
+		return err
 	}
-	// Unconditional (#2433), not guarded on !notificationChannelExists like the
-	// SESSION-U U1 block above: that guard only ever existed to catch up a table
-	// that was missing ENTIRELY on an upgrading install (the historical bug those
-	// 11 models share) -- it was never meant to freeze the table's columns at
-	// whatever existed the day the catch-up landed. NotificationChannel added two
-	// new columns (URLEnc/URLMeta) after that fix shipped; the old `if !exists`
-	// gate would skip AutoMigrate entirely once the table exists, so an
-	// upgrading install would never get the new columns at all, even though
-	// notification_channels.go's CRUD now depends on them unconditionally.
-	// AutoMigrate is additive and safe on an existing table (same rationale as
-	// "Create rotation_policies if missing" below), so there is no reason this
-	// one model needed the once-only gate going forward.
-	if err := db.AutoMigrate(&models.NotificationChannel{}); err != nil {
-		return fmt.Errorf("failed to migrate notification_channels table: %w", err)
+
+	if err := createSecretACLs(db, secretACLExists); err != nil {
+		return err
 	}
-	if !secretVersionCommentExists {
-		if err := db.AutoMigrate(&models.SecretVersionComment{}); err != nil {
-			return fmt.Errorf("failed to migrate secret_version_comments table: %w", err)
-		}
+
+	if err := createSecretAccessSchedules(db, scheduleExists); err != nil {
+		return err
 	}
-	if !mfaStepupTokenExists {
-		if err := db.AutoMigrate(&models.MFAStepupToken{}); err != nil {
-			return fmt.Errorf("failed to migrate mfa_stepup_tokens table: %w", err)
-		}
+
+	if err := createPendingAuditEvents(db, pendingAuditExists); err != nil {
+		return err
 	}
-	if !hygieneTrendExists {
-		if err := db.AutoMigrate(&models.HygieneTrendSnapshot{}); err != nil {
-			return fmt.Errorf("failed to migrate hygiene_trend_snapshots table: %w", err)
-		}
+
+	if err := createPasswordHistories(db, pwHistExists); err != nil {
+		return err
 	}
-	if !compliancePostureExists {
-		if err := db.AutoMigrate(&models.CompliancePostureSnapshot{}); err != nil {
-			return fmt.Errorf("failed to migrate compliance_posture_snapshots table: %w", err)
-		}
+
+	if err := createMachineIdentities(db, exec, machineExists); err != nil {
+		return err
+	}
+
+	if err := createMachineIdentityCredentials(db, exec, machineCredExists); err != nil {
+		return err
+	}
+	if err := createMachineIdentityRoleTables(db, machineRoleExists, machineOIDCExists); err != nil {
+		return err
+	}
+
+	if err := createProjectMemberships(db, membershipExists); err != nil {
+		return err
+	}
+
+	if err := createSetupTokens(db, setupTokenExists); err != nil {
+		return err
+	}
+
+	if err := createNotifications(db, notificationsExists); err != nil {
+		return err
+	}
+	if err := createUnmigratedFeatureTables(db, secretTemplateExists, alertEscalationExists, secretVersionCommentExists, mfaStepupTokenExists, hygieneTrendExists, compliancePostureExists); err != nil {
+		return err
 	}
 
 	// At most one unread rotation/expiry reminder may stand per (user, project) at a
@@ -2135,250 +941,36 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 		return err
 	}
 
-	// Groups gained soft-delete (DeletedAt) + a partial unique index on name. On an
-	// existing DB add the column and swap the plain unique index for the partial one
-	// (additive, idempotent); the full AutoMigrate below covers fresh DBs.
-	if groupsExists {
-		if m := db.Migrator(); !m.HasColumn(&models.Group{}, "DeletedAt") {
-			if err := m.AddColumn(&models.Group{}, "DeletedAt"); err != nil {
-				return fmt.Errorf("failed to add groups.deleted_at column: %w", err)
-			}
-		}
-		// groups.name_folded (#1642) has exactly the same existing-DB problem
-		// roles.name_folded had, and was missed because the reasoning stopped at
-		// the wrong question. #1642's own note reads groups.name_folded as safe
-		// because ensureGroupNameIndex is "called from both here AND the fresh-DB
-		// tail" -- true, and irrelevant: ensureGroupNameIndex calls
-		// backfillFoldedColumn, which only backfills and indexes an EXISTING
-		// column and never ALTER TABLE ADD COLUMN it. The call site existed; the
-		// column did not. On any database created before #1642, migrateDatabase
-		// returns early (projectsExists) so AutoMigrate never adds it, and the
-		// backfill's own SELECT is what fails:
-		//
-		//   failed to read groups for name_folded backfill:
-		//   ERROR: column "name_folded" does not exist (SQLSTATE 42703)
-		//
-		// which aborts migrateDatabase and, through CreateStorage ->
-		// server/main.go's log.Fatalf, prevents the server from booting at all.
-		// Found by running v0.92.0 against the DAST rig's real Postgres volume,
-		// 2026-09-11. Literal DDL rather than Migrator.AddColumn because the
-		// model tags this column `not null`, and Postgres rejects ADD COLUMN ...
-		// NOT NULL without a DEFAULT on a table that already has rows.
-		if !columnExists(db, "groups", "name_folded") {
-			if err := exec("ALTER TABLE groups ADD COLUMN name_folded TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		if err := ensureGroupNameIndex(db); err != nil {
-			return err
-		}
+	if err := alterGroups(db, exec, groupsExists); err != nil {
+		return err
 	}
 
-	// UserGroup.ProjectID scopes group membership to a project (0 = global).
-	// The old PK was (user_id, group_id); the new PK is (user_id, group_id, project_id).
-	// For SQLite (fresh DBs or test environments) AutoMigrate handles this; for
-	// existing installs we add the column with a DEFAULT 0 so existing global
-	// memberships are correctly mapped to project_id=0. The PK cannot be altered in
-	// place on SQLite (no ADD COLUMN to PK), but GORM's AutoMigrate on a fresh DB
-	// already creates the correct composite PK. For Postgres, the ALTER adds the
-	// column first and we let GORM's AutoMigrate handle the rest on next fresh-DB
-	// creation; upgraded installs get a best-effort column add so the application
-	// can at least insert new scoped rows without breaking on old global ones.
-	if tableExists(db, "user_groups") && !columnExists(db, "user_groups", "project_id") {
-		if err := exec("ALTER TABLE user_groups ADD COLUMN project_id INTEGER NOT NULL DEFAULT 0"); err != nil {
-			return err
-		}
+	if err := alterUserGroupsProjectID(db, exec); err != nil {
+		return err
 	}
 
-	// Swap the plain unique index on users.username for a partial one (live rows only),
-	// so a SCIM-deprovisioned username can be re-provisioned. Additive + idempotent; the
-	// full AutoMigrate below covers fresh DBs.
-	if tableExists(db, "users") {
-		// users.username_folded and users.email_folded (#1642) -- the same
-		// missing-column shape as groups.name_folded above and roles.name_folded
-		// below. ensureUserNameIndex/ensureUserEmailIndex each call
-		// backfillFoldedColumn, which reads the folded column before anything has
-		// created it. groups fails first on a pre-#1642 database, so these two
-		// were still queued behind it when the groups failure was found;
-		// confirmed absent on the same real database (information_schema showed
-		// no *_folded column on users at all). Fixing only the column that
-		// happens to error first would have moved the crash one line down.
-		if !columnExists(db, "users", "username_folded") {
-			if err := exec("ALTER TABLE users ADD COLUMN username_folded TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		if !columnExists(db, "users", "email_folded") {
-			if err := exec("ALTER TABLE users ADD COLUMN email_folded TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		if err := ensureUserNameIndex(db); err != nil {
-			return err
-		}
-		// Add a DB-level, case-insensitive, live-rows-only unique index on users.email
-		// (#117): CreateUser/signup/invite-accept/SCIM provisioning previously enforced
-		// email uniqueness only via a check-then-act read, letting concurrent creates for
-		// the identical email all succeed and leaving GetUserByEmail to resolve to an
-		// arbitrary one of the resulting rows. Additive + idempotent; the full AutoMigrate
-		// below covers fresh DBs.
-		if err := ensureUserEmailIndex(db); err != nil {
-			return err
-		}
-		// Same DB-level protection for users.external_id (#117): the SCIM/IdP-asserted
-		// identifier was indexed but NOT unique, so two different users could share the
-		// same non-empty external_id — an ambiguity GetUserByExternalID (SSO/SCIM login
-		// resolution) must not tolerate. Additive + idempotent; the full AutoMigrate
-		// below covers fresh DBs.
-		if err := ensureUserExternalIDIndex(db); err != nil {
-			return err
-		}
+	if err := alterUserIdentityIndexes(db, exec); err != nil {
+		return err
 	}
 
-	// #1642: roles.name_folded and secret_nodes' NFC-normalized name were only
-	// ever wired into the fresh-DB tail below, never into this additive,
-	// existing-DB-safe path -- unlike every sibling *_folded/normalized column
-	// above (groups.name_folded, users.username_folded/email_folded), which is
-	// called from both here AND the fresh-DB tail. Since migrateDatabase
-	// returns early below once projectsExists is true (an already-initialized
-	// database), the fresh-DB-only call site never ran on any upgrade: the
-	// roles table never gained name_folded, while models.Role and
-	// CreateRole/UpdateRole unconditionally reference that column in every
-	// generated INSERT/UPDATE -- breaking role creation/update outright on
-	// every real upgrade the first time either is called. Mirrors
-	// ensureUserNameIndex's tableExists guard above exactly. Additive +
-	// idempotent; the full AutoMigrate below covers fresh DBs.
-	if tableExists(db, "roles") {
-		// ensureRoleNameIndex/backfillFoldedColumn assume name_folded already
-		// exists (true on a fresh install, where AutoMigrate added it from
-		// models.Role's struct tag) -- they only backfill and index an
-		// EXISTING column, they never ALTER TABLE ADD COLUMN it themselves.
-		// On an existing install AutoMigrate never runs, so this ADD COLUMN
-		// step -- mirroring the groups.DeletedAt AddColumn immediately above
-		// this comment block -- is what actually has to add it here.
-		// Literal DDL, not Migrator.AddColumn. models.Role tags NameFolded
-		// "not null", and GORM renders that straight into the ALTER with no
-		// DEFAULT -- which every engine rejects against a table that already
-		// has rows:
-		//
-		//   SQLite:   Cannot add a NOT NULL column with default value NULL
-		//   Postgres: column "name_folded" of relation "roles" contains null values
-		//
-		// so #1642's roles guard only ever worked on an EMPTY roles table. It
-		// went unnoticed because the one real database this was reproduced on
-		// happened to have roles=0; any install with the seeded admin/operator/
-		// viewer roles would have hit it. Caught by
-		// TestMigrateDatabase_PreFoldedColumnsUpgrade, whose fixture inserts a
-		// role -- the synthetic case was stronger than the real one here.
-		// DEFAULT '' also matches what backfillFoldedColumn selects on, so the
-		// backfill immediately below still picks every pre-existing row up.
-		if !columnExists(db, "roles", "name_folded") {
-			if err := exec("ALTER TABLE roles ADD COLUMN name_folded TEXT NOT NULL DEFAULT ''"); err != nil {
-				return err
-			}
-		}
-		if err := ensureRoleNameIndex(db); err != nil {
-			return err
-		}
-	}
-	if tableExists(db, "secret_nodes") {
-		if err := ensureSecretNodeNameNFC(db); err != nil {
-			return err
-		}
+	if err := alterRoleAndSecretNodeNames(db, exec); err != nil {
+		return err
 	}
 
-	// Close the share-create race (#136): a partial unique index on live rows so two
-	// concurrent CreateShareRecord calls for the same (secret, recipient, is_group)
-	// can no longer both succeed as separate rows. Additive + idempotent; the full
-	// AutoMigrate below covers fresh DBs (which get the index further down too).
-	if tableExists(db, "share_records") {
-		if err := ensureShareRecordUniqueIndex(db); err != nil {
-			return err
-		}
+	if err := alterShareRecordIndex(db); err != nil {
+		return err
 	}
 
-	// Close the secret-version TOCTOU (#121): a unique index on (secret_node_id,
-	// version_number) so two concurrent RotateSecret calls for the same secret can no
-	// longer both write the same next version number. Additive + idempotent; the full
-	// AutoMigrate below covers fresh DBs.
-	if tableExists(db, "secret_versions") {
-		if err := ensureSecretVersionIndex(db); err != nil {
-			return err
-		}
+	if err := alterSecretVersionIndex(db); err != nil {
+		return err
 	}
 
-	// Swap the plain unique index on projects.name for a case-insensitive, live-rows-
-	// only partial one (#385): "Production"/"production" previously landed as two
-	// distinct, all-succeeding rows, and the CLI's project name resolution
-	// (resolveProjectID) is case-insensitive and returns the first match — so a
-	// same-name-different-case shadow project the exact-match index didn't block could
-	// silently hijack a later `keyorix secret import/export --project production`.
-	// Additive + idempotent; the full AutoMigrate below covers fresh DBs.
-	if projectsExists {
-		if err := ensureProjectNameIndex(db); err != nil {
-			return err
-		}
+	if err := alterProjectNameIndex(db, projectsExists); err != nil {
+		return err
 	}
 
-	// SESSION-U guard U1: create these 11 tables unconditionally (not only on a
-	// fresh install) -- see the existence-flag block above for why. Each is a
-	// brand new table with no legacy columns to conditionally backfill, so a
-	// plain gated AutoMigrate is enough, matching MFAStepUpGrant/AuditCheckpoint
-	// above.
-	if !apiClientExists {
-		if err := db.AutoMigrate(&models.APIClient{}); err != nil {
-			return fmt.Errorf("failed to migrate api_clients table: %w", err)
-		}
-	}
-	if !apiTokenExists {
-		if err := db.AutoMigrate(&models.APIToken{}); err != nil {
-			return fmt.Errorf("failed to migrate api_tokens table: %w", err)
-		}
-	}
-	if !apiCallLogExists {
-		if err := db.AutoMigrate(&models.APICallLog{}); err != nil {
-			return fmt.Errorf("failed to migrate api_call_logs table: %w", err)
-		}
-	}
-	if !externalIdentityExists {
-		if err := db.AutoMigrate(&models.ExternalIdentity{}); err != nil {
-			return fmt.Errorf("failed to migrate external_identities table: %w", err)
-		}
-	}
-	if !grpcServiceExists {
-		if err := db.AutoMigrate(&models.GRPCService{}); err != nil {
-			return fmt.Errorf("failed to migrate g_rpc_services table: %w", err)
-		}
-	}
-	if !identityProviderExists {
-		if err := db.AutoMigrate(&models.IdentityProvider{}); err != nil {
-			return fmt.Errorf("failed to migrate identity_providers table: %w", err)
-		}
-	}
-	if !passwordResetExists {
-		if err := db.AutoMigrate(&models.PasswordReset{}); err != nil {
-			return fmt.Errorf("failed to migrate password_resets table: %w", err)
-		}
-	}
-	if !rateLimitExists {
-		if err := db.AutoMigrate(&models.RateLimit{}); err != nil {
-			return fmt.Errorf("failed to migrate rate_limits table: %w", err)
-		}
-	}
-	if !secretAccessLogExists {
-		if err := db.AutoMigrate(&models.SecretAccessLog{}); err != nil {
-			return fmt.Errorf("failed to migrate secret_access_logs table: %w", err)
-		}
-	}
-	if !secretMetadataHistoryExists {
-		if err := db.AutoMigrate(&models.SecretMetadataHistory{}); err != nil {
-			return fmt.Errorf("failed to migrate secret_metadata_histories table: %w", err)
-		}
-	}
-	if !settingExists {
-		if err := db.AutoMigrate(&models.Setting{}); err != nil {
-			return fmt.Errorf("failed to migrate settings table: %w", err)
-		}
+	if err := createU1Tables(db, apiClientExists, apiTokenExists, apiCallLogExists, externalIdentityExists, grpcServiceExists, identityProviderExists, passwordResetExists, rateLimitExists, secretAccessLogExists, secretMetadataHistoryExists, settingExists); err != nil {
+		return err
 	}
 
 	// freshInstallComplete is true only when EVERY model the transactional
@@ -2432,6 +1024,11 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	// transactional wrapper (harmless, not required for correctness there,
 	// since Postgres was already atomic end to end).
 	return db.Transaction(func(tx *gorm.DB) error {
+		// Fresh-install steps (a new or half-migrated database only; an initialised one
+		// returned above). How to add a migration step: a new model goes in the AutoMigrate
+		// list below and in freshInstallComplete above; any other step is appended before
+		// recordSchemaEpoch, which stays last. A step an existing database also needs is
+		// called from the lists above as well.
 		// Migrated one model per AutoMigrate call, not as one bulk variadic call: on a
 		// fresh Postgres, re-inspecting a table that AutoMigrate already created
 		// earlier in this same run trips a pgx prepared-statement cache bug

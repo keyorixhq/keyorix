@@ -86,6 +86,8 @@ import (
 // to take its name).
 var secretNodesSweepExemptFiles = map[string]string{
 	"internal/storage/factory.go":            "migrateDatabase DDL and backfills: schema changes must reach every row, soft-deleted included",
+	"internal/storage/migrate_secrets.go":    "migrateDatabase steps (moved from factory.go): DDL and backfills must reach every row, soft-deleted included",
+	"internal/storage/migrate_rbac.go":       "migrateDatabase steps (moved from factory.go): DDL and backfills must reach every row, soft-deleted included",
 	"internal/storage/normalize_backfill.go": "name_folded backfill: must normalize soft-deleted rows too, or a restore lands an un-normalized name",
 	// Same class as factory.go's entry, just living in this package so the
 	// cache's own tests build their schema with the one definition rather than a
