@@ -72,6 +72,35 @@ export interface Group {
     member_count?: number;
 }
 
-export type BuiltInRole = 'super_admin' | 'admin' | 'editor' | 'viewer' | 'auditor';
+export type BuiltInRole =
+    | 'super_admin'
+    | 'admin'
+    | 'editor'
+    | 'viewer'
+    | 'auditor'
+    | 'system_admin'
+    | 'system_auditor'
+    | 'system_viewer'
+    | 'project_admin'
+    | 'project_developer'
+    | 'project_viewer'
+    | 'project_auditor'
+    | 'alert_operator';
 
-export const BUILT_IN_ROLES: BuiltInRole[] = ['super_admin', 'admin', 'editor', 'viewer', 'auditor'];
+// Mirrors builtinRoleNames in internal/core/auth_bootstrap.go: the server refuses to
+// update or delete these (core.IsBuiltinRole). Keep the two lists in step.
+export const BUILT_IN_ROLES: BuiltInRole[] = [
+    'super_admin',
+    'admin',
+    'editor',
+    'viewer',
+    'auditor',
+    'system_admin',
+    'system_auditor',
+    'system_viewer',
+    'project_admin',
+    'project_developer',
+    'project_viewer',
+    'project_auditor',
+    'alert_operator',
+];
