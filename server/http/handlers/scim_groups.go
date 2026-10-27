@@ -5,7 +5,6 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -65,9 +64,15 @@ func (p *scimGroupPayload) memberIDs() []uint {
 	return out
 }
 
-// renderGroup writes a group with its current members at the given status.
-func (h *SCIMHandler) renderGroup(w http.ResponseWriter, ctx context.Context, g *models.Group, status int) {
-	members, _ := h.coreService.GetGroupMembers(ctx, g.ID)
+// renderGroup writes a group with its current members at the given status. A failed
+// member read answers the SCIM error instead: rendering the group with an empty member
+// list would tell the IdP the group has no members, and it would remove them all.
+func (h *SCIMHandler) renderGroup(w http.ResponseWriter, r *http.Request, g *models.Group, status int) {
+	members, err := h.coreService.GetGroupMembers(r.Context(), g.ID)
+	if err != nil {
+		writeSCIMWriteError(w, r, fmt.Sprintf("reading members of SCIM group %d", g.ID), err)
+		return
+	}
 	writeSCIM(w, status, toSCIMGroup(g, members))
 }
 
@@ -127,7 +132,11 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	// of running across the whole directory.
 	resources := make([]map[string]any, 0, len(page))
 	for _, g := range page {
-		members, _ := h.coreService.GetGroupMembers(r.Context(), g.ID)
+		members, err := h.coreService.GetGroupMembers(r.Context(), g.ID)
+		if err != nil {
+			writeSCIMWriteError(w, r, fmt.Sprintf("listing members of SCIM group %d", g.ID), err)
+			return
+		}
 		resources = append(resources, toSCIMGroup(g, members))
 	}
 	writeSCIM(w, http.StatusOK, listResponsePaged(resources, total, startIndex))
@@ -155,7 +164,7 @@ func (h *SCIMHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMWriteError(w, r, fmt.Sprintf("reading SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusOK)
+	h.renderGroup(w, r, g, http.StatusOK)
 }
 
 // CreateGroup handles POST /scim/v2/Groups — provision a group with initial members.
@@ -178,7 +187,7 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMWriteError(w, r, fmt.Sprintf("provisioning SCIM group %q", p.DisplayName), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusCreated)
+	h.renderGroup(w, r, g, http.StatusCreated)
 }
 
 // ReplaceGroup handles PUT /scim/v2/Groups/{id} — rename + full member replace.
@@ -201,7 +210,7 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMWriteError(w, r, fmt.Sprintf("replacing SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusOK)
+	h.renderGroup(w, r, g, http.StatusOK)
 }
 
 var scimMemberFilterPath = regexp.MustCompile(`(?i)members\[\s*value\s+eq\s+"([^"]+)"\s*\]`)
@@ -304,7 +313,7 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) { // NO
 		writeSCIMWriteError(w, r, fmt.Sprintf("patching SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusOK)
+	h.renderGroup(w, r, g, http.StatusOK)
 }
 
 // DeleteGroup handles DELETE /scim/v2/Groups/{id}.
