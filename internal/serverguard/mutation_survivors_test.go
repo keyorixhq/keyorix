@@ -23,9 +23,9 @@ func TestSQLiteLockPath_ExactSpellings(t *testing.T) {
 	}{
 		{"empty path uses the default database", "", "./secrets.db" + serverLockSuffix, true},
 		{"plain path", "/data/secrets.db", "/data/secrets.db" + serverLockSuffix, true},
-		{"query is not part of the file", "/data/secrets.db?cache=shared", "/data/secrets.db" + serverLockSuffix, true},
+		{"query is not part of the file", "/data/secrets.db?mode=ro", "/data/secrets.db" + serverLockSuffix, true},
 		{"memory database", ":memory:", "", false},
-		{"memory by query", "file:x.db?mode=memory&cache=shared", "", false},
+		{"memory by query", "file:x.db?mode=memory&mode2=x", "", false},
 		{"mode=memory in a directory name is a real file", "/data/mode=memory/secrets.db", "/data/mode=memory/secrets.db" + serverLockSuffix, true},
 		{"file: with an absolute path", "file:/data/secrets.db", "/data/secrets.db" + serverLockSuffix, true},
 		{"file: with an empty authority", "file:///data/secrets.db", "/data/secrets.db" + serverLockSuffix, true},
