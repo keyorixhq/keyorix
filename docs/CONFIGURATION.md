@@ -831,6 +831,21 @@ storage:
   resource name, or an Azure Key Vault key identifier URL.
   `KEYORIX_MASTER_PASSWORD` is **not** required. Startup needs the KMS reachable
   (fail-closed).
+  **`storage.encryption.key_provider.kms_encryption_context`** (a map of string to
+  string, default empty = no binding) is passed as the AWS `EncryptionContext` (aws-kms)
+  or the GCP additional authenticated data (gcp-kms) when the KEK is wrapped and
+  unwrapped, so another install that shares the same KMS key cannot unwrap this
+  install's wrapped KEK. Give it a value unique to the install, for example
+  `{keyorix-install: <id>}`. Left empty there is no binding, so on a KMS key shared with
+  other installs the wrapped KEK is not tied to this one. `azure-kms` does not support it (its RSA
+  wrap has no AAD input): setting it there is a **hard start-up error**, not a silent
+  downgrade. A context is applied only when a fresh KEK is wrapped, so adding one to
+  an existing install is `admin encryption migrate-provider --to-kms-encryption-context
+  … ` with a **new** `--to-wrapped-key-path` (it refuses the current path). Once the
+  context is set, a wrapped KEK that does not decrypt under it **fails start-up**; the
+  transitional escape hatch is `insecure_allow_kms_context_fallback` (see the
+  renamed-settings table), which retries without a context, is logged at every use,
+  and is refused at start-up as soon as the blob decrypts under its context.
 
 > Rotating the **DEK** (`keyorix-server admin encryption rotate`) re-encrypts all rows under a
 > new DEK and is independent of the provider.
@@ -1906,8 +1921,9 @@ commercial features off. It acts only on a validly signed license that has an ex
 date: with no license (the community baseline) or an invalid or untrusted one it says
 nothing (a bad license is reported at start-up and on the license status endpoint
 instead). It never changes whether the license gate lets a feature through. An unread
-reminder is not repeated, but is raised in place from Warning (expiring) to Critical
-(expired). Single-replica-gated (ADR-039).
+reminder is not repeated, but is raised in place from Warning (expiring, which includes
+the [`license.grace_hours`](#license) grace period) to Critical (expired past the grace
+period). Single-replica-gated (ADR-039).
 
 ```yaml
 license_expiry:
@@ -2431,6 +2447,40 @@ crypto_inventory:
   migration_years: 3              # default; time needed to move off a vulnerable algorithm
   unbounded_lifetime_years: 10    # default; lifetime assumed for a key with no expiry
 ```
+
+## license
+
+The offline commercial license (ADR-065), checked locally with no phone-home. **Fail-safe:
+a missing, unreadable, expired or invalid license never blocks start-up or denies access to
+existing data**; the license gate falls back to the community baseline and the server
+keeps running. A build without an embedded license key evaluates every token to the
+baseline.
+
+```yaml
+license:
+  path: /etc/keyorix/license.token   # default empty = community baseline
+  deployment_id: ""                  # default empty
+  grace_hours: 336                   # default 336 (14 days)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `license.path` | empty | File holding the license token, as written by `keyorix license install`. Empty means the community baseline. A file that is missing, unreadable or not a regular file logs a `WARNING` and also means the baseline. The file is read **once, at start-up**; after installing a renewed license, restart the server. |
+| `license.deployment_id` | empty | Only matters for a license bound to a deployment. For such a license this must be set and equal to the license's `deployment_id`; if it is empty or different, the license is treated as invalid (community baseline). A license not bound to a deployment ignores this key. |
+| `license.grace_hours` | `336` | Hours after the license's expiry date during which its features are kept (with a "renew now" warning). `0` or a negative value means 336 (14 days). After the grace window the license counts as expired and the baseline applies. |
+
+See [`license_expiry`](#license_expiry) for the optional admin reminder.
+
+## minimum_cli_version
+
+A top-level string, empty by default (no floor). Set it to a semantic version such as
+`"1.2.0"` to make the CLI refuse to run against this server when the CLI build is older
+than that, or on a different major version. It is meant for forcing operators onto a CLI
+that carries a security fix. The server only *publishes* the value, on the
+unauthenticated `GET /api/v1/version` (so a CLI can check before it has credentials); the
+refusal is made by the CLI itself (`cli/internal/skew`), so it cannot stop an old
+CLI that skips the check, or a raw API client. With the key empty the CLI still applies its
+own same-major-version rule.
 
 ## sso
 

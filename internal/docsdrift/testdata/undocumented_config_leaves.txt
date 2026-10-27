@@ -13,8 +13,3 @@ client.auth.type
 client.endpoint
 client.timeout
 connect.connectors.environment
-license.deployment_id
-license.grace_hours
-license.path
-minimum_cli_version
-storage.encryption.key_provider.kms_encryption_context
