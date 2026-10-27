@@ -183,6 +183,9 @@ func (h *RotationPolicyHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 	policy, err := h.coreService.CreateRotationPolicy(r.Context(), userCtx.UserID, req)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating rotation policy: %v", err)
 		if strings.Contains(err.Error(), "required") || strings.Contains(err.Error(), "must be less than") {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
@@ -269,6 +272,9 @@ func (h *RotationPolicyHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	policy, err := h.coreService.UpdateRotationPolicy(r.Context(), userCtx.UserID, req)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error updating rotation policy: %v", err)
 		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)
@@ -299,6 +305,9 @@ func (h *RotationPolicyHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.coreService.DeleteRotationPolicy(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error deleting rotation policy: %v", err)
 		if strings.Contains(err.Error(), errNotFound) {
 			h.sendError(w, "NotFound", errRotationPolicyNotFound, http.StatusNotFound, nil)

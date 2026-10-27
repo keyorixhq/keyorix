@@ -30,6 +30,10 @@ func NewMachineIdentityService(coreService *core.KeyorixCore) *MachineIdentityGR
 }
 
 func mapMachineError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	// MACH-001: a privilege-ceiling denial (requireMachinePrivilegeCeiling) is a
 	// deliberate, terminal authorization refusal, not an internal error. Check the
 	// typed sentinel via errors.Is BEFORE the substring switch below — the message

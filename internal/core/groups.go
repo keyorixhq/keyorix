@@ -102,7 +102,7 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 		}
 		if !matched {
-			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+			return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrGroupNotFound)
 		}
 		// Return the committed row, not the struct read before the write.
 		if updated, uerr = tx.GetGroup(ctx, group.ID); uerr != nil {

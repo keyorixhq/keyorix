@@ -44,6 +44,9 @@ func (h *DashboardHandler) PlaceLegalHold(w http.ResponseWriter, r *http.Request
 	}
 	hold, err := h.coreService.PlaceLegalHold(r.Context(), actor.UserID, body.Reason)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -79,6 +82,9 @@ func (h *DashboardHandler) LiftLegalHold(w http.ResponseWriter, r *http.Request)
 		_ = json.NewDecoder(r.Body).Decode(&body)
 	}
 	if err := h.coreService.LiftLegalHold(r.Context(), actor.UserID, body.Reason); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

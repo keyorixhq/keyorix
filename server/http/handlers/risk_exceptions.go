@@ -58,6 +58,9 @@ func (h *DashboardHandler) CreateRiskException(w http.ResponseWriter, r *http.Re
 	}
 	exc, err := h.coreService.CreateRiskException(r.Context(), actor.UserID, isMachineActor(r), body.Title, body.Category, body.Reference, body.Justification, expiresAt)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -89,6 +92,9 @@ func (h *DashboardHandler) ApproveRiskException(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err := h.coreService.ApproveRiskException(r.Context(), actor.UserID, isMachineActor(r), uint(id)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

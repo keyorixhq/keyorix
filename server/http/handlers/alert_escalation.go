@@ -85,6 +85,9 @@ func (h *AlertEscalationHandler) Create(w http.ResponseWriter, r *http.Request) 
 	// AUDIT-TX-3: core writes the policy-created row in the create's own transaction.
 	created, err := h.coreService.CreateAlertEscalationPolicy(core.WithMutationAuditActor(r.Context(), u.UserID), p)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if isEscalationValidationError(err) {
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 			return
@@ -150,6 +153,9 @@ func (h *AlertEscalationHandler) Update(w http.ResponseWriter, r *http.Request) 
 	// side) and writes the policy-updated row in the update's own transaction.
 	updated, err := h.coreService.UpdateAlertEscalationPolicy(core.WithMutationAuditActor(r.Context(), u.UserID), id, body)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), escalationNotFound) {
 			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
 			return
@@ -177,6 +183,9 @@ func (h *AlertEscalationHandler) Delete(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.DeleteAlertEscalationPolicy(core.WithMutationAuditActor(r.Context(), u.UserID), id); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), escalationNotFound) {
 			sendError(w, "NotFound", escalationNotFoundMessage, http.StatusNotFound, nil)
 			return

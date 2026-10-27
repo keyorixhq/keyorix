@@ -218,7 +218,17 @@ func TestFence_RefusesEveryForeignWriteWhileHolderLives(t *testing.T) {
 		}
 		return tx.Exec("UPDATE machine_identity_credentials SET revoked = true WHERE id = ?", w.credID).Error
 	})
-	requireFenced(t, err, "replica-role session")
+	var super bool
+	require.NoError(t, w.foreign.Raw("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super).Error)
+	if super {
+		requireFenced(t, err, "replica-role session")
+	} else {
+		// Setting session_replication_role needs a superuser (or a SET grant
+		// on the parameter): this role cannot reach replica mode at all.
+		require.ErrorContains(t, err, `permission denied to set parameter "session_replication_role"`)
+		t.Log("replica-role case: the test role is not a superuser, so the fence under replica mode is pending a superuser Postgres (CI's service role is one)")
+	}
+	require.False(t, w.revoked(), "the replica-role write must not have been applied")
 
 	// A session on another search_path writing schema-qualified names meets
 	// the same fence (the holder is looked up for the TABLE's schema).
@@ -458,6 +468,21 @@ func TestCheckOff(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, live)
 	require.Equal(t, g.PID(), pid)
+	// The other accepted spelling of the storage type sees the holder too: a
+	// "not PostgreSQL" answer would skip the admin --force refusal, let a
+	// server without the setting boot beside the holder, and report no fence.
+	alt := *w.cfg
+	alt.Storage.Type = "postgresql"
+	live, pid, err = HolderLive(context.Background(), &alt)
+	require.NoError(t, err)
+	require.True(t, live, `storage.type "postgresql" did not see the live holder`)
+	require.Equal(t, g.PID(), pid)
+	err = CheckOff(context.Background(), &alt)
+	require.Error(t, err, `storage.type "postgresql": CheckOff let a server boot beside the holder`)
+	require.Contains(t, err.Error(), "single_writer holds this database")
+	rep, err := InspectFence(context.Background(), &alt)
+	require.NoError(t, err)
+	require.True(t, rep.Complete(), `storage.type "postgresql": InspectFence saw no fence: %+v`, rep)
 
 	g.Close()
 	require.Eventually(t, func() bool { l, _, _ := HolderLive(context.Background(), w.cfg); return !l }, 5*time.Second, 50*time.Millisecond)

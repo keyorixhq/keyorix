@@ -65,6 +65,9 @@ func (h *SecretHandler) ResumeSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := h.coreService.ResumeSecret(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), "not found") {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else {

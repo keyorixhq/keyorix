@@ -145,6 +145,10 @@ func breakGlassToProto(a *models.BreakGlassActivation) *pb.BreakGlassActivation 
 // PermissionDenied/NotFound silently became Internal. An error that carries no
 // sentinel is Internal whatever its words say.
 func breakGlassError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	// #3546: a role-scope refusal is the caller's to fix (fixed, client-safe text).
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
 		return status.Error(codes.InvalidArgument, scopeMsg)
