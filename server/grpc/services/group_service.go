@@ -2,9 +2,11 @@ package services
 
 import (
 	"context"
+	"errors"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -218,19 +220,33 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 // groupError maps a core error to a gRPC status. Raw core/DB error strings are
 // never forwarded — only safe static messages reach the caller to prevent
 // internal detail leakage.
+//
+// Not-found, already-exists and last-administrator are classified by sentinel
+// (errors.Is), never by matching err.Error(): the text depends on the locale and on
+// whichever layer wrapped it, and a raw "record not found" from some other row is not
+// a missing group (AUDIT-503-MAP-1). Every core path a group RPC reaches returns a
+// typed error for these three; an untyped one is Internal until it is typed.
 func groupError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
+	switch {
+	case errors.Is(err, storage.ErrGroupNotFound):
+		return status.Error(codes.NotFound, "group not found")
+	case errors.Is(err, storage.ErrUserNotFound):
+		return status.Error(codes.NotFound, "user not found")
+	case errors.Is(err, storage.ErrDuplicateGroupName):
+		return status.Error(codes.AlreadyExists, "group name already in use")
+	case errors.Is(err, core.ErrLastAdminGroupGuard), errors.Is(err, storage.ErrWouldStrandLastAdmin):
+		return status.Error(codes.FailedPrecondition, "cannot remove the last administrator")
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
-	case strings.Contains(msg, "not found"):
-		return status.Error(codes.NotFound, "group not found")
-	case strings.Contains(msg, "already exists") || strings.Contains(msg, "duplicate") || strings.Contains(msg, "in use"):
-		return status.Error(codes.AlreadyExists, "group name already in use")
 	case strings.Contains(msg, "required") || strings.Contains(msg, "invalid") || strings.Contains(msg, "exceeds"):
 		return status.Error(codes.InvalidArgument, "invalid group request")
 	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied") || strings.Contains(msg, "administrator can grant"):
 		return status.Error(codes.PermissionDenied, "access denied")
-	case strings.Contains(msg, "refusing to remove the last"):
-		return status.Error(codes.FailedPrecondition, "cannot remove the last administrator")
 	default:
 		return status.Error(codes.Internal, "group operation failed")
 	}

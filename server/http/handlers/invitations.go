@@ -63,6 +63,9 @@ func (h *CatalogHandler) CreateInvitation(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		// See CreateGlobalInvitation's identical carve-out (#2419): a failed
 		// supersede+create of the setup token itself must fail closed, not be
 		// reported as a resendable partial success.
@@ -153,6 +156,9 @@ func (h *CatalogHandler) CreateGlobalInvitation(w http.ResponseWriter, r *http.R
 		return
 	}
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		// A failed supersede+create of the setup token itself must never be reported
 		// as success (#2419): unlike a config/throttle/delivery failure below, this
 		// means the attempted invalidation of the subject's prior active links did
@@ -302,6 +308,9 @@ func (h *CatalogHandler) CreateAccessRequest(w http.ResponseWriter, r *http.Requ
 	}
 	req, err := h.coreService.RequestProjectAccess(r.Context(), id, actor.UserID, body.SuggestedRole, body.Reason)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -384,6 +393,9 @@ func (h *CatalogHandler) ResolveAccessRequest(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if resolveErr != nil {
+		if sendAuditUnavailable(w, resolveErr) {
+			return
+		}
 		if sendRoleScopeError(w, resolveErr) {
 			return
 		}

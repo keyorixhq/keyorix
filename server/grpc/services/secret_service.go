@@ -582,6 +582,10 @@ func secretACLToProto(a *models.SecretACL) *pb.SecretACLEntry {
 
 // mapSecretACLError translates core ACL errors into gRPC status codes.
 func mapSecretACLError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):
