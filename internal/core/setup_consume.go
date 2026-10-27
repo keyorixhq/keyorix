@@ -494,7 +494,9 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	ok, uerr := c.storage.UpdateProjectInvitation(ctx, inv)
 	if uerr != nil {
 		// The grants are live but the invitation still reads pending: undo them and
-		// the account, like a failed grant, so a resend starts clean.
+		// the account, like a failed grant, so a resend starts clean. If the write
+		// actually committed (ambiguous error), the row reads accepted with no grants
+		// and no account: fail-closed, but the "still pending" message is then wrong.
 		inv.State, inv.AcceptedAt = InvitationPending, nil
 		return nil, c.abandonInvitationAccept(ctx, inv, user, invitationAcceptStepAccept, uerr)
 	}
