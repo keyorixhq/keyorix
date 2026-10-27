@@ -54,11 +54,20 @@ into the output. Pinned by INV-HTTP-crypto-inventory-metadata-only.
 
 1. **The score is a heuristic, not a cryptanalytic claim.** The horizon and the assumed lifetime of a
    never-expiring key are policy inputs. Reports must show the policy used (the JSON and CBOM both do).
-2. **Coverage gaps, listed rather than hidden.** WebAuthn credentials are one asset: per-credential COSE
-   algorithms need a deployment-wide storage listing that does not exist yet. SAML signing certificates,
-   the database TLS client certificate, and backup archive encryption are not inventoried. The DEK `created_at`
-   is the key file's mtime (creation or last rotation). AWS and GCP KMS wrapping keys are assumed symmetric;
-   autocert certificates are assumed ECDSA P-256. Derived HMAC keys have no creation date.
+2. **Coverage gaps, listed rather than hidden.** Closed by RD-CBOM-TAILS-1: SAML (the IdP signing
+   certificates Keyorix trusts, read from the provider's metadata; Keyorix holds no SAML signing key of its
+   own), the database TLS client certificate (only when the `dsn` carries `sslcert`) and CA bundle
+   (`ssl_root_cert` or the dsn's `sslrootcert`; `system` roots have no file to read), and backup archive
+   encryption (stated as it is: the archive container is not encrypted, secret values travel as stored
+   ciphertext and the DEK wrapped under the KEK). WebAuthn is now listed per credential public-key algorithm,
+   by walking the users with the existing per-user credential listing (no new storage method; capped at 5000
+   users, falling back to one generic asset with a warning). The DEK `created_at` is the DEK epoch row's
+   `updated_at` (PostgreSQL; the key-set manifest records generations and hashes, no time) and falls back to the
+   key file's mtime marked `created_at_estimated`; that mtime also moves on KEK rewrap. Still open: a client
+   certificate supplied by `PGSSLCERT` or libpq's default path is not discovered; the epoch row dates the DEK
+   from when the epoch was seeded, which for a deployment that predates the epoch is the upgrade, not the DEK's
+   creation; AWS and GCP KMS wrapping keys are assumed symmetric; autocert certificates are assumed ECDSA P-256;
+   derived HMAC keys have no creation date.
 3. **Locator disclosure.** File paths and KMS key IDs go to `audit.read` holders, more than the `system.read`
    `/system/encryption-config` sibling shows. Acceptable for the auditor role; recorded in the invariant.
 4. **Audit write is best-effort**, like the sibling compliance reads: a failed audit insert is logged but

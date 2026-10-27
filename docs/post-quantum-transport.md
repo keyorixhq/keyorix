@@ -32,7 +32,7 @@ the whole system is quantum-safe.
 | Go SDK (`keyorix-sdks/go`) | yes (built with Go >= 1.24; its default client sets no TLS config) | run against a real server with a `DefaultTransport` clone trusting the test CA: the server counted one hybrid handshake |
 | Node SDK | yes with Node 26.11 / OpenSSL 4 | run against a real server: `getEphemeralKeyInfo()` = `X25519MLKEM768` |
 | Python SDK | yes with Python 3.14 / OpenSSL 4.0.3 | run against a real server: the server counted one hybrid handshake |
-| Java SDK | **not verified** | no JDK in the test session; depends on the JDK's TLS provider |
+| Java SDK | yes with JDK 25.0.5 (Temurin); other JDKs not tested | the SDK (`KeyorixClient` with a CA path, `health()`) run on JDK 25.0.5 against a Go 1.27.2 `crypto/tls` test server (not the Keyorix binary): the server logged `X25519MLKEM768`; the same client with `-Djdk.tls.namedGroups=x25519` logged `X25519`. Older JDKs were not tested; treat them as classical until you check |
 | Outbound connectors (webhooks, Vault, KMS, Kubernetes...) | the client side offers it; the remote service decides | they use Go's default groups |
 
 The SDKs inherit their language runtime's TLS library. Whether *your* client negotiates the
@@ -139,6 +139,11 @@ Go >= 1.24 offers the hybrid by default; nginx needs OpenSSL 3.5+ and a group li
 includes it; managed load balancers publish their own policies. Check with the OpenSSL
 command above against the public name.
 
+Front-proxy checks, **pending e2e VM** (they need Docker, which the session that wrote this page
+did not have): Caddy and nginx in front of Keyorix, each checked with `openssl s_client` against
+the proxy's public name. The statements above about Caddy and nginx come from their
+documentation and the Go/OpenSSL versions they build with, not from a run.
+
 ## How this is kept true
 
 - `server/pq_transport_test.go`, `server/grpc/pq_transport_test.go`: real handshakes against
@@ -151,6 +156,6 @@ command above against the public name.
 - The same tests run under `GODEBUG=fips140=on` and `fips140=only`
   (`GODEBUG=fips140=only go test ./server -run TestPQTransport`).
 - Not covered by an automated test: the Node, Python and Java SDKs (checked by hand against a
-  real server; Java not checked), and TLS terminated by a proxy.
+  test server; Java on JDK 25.0.5 only), and TLS terminated by a proxy.
 
 Design note and risks: [design/post-quantum-transport.md](design/post-quantum-transport.md).
