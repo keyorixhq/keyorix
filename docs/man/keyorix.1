@@ -1762,7 +1762,9 @@ Username
 .SS keyorix logout
 Revoke the stored session and forget it locally
 .PP
-logout is the remote\-only successor to the old CLI's "auth logout" (docs/cli\-split\-inventory.md §2.3, §4): the old command only cleared local config and never told the server (§8 Finding S12). This one calls POST /auth/logout to invalidate the token server\-side first, then deletes the local credentials file regardless of whether that call succeeded \-\- a server that is unreachable or already rejects the token must not leave a stale credential sitting on disk.
+Sign out: the server revokes the stored session token first, then the local credentials file is deleted, even when the server cannot be reached or already rejects the token, so no stale credential stays on disk.
+.PP
+The credentials file also holds the server URL and the ca_file setting (keyorix config set ca_file), so both are forgotten too: against a server with a private or self\-signed certificate, run "keyorix config set ca_file <path>" again (or pass \-\-ca\-file) before the next "keyorix login".
 .PP
 Usage: \fBkeyorix logout\fR
 .PP
@@ -5186,7 +5188,9 @@ Usage: \fBkeyorix user [command]\fR
 .SS keyorix user create
 Create a new user
 .PP
-Create a new user. Supply \-\-password to set an initial password, or use \-\-setup\-link to provision an ADR\-028 setup link instead: the account is created in pending_first_login state and the user sets their own password via the link. In out\-of\-band mode the link is printed for you to relay.
+Create a new user. By default you set the initial password: it is read from a hidden prompt, or in a script from KEYORIX_INITIAL_PASSWORD or the 0600 file named by KEYORIX_INITIAL_PASSWORD_FILE (never from the command line, where ps and shell history would show it).
+.PP
+Or use \-\-setup\-link to provision an ADR\-028 setup link instead: the account is created in pending_first_login state and the user sets their own password via the link. In out\-of\-band mode the link is printed for you to relay.
 .PP
 Or use \-\-one\-time\-password to have the server generate an initial password (ADR\-028 Part E): the account is created in password_reset_required state, the password is printed once for you to relay, and the user must change it on first login.
 .PP
