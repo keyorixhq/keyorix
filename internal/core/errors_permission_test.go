@@ -7,11 +7,11 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
 func TestErrPermissionDenied_SpecificSentinelsMatchIt(t *testing.T) {
@@ -68,14 +68,11 @@ func TestEveryErrorPermissionDeniedRefusalIsTyped(t *testing.T) {
 		"wrapSoDPermissionDenied": true, "wrapRiskExceptionPermissionDenied": true,
 		"shareRefusal": true,
 	}
-	files, err := filepath.Glob("*.go")
+	files, err := srcpath.CoreFamilyGoFiles()
 	require.NoError(t, err)
 	fset := token.NewFileSet()
 	var bad []string
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
 		file, err := parser.ParseFile(fset, f, nil, 0)
 		require.NoError(t, err)
 		var stack []ast.Node

@@ -23,6 +23,7 @@ classification_gate.go
 connect.go
 constants.go
 errors.go
+errors_permission.go
 gate_read_decision.go
 hash.go
 identity.go
