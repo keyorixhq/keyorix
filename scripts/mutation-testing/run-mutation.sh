@@ -71,7 +71,8 @@ mkdir -p "$MUTATION_STATE_DIR"
 # (one database per package, MUTATION_WORKERS=1): the PostgreSQL-only tests
 # then run and cover mutants the run without a DSN reports as not covered, so
 # the two efficacies differ. With a DSN set it replaces the fourth field; a
-# package without one keeps the fourth (its result does not depend on the DSN).
+# package without one keeps the fourth (its result does not depend on the DSN,
+# or its Postgres floor is not measured yet).
 #
 # A quoted heredoc, not a double-quoted string: the comment lines below quote
 # code (backticks, double quotes), which a double-quoted string runs as command
