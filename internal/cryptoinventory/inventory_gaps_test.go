@@ -9,12 +9,15 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol/webauthncbor"
+	"github.com/go-webauthn/webauthn/protocol/webauthncose"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -268,4 +271,98 @@ func TestBuild_DEKCreatedAtEstimatedIsMarked(t *testing.T) {
 	// no DEK time at all: nothing is marked
 	inv := Build(Inputs{EncryptionEnabled: true, DEKCreatedAtEstimated: true}, DefaultPolicy(), riskNow)
 	assert.False(t, assetByID(t, inv, "dek").CreatedAtEstimated)
+}
+
+// coseKeys are real COSE_Key encodings of freshly generated keys, the shape a
+// passkey's public key has in the credential store.
+func coseKeys(t *testing.T) map[string][]byte {
+	t.Helper()
+	marshal := func(v any) []byte {
+		b, err := webauthncbor.Marshal(v)
+		require.NoError(t, err)
+		return b
+	}
+	pad := func(b []byte, n int) []byte { return append(make([]byte, n-len(b)), b...) }
+
+	ec, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	rk, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	edPub, _, err := ed25519.GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	return map[string][]byte{
+		"es256": marshal(webauthncose.EC2PublicKeyData{
+			PublicKeyData: webauthncose.PublicKeyData{KeyType: int64(webauthncose.EllipticKey), Algorithm: int64(webauthncose.AlgES256)},
+			Curve:         int64(webauthncose.P256), XCoord: pad(ec.X.Bytes(), 32), YCoord: pad(ec.Y.Bytes(), 32)}),
+		"rs256": marshal(webauthncose.RSAPublicKeyData{
+			PublicKeyData: webauthncose.PublicKeyData{KeyType: int64(webauthncose.RSAKey), Algorithm: int64(webauthncose.AlgRS256)},
+			Modulus:       rk.N.Bytes(), Exponent: big.NewInt(int64(rk.E)).Bytes()}),
+		"eddsa": marshal(webauthncose.OKPPublicKeyData{
+			PublicKeyData: webauthncose.PublicKeyData{KeyType: int64(webauthncose.OctetKey), Algorithm: int64(webauthncose.AlgEdDSA)},
+			Curve:         int64(webauthncose.Ed25519), XCoord: edPub}),
+	}
+}
+
+func TestClassifyWebAuthnKey(t *testing.T) {
+	keys := coseKeys(t)
+	for name, want := range map[string]WebAuthnKey{
+		"es256": {Algorithm: "ECDSA-P256 (COSE ES256)", KeySizeBits: 256},
+		"rs256": {Algorithm: "RSA-2048 (COSE RS256)", KeySizeBits: 2048},
+		"eddsa": {Algorithm: "Ed25519 (COSE EdDSA)", KeySizeBits: 256},
+	} {
+		t.Run(name, func(t *testing.T) {
+			got, err := ClassifyWebAuthnKey(keys[name])
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+		})
+	}
+	for name, junk := range map[string][]byte{"empty": nil, "garbage": []byte("not cbor at all"), "truncated": keys["es256"][:10]} {
+		_, err := ClassifyWebAuthnKey(junk)
+		assert.Error(t, err, name)
+	}
+}
+
+func TestBuild_WebAuthnCredentialsPerAlgorithm(t *testing.T) {
+	sch := compileCycloneDX16(t)
+	keys := coseKeys(t)
+	d1, d2 := riskNow.Add(-300*24*time.Hour), riskNow.Add(-10*24*time.Hour)
+	in := Inputs{WebAuthnEnabled: true, WebAuthnRPID: "keyorix.example", WebAuthnEnumerated: true,
+		WebAuthnCredentials: []WebAuthnCredentialInput{
+			{PublicKey: keys["es256"], CreatedAt: d2},
+			{PublicKey: keys["es256"], CreatedAt: d1},
+			{PublicKey: keys["rs256"], CreatedAt: d2},
+			{PublicKey: keys["eddsa"], CreatedAt: d2},
+			{PublicKey: []byte("junk"), CreatedAt: d2},
+		}}
+	inv := Build(in, DefaultPolicy(), riskNow)
+
+	es := assetByID(t, inv, "webauthn-passkeys.ecdsa-p256-cose-es256")
+	assert.Equal(t, "ECDSA-P256 (COSE ES256)", es.Algorithm)
+	assert.Contains(t, es.Notes, "2 credential(s)")
+	require.NotNil(t, es.CreatedAt)
+	assert.WithinDuration(t, d1, *es.CreatedAt, time.Second, "oldest registration")
+	assert.True(t, es.Risk.QuantumVulnerable)
+	assert.Equal(t, 2048, assetByID(t, inv, "webauthn-passkeys.rsa-2048-cose-rs256").KeySizeBits)
+	assert.True(t, assetByID(t, inv, "webauthn-passkeys.ed25519-cose-eddsa").Risk.QuantumVulnerable)
+	unk := assetByID(t, inv, "webauthn-passkeys.unknown")
+	assert.GreaterOrEqual(t, unk.Risk.Score, 40, "an unclassifiable key fails closed")
+	assert.Contains(t, gapWarnings(inv)[0], "1 WebAuthn credential(s)")
+	for _, a := range inv.Assets {
+		assert.NotEqual(t, "webauthn-passkeys", a.ID, "the generic asset is replaced by the enumerated ones")
+	}
+
+	doc, err := inv.CBOM(CBOMOptions{})
+	require.NoError(t, err)
+	require.NoError(t, validate(t, sch, doc))
+}
+
+func TestBuild_WebAuthnNotEnumeratedKeepsGenericAsset(t *testing.T) {
+	inv := Build(Inputs{WebAuthnEnabled: true, WebAuthnRPID: "x"}, DefaultPolicy(), riskNow)
+	assetByID(t, inv, "webauthn-passkeys")
+
+	none := Build(Inputs{WebAuthnEnabled: true, WebAuthnRPID: "x", WebAuthnEnumerated: true}, DefaultPolicy(), riskNow)
+	for _, a := range none.Assets {
+		assert.NotEqual(t, ClassWebAuthn, a.Class, "enumerated and empty: nothing to list")
+	}
+	assert.Contains(t, strings.Join(none.Notes, " "), "no passkey is registered")
 }

@@ -28,10 +28,14 @@ type Inputs struct {
 	Recovery              *RecoveryInput
 	WebAuthnEnabled       bool
 	WebAuthnRPID          string
-	OIDCIssuers           []string
-	SAML                  []SAMLInput
-	Database              *DatabaseTLSInput
-	Backup                *BackupInput
+	// WebAuthnEnumerated is true when WebAuthnCredentials is the complete list of
+	// stored credentials (possibly empty). False leaves the single generic asset.
+	WebAuthnEnumerated  bool
+	WebAuthnCredentials []WebAuthnCredentialInput
+	OIDCIssuers         []string
+	SAML                []SAMLInput
+	Database            *DatabaseTLSInput
+	Backup              *BackupInput
 }
 
 // SAMLInput is one SAML provider's IdP metadata (public: entity, endpoints and
@@ -108,7 +112,15 @@ func Build(in Inputs, p Policy, now time.Time) Inventory {
 			inv.Warnings = append(inv.Warnings, warn)
 		}
 	}
-	if in.WebAuthnEnabled {
+	switch {
+	case in.WebAuthnEnabled && in.WebAuthnEnumerated:
+		wa, warns := webAuthnCredentialAssets(in.WebAuthnRPID, in.WebAuthnCredentials)
+		assets = append(assets, wa...)
+		inv.Warnings = append(inv.Warnings, warns...)
+		if len(in.WebAuthnCredentials) == 0 {
+			inv.Notes = append(inv.Notes, "WebAuthn is enabled but no passkey is registered.")
+		}
+	case in.WebAuthnEnabled:
 		assets = append(assets, webAuthnAsset(in.WebAuthnRPID))
 	}
 	for i, iss := range in.OIDCIssuers {

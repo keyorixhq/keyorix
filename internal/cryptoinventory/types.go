@@ -78,8 +78,8 @@ type Asset struct {
 	// CreatedAtEstimated marks a CreatedAt that is a stand-in for the real creation
 	// time (for example a key file's modification time). Absent means CreatedAt is
 	// recorded, or there is none.
-	CreatedAtEstimated bool `json:"created_at_estimated,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	CreatedAtEstimated bool       `json:"created_at_estimated,omitempty"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
 	// AssumedLifetimeDays stands in for ExpiresAt when the real expiry is unknown
 	// but the rotation cadence is (e.g. an ACME certificate, an IdP JWKS key).
 	// Zero means "no expiry": the policy's UnboundedLifetimeYears applies.

@@ -5,6 +5,8 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/cryptoinventory"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
@@ -146,6 +149,14 @@ func cryptoInventoryInputs(ctx context.Context, cfg *config.Config, coreService 
 		}
 	}
 
+	if cfg.WebAuthn.Enabled {
+		creds, complete, warn := webAuthnInventoryCredentials(ctx, coreService.Storage())
+		in.WebAuthnCredentials, in.WebAuthnEnumerated = creds, complete
+		if warn != "" {
+			warnings = append(warnings, warn)
+		}
+	}
+
 	in.Backup = &cryptoinventory.BackupInput{EncryptionEnabled: enc.Enabled}
 	if st := cfg.Storage.Type; st == "postgres" || st == "postgresql" {
 		files, err := config.DatabaseTLSFilesOf(&cfg.Storage.Database)
@@ -249,4 +260,59 @@ func dekCreatedAt(ctx context.Context, dekPath string, st interface {
 		return &m, true
 	}
 	return nil, false
+}
+
+const (
+	// webAuthnListPageSize / webAuthnListMaxUsers bound the deployment-wide walk.
+	webAuthnListPageSize = 200
+	webAuthnListMaxUsers = 5000
+)
+
+// webAuthnInventoryCredentials lists every stored passkey's public key by walking
+// the users with the EXISTING per-user ListWebAuthnCredentials: a deployment-wide
+// listing method on the storage interface was deliberately not added (it is the
+// hot interface every wrapper and fault double implements). The cost is one
+// credential query per user, acceptable for an audit.read-gated report that is
+// read rarely and is capped at webAuthnListMaxUsers users. complete is false when
+// the walk failed or was capped, in which case the generic WebAuthn asset is
+// kept and warn says why. Only credential_blob's public key is decoded here.
+func webAuthnInventoryCredentials(ctx context.Context, st storage.Storage) (creds []cryptoinventory.WebAuthnCredentialInput, complete bool, warn string) {
+	seen := map[uint]bool{}
+	users := 0
+	for page := 1; ; page++ {
+		batch, total, err := st.ListUsers(ctx, &storage.UserFilter{Page: page, PageSize: webAuthnListPageSize, IncludeDeleted: true})
+		if err != nil {
+			log.Printf("crypto inventory: list users for webauthn: %v", err)
+			return nil, false, "WebAuthn credentials could not be listed; the per-credential algorithms are missing from this inventory"
+		}
+		for _, u := range batch {
+			users++
+			rows, err := st.ListWebAuthnCredentials(ctx, u.ID)
+			if err != nil {
+				log.Printf("crypto inventory: list webauthn credentials: %v", err)
+				return nil, false, "WebAuthn credentials could not be listed; the per-credential algorithms are missing from this inventory"
+			}
+			for _, r := range rows {
+				if seen[r.ID] {
+					continue
+				}
+				seen[r.ID] = true
+				var blob struct {
+					PublicKey []byte `json:"publicKey"`
+				}
+				// An undecodable blob is passed on empty: the inventory records it as
+				// an unclassifiable credential rather than dropping it.
+				if err := json.Unmarshal(r.CredentialBlob, &blob); err != nil {
+					blob.PublicKey = nil
+				}
+				creds = append(creds, cryptoinventory.WebAuthnCredentialInput{PublicKey: blob.PublicKey, CreatedAt: r.CreatedAt})
+			}
+		}
+		if len(batch) == 0 || int64(users) >= total {
+			return creds, true, ""
+		}
+		if users >= webAuthnListMaxUsers {
+			return nil, false, fmt.Sprintf("WebAuthn credentials were not enumerated: more than %d users", webAuthnListMaxUsers)
+		}
+	}
 }
