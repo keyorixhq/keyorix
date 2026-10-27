@@ -63,7 +63,7 @@ func tx3Kinds() []grantKind {
 		u := scimUser(w).(*models.User)
 		g, err := w.c.ProvisionSCIMGroup(ctx, 0, w.tag("g3-sg"), nil)
 		require.NoError(w.t, err)
-		return [2]any{g, u}
+		return [2]any{g.Group, u}
 	}
 	channel := func(w *satWorld) any {
 		ch, err := w.c.CreateNotificationChannel(ctx, &models.NotificationChannel{

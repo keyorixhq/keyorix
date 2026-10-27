@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"regexp"
 	"strings"
 
@@ -323,6 +324,9 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 	var patHashes []string // PATs revoked by a deactivation; evicted from the auth cache after commit
 	var guardErr error     // guardLastAdminDeactivation's own error, returned verbatim below — never wrapped as a storage failure
 	var settle func()
+	// committed: the callback below ran to the end and its transaction committed. The lock
+	// wrapper can still report an error after that (#3774); see the lockErr handling.
+	var committed bool
 	// split: a deactivation of an active user that also changes the email is a mixed
 	// request (MERGE-FIX-3482G): the deactivation commits alone below (owed), and the
 	// email/displayName change follows as its own fail-closed commit (audit_split.go).
@@ -378,10 +382,19 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 				fmt.Sprintf(desc, id))
 			return nil
 		})
+		committed = serr == nil
 		return serr
 	})
 	if guardErr != nil {
 		return nil, guardErr
+	}
+	if lockErr != nil && committed {
+		// The deactivation committed and only the lock wrapper failed afterwards (releasing
+		// the lock). Returning the error here would skip the session and cache eviction and
+		// the owed audit row below, and the IdP's retry finds the user already inactive and
+		// does not redo them (#3774). Carry on as a success.
+		log.Printf("SCIM update of user %d: the named lock reported an error after the change committed (continuing with the post-commit steps): %v", id, lockErr)
+		lockErr = nil
 	}
 	if lockErr != nil {
 		if errors.Is(lockErr, storage.ErrUserNotFound) {
@@ -668,6 +681,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	var username string
 	var guardErr error
 	var settle func()
+	var committed bool // the callback's transaction committed (the lock wrapper may still fail, #3774)
 	lockErr := c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
 		c.accountStateMu.Lock()
 		defer c.accountStateMu.Unlock()
@@ -778,10 +792,17 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 				fmt.Sprintf("SCIM deprovisioned user %d (%s)", id, username))
 			return nil
 		})
+		committed = serr == nil
 		return serr
 	})
 	if guardErr != nil {
 		return guardErr
+	}
+	if lockErr != nil && committed {
+		// The deprovision committed and only the lock wrapper failed afterwards: carry on
+		// with the cache eviction and the owed audit row (#3774), see UpdateSCIMUser.
+		log.Printf("SCIM deprovision of user %d: the named lock reported an error after the change committed (continuing with the post-commit steps): %v", id, lockErr)
+		lockErr = nil
 	}
 	if lockErr != nil {
 		if errors.Is(lockErr, storage.ErrUserNotFound) {

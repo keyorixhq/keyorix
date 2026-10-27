@@ -14,6 +14,12 @@ var scimSweepOps = []string{
 	"REST PUT /scim/v2/Groups/{id}",
 	"REST PATCH /scim/v2/Groups/{id}",
 	"REST DELETE /scim/v2/Groups/{id}",
+	// Item 3: the ops SESSION-AT AT5 left StatusPending (zz_scim_ops_catalog_test.go).
+	"REST POST /scim/v2/Groups",
+	"REST POST /scim/v2/Users",
+	"REST PUT /scim/v2/Users/{id}",
+	"REST PATCH /scim/v2/Users/{id}",
+	"REST DELETE /scim/v2/Users/{id}",
 }
 
 // TestSCIMOpsFaultSweep is TestOpFaultSweep for scimSweepOps, cheap enough for the

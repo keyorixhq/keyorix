@@ -183,12 +183,15 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		scimError(w, http.StatusRequestEntityTooLarge, errTooManyMembers)
 		return
 	}
-	g, err := h.coreService.ProvisionSCIMGroup(r.Context(), 0, p.DisplayName, p.memberIDs())
+	st, err := h.coreService.ProvisionSCIMGroup(r.Context(), 0, p.DisplayName, p.memberIDs())
 	if err != nil {
 		writeSCIMWriteError(w, r, fmt.Sprintf("provisioning SCIM group %q", p.DisplayName), err)
 		return
 	}
-	h.renderGroup(w, r, g, http.StatusCreated)
+	// Read in the create's own transaction, like PUT/PATCH: a member read after the
+	// commit that failed would answer 500 for a group that exists, and the IdP's retry
+	// of the POST would then hit 409 on the duplicate name.
+	writeSCIM(w, http.StatusCreated, toSCIMGroup(st.Group, st.Members))
 }
 
 // ReplaceGroup handles PUT /scim/v2/Groups/{id} — rename + full member replace.

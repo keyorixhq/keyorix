@@ -150,7 +150,7 @@ func (c *KeyorixCore) readSCIMGroupState(ctx context.Context, tx storage.Storage
 // ProvisionSCIMGroup creates a group from a SCIM Create and adds its initial members.
 // Only SCIM-managed members may be added (scimManagedMember, #167); a non-SCIM-managed
 // id in memberIDs is refused.
-func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*models.Group, error) {
+func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*SCIMGroupState, error) {
 	if displayName == "" {
 		return nil, fmt.Errorf("%w: displayName is required", ErrInvalidInput)
 	}
@@ -186,10 +186,11 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 	//
 	// AUDIT-TX-3: a group created with members confers whatever roles it later holds
 	// to them, so the scim.group_provisioned row commits with the group or not at all.
-	var group *models.Group
+	//
+	// The state the response renders is read in the same transaction (SCIMGroupState).
+	var state *SCIMGroupState
 	err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
-		var cerr error
-		group, cerr = tx.CreateGroup(ctx, &models.Group{Name: displayName, NameFolded: foldedName.Folded()})
+		group, cerr := tx.CreateGroup(ctx, &models.Group{Name: displayName, NameFolded: foldedName.Folded()})
 		if cerr != nil {
 			return cerr
 		}
@@ -200,12 +201,13 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 		}
 		c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupProvisioned, actorPtr(actorID), nil, nil, "",
 			fmt.Sprintf("SCIM provisioned group %d (%q) with %d member(s)", group.ID, displayName, len(allowed)))
-		return nil
+		state, cerr = c.readSCIMGroupState(ctx, tx, group.ID)
+		return cerr
 	})
 	if err != nil {
 		return nil, err
 	}
-	return group, nil
+	return state, nil
 }
 
 // ReplaceSCIMGroup applies a SCIM Replace (PUT): an optional rename plus the FULL

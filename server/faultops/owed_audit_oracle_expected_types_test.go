@@ -36,6 +36,11 @@ var owedAuditExpectedOwedTypes = map[string]map[string]int{
 	// scenarios keep the set).
 	"REST PUT /api/v1/roles/{id}":            {"role.updated": 1},
 	"GRPC keyorix.v1.RoleService.UpdateRole": {"role.updated": 1},
+	// SCIM-TAILS-1: a SCIM deactivation (PUT/PATCH active=false) owes its scim.user_updated
+	// row, a SCIM DELETE its scim.user_deprovisioned row (internal/core/scim.go).
+	"REST PUT /scim/v2/Users/{id}":    {"scim.user_updated": 1},
+	"REST PATCH /scim/v2/Users/{id}":  {"scim.user_updated": 1},
+	"REST DELETE /scim/v2/Users/{id}": {"scim.user_deprovisioned": 1},
 
 	"REST DELETE /api/v1/user-roles/":                                                   {"role.removed": 1},
 	"REST DELETE /api/v1/environments/{id}":                                             {"environment.deleted": 1},
