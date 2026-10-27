@@ -34,6 +34,11 @@ type AuditFilter struct {
 
 	// IPAddress filters events by the exact IP address that originated the request.
 	IPAddress *string
+	// RequestID filters events by the exact server-minted request id
+	// (audit_events.request_id). It is advisory and not covered by the hash chain
+	// (docs/specs/audit-request-id.md §5); the column is unindexed, so pair it
+	// with a time window.
+	RequestID *string
 	// ActorUsername filters events by a partial match on the actor's username
 	// (resolved via a LEFT JOIN on the users table). Nil = no username filter.
 	ActorUsername *string

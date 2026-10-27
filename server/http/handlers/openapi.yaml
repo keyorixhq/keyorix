@@ -6571,7 +6571,7 @@ paths:
       summary: List audit log entries (UI-oriented, paginated)
       description: >-
         Return audit log entries newest first (event time, then id), filtered by
-        action, user, project, actor type, or time range. page/page_size reach
+        action, user, project, actor type, request id, or time range. page/page_size reach
         the newest 10000 events; follow next_cursor (cursor=) to page deeper.
         See docs/specs/audit-list-keyset.md.
       operationId: listAuditLogs
@@ -6581,6 +6581,7 @@ paths:
         - {name: user_id, in: query, schema: {type: integer}, description: Filter by acting user ID.}
         - {name: project_id, in: query, schema: {type: integer}, description: Filter by project ID.}
         - {name: actor_type, in: query, schema: {type: string, enum: [user, machine_identity, system]}, description: Segment human vs machine activity (ADR-023).}
+        - {name: request_id, in: query, schema: {type: string}, description: "Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with start_time/end_time."}
         - {name: start_time, in: query, schema: {type: string, format: date-time}, description: RFC3339 lower bound (inclusive).}
         - {name: end_time, in: query, schema: {type: string, format: date-time}, description: RFC3339 upper bound (inclusive).}
         - {name: page, in: query, schema: {type: integer, default: 1, minimum: 1}, description: "(page-1)*page_size + page_size must be at most 10000 (400 beyond; use cursor)."}
@@ -6591,8 +6592,8 @@ paths:
         '200':
           description: >-
             Envelope {data, message}. data has logs[] (each: id, event_type, actor,
-            actor_type, description, timestamp, optional diff, and impersonation /
-            impersonated_by / acting_as when impersonated), page, page_size,
+            actor_type, description, timestamp, optional diff, optional request_id,
+            and impersonation / impersonated_by / acting_as when impersonated), page, page_size,
             next_cursor (null on the last page), and total, total_exact,
             total_pages (absent on a cursor page without include_total).
         '400': {$ref: '#/components/responses/Error'}
@@ -6618,7 +6619,8 @@ paths:
           description: >-
             Envelope {data, message}. data has events[] (each: id, event_type, timestamp,
             actor, user_id, project_id, secret_id, description, ip_address, actor_type,
-            success, optional diff/impersonation/impersonated_by/acting_as), count, and
+            success, optional diff/impersonation/impersonated_by/acting_as, and request_id
+            (the server-minted id, outside the hash chain; absent when the row has none)), count, and
             next_cursor (the id for the next after_id, or null when caught up).
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
@@ -6645,7 +6647,7 @@ paths:
         - {name: limit, in: query, schema: {type: integer, default: 1000, maximum: 10000}, description: Maximum rows to include.}
       responses:
         '200':
-          description: CSV file download (`text/csv`). Columns — id, event_type, actor, actor_type, description, ip_address, project_id, secret_id, success, timestamp.
+          description: CSV file download (`text/csv`). Columns — id, event_time, event_type, actor, actor_type, user_id, project_id, secret_id, ip_address, success, description, request_id (empty when the row has none; not covered by the hash chain).
           content:
             text/csv:
               schema: {type: string, format: binary}
@@ -6672,6 +6674,7 @@ paths:
         - {name: resource_type, in: query, schema: {type: string}, description: "Resource kind prefix (e.g. secret)."}
         - {name: resource_id, in: query, schema: {type: integer}, description: Exact secret_node_id.}
         - {name: ip, in: query, schema: {type: string}, description: Exact originating IP address.}
+        - {name: request_id, in: query, schema: {type: string}, description: "Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with start_time/end_time."}
         - {name: success, in: query, schema: {type: string, enum: ['true', 'false']}, description: Filter by operation success/failure.}
         - {name: since, in: query, schema: {type: string, format: date-time}, description: RFC3339 start of time range (inclusive).}
         - {name: until, in: query, schema: {type: string, format: date-time}, description: RFC3339 end of time range (inclusive).}
@@ -6684,8 +6687,8 @@ paths:
           description: >-
             Envelope {data, message}. data has events[] -- the same shape GET
             /audit/logs returns (each: id, event_type, actor, actor_type,
-            description, timestamp, optional diff, and impersonation /
-            impersonated_by / acting_as when impersonated; never ip_address or
+            description, timestamp, optional diff, optional request_id, and
+            impersonation / impersonated_by / acting_as when impersonated; never ip_address or
             the tamper-evidence hash chain) -- next_cursor (null on the last
             page), and total and total_exact (absent on a cursor page without
             include_total).

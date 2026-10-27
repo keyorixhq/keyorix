@@ -201,6 +201,9 @@ func applyAuditFilter(q *gorm.DB, f *storage.AuditFilter) *gorm.DB {
 	if f.IPAddress != nil {
 		q = q.Where("ip_address = ?", *f.IPAddress)
 	}
+	if f.RequestID != nil {
+		q = q.Where("request_id = ?", *f.RequestID)
+	}
 	if f.ActorUsername != nil {
 		// Resolve username → user_id via a subquery so we stay on the
 		// audit_events table (no JOIN needed for the count query too).

@@ -105,6 +105,7 @@ func parseAuditSearchRequest(r *http.Request) (core.AuditSearchRequest, error) {
 		Action:        q.Get("action"),
 		ResourceType:  q.Get("resource_type"),
 		IPAddress:     q.Get("ip"),
+		RequestID:     q.Get("request_id"),
 		Success:       parseQueryBoolPtr(q, "success"),
 	}
 	if uid, ok := parseQueryUint(q, "user_id"); ok {
@@ -146,6 +147,7 @@ func parseAuditSearchRequest(r *http.Request) (core.AuditSearchRequest, error) {
 //	resource_type — resource kind prefix (e.g. "secret")
 //	resource_id  — exact secret_node_id
 //	ip           — exact originating IP address
+//	request_id   — exact server-minted request id (advisory, not hash-chained; unindexed, pair with since/until)
 //	success      — "true" or "false"
 //	since        — RFC3339 start of time range (inclusive)
 //	until        — RFC3339 end of time range (inclusive)

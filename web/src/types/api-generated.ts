@@ -4207,7 +4207,7 @@ export interface paths {
         };
         /**
          * List audit log entries (UI-oriented, paginated)
-         * @description Return audit log entries newest first (event time, then id), filtered by action, user, project, actor type, or time range. page/page_size reach the newest 10000 events; follow next_cursor (cursor=) to page deeper. See docs/specs/audit-list-keyset.md.
+         * @description Return audit log entries newest first (event time, then id), filtered by action, user, project, actor type, request id, or time range. page/page_size reach the newest 10000 events; follow next_cursor (cursor=) to page deeper. See docs/specs/audit-list-keyset.md.
          */
         get: operations["listAuditLogs"];
         put?: never;
@@ -13674,6 +13674,8 @@ export interface operations {
                 project_id?: number;
                 /** @description Segment human vs machine activity (ADR-023). */
                 actor_type?: "user" | "machine_identity" | "system";
+                /** @description Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with start_time/end_time. */
+                request_id?: string;
                 /** @description RFC3339 lower bound (inclusive). */
                 start_time?: string;
                 /** @description RFC3339 upper bound (inclusive). */
@@ -13692,7 +13694,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data has logs[] (each: id, event_type, actor, actor_type, description, timestamp, optional diff, and impersonation / impersonated_by / acting_as when impersonated), page, page_size, next_cursor (null on the last page), and total, total_exact, total_pages (absent on a cursor page without include_total). */
+            /** @description Envelope {data, message}. data has logs[] (each: id, event_type, actor, actor_type, description, timestamp, optional diff, optional request_id, and impersonation / impersonated_by / acting_as when impersonated), page, page_size, next_cursor (null on the last page), and total, total_exact, total_pages (absent on a cursor page without include_total). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13719,7 +13721,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data has events[] (each: id, event_type, timestamp, actor, user_id, project_id, secret_id, description, ip_address, actor_type, success, optional diff/impersonation/impersonated_by/acting_as), count, and next_cursor (the id for the next after_id, or null when caught up). */
+            /** @description Envelope {data, message}. data has events[] (each: id, event_type, timestamp, actor, user_id, project_id, secret_id, description, ip_address, actor_type, success, optional diff/impersonation/impersonated_by/acting_as, and request_id (the server-minted id, outside the hash chain; absent when the row has none)), count, and next_cursor (the id for the next after_id, or null when caught up). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13751,7 +13753,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description CSV file download (`text/csv`). Columns — id, event_type, actor, actor_type, description, ip_address, project_id, secret_id, success, timestamp. */
+            /** @description CSV file download (`text/csv`). Columns — id, event_time, event_type, actor, actor_type, user_id, project_id, secret_id, ip_address, success, description, request_id (empty when the row has none; not covered by the hash chain). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -13781,6 +13783,8 @@ export interface operations {
                 resource_id?: number;
                 /** @description Exact originating IP address. */
                 ip?: string;
+                /** @description Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with start_time/end_time. */
+                request_id?: string;
                 /** @description Filter by operation success/failure. */
                 success?: "true" | "false";
                 /** @description RFC3339 start of time range (inclusive). */
@@ -13802,7 +13806,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Envelope {data, message}. data has events[] -- the same shape GET /audit/logs returns (each: id, event_type, actor, actor_type, description, timestamp, optional diff, and impersonation / impersonated_by / acting_as when impersonated; never ip_address or the tamper-evidence hash chain) -- next_cursor (null on the last page), and total and total_exact (absent on a cursor page without include_total). */
+            /** @description Envelope {data, message}. data has events[] -- the same shape GET /audit/logs returns (each: id, event_type, actor, actor_type, description, timestamp, optional diff, optional request_id, and impersonation / impersonated_by / acting_as when impersonated; never ip_address or the tamper-evidence hash chain) -- next_cursor (null on the last page), and total and total_exact (absent on a cursor page without include_total). */
             200: {
                 headers: {
                     [name: string]: unknown;
