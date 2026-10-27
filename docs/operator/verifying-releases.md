@@ -83,6 +83,10 @@ you already downloaded), `--skip-binaries` (skip the ~540 MB of binaries; SBOMs 
 checked), `--offline` (never call api.github.com), `--cosign-args "..."` (extra cosign
 flags). `scripts/release/verify-release.sh --help` lists all of them.
 
+Open issues labelled `release-blocker` are not part of a verification: they are about the
+next release, not the tag you check, and the script does not look at them unless a
+maintainer passes `--check-blockers` before tagging (see `RELEASING.md`).
+
 The GitHub API allows 60 anonymous requests per hour per IP address and one full run uses
 about 12. When the limit is reached the affected checks are reported as SKIP ("GitHub API
 rate limit reached"), not FAIL; set `GITHUB_TOKEN` (any token, no scopes) or wait, and

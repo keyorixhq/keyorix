@@ -130,12 +130,13 @@ cosign verify-blob --key scratch-key.pub --signature checksums.txt.sig \
 **Release gate first (hard step).** `scripts/release/check-release-blockers.sh` must print
 `release gate: PASS`: it fails while any issue labelled `release-blocker` is open and lists
 them (RELEASING.md step 4). Exit 3 or 4 (list not obtainable, no token) is a stop too.
+The block is one `&&` chain, so a gate that does not pass stops it before `git tag`:
 
 ```sh
-scripts/release/check-release-blockers.sh
-git switch main && git pull
-git tag vX.Y.Z
-git push origin vX.Y.Z      # fires release.yml, docker-publish.yml
+scripts/release/check-release-blockers.sh &&
+  git switch main && git pull &&
+  git tag vX.Y.Z &&
+  git push origin vX.Y.Z      # fires release.yml, docker-publish.yml
 ```
 
 (Andrei only: nothing in the dry run pushed a tag.)

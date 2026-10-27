@@ -53,8 +53,8 @@ checks is [docs/releases/RELEASE-CHECKLIST.md](docs/releases/RELEASE-CHECKLIST.m
    obtainable) and 4 (no token) also mean stop: unknown is not a pass. The only ways past it
    are to fix the issue or for the maintainer to remove the label with a written reason on the
    issue. `scripts/release/check-release-blockers.sh --self-test` shows the red and green cases.
-   `scripts/release/verify-release.sh` repeats the check as its first step when a token is
-   available.
+   `scripts/release/verify-release.sh --check-blockers` repeats the check as its first step
+   (opt-in: a customer's verification of a published tag never runs it).
 5. Tag and push:
 
    ```sh

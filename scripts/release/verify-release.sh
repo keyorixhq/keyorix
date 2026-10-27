@@ -57,7 +57,7 @@ SKIP_CHARTS=0
 PLAIN_HTTP=0
 NO_COSIGN=0
 NO_GH=0
-NO_BLOCKER_CHECK=0
+CHECK_BLOCKERS=0
 ALLOW_SKIP=0
 COMMIT=""
 COSIGN_ARGS=""
@@ -107,7 +107,8 @@ Options:
                         "--insecure-ignore-tlog=true" makes checksums.txt
                         verifiable without network today)
   --no-cosign|--no-gh   behave as if the tool were not installed
-  --no-blocker-check    do not run the release-blocker pre-check (see below)
+  --check-blockers      maintainers, before tagging: also run the release gate
+                        (open "release-blocker" issues are a FAIL; see below)
   --allow-skip          exit 0 even if some checks were SKIPped (never hides FAIL,
                         and never covers a SKIPped cosign signature check: without
                         cosign, or with the registry or a tag unreachable, the result
@@ -116,10 +117,11 @@ Options:
   --self-test           run the built-in tests (fixtures; no network)
   -h, --help            this text
 
-Pre-check: when a GitHub token (GITHUB_TOKEN/GH_TOKEN, a gh login or kgh) is available
-and --offline is not given, scripts/release/check-release-blockers.sh runs first and the
-open "release-blocker" issues are a FAIL (release.blockers). Without a token it is
-skipped with a note on stderr (not a SKIP line: a customer has no reason to care).
+Release gate (--check-blockers only, off by default): scripts/release/check-release-blockers.sh
+runs first and any open "release-blocker" issue is a FAIL (release.blockers). It is
+about the NEXT release, not the tag being verified, so a customer run never includes it.
+With --check-blockers, no token (GITHUB_TOKEN/GH_TOKEN or a gh login), --offline or a
+list that cannot be obtained is a SKIP (exit 2): unknown is not a pass.
 
 Needs cosign >= 3 for the image and chart signature checks (older cosign cannot
 see their referrer signatures: those checks are SKIPped, exit 2, not FAILed).
@@ -902,23 +904,24 @@ check_chart() { # chart
 }
 
 # ------------------------------------------------------------------------ main
-# check_blockers: the release gate as a pre-check (scripts/release/check-release-blockers.sh).
-# Exit 0 -> PASS, 1 -> FAIL with the issues, 4 (no token / lister) -> note on stderr only,
-# anything else (token present but the list failed) -> SKIP, because unknown is not a pass.
+# check_blockers: the release gate (scripts/release/check-release-blockers.sh), only with
+# --check-blockers. Open release-blocker issues concern the next release, not the tag being
+# verified, so a customer run (the default) never lists them: that would FAIL a good release.
+# Exit 0 -> PASS, 1 -> FAIL with the issues, anything else (no token, list failed) -> SKIP,
+# because unknown is not a pass.
 check_blockers() {
   local gate rc
+  [ "$CHECK_BLOCKERS" = 1 ] || return 0
   gate="$(dirname "$SELF")/check-release-blockers.sh"
-  if [ "$NO_BLOCKER_CHECK" = 1 ]; then log "== release-blocker pre-check SKIPPED (--no-blocker-check)"; return 0; fi
-  if [ "$OFFLINE" = 1 ]; then log "== release-blocker pre-check SKIPPED (--offline: no GitHub API access)"; return 0; fi
-  if [ -n "$FIXTURES" ] && [ -z "${KRB_LISTER:-}" ]; then log "== release-blocker pre-check SKIPPED (--fixtures: no GitHub issues to list)"; return 0; fi
-  if [ ! -f "$gate" ]; then log "== release-blocker pre-check SKIPPED ($gate not found)"; return 0; fi
-  log "== release-blocker pre-check"
+  log "== release gate (--check-blockers)"
+  if [ "$OFFLINE" = 1 ]; then skip release.blockers "--offline: the open release-blocker issues were not listed - NOT a pass"; return 0; fi
+  if [ ! -f "$gate" ]; then skip release.blockers "$gate not found - NOT a pass"; return 0; fi
   bash "$gate" --repo "$REPO" >"$WORK/blockers.out" 2>"$WORK/blockers.err"
   rc=$?
   case $rc in
     0) pass release.blockers "no open release-blocker issue" ;;
     1) fail release.blockers "open release-blocker issue(s): do not release"; detail "$WORK/blockers.out" 12 ;;
-    4) log "  release-blocker pre-check SKIPPED: no GitHub token available (set GITHUB_TOKEN or GH_TOKEN, or run gh auth login). The release gate itself is still required before tagging." ;;
+    4) skip release.blockers "no GitHub token or issue lister (set GITHUB_TOKEN or GH_TOKEN, or run gh auth login) - NOT a pass"; detail "$WORK/blockers.err" 4 ;;
     *) skip release.blockers "could not list the open release-blocker issues (exit $rc): NOT a pass"; detail "$WORK/blockers.err" 4 ;;
   esac
 }
@@ -1584,22 +1587,34 @@ self_test() {
   st_atleast "$ST_OUT" 'attestation-manifest-digest-mismatch' 2
   st_expect "$ST_OUT" PASS image.k8s-sync.sbom
 
-  log "self-test 16/16: release-blocker pre-check: green PASS, red FAIL (exit 1), listing failure SKIP, no token silent, --no-blocker-check"
+  log "self-test 16/16: release gate only with --check-blockers: default run (token set, open blocker) has no release.blockers; with the flag green PASS, red FAIL (exit 1), listing failure, no token and --offline SKIP"
+  # shellcheck disable=SC2016 # the stub expands $KRB_STUB_JSON when it runs, not here
   printf '#!/bin/sh\nprintf "%%s\\n" "$KRB_STUB_JSON"\n' >"$WORK/st/lister.sh"
   printf '#!/bin/sh\nexit 1\n' >"$WORK/st/lister-fail.sh"
-  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[]' st_run blk-green 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  # a gh with no login: "gh auth status" fails, anything else would list no blocker (a PASS, caught below)
+  mkdir -p "$WORK/st/nologin"
+  # shellcheck disable=SC2016 # $1 belongs to the stub
+  printf '#!/bin/sh\n[ "$1" = auth ] && exit 1\nprintf "[]\\n"\n' >"$WORK/st/nologin/gh"
+  chmod +x "$WORK/st/nologin/gh"
+  # the customer default: a token is set and a blocker is open, but the verified tag is not judged by it
+  PATH="$WORK/st/bin:$PATH" GITHUB_TOKEN=tok KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[{"number":3642,"title":"audit key transition","url":"u"}]' st_run blk-default 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" 'release\.blockers|release gate|3642' 0
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" '^PASS ' 60
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[]' st_run blk-green 2 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS release.blockers
   st_count "$ST_OUT" '^PASS ' 61
-  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[{"number":3642,"title":"audit key transition","url":"u"}]' st_run blk-red 1 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[{"number":3642,"title":"audit key transition","url":"u"}]' st_run blk-red 1 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" FAIL release.blockers
   st_count "$ST_OUT" '#3642  audit key transition' 1
-  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister-fail.sh" st_run blk-listfail 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister-fail.sh" st_run blk-listfail 2 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" SKIP release.blockers
   st_count "$ST_OUT" '^FAIL ' 0
-  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[{"number":1,"title":"x","url":"u"}]' st_run blk-off 2 "${base[@]}" --no-blocker-check --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
-  st_count "$ST_OUT" 'release\.blockers' 0
-  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[{"number":1,"title":"x","url":"u"}]' st_run blk-offline 2 "${base[@]}" --offline --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
-  st_count "$ST_OUT" 'release\.blockers' 0
+  PATH="$WORK/st/nologin:$WORK/st/bin:$PATH" GITHUB_ACTIONS=1 GITHUB_TOKEN='' GH_TOKEN='' KRB_LISTER='' st_run blk-notoken 2 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^SKIP +release\.blockers +no GitHub token' 1
+  st_count "$ST_OUT" '^PASS +release\.blockers' 0
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[]' st_run blk-offline 2 "${base[@]}" --check-blockers --offline --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^SKIP +release\.blockers +--offline' 1
 
   printf 'self-test: %d assertions passed, %d failed\n' "$ST_OK" "$ST_BAD"
   [ "$ST_BAD" = 0 ] || { log "outputs kept in $WORK/st"; KEEP_WORK=1; return 1; }
@@ -1621,7 +1636,7 @@ while [ $# -gt 0 ]; do
     --cosign-args) COSIGN_ARGS=${2-}; shift 2 ;;
     --no-cosign) NO_COSIGN=1; shift ;;
     --no-gh) NO_GH=1; shift ;;
-    --no-blocker-check) NO_BLOCKER_CHECK=1; shift ;;
+    --check-blockers) CHECK_BLOCKERS=1; shift ;;
     --allow-skip) ALLOW_SKIP=1; shift ;;
     --fixtures) FIXTURES=${2:?--fixtures needs DIR}; shift 2 ;; # test hook, see --self-test
     --self-test) SELF_TEST=1; shift ;;

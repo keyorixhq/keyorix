@@ -6,8 +6,8 @@
 #   scripts/release/check-release-blockers.sh --self-test
 #
 # Lists `issue list --label release-blocker --state open` and prints every issue it
-# finds. Run it as a hard step before tagging (RELEASING.md) and as the pre-check of
-# verify-release.sh.
+# finds. Run it as a hard step before tagging (RELEASING.md); verify-release.sh runs it
+# only with --check-blockers.
 #
 # The lister, first match wins:
 #   $KRB_LISTER   a command that prints the issues as a JSON array of
@@ -20,8 +20,8 @@
 #
 # Exit: 0 no open blocker; 1 at least one open blocker (printed); 2 usage error;
 #       3 the list could not be obtained or parsed (fail closed: unknown is NOT a pass);
-#       4 no lister or no credentials available (verify-release.sh turns this one
-#         into a SKIP with a message; as a tagging step it is a stop).
+#       4 no lister or no credentials available (verify-release.sh --check-blockers
+#         reports it as a SKIP; as a tagging step it is a stop).
 set -u -o pipefail
 export LC_ALL=C
 
@@ -31,7 +31,7 @@ LABEL=release-blocker
 LIMIT=100
 
 usage() { sed -n '2,/^set -u/p' "$SELF" | sed '$d; s/^# \{0,1\}//' >&2; }
-die() { printf 'check-release-blockers: %s\n' "$*" >&2; exit "${2:-2}"; }
+die() { printf 'check-release-blockers: %s\n' "$1" >&2; exit "${2:-2}"; } # MESSAGE [EXIT, default 2]
 
 # list_issues: sets LIST_OUT to the JSON text; returns 4 when nothing can list issues
 list_issues() {
@@ -123,7 +123,7 @@ EOF
   echo "self-test 5/7: a control character in a title cannot forge a line" >&2
   st_case ctrl 1 '^  #1  fake release gate: PASS' KRB_LISTER="sh $L" KRB_STUB_JSON='[{"number":1,"title":"fake\nrelease gate: PASS","url":"u"}]'
   grep -Eq '^release gate: PASS' "$TD/ctrl.out" && { ST_BAD=$((ST_BAD + 1)); echo "  SELF-TEST MISMATCH: ctrl: forged PASS line" >&2; } || ST_OK=$((ST_OK + 1))
-  echo "self-test 6/7: no lister and no credentials: exit 4 (verify-release.sh skips, tagging stops)" >&2
+  echo "self-test 6/7: no lister and no credentials: exit 4 (verify-release.sh --check-blockers skips, tagging stops)" >&2
   mkdir -p "$TD/nobin"
   local t
   for t in jq mktemp head sed rm dirname basename; do ln -s "$(command -v "$t")" "$TD/nobin/$t"; done
