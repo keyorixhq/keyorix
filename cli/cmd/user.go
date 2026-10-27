@@ -101,8 +101,11 @@ var (
 var userCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new user",
-	Long: "Create a new user. Supply --password to set an initial password, or use\n" +
-		"--setup-link to provision an ADR-028 setup link instead: the account is created\n" +
+	Long: "Create a new user. By default you set the initial password: it is read from a\n" +
+		"hidden prompt, or in a script from KEYORIX_INITIAL_PASSWORD or the 0600 file named by\n" +
+		"KEYORIX_INITIAL_PASSWORD_FILE (never from the command line, where ps and shell\n" +
+		"history would show it).\n\n" +
+		"Or use --setup-link to provision an ADR-028 setup link instead: the account is created\n" +
 		"in pending_first_login state and the user sets their own password via the link.\n" +
 		"In out-of-band mode the link is printed for you to relay.\n\n" +
 		"Or use --one-time-password to have the server generate an initial password\n" +

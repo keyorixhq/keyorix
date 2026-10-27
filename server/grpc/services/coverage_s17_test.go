@@ -164,9 +164,8 @@ func TestDeleteGroup_NotFound(t *testing.T) {
 	svc, _ := newGroupServiceFull(t)
 	_, err := svc.DeleteGroup(groupCtx(), &pb.DeleteGroupRequest{Id: 99999})
 	require.Error(t, err)
-	// The i18n key "ErrorGroupNotFound" is returned verbatim (not in locale file),
-	// which doesn't match "not found" in groupError → maps to Internal.
-	assert.Equal(t, codes.Internal, status.Code(err))
+	// A missing group is a genuine not-found, not a storage failure.
+	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestDeleteGroup_Unauthenticated(t *testing.T) {
@@ -198,9 +197,8 @@ func TestAddGroupMember_NonExistentGroup(t *testing.T) {
 	h.CreateTestUser(t, "alice", 2)
 	_, err := svc.AddGroupMember(groupCtx(), &pb.GroupMemberRequest{GroupId: 99999, UserId: 2})
 	require.Error(t, err)
-	// groupError falls through to Internal because the i18n key returned verbatim
-	// does not contain the "not found" substring (no space).
-	assert.Equal(t, codes.Internal, status.Code(err))
+	// A missing group is a genuine not-found, not a storage failure.
+	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestAddGroupMember_Unauthenticated(t *testing.T) {

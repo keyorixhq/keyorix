@@ -178,7 +178,8 @@ Two things about this command are not obvious from `--help` alone:
   fails the server's email validation (no dot after `@`), so omitting it makes
   bootstrap fail with a confusing `Validation error: Validation error: Email`.
 - **Pick a password with an uppercase letter, a digit, and that does not contain
-  the username.** `Correct-Horse-Battery9` above satisfies all three.
+  the username.** The one `keyorix-server admin generate-secrets` writes to
+  `secrets/admin_password` satisfies all three.
 
 `system init --server` is safe to run more than once — it is idempotent, and
 reports `already_initialized` on every call after the first. It creates the
@@ -256,6 +257,8 @@ directory: on Linux set `XDG_CONFIG_HOME=<dir>` for every `keyorix` command of t
 install (the file is then `<dir>/keyorix/credentials.yaml`); macOS ignores
 `XDG_CONFIG_HOME`, so use a separate `HOME` there. `KEYORIX_SERVER` and
 `KEYORIX_TOKEN_FILE` override the stored server and token without touching the file.
+`keyorix logout` deletes this file, `ca_file` included: run
+`keyorix config set ca_file ...` again before the next `login` (#3735).
 
 With no terminal (a script, CI), `login` reads `KEYORIX_PASSWORD` or the file named
 by `KEYORIX_PASSWORD_FILE` (a 0600 file; on `main`, not in the v0.96.3 release).
@@ -301,7 +304,10 @@ Save the recovery codes `mfa activate` prints — they are shown once. The sessi
 you activated from stays signed in (every *other* session is signed out), so the
 commands below work immediately; the next `login` asks for a code after the
 password; type the authenticator code there (an unused recovery code works too).
-Either is used for that one request: only the session token is stored. For
+Either is used for that one request: only the session token is stored. Each
+authenticator code works once: a `login` right after `mfa activate` with the code
+you just activated with is refused (`Invalid or expired code`), so wait for the
+app to show the next one. For
 non-interactive use, log in once and use a personal access token
 (`KEYORIX_TOKEN`) instead of scripting the password and code. An account whose
 only second factor is a WebAuthn passkey cannot complete a CLI login — sign in
@@ -397,9 +403,9 @@ Because the recipient must already hold a role in the project to receive a share
 (above), a recipient with `project_viewer` can read every secret in the project
 through that role. So `share revoke` removes the share record — `share list` and
 the audit log (event `share_revoked`; `keyorix audit search --action share_revoked`) show it — but **alice keeps read access** until her
-role is removed too (`rbac remove-role`). Do not rely on a `write` share to let a
-read-only role edit a secret: when tried (`share create --permission write`, then
-`secret update` as a `project_viewer`) the update was still refused (#2941).
+role is removed too (`rbac remove-role`). A `write` share does lift a
+`project_viewer` on that one secret (update and rotate, as described above), and
+revoking it takes exactly that away again; her role's read stays.
 
 To demonstrate access actually disappearing, remove the role:
 

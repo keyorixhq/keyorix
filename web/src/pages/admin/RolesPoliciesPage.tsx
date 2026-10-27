@@ -29,11 +29,13 @@ interface AssignableScopeSelectProps {
     id: string;
     value: RoleAssignableScope;
     onChange: (value: RoleAssignableScope) => void;
+    // A built-in role: the server refuses every update of it, so the choice is not offered.
+    builtIn?: boolean;
 }
 
 // Where the role may be granted (#3546). A new role defaults to per project; widening it
 // lets it be granted install-wide, where it applies in EVERY project.
-const AssignableScopeSelect: React.FC<AssignableScopeSelectProps> = ({ id, value, onChange }) => (
+const AssignableScopeSelect: React.FC<AssignableScopeSelectProps> = ({ id, value, onChange, builtIn = false }) => (
     <div>
         <label htmlFor={id} className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
             Can be granted
@@ -41,8 +43,9 @@ const AssignableScopeSelect: React.FC<AssignableScopeSelectProps> = ({ id, value
         <select
             id={id}
             value={value}
+            disabled={builtIn}
             onChange={(e) => onChange(e.target.value as RoleAssignableScope)}
-            className="w-full px-3 py-2 rounded-md border text-sm"
+            className="w-full px-3 py-2 rounded-md border text-sm disabled:opacity-60 disabled:cursor-not-allowed"
             style={{
                 backgroundColor: 'var(--bg-app)',
                 borderColor: 'var(--border-strong)',
@@ -56,9 +59,11 @@ const AssignableScopeSelect: React.FC<AssignableScopeSelectProps> = ({ id, value
             ))}
         </select>
         <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
-            {value === 'project'
-                ? 'Grants must name a project. Recommended for most roles.'
-                : 'An install-wide grant applies in every project. Changing this does not change existing grants.'}
+            {builtIn
+                ? 'This is a built-in role: it cannot be changed, including where it can be granted.'
+                : value === 'project'
+                  ? 'Grants must name a project. Recommended for most roles.'
+                  : 'An install-wide grant applies in every project. Changing this does not change existing grants.'}
         </p>
     </div>
 );
@@ -467,6 +472,7 @@ export const RolesPoliciesPage: React.FC = () => {
                     </div>
                     <AssignableScopeSelect
                         id="edit-role-assignable-scope"
+                        builtIn={editRole !== null && isBuiltIn(editRole.name)}
                         value={formData.assignable_scope}
                         onChange={(assignable_scope) => setFormData((d) => ({ ...d, assignable_scope }))}
                     />

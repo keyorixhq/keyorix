@@ -133,6 +133,31 @@ func TestRunRBACListRoles_MatchesOldCLIOutputShape(t *testing.T) {
 	}
 }
 
+// Where a role may be granted is part of choosing it: a project-tier role cannot be
+// assigned without a project, an install-wide one cannot be assigned at a project.
+func TestRunRBACListRoles_ShowsAssignableScope(t *testing.T) {
+	srv := rbacTestServer(t, jsonRoute(http.MethodGet, "/api/v1/roles",
+		`{"data":{"roles":[`+
+			`{"id":1,"name":"system_admin","description":"Everything","assignable_scope":"global"},`+
+			`{"id":2,"name":"project_developer","description":"Develops","assignable_scope":"project"},`+
+			`{"id":3,"name":"auditor","description":"","assignable_scope":"any"}`+
+			`],"total":3}}`))
+	setPATCreds(t, srv)
+
+	out := captureStdout(t, func() {
+		if err := runRBACListRoles(rbacListRolesCmd, nil); err != nil {
+			t.Fatalf("runRBACListRoles: %v", err)
+		}
+	})
+	want := "Available roles:\n" +
+		"  - system_admin: Everything [assignable: global]\n" +
+		"  - project_developer: Develops [assignable: project]\n" +
+		"  - auditor:  [assignable: any]\n"
+	if out != want {
+		t.Fatalf("output = %q, want %q", out, want)
+	}
+}
+
 func TestRunRBACListRoles_EmptyPrintsNoRolesMessage(t *testing.T) {
 	srv := rbacTestServer(t, jsonRoute(http.MethodGet, "/api/v1/roles", `{"data":{"roles":[],"total":0}}`))
 	setPATCreds(t, srv)

@@ -33,12 +33,15 @@ export interface RoleWithPermissions extends Role {
     permissions: Permission[];
 }
 
-// A role granted to a group, with the grant's optional time-bound expiry
-// (absent = permanent).
+// A role granted to a group, with the scope it applies at (project_id /
+// environment_id, 0 = not scoped; 0/0 = global) and the grant's optional
+// time-bound expiry (absent = permanent).
 export interface GroupRoleGrant {
     id: number;
     name: string;
     description: string;
+    project_id: number;
+    environment_id: number;
     expires_at?: string;
 }
 
@@ -69,6 +72,35 @@ export interface Group {
     member_count?: number;
 }
 
-export type BuiltInRole = 'super_admin' | 'admin' | 'editor' | 'viewer' | 'auditor';
+export type BuiltInRole =
+    | 'super_admin'
+    | 'admin'
+    | 'editor'
+    | 'viewer'
+    | 'auditor'
+    | 'system_admin'
+    | 'system_auditor'
+    | 'system_viewer'
+    | 'project_admin'
+    | 'project_developer'
+    | 'project_viewer'
+    | 'project_auditor'
+    | 'alert_operator';
 
-export const BUILT_IN_ROLES: BuiltInRole[] = ['super_admin', 'admin', 'editor', 'viewer', 'auditor'];
+// Mirrors builtinRoleNames in internal/core/auth_bootstrap.go: the server refuses to
+// update or delete these (core.IsBuiltinRole). Keep the two lists in step.
+export const BUILT_IN_ROLES: BuiltInRole[] = [
+    'super_admin',
+    'admin',
+    'editor',
+    'viewer',
+    'auditor',
+    'system_admin',
+    'system_auditor',
+    'system_viewer',
+    'project_admin',
+    'project_developer',
+    'project_viewer',
+    'project_auditor',
+    'alert_operator',
+];

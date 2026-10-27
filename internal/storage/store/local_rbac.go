@@ -1056,11 +1056,12 @@ func (ls *LocalStorage) GetGroupRoles(ctx context.Context, groupID uint) ([]*mod
 }
 
 // GetGroupRoleGrants is GetGroupRoles plus each grant's time-bound expiry, joined
-// from group_roles.expires_at (nil = permanent).
+// from group_roles.expires_at (nil = permanent), and the scope it applies at
+// (group_roles.project_id / environment_id, 0 = global).
 func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([]*storage.GroupRoleGrant, error) {
 	var grants []*storage.GroupRoleGrant
 	err := ls.db.WithContext(ctx).Table("roles").
-		Select("roles.id, roles.name, roles.description, group_roles.expires_at").
+		Select("roles.id, roles.name, roles.description, group_roles.project_id, group_roles.environment_id, group_roles.expires_at").
 		Joins("JOIN group_roles ON roles.id = group_roles.role_id").
 		Where("group_roles.group_id = ?", groupID).
 		Scan(&grants).Error
@@ -1071,11 +1072,11 @@ func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([
 }
 
 // ListGroupRoleAssignments returns every LIVE role grant held by groupID across all
-// scopes, unlike GetGroupRoles/GetGroupRoleGrants which return the role but not
-// which scope it was granted at. Excludes expired grants -- matching every other
-// role-lookup function in this file -- since callers (validateGroupJoinRoles's
-// SoD/escalation checks, the admin group-roles view) treat this as "what does the
-// group currently confer," not a historical record.
+// scopes, unlike GetGroupRoles, which returns the role but not which scope it was
+// granted at, and GetGroupRoleGrants, which keeps expired grants. Excludes expired
+// grants -- matching every other role-lookup function in this file -- since callers
+// (validateGroupJoinRoles's SoD/escalation checks, the admin group-roles view) treat
+// this as "what does the group currently confer," not a historical record.
 func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
 	var rows []models.GroupRole
 	if err := ls.db.WithContext(ctx).

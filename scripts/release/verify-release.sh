@@ -57,6 +57,7 @@ SKIP_CHARTS=0
 PLAIN_HTTP=0
 NO_COSIGN=0
 NO_GH=0
+CHECK_BLOCKERS=0
 ALLOW_SKIP=0
 COMMIT=""
 COSIGN_ARGS=""
@@ -106,6 +107,8 @@ Options:
                         "--insecure-ignore-tlog=true" makes checksums.txt
                         verifiable without network today)
   --no-cosign|--no-gh   behave as if the tool were not installed
+  --check-blockers      maintainers, before tagging: also run the release gate
+                        (open "release-blocker" issues are a FAIL; see below)
   --allow-skip          exit 0 even if some checks were SKIPped (never hides FAIL,
                         and never covers a SKIPped cosign signature check: without
                         cosign, or with the registry or a tag unreachable, the result
@@ -113,6 +116,12 @@ Options:
                         are covered, and the summary says SCOPE REDUCED
   --self-test           run the built-in tests (fixtures; no network)
   -h, --help            this text
+
+Release gate (--check-blockers only, off by default): scripts/release/check-release-blockers.sh
+runs first and any open "release-blocker" issue is a FAIL (release.blockers). It is
+about the NEXT release, not the tag being verified, so a customer run never includes it.
+With --check-blockers, no token (GITHUB_TOKEN/GH_TOKEN or a gh login), --offline or a
+list that cannot be obtained is a SKIP (exit 2): unknown is not a pass.
 
 Needs cosign >= 3 for the image and chart signature checks (older cosign cannot
 see their referrer signatures: those checks are SKIPped, exit 2, not FAILed).
@@ -895,10 +904,33 @@ check_chart() { # chart
 }
 
 # ------------------------------------------------------------------------ main
+# check_blockers: the release gate (scripts/release/check-release-blockers.sh), only with
+# --check-blockers. Open release-blocker issues concern the next release, not the tag being
+# verified, so a customer run (the default) never lists them: that would FAIL a good release.
+# Exit 0 -> PASS, 1 -> FAIL with the issues, anything else (no token, list failed) -> SKIP,
+# because unknown is not a pass.
+check_blockers() {
+  local gate rc
+  [ "$CHECK_BLOCKERS" = 1 ] || return 0
+  gate="$(dirname "$SELF")/check-release-blockers.sh"
+  log "== release gate (--check-blockers)"
+  if [ "$OFFLINE" = 1 ]; then skip release.blockers "--offline: the open release-blocker issues were not listed - NOT a pass"; return 0; fi
+  if [ ! -f "$gate" ]; then skip release.blockers "$gate not found - NOT a pass"; return 0; fi
+  bash "$gate" --repo "$REPO" >"$WORK/blockers.out" 2>"$WORK/blockers.err"
+  rc=$?
+  case $rc in
+    0) pass release.blockers "no open release-blocker issue" ;;
+    1) fail release.blockers "open release-blocker issue(s): do not release"; detail "$WORK/blockers.out" 12 ;;
+    4) skip release.blockers "no GitHub token or issue lister (set GITHUB_TOKEN or GH_TOKEN, or run gh auth login) - NOT a pass"; detail "$WORK/blockers.err" 4 ;;
+    *) skip release.blockers "could not list the open release-blocker issues (exit $rc): NOT a pass"; detail "$WORK/blockers.err" 4 ;;
+  esac
+}
+
 run_checks() {
   gen_expected
   detect_cosign
   SHA=""
+  check_blockers
   log "== $REPO $TAG: source commit"
   check_source
   log "== GitHub Release assets"
@@ -1264,7 +1296,7 @@ self_test() {
   local base=(--repo selftest/keyorix --registry registry.test/keyorix --no-gh)
   local id n
 
-  log "self-test 1/15: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
+  log "self-test 1/16: consistent synthetic release: every check PASS, only the gh check SKIPped (exit 2)"
   st_world "$WORK/st/ok"
   PATH="$WORK/st/bin:$PATH" st_run ok 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   for id in source.commit release.assets release.checksums.listing release.checksums.sboms release.checksums.binaries release.signature.cosign release.signature.cert release.signature.offline release.sbom release.provenance ci.release-run ci.docker-publish-run image.server.tag image.server.shatag image.server.platforms image.server.sbom image.server.buildkit-provenance image.server.signature image.server.slsa image.server-airgap.tag image.k8s-sync.signature image.operator.slsa image.mcp.platforms image.web.platforms chart.keyorix.version chart.keyorix-operator.signature; do
@@ -1277,7 +1309,7 @@ self_test() {
   PATH="$WORK/st/bin:$PATH" st_run ok-allow 0 "${base[@]}" --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 2/15: one altered binary, one missing SBOM, cosign rejecting everything"
+  log "self-test 2/16: one altered binary, one missing SBOM, cosign rejecting everything"
   st_world "$WORK/st/mut"
   printf 'tampered\n' >>"$WORK/st/mut/assets/keyorix_linux_amd64"
   rm "$WORK/st/mut/assets/keyorix-migrate_darwin_arm64_sbom.cdx.json"
@@ -1297,7 +1329,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL chart.keyorix.signature
   st_expect "$ST_OUT" PASS image.web.tag
 
-  log "self-test 3/15: checksums.txt altered after signing"
+  log "self-test 3/16: checksums.txt altered after signing"
   st_world "$WORK/st/sum"
   awk '{ if ($2 == "keyorix_darwin_arm64") $1 = "0000000000000000000000000000000000000000000000000000000000000000"; print $1 "  " $2 }' "$WORK/st/sum/assets/checksums.txt" >"$WORK/st/sum/c.txt"
   mv "$WORK/st/sum/c.txt" "$WORK/st/sum/assets/checksums.txt"
@@ -1306,13 +1338,13 @@ self_test() {
   st_expect "$ST_OUT" FAIL release.checksums.binaries
   st_expect "$ST_OUT" FAIL release.provenance
 
-  log "self-test 4/15: certificate names a different workflow"
+  log "self-test 4/16: certificate names a different workflow"
   ST_SAN="https://github.com/selftest/keyorix/.github/workflows/evil.yml@refs/tags/v9.9.9" st_world "$WORK/st/san"
   PATH="$WORK/st/bin:$PATH" st_run san 1 "${base[@]}" --assets-dir "$WORK/st/san/assets" --fixtures "$WORK/st/san/fx" v9.9.9
   st_expect "$ST_OUT" FAIL release.signature.cert
   st_expect "$ST_OUT" PASS release.signature.offline
 
-  log "self-test 5/15: chart appVersion wrong, one image tag missing"
+  log "self-test 5/16: chart appVersion wrong, one image tag missing"
   ST_BAD_APPVERSION=9.9.8 ST_NO_TAG=web st_world "$WORK/st/chart"
   PATH="$WORK/st/bin:$PATH" st_run chart 1 "${base[@]}" --assets-dir "$WORK/st/chart/assets" --fixtures "$WORK/st/chart/fx" v9.9.9
   st_expect "$ST_OUT" FAIL chart.keyorix.version
@@ -1320,7 +1352,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL image.web.tag
   st_expect "$ST_OUT" PASS image.server.tag
 
-  log "self-test 6/15: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
+  log "self-test 6/16: no cosign and unreachable registry must be INCOMPLETE (exit 2), not a pass"
   st_world "$WORK/st/skip"
   printf 'https://registry.test/v2/\t-\t000\t\n' >"$WORK/st/skip/fx/index.tsv.new"
   awk -F'\t' '$1 != "https://registry.test/v2/"' "$WORK/st/skip/fx/index.tsv" >>"$WORK/st/skip/fx/index.tsv.new"
@@ -1332,7 +1364,7 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.offline
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 7/15: replay of GitHub-side data copied from the real v0.96.3 release"
+  log "self-test 7/16: replay of GitHub-side data copied from the real v0.96.3 release"
   local real
   real="$(dirname "$SELF")/testdata/real-v0.96.3"
   if [ -d "$real" ]; then
@@ -1350,7 +1382,7 @@ self_test() {
     ST_BAD=$((ST_BAD + 1))
   fi
 
-  log "self-test 8/15: cosign v2 verifies checksums.txt but cannot see referrer signatures: SKIP + precondition, never FAIL"
+  log "self-test 8/16: cosign v2 verifies checksums.txt but cannot see referrer signatures: SKIP + precondition, never FAIL"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=v2.5.2 st_run cosign2 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_expect "$ST_OUT" SKIP image.server.signature
@@ -1379,14 +1411,14 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_count "$ST_OUT" 'PRECONDITION NOT MET' 0
 
-  log "self-test 9/15: unrecognised cosign version string (dev build, no output): the checks are attempted"
+  log "self-test 9/16: unrecognised cosign version string (dev build, no output): the checks are attempted"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION=devel st_run cosigndev 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS image.server.signature
   st_expect "$ST_OUT" PASS chart.keyorix.signature
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_VERSION='' st_run cosignnone 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_expect "$ST_OUT" PASS image.web.signature
 
-  log "self-test 10/15: BuildKit attestation layers as the real registry serves them"
+  log "self-test 10/16: BuildKit attestation layers as the real registry serves them"
   local RB want got
   RB="$(dirname "$SELF")/testdata/real-buildkit-v0.96.3"
   # verbatim copy of the real v0.96.3 keyorix-k8s-sync attestation manifest (sha256:862b7c3f...)
@@ -1404,7 +1436,7 @@ self_test() {
   st_expect "$ST_OUT" PASS image.server.buildkit-provenance
   st_count "$ST_OUT" 'no-sbom-layer\(layer types: https://spdx.dev/Spdx,https://slsa.dev/provenance/v1\)' 6
 
-  log "self-test 11/15: GitHub API rate limit (HTTP 403 'API rate limit exceeded') is INCOMPLETE, never FAIL"
+  log "self-test 11/16: GitHub API rate limit (HTTP 403 'API rate limit exceeded') is INCOMPLETE, never FAIL"
   st_world "$WORK/st/rate"
   printf '{"message":"API rate limit exceeded for 203.0.113.7. (But here'"'"'s the good news: Authenticated requests get a higher rate limit.)","documentation_url":"https://docs.github.com/rest/overview/resources-in-the-rest-api#rate-limiting"}\n' >"$WORK/st/rate/fx/ratelimit.json"
   awk -F'\t' -v OFS='\t' '$1 ~ /^https:\/\/api\.github\.com\// { $2 = "ratelimit.json"; $3 = "403" } { print }' "$WORK/st/rate/fx/index.tsv" >"$WORK/st/rate/fx/index.tsv.new"
@@ -1420,7 +1452,7 @@ self_test() {
   st_count "$ST_OUT" 'GitHub API rate limit reached \(HTTP 403\).*NOT a verification failure' 8
   st_count "$ST_OUT" '^RESULT: INCOMPLETE' 1
 
-  log "self-test 12/15: --allow-skip never covers a SKIPped cosign signature check (a self-signed forgery must not exit 0)"
+  log "self-test 12/16: --allow-skip never covers a SKIPped cosign signature check (a self-signed forgery must not exit 0)"
   # the synthetic release IS a forgery as far as openssl can tell: a self-signed certificate
   # with the right SAN and issuer extension, a matching signature and checksums
   st_run nocosign-allow 2 "${base[@]}" --no-cosign --allow-skip --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
@@ -1471,7 +1503,7 @@ self_test() {
   st_expect "$ST_OUT" PASS release.signature.cosign
   st_count "$ST_OUT" '^SCOPE REDUCED: --skip-images --skip-charts: the image and chart signatures were not verified by this run' 1
 
-  log "self-test 13/15: cosign is asked for the pinned identity, issuer and @digest; wrong issuer and missing .sig/.pem FAIL"
+  log "self-test 13/16: cosign is asked for the pinned identity, issuer and @digest; wrong issuer and missing .sig/.pem FAIL"
   : >"$WORK/st/cosign.log"
   PATH="$WORK/st/bin:$PATH" FAKE_COSIGN_LOG="$WORK/st/cosign.log" st_run cosign-args 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^FAIL ' 0
@@ -1501,7 +1533,7 @@ self_test() {
   st_expect "$ST_OUT" FAIL release.signature.files
   st_count "$ST_OUT" '^PASS +release\.signature\.cosign' 0
 
-  log "self-test 14/15: REGISTRY_USER/REGISTRY_PASSWORD go to the registry only, GITHUB_TOKEN to api.github.com only, both never on a command line"
+  log "self-test 14/16: REGISTRY_USER/REGISTRY_PASSWORD go to the registry only, GITHUB_TOKEN to api.github.com only, both never on a command line"
   st_fake_curl
   : >"$WORK/st/curl.log"
   PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=MIRROR-SECRET GITHUB_TOKEN='' GH_TOKEN='' \
@@ -1530,7 +1562,7 @@ self_test() {
   PATH="$WORK/st/curlbin:$PATH" FAKE_CURL_LOG="$WORK/st/curl.log" REGISTRY_USER=mirroruser REGISTRY_PASSWORD=$'a\nurl = "https://evil.test/"' \
     st_run creds-newline 3 --repo selftest/keyorix --registry registry.test/keyorix --no-gh --no-cosign --skip-binaries v9.9.9
 
-  log "self-test 15/15: --commit is cross-checked online and only ASSERTED offline; TAG/--commit validation; attestation manifest bound to its digest"
+  log "self-test 15/16: --commit is cross-checked online and only ASSERTED offline; TAG/--commit validation; attestation manifest bound to its digest"
   PATH="$WORK/st/bin:$PATH" st_run commit-match 2 "${base[@]}" --commit 0123456789abcdef0123456789abcdef01234567 --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
   st_count "$ST_OUT" '^PASS +source\.commit +tag v9\.9\.9 -> 0123456789abcdef0123456789abcdef01234567 \(matches --commit\)' 1
   PATH="$WORK/st/bin:$PATH" st_run commit-wrong 1 "${base[@]}" --commit ffffffffffffffffffffffffffffffffffffffff --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
@@ -1555,6 +1587,35 @@ self_test() {
   st_atleast "$ST_OUT" 'attestation-manifest-digest-mismatch' 2
   st_expect "$ST_OUT" PASS image.k8s-sync.sbom
 
+  log "self-test 16/16: release gate only with --check-blockers: default run (token set, open blocker) has no release.blockers; with the flag green PASS, red FAIL (exit 1), listing failure, no token and --offline SKIP"
+  # shellcheck disable=SC2016 # the stub expands $KRB_STUB_JSON when it runs, not here
+  printf '#!/bin/sh\nprintf "%%s\\n" "$KRB_STUB_JSON"\n' >"$WORK/st/lister.sh"
+  printf '#!/bin/sh\nexit 1\n' >"$WORK/st/lister-fail.sh"
+  # a gh with no login: "gh auth status" fails, anything else would list no blocker (a PASS, caught below)
+  mkdir -p "$WORK/st/nologin"
+  # shellcheck disable=SC2016 # $1 belongs to the stub
+  printf '#!/bin/sh\n[ "$1" = auth ] && exit 1\nprintf "[]\\n"\n' >"$WORK/st/nologin/gh"
+  chmod +x "$WORK/st/nologin/gh"
+  # the customer default: a token is set and a blocker is open, but the verified tag is not judged by it
+  PATH="$WORK/st/bin:$PATH" GITHUB_TOKEN=tok KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[{"number":3642,"title":"audit key transition","url":"u"}]' st_run blk-default 2 "${base[@]}" --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" 'release\.blockers|release gate|3642' 0
+  st_count "$ST_OUT" '^FAIL ' 0
+  st_count "$ST_OUT" '^PASS ' 60
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[]' st_run blk-green 2 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" PASS release.blockers
+  st_count "$ST_OUT" '^PASS ' 61
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[{"number":3642,"title":"audit key transition","url":"u"}]' st_run blk-red 1 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" FAIL release.blockers
+  st_count "$ST_OUT" '#3642  audit key transition' 1
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister-fail.sh" st_run blk-listfail 2 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_expect "$ST_OUT" SKIP release.blockers
+  st_count "$ST_OUT" '^FAIL ' 0
+  PATH="$WORK/st/nologin:$WORK/st/bin:$PATH" GITHUB_ACTIONS=1 GITHUB_TOKEN='' GH_TOKEN='' KRB_LISTER='' st_run blk-notoken 2 "${base[@]}" --check-blockers --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^SKIP +release\.blockers +no GitHub token' 1
+  st_count "$ST_OUT" '^PASS +release\.blockers' 0
+  PATH="$WORK/st/bin:$PATH" KRB_LISTER="sh $WORK/st/lister.sh" KRB_STUB_JSON='[]' st_run blk-offline 2 "${base[@]}" --check-blockers --offline --assets-dir "$WORK/st/ok/assets" --fixtures "$WORK/st/ok/fx" v9.9.9
+  st_count "$ST_OUT" '^SKIP +release\.blockers +--offline' 1
+
   printf 'self-test: %d assertions passed, %d failed\n' "$ST_OK" "$ST_BAD"
   [ "$ST_BAD" = 0 ] || { log "outputs kept in $WORK/st"; KEEP_WORK=1; return 1; }
   return 0
@@ -1575,6 +1636,7 @@ while [ $# -gt 0 ]; do
     --cosign-args) COSIGN_ARGS=${2-}; shift 2 ;;
     --no-cosign) NO_COSIGN=1; shift ;;
     --no-gh) NO_GH=1; shift ;;
+    --check-blockers) CHECK_BLOCKERS=1; shift ;;
     --allow-skip) ALLOW_SKIP=1; shift ;;
     --fixtures) FIXTURES=${2:?--fixtures needs DIR}; shift 2 ;; # test hook, see --self-test
     --self-test) SELF_TEST=1; shift ;;

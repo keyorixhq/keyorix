@@ -14,6 +14,10 @@ command, and most of DEMO-1's findings are fixed (MFA, least-privilege CLI
 access, live backup, fresh-volume restore). What's left open is smaller and
 listed below.
 
+No Docker on the demo machine? "Without Docker: the release-binary golden path"
+near the end is the ~20-minute version from the two release binaries, with
+PostgreSQL, upgrade and recovery (DEMO-1, 2026-10-27).
+
 ## Before you're on stage: run the readiness check (~5 min)
 
 `make demo-check` (or `./scripts/demo/check.sh`) walks this exact script end
@@ -145,8 +149,10 @@ KEYORIX_INITIAL_PASSWORD='<a long passphrase>' ./bin/keyorix user create \
 ```
 
 The server confines **dana** to the security page
-(`/profile?tab=security&mfa=required`) until she enrols — scan the QR/enter the
-setup key in any TOTP app, enter the 6-digit code and her password, confirm. Log
+(`/profile?tab=security&mfa=required`) until she enrols — enter the setup key in
+any TOTP app (the dialog shows no QR code yet, #3738: type the 32-character key
+into the phone, or use a desktop authenticator), enter the 6-digit code and her
+password, confirm. Log
 out, log back in — the server now challenges for the code. While she is not yet
 enrolled, Compliance's second-factor coverage drops below 100% and that control is
 a gap; it returns to 100% the moment she enrols. (Disabling it again: Security -> Disable; **use a
@@ -378,6 +384,188 @@ SDK" pitch the footprint benchmark already made against Vault/OpenBao/
 Infisical (`~/proj/prompts/reports/SESSION-R.md`) — now demonstrated live,
 offline, in front of the audience, not just measured in a lab.
 
+## Without Docker: the release-binary golden path (~20 min)
+
+The same story from the two release binaries, the way a customer without Docker
+installs it: secure defaults on (TLS, MFA, rate limiting), SQLite or PostgreSQL.
+Walked end to end twice by DEMO-1 on 2026-10-27 from `main` @ `112c537a3` (A:
+SQLite with the air-gapped server build, B: PostgreSQL), with the upgrade from
+v0.96.3 and the break-glass/recovery drill. The DEMO-1 journey PR adds
+`TestJourney_ReleaseBinaryGoldenPath` (`scripts/e2e/journeys/`), which runs steps
+1-8 against real binaries so the sequence cannot silently break. Times are what each
+step took live.
+
+Run everything from an empty install directory. Use `keyorix-server-airgap_linux_*`
+as `bin/keyorix-server` on an air-gapped host: nothing below needs the network.
+Without a phone to hand, any RFC 6238 TOTP generator fed the setup key works.
+
+### 1. Install and first start (~3 min)
+
+```sh
+mkdir -m 700 ~/keyorix && cd ~/keyorix && mkdir -m 700 bin
+# bin/keyorix-server and bin/keyorix: the release assets (QUICK_START.md "Get the binaries")
+./bin/keyorix-server admin generate-secrets          # master passphrase, bootstrap token, admin password: 0600 files, never printed
+./bin/keyorix-server admin init --config ./keyorix.yaml        # secure baseline + self-signed TLS cert
+#   PostgreSQL instead: admin init --storage-type postgres, set storage.database.dsn,
+#   put the DB password in secrets/db_password and export KEYORIX_DB_PASSWORD_FILE for every command
+export KEYORIX_MASTER_PASSWORD_FILE=secrets/master_password
+./bin/keyorix-server admin encryption init --config ./keyorix.yaml
+./bin/keyorix-server admin migrate --config ./keyorix.yaml
+./bin/keyorix-server admin validate --posture --config ./keyorix.yaml    # "No deviations found."
+./bin/keyorix-server admin recovery-key rotate --config ./keyorix.yaml \
+  --recipient ~/.ssh/id_ed25519.pub --output ./recovery-key.age         # encrypted to you, never printed
+KEYORIX_CONFIG_PATH=./keyorix.yaml KEYORIX_BOOTSTRAP_TOKEN_FILE=secrets/bootstrap_token ./bin/keyorix-server &
+curl --cacert certs/server.crt https://localhost:8080/health              # "status":"healthy"
+```
+
+Say out loud: TLS from the first start (plain `http://` is refused), `/metrics`
+behind a token, a recovery key that only you can open.
+
+### 2. First admin and MFA (~2 min)
+
+```sh
+./bin/keyorix config set ca_file "$PWD/certs/server.crt"
+KEYORIX_ADMIN_PASSWORD_FILE=secrets/admin_password KEYORIX_BOOTSTRAP_TOKEN_FILE=secrets/bootstrap_token \
+  ./bin/keyorix system init --server https://localhost:8080 --admin-username admin --admin-email admin@acme.example
+./bin/keyorix login --server https://localhost:8080 --username admin < secrets/admin_password
+./bin/keyorix secret list        # refused: "This deployment requires multi-factor authentication"
+./bin/keyorix mfa enroll         # setup key + otpauth:// link
+./bin/keyorix mfa activate       # code, then password; prints 10 recovery codes once
+```
+
+Secrets stay locked until the admin has a second factor: that is the default.
+The next `login` asks for a code. Each code works once, so wait for the next one
+after activating.
+
+### 3. Teams and projects (~2 min)
+
+```sh
+./bin/keyorix project create --name payments          # id 2, environments 4/5/6
+./bin/keyorix project create --name storefront        # id 3, environments 7/8/9
+./bin/keyorix project create --name data-platform
+./bin/keyorix group create --name team-payments
+./bin/keyorix group create --name team-storefront
+```
+
+In the web UI (Projects → New Project) a project is one dialog; it opens on the
+new project's Production secrets.
+
+### 4. People and least privilege (~3 min)
+
+```sh
+KEYORIX_INITIAL_PASSWORD_FILE=bob.pw   ./bin/keyorix user create --username bob   --email bob@acme.example
+KEYORIX_INITIAL_PASSWORD_FILE=carol.pw ./bin/keyorix user create --username carol --email carol@acme.example
+./bin/keyorix group add-member team-payments --user bob
+./bin/keyorix group add-member team-storefront --user carol
+./bin/keyorix rbac assign-role-to-group --group team-payments   --role project_developer --project payments
+./bin/keyorix rbac assign-role-to-group --group team-storefront --role project_viewer    --project storefront
+./bin/keyorix rbac assign-role --user admin@acme.example --role project_admin --project payments
+```
+
+Log in as carol in the web UI: she is confined to enrolling MFA (Profile →
+Security → Enable, setup key + code + password), then sees only `storefront`.
+From the CLI as carol: `secret get` on a payments secret is `Insufficient
+permissions`, and so are `audit logs`, `user list` and writing her own project's
+secret. bob can write payments secrets and cannot read storefront.
+
+### 5. Secrets: create, version, reveal, rotate, delete, restore (~3 min)
+
+```sh
+printf %s 'sk_live_v1' | ./bin/keyorix secret create --name stripe-api-key --project 2 --environment 6 --from-file -
+printf %s 'sk_live_v2' | ./bin/keyorix secret update --id 1 --from-file -      # version 2
+./bin/keyorix secret rotate --id 1                                              # hidden prompt: version 3
+./bin/keyorix secret versions --id 1                                            # 3 versions
+./bin/keyorix secret get --id 1 --show-value                                    # the reveal (audited)
+./bin/keyorix secret delete --id 1      # type the name, then "yes": soft-delete, prints the restore deadline
+./bin/keyorix secret restore --id 1
+```
+
+Values never go on the command line: a hidden prompt, a relative file, or stdin
+(`--from-file -`).
+
+### 6. A machine identity, the way CI reads (~2 min)
+
+```sh
+./bin/keyorix machine create --name payments-ci --project payments --type ci
+./bin/keyorix machine grant-role payments-ci --project payments --role project_viewer
+./bin/keyorix machine token issue payments-ci --name ci --project payments \
+  --expires-in-days 30 --output-file ci.token            # 0600 file, never printed
+
+# in the CI job: no login, just the token
+export KEYORIX_SERVER=https://localhost:8080 KEYORIX_TOKEN_FILE=$PWD/ci.token KEYORIX_CA_FILE=$PWD/certs/server.crt
+keyorix secret get --ref payments/production/stripe-api-key --show-value
+keyorix run --project payments --env production --var STRIPE_KEY=stripe-api-key -- ./deploy.sh
+curl --cacert certs/server.crt -H "Authorization: Bearer $(cat ci.token)" \
+  "https://localhost:8080/api/v1/secrets/1?include_value=true"
+keyorix secret get --id 3 --show-value      # storefront: Insufficient permissions
+```
+
+### 7. Audit: find it, export it, prove it (~3 min)
+
+```sh
+./bin/keyorix audit search --action secret.read --actor admin          # the reveal
+./bin/keyorix audit logs --actor-type machine_identity --limit 5        # the CI reads, and the refused one
+./bin/keyorix audit search --action secret.read --actor carol           # "was refused a secret value read"
+./bin/keyorix audit export --all > audit.ndjson
+./bin/keyorix audit verify                                              # Audit chain: VALID
+```
+
+Tamper evidence without stopping anything, on a copy (SQLite):
+
+```sh
+sqlite3 keyorix.db ".backup audit-copy.db"
+./bin/keyorix-server admin verify-audit --db audit-copy.db      # Verdict: VALID
+sqlite3 audit-copy.db "UPDATE audit_events SET description='TAMPERED' WHERE id=47;"
+./bin/keyorix-server admin verify-audit --db audit-copy.db      # Verdict: BROKEN, first broken id: 47
+```
+
+(`verify-audit` also takes `--pg-dsn` for a PostgreSQL copy; DEMO-1 walked the
+tamper step on SQLite only.)
+
+### 8. Backup, wipe, restore (~3 min)
+
+```sh
+# PostgreSQL: beside the running server. SQLite: stop the server first.
+./bin/keyorix-server admin backup --output ../keyorix-backup.tar.gz --config ./keyorix.yaml
+```
+
+The disaster: a new, empty host directory (and, on PostgreSQL, an empty database)
+holding only `bin/`, `keyorix.yaml`, `certs/`, `secrets/master_password`,
+`secrets/metrics_token` (and `secrets/db_password`):
+
+```sh
+./bin/keyorix-server admin restore --input ../keyorix-backup.tar.gz --config ./keyorix.yaml
+#   ... verify-audit on the restored database: VALID
+```
+
+Start it, log in with the same password and authenticator: the secret reads back
+at version 3, the CI read is still in the audit log, `audit verify` is `VALID`.
+
+### 9. Upgrade with data in place (mention, or show from a prepared v0.96.3 install)
+
+Stop the old server, `admin backup` with the **old** binary, replace both binaries,
+start. Then `keyorix audit verify --full` (a plain `verify` says `NOT PROVEN` until
+then) and delete the two deprecated keys the old config carries: see
+[UPGRADING.md](../UPGRADING.md#any-v096x-install-moving-to-the-next-release-two-things-you-will-see).
+
+### 10. Recovery and break-glass (~2 min)
+
+Locked-out admin (lost phone), on the host with the server stopped:
+
+```sh
+age -d -i ~/.ssh/id_ed25519 recovery-key.age | \
+  ./bin/keyorix-server admin recover-admin --user admin@acme.example --recovery-key -
+```
+
+(DEMO-1 fed the key from a plaintext `recovery-key rotate` on stdin; the `age -d`
+pipe is the same input, decrypted with the key step 1 encrypted it to.)
+
+It prints a one-time password valid for 24 hours. That login can only change the
+password and enrol MFA (the CLI says so). Every use is in the audit log, naming
+the host user who ran it. Break-glass (off by default; enable it in
+`keyorix.yaml` and restart) is the "Optional: emergency access" section above, run
+exactly as written.
+
 ## Known rough edges
 
 **Fixed since DEMO-1** (no longer blockers): MFA enrollment/login (#2552),
@@ -420,5 +608,35 @@ those three types, low/medium severity, whose accessor is a seeded demo principa
 open and fails `check.sh`. Whether the creator's own first access to a brand-new
 secret should count as "new" remains a product question, not a demo one.
 
-**Polish, safe to demo through:** none currently open that affect this
-script's own steps.
+**Found re-walking from the release binaries (DEMO-1, 2026-10-27; all
+`demo-polish`, none blocks the demo):**
+- `keyorix logout` forgets `ca_file`, so switching users on stage needs
+  `keyorix config set ca_file ...` again before the next `login`:
+  [#3735](https://github.com/keyorixhq/keyorix/issues/3735).
+- `audit search --actor payments-ci` finds nothing: filter machine reads with
+  `audit logs --actor-type machine_identity` (as the script does):
+  [#3736](https://github.com/keyorixhq/keyorix/issues/3736).
+- `secret restore` on a secret that is not deleted says "Storage operation failed:
+  Secret not found": [#3737](https://github.com/keyorixhq/keyorix/issues/3737).
+- The web TOTP dialog has no QR code:
+  [#3738](https://github.com/keyorixhq/keyorix/issues/3738).
+- A `project_viewer` sees New Project / edit / delete on Projects (the server
+  refuses them): [#3739](https://github.com/keyorixhq/keyorix/issues/3739). Do not
+  click them in the least-privilege part.
+- A fresh dashboard shows "Inactive users: 1 — no login in 30 days" for users who
+  have not logged in yet: [#3740](https://github.com/keyorixhq/keyorix/issues/3740).
+- `break-glass list` shows the user as a number:
+  [#3741](https://github.com/keyorixhq/keyorix/issues/3741).
+- A missing key directory is reported as "a live server ... is using this key
+  directory": [#3742](https://github.com/keyorixhq/keyorix/issues/3742).
+- Right after an upgrade, `audit verify` says `NOT PROVEN` until
+  `audit verify --full`; the v0.96 config carries two deprecated keys:
+  [#3743](https://github.com/keyorixhq/keyorix/issues/3743) (documented in UPGRADING.md).
+- Copy: the wrong "request access" hint after `recover-admin` and the help of
+  `user create`/`logout` are fixed in the DEMO-1 PR; internal references
+  ("pre-#1452", "design §3.4") in `verify-audit`/`restore` output remain:
+  [#3744](https://github.com/keyorixhq/keyorix/issues/3744).
+- With the default TLS (self-signed certificate), a browser shows a certificate
+  warning until the presenter trusts `certs/server.crt` (macOS: open it in Keychain
+  Access and set it to "Always Trust"), so do that before the demo. The
+  `admin init --dev` config (no TLS) avoids it but is DEV-ONLY.

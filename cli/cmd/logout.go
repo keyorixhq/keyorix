@@ -11,12 +11,14 @@ import (
 var logoutCmd = &cobra.Command{
 	Use:   "logout",
 	Short: "Revoke the stored session and forget it locally",
-	Long: `logout is the remote-only successor to the old CLI's "auth logout"
-(docs/cli-split-inventory.md §2.3, §4): the old command only cleared local config and
-never told the server (§8 Finding S12). This one calls POST /auth/logout to invalidate
-the token server-side first, then deletes the local credentials file regardless of
-whether that call succeeded -- a server that is unreachable or already rejects the
-token must not leave a stale credential sitting on disk.`,
+	Long: `Sign out: the server revokes the stored session token first, then the local
+credentials file is deleted, even when the server cannot be reached or already rejects
+the token, so no stale credential stays on disk.
+
+The credentials file also holds the server URL and the ca_file setting
+(keyorix config set ca_file), so both are forgotten too: against a server with a private
+or self-signed certificate, run "keyorix config set ca_file <path>" again (or pass
+--ca-file) before the next "keyorix login".`,
 	RunE: runLogout,
 }
 

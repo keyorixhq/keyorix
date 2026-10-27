@@ -301,6 +301,42 @@ describe('RolesPoliciesPage — create role', () => {
     });
 });
 
+// The server refuses every update of a built-in role (core.IsBuiltinRole), including a
+// change of where it can be granted, so the form says so instead of offering the choice.
+describe('RolesPoliciesPage — edit a built-in role', () => {
+    it('disables the "Can be granted" selector and explains the refusal', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('admin')).getByTitle('Edit role'));
+
+        const dialog = screen.getByRole('dialog');
+        expect(within(dialog).getByLabelText('Can be granted')).toBeDisabled();
+        expect(within(dialog).getByText(/built-in role.*cannot be changed/i)).toBeInTheDocument();
+    });
+
+    it('keeps the selector enabled for a custom role', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+
+        const dialog = screen.getByRole('dialog');
+        expect(within(dialog).getByLabelText('Can be granted')).toBeEnabled();
+        expect(within(dialog).queryByText(/cannot be changed/i)).not.toBeInTheDocument();
+    });
+
+    // The two-tier ADR-021 roles are built-in too; the page used to know only five names.
+    it.each(['system_admin', 'project_developer', 'project_viewer', 'alert_operator'])(
+        'treats %s as built-in',
+        (name) => {
+            useRoles.mockReturnValue({ data: [{ ...roleDeveloper, id: 9, name }], isLoading: false, error: null });
+            render(<RolesPoliciesPage />);
+            const card = getRoleCard(name);
+            expect(within(card).getByText('Built-in')).toBeInTheDocument();
+
+            fireEvent.click(within(card).getByTitle('Edit role'));
+            expect(within(screen.getByRole('dialog')).getByLabelText('Can be granted')).toBeDisabled();
+        }
+    );
+});
+
 describe('RolesPoliciesPage — edit role', () => {
     it('prefills the form from the clicked role and submits an update', () => {
         render(<RolesPoliciesPage />);
