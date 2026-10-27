@@ -446,6 +446,9 @@ Max events to show (1\(en100) (default 50)
 \fB\-\-project\-id\fR \fIuint\fR
 Filter by project id
 .TP
+\fB\-\-request\-id\fR \fIstring\fR
+Filter by the server request id (the X\-Request\-ID of the call); not covered by the audit hash chain; combine with \-\-since
+.TP
 \fB\-\-since\fR \fIstring\fR
 Only events at/after this time (RFC3339)
 .TP
@@ -454,6 +457,9 @@ Only events at/before this time (RFC3339)
 .TP
 \fB\-\-user\-id\fR \fIuint\fR
 Filter by actor user id
+.TP
+\fB\-\-wide\fR
+Add the REQUEST\-ID column
 .SS keyorix audit migrate\-chain\-encoding
 One\-time re\-derivation of the audit hash chain under the current encoding
 .PP
@@ -509,6 +515,9 @@ Pagination offset (offset+limit up to 10000; use \-\-cursor beyond)
 \fB\-\-project\-id\fR \fIuint\fR
 Filter by project ID
 .TP
+\fB\-\-request\-id\fR \fIstring\fR
+Filter by the server request id (the X\-Request\-ID of the call); not covered by the audit hash chain; combine with \-\-since
+.TP
 \fB\-\-resource\-id\fR \fIuint\fR
 Filter by exact resource ID (secret_node_id)
 .TP
@@ -526,6 +535,9 @@ Only events at/before this RFC3339 time
 .TP
 \fB\-\-user\-id\fR \fIuint\fR
 Filter by exact actor user ID
+.TP
+\fB\-\-wide\fR
+Add the REQUEST\-ID column
 .SS keyorix audit verify
 Report the audit hash chain's integrity (non\-zero exit if broken or not proven)
 .PP
