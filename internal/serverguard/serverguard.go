@@ -137,25 +137,6 @@ func IsLockHeld(err error) bool {
 	return errors.As(err, &e)
 }
 
-// lockFileErr marks an AcquireExclusive failure on the SQLite sidecar lock file
-// itself (it cannot be created, opened, statted or flocked: a foreign-owned or
-// unreadable .server.lock, a filesystem without flock or inode numbers), as
-// opposed to a held lock or a database connection failure. Fails closed like
-// every other acquisition failure; IsLockFileError lets a caller say what
-// actually went wrong (REVIEW-SERVERGUARD-RECOVERYKEY-1 F7: the admin refusal
-// called an EACCES on the lock file "cannot connect to the database").
-type lockFileErr struct{ err error }
-
-func (e *lockFileErr) Error() string { return e.err.Error() }
-func (e *lockFileErr) Unwrap() error { return e.err }
-
-// IsLockFileError reports whether err (as returned by AcquireExclusive) is a
-// failure on the SQLite server lock file itself.
-func IsLockFileError(err error) bool {
-	var e *lockFileErr
-	return errors.As(err, &e)
-}
-
 // serverPresenceLockKey is the Postgres advisory-lock key for this guard.
 // Arbitrary but fixed, distinct from internal/storage/factory.go's
 // postgresMigrationLockKey (872341) — the two locks serve different purposes
@@ -512,7 +493,7 @@ func acquireSQLiteExclusive(cfg *config.Config) (*Exclusive, error) {
 		return nil, &lockHeldErr{fmt.Errorf("another process holds this database (a live server, or another admin command) via %s", path)}
 	}
 	if err != nil {
-		return nil, &lockFileErr{err}
+		return nil, err
 	}
 	return &Exclusive{release: func() error {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)

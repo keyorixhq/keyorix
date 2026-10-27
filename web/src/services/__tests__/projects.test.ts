@@ -479,7 +479,7 @@ describe('projectsApi.accessReview', () => {
         const result = await projectsApi.accessReview(9);
 
         expect(mocked.get).toHaveBeenCalledWith('/api/v1/projects/9/access-review');
-        expect(result).toEqual([
+        expect(result.entries).toEqual([
             {
                 principalType: 'user',
                 principalId: 3,
@@ -504,19 +504,51 @@ describe('projectsApi.accessReview', () => {
 
         const result = await projectsApi.accessReview(9);
 
-        expect(result.map((e) => e.activityWindowDays)).toEqual([45, 45]);
+        expect(result.entries.map((e) => e.activityWindowDays)).toEqual([45, 45]);
     });
 
-    it('returns [] when entries is missing', async () => {
+    it('returns an empty, not-degraded report when the payload is empty', async () => {
         mocked.get.mockResolvedValueOnce({ data: { data: {} } });
 
-        await expect(projectsApi.accessReview(9)).resolves.toEqual([]);
+        await expect(projectsApi.accessReview(9)).resolves.toEqual({
+            entries: [],
+            degraded: false,
+            degradedReasons: [],
+        });
+    });
+
+    // A degraded review is an incomplete list: the flag must survive even when no entry did.
+    it('carries degraded and degraded_reasons, including on an empty entry list', async () => {
+        mocked.get.mockResolvedValueOnce({
+            data: {
+                data: {
+                    entries: [],
+                    degraded: true,
+                    degraded_reasons: ['role scope: environment 7 granted without a project'],
+                },
+            },
+        });
+
+        const result = await projectsApi.accessReview(9);
+
+        expect(result.entries).toEqual([]);
+        expect(result.degraded).toBe(true);
+        expect(result.degradedReasons).toEqual(['role scope: environment 7 granted without a project']);
+    });
+
+    it('treats a missing degraded_reasons as none even when degraded is set', async () => {
+        mocked.get.mockResolvedValueOnce({ data: { data: { entries: [], degraded: true } } });
+
+        const result = await projectsApi.accessReview(9);
+
+        expect(result.degraded).toBe(true);
+        expect(result.degradedReasons).toEqual([]);
     });
 
     it('defaults every field on a sparse access-review entry', async () => {
         mocked.get.mockResolvedValueOnce({ data: { data: { entries: [{ source: 'owner' }] } } });
 
-        const result = await projectsApi.accessReview(9);
+        const result = (await projectsApi.accessReview(9)).entries;
 
         expect(result).toEqual([
             {

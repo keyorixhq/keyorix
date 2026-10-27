@@ -967,6 +967,59 @@ describe('AdminPage — roles', () => {
         );
     });
 
+    // This editor replaces the user's roles at the GLOBAL scope (PUT sends no
+    // project_id), where a project-tier role is refused. Such roles are shown read-only
+    // and never submitted, so the save cannot fail on them.
+    describe('project-tier roles', () => {
+        const projectRole = {
+            id: 7,
+            name: 'project_developer',
+            description: 'Develops in a project',
+            assignable_scope: 'project',
+        };
+
+        beforeEach(() => {
+            useAdminRoles.mockReturnValue({
+                data: [{ id: 1, name: 'admin', description: 'Full access', assignable_scope: 'global' }, projectRole],
+            });
+        });
+
+        it('cannot be checked at the global scope and says where to assign it', async () => {
+            render(<AdminPage />);
+            fireEvent.click(within(aliceRow()).getByTitle('Manage roles'));
+
+            const box = await screen.findByRole('checkbox', { name: /project_developer/i });
+            expect(box).toBeDisabled();
+            expect(screen.getByText(/assign it from the project/i)).toBeInTheDocument();
+            expect(screen.getByRole('checkbox', { name: /admin/i })).toBeEnabled();
+        });
+
+        it('is left out of the submitted role ids even when the user holds it in a project', async () => {
+            useUserRoles.mockReturnValue({ data: [{ id: 1 }, { id: 7 }], isLoading: false });
+            render(<AdminPage />);
+            fireEvent.click(within(aliceRow()).getByTitle('Manage roles'));
+
+            await screen.findByRole('checkbox', { name: /project_developer/i });
+            fireEvent.click(screen.getByRole('button', { name: 'Save Roles' }));
+
+            await waitFor(() =>
+                expect(updateRolesMutate).toHaveBeenCalledWith({ userId: 1, roleIds: [1] }, expect.anything())
+            );
+        });
+
+        it('does not count toward the "at least one role" rule', async () => {
+            useUserRoles.mockReturnValue({ data: [{ id: 7 }], isLoading: false });
+            render(<AdminPage />);
+            fireEvent.click(within(aliceRow()).getByTitle('Manage roles'));
+
+            await screen.findByRole('checkbox', { name: /project_developer/i });
+            fireEvent.click(screen.getByRole('button', { name: 'Save Roles' }));
+
+            expect(await screen.findByText('User must have at least one role')).toBeInTheDocument();
+            expect(updateRolesMutate).not.toHaveBeenCalled();
+        });
+    });
+
     it('closes the modal once the save succeeds', async () => {
         useUserRoles.mockReturnValue({ data: [], isLoading: false });
         updateRolesMutate.mockImplementation((_vars, opts) => opts.onSuccess());

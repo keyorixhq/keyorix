@@ -146,6 +146,31 @@ func TestContractPR3_GetGroupRoles(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code)
 }
 
+// A group holding a project-scoped grant: the populated roles[] items (with
+// project_id / environment_id) must validate against GroupRoleGrant.
+func TestContractPR3_GetGroupRoles_ScopedGrant(t *testing.T) {
+	cs, db := freshCoreS12WithAdmin(t)
+	h := NewRBACHandler(cs)
+	g := &models.Group{Name: "contract-pr3-group-roles-scoped"}
+	require.NoError(t, db.Create(g).Error)
+	role := &models.Role{Name: "contract-pr3-scoped-role", Description: "d", AssignableScope: models.RoleAssignableAny}
+	require.NoError(t, db.Create(role).Error)
+	proj := &models.Project{Name: "contract-pr3-group-roles-proj"}
+	require.NoError(t, db.Create(proj).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: g.ID, RoleID: role.ID, ProjectID: proj.ID}).Error)
+
+	req := withUserCtx(withChiParamsPR2(
+		httptest.NewRequest(http.MethodGet, "/api/v1/groups/1/roles", nil),
+		"id", fmt.Sprintf("%d", g.ID),
+	))
+	w := httptest.NewRecorder()
+	h.GetGroupRoles(w, req)
+
+	contracttest.AssertOpenAPIResponse(t, req, w)
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), fmt.Sprintf(`"project_id":%d`, proj.ID))
+}
+
 func TestContractPR3_AssignRoleToGroup(t *testing.T) {
 	cs, db := freshCoreS12WithAdmin(t)
 	h := NewRBACHandler(cs)

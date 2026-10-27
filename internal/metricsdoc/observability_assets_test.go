@@ -13,6 +13,7 @@ package metricsdoc
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,6 +102,9 @@ func checkExpr(inv map[string]metricInfo, expr string) []string {
 		if !ok {
 			continue // already reported
 		}
+		if m.typ == recordingType {
+			continue // a recording rule's labels come from its own expr, not the code inventory
+		}
 		for _, mm := range matcherNameRe.FindAllStringSubmatch(sel[2], -1) {
 			if !slices.Contains(m.labels, mm[1]) && !slices.Contains(implicitLabels, mm[1]) {
 				problems = append(problems, "metric "+sel[1]+" has no label "+mm[1])
@@ -123,7 +127,12 @@ func checkExpr(inv map[string]metricInfo, expr string) []string {
 	return problems
 }
 
+// recordingType marks an inventory entry that is a recording rule defined in the rule
+// file itself, not a metric registered by the code.
+const recordingType = "recording"
+
 type alertRule struct {
+	Record      string            `yaml:"record"`
 	Alert       string            `yaml:"alert"`
 	Expr        string            `yaml:"expr"`
 	For         string            `yaml:"for"`
@@ -136,28 +145,171 @@ type ruleGroup struct {
 	Rules []alertRule `yaml:"rules"`
 }
 
-func loadRules(t *testing.T) []ruleGroup {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(repoRoot(), obsDir, "prometheus-alerts.yaml")) //nolint:gosec // fixed repo path
-	if err != nil {
-		t.Fatal(err)
-	}
+func parseRules(raw []byte) ([]ruleGroup, error) {
 	var doc struct {
 		Groups []ruleGroup `yaml:"groups"`
 	}
 	dec := yaml.NewDecoder(strings.NewReader(string(raw)))
 	dec.KnownFields(true) // a misspelt key (e.g. `annotation:`) must fail, not be ignored
 	if err := dec.Decode(&doc); err != nil {
+		return nil, err
+	}
+	return doc.Groups, nil
+}
+
+func loadRules(t *testing.T) []ruleGroup {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), obsDir, "prometheus-alerts.yaml")) //nolint:gosec // fixed repo path
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups, err := parseRules(raw)
+	if err != nil {
 		t.Fatalf("prometheus-alerts.yaml does not parse: %v", err)
 	}
-	return doc.Groups
+	return groups
+}
+
+// withRecordings returns inv plus the recording rules the file defines, so an expr that
+// reads a recorded series is not reported as an unknown metric. A recording rule that
+// shadows a registered metric is an error: the name would mean two things.
+func withRecordings(inv map[string]metricInfo, groups []ruleGroup) (map[string]metricInfo, []string) {
+	out := maps.Clone(inv)
+	var problems []string
+	for _, g := range groups {
+		for _, r := range g.Rules {
+			if r.Record == "" {
+				continue
+			}
+			if _, clash := inv[r.Record]; clash {
+				problems = append(problems, g.Name+"/"+r.Record+": recording rule shadows a registered metric")
+			}
+			out[r.Record] = metricInfo{typ: recordingType}
+		}
+	}
+	return out, problems
+}
+
+// checkRuleFile returns every problem in a rule file's text: it must parse, each alert
+// needs a severity and a runbook_url or description, and every metric an expr names must
+// be registered in inv or recorded by the file itself. Alerts-versus-runbook.md and
+// runbook_url shape are checked separately by TestAlertRules_StructureMetricsAndRunbooks.
+func checkRuleFile(inv map[string]metricInfo, raw []byte) []string {
+	groups, err := parseRules(raw)
+	if err != nil {
+		return []string{"does not parse: " + err.Error()}
+	}
+	full, problems := withRecordings(inv, groups)
+	for _, g := range groups {
+		for _, r := range g.Rules {
+			id := g.Name + "/" + r.Alert + r.Record
+			if r.Alert != "" {
+				if !slices.Contains(severities, r.Labels["severity"]) {
+					problems = append(problems, id+": labels.severity missing or unknown")
+				}
+				if strings.TrimSpace(r.Annotations["runbook_url"]) == "" && strings.TrimSpace(r.Annotations["description"]) == "" {
+					problems = append(problems, id+": needs a runbook_url or description annotation")
+				}
+			}
+			for _, p := range checkExpr(full, r.Expr) {
+				problems = append(problems, id+": "+p)
+			}
+		}
+	}
+	return problems
+}
+
+func TestAlertRules_FileCheckIsGreenAndWatchedRed(t *testing.T) {
+	inv := inventory(t)
+	raw, err := os.ReadFile(filepath.Join(repoRoot(), obsDir, "prometheus-alerts.yaml")) //nolint:gosec // fixed repo path
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := checkRuleFile(inv, raw); len(p) != 0 {
+		t.Fatalf("the shipped rule file has problems:\n%s", strings.Join(p, "\n"))
+	}
+
+	// Red: the same file with one metric misspelt must be reported.
+	src := string(raw)
+	bad := strings.Replace(src, "keyorix_audit_write_failures_total", "keyorix_audit_write_failure_total", 1)
+	if bad == src {
+		t.Fatal("test premise: keyorix_audit_write_failures_total no longer appears in the rule file")
+	}
+	if p := strings.Join(checkRuleFile(inv, []byte(bad)), "\n"); !strings.Contains(p, "unknown metric keyorix_audit_write_failure_total") {
+		t.Errorf("a misspelt metric in a copy of the file was not reported: %q", p)
+	}
+
+	// Red: an alert without severity, and one with neither runbook_url nor description.
+	noSev := strings.Replace(src, "severity: critical", "sev: critical", 1)
+	if p := strings.Join(checkRuleFile(inv, []byte(noSev)), "\n"); p == "" {
+		t.Error("a mistyped labels key was not reported")
+	}
+	const minimal = "groups:\n- name: g\n  rules:\n  - alert: KeyorixX\n    expr: up == 0\n    labels: {severity: info}\n    annotations: {summary: s}\n"
+	if p := strings.Join(checkRuleFile(inv, []byte(minimal)), "\n"); !strings.Contains(p, "runbook_url or description") {
+		t.Errorf("an alert with no runbook_url or description was not reported: %q", p)
+	}
+
+	// Green: a recording rule defined in the file may be used by another expr; a clash
+	// with a registered metric may not.
+	const withRec = "groups:\n- name: g\n  rules:\n  - record: keyorix_my_recorded\n    expr: sum(rate(keyorix_http_requests_total[5m]))\n" +
+		"  - alert: KeyorixY\n    expr: keyorix_my_recorded > 1\n    labels: {severity: info}\n    annotations: {description: d}\n"
+	if p := checkRuleFile(inv, []byte(withRec)); len(p) != 0 {
+		t.Errorf("a locally recorded series was rejected: %v", p)
+	}
+	clash := strings.Replace(withRec, "keyorix_my_recorded", "keyorix_http_requests_total", 2)
+	if p := strings.Join(checkRuleFile(inv, []byte(clash)), "\n"); !strings.Contains(p, "shadows a registered metric") {
+		t.Errorf("a recording rule shadowing a registered metric was not reported: %q", p)
+	}
+}
+
+// TestAlertRules_OwedAgeThresholdsArePinned pins the numbers in the owed-audit alerts,
+// read from the rule file, so a threshold edit shows up as a diff of this table. The
+// numbers are a starting point owned by the operator, not a recommendation: changing one
+// means changing the table, deploy/observability/README.md and the metric help text.
+func TestAlertRules_OwedAgeThresholdsArePinned(t *testing.T) {
+	byName := map[string]alertRule{}
+	for _, g := range loadRules(t) {
+		for _, r := range g.Rules {
+			byName[r.Alert] = r
+		}
+	}
+	tests := []struct {
+		alert    string
+		severity string
+		expr     string
+		forDur   string
+	}{
+		{"KeyorixAuditOwedOldestPendingWarn", "warning", `max(keyorix_audit_owed_oldest_pending_age_seconds) > 3600`, "5m"},
+		{"KeyorixAuditOwedOldestPendingCritical", "critical", `max(keyorix_audit_owed_oldest_pending_age_seconds) > 86400`, "5m"},
+		{"KeyorixAuditOwedMetricUnreadable", "warning", `sum(increase(keyorix_audit_owed_metric_scrape_errors_total[15m])) > 0`, "15m"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.alert, func(t *testing.T) {
+			r, ok := byName[tc.alert]
+			if !ok {
+				t.Fatalf("alert %s is not in the rule file", tc.alert)
+			}
+			if got := strings.Join(strings.Fields(r.Expr), " "); got != tc.expr {
+				t.Errorf("expr = %q, want %q", got, tc.expr)
+			}
+			if r.Labels["severity"] != tc.severity {
+				t.Errorf("severity = %q, want %q", r.Labels["severity"], tc.severity)
+			}
+			if r.For != tc.forDur {
+				t.Errorf("for = %q, want %q", r.For, tc.forDur)
+			}
+		})
+	}
 }
 
 func TestAlertRules_StructureMetricsAndRunbooks(t *testing.T) {
-	inv := inventory(t)
 	groups := loadRules(t)
 	if len(groups) == 0 {
 		t.Fatal("no rule groups")
+	}
+	inv, recProblems := withRecordings(inventory(t), groups)
+	for _, p := range recProblems {
+		t.Error(p)
 	}
 	rb, err := os.ReadFile(filepath.Join(repoRoot(), obsDir, "runbook.md")) //nolint:gosec // fixed repo path
 	if err != nil {
@@ -176,6 +328,12 @@ func TestAlertRules_StructureMetricsAndRunbooks(t *testing.T) {
 		}
 		seenGroup[g.Name] = true
 		for _, r := range g.Rules {
+			if r.Record != "" {
+				for _, p := range checkExpr(inv, r.Expr) {
+					t.Errorf("%s/%s: %s\n  expr: %s", g.Name, r.Record, p, strings.TrimSpace(r.Expr))
+				}
+				continue
+			}
 			total++
 			id := g.Name + "/" + r.Alert
 			if !strings.HasPrefix(r.Alert, "Keyorix") || seenAlert[r.Alert] {

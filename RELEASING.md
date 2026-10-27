@@ -45,7 +45,17 @@ checks is [docs/releases/RELEASE-CHECKLIST.md](docs/releases/RELEASE-CHECKLIST.m
    Before tagging run `scripts/release/check-docs-version.sh vX.Y.Z` (intentional
    exceptions: `scripts/release/docs-version-exceptions.txt`) and read the install commands
    in README and `QUICK_START.md` once as a new user would.
-4. Tag and push:
+4. **Release gate (hard step, do not tag around it).** Run
+   `scripts/release/check-release-blockers.sh` (needs `gh` with `GITHUB_TOKEN`/`GH_TOKEN` or
+   a `gh auth login`; in a sandboxed session run it outside the sandbox or feed `kgh issue
+   list ... --json number,title,url` through `KRB_LISTER`). It lists the open issues labelled
+   `release-blocker`, prints every one and exits 1 while any is open; exit 3 (list not
+   obtainable) and 4 (no token) also mean stop: unknown is not a pass. The only ways past it
+   are to fix the issue or for the maintainer to remove the label with a written reason on the
+   issue. `scripts/release/check-release-blockers.sh --self-test` shows the red and green cases.
+   `scripts/release/verify-release.sh --check-blockers` repeats the check as its first step
+   (opt-in: a customer's verification of a published tag never runs it).
+5. Tag and push:
 
    ```sh
    git checkout main && git pull

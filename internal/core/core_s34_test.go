@@ -188,16 +188,20 @@ func TestRevokeSystemRoleGrant_RoleNotFound_s34(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
+	ms.On("LogAuditEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 	c := NewKeyorixCore(ms)
 	inv := &models.ProjectInvitation{SystemRole: "admin"}
-	// GetRoleByName fails → return early without error (best-effort).
-	c.revokeSystemRoleGrant(context.Background(), inv, 1)
+	// GetRoleByName fails → nothing reverted, reported as incomplete (and audited as
+	// MANUAL CLEANUP REQUIRED), never an error.
+	assert.False(t, c.revokeSystemRoleGrant(context.Background(), inv, 1))
 }
 
 func TestRevokeSystemRoleGrant_Success(t *testing.T) {
 	t.Parallel()
 	ms := new(MockStorage)
 	ms.On("GetRoleByName", mock.Anything, "viewer").Return(&models.Role{ID: 2, Name: "viewer"}, nil)
+	// The grant is reverted only when the user holds it.
+	ms.On("GetUserRoleIDsExact", mock.Anything, uint(1), mock.AnythingOfType("rules.Scope")).Return([]uint{2}, nil)
 	// RemoveUserRole calls installAdminRoleIDSet which tries GetRoleByName for admin role names
 	ms.On("GetRoleByName", mock.Anything, "super_admin").Return(nil, errors.New("not found"))
 	ms.On("GetRoleByName", mock.Anything, "admin").Return(nil, errors.New("not found"))
@@ -208,7 +212,7 @@ func TestRevokeSystemRoleGrant_Success(t *testing.T) {
 	ms.On("ListSessionTokenHashesForUser", mock.Anything, uint(1)).Return([]string{}, nil)
 	c := NewKeyorixCore(ms)
 	inv := &models.ProjectInvitation{SystemRole: "viewer"}
-	c.revokeSystemRoleGrant(context.Background(), inv, 1)
+	assert.True(t, c.revokeSystemRoleGrant(context.Background(), inv, 1))
 }
 
 // ── jit_access.go — assignUserRoleWithExpirySkipSoD ──────────────────────

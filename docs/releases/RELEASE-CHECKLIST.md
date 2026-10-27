@@ -18,10 +18,10 @@ example `v0.96.1`) throughout.
       `internal/core` and `internal/storage/store`):
       `GOMAXPROCS=2 gremlins unleash --workers 2 ./internal/crypto` and the same for
       `./internal/keyfiles`, `./internal/securefiles`, `./internal/recoverykey` and
-      `./internal/evidencesink` (use `--workers 1` for securefiles: its RLIMIT tests
+      `./internal/evidencesink`, `./internal/netutil` and `./internal/serverguard`, `./internal/solewriter`, `./internal/core/rules`, `./internal/identity`, `./internal/auditverify` (the latter also covers `anchorbundle`; use `--workers 1` for securefiles: its RLIMIT tests
       are process-wide). Test efficacy must not be lower than the last recorded
       value (2026-10-23: crypto 98.8% after #3612, keyfiles 100%, securefiles 98.3%,
-      recoverykey 82.4%, evidencesink 100%; the three remaining crypto survivors are
+      recoverykey 82.4%, evidencesink 100%, netutil 100%, auditverify 99.55%, serverguard 100%, solewriter 99.26% (both without a Postgres DSN), core/rules 98.06%, identity 100%; the three remaining crypto survivors are
       equivalent mutants listed in `internal/crypto/mutation_equivalents_test.go`, the
       rest are listed as equivalent in the MUTANT-SEC-1 commits and `run-mutation.sh`
       holds the floors).
@@ -127,10 +127,16 @@ cosign verify-blob --key scratch-key.pub --signature checksums.txt.sig \
 
 ## 3. Tag
 
+**Release gate first (hard step).** `scripts/release/check-release-blockers.sh` must print
+`release gate: PASS`: it fails while any issue labelled `release-blocker` is open and lists
+them (RELEASING.md step 4). Exit 3 or 4 (list not obtainable, no token) is a stop too.
+The block is one `&&` chain, so a gate that does not pass stops it before `git tag`:
+
 ```sh
-git switch main && git pull
-git tag vX.Y.Z
-git push origin vX.Y.Z      # fires release.yml, docker-publish.yml
+scripts/release/check-release-blockers.sh &&
+  git switch main && git pull &&
+  git tag vX.Y.Z &&
+  git push origin vX.Y.Z      # fires release.yml, docker-publish.yml
 ```
 
 (Andrei only: nothing in the dry run pushed a tag.)
@@ -155,6 +161,10 @@ cosign verify \
 helm show chart oci://ghcr.io/keyorixhq/charts/keyorix --version X.Y.Z
 curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh && keyorix --version
 ```
+
+The `cosign verify` line (images, charts) needs cosign >= 3; with cosign 2.x it prints
+`no signatures found` for a good image ([guide](../operator/verifying-releases.md#tools)).
+`scripts/release/verify-release.sh vX.Y.Z` runs all of this and says which tool is too old.
 
 These are the commands SECURITY.md and RELEASING.md give users. In the dry run the
 `cosign verify-blob` line was run unchanged except for two offline flags

@@ -66,10 +66,14 @@ type RoleAssignment struct {
 
 // GroupRoleGrant is a role assigned to a group together with the grant's optional
 // time-bound expiry (nil = permanent). Mirrors a models.Role plus expires_at so the
-// group-roles API can show remaining time on a just-in-time grant.
+// group-roles API can show remaining time on a just-in-time grant. ProjectID and
+// EnvironmentID are the scope the grant applies at (0/0 = global), so the same role
+// held at several scopes comes back as distinguishable rows.
 type GroupRoleGrant struct {
-	ID          uint       `json:"id"`
-	Name        string     `json:"name"`
-	Description string     `json:"description"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	ID            uint       `json:"id"`
+	Name          string     `json:"name"`
+	Description   string     `json:"description"`
+	ProjectID     uint       `json:"project_id"`
+	EnvironmentID uint       `json:"environment_id"`
+	ExpiresAt     *time.Time `json:"expires_at,omitempty"`
 }

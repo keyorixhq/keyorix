@@ -1265,7 +1265,7 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 		return err
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("refusing to delete group %d: it holds the install's last administrative role grant, and deleting it would leave no install administrator at the global scope", groupID)
+		return fmt.Errorf("refusing to delete group %d: it holds the install's last administrative role grant, and deleting it would leave no install administrator at the global scope: %w", groupID, ErrLastAdminGroupGuard)
 	}
 	return nil
 }

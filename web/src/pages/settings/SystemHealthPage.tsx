@@ -66,7 +66,7 @@ const CapabilityPill: React.FC<{ label: string; active: boolean }> = ({ label, a
         className="text-xs px-2.5 py-1 rounded-full font-medium"
         style={
             active
-                ? { backgroundColor: 'rgba(34,197,94,0.15)', color: '#16a34a' }
+                ? { backgroundColor: 'var(--success-subtle)', color: 'var(--success)' }
                 : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
         }
     >

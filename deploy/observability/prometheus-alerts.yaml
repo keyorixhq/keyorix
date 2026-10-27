@@ -9,7 +9,8 @@
 # Scrape setup this file assumes:
 #   * job "keyorix": GET /metrics (unauthenticated by default, or with metrics_token).
 #   * job "keyorix-protected": GET /api/v1/admin/scheduler-metrics with a bearer token that
-#     holds system.write. The audit-verification alerts, KeyorixAuditOwedPending,
+#     holds system.write. The audit-verification alerts (including
+#     KeyorixAuditVerifyStateDiscontinuity), KeyorixAuditOwedPending,
 #     KeyorixAuditWriteFailures, KeyorixLoginBruteForce, the four keyorix-encryption alerts
 #     (disabled, not ready, decrypt failures, KEK downgrade) and
 #     KeyorixSingleWriterUnattributedWrites need it; those metrics are deliberately NOT on
@@ -142,6 +143,15 @@ groups:
           summary: "Keyorix recorded an audit-chain verification failure"
           description: "A verification found a break in the tamper-evident audit chain. The flag stays set until a passing full verification. Treat as a possible integrity incident."
           runbook_url: "https://github.com/keyorixhq/keyorix/blob/main/deploy/observability/runbook.md#keyorixauditchainbreakrecorded"
+
+      - alert: KeyorixAuditVerifyStateDiscontinuity
+        expr: max(keyorix_audit_verify_state_discontinuity) == 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Keyorix lost continuity with its earlier audit verifications"
+          description: "The stored audit verification state was deleted, garbled, signed under another key epoch, claimed rows past the chain head, or predated a recorded break. The flag is sticky and no verification clears it, so the server cannot say whether rows were lost before this point. Treat as a possible truncation: see docs/operator/audit-chain-break-runbook.md."
+          runbook_url: "https://github.com/keyorixhq/keyorix/blob/main/deploy/observability/runbook.md#keyorixauditverifystatediscontinuity"
 
       - alert: KeyorixAuditVerifyStateRejected
         expr: max(keyorix_audit_verify_state_rejected) == 1

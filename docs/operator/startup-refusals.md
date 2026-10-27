@@ -981,7 +981,7 @@ With Docker Compose, run admin commands in a throwaway container while the serve
 ### An admin command cannot open the server lock file — from code
 
 ```
-Error: cannot open the server lock file: open server lock file "<datadir>/keyorix.db.server.lock": open <datadir>/keyorix.db.server.lock: permission denied — admin commands must not run concurrently with a server, and without this file that could not be verified; fix the file's ownership or permissions (it must be readable and writable by the user running both the server and this command; never delete it while a server runs), or pass --force if you are certain this is safe
+Error: cannot open the server lock file: <datadir>/keyorix.db.server.lock: permission denied — admin commands must not run concurrently with a server, and this file is how they tell; make it readable and writable by the user running this command (the same user the server runs as), or pass --force if you are certain no server is running
 ```
 
 **Match:** `cannot open the server lock file: `

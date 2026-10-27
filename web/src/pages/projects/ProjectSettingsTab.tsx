@@ -321,7 +321,7 @@ function renderHygieneSection(hygiene: Hygiene | undefined): React.ReactNode {
                         key={label}
                         className="rounded-lg border p-3"
                         style={{
-                            borderColor: count > 0 ? 'var(--warning, #d97706)' : 'var(--border)',
+                            borderColor: count > 0 ? 'var(--warning)' : 'var(--border)',
                             backgroundColor: count > 0 ? 'var(--warning-subtle, #fffbeb)' : 'var(--bg-surface)',
                         }}
                     >

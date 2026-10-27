@@ -34,6 +34,13 @@ func TestSCIMWriteErrorStatus_Classes(t *testing.T) {
 		{wrap(core.ErrSCIMUserExists), http.StatusConflict, "uniqueness"},
 		{wrap(core.ErrLastAdminDeactivation), http.StatusConflict, ""},
 		{wrap(core.ErrInvalidInput), http.StatusBadRequest, "invalidValue"},
+		// Groups (#3620).
+		{wrap(corestorage.ErrGroupNotFound), http.StatusNotFound, ""},
+		{wrap(corestorage.ErrDuplicateGroupName), http.StatusConflict, "uniqueness"},
+		{wrap(core.ErrSCIMMemberNotManaged), http.StatusBadRequest, "invalidValue"},
+		{wrap(core.ErrSCIMGroupConfersAdmin), http.StatusForbidden, ""},
+		{wrap(core.ErrLastAdminGroupGuard), http.StatusConflict, ""},
+		{wrap(corestorage.ErrWouldStrandLastAdmin), http.StatusConflict, ""},
 		{wrap(corestorage.ErrSQLiteWriteContention), http.StatusServiceUnavailable, ""},
 		{wrap(core.ErrUserActiveStateConflict), http.StatusServiceUnavailable, ""},
 		{wrap(core.ErrUserAccountStateConflict), http.StatusServiceUnavailable, ""},

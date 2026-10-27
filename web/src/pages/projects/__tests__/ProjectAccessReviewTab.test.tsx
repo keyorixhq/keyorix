@@ -51,13 +51,70 @@ const entries = [
     },
 ];
 
+// The hook returns the report: entries plus the server's degraded flag and reasons.
+const report = (list: unknown[], extra: { degraded?: boolean; degradedReasons?: string[] } = {}) => ({
+    entries: list,
+    degraded: false,
+    degradedReasons: [],
+    ...extra,
+});
+
 describe('ProjectAccessReviewTab', () => {
     beforeEach(() => {
         vi.clearAllMocks();
     });
 
+    it('shows no degraded warning for a complete review', () => {
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report(entries) });
+        render(<ProjectAccessReviewTab projectId={1} />);
+        expect(screen.queryByTestId('access-review-degraded')).not.toBeInTheDocument();
+    });
+
+    it('warns that a degraded review may be incomplete and lists every reason', () => {
+        mockUseAccessReview.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: report([entries[0]], {
+                degraded: true,
+                degradedReasons: [
+                    'group shares: read failed',
+                    'role scope: {project 0, environment 7} granted without a project',
+                ],
+            }),
+        });
+        render(<ProjectAccessReviewTab projectId={1} />);
+
+        const warning = screen.getByTestId('access-review-degraded');
+        expect(warning).toHaveTextContent(/may be incomplete/i);
+        expect(warning).toHaveTextContent('group shares: read failed');
+        expect(warning).toHaveTextContent('role scope: {project 0, environment 7} granted without a project');
+    });
+
+    // An empty list from a degraded review is not "no one has access".
+    it('does not claim that no one has access when the review is degraded', () => {
+        mockUseAccessReview.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: report([], { degraded: true, degradedReasons: ['role assignments: timeout'] }),
+        });
+        render(<ProjectAccessReviewTab projectId={1} />);
+
+        expect(screen.getByTestId('access-review-degraded')).toHaveTextContent('role assignments: timeout');
+        expect(screen.queryByText(/No one has access/i)).not.toBeInTheDocument();
+    });
+
+    it('still warns when the server flags degraded without naming a reason', () => {
+        mockUseAccessReview.mockReturnValue({
+            isLoading: false,
+            isError: false,
+            data: report([entries[0]], { degraded: true }),
+        });
+        render(<ProjectAccessReviewTab projectId={1} />);
+        expect(screen.getByTestId('access-review-degraded')).toHaveTextContent(/may be incomplete/i);
+    });
+
     it('lists each grant with its source, principal, and access level', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: entries });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report(entries) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         expect(screen.getByText(/alice \(alice@x.io\)/)).toBeInTheDocument();
@@ -70,7 +127,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('offers Attest for every grant but Revoke only for non-owner grants', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: entries });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report(entries) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         // 3 entries → 3 Attest buttons; owner is not revocable → 2 Revoke buttons.
@@ -79,7 +136,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('attests a grant with the decision derived from the entry', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[0]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[0]]) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         fireEvent.click(screen.getByText('Attest'));
@@ -90,7 +147,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('requires a confirmation before revoking', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[2]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[2]]) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         // First click reveals Confirm; it does not revoke yet.
@@ -104,26 +161,26 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('shows an empty state when no one has access', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([]) });
         render(<ProjectAccessReviewTab projectId={1} />);
         expect(screen.getByText(/No one has access/i)).toBeInTheDocument();
     });
 
     it('shows a loading skeleton while the review is in flight', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: true, isError: false, data: [] });
+        mockUseAccessReview.mockReturnValue({ isLoading: true, isError: false, data: report([]) });
         const { container } = render(<ProjectAccessReviewTab projectId={1} />);
         expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0);
         expect(screen.queryByText(/No one has access/i)).not.toBeInTheDocument();
     });
 
     it('shows an error message when the review fails to load', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: true, data: [] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: true, data: report([]) });
         render(<ProjectAccessReviewTab projectId={1} />);
         expect(screen.getByText('Failed to load the access review.')).toBeInTheDocument();
     });
 
     it('marks a grant Attested after a successful attest, and shows an error on failure', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[0]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[0]]) });
         mockAttestMutate.mockImplementationOnce((_decision, opts) => opts.onSuccess());
         render(<ProjectAccessReviewTab projectId={1} />);
 
@@ -132,7 +189,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('shows an error banner when attest fails', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[0]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[0]]) });
         mockAttestMutate.mockImplementationOnce((_decision, opts) =>
             opts.onError({ response: { data: { error: 'attest failed' } } })
         );
@@ -143,7 +200,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('cancels a pending revoke confirmation without revoking', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[2]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[2]]) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         fireEvent.click(screen.getByText('Revoke'));
@@ -153,7 +210,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('shows an error banner when revoke fails', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[2]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[2]]) });
         mockRevokeMutate.mockImplementationOnce((_decision, opts) =>
             opts.onError({ response: { data: { message: 'revoke failed' } } })
         );
@@ -165,7 +222,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('falls back to a generic "Action failed" message with no error payload', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[0]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[0]]) });
         mockAttestMutate.mockImplementationOnce((_decision, opts) => opts.onError({}));
         render(<ProjectAccessReviewTab projectId={1} />);
 
@@ -185,7 +242,7 @@ describe('ProjectAccessReviewTab', () => {
             accessLevel: '',
             environmentId: 7,
         };
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [scopedRoleEntry] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([scopedRoleEntry]) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         // Unmapped source falls back to the raw value.
@@ -209,7 +266,7 @@ describe('ProjectAccessReviewTab', () => {
             accessLevel: 'read',
             environmentId: 9,
         };
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [envScopedRole] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([envScopedRole]) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         expect(screen.getByText(/Role: viewer \(env 9\)/)).toBeInTheDocument();
@@ -225,7 +282,7 @@ describe('ProjectAccessReviewTab', () => {
             source: 'group_share',
             accessLevel: 'read',
         };
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [noSecretEntry] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([noSecretEntry]) });
         render(<ProjectAccessReviewTab projectId={1} />);
         expect(screen.getByText('—')).toBeInTheDocument();
     });
@@ -242,7 +299,7 @@ describe('ProjectAccessReviewTab', () => {
             accessLevel: 'read',
             environmentId: 0,
         };
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [unnamedRoleEntry] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([unnamedRoleEntry]) });
         render(<ProjectAccessReviewTab projectId={1} />);
         expect(screen.getByText('Role: — (project-wide)')).toBeInTheDocument();
     });
@@ -260,7 +317,7 @@ describe('ProjectAccessReviewTab', () => {
             environmentId: 0,
             lastUsedAt: new Date().toISOString(),
         };
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [recentEntry] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([recentEntry]) });
         render(<ProjectAccessReviewTab projectId={1} />);
 
         const badge = screen.getByText('used today');
@@ -269,7 +326,7 @@ describe('ProjectAccessReviewTab', () => {
     });
 
     it('resets the revoke confirmation after a successful revoke', () => {
-        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: [entries[2]] });
+        mockUseAccessReview.mockReturnValue({ isLoading: false, isError: false, data: report([entries[2]]) });
         mockRevokeMutate.mockImplementationOnce((_decision, opts) => opts.onSuccess());
         render(<ProjectAccessReviewTab projectId={1} />);
 
