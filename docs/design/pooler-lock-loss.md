@@ -120,11 +120,13 @@ makes the overlap visible, it does not prevent it.
 Not changed, and why:
 
 - **Live `admin backup` presence lock.** A live PostgreSQL backup holds the presence
-  lock shared under `key_dir_lock: database` so a rotation cannot start meanwhile. It
-  is watched (Presence.Lost) but the backup does not act on it. Stopping it like the
-  other admin commands would leave a partly written output file (it is written in place,
-  not renamed into place), so it needs its own change: fail the backup and remove the
-  partial file. Left as a follow-up.
+  lock shared under `key_dir_lock: database` so a rotation cannot start meanwhile.
+  Stopping it like the other admin commands (exit at once) would leave a partly
+  written output file (it is written in place, not renamed into place). Since
+  ADMIN-TAILS-1 it acts on Presence.Lost itself instead: writes to the archive stop,
+  the snapshot reads are cancelled, the partial file is removed and the backup fails
+  with the reason (`TestAdminBackup_Postgres_RealPresenceLockLost_NoArchive`,
+  `TestAdminBackup_Postgres_PresenceLostMidWrite_RemovesTheArchiveAndFails`).
 - **The overlap window itself** for named and scheduler locks: closing it needs D per
   section.
 

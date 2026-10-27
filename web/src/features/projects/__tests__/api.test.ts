@@ -224,11 +224,13 @@ describe('useProjectMemberships', () => {
 });
 
 describe('useAccessReview', () => {
-    it('fetches the access review entries', async () => {
-        mockProjects.accessReview!.mockResolvedValueOnce([{ principalId: 1 }]);
+    it('fetches the access review report (entries and the degraded flag)', async () => {
+        const report = { entries: [{ principalId: 1 }], degraded: true, degradedReasons: ['role scope: x'] };
+        mockProjects.accessReview!.mockResolvedValueOnce(report);
         const { result } = renderHook(() => useAccessReview(3), { wrapper: createWrapper().wrapper });
         await waitFor(() => expect(result.current.isSuccess).toBe(true));
         expect(mockProjects.accessReview).toHaveBeenCalledWith(3);
+        expect(result.current.data).toEqual(report);
     });
 
     it('does not fetch when projectId is 0', async () => {

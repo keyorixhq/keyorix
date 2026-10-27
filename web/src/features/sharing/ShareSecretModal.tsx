@@ -211,7 +211,7 @@ export const ShareSecretModal: React.FC<ShareSecretModalProps> = ({ secret, isOp
     };
 
     const dropdownContent = searchError ? (
-        <div role="alert" className="px-4 py-3 text-sm" style={{ color: 'var(--text-danger, #dc2626)' }}>
+        <div role="alert" className="px-4 py-3 text-sm" style={{ color: 'var(--danger)' }}>
             {searchError}
         </div>
     ) : results.length === 0 ? (

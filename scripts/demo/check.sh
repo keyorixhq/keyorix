@@ -249,13 +249,21 @@ bring_up_postgres() {
   # that script's "files owned by the server uid" refusal is handled by the chown below.
   INIT_SECRETS_SERVER_UID=65534 "$REPO_ROOT/scripts/selfhost/init-secrets.sh" --dir "$secrets_dir" --env-file "$SCRATCH/.env.init-secrets" >"$SCRATCH/init-secrets.log" 2>&1 \
     || { cat "$SCRATCH/init-secrets.log"; echo "scripts/selfhost/init-secrets.sh failed"; return 1; }
-  # The server container runs as uid 1001 and refuses a group-readable secret file
-  # it owns. A host user that is also uid 1001 (the GitHub-hosted runner) hands the
-  # files to root, keeping the group bit the container joins; deleting them later
-  # needs only write access to the directory, which we keep.
-  if [ "$(id -u)" = "1001" ]; then
-    sudo -n chown root:"$(id -g)" "$secrets_dir"/db_password "$secrets_dir"/master_password "$secrets_dir"/admin_password "$secrets_dir"/bootstrap_token "$secrets_dir"/postgres_tls.crt "$secrets_dir"/postgres_tls.key \
-      || { echo "uid 1001 needs passwordless sudo to hand the demo secrets files to root (the server refuses group-readable files it owns)"; return 1; }
+  # The server container runs as uid 1001 and refuses a secret file owned by anyone
+  # but itself or root (server/entrypoint.sh). On a Linux host the bind-mounted files
+  # keep the host owner, so ANY non-root host user (uid 1001 on the GitHub-hosted
+  # runner, 1000 on a typical dev box or the e2e VM) must hand them to root, keeping
+  # the group bit the container joins; deleting them later needs only write access to
+  # the directory, which we keep. Docker Desktop (macOS) maps ownership itself.
+  if [ "$(uname -s)" = "Linux" ] && [ "$(id -u)" != "0" ]; then
+    secret_files=(db_password master_password admin_password bootstrap_token postgres_tls.crt postgres_tls.key)
+    if ! sudo -n chown root:"$(id -g)" "${secret_files[@]/#/$secrets_dir/}" 2>/dev/null; then
+      # No passwordless sudo: a throwaway root container does the same chown (whoever
+      # can run this script can already run docker).
+      docker run --rm --user 0 --entrypoint chown -v "$secrets_dir:/s" "$PG_BACKEND_IMAGE" \
+        "0:$(id -g)" "${secret_files[@]/#//s/}" \
+        || { echo "could not hand the demo secrets files to root (tried passwordless sudo, then docker run --user 0): the server refuses secret files owned by another user -- server/entrypoint.sh"; return 1; }
+    fi
   fi
   cat > "$PG_ENV_FILE" <<EOF
 KEYORIX_SECRETS_DIR=$secrets_dir

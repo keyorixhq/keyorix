@@ -1,0 +1,2 @@
+### Testing
+- **Mutation testing widened to six more security packages.** `internal/netutil`, `internal/auditverify` (with `anchorbundle`), `internal/serverguard`, `internal/solewriter`, `internal/core/rules` and `internal/identity` are in `scripts/mutation-testing/run-mutation.sh` with an efficacy floor each (100, 99.55, 100, 99.26, 98.06, 100 percent), and the tests that kill every killable surviving mutant are added. The survivors that remain are equivalent mutants, listed in the script. `internal/backupfmt` is not included yet.

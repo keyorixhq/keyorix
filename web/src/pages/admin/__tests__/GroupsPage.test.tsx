@@ -381,6 +381,72 @@ describe('GroupsPage — manage roles', () => {
         expect(within(dialog).getByText(/expires in/)).toBeInTheDocument();
     });
 
+    // The same role can be held at several scopes; the modal must say where each
+    // grant applies (project_id / environment_id from GET /groups/{id}/roles).
+    it('lists each grant with the scope it applies at', () => {
+        state.roles.data = [adminRole, viewerRole];
+        state.groupRolesByGroupId[1] = [
+            { ...viewerRole, project_id: 0, environment_id: 0 },
+            { ...viewerRole, project_id: 2, environment_id: 0 },
+            { ...viewerRole, project_id: 2, environment_id: 5 },
+            { ...adminRole, project_id: 9, environment_id: 0 },
+        ];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        const grants = within(within(screen.getByRole('dialog')).getByTestId('group-role-grants'));
+        const items = grants.getAllByRole('listitem').map((li) => li.textContent);
+        expect(items).toEqual([
+            'viewerAll projects (global)',
+            'viewerpayments (all environments)',
+            // Environment names load per project: until that project is picked above,
+            // the grant is labelled by id rather than guessed.
+            'viewerpayments › environment #5',
+            'adminproject #9 (all environments)',
+        ]);
+
+        fireEvent.change(within(screen.getByRole('dialog')).getByLabelText('Project'), { target: { value: '2' } });
+        expect(within(screen.getByTestId('group-role-grants')).getByText('payments › prod')).toBeInTheDocument();
+    });
+
+    it('shows no grants list when the group holds no roles', () => {
+        state.roles.data = [adminRole];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        expect(within(screen.getByRole('dialog')).queryByTestId('group-role-grants')).not.toBeInTheDocument();
+    });
+
+    it('checks a role only when it is held at the selected scope', () => {
+        state.roles.data = [viewerRole];
+        state.groupRolesByGroupId[1] = [{ ...viewerRole, project_id: 2, environment_id: 0 }];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        const dialog = screen.getByRole('dialog');
+        // Global scope selected: the payments-only grant does not count.
+        expect(within(dialog).getByRole('checkbox', { name: /viewer/i })).not.toBeChecked();
+
+        fireEvent.change(within(dialog).getByLabelText('Project'), { target: { value: '2' } });
+        expect(within(dialog).getByRole('checkbox', { name: /viewer/i })).toBeChecked();
+    });
+
+    it('removes the grant at the selected scope, not another one', () => {
+        state.roles.data = [viewerRole];
+        state.groupRolesByGroupId[1] = [
+            { ...viewerRole, project_id: 0, environment_id: 0 },
+            { ...viewerRole, project_id: 2, environment_id: 0 },
+        ];
+        render(<GroupsPage />);
+        fireEvent.click(screen.getByTitle('Manage roles'));
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.change(within(dialog).getByLabelText('Project'), { target: { value: '2' } });
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: /viewer/i }));
+
+        expect(mocks.removeMutate).toHaveBeenCalledWith({ groupId: 1, roleId: 11, scope: { projectId: 2 } });
+    });
+
     it('assigns a permanent grant when the duration preset is "Never" and the box is checked', () => {
         state.roles.data = [adminRole, viewerRole];
         render(<GroupsPage />);

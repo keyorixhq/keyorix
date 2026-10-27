@@ -605,10 +605,16 @@ type Group struct {
 type GroupRoleGrant struct {
 	Description *string `json:"description,omitempty"`
 
+	// EnvironmentId Environment the grant applies to; 0 = not environment-scoped.
+	EnvironmentId *int `json:"environment_id,omitempty"`
+
 	// ExpiresAt Omitted (never null) for a permanent grant.
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 	Id        *int       `json:"id,omitempty"`
 	Name      *string    `json:"name,omitempty"`
+
+	// ProjectId Project the grant applies to; 0 = not project-scoped (global when environment_id is also 0).
+	ProjectId *int `json:"project_id,omitempty"`
 }
 
 // LoginSuccessData defines model for LoginSuccessData.

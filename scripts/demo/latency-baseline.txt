@@ -1,0 +1,13 @@
+10
+# p50 secret-read latency in ms that scripts/demo/check.sh prints next to each run
+# (line 1 is the only value read). The check fails only at >= 10x this number
+# (100 ms); anything below is informational.
+#
+# Source: observed p50 over 50 reads of GET /api/v1/secrets/value, demo stack on one host:
+#   7.2 ms  SQLite   Mac (Docker Desktop)    DEMO-READY-1, earlier run
+#   7.7 ms  Postgres Mac (Docker Desktop)    DEMO-READY-1, earlier run
+#   9.4 ms  Postgres e2e VM                  DEMO-READY-1, 2026-10-27
+#  33.7 ms  SQLite   e2e VM, right after a 105 s image build on a shared host (outlier)
+# This is NOT a performance benchmark (docs/PERFORMANCE.md holds those); it is a
+# "did something get ten times slower" tripwire for the demo. Update line 1 if the
+# demo stack legitimately gets slower.

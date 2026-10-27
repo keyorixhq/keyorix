@@ -23,6 +23,11 @@ interface GroupFormData {
     description: string;
 }
 
+// One group grant is identified by role + scope; a role may be held at several
+// scopes. Servers that predate project_id/environment_id omit them (= global).
+const grantKey = (roleId: number, projectId?: number, environmentId?: number) =>
+    `${roleId}:${projectId ?? 0}:${environmentId ?? 0}`;
+
 interface GroupRowProps {
     group: Group;
     onEdit: (group: Group) => void;
@@ -61,7 +66,7 @@ const GroupRow: React.FC<GroupRowProps> = ({ group, onEdit, onDelete, onManageRo
                     <div className="flex flex-wrap gap-1">
                         {roles.map((r) => (
                             <span
-                                key={r.id}
+                                key={grantKey(r.id, r.project_id, r.environment_id)}
                                 className="text-xs px-2 py-0.5 rounded-full font-medium"
                                 style={{
                                     backgroundColor: 'var(--accent-subtle)',
@@ -161,11 +166,13 @@ export const GroupsPage: React.FC = () => {
     const removeMutation = useRemoveRoleFromGroup();
 
     const groups = (groupsData?.groups ?? []) as Group[];
-    const assignedRoleIds = new Set((groupRolesData?.roles ?? []).map((r) => r.id));
-    // Per-grant expiry (ISO) by role id, for the time-bound badge on assigned roles.
-    const roleExpiryById = new Map(
-        (groupRolesData?.roles ?? []).filter((r) => r.expires_at).map((r) => [r.id, r.expires_at as string])
-    );
+    // The same role can be held at several scopes, so "assigned" means held at the
+    // scope currently selected above (what a check or uncheck would act on).
+    const heldGrants = groupRolesData?.roles ?? [];
+    const selectedKey = (roleId: number) => grantKey(roleId, grantProjectId, grantEnvironmentId);
+    const grantAtSelectedScope = new Map(heldGrants.map((g) => [grantKey(g.id, g.project_id, g.environment_id), g]));
+    const projectNames = new Map((projects ?? []).map((p) => [p.id, p.name]));
+    const environmentNames = new Map((grantEnvironments ?? []).map((env) => [env.id, env.name]));
     const isMutatingRole = assignMutation.isPending || removeMutation.isPending;
 
     const openCreate = () => {
@@ -213,10 +220,17 @@ export const GroupsPage: React.FC = () => {
         : {};
     const roleMutationError = assignMutation.error ?? removeMutation.error;
 
+    const scopeLabel = (projectId: number, environmentId: number): string => {
+        if (projectId === 0) return environmentId === 0 ? 'All projects (global)' : `environment #${environmentId}`;
+        const project = projectNames.get(projectId) ?? `project #${projectId}`;
+        if (environmentId === 0) return `${project} (all environments)`;
+        return `${project} › ${environmentNames.get(environmentId) ?? `environment #${environmentId}`}`;
+    };
+
     const handleToggleRole = (role: Role) => {
         if (manageGroupId === null) return;
         setRoleScopeError(null);
-        if (assignedRoleIds.has(role.id)) {
+        if (grantAtSelectedScope.has(selectedKey(role.id))) {
             removeMutation.mutate({ groupId: manageGroupId, roleId: role.id, scope: grantScope });
         } else {
             const refusal = roleScopeRefusal(role, grantProjectId || undefined);
@@ -489,6 +503,28 @@ export const GroupsPage: React.FC = () => {
                         {roleScopeError ?? errMsg(roleMutationError, 'Could not change the role. Please try again.')}
                     </p>
                 )}
+                {heldGrants.length > 0 && (
+                    <div data-testid="group-role-grants" className="mb-3">
+                        <p className="mb-1 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+                            Current grants
+                        </p>
+                        <ul className="space-y-1">
+                            {heldGrants.map((g) => (
+                                <li
+                                    key={grantKey(g.id, g.project_id, g.environment_id)}
+                                    className="flex items-center justify-between gap-2 text-xs"
+                                >
+                                    <span className="font-medium" style={{ color: 'var(--text-primary)' }}>
+                                        {g.name}
+                                    </span>
+                                    <span style={{ color: 'var(--text-muted)' }}>
+                                        {scopeLabel(g.project_id ?? 0, g.environment_id ?? 0)}
+                                    </span>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                )}
                 {rolesLoading ? (
                     <div className="flex justify-center py-8">
                         <Spinner />
@@ -496,7 +532,8 @@ export const GroupsPage: React.FC = () => {
                 ) : (
                     <div className="space-y-1 max-h-[55vh] overflow-y-auto pr-1">
                         {(allRoles ?? []).map((role) => {
-                            const assigned = assignedRoleIds.has(role.id);
+                            const grant = grantAtSelectedScope.get(selectedKey(role.id));
+                            const assigned = grant !== undefined;
                             return (
                                 <label
                                     key={role.id}
@@ -516,16 +553,16 @@ export const GroupsPage: React.FC = () => {
                                             style={{ color: 'var(--text-primary)' }}
                                         >
                                             {role.name}
-                                            {assigned && roleExpiryById.has(role.id) && (
+                                            {grant?.expires_at && (
                                                 <span
                                                     className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
                                                     style={{
                                                         backgroundColor: 'var(--warning-subtle, #fef9c3)',
                                                         color: 'var(--warning, #a16207)',
                                                     }}
-                                                    title={formatDateTime(roleExpiryById.get(role.id) as string)}
+                                                    title={formatDateTime(grant.expires_at)}
                                                 >
-                                                    {formatRemaining(roleExpiryById.get(role.id) as string)}
+                                                    {formatRemaining(grant.expires_at)}
                                                 </span>
                                             )}
                                         </span>

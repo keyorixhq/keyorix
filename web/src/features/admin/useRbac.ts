@@ -38,22 +38,59 @@ export const useRolePermissions = (roleId: number | null) =>
 export const useCreateRole = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: (body: { name: string; description: string; assignable_scope?: RoleAssignableScope }) =>
-            rbacApi.createRole(body),
+        mutationFn: (body: {
+            name: string;
+            description: string;
+            permissions: string[];
+            assignable_scope?: RoleAssignableScope;
+        }) => rbacApi.createRole(body),
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rbac', 'roles'] }),
     });
+};
+
+// The permission names an admin ticked and unticked in Edit Role, against the role as opened.
+export interface RolePermissionChanges {
+    added: string[];
+    removed: string[];
+}
+
+// The server's PUT replaces the whole permission set, so the set sent must be the one the server
+// holds now with only this admin's changes applied. Sending the set read when the dialog opened
+// would re-grant a permission another admin revoked in between (REVIEW-3726-DEEP-3 F1). The
+// current set is read right before the PUT; the server has no version precondition, so a change
+// landing between that read and the PUT can still be overwritten (a much smaller window).
+const permissionsToSend = async (id: number, changes: RolePermissionChanges): Promise<string[] | undefined> => {
+    if (changes.added.length === 0 && changes.removed.length === 0) return undefined;
+    const current = (await rbacApi.getRolePermissions(id)).permissions.map((p) => p.name);
+    const next = [
+        ...current.filter((n) => !changes.removed.includes(n)),
+        ...changes.added.filter((n) => !current.includes(n)),
+    ];
+    if (next.length === current.length && next.every((n) => current.includes(n))) return undefined;
+    if (next.length === 0) {
+        throw new Error('A role needs at least one permission. Reload the role to see its current permissions.');
+    }
+    return next;
 };
 
 export const useUpdateRole = () => {
     const queryClient = useQueryClient();
     return useMutation({
-        mutationFn: ({
+        mutationFn: async ({
             id,
             body,
+            permissionChanges,
         }: {
             id: number;
-            body: { name: string; description: string; assignable_scope?: RoleAssignableScope };
-        }) => rbacApi.updateRole(id, body),
+            body: {
+                description: string;
+                assignable_scope?: RoleAssignableScope;
+            };
+            permissionChanges?: RolePermissionChanges;
+        }) => {
+            const permissions = permissionChanges ? await permissionsToSend(id, permissionChanges) : undefined;
+            return rbacApi.updateRole(id, { ...body, ...(permissions ? { permissions } : {}) });
+        },
         onSuccess: () => queryClient.invalidateQueries({ queryKey: ['rbac', 'roles'] }),
     });
 };

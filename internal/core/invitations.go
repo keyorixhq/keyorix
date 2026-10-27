@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -619,47 +620,68 @@ func (c *KeyorixCore) requireInvitationGrantScopesValid(ctx context.Context, inv
 // failure on one project assignment must not stop the others from being reverted.
 // Errors are audited, not returned or retried: the caller is already on a fail-closed
 // path and a partial rollback is strictly better than leaving every grant live.
-func (c *KeyorixCore) revokeInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) {
+//
+// Also used when the accept fails part-way through applyInvitationGrants
+// (abandonInvitationAccept), so a grant that was never made is skipped, not reported:
+// a project the user is not a member of (ErrNotProjectMember), a system role they do
+// not hold. complete is false when any grant that was made could not be reverted.
+func (c *KeyorixCore) revokeInvitationGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) (complete bool) {
 	if inv.SystemRole != "" || inv.AssignmentsJSON != "" {
-		c.revokeSystemRoleGrant(ctx, inv, userID)
-		c.revokeAssignmentGrants(ctx, inv, userID)
-		return
+		sys := c.revokeSystemRoleGrant(ctx, inv, userID)
+		return c.revokeAssignmentGrants(ctx, inv, userID) && sys
 	}
 	// Project-scoped invite: revert the single project membership/role.
-	if err := c.RemoveProjectMember(ctx, 0, inv.ProjectID, userID); err != nil {
+	if err := c.RemoveProjectMember(ctx, 0, inv.ProjectID, userID); err != nil && !errors.Is(err, ErrNotProjectMember) {
 		c.auditProjectScopedFailed(ctx, eventInvitationRaceRevokeFailed, userID, inv.ProjectID,
 			fmt.Sprintf("failed to revert project role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.Role, userID, inv.ID, err))
+		return false
 	}
+	return true
 }
 
-func (c *KeyorixCore) revokeSystemRoleGrant(ctx context.Context, inv *models.ProjectInvitation, userID uint) {
+func (c *KeyorixCore) revokeSystemRoleGrant(ctx context.Context, inv *models.ProjectInvitation, userID uint) bool {
 	if inv.SystemRole == "" {
-		return
+		return true
+	}
+	fail := func(err error) bool {
+		c.auditProjectScopedFailed(ctx, eventInvitationRaceRevokeFailed, userID, 0,
+			fmt.Sprintf("failed to revert system role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.SystemRole, userID, inv.ID, err))
+		return false
 	}
 	role, err := c.storage.GetRoleByName(ctx, inv.SystemRole)
 	if err != nil {
-		return
+		return fail(err)
+	}
+	held, err := c.storage.GetUserRoleIDsExact(ctx, userID, storage.Scope{})
+	if err != nil {
+		return fail(err)
+	}
+	if !slices.Contains(held, role.ID) {
+		return true // never granted
 	}
 	if err := c.RemoveUserRole(ctx, 0, userID, role.ID, Scope{ProjectID: 0}); err != nil {
-		c.auditProjectScopedFailed(ctx, eventInvitationRaceRevokeFailed, userID, 0,
-			fmt.Sprintf("failed to revert system role %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", inv.SystemRole, userID, inv.ID, err))
+		return fail(err)
 	}
+	return true
 }
 
-func (c *KeyorixCore) revokeAssignmentGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) {
+func (c *KeyorixCore) revokeAssignmentGrants(ctx context.Context, inv *models.ProjectInvitation, userID uint) bool {
 	if inv.AssignmentsJSON == "" {
-		return
+		return true
 	}
 	var assignments []ProjectAssignment
 	if err := json.Unmarshal([]byte(inv.AssignmentsJSON), &assignments); err != nil {
-		return
+		return true // applyInvitationGrants refused the same decode before granting any
 	}
+	complete := true
 	for _, a := range assignments {
-		if err := c.RemoveProjectMember(ctx, 0, a.ProjectID, userID); err != nil {
+		if err := c.RemoveProjectMember(ctx, 0, a.ProjectID, userID); err != nil && !errors.Is(err, ErrNotProjectMember) {
 			c.auditProjectScopedFailed(ctx, eventInvitationRaceRevokeFailed, userID, a.ProjectID,
 				fmt.Sprintf("failed to revert project assignment %q granted to user %d by invitation %d: %v — MANUAL CLEANUP REQUIRED", a.Role, userID, inv.ID, err))
+			complete = false
 		}
 	}
+	return complete
 }
 
 // ResendInvitationLink reissues the accept link for a still-pending invitation

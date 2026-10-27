@@ -1,12 +1,12 @@
-// Package pqwrap is the RD-PQWRAP-1 proof of concept for hybrid post-quantum
-// key wrapping: a KEM-DEM envelope that wraps a short symmetric key (a DEK or
-// a backup content key) to an X25519 + ML-KEM public key. The design, the
-// combiner rationale and the open decisions are in
-// docs/design/pq-key-wrapping.md; section numbers below refer to it.
+// Package pqwrap is hybrid post-quantum key wrapping: a KEM-DEM envelope that
+// wraps a short symmetric key (a DEK or a backup content key) to an X25519 +
+// ML-KEM public key, and the self-describing keyset key file built on it
+// (keyset.go). The design, the combiner rationale and the decisions are in
+// docs/design/pq-key-wrapping.md; section numbers below refer to it. Read
+// INVARIANTS.md before changing this package.
 //
-// STATUS: unwired research code. Nothing in the server, the CLI or the key
-// paths imports this package, and the design note is not yet accepted. Do not
-// wire it in before the ADR is approved.
+// STATUS: the design note is approved (#3662). The keyset codec is complete;
+// the server's key-file paths do not call it yet (RD-PQWRAP-2).
 //
 // The construction (§4):
 //

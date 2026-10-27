@@ -954,6 +954,11 @@ const RestoreUserModal: React.FC<RestoreUserModalProps> = ({ activeModal, onRest
     </Modal>
 );
 
+// This editor replaces a user's roles at the global scope only (PUT sends no
+// project_id), and the server refuses a project-tier role there (#3546).
+const isProjectTierRole = (role: { assignable_scope?: string } | undefined): boolean =>
+    role?.assignable_scope === 'project';
+
 interface RolesModalProps {
     activeModal: ActiveModal;
     formError: string;
@@ -989,28 +994,39 @@ const RolesModal: React.FC<RolesModalProps> = ({
                 <Loading />
             ) : (
                 <div className="space-y-2">
-                    {((allRoles as any[]) ?? []).map((role: any) => (
-                        <label
-                            key={role.id}
-                            htmlFor={`role-checkbox-${role.id}`}
-                            className="flex items-start gap-3 p-3 rounded-lg border border-base hover:bg-subtle cursor-pointer transition-colors"
-                        >
-                            <input
-                                id={`role-checkbox-${role.id}`}
-                                type="checkbox"
-                                checked={selectedRoleIds.has(role.id)}
-                                onChange={() => toggleRoleId(role.id)}
-                                className="mt-0.5 h-4 w-4 rounded-sm border-base"
-                                style={{ accentColor: 'var(--accent)' }}
-                            />
-                            <div>
-                                <p className="text-sm font-medium text-base-primary">{role.name}</p>
-                                {role.description && (
-                                    <p className="text-xs text-base-muted mt-0.5">{role.description}</p>
-                                )}
-                            </div>
-                        </label>
-                    ))}
+                    {((allRoles as any[]) ?? []).map((role: any) => {
+                        const projectTier = isProjectTierRole(role);
+                        return (
+                            <label
+                                key={role.id}
+                                htmlFor={`role-checkbox-${role.id}`}
+                                className={`flex items-start gap-3 p-3 rounded-lg border border-base transition-colors ${
+                                    projectTier ? 'opacity-70' : 'hover:bg-subtle cursor-pointer'
+                                }`}
+                            >
+                                <input
+                                    id={`role-checkbox-${role.id}`}
+                                    type="checkbox"
+                                    checked={selectedRoleIds.has(role.id)}
+                                    disabled={projectTier}
+                                    onChange={() => toggleRoleId(role.id)}
+                                    className="mt-0.5 h-4 w-4 rounded-sm border-base"
+                                    style={{ accentColor: 'var(--accent)' }}
+                                />
+                                <div>
+                                    <p className="text-sm font-medium text-base-primary">{role.name}</p>
+                                    {role.description && (
+                                        <p className="text-xs text-base-muted mt-0.5">{role.description}</p>
+                                    )}
+                                    {projectTier && (
+                                        <p className="text-xs text-base-muted mt-0.5">
+                                            Project role: assign it from the project (Members), not here.
+                                        </p>
+                                    )}
+                                </div>
+                            </label>
+                        );
+                    })}
                 </div>
             )}
             <div className="flex justify-end gap-3 pt-2">
@@ -1149,13 +1165,19 @@ export const AdminPage: React.FC = () => {
 
     function handleSaveRoles() {
         if (activeModal?.type !== 'roles') return;
-        if (selectedRoleIds.size === 0) {
+        // Project-tier roles the user holds in a project are not part of this global
+        // replacement: leave them out so the save cannot be refused on them.
+        const projectTierIds = new Set(
+            ((allRoles as any[]) ?? []).filter((r) => isProjectTierRole(r)).map((r) => r.id as number)
+        );
+        const roleIds = Array.from(selectedRoleIds).filter((id) => !projectTierIds.has(id));
+        if (roleIds.length === 0) {
             setFormError('User must have at least one role');
             return;
         }
         setFormError('');
         updateRolesMutation.mutate(
-            { userId: activeModal.user.id, roleIds: Array.from(selectedRoleIds) },
+            { userId: activeModal.user.id, roleIds },
             {
                 onSuccess: () => {
                     closeModal();
