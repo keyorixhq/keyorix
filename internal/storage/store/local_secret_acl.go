@@ -5,8 +5,10 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
@@ -60,11 +62,18 @@ func (ls *LocalStorage) ListSecretACLsByUser(ctx context.Context, userID uint) (
 	return rows, nil
 }
 
-// GetSecretACL returns the ACL for the given (secret, user) pair, or an error if not found.
+// GetSecretACL returns the ACL for the given (secret, user) pair. A missing row
+// wraps storage.ErrSecretACLNotFound (same text as before: gorm's "record not
+// found"); any other failure (DB outage, cancelled context) is a retrieval failure
+// that does NOT match it, so the authorization check cannot read an outage as "no
+// grant" (ERRLOSS-ACL-1).
 func (ls *LocalStorage) GetSecretACL(ctx context.Context, secretID, userID uint) (*models.SecretACL, error) {
 	var row models.SecretACL
 	if err := ls.db.WithContext(ctx).Where("secret_id = ? AND user_id = ?", secretID, userID).First(&row).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrSecretACLNotFound)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &row, nil
 }

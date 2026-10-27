@@ -72,6 +72,17 @@ func requireExistingKeys(cfg *config.Config, service *encryption.Service, baseDi
 	return missingKeysError(cfg, baseDir)
 }
 
+// pendingDEKExists reports whether "<dek_path>.pending" (a DEK rotation's
+// staged new DEK) exists, resolved like the DEK path itself.
+func pendingDEKExists(cfg *config.Config, baseDir string) bool {
+	p := cfg.Storage.Encryption.DEKPath + ".pending"
+	if !filepath.IsAbs(p) {
+		p = filepath.Join(baseDir, p)
+	}
+	_, err := os.Lstat(p)
+	return err == nil
+}
+
 // missingKeysError is requireExistingKeys' refusal.
 func missingKeysError(cfg *config.Config, baseDir string) error {
 	if abs, err := filepath.Abs(baseDir); err == nil {
@@ -141,19 +152,11 @@ func openKeyWriter(cfg *config.Config, baseDir, passphrase, what string) (*encry
 	if err := service.AcquireExclusiveKeyLock(); err != nil {
 		return nil, nil, fmt.Errorf("refusing to %s: %w — stop the running server before running it", what, err)
 	}
-	// OpenGormDB honors cfg.Storage.Type and keeps the driver selection inside the
-	// storage package (ADR-049). Callers refuse remote storage before this.
-	db, err := storage.OpenGormDB(cfg)
-	if err != nil {
-		service.Shutdown()
-		return nil, nil, fmt.Errorf("failed to open database to %s: %w", what, err)
-	}
 	// An interrupted restore first (its journal names the fix, --recover): while
 	// one is unresolved the key files may be half the archive's, which the
 	// key-set check below would report as a mixed set with the wrong remedy,
 	// and a key write would land on files --recover is about to replace.
 	if err := restorejournal.RefuseIfPresent(cfg); err != nil {
-		closeGormDB(db)
 		service.Shutdown()
 		return nil, nil, fmt.Errorf("refusing to %s: %w", what, err)
 	}
@@ -161,9 +164,27 @@ func openKeyWriter(cfg *config.Config, baseDir, passphrase, what string) (*encry
 	// mixed or incoherent set before writing to it, and finish an interrupted
 	// rotate-kek the manifest proves finishable, exactly as server boot does.
 	if err := service.ReconcileKeySet(); err != nil {
-		closeGormDB(db)
 		service.Shutdown()
 		return nil, nil, fmt.Errorf("refusing to %s: %w", what, err)
+	}
+	// Missing keys are refused BEFORE the database is opened: opening a SQLite
+	// path creates the file, so a run from the wrong directory (or with a wrong
+	// dek_path) left a fresh empty database behind next to the refusal
+	// (ATOMIC-OWED-1, the #3523 family). A leftover dek.key.pending is the one
+	// case the crash recovery below may still promote into the DEK, so that
+	// case keeps its check after recovery.
+	if !pendingDEKExists(cfg, baseDir) {
+		if err := requireExistingKeys(cfg, service, baseDir); err != nil {
+			service.Shutdown()
+			return nil, nil, err
+		}
+	}
+	// OpenGormDB honors cfg.Storage.Type and keeps the driver selection inside the
+	// storage package (ADR-049). Callers refuse remote storage before this.
+	db, err := storage.OpenGormDB(cfg)
+	if err != nil {
+		service.Shutdown()
+		return nil, nil, fmt.Errorf("failed to open database to %s: %w", what, err)
 	}
 	// Heal an interrupted PRIOR rotation BEFORE Initialize, so Initialize loads the
 	// correct (possibly just-promoted) active DEK: promote dek.key.pending when the

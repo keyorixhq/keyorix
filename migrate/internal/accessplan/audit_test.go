@@ -88,6 +88,10 @@ func TestAuditWidenedGrants_DemoData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// What plan-access lists in the demo's other mount: kv1-legacy/ holds legacy/smtp and nothing
+	// named after a Keyorix project, so no path lands by name in the --path-map scope.
+	sourceHCL(t, "scripts/demo/vault-migration-demo.sh", `kv1-legacy/legacy/smtp`, "")
+	m.SetKVTree(kvTree(map[string][]string{"secret/": nil, "kv1-legacy/": nil}))
 	got := AuditWidenedGrants(in, m, "https://k8s.demo.local")
 	want := []WidenedGrant{
 		{MachineName: "vault-approle-ci-payments-reader", ProjectID: 2, EnvironmentID: 6, RoleName: "vault-migrated-read",

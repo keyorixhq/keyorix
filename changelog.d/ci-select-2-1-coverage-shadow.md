@@ -1,0 +1,2 @@
+### Internal
+- **CI-SELECT-2 lever C in shadow mode.** `scripts/ci/coverage-shadow.py` logs, as JSON lines, whether each package lever A selects as a dependent actually executes the PR's changed lines under `go test -coverpkg` (KEEP or SKIPPABLE). Observation only: it skips and fails no test, is not called from any workflow, and resolves every doubt to KEEP. Unit tests: `scripts/ci/coverage_shadow_unittest.py`, run by `TestCoverageShadowUnit`.

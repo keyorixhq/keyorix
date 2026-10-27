@@ -92,6 +92,9 @@ func (h *GroupHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		Description: body.Description,
 	})
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating group: %v", err)
 		// #2779: match the storage sentinel, not driver text -- SQLite reports
 		// "UNIQUE constraint failed" (upper case), which the old substring test missed,
@@ -169,6 +172,9 @@ func (h *GroupHandler) UpdateGroup(w http.ResponseWriter, r *http.Request) {
 		Description: body.Description,
 	})
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error updating group: %v", err)
 		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), i18n.T("ErrorGroupNotFound", nil)) {
 			sendError(w, "NotFound", errGroupNotFound, http.StatusNotFound, nil)
@@ -223,6 +229,9 @@ func (h *GroupHandler) RestoreGroup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := h.coreService.RestoreGroup(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error restoring group: %v", err)
 		if strings.Contains(err.Error(), errNotFound) || strings.Contains(err.Error(), "not deleted") {
 			sendError(w, "NotFound", "Group not found or not deleted", http.StatusNotFound, nil)

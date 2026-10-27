@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/migrate/internal/accessplan"
+	"github.com/keyorixhq/keyorix/migrate/internal/accessreport"
+	"github.com/keyorixhq/keyorix/migrate/internal/accesstarget"
 	"github.com/keyorixhq/keyorix/migrate/internal/healthscan"
 )
 
@@ -88,5 +90,59 @@ func TestRefuseCrossMountDrift(t *testing.T) {
 	}
 	if err := refuseCrossMountDrift(io.Discard, reviewed, reviewed); err != nil {
 		t.Fatalf("unchanged tree: %v", err)
+	}
+}
+
+// plan-access with a --path-map entry: the policy covers the whole mapped subtree, so it maps to
+// team-a/prod; kv1/team-a/prod/ lands in the same scope by name. The report says it is not
+// equivalent and prints that path (the control run, with kv1 empty, maps).
+func TestBuildFreshAccessPlan_PathMapScopeSharedByNameWithAnotherMount(t *testing.T) {
+	for _, kv1Holds := range []bool{true, false} {
+		vault := &fakeAccessVault{kv1HoldsTeamAProd: kv1Holds}
+		vsrv := httptest.NewServer(vault)
+		ksrv := httptest.NewServer(&fakeAccessKeyorix{})
+		ctx := context.Background()
+		vc, err := healthscan.New(ctx, healthscan.Config{Addr: vsrv.URL, Token: "vault-token"}, io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		api, err := newAPIClient(ksrv.URL, "pat")
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, _, err := buildFreshAccessPlan(ctx, vc, accesstarget.New(api), "", []string{"secret/data/team-a/prod=1:11"})
+		vsrv.Close()
+		ksrv.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var md bytes.Buffer
+		if err := accessreport.WriteMarkdown(&md, plan, vsrv.URL); err != nil {
+			t.Fatal(err)
+		}
+		creates, unmappable := 0, 0
+		for _, it := range plan.Items {
+			if it.Kind != accessplan.KindRole || !strings.HasPrefix(it.SourceRef, "policy:team-a-prod-ro") {
+				continue
+			}
+			switch it.Outcome {
+			case accessplan.Create:
+				creates++
+			case accessplan.Unmappable:
+				unmappable++
+				if it.Category != accessplan.CategoryCrossMountScope {
+					t.Errorf("category = %q, want %q", it.Category, accessplan.CategoryCrossMountScope)
+				}
+			}
+		}
+		if kv1Holds {
+			if creates != 0 || unmappable == 0 || !strings.Contains(md.String(), "kv1/team-a/prod/: present") {
+				t.Fatalf("kv1 holds team-a/prod/: creates=%d unmappable=%d, want 0 / >0 with the kv1 path printed in the report:\n%s", creates, unmappable, md.String())
+			}
+			continue
+		}
+		if creates == 0 || unmappable != 0 {
+			t.Fatalf("kv1 empty (control): creates=%d unmappable=%d, want the grant to map", creates, unmappable)
+		}
 	}
 }

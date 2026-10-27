@@ -29,6 +29,10 @@ func NewProjectService(coreService *core.KeyorixCore) *ProjectGRPCService {
 }
 
 func mapProjectError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	msg := err.Error()
 	switch {
 	case strings.Contains(msg, "not found"):

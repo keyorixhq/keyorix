@@ -343,6 +343,13 @@ var operationOverrides = map[string]overrideEntry{
 	"REST PATCH /scim/v2/Groups/{id}":  {StatusFuzzed, "opCatalog[\"PatchOrReplaceSCIMGroup\"] — SESSION-AT AT5"},
 	"REST PUT /scim/v2/Groups/{id}":    {StatusFuzzed, "opCatalog[\"ReplaceSCIMGroup\"] — SESSION-AT AT5"},
 	"REST DELETE /scim/v2/Groups/{id}": {StatusFuzzed, "opCatalog[\"DeprovisionSCIMGroup\"] — SESSION-AT AT5"},
+	// SCIM-TAILS-1 item 3: the five keys the comment above left StatusPending
+	// (zz_scim_ops_catalog_test.go), swept by TestSCIMOpsFaultSweep.
+	"REST POST /scim/v2/Groups":       {StatusFuzzed, "opCatalog[\"REST POST /scim/v2/Groups\"] — SCIM-TAILS-1"},
+	"REST POST /scim/v2/Users":        {StatusFuzzed, "opCatalog[\"REST POST /scim/v2/Users\"] — SCIM-TAILS-1"},
+	"REST PUT /scim/v2/Users/{id}":    {StatusFuzzed, "opCatalog[\"REST PUT /scim/v2/Users/{id}\"] — SCIM-TAILS-1"},
+	"REST PATCH /scim/v2/Users/{id}":  {StatusFuzzed, "opCatalog[\"REST PATCH /scim/v2/Users/{id}\"] — SCIM-TAILS-1"},
+	"REST DELETE /scim/v2/Users/{id}": {StatusFuzzed, "opCatalog[\"REST DELETE /scim/v2/Users/{id}\"] — SCIM-TAILS-1"},
 	// Session FI2: the two WebAuthn "finish" ceremonies, driven with real W3C
 	// spec test vectors (webauthn_finish_ops_test.go) — go-webauthn's actual
 	// signature-verification path, not a stub.

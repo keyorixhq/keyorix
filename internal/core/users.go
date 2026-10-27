@@ -122,8 +122,8 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	// weak password, which is then exposed to online guessing. The policy's user context
 	// also catches username/email-in-password. ADR-025.
 	policyUser := &models.User{Username: req.Username, Email: req.Email, DisplayName: displayName}
-	if err := c.passwordPolicy.Validate(req.Password, policyUser); err != nil {
-		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	if refusal := c.refuseUnmetRules(req.Password, policyUser); refusal != nil {
+		return nil, "", refusal
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), int(bcryptCost.Load()))
@@ -622,14 +622,14 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 	deactivating := wasActive && !user.IsActive
 	user.UpdatedAt = c.now()
 
-	var sessionHashes []string
+	var sessionEv sessionEvictions
 	if deactivating {
 		// Collect session hashes before the write so we can evict the auth cache
 		// after commit. The HTTP auth middleware caches validated tokens for up to
 		// validTokenTTL (30s); without eviction a just-deactivated user's session
 		// keeps passing auth for that window — same race SetAccountState already
 		// handles on suspend/deactivate via the account-state path (#r124).
-		sessionHashes, _ = c.storage.ListSessionTokenHashesForUser(ctx, req.ID)
+		sessionEv = c.listSessionHashesForEviction(ctx, req.ID)
 	}
 
 	var patHashes []string
@@ -799,7 +799,7 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if deactivating {
-		c.invalidateTokenCache(sessionHashes...)
+		c.evictSessionsAndAudit(ctx, req.ID, sessionEv, evictTombstone, "UpdateUser deactivation")
 		c.invalidateTokenCache(patHashes...)
 		purgeStepUpGrants(ctx, c.storage, req.ID)
 		settle()
@@ -911,11 +911,11 @@ const EventUserDeactivationCleanupFailed = "user.deactivation_cleanup_failed"
 // accepts. Fire-and-forget: audits on failure, returns nothing, exactly like
 // the code path it mirrors.
 func (c *KeyorixCore) RevokeUserCredentialsForDeactivation(ctx context.Context, userID uint) {
-	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	sessionEv := c.listSessionHashesForEviction(ctx, userID)
 	patHashes, patErr := c.storage.RevokeAllPersonalAccessTokensForUser(ctx, userID)
 	sessionErr := c.storage.DeleteSessionsForUserExcept(ctx, userID, 0)
 	purgeStepUpGrants(ctx, c.storage, userID)
-	c.invalidateTokenCache(sessionHashes...)
+	c.evictSessionsAndAudit(ctx, userID, sessionEv, evictTombstone, "RevokeUserCredentialsForDeactivation")
 	if patErr == nil {
 		c.invalidateTokenCache(patHashes...)
 	}
@@ -972,7 +972,7 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 		if err := c.guardLastAdminDeactivation(ctx, id); err != nil {
 			return err
 		}
-		sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, id)
+		sessionEv := c.listSessionHashesForEviction(ctx, id)
 		var patHashes []string
 		var user *models.User
 		// AUDIT-TX-3: deleting a user is a revocation, so never blocked by the audit
@@ -1030,10 +1030,15 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 		if err != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
-		c.invalidateTokenCache(sessionHashes...)
+		// Evict now (the revocation has taken effect), but write the audit row for a
+		// failed listing only after the last-admin lock is released, like the owed row.
+		c.evictSessions(id, sessionEv, evictTombstone, "DeleteUser")
 		c.invalidateTokenCache(patHashes...)
 		purgeStepUpGrants(ctx, c.storage, id)
-		settle = owedSettle
+		settle = func() {
+			owedSettle()
+			c.auditSessionListFailure(ctx, id, sessionEv, evictTombstone, "DeleteUser")
+		}
 		return nil
 	})
 	// settle is set only once the delete has committed; call it even if releasing the
@@ -1173,7 +1178,7 @@ func (c *KeyorixCore) DeleteSessionsForUserExcept(ctx context.Context, actorType
 	if err := c.requireUserCredentialsRevokeAuthority(ctx, actorType, actorID); err != nil {
 		return err
 	}
-	sessionHashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, targetUserID)
+	sessionEv := c.listSessionHashesForEviction(ctx, targetUserID)
 	// AUDIT-TX-3: see RevokeAllPersonalAccessTokensForUser.
 	settle, err := c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		if err := tx.DeleteSessionsForUserExcept(ctx, targetUserID, exceptSessionID); err != nil {
@@ -1186,7 +1191,7 @@ func (c *KeyorixCore) DeleteSessionsForUserExcept(ctx context.Context, actorType
 	if err != nil {
 		return err
 	}
-	c.invalidateTokenCache(sessionHashes...)
+	c.evictSessionsAndAudit(ctx, targetUserID, sessionEv, evictTombstone, "DeleteSessionsForUserExcept")
 	settle()
 	return nil
 }

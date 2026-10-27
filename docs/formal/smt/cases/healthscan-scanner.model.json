@@ -99,6 +99,20 @@
     },
     {
       "policy": "keyorix-healthscan",
+      "path": "auth/+/users",
+      "capabilities": [
+        "list"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "auth/+/users/+",
+      "capabilities": [
+        "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
       "path": "sys/policies/acl",
       "capabilities": [
         "list"
@@ -138,6 +152,13 @@
       "capabilities": [
         "list",
         "read"
+      ]
+    },
+    {
+      "policy": "keyorix-healthscan",
+      "path": "kv1/*",
+      "capabilities": [
+        "list"
       ]
     },
     {
@@ -182,11 +203,19 @@
       "category": "metadata-only"
     },
     {
+      "source_ref": "policy:keyorix-healthscan path:auth/+/users",
+      "category": "metadata-only"
+    },
+    {
       "source_ref": "policy:keyorix-healthscan path:sys/policies/acl",
       "category": "metadata-only"
     },
     {
       "source_ref": "policy:keyorix-healthscan path:sys/leases/lookup/+",
+      "category": "metadata-only"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:kv1/*",
       "category": "metadata-only"
     },
     {
@@ -227,6 +256,10 @@
     },
     {
       "source_ref": "policy:keyorix-healthscan path:auth/+/role/+",
+      "category": "mount-management"
+    },
+    {
+      "source_ref": "policy:keyorix-healthscan path:auth/+/users/+",
       "category": "mount-management"
     },
     {

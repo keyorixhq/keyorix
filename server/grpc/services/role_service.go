@@ -397,6 +397,10 @@ func validateRoleDescription(description string) error {
 
 // mapRoleError translates core/storage role errors into gRPC status codes.
 func mapRoleError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	// #3546: a role-scope refusal (e.g. a project-tier role with no project_id)
 	// is the caller's to fix; its message is fixed, client-safe text.
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {

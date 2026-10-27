@@ -78,9 +78,12 @@
 //     server checks every config.PinnedLockPingInterval (5 s) that the path
 //     still names the file it holds, and otherwise re-creates it and takes the
 //     lock again, or, when an admin command already holds the new file, closes
-//     Presence.Lost so the server stops (sidecarWatch). An admin command that
-//     starts AND finishes inside that interval is not detected. An admin
-//     command's own exclusive hold is not watched. Both sides check, after the
+//     Presence.Lost so the server stops (sidecarWatch). An admin command's
+//     exclusive hold is watched on the same interval, and when its sidecar is
+//     deleted or replaced it closes Exclusive.Lost (the command stops), holding
+//     the new file meanwhile so no server starts before it has. A process that
+//     starts AND finishes inside that interval is not detected, on either
+//     side. Both sides check, after the
 //     flock, that the path still names the file they locked, so an unlink
 //     between open and flock cannot leave one on a deleted file (lockSidecar).
 //     A filesystem without flock support or inode numbers is refused at start
@@ -190,12 +193,14 @@ type Exclusive struct {
 	lost    chan struct{} // closed when the lock is found lost; nil if it cannot be
 }
 
-// Lost is closed when the PostgreSQL exclusive lock is found lost while held
-// (the same causes as Presence.Lost). From that moment a server can start
-// beside the admin command, and with storage.encryption.key_dir_lock: database
-// this lock is the only thing that keeps a replica off the key files a
-// rotation is rewriting (docs/multi-replica-keys.md), so the caller should
-// stop. A nil channel for SQLite, remote storage and a nil *Exclusive; never
+// Lost is closed when the exclusive lock is found lost while held: on
+// PostgreSQL for the same causes as Presence.Lost, on SQLite when the sidecar
+// lock file was deleted or replaced (sidecarWatch). From that moment a server
+// can start beside the admin command, and with
+// storage.encryption.key_dir_lock: database this lock is the only thing that
+// keeps a replica off the key files a rotation is rewriting
+// (docs/multi-replica-keys.md), so the caller should stop. A nil channel for
+// remote storage, an in-memory SQLite database and a nil *Exclusive; never
 // closed after Release.
 func (e *Exclusive) Lost() <-chan struct{} {
 	if e == nil {
@@ -397,30 +402,48 @@ func acquireSQLitePresence(cfg *config.Config) (*Presence, error) {
 	if err != nil {
 		return nil, err
 	}
-	w := &sidecarWatch{path: path, f: f, lost: make(chan struct{}), stop: make(chan struct{}), done: make(chan struct{})}
+	w := newSidecarWatch(path, f, false)
 	go w.run(config.PinnedLockPingInterval)
 	return &Presence{lost: w.lost, release: w.release}, nil
 }
 
-// sidecarWatch keeps a server's SQLite presence lock on the file its path
-// names (REVIEW-SERVERGUARD-RECOVERYKEY-1 F4). Every interval (the PostgreSQL
-// presence watch's, config.PinnedLockPingInterval) it checks that the path
-// still names the inode it holds. If the sidecar was deleted or replaced, it
-// opens (re-creating) the file the path now names and takes LOCK_SH on it,
-// then lets the old one go. If that fails, an admin command already holds the
-// new file exclusively (or the file cannot be locked at all), so the server
-// is no longer excluding admin commands: lost is closed, and the server stops
-// as on a lost PostgreSQL presence lock (server/lock_loss.go).
+func newSidecarWatch(path string, f *os.File, admin bool) *sidecarWatch {
+	return &sidecarWatch{path: path, f: f, admin: admin, lost: make(chan struct{}), stop: make(chan struct{}), done: make(chan struct{})}
+}
+
+// sidecarWatch keeps a SQLite sidecar lock on the file its path names
+// (REVIEW-SERVERGUARD-RECOVERYKEY-1 F4). Every interval (the PostgreSQL lock
+// watch's, config.PinnedLockPingInterval) it checks that the path still names
+// the inode it holds. If the sidecar was deleted or replaced, it opens
+// (re-creating) the file the path now names and takes the same lock on it
+// (LOCK_SH for a server, LOCK_EX for an admin command), then lets the old one
+// go.
 //
-// Not covered: an admin command that starts and finishes inside one interval
-// after the deletion ran beside the server, and nothing can tell afterwards.
-// Only the watcher goroutine uses f until release has stopped it.
+// A server then keeps running. If taking the new file fails, an
+// admin command already holds it exclusively (or the file cannot be locked at
+// all), so the server is no longer excluding admin commands: lost is closed,
+// and the server stops as on a lost PostgreSQL presence lock
+// (server/lock_loss.go).
+//
+// An admin command closes lost either way (SERVERGUARD-LOCK-TAILS-1):
+// for up to one interval nothing excluded a server or another admin command,
+// so one may have started and written beside it, and the command stops as on a
+// lost PostgreSQL exclusive lock (server/admin/lock_loss.go). When it got the
+// new file, it keeps holding it until Release (the process exit), so no second
+// acquisition gets in between the loss being noticed and the command stopping.
+//
+// Not covered: a process that starts and finishes inside one interval after
+// the deletion ran beside the holder, and nothing can tell afterwards. Only
+// the watcher goroutine uses f until release has stopped it.
 type sidecarWatch struct {
 	path string
 	f    *os.File
-	lost chan struct{}
-	stop chan struct{}
-	done chan struct{}
+	// admin: this is an admin command's exclusive hold (LOCK_EX), not a
+	// server's presence (LOCK_SH).
+	admin bool
+	lost  chan struct{}
+	stop  chan struct{}
+	done  chan struct{}
 
 	releaseOnce sync.Once
 	releaseErr  error
@@ -443,11 +466,18 @@ func (w *sidecarWatch) run(interval time.Duration) {
 		default:
 		}
 		if err != nil {
-			log.Printf("serverguard presence lock: %v, so the lock is lost", err)
+			log.Printf("serverguard %s lock: %v, so the lock is lost", w.lockName(), err)
 			close(w.lost)
 			return
 		}
 	}
+}
+
+func (w *sidecarWatch) lockName() string {
+	if w.admin {
+		return "admin exclusive"
+	}
+	return "presence"
 }
 
 func (w *sidecarWatch) check() error {
@@ -457,18 +487,29 @@ func (w *sidecarWatch) check() error {
 			return nil
 		}
 	}
-	nf, err := lockSidecar(w.path, syscall.LOCK_SH)
+	admin := w.admin
+	holder, how := "this server", syscall.LOCK_SH
+	if admin {
+		holder, how = "this admin command", syscall.LOCK_EX
+	}
+	nf, err := lockSidecar(w.path, how)
 	switch {
 	case err == nil:
 		_ = syscall.Flock(int(w.f.Fd()), syscall.LOCK_UN)
 		_ = w.f.Close()
 		w.f = nf
-		log.Printf("serverguard: WARNING: %s was deleted or replaced while this server held it; re-created it and took the presence lock again. It is never a stale lock file: do not delete it", w.path)
+		if admin {
+			return fmt.Errorf("%s was deleted or replaced while %s held it, so a server or another admin command could have started beside it (this command now holds the new file, keeping new ones out until it stops). It is never a stale lock file: do not delete it", w.path, holder)
+		}
+		log.Printf("serverguard: WARNING: %s was deleted or replaced while %s held it; re-created it and took the presence lock again. It is never a stale lock file: do not delete it", w.path, holder)
 		return nil
 	case errors.Is(err, errSidecarHeld):
-		return fmt.Errorf("%s was deleted or replaced while this server held it, and an admin command now holds the new file exclusively", w.path)
+		if admin {
+			return fmt.Errorf("%s was deleted or replaced while %s held it, and a server or another admin command now holds the new file", w.path, holder)
+		}
+		return fmt.Errorf("%s was deleted or replaced while %s held it, and an admin command now holds the new file exclusively", w.path, holder)
 	default:
-		return fmt.Errorf("%s was deleted or replaced while this server held it, and taking it again failed: %w", w.path, err)
+		return fmt.Errorf("%s was deleted or replaced while %s held it, and taking it again failed: %w", w.path, holder, err)
 	}
 }
 
@@ -495,10 +536,11 @@ func acquireSQLiteExclusive(cfg *config.Config) (*Exclusive, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Exclusive{release: func() error {
-		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
-		return f.Close()
-	}}, nil
+	// Watched like the server's presence lock: an admin command whose sidecar
+	// is deleted or replaced no longer keeps a server out (sidecarWatch).
+	w := newSidecarWatch(path, f, true)
+	go w.run(config.PinnedLockPingInterval)
+	return &Exclusive{lost: w.lost, release: w.release}, nil
 }
 
 // pgConn opens a single dedicated connection to cfg's Postgres database,

@@ -443,15 +443,42 @@ storage: opening existing SQLite database at <datadir>/keyorix.db (configured: "
 failed to initialize core service: failed to initialize encryption: KEK derivation from the master passphrase read from KEYORIX_MASTER_PASSWORD_FILE="<datadir>/mp" failed: failed to initialize key manager: failed to unwrap DEK — wrong passphrase or corrupted key file: GCM open failed: cipher: message authentication failed
 ```
 
-**Match:** `wrong passphrase or corrupted key file`, `KEK derivation from the master passphrase read from`
+When an interrupted (or unfinished) `rotate-kek` or `migrate-provider` left a file in the
+key directory, the same error carries one more line per leftover, naming the file and the
+recovery. Real output after a `migrate-provider --to-type file` whose new `key_provider`
+was never put into the config (key paths are relative to the server's directory):
 
-**Cause.** The passphrase does not open the wrapped key (`dek.enc`), or the key file or
-`salt.bin` is damaged or from a different install. The message names the source the
+```
+failed to initialize core service: failed to initialize encryption: KEK derivation from the master passphrase read from KEYORIX_MASTER_PASSWORD_FILE="<datadir>/mp" failed: failed to initialize key manager: failed to unwrap DEK — wrong passphrase or corrupted key file: GCM open failed: cipher: message authentication failed
+  - keys/dek.key.migrate-backup.1793090500835024000-7a03da4d is the newest migrate-provider backup: if a migrate-provider was interrupted after it re-wrapped keys/dek.key (or finished and the configuration was not updated), keys/dek.key is wrapped under the TARGET provider. Set storage.encryption.key_provider to the provider you migrated to and start again; to go back afterwards, run `keyorix-server admin encryption migrate-provider --to-type <previous provider> --confirm`. Keep the backup until that works (docs/operator/key-rotation-runbook.md, "Interrupted rotate-kek or migrate-provider")
+```
+
+From code, for a `rotate-kek` killed after it re-wrapped the DEK and before it replaced the
+salt (`<salt_path>.pending` present, no `<dek_path>.pending`):
+
+```
+  - keys/kek.salt.pending exists: a rotate-kek was interrupted after it re-wrapped keys/dek.key under the new passphrase and before it replaced keys/kek.salt. With the server stopped, run `mv keys/kek.salt.pending keys/kek.salt` and start with the NEW passphrase (docs/operator/key-rotation-runbook.md, "Interrupted rotate-kek or migrate-provider")
+```
+
+When `<dek_path>.pending` exists as well, the line says instead that a rotate-kek was
+interrupted before it replaced the DEK: start with the **previous** passphrase, re-run
+`rotate-kek`, and do not rename either file.
+
+**Match:** `wrong passphrase or corrupted key file`, `KEK derivation from the master passphrase read from`, `is the newest migrate-provider backup`, `a rotate-kek was interrupted after it re-wrapped`, `a rotate-kek was interrupted before it replaced`
+
+**Cause.** The passphrase does not open the wrapped DEK (`storage.encryption.dek_path`,
+`keys/dek.key` in the config `admin init` writes), or the DEK or the salt
+(`storage.encryption.salt_path`, `keys/kek.salt`) is damaged or from a different install, or
+a `rotate-kek` / `migrate-provider` left the DEK wrapped under a KEK the configuration does
+not produce yet (the extra lines above). The message names the source the
 passphrase was read from (`--passphrase-fd N`, `--passphrase-file "<path>"`,
 `--passphrase-stdin`, `KEYORIX_MASTER_PASSWORD_FILE="<path>"` or `KEYORIX_MASTER_PASSWORD`):
-check that it is the one you meant, since a leftover variable in the environment is easy to miss. **Fix.** Try the right passphrase first.
+check that it is the one you meant, since a leftover variable in the environment is easy to miss. **Fix.** If the
+message has a leftover line, follow it (full procedure:
+[key-rotation-runbook.md](key-rotation-runbook.md#interrupted-rotate-kek-or-migrate-provider)) and keep
+the leftover file until the server starts. Otherwise try the right passphrase first.
 If you changed it deliberately, check that `admin encryption rotate-kek` finished. If a key
-file is damaged, restore the matching `dek.enc` **and** `salt.bin` from backup. **Never**
+file is damaged, restore the matching DEK **and** salt from backup. **Never**
 delete the key files to "start fresh": a new key cannot open existing data.
 **In place:** no. [j6-key-rotation.md](j6-key-rotation.md), [drill-backup-restore.md](drill-backup-restore.md).
 
@@ -686,7 +713,7 @@ Real output (schema epoch edited to 999 to stand in for a newer release):
 
 ```
 storage: opening existing SQLite database at <datadir>/keyorix.db (configured: "<datadir>/keyorix.db")
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 3 (recorded at 2026-10-17T21:52:34+02:00, 23s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 7 (recorded at 2026-10-27T12:14:09+01:00, 34s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
 ```
 
 **Match:** `is newer than this binary's schema epoch`, `checked before migrating; nothing was migrated`
@@ -703,7 +730,7 @@ schema. **In place:** no. [UPGRADING.md §7 Rollback](../UPGRADING.md#7-rollback
 Real output (floor edited to 999):
 
 ```
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 3), above this binary's schema epoch 3 (floor recorded at 2026-10-17T21:52:34+02:00, 30s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 7), above this binary's schema epoch 7 (floor recorded at 2026-10-27T12:14:09+01:00, 25s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
 ```
 
 **Match:** `database declares a minimum compatible schema epoch of`

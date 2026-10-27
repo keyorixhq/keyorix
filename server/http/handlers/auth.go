@@ -1021,6 +1021,21 @@ func (h *AuthHandler) PasswordReset(w http.ResponseWriter, r *http.Request) {
 	sendSuccess(w, nil, "If that email is registered, a reset link has been sent")
 }
 
+// sendPolicyRefusal answers a refused new password with 400 and the rule text and
+// reports whether err was one. Every route that takes a new password uses it, so
+// they answer alike (PASSWORD-POLICY-FAMILY-1). The text is fixed wording from core
+// and the log line is fixed too: nothing that came out of a password check reaches
+// a log call.
+func sendPolicyRefusal(w http.ResponseWriter, route string, err error) bool {
+	msg, refused := core.PolicyRefusalMessage(err)
+	if !refused {
+		return false
+	}
+	log.Printf("%s: new password refused by policy", route)
+	sendError(w, "BadRequest", msg, http.StatusBadRequest, nil)
+	return true
+}
+
 // InitSystem handles POST /system/init.
 //
 // Bootstraps a Keyorix server in a single call:
@@ -1053,7 +1068,12 @@ func (h *AuthHandler) InitSystem(w http.ResponseWriter, r *http.Request) {
 		Token:       token,
 	})
 	if err != nil {
-		// A bad/missing token or a weak password is a client error, not a 500.
+		// A weak password is a 400 that names the broken rule. Core checks the token
+		// first, so only a caller holding it can reach this answer.
+		if sendPolicyRefusal(w, "InitSystem", err) {
+			return
+		}
+		// A bad/missing token or another validation failure is a client error, not a 500.
 		if errors.Is(err, core.ErrInvalidBootstrapToken) || strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 			sendError(w, "Error", err.Error(), http.StatusForbidden, nil)
 			return

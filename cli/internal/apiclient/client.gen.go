@@ -18286,6 +18286,7 @@ type CreateGroupResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON409 *Error
+	JSON503 *AuditUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -18509,6 +18510,7 @@ type AssignRoleToGroupResponse struct {
 	JSON401 *Error
 	JSON404 *Error
 	JSON409 *Error
+	JSON503 *AuditUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -18914,6 +18916,7 @@ type CreateProjectResponse struct {
 	}
 	JSON400 *Error
 	JSON401 *Error
+	JSON503 *AuditUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -19437,6 +19440,7 @@ type CreateProjectEnvironmentResponse struct {
 	}
 	JSON400 *Error
 	JSON401 *Error
+	JSON503 *AuditUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -20713,6 +20717,7 @@ type CreateRoleResponse struct {
 	JSON400 *Error
 	JSON401 *Error
 	JSON409 *Error
+	JSON503 *AuditUnavailable
 }
 
 // Status returns HTTPResponse.Status
@@ -28720,6 +28725,13 @@ func ParseCreateGroupResponse(rsp *http.Response) (*CreateGroupResponse, error) 
 		}
 		response.JSON409 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
 	}
 
 	return response, nil
@@ -29076,6 +29088,13 @@ func ParseAssignRoleToGroupResponse(rsp *http.Response) (*AssignRoleToGroupRespo
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -29707,6 +29726,13 @@ func ParseCreateProjectResponse(rsp *http.Response) (*CreateProjectResponse, err
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -30627,6 +30653,13 @@ func ParseCreateProjectEnvironmentResponse(rsp *http.Response) (*CreateProjectEn
 			return nil, err
 		}
 		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 
@@ -32888,6 +32921,13 @@ func ParseCreateRoleResponse(rsp *http.Response) (*CreateRoleResponse, error) {
 			return nil, err
 		}
 		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
 
 	}
 

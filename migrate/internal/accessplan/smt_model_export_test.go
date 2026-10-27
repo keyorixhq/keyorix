@@ -58,6 +58,10 @@ type smtCaseInput struct {
 	Environments map[int][]EnvironmentRef `json:"environments"`
 	PathMap      []string                 `json:"path_map"`
 	Imports      []smtImport              `json:"imports"`
+	// KVListing is what plan-access lists under each KV mount's project-named roots, per mount
+	// path: "<project>" or "<project>/<env>" keys. Every KV mount counts as listed; a mount
+	// absent here holds nothing named after a Keyorix project (true of every seeded Vault).
+	KVListing map[string][]string `json:"kv_listing,omitempty"`
 }
 
 type smtRule struct {
@@ -164,6 +168,11 @@ func buildSMTModel(t *testing.T, in smtCaseInput) smtModel {
 	if err != nil {
 		t.Fatalf("case %s: NewPathMapper: %v", in.Case, err)
 	}
+	listing := map[string][]string{}
+	for _, km := range in.KVMounts {
+		listing[km.Path] = in.KVListing[km.Path]
+	}
+	mapper.SetKVTree(kvTree(listing)) // as plan-access lists the Vault the case was seeded from.
 	out := smtModel{Case: in.Case, Description: in.Description, Constructed: in.Constructed,
 		Sources: sources, Imports: in.Imports, Grants: []smtGrant{}, Unmappable: []smtUnmappable{}}
 	for _, km := range in.KVMounts {

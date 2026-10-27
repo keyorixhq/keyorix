@@ -72,7 +72,7 @@ func ancestorLoopErrStorage(inner corestorage.Storage, directID uint, loopErr er
 		},
 		GetSecretACL: func(_ corestorage.Storage, _ context.Context, secretID, _ uint) (*models.SecretACL, error) {
 			if secretID == directID {
-				return nil, errors.New("record not found")
+				return nil, corestorage.ErrSecretACLNotFound
 			}
 			return nil, loopErr
 		},
@@ -299,18 +299,4 @@ func TestAuthorizeSecret_HasSecretACLError(t *testing.T) {
 	require.Error(t, err, "AuthorizeSecret must fail closed when HasSecretACL errors, even though the user's project role would otherwise grant access")
 	assert.ErrorIs(t, err, wantErr)
 	assert.False(t, ok)
-}
-
-// --- isNotFound ---
-
-func TestIsNotFound_Nil(t *testing.T) {
-	t.Parallel()
-	assert.False(t, isNotFound(nil))
-}
-
-func TestIsNotFound_Messages(t *testing.T) {
-	t.Parallel()
-	assert.True(t, isNotFound(errors.New("record not found")))
-	assert.True(t, isNotFound(errors.New("entry not found")))
-	assert.False(t, isNotFound(errors.New("some other error")))
 }

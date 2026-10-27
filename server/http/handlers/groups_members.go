@@ -89,6 +89,9 @@ func (h *GroupHandler) AddGroupMember(w http.ResponseWriter, r *http.Request) {
 		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
 	}
 	if err := h.coreService.AddUserToGroup(ctx, userCtx.UserID, isMachineActor(r), body.UserID, uint(groupID), body.ProjectID); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error adding group member: %v", err)
 		switch {
 		case strings.Contains(err.Error(), "not found"):
