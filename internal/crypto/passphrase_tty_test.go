@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,8 +19,9 @@ import (
 
 // withTTYStdin makes os.Stdin the slave of a fresh pty, types input on the master
 // (before the read, so it waits in the line discipline's queue) and points os.Stderr
-// at a file so the prompt does not clutter the test log. It returns the stderr path.
-func withTTYStdin(t *testing.T, input string) (stderrPath string) {
+// at a file so the prompt does not clutter the test log. It returns the stderr path
+// and the master end (resolveWithDeadline uses it to unblock a read that never ends).
+func withTTYStdin(t *testing.T, input string) (stderrPath string, master *os.File) {
 	t.Helper()
 	master, slave, err := openPTY()
 	if err != nil {
@@ -38,15 +40,55 @@ func withTTYStdin(t *testing.T, input string) (stderrPath string) {
 		_ = master.Close()
 	})
 
-	_, err = master.WriteString(input)
-	require.NoError(t, err)
-	return stderrPath
+	if input != "" {
+		_, err = master.WriteString(input)
+		require.NoError(t, err)
+	}
+	return stderrPath, master
+}
+
+// resolveWithDeadline runs ResolvePassphrase on the pty stdin and fails the test after
+// a deadline instead of hanging the package until the go test timeout (CI hung for 30
+// minutes on the Ctrl-D case: an end-of-file typed before term.ReadPassword switches the
+// terminal mode did not reach the read that followed). If eof is set, a Ctrl-D is typed
+// every 50ms while the read is pending, so one lands on an empty line of the read that
+// is actually waiting. On deadline the master is closed, which hangs the slave up and
+// lets the blocked read return.
+func resolveWithDeadline(t *testing.T, master *os.File, eof bool) ([]byte, error) {
+	t.Helper()
+	type result struct {
+		got []byte
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		got, err := ResolvePassphrase(PassphraseSource{Stdin: true}, "UNUSED")
+		done <- result{got, err}
+	}()
+	deadline := time.After(20 * time.Second)
+	tick := time.NewTicker(50 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case r := <-done:
+			return r.got, r.err
+		case <-tick.C:
+			if eof {
+				_, _ = master.WriteString("\x04")
+			}
+		case <-deadline:
+			_ = master.Close()
+			<-done
+			t.Fatal("ResolvePassphrase did not return within 20s on a pty stdin")
+			return nil, nil
+		}
+	}
 }
 
 func TestResolvePassphrase_Stdin_Terminal(t *testing.T) {
 	t.Run("typed passphrase is returned without its newline, after a prompt", func(t *testing.T) {
-		stderrPath := withTTYStdin(t, "s3cret pass\n")
-		got, err := ResolvePassphrase(PassphraseSource{Stdin: true}, "UNUSED")
+		stderrPath, master := withTTYStdin(t, "s3cret pass\n")
+		got, err := resolveWithDeadline(t, master, false)
 		require.NoError(t, err)
 		assert.Equal(t, "s3cret pass", string(got))
 
@@ -57,16 +99,16 @@ func TestResolvePassphrase_Stdin_Terminal(t *testing.T) {
 	})
 
 	t.Run("an empty entry is refused", func(t *testing.T) {
-		withTTYStdin(t, "\n")
-		got, err := ResolvePassphrase(PassphraseSource{Stdin: true}, "UNUSED")
+		_, master := withTTYStdin(t, "\n")
+		got, err := resolveWithDeadline(t, master, false)
 		require.Error(t, err)
 		assert.Nil(t, got)
 		assert.EqualError(t, err, "no passphrase entered")
 	})
 
 	t.Run("end of input at the prompt is a read error, not an empty passphrase", func(t *testing.T) {
-		withTTYStdin(t, "\x04") // Ctrl-D at the start of a line
-		got, err := ResolvePassphrase(PassphraseSource{Stdin: true}, "UNUSED")
+		_, master := withTTYStdin(t, "") // Ctrl-D is typed while the read waits
+		got, err := resolveWithDeadline(t, master, true)
 		require.Error(t, err)
 		assert.Nil(t, got)
 		assert.ErrorContains(t, err, "reading passphrase from terminal: ")
