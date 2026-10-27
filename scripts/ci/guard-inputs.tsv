@@ -55,6 +55,7 @@ server/http/g80_triage_doc_closure_guard_test.go	!server/**/*.md	reads the cited
 server/middleware/j5_doc_messages_test.go	docs/operator/j5-lost-admin.md	J5 messages quoted in the runbook
 #
 # --- web/ ---------------------------------------------------------------------------
+server/http/airgap_external_hosts_guard_test.go	web/index.html,web/src/**/*.css,web/public/**,server/webui/dist/**,!operator/**	the served markup it scans for external hosts: the web entry page, the CSS and public assets, the embedded dist (web/dist is untracked build output; operator/ is not read)
 deploy/hsts_nginx_behaviour_test.go	web/nginx.conf,web/nginx-hsts.conf,web/keyorix-backend.conf,web/docker-entrypoint.d/**	nginx configs and the HSTS entrypoint hook (runs nginx in Docker when available)
 server/http/suspend_audit_refusal_message_drift_test.go	web/src/features/secrets/__tests__/SuspendAuditRefusal.test.tsx,web/src/features/secrets/__tests__/SuspendSecretModal.test.tsx,cli/cmd/suspend_audit_refusal_test.go	the refusal text quoted by the web and CLI tests
 server/middleware/nginx_conf_header_scope_test.go	web/nginx.conf	nginx header scoping
