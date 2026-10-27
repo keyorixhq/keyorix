@@ -146,6 +146,9 @@ func runEncRotate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer lock.Release() //nolint:errcheck
+	if err := refuseForcedDEKRotation(cfg, encRotateDryRun); err != nil {
+		return err
+	}
 	if err := encryptionops.RotateWithConfig(cfg, encRotateConfirm, encRotateDryRun, encPassphraseSource); err != nil {
 		return err
 	}
