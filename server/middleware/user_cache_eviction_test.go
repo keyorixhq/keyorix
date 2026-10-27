@@ -69,9 +69,70 @@ func TestInvalidateUserTokenCache_DropsInFlightPositiveForUncachedKey(t *testing
 	}
 
 	// A validation that starts after the eviction caches normally: the user is not locked out.
-	cacheSetValidated(key, &UserContext{UserID: evictTestUserID, SessionAuth: true}, time.Now(), time.Now().Add(validTokenTTL))
+	// Strictly after: a tie with the eviction instant goes to the eviction (see _TieGoesToEviction).
+	cacheSetValidated(key, &UserContext{UserID: evictTestUserID, SessionAuth: true}, evictedAtForTest(t, evictTestUserID).Add(time.Nanosecond), time.Now().Add(validTokenTTL))
 	if e, ok := cacheGet(key); !ok || e.userCtx == nil {
 		t.Fatal("a post-eviction validation was not cached")
+	}
+}
+
+func evictedAtForTest(t *testing.T, userID uint) time.Time {
+	t.Helper()
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	ea, ok := userEvictedAt[userID]
+	if !ok {
+		t.Fatalf("no userEvictedAt marker for user %d", userID)
+	}
+	return ea
+}
+
+// A validation that began on the same clock tick as the eviction cannot be ordered after
+// it (coarse monotonic clocks make this common), so its DB read may predate the revoke:
+// the tie must go to the eviction, never to the stale positive.
+func TestInvalidateUserTokenCache_TieGoesToEviction(t *testing.T) {
+	resetTokenCacheForTest(t)
+	forgetUserEvictionForTest(t, evictTestUserID)
+	key := tokenKey("same-tick-session")
+
+	InvalidateUserTokenCache(evictTestUserID)
+
+	cacheSetValidated(key, &UserContext{UserID: evictTestUserID, SessionAuth: true}, evictedAtForTest(t, evictTestUserID), time.Now().Add(validTokenTTL))
+	if _, ok := cacheGet(key); ok {
+		t.Fatal("a validation that began on the eviction's own clock tick re-cached the revoked session")
+	}
+}
+
+// ListSessionTokenHashesForUser also returns impersonation sessions the user STARTED
+// (impersonated_by = user), cached with UserID = the target and ImpersonatedBy = the user.
+// The per-user fallback stands in for that listing, so it must drop those entries too, and
+// refuse to re-cache one whose validation was in flight.
+func TestInvalidateUserTokenCache_CoversImpersonationSessionsTheUserStarted(t *testing.T) {
+	resetTokenCacheForTest(t)
+	const targetID = evictTestUserID + 2
+	forgetUserEvictionForTest(t, evictTestUserID)
+	impersonator := uint(evictTestUserID)
+	exp := time.Now().Add(validTokenTTL)
+	cached, inFlight := tokenKey("impersonation-cached"), tokenKey("impersonation-in-flight")
+	target := tokenKey("target-own-session")
+	impCtx := func() *UserContext {
+		return &UserContext{UserID: targetID, SessionAuth: true, ImpersonatedBy: &impersonator}
+	}
+	cacheSetValidated(cached, impCtx(), time.Now(), exp)
+	cacheSetValidated(target, &UserContext{UserID: targetID, SessionAuth: true}, time.Now(), exp)
+	validatedAt := time.Now()
+
+	InvalidateUserTokenCache(evictTestUserID)
+
+	if _, ok := cacheGet(cached); ok {
+		t.Fatal("an impersonation session started by the evicted user survived the per-user eviction")
+	}
+	cacheSetValidated(inFlight, impCtx(), validatedAt, exp)
+	if _, ok := cacheGet(inFlight); ok {
+		t.Fatal("an in-flight validation of an impersonation session started by the evicted user re-cached it")
+	}
+	if e, ok := cacheGet(target); !ok || e.userCtx == nil {
+		t.Fatal("the impersonation target's own session was evicted by the impersonator's eviction")
 	}
 }
 

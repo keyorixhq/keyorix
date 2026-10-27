@@ -331,10 +331,8 @@ func cacheSetValidatedGen(key string, userCtx *UserContext, validatedAt time.Tim
 		// via the separate clearedAt map since a clear's own tokenCache marker (if any)
 		// does not survive an intervening cacheGet long enough to check here directly.
 	}
-	if userCtx != nil && userCtx.UserID != 0 {
-		if ea, ok := userEvictedAt[userCtx.UserID]; ok && ea.After(validatedAt) {
-			return // the user's cache entries were evicted (InvalidateUserTokenCache) during our validation
-		}
+	if userEvictedDuringLocked(userCtx, validatedAt) {
+		return // the user's cache entries were evicted (InvalidateUserTokenCache) during our validation
 	}
 	entry := tokenCacheEntry{userCtx: userCtx, expiresAt: expiresAt}
 	if isMachineEntry(userCtx) {
@@ -2107,8 +2105,8 @@ func ClearTokenCacheIfCached(hash string) {
 }
 
 // InvalidateUserTokenCache drops every cache entry (session and PAT) that resolved to
-// the human user userID, so each of their credentials re-validates against storage on
-// its next request. Fail-closed fallback for the session-revocation paths in
+// the human user userID, plus impersonation sessions userID started (ImpersonatedBy),
+// so each of those credentials re-validates against storage on its next request. Fail-closed fallback for the session-revocation paths in
 // internal/core (session_eviction.go) when ListSessionTokenHashesForUser failed after
 // the revocation committed and the exact cache keys are therefore unknown. It deletes
 // rather than tombstones, like InvalidateAllMachineTokenCache: an unrelated credential
@@ -2124,10 +2122,41 @@ func InvalidateUserTokenCache(userID uint) {
 	defer tokenCacheMu.Unlock()
 	userEvictedAt[userID] = time.Now()
 	for k, e := range tokenCache {
-		if e.userCtx != nil && !isMachineEntry(e.userCtx) && e.userCtx.UserID == userID {
+		if e.userCtx != nil && !isMachineEntry(e.userCtx) && userCacheEntryOf(e.userCtx, userID) {
 			delete(tokenCache, k)
 		}
 	}
+}
+
+// userCacheEntryOf reports whether a human cache entry belongs to userID for per-user
+// eviction: the user's own credentials, plus impersonation sessions the user started
+// (UserID = the target, ImpersonatedBy = userID), matching the user_id OR impersonated_by
+// union of ListSessionTokenHashesForUser that InvalidateUserTokenCache stands in for.
+func userCacheEntryOf(userCtx *UserContext, userID uint) bool {
+	return userCtx.UserID == userID || (userCtx.ImpersonatedBy != nil && *userCtx.ImpersonatedBy == userID)
+}
+
+// userEvictedDuringLocked reports whether InvalidateUserTokenCache ran for the entry's
+// user or impersonator at or after validatedAt. A tie counts as evicted: a validation that
+// began on the eviction's own clock tick cannot be ordered after it, and this is a
+// fail-closed fallback, so the stale positive must not win. Caller holds tokenCacheMu.
+func userEvictedDuringLocked(userCtx *UserContext, validatedAt time.Time) bool {
+	if userCtx == nil {
+		return false
+	}
+	ids := []uint{userCtx.UserID}
+	if userCtx.ImpersonatedBy != nil {
+		ids = append(ids, *userCtx.ImpersonatedBy)
+	}
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if ea, ok := userEvictedAt[id]; ok && !ea.Before(validatedAt) {
+			return true
+		}
+	}
+	return false
 }
 
 // InvalidateAllMachineTokenCache drops every positive cache entry attributed to a
