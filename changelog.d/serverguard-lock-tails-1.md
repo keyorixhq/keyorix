@@ -1,0 +1,2 @@
+### Security
+- **An admin command on SQLite stops when its lock file is deleted.** Deleting or replacing `<database>.server.lock` while a `keyorix-server admin` command ran let a server start beside the command, and both wrote to the database. The command now checks the file every 5 s, as the server already does, takes the new file so no server can start, and stops with exit status 1 and an error naming the cause. The lock file is never stale: do not delete it.

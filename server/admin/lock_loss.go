@@ -9,7 +9,8 @@ import (
 
 // lostDatabaseLockMsg is printed when an admin command's exclusive database lock
 // is found lost while the command runs.
-const lostDatabaseLockMsg = "ERROR: this admin command's exclusive database lock was lost (its database connection died), " +
+const lostDatabaseLockMsg = "ERROR: this admin command's exclusive database lock was lost (its database connection died, " +
+	"or its SQLite lock file <database>.server.lock was deleted or replaced), " +
 	"so a server or another admin command may have started beside it. Stopping now, as after a crash. " +
 	"Check that no server or admin command is running against this database (stop any that started), " +
 	"then re-run this command; see docs/postgresql-poolers.md, \"When a lock is lost\".\n"
@@ -27,10 +28,13 @@ var exitOnLostDatabaseLock = func() { os.Exit(1) }
 // survive (DEK rotation's crash recovery, transactions rolled back with the
 // connection); running on beside a server is not.
 //
-// Nothing happens for a nil lock (--force past a held lock, remote storage) or
-// a lock that cannot be lost (SQLite's flock). Lost is never closed after
-// Release, so a command that finished is never stopped; its goroutine stays
-// parked until the process exits, which for a one-shot admin command is at once.
+// PostgreSQL: the lock's connection died. SQLite: the <database>.server.lock
+// sidecar was deleted or replaced (the watch keeps the new file locked, so no
+// server starts before this exit). Nothing happens for a nil lock (--force past
+// a held lock, remote storage, an in-memory SQLite database). Lost is never
+// closed after Release, so a command that finished is never stopped; its
+// goroutine stays parked until the process exits, which for a one-shot admin
+// command is at once.
 func stopOnLostDatabaseLock(lock *serverguard.Exclusive) {
 	lost := lock.Lost()
 	if lost == nil {
