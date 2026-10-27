@@ -116,10 +116,21 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 				return err
 			}
 		}
+		// Pre-commit decrypt check (sweep_verify.go): a sample round trip before
+		// the sweep, then every rewritten row read back and opened with the new
+		// DEK before the commit. Any failure rolls the whole sweep back.
+		if err := rewrapCanary(tx, oldSvc, newSvc, newKeyVersion); err != nil {
+			tx.Rollback()
+			return err
+		}
 		result, err := SweepAllTables(tx, oldSvc, newSvc, newKeyVersion, false)
 		if err != nil {
 			tx.Rollback()
 			return fmt.Errorf("sweep failed: %w", err)
+		}
+		if err := verifySweepBeforeCommit(tx, newSvc, result); err != nil {
+			tx.Rollback()
+			return err
 		}
 		if fence != nil {
 			// Same transaction as the re-encryption: the epoch names the new DEK
