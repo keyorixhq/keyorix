@@ -468,6 +468,21 @@ func TestCheckOff(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, live)
 	require.Equal(t, g.PID(), pid)
+	// The other accepted spelling of the storage type sees the holder too: a
+	// "not PostgreSQL" answer would skip the admin --force refusal, let a
+	// server without the setting boot beside the holder, and report no fence.
+	alt := *w.cfg
+	alt.Storage.Type = "postgresql"
+	live, pid, err = HolderLive(context.Background(), &alt)
+	require.NoError(t, err)
+	require.True(t, live, `storage.type "postgresql" did not see the live holder`)
+	require.Equal(t, g.PID(), pid)
+	err = CheckOff(context.Background(), &alt)
+	require.Error(t, err, `storage.type "postgresql": CheckOff let a server boot beside the holder`)
+	require.Contains(t, err.Error(), "single_writer holds this database")
+	rep, err := InspectFence(context.Background(), &alt)
+	require.NoError(t, err)
+	require.True(t, rep.Complete(), `storage.type "postgresql": InspectFence saw no fence: %+v`, rep)
 
 	g.Close()
 	require.Eventually(t, func() bool { l, _, _ := HolderLive(context.Background(), w.cfg); return !l }, 5*time.Second, 50*time.Millisecond)
