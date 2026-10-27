@@ -918,6 +918,7 @@ paths:
                   data: {$ref: '#/components/schemas/Project'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
 
   /api/v1/projects/{id}:
     get:
@@ -1863,6 +1864,7 @@ paths:
                   data: {$ref: '#/components/schemas/Environment'}
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
 
   /api/v1/projects/{id}/environments/{envId}/clone:
     post:
@@ -5986,6 +5988,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
 
   /api/v1/groups/{id}:
     parameters:
@@ -6180,6 +6183,7 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
 
   /api/v1/groups/{id}/roles/{roleId}:
     parameters:
@@ -6281,6 +6285,7 @@ paths:
         '400': {$ref: '#/components/responses/Error'}
         '401': {$ref: '#/components/responses/Error'}
         '409': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/AuditUnavailable'}
 
   /api/v1/roles/{id}:
     parameters:
@@ -7863,6 +7868,32 @@ components:
                   /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET
                   /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens
                   both, in either order.
+    AuditUnavailable:
+      description: >-
+        The change was refused because its audit row could not be recorded
+        (AUDIT-503-MAP-1). Security-relevant mutations (role and permission grants,
+        group and project membership, shares, machine identities, user lifecycle,
+        policies, ...) commit together with their audit row; when the audit log cannot
+        take the row the transaction rolls back and NOTHING was changed. The answer is
+        503 with a `Retry-After` header (seconds) and the stable `error` code
+        `audit_unavailable`; `message` is a fixed sentence. The request is safe to retry
+        unchanged once the audit log is back. A revocation is never refused for this
+        reason (its audit row is owed, not required). The suspend endpoints that clear
+        synced copies keep their own code, `SuspendAuditUnavailable`. The gRPC twin is
+        `Unavailable` with the same message.
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying.
+          schema: {type: integer}
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success: {type: boolean}
+              code: {type: integer, description: 'Always 503.'}
+              error: {type: string, description: 'Always `audit_unavailable`.'}
+              message: {type: string}
     SecretReadRefused:
       description: >-
         The caller may read this secret, but the secret's own state refuses the value

@@ -138,6 +138,9 @@ func (h *CatalogHandler) CreateMachineIdentity(w http.ResponseWriter, r *http.Re
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
 	m, err := h.coreService.CreateMachineIdentity(auditCtx, id, body.Name, body.IdentityType, body.Description, body.Classification, actor.UserID, machineID(r))
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, "invalid identity_type") || strings.Contains(msg, "required") {
@@ -187,6 +190,9 @@ func (h *CatalogHandler) MigrateUserToMachine(w http.ResponseWriter, r *http.Req
 
 	m, err := h.coreService.MigrateUserToMachine(r.Context(), body.Username, id, body.IdentityType, body.Name, actor.UserID, machineID(r), !body.KeepUser)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -233,6 +239,9 @@ func (h *CatalogHandler) TransitionMachineIdentity(w http.ResponseWriter, r *htt
 	}
 	m, err := h.coreService.TransitionMachineIdentity(r.Context(), projectID, uint(machineID), to, actor.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -301,6 +310,9 @@ func (h *CatalogHandler) IssueMachineToken(w http.ResponseWriter, r *http.Reques
 		ReplaceCredentialID: body.ReplaceCredentialID,
 	})
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		// A rotation revokes the old credential first (never blocked by the audit log);
 		// if issuing the new one then fails, the old one stays revoked (503, partial
 		// apply; core already evicted it from the auth cache).
@@ -437,6 +449,9 @@ func (h *CatalogHandler) ClassifyMachineIdentity(w http.ResponseWriter, r *http.
 	}
 	m, err := h.coreService.ClassifyMachineIdentity(r.Context(), projectID, machineID, body.Classification, actor.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusBadRequest
 		msg := err.Error()
 		switch {
@@ -476,6 +491,9 @@ func (h *CatalogHandler) ClassifyMachineToken(w http.ResponseWriter, r *http.Req
 	}
 	cred, err := h.coreService.ClassifyMachineToken(r.Context(), projectID, machineID, uint(tokenID), body.Classification, actor.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusBadRequest
 		msg := err.Error()
 		switch {
@@ -580,6 +598,9 @@ func (h *CatalogHandler) changeMachineRole(w http.ResponseWriter, r *http.Reques
 		err = h.coreService.RemoveMachineRole(r.Context(), uint(machineID), roleID, scope, actor.UserID)
 	}
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if sendRoleScopeError(w, err) {
 			return
 		}

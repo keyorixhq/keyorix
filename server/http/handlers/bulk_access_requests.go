@@ -29,6 +29,9 @@ func (h *CatalogHandler) BulkApproveAccessRequests(w http.ResponseWriter, r *htt
 	}
 	result, err := h.coreService.BulkApproveAccessRequests(r.Context(), body.RequestIDs, actor.UserID, machineID(r))
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if sendRoleScopeError(w, err) {
 			return
 		}

@@ -107,6 +107,9 @@ func (h *SecretHandler) GrantSecretACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.GrantSecretACL(r.Context(), userCtx.UserID, uint(secretID), body.UserID, body.Permissions); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := aclErrorStatus(err.Error())
 		msg := err.Error()
 		if status == http.StatusInternalServerError {
