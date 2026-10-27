@@ -12,9 +12,12 @@ package encryptionops
 
 import (
 	"bytes"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -224,8 +227,8 @@ func MigrateProviderWithConfig(cfg *config.Config, opts MigrateOpts, confirm boo
 	}
 
 	// 3. Back up the current wrapped DEK before overwriting it.
-	backupRel := fmt.Sprintf("%s.migrate-backup.%d", enc.DEKPath, time.Now().Unix())
-	if err := CopyFile(baseDir, enc.DEKPath, backupRel); err != nil {
+	backupRel, err := CreateMigrateBackup(baseDir, enc.DEKPath)
+	if err != nil {
 		return fmt.Errorf("failed to back up current wrapped DEK: %w", err)
 	}
 
@@ -297,10 +300,10 @@ func presentPaths(paths []string) []string {
 // securefiles' per-path-component O_NOFOLLOW walk (SecureOpenBeneath/SafeReadFile) so
 // a symlink planted at any intermediate directory component (not just the leaf)
 // between this tool starting and this copy running can't redirect the read or the
-// write. The backup this produces is the rollback target if migration verification
-// fails — a non-durable backup lost to a crash could leave neither a valid old nor
-// new wrapped DEK on disk, so the write is fsynced (file and directory) before
-// returning.
+// write. The write is fsynced (file and directory) before returning. It truncates an
+// existing destination in place, so migrate-provider no longer uses it for key
+// material: CreateMigrateBackup makes the backup (O_EXCL) and RestoreBackup puts it
+// back by rename.
 func CopyFile(baseDir, srcRel, dstRel string) error {
 	data, err := securefiles.SafeReadFile(baseDir, srcRel)
 	if err != nil {
@@ -335,11 +338,76 @@ func CopyFile(baseDir, srcRel, dstRel string) error {
 	return securefiles.SyncDir(filepath.Join(baseDir, filepath.Dir(dstRel)))
 }
 
-// RestoreBackup copies the backup back over the active DEK path. Best-effort: logs
-// to stderr if the restore itself fails so the operator can recover manually.
-// ks (nil skips it) records the restored DEK in the key-set manifest: the
-// re-wrap already committed the new DEK there, and an unrecorded rollback
-// would make the next boot refuse the restored file as foreign.
+// migrateBackupNow and migrateBackupSuffix name a new backup. Test seams: a
+// test pins the clock to show that two backups in the same instant still get
+// different names.
+var (
+	migrateBackupNow    = time.Now
+	migrateBackupSuffix = func() (string, error) {
+		b := make([]byte, 4)
+		if _, err := cryptorand.Read(b); err != nil {
+			return "", err
+		}
+		return hex.EncodeToString(b), nil
+	}
+)
+
+// migrateBackupAttempts bounds CreateMigrateBackup's retries on a name that
+// already exists.
+const migrateBackupAttempts = 3
+
+// CreateMigrateBackup copies the wrapped DEK at baseDir/dekPath to a new
+// "<dekPath>.migrate-backup.<unix-nanoseconds>-<random>" file and returns its
+// name relative to baseDir. The file is created with O_EXCL, so it never
+// truncates an existing backup: before REVIEW-ENCRYPTIONOPS-1 R1 the name had
+// one-second resolution and a second migration in the same second overwrote
+// the first one's backup, then removed it on its own failure path. The copy
+// and its directory entry are fsynced before returning: the backup is the
+// rollback target if verification fails.
+func CreateMigrateBackup(baseDir, dekPath string) (string, error) {
+	data, err := securefiles.SafeReadFile(baseDir, dekPath)
+	if err != nil {
+		return "", err
+	}
+	var lastErr error
+	for range migrateBackupAttempts {
+		suffix, err := migrateBackupSuffix()
+		if err != nil {
+			return "", fmt.Errorf("name the backup: %w", err)
+		}
+		backupRel := fmt.Sprintf("%s.migrate-backup.%d-%s", dekPath, migrateBackupNow().UnixNano(), suffix)
+		err = securefiles.SecureCreateFileSync(baseDir, backupRel, data, 0600)
+		if errors.Is(err, fs.ErrExist) {
+			lastErr = err
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if err := securefiles.SyncDir(filepath.Join(baseDir, filepath.Dir(backupRel))); err != nil {
+			return "", err
+		}
+		return backupRel, nil
+	}
+	return "", fmt.Errorf("no unused backup name after %d attempts: %w", migrateBackupAttempts, lastErr)
+}
+
+// migrateRestoreCrashHook, when non-nil, runs at each named step of
+// RestoreBackup; returning true stops it there, as a crash would (no cleanup,
+// no message). Test-only; nil in production.
+var migrateRestoreCrashHook func(point string) bool
+
+// RestoreBackup puts the backup back as the active wrapped DEK. It writes the
+// backup's bytes to "<backupRel>.restoring" beside it (fsynced), renames that
+// over dekPath (one directory, so the rename is atomic) and fsyncs the
+// directory, so a crash at any point leaves dekPath either the re-wrapped DEK or
+// the backup's bytes, never a torn file (REVIEW-ENCRYPTIONOPS-1 R1; it used to
+// rewrite dekPath in place). The staging name keeps the migrate-backup prefix,
+// so a leftover one is listed and removed by `migrate-provider cleanup`.
+// Best-effort: logs to stderr if the restore itself fails so the operator can
+// recover manually. ks (nil skips it) records the restored DEK in the key-set
+// manifest: the re-wrap already committed the new DEK there, and an unrecorded
+// rollback would make the next boot refuse the restored file as foreign.
 func RestoreBackup(baseDir, backupRel, dekPath string, ks *keyfiles.SetWriter) {
 	data, err := securefiles.SafeReadFile(baseDir, backupRel)
 	if err != nil {
@@ -352,9 +420,29 @@ func RestoreBackup(baseDir, backupRel, dekPath string, ks *keyfiles.SetWriter) {
 		staged = false
 		fmt.Fprintf(os.Stderr, "⚠️  could not stage the key-set manifest before restoring the DEK backup (%v)\n", err)
 	}
-	if err := CopyFile(baseDir, backupRel, dekPath); err != nil {
-		fmt.Fprintf(os.Stderr, "❌ CRITICAL: failed to restore DEK backup %s → %s: %v\n  Restore it manually before restarting.\n", backupRel, dekPath, err)
+	pendingRel := backupRel + ".restoring"
+	pendingFull := filepath.Join(baseDir, pendingRel)
+	restoreFailed := func(err error) {
+		_ = os.Remove(pendingFull)
+		fmt.Fprintf(os.Stderr, "❌ CRITICAL: failed to restore DEK backup %s → %s: %v\n  %s is unchanged; restore the backup over it manually before restarting.\n", backupRel, dekPath, err, dekPath)
+	}
+	if filepath.Dir(filepath.Clean(backupRel)) != filepath.Dir(filepath.Clean(dekPath)) {
+		restoreFailed(fmt.Errorf("the backup is not in the directory of the DEK, so it cannot be renamed into place atomically"))
 		return
+	}
+	if err := securefiles.SecureWriteFileSync(baseDir, pendingRel, data, 0600); err != nil {
+		restoreFailed(fmt.Errorf("write %s: %w", pendingRel, err))
+		return
+	}
+	if hook := migrateRestoreCrashHook; hook != nil && hook("before-rename") {
+		return
+	}
+	if err := os.Rename(pendingFull, filepath.Join(baseDir, dekPath)); err != nil {
+		restoreFailed(fmt.Errorf("rename %s over %s: %w", pendingRel, dekPath, err))
+		return
+	}
+	if err := securefiles.SyncDir(filepath.Dir(filepath.Join(baseDir, dekPath))); err != nil {
+		fmt.Fprintf(os.Stderr, "⚠️  the DEK backup was restored over %s but the key directory could not be fsynced (%v); the restore may not survive a power loss before the next sync\n", dekPath, err)
 	}
 	if err := ks.CommitManifest(keyfiles.OpRewrapRollback, files); err != nil {
 		if staged {
@@ -433,10 +521,27 @@ func PrintMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 // MigrateProviderCleanupWithConfig is the testable core of `encryption
 // migrate-provider cleanup`: no flag parsing, an explicit baseDir instead of
 // os.Getwd().
+//
+// It holds the exclusive key-directory lock (dek.lock) for its whole run,
+// --dry-run included (REVIEW-ENCRYPTIONOPS-1 R2). The database-presence lock
+// the admin tree takes is not enough: `--force` goes past it in flock mode, and
+// a cleanup beside a migration whose verification then fails would delete the
+// backup RestoreBackup needs, leaving the DEK wrapped under a KEK that may not
+// work. migrate-provider holds dek.lock exclusively from start to finish, so it
+// and cleanup now exclude each other whatever --force says. A live server
+// holds dek.lock too (flock mode), so cleanup needs the server stopped, like
+// every other key writer. Exclusive rather than shared: cleanup deletes files
+// in the key directory, and the shared lock is only offered to an initialized
+// Service, which would make cleanup need the passphrase it never needed.
 func MigrateProviderCleanupWithConfig(cfg *config.Config, baseDir string, dryRun, confirm bool) error {
 	if !cfg.Storage.Encryption.Enabled {
 		return fmt.Errorf("encryption is disabled in configuration")
 	}
+	lockSvc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+	if err := lockSvc.AcquireExclusiveKeyLock(); err != nil {
+		return fmt.Errorf("refusing to clean up migrate-backup files: %w — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry", err)
+	}
+	defer lockSvc.Shutdown()
 	matches, err := FindMigrateBackups(baseDir, cfg.Storage.Encryption.DEKPath)
 	if err != nil {
 		return fmt.Errorf("failed to scan for migrate-backup files: %w", err)

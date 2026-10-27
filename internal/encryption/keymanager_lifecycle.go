@@ -487,7 +487,7 @@ func (km *KeyManager) unwrapDEK(kek []byte) ([]byte, error) {
 
 	dek, err := unwrapKey(wrapped, kek)
 	if err != nil {
-		return nil, fmt.Errorf("failed to unwrap DEK — wrong passphrase or corrupted key file: %w", err)
+		return nil, km.withInterruptedKeyOpHints(fmt.Errorf("failed to unwrap DEK — wrong passphrase or corrupted key file: %w", err))
 	}
 	if len(dek) != 32 {
 		return nil, fmt.Errorf("invalid DEK size after unwrap: expected 32 bytes, got %d", len(dek))
