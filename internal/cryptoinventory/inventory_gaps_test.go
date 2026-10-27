@@ -366,3 +366,20 @@ func TestBuild_WebAuthnNotEnumeratedKeepsGenericAsset(t *testing.T) {
 	}
 	assert.Contains(t, strings.Join(none.Notes, " "), "no passkey is registered")
 }
+
+// An AKP (ML-DSA) credential is post-quantum: only its header is read, so this
+// does not depend on the Go version's ML-DSA support.
+func TestClassifyWebAuthnKey_MLDSAIsPostQuantum(t *testing.T) {
+	b, err := webauthncbor.Marshal(webauthncose.PublicKeyData{KeyType: int64(webauthncose.AKP), Algorithm: -48})
+	require.NoError(t, err)
+	k, err := ClassifyWebAuthnKey(b)
+	require.NoError(t, err)
+	assert.True(t, k.PostQuantum)
+	assert.Contains(t, k.Algorithm, "COSE")
+
+	inv := Build(Inputs{WebAuthnEnabled: true, WebAuthnEnumerated: true,
+		WebAuthnCredentials: []WebAuthnCredentialInput{{PublicKey: b, CreatedAt: riskNow}}}, DefaultPolicy(), riskNow)
+	require.Len(t, inv.Assets, 1)
+	assert.False(t, inv.Assets[0].Risk.QuantumVulnerable)
+	assert.Equal(t, LevelLow, inv.Assets[0].Risk.Level)
+}
