@@ -759,13 +759,16 @@ func (c *KeyorixCore) signedAuditVerifyPin(ctx context.Context) (*auditVerifyPin
 		return nil, err
 	}
 	// A pin certified before an accepted loss is not a floor for the chain
-	// after it (accept-loss re-baselines the pin); the state load reports a row
-	// that disagrees with the seal record.
+	// after it (accept-loss re-baselines it). Only a row saved under fewer
+	// seals than the record holds is dropped: a row saved under more (a seal
+	// record deleted or replaced since) keeps its pin, so deleting the record
+	// cannot remove the floor a re-baseline is checked against. The state load
+	// reports both as discontinuities.
 	seals, err := c.loadAuditSeals(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if seals.problem == "" && s.Seals != len(seals.recs) {
+	if seals.problem == "" && s.Seals < len(seals.recs) {
 		return nil, nil
 	}
 	var pin auditVerifyPin

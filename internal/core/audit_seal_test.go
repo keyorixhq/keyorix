@@ -442,3 +442,26 @@ func TestAuditSeal_PostureShowsSealed(t *testing.T) {
 		assert.Contains(t, p.AuditIntegrity.Reason, "seal #1")
 	})
 }
+
+// (5) Deleting the seal record does not drop the floor the signed state pins:
+// the lenient re-baseline path (a relabelled checkpoint key version) is still
+// checked against it.
+func TestAuditSeal_DeletedSealKeepsStatePin(t *testing.T) {
+	fcRun(t, func(t *testing.T, e *fcEnv) {
+		ctx := context.Background()
+		c, _ := sealedEnv(t, e)
+		assertSealed(t, e, c, 1)
+		pin, err := c.signedAuditVerifyPin(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, pin)
+		require.NoError(t, e.db.Where(&models.SystemMetadata{Key: auditSealsKey}).Delete(&models.SystemMetadata{}).Error)
+		c2 := e.restart()
+		after, err := c2.signedAuditVerifyPin(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, after, "the pin survives a deleted seal record")
+		assert.Equal(t, pin.Events, after.Events)
+		reason, tampered, err := c2.auditVerifyStateTruncation(ctx, pin.Events-1)
+		require.NoError(t, err)
+		assert.True(t, tampered, "a re-baseline below the pin is refused: %s", reason)
+	})
+}
