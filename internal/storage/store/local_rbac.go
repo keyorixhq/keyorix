@@ -1072,11 +1072,11 @@ func (ls *LocalStorage) GetGroupRoleGrants(ctx context.Context, groupID uint) ([
 }
 
 // ListGroupRoleAssignments returns every LIVE role grant held by groupID across all
-// scopes, unlike GetGroupRoles/GetGroupRoleGrants which return the role but not
-// which scope it was granted at. Excludes expired grants -- matching every other
-// role-lookup function in this file -- since callers (validateGroupJoinRoles's
-// SoD/escalation checks, the admin group-roles view) treat this as "what does the
-// group currently confer," not a historical record.
+// scopes, unlike GetGroupRoles, which returns the role but not which scope it was
+// granted at, and GetGroupRoleGrants, which keeps expired grants. Excludes expired
+// grants -- matching every other role-lookup function in this file -- since callers
+// (validateGroupJoinRoles's SoD/escalation checks, the admin group-roles view) treat
+// this as "what does the group currently confer," not a historical record.
 func (ls *LocalStorage) ListGroupRoleAssignments(ctx context.Context, groupID uint) ([]storage.RoleAssignment, error) {
 	var rows []models.GroupRole
 	if err := ls.db.WithContext(ctx).
