@@ -215,6 +215,10 @@ var schemaExemptOperations = map[string]bool{
 // its entry here too, or the coverage check will report a false failure
 // (loud, not silent -- an out-of-date entry here fails closed).
 var exercisingTests = map[string][]string{
+	"requestMFAReset":               {"TestContractMFAReset_RequestApproveListCancel", "TestContractMFAReset_Cancel"},
+	"approveMFAReset":               {"TestContractMFAReset_RequestApproveListCancel"},
+	"listMFAResetRequests":          {"TestContractMFAReset_RequestApproveListCancel"},
+	"cancelMFAReset":                {"TestContractMFAReset_RequestApproveListCancel", "TestContractMFAReset_Cancel"},
 	"authGetSetupToken":             {"TestGetSetupToken_HappyPath_S11"},
 	"searchShareRecipients":         {"TestContractShare2_SearchShareRecipients"},
 	"listOwnedShares":               {"TestContractShare3_ListOwnedShares"},

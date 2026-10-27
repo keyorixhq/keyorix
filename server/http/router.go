@@ -1262,6 +1262,12 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post(pathRiskExceptions, dashboardHandler.CreateRiskException)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Post("/risk-exceptions/{id}/approve", dashboardHandler.ApproveRiskException)
 		r.With(customMiddleware.RequirePermission(permSystemWrite)).Delete(pathRiskExceptionsID, dashboardHandler.RevokeRiskException)
+		// Two-admin MFA reset (RECOVERY-MFA-RESET-1): users.write at the gate; core
+		// requires a human global admin with a fresh second-factor proof for each step.
+		r.With(customMiddleware.RequirePermission(permUsersWrite)).Get("/mfa-reset-requests", handlers.ListMFAResetRequests)
+		r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/mfa-reset-requests", handlers.RequestMFAReset)
+		r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/mfa-reset-requests/{id}/approve", handlers.ApproveMFAReset)
+		r.With(customMiddleware.RequirePermission(permUsersWrite)).Post("/mfa-reset-requests/{id}/cancel", handlers.CancelMFAReset)
 
 		// Separation of duties (ISO A.5.3): policy definitions (name/permission pair, no
 		// PII) stay at the baseline system.read; the violations list discloses

@@ -112,6 +112,33 @@ nothing), and leaves an in-app notification for the user and for every admin.
 Give the one-time password to the user out of band. They sign in with it, set a new password and
 enrol a new authenticator.
 
+### 4b. Online, two administrators
+
+With the server running, a reset needs two different global administrators, each with a second
+factor of their own; neither may be the user being reset. Admin A opens the request, admin B
+approves it within 24 hours. Each proves their own factor again in `code`: a current TOTP code,
+or (passkey-only account) the account password right after a passkey re-authentication. There is
+no `keyorix` CLI subcommand for this yet; use the API (or `curl`):
+
+```bash
+# admin A
+curl -sS -H "Authorization: Bearer $TOKEN_A" -H 'Content-Type: application/json' \
+  -d '{"user":"alice","reason":"lost phone","verified_by":"video","evidence":"call 10:05, ticket T-123","code":"123456"}' \
+  https://keyorix.example.com/api/v1/mfa-reset-requests
+# admin B: list, then approve; the response carries the one-time password, once
+curl -sS -H "Authorization: Bearer $TOKEN_B" 'https://keyorix.example.com/api/v1/mfa-reset-requests?status=pending'
+curl -sS -H "Authorization: Bearer $TOKEN_B" -H 'Content-Type: application/json' \
+  -d '{"code":"654321"}' https://keyorix.example.com/api/v1/mfa-reset-requests/7/approve
+```
+
+`verified_by` is `in_person`, `video`, `ticket` or `other`. A requester approving their own
+request is refused and audited; an approved or cancelled request cannot be approved again; any
+admin can cancel a pending one (`POST .../{id}/cancel`). If the install has no second eligible
+admin, the request is refused and names `admin reset-mfa` (section 4a). Audit:
+`mfa.reset_requested`, `mfa.reset_approved`, `mfa.reset`, `mfa.reset_cancelled`. Every admin is
+notified when a request is opened, approved or cancelled; the user gets an in-app notice after
+signing in. Admin B hands the one-time password to the user out of band.
+
 Do not work around a refusal by editing `mfa_secrets` or `users` rows in the database: that skips
 the audit trail for an authentication change and is not a path the product supports.
 
