@@ -393,7 +393,7 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 		// the lock). Returning the error here would skip the session and cache eviction and
 		// the owed audit row below, and the IdP's retry finds the user already inactive and
 		// does not redo them (#3774). Carry on as a success.
-		log.Printf("SCIM update of user %d: the named lock reported an error after the change committed (continuing with the post-commit steps): %v", id, lockErr)
+		log.Printf("SECURITY: SCIM update of user %d: the last-admin guard lock reported an error after the change committed (on Postgres: the lock session was lost, so the cross-replica exclusion may not have held; continuing with the post-commit steps): %v", id, lockErr)
 		lockErr = nil
 	}
 	if lockErr != nil {
@@ -801,7 +801,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	if lockErr != nil && committed {
 		// The deprovision committed and only the lock wrapper failed afterwards: carry on
 		// with the cache eviction and the owed audit row (#3774), see UpdateSCIMUser.
-		log.Printf("SCIM deprovision of user %d: the named lock reported an error after the change committed (continuing with the post-commit steps): %v", id, lockErr)
+		log.Printf("SECURITY: SCIM deprovision of user %d: the last-admin guard lock reported an error after the change committed (on Postgres: the lock session was lost, so the cross-replica exclusion may not have held; continuing with the post-commit steps): %v", id, lockErr)
 		lockErr = nil
 	}
 	if lockErr != nil {

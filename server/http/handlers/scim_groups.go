@@ -6,12 +6,15 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
+
+	chimw "github.com/go-chi/chi/v5/middleware"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -211,11 +214,14 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 	}
 	st, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
 	if err != nil {
+		// Including core.ErrSCIMGroupStateUnavailable (a pure removal applied, its
+		// read-back failed): a PUT must return the resource (RFC 7644 §3.5.1), so it
+		// answers the SCIM error as before; the IdP's retry is an idempotent no-op.
 		writeSCIMWriteError(w, r, fmt.Sprintf("replacing SCIM group %d", id), err)
 		return
 	}
-	// The committed state comes from the write's own transaction: a member read after
-	// the commit that failed would answer 500 for a write that was applied.
+	// The committed state comes from the write's own transaction (after the commit
+	// for a pure removal, see core.SCIMGroupState).
 	writeSCIM(w, http.StatusOK, toSCIMGroup(st.Group, st.Members))
 }
 
@@ -314,6 +320,14 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) { // NO
 		st, err = h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, name, replaceMembers)
 	} else {
 		st, err = h.coreService.PatchSCIMGroup(r.Context(), 0, id, newName, addIDs, removeIDs)
+	}
+	if errors.Is(err, core.ErrSCIMGroupStateUnavailable) {
+		// A pure member removal committed and only its read-back failed: report it as
+		// applied, without a body (RFC 7644 §3.5.2 allows 204 for a PATCH). A 500 would
+		// tell the IdP the revocation did not happen.
+		log.Printf("SCIM patching group %d applied, but the group could not be read back (HTTP 204, request %s): %v", id, chimw.GetReqID(r.Context()), err)
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 	if err != nil {
 		writeSCIMWriteError(w, r, fmt.Sprintf("patching SCIM group %d", id), err)
