@@ -395,11 +395,20 @@ func (c *KeyorixCore) IsGlobalAdmin(ctx context.Context, userID uint) (bool, err
 // for any "is THIS OTHER PRINCIPAL an admin" query; use IsGlobalAdmin only
 // for "should THE CALLER be treated as one."
 func (c *KeyorixCore) targetHasGlobalAdminRole(ctx context.Context, targetID uint) (bool, error) {
-	roleIDs, err := c.scopedRoleIDs(ctx, targetID, Scope{})
+	return targetHasGlobalAdminRoleOn(ctx, c.storage, targetID)
+}
+
+// targetHasGlobalAdminRoleOn is targetHasGlobalAdminRole read through st (a
+// transaction handle, for the in-transaction last-admin re-check).
+func targetHasGlobalAdminRoleOn(ctx context.Context, st storage.Storage, targetID uint) (bool, error) {
+	roleIDs, err := scopedRoleIDsOn(ctx, st, targetID, Scope{})
 	if err != nil {
 		return false, err
 	}
-	return c.roleSetContainsAdmin(ctx, roleIDs)
+	if len(roleIDs) == 0 {
+		return false, nil
+	}
+	return st.RoleSetBypassesPermissionChecks(ctx, roleIDs)
 }
 
 // scopedRoleIDs returns the de-duplicated set of role IDs that apply to userID
@@ -1138,6 +1147,11 @@ func groupHoldsGlobalAdminRole(assignments []storage.RoleAssignment, adminIDs ma
 // letting the LAST two admins each be deactivated one after another (or
 // concurrently), not just the intended "one may go, one must remain."
 func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs map[uint]bool, assignments []storage.RoleAssignment, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) (map[uint]bool, error) {
+	return resolveGlobalAdminHoldersOn(ctx, c.storage, adminIDs, assignments, excludeAssignment, excludeMember)
+}
+
+// resolveGlobalAdminHoldersOn is resolveGlobalAdminHolders read through st.
+func resolveGlobalAdminHoldersOn(ctx context.Context, st storage.Storage, adminIDs map[uint]bool, assignments []storage.RoleAssignment, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) (map[uint]bool, error) {
 	holders := make(map[uint]bool)
 	for _, a := range assignments {
 		if !adminIDs[a.RoleID] {
@@ -1150,12 +1164,12 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 		case "user":
 			holders[a.PrincipalID] = true
 		case "group":
-			if err := c.resolveGroupAdminMembers(ctx, a.PrincipalID, excludeMember, holders); err != nil {
+			if err := resolveGroupAdminMembersOn(ctx, st, a.PrincipalID, excludeMember, holders); err != nil {
 				return nil, err
 			}
 		}
 	}
-	return c.filterActiveHolders(ctx, holders)
+	return filterActiveHoldersOn(ctx, st, holders)
 }
 
 // filterActiveHolders drops every holder whose account is no longer usable as a
@@ -1163,8 +1177,13 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 // account_state such as suspended) — see resolveGlobalAdminHolders'
 // #G03 doc comment above for why a surviving grant ROW is not sufficient on its own.
 func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]bool) (map[uint]bool, error) {
+	return filterActiveHoldersOn(ctx, c.storage, holders)
+}
+
+// filterActiveHoldersOn is filterActiveHolders read through st.
+func filterActiveHoldersOn(ctx context.Context, st storage.Storage, holders map[uint]bool) (map[uint]bool, error) {
 	for id := range holders {
-		user, err := c.storage.GetUser(ctx, id)
+		user, err := st.GetUser(ctx, id)
 		if err != nil {
 			if isNotFound(err) {
 				// Soft-deleted: GetUser's default scope excludes it — this holder no
@@ -1194,7 +1213,12 @@ func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]
 // global admin be removed because a project-scoped member was miscounted as a
 // backup).
 func (c *KeyorixCore) resolveGroupAdminMembers(ctx context.Context, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
-	members, merr := c.storage.ListGroupMembersAt(ctx, groupID, Scope{})
+	return resolveGroupAdminMembersOn(ctx, c.storage, groupID, excludeMember, holders)
+}
+
+// resolveGroupAdminMembersOn is resolveGroupAdminMembers read through st.
+func resolveGroupAdminMembersOn(ctx context.Context, st storage.Storage, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
+	members, merr := st.ListGroupMembersAt(ctx, groupID, Scope{})
 	if merr != nil {
 		return fmt.Errorf("failed to resolve group %d membership: %w", groupID, merr)
 	}

@@ -361,6 +361,16 @@ func (c *KeyorixCore) UpdateSCIMUser(ctx context.Context, actorID, id uint, disp
 			// the stored row already has is no change, any other one is commit 2
 			// (REVIEW-3482B B3). fn may run twice: split is recomputed here.
 			split = false
+			if active != nil && !*active {
+				// NAMEDLOCK-OVERLAP-1: the guard above ran under the named lock only;
+				// re-check it on the grant row locks (fenceLastAdminDeactivationOn).
+				if ferr := fenceLastAdminDeactivationOn(ctx, tx, id); ferr != nil {
+					if errors.Is(ferr, ErrLastAdminDeactivation) {
+						guardErr = ferr
+					}
+					return ferr
+				}
+			}
 			if revocation && email != nil && *email != "" {
 				locked, lerr := tx.LockUserForUpdate(ctx, id)
 				if lerr != nil {
@@ -581,10 +591,17 @@ func applySCIMActiveState(user *models.User, active *bool, deactivated *bool) {
 // the same change) -- filed as an explicit follow-up, not silently carried
 // forward as already covered.
 func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID uint) error {
+	return guardLastAdminDeactivationOn(ctx, c.storage, targetID)
+}
+
+// guardLastAdminDeactivationOn is guardLastAdminDeactivation read through st. The
+// write transaction re-runs it there, after lockGlobalAdminGrantsOn
+// (fenceLastAdminDeactivationOn, NAMEDLOCK-OVERLAP-1).
+func guardLastAdminDeactivationOn(ctx context.Context, st storage.Storage, targetID uint) error {
 	// targetHasGlobalAdminRole, not IsGlobalAdmin: this asks whether targetID
 	// is an admin, not whether the acting caller is — see targetHasGlobalAdminRole's
 	// doc comment (internal/core/authz.go) for the confused-deputy this avoids.
-	isAdmin, err := c.targetHasGlobalAdminRole(ctx, targetID)
+	isAdmin, err := targetHasGlobalAdminRoleOn(ctx, st, targetID)
 	if err != nil {
 		// #337: "can't tell" is NOT the same as "confirmed not an admin". The previous
 		// code treated an IsGlobalAdmin lookup error identically to a confirmed non-admin
@@ -599,18 +616,22 @@ func (c *KeyorixCore) guardLastAdminDeactivation(ctx context.Context, targetID u
 	if !isAdmin {
 		return nil // confirmed not an admin — not the last-admin case
 	}
-	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	ids, err := st.ListAdminBypassRoleIDs(ctx)
 	if err != nil {
 		// #2496, same stance as the targetHasGlobalAdminRole error above: "can't
 		// tell which roles are admin-conferring" must not silently become "there
 		// are none", which would disable this guard entirely.
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	adminIDs := make(map[uint]bool, len(ids))
+	for _, id := range ids {
+		adminIDs[id] = true
+	}
+	assignments, err := st.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
-	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments,
+	holders, err := resolveGlobalAdminHoldersOn(ctx, st, adminIDs, assignments,
 		func(a storage.RoleAssignment) bool { return a.PrincipalType == "user" && a.PrincipalID == targetID },
 		func(_, userID uint) bool { return userID == targetID },
 	)
@@ -698,6 +719,14 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 			// pattern (both in this package) rather than scimUpdateUserTx's own #G42
 			// caveat: everything from here to the write below runs while accountStateMu is
 			// still held, so this fresh read can't itself go stale before it's persisted.
+			// NAMEDLOCK-OVERLAP-1: the guard above ran under the named lock only;
+			// re-check it on the grant row locks (fenceLastAdminDeactivationOn).
+			if ferr := fenceLastAdminDeactivationOn(ctx, tx, id); ferr != nil {
+				if errors.Is(ferr, ErrLastAdminDeactivation) {
+					guardErr = ferr
+				}
+				return ferr
+			}
 			user, err := tx.LockUserForUpdate(ctx, id)
 			if err != nil {
 				return err

@@ -122,6 +122,11 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 			defer c.accountStateMu.Unlock()
 			var created *models.MachineIdentity
 			if txErr := c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+				// NAMEDLOCK-OVERLAP-1: the guard above ran under the named lock only;
+				// re-check it on the grant row locks (fenceLastAdminDeactivationOn).
+				if ferr := fenceLastAdminDeactivationOn(ctx, tx, user.ID); ferr != nil {
+					return ferr
+				}
 				var cerr error
 				created, cerr = tx.CreateMachineIdentity(ctx, pending)
 				if cerr != nil {
