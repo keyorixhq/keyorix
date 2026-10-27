@@ -18,6 +18,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/cryptoinventory"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/version"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -294,6 +295,12 @@ const (
 	webAuthnListMaxUsers = 5000
 )
 
+// webAuthnWalkStore is the part of the storage the WebAuthn walk reads.
+type webAuthnWalkStore interface {
+	ListUsers(ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error)
+	ListWebAuthnCredentials(ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
+}
+
 // webAuthnInventoryCredentials lists every stored passkey's public key by walking
 // the users with the EXISTING per-user ListWebAuthnCredentials: a deployment-wide
 // listing method on the storage interface was deliberately not added (it is the
@@ -302,21 +309,38 @@ const (
 // read rarely and is capped at webAuthnListMaxUsers users. complete is false when
 // the walk failed or was capped, in which case the generic WebAuthn asset is
 // kept and warn says why. Only credential_blob's public key is decoded here.
-func webAuthnInventoryCredentials(ctx context.Context, st storage.Storage) (creds []cryptoinventory.WebAuthnCredentialInput, complete bool, warn string) {
+//
+// ListUsers pages by OFFSET without a guaranteed order, so pages may overlap and
+// skip users (PostgreSQL), and users created or deleted during the walk shift
+// them. The walk is complete only when the user total stayed the same on every
+// page and that many distinct users were seen; a skip with a stable total shows
+// up as a repeat. Not detected: a create and a delete between two pages that
+// leave the total unchanged while shifting a user past the walk.
+func webAuthnInventoryCredentials(ctx context.Context, st webAuthnWalkStore) (creds []cryptoinventory.WebAuthnCredentialInput, complete bool, warn string) {
+	const listFailed = "WebAuthn credentials could not be listed; the per-credential algorithms are missing from this inventory"
 	seen := map[uint]bool{}
-	users := 0
+	seenUsers := map[uint]bool{}
+	firstTotal := int64(-1)
 	for page := 1; ; page++ {
 		batch, total, err := st.ListUsers(ctx, &storage.UserFilter{Page: page, PageSize: webAuthnListPageSize, IncludeDeleted: true})
 		if err != nil {
 			log.Printf("crypto inventory: list users for webauthn: %v", err)
-			return nil, false, "WebAuthn credentials could not be listed; the per-credential algorithms are missing from this inventory"
+			return nil, false, listFailed
+		}
+		if firstTotal < 0 {
+			firstTotal = total
+		} else if total != firstTotal {
+			return nil, false, "WebAuthn credentials were not enumerated: users were added or removed during the listing; read the inventory again"
 		}
 		for _, u := range batch {
-			users++
+			if seenUsers[u.ID] {
+				continue
+			}
+			seenUsers[u.ID] = true
 			rows, err := st.ListWebAuthnCredentials(ctx, u.ID)
 			if err != nil {
 				log.Printf("crypto inventory: list webauthn credentials: %v", err)
-				return nil, false, "WebAuthn credentials could not be listed; the per-credential algorithms are missing from this inventory"
+				return nil, false, listFailed
 			}
 			for _, r := range rows {
 				if seen[r.ID] {
@@ -334,10 +358,14 @@ func webAuthnInventoryCredentials(ctx context.Context, st storage.Storage) (cred
 				creds = append(creds, cryptoinventory.WebAuthnCredentialInput{PublicKey: blob.PublicKey, CreatedAt: r.CreatedAt})
 			}
 		}
-		if len(batch) == 0 || int64(users) >= total {
+		if len(batch) == 0 || int64(page)*webAuthnListPageSize >= total {
+			if int64(len(seenUsers)) != total {
+				log.Printf("crypto inventory: webauthn walk saw %d distinct users of %d", len(seenUsers), total)
+				return nil, false, "WebAuthn credentials were not enumerated: the user listing was not stable while it was read; read the inventory again"
+			}
 			return creds, true, ""
 		}
-		if users >= webAuthnListMaxUsers {
+		if len(seenUsers) >= webAuthnListMaxUsers {
 			return nil, false, fmt.Sprintf("WebAuthn credentials were not enumerated: more than %d users", webAuthnListMaxUsers)
 		}
 	}
