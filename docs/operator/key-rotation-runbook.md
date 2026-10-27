@@ -212,7 +212,29 @@ by the pg-gated tests named in `internal/encryption/INVARIANTS.d/`, not by a dri
 | A KEK re-wrap (`rotate-kek`, `migrate-provider`) was killed or the host lost power | Nothing special: it leaves either the old or the new wrapped-DEK file, never a torn one. Run `encryption validate`, then re-run it if you still want it. |
 | `rotate-kek` done, the server will not start (`wrong passphrase or corrupted key file`) | The configured passphrase is still the old one. Set the new one; nothing is lost. |
 | `rotate-kek` done, and you want the old passphrase back | Rotate again with the sources swapped: `--passphrase-file ./new_master_password --new-passphrase-file ./old_master_password`. This re-wraps the same DEK under a fresh salt and again changes the checkpoint key (section 5). |
-| `migrate-provider` was interrupted after the re-wrap | The previous wrapped DEK is on disk as `<dek_path>.migrate-backup.*` for a human to restore; the DEK's plaintext value did not change. Keep it until you have verified. |
+| `migrate-provider` was interrupted after the re-wrap | The previous wrapped DEK is on disk as `<dek_path>.migrate-backup.<nanoseconds>-<random>` (each run creates its own and never overwrites an earlier one); the DEK's plaintext value did not change. Keep it until you have verified. The server then names it in its start error; follow [Interrupted `rotate-kek` or `migrate-provider`](#interrupted-rotate-kek-or-migrate-provider). |
+| `migrate-provider` failed verification and restored the previous DEK | The restore writes `<backup>.restoring` and renames it over `dek_path`, so `dek_path` is either the re-wrapped or the restored file, never a torn one. If the command was killed during the restore, a leftover `<backup>.restoring` is a complete copy of the backup; `migrate-provider cleanup` lists and removes it with the backups. |
+
+### Interrupted rotate-kek or migrate-provider
+
+Both leave `dek.key` wrapped under a KEK the configuration does not produce yet if they are
+killed at one point, and every start then fails with `failed to unwrap DEK — wrong passphrase
+or corrupted key file`. That error now names the leftover file it found and the line below
+that applies. Stop the server and copy the key directory aside before you change anything.
+
+| The error names | What happened | Recovery |
+|---|---|---|
+| `<salt_path>.pending exists: a rotate-kek was interrupted after it re-wrapped ...` | `rotate-kek` was killed after it renamed the new `dek.key` into place and before it renamed the salt. `dek.key` is under the new passphrase and the salt in `<salt_path>.pending`. | `mv <salt_path>.pending <salt_path>`, then start with the **new** passphrase. The start reconciles `keyset.manifest.json` with the renamed salt. |
+| `<salt_path>.pending and <dek_path>.pending exist: a rotate-kek was interrupted before it replaced ...` | `rotate-kek` was killed before it touched `dek.key`, which is still under the previous passphrase. | Do not rename either file. Start with the **previous** passphrase (the next key writer or start resolves the leftovers) and re-run `rotate-kek`. |
+| `<dek_path>.migrate-backup.<...> is the newest migrate-provider backup` | `migrate-provider` was killed after the re-wrap, or finished and `storage.encryption.key_provider` was not updated. `dek.key` is under the target provider; the backup is the same DEK under the previous one. | Set `storage.encryption.key_provider` to the provider you migrated to (the one `migrate-provider` printed) and start. To go back, run `keyorix-server admin encryption migrate-provider --to-type <previous provider> --confirm` from there. Keep the backup until the server starts; then `migrate-provider cleanup`. |
+
+If the target provider cannot open `dek.key` (the KMS key is gone, the shares are lost), the
+backup is the only copy under a KEK you still have. Restore it by rename, server stopped:
+`cp -p <backup> <dek_path>.restoring && mv <dek_path>.restoring <dek_path>`. The key-set
+manifest still records the re-wrapped DEK, so the next start refuses the file as not matching
+it; once you have confirmed `<dek_path>` is that backup, move `keyset.manifest.json` aside so
+the start adopts the current files (with a WARN and an `encryption.keyset_manifest_adopted`
+audit event), as `migrate-provider`'s own rollback error says.
 
 Restoring the archive (server stopped, same config and key paths, passphrase current when the
 archive was taken):
@@ -260,7 +282,8 @@ restored keys open every row, then start the servers with the restored key set o
   turns off the mixed-set check for that start.
 - **Do not delete `*.migrate-backup.*` or `*.pre-restore-*` files** until the result is verified.
   `admin encryption migrate-provider cleanup --dry-run`, then `--confirm`, is the supported
-  deletion.
+  deletion. It takes the key-directory lock (`dek.lock`) exclusively, so it refuses while a
+  server or a `migrate-provider`/rotation runs, `--force` or not: stop the server first.
 - **Do not put a passphrase on a command line, in shell history or in a shared log.** Use a
   `0600` file, a descriptor, or stdin; the new passphrase on a `migrate-provider` back to the
   password provider comes from `KEYORIX_NEW_MASTER_PASSWORD` or the `--new-passphrase-*` flags.

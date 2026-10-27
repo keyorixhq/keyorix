@@ -17,13 +17,25 @@ import (
 	"github.com/keyorixhq/keyorix/internal/securefiles"
 )
 
+// maxShamirShares is crypto.Split's limit on the number of shares.
+const maxShamirShares = 255
+
 // ShamirSplitWithConfig generates a fresh KEK, splits it into shares many
 // Shamir shares (threshold to reconstruct), and either prints them to stdout
 // (outDir == "") or writes them to outDir as share-N.hex plus commitment.hex.
 // The KEK is wiped from memory once split.
 func ShamirSplitWithConfig(shares, threshold int, outDir string) error {
+	// The bounds come first, before any output name is allocated or the output
+	// directory is looked at: shamirOutputFiles allocates one name per share and
+	// Lstats each, so an unbounded --shares allocated gigabytes before SplitKEK
+	// refused it (REVIEW-ENCRYPTIONOPS-1 R5). A share's x-coordinate is one
+	// non-zero byte (crypto.Split), so there are at most 255 shares; threshold < 2
+	// also refuses threshold < 1.
 	if threshold < 2 {
 		return fmt.Errorf("--threshold must be at least 2")
+	}
+	if shares > maxShamirShares {
+		return fmt.Errorf("--shares (%d) must be at most %d: each share's index is one byte", shares, maxShamirShares)
 	}
 	if shares < threshold {
 		return fmt.Errorf("--shares (%d) must be >= --threshold (%d)", shares, threshold)

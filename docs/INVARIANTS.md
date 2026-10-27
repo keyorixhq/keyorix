@@ -29,8 +29,10 @@ silently removing it.
 | `cli` | [cli/INVARIANTS.md](../cli/INVARIANTS.md) | 13 | 10 | 3 |
 | `web/src` | [web/src/INVARIANTS.md](../web/src/INVARIANTS.md) | 7 | 2 | 5 |
 | `internal/solewriter` | [internal/solewriter/INVARIANTS.md](../internal/solewriter/INVARIANTS.md) | 16 | 16 | 0 |
-| **Total** | | **236** | **201** | **35** |
-| **Total** | | **237** | **201** | **36** |
+| `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
+| `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
+| **Total** | | **245** | **209** | **36** |
+| **Total** | | **246** | **209** | **37** |
 
 ## Highest-priority UNGUARDED gaps
 
