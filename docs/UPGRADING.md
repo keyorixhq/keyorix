@@ -1202,7 +1202,10 @@ Two more shapes, both in every release that shipped `plan-access`:
   maps the secret mount into team-a/dev, and `kv1/team-a/dev/x` lands in team-a/dev by name, so
   a grant there reaches it too. `plan-access` and `audit-access` now report such a policy as
   `cross-mount-scope` and print the other mount's path; send that mount's paths to their own
-  scope with another `--path-map` entry to clear it.
+  scope with another `--path-map` entry to clear it. The policy's own mount counts too: with
+  `--path-map secret/data/legacy=<team-a>:<dev>`, `secret/team-a/dev/x` lies outside
+  `secret/data/legacy/*` and lands in team-a/dev by name, so the report prints
+  `secret/team-a/dev/: present (policy mount, outside the policy)`.
 - **`secrets.read` implies listing** (known residual, not revocable by an upgrade): a migrated
   `secrets.read` grant also lists secret names and reads version metadata in its scope, which
   a Vault policy with `read` on `data/` but no `list`/`read` on `metadata/` did not allow.

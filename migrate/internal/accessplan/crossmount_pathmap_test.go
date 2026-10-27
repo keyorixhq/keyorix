@@ -102,6 +102,55 @@ func TestPathMapScope_OtherMountMappedElsewhereIsNotByName(t *testing.T) {
 	requireUnmappable(t, buildOne(t, m, "secret/data/*", "read", "list"), CategoryCrossMountScope)
 }
 
+// The policy's own mount is not exempt: --path-map secret/data/legacy=1:10 takes only
+// secret/data/legacy/ into team-a/dev, and secret/team-a/dev/x (outside secret/data/legacy/*)
+// still lands there by name. The evidence must not call that directory "policy mount", which
+// would tell the plan reviewer the policy covers it.
+func TestPathMapScope_PolicyMountOutsideThePolicyIsNotEquivalent(t *testing.T) {
+	m := testMapper(t, "secret/data/legacy=1:10")
+	m.SetKVTree(kvTree(map[string][]string{"secret/": {"legacy/x", "team-a/dev"}, "kv1/": nil}))
+	it := buildOne(t, m, "secret/data/legacy/*", "read", "list")
+	requireUnmappable(t, it, CategoryCrossMountScope)
+	const want = "secret/team-a/dev/: present (policy mount, outside the policy)"
+	if !strings.Contains(it.Reason, want) || !slices.Contains(it.CrossMountEvidence, want) {
+		t.Errorf("reason %q / evidence %v must name %q", it.Reason, it.CrossMountEvidence, want)
+	}
+	if slices.Contains(it.CrossMountEvidence, "secret/team-a/dev/: policy mount") {
+		t.Errorf("evidence %v labels a directory the policy does not cover as the policy mount", it.CrossMountEvidence)
+	}
+
+	// Fail closed: the own mount could not be listed at the project level.
+	tree := kvTree(map[string][]string{"kv1/": nil})
+	tree["secret/"] = KVMountListing{RootListed: true, Projects: map[string]KVProjectListing{"team-a": {Listed: false}}}
+	m.SetKVTree(tree)
+	requireUnmappable(t, buildOne(t, m, "secret/data/legacy/*", "read", "list"), CategoryCrossMountScope)
+}
+
+func TestPathMapScope_PolicyMountOutsideThePolicy_Controls(t *testing.T) {
+	// Nothing by name on the own mount: equivalent.
+	m := testMapper(t, "secret/data/legacy=1:10")
+	m.SetKVTree(kvTree(map[string][]string{"secret/": {"legacy/x", "team-a/prod"}, "kv1/": nil}))
+	it := buildOne(t, m, "secret/data/legacy/*", "read", "list")
+	requireCreate(t, it, 1, 10)
+	if !slices.Contains(it.CrossMountEvidence, "secret/team-a/dev/: absent (policy mount, outside the policy)") {
+		t.Errorf("evidence %v must record the own mount's directory outside the policy", it.CrossMountEvidence)
+	}
+
+	// Another --path-map entry routes the own mount's team-a/dev/ elsewhere: not by name.
+	m = testMapper(t, "secret/data/legacy=1:10", "secret/data/team-a=2:20")
+	m.SetKVTree(kvTree(map[string][]string{"secret/": {"legacy/x", "team-a/dev"}, "kv1/": nil}))
+	requireCreate(t, buildOne(t, m, "secret/data/legacy/*", "read", "list"), 1, 10)
+
+	// A policy that covers the own mount's directory keeps "policy mount".
+	m = testMapper(t, "secret/data=1:10")
+	m.SetKVTree(kvTree(map[string][]string{"secret/": {"team-a/dev"}, "kv1/": nil}))
+	it = buildOne(t, m, "secret/data/*", "read", "list")
+	requireCreate(t, it, 1, 10)
+	if !slices.Contains(it.CrossMountEvidence, "secret/team-a/dev/: policy mount") {
+		t.Errorf("evidence %v: the policy covers secret/data/team-a/dev/", it.CrossMountEvidence)
+	}
+}
+
 // A single KV mount has no other mount to share the scope with, with or without a listing.
 func TestPathMapScope_SingleMountNeedsNoListing(t *testing.T) {
 	m, err := NewPathMapper([]ProjectRef{{ID: 1, Name: "team-a"}}, map[int][]EnvironmentRef{1: {{ID: 10, Name: "dev"}}},

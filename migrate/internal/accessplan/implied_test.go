@@ -53,6 +53,11 @@ func TestImpliedAccess_ReportListsJourney4AndTestbedMigrator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// What plan-access lists in secret/: journey 4 seeds only n4-team/ paths, nothing named after
+	// the Keyorix project, so nothing outside the policy lands in n4-project/production by name.
+	sourceHCL(t, "scripts/e2e/journeys/journey4_vault_migrate_test.go", `n4VaultSeed.dbPassword.path = "n4-team/db-password"`, "")
+	sourceHCL(t, "scripts/e2e/journeys/journey4_vault_migrate_test.go", `n4VaultSeed.nestedAPIKey.path = "n4-team/nested/api-key"`, "")
+	m4.SetKVTree(kvTree(map[string][]string{"secret/": nil}))
 	items := BuildPolicyItems([]healthscan.Policy{{Name: "n4-readonly", Blocks: healthscan.ParsePolicyHCL(n4)}}, m4)
 	got := impliedFor(t, items, "n4-readonly")
 	if !slices.Equal(got.Access, both) || !slices.Equal(got.Paths, []string{"secret/data/n4-team/*"}) {

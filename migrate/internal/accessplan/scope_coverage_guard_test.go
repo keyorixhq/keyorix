@@ -25,10 +25,14 @@ import (
 // same corpus, as plan-access lists it: the corpus is asymmetric (kv1 holds only team-b and
 // payments paths) so that both cross-mount refusals and default-convention Creates occur.
 //
-// A scope that a --path-map entry targets is filled by the override's subtree AND by any other
-// mount's paths the default convention names into it (kv1/team-a/dev/x lands in team-a/dev):
-// plan-access cannot tell which of them the operator imported there, so a Create must not grant
-// either. router.route models only the first; the second is the same-name check below.
+// A scope that a --path-map entry targets is filled by the override's subtree AND by any path
+// outside it, on another mount or on the policy's own mount, that the default convention names
+// into it (kv1/team-a/dev/x and, under --path-map secret/data/payments=1:11,
+// secret/data/team-a/prod/x): plan-access cannot tell which of them the operator imported there,
+// so a Create must not grant either. router.route models only the first; the second is the
+// same-name check below, applied to every mount. The corpus keeps "secret/data/payments=1:11"
+// because kv1 holds nothing in team-a/prod: only the own mount can refuse it, so the own-mount
+// case is not masked by a refusal for kv1.
 //
 // What it does NOT check: which Vault paths an operator actually imported into an environment:
 // plan-access never sees that, and neither does this test.
@@ -45,6 +49,7 @@ func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 		{"secret/data/payments/=1:10", "secret/data/mobile-app/=1:10"},
 		{"secret/data/team-a=2:20", "secret/data/team-a/dev=1:10"},
 		{"secret/data/payments=1:0"},
+		{"secret/data/payments=1:11"},
 		{"kv1/payments=1:11"},
 		{"secret/metadata=1:10"},
 	}
@@ -106,7 +111,7 @@ func TestBuildPolicyItems_CreateNeverWiderThanPolicy(t *testing.T) {
 					}
 					for _, s := range secrets {
 						p, e, routed := router.route(s)
-						if !routed && mountOf(s) != mountOf(path) {
+						if !routed {
 							p, e, routed = router.routeByName(s)
 						}
 						if !routed || p != it.ProposedProjectID || (it.ProposedEnvironmentID != 0 && e != it.ProposedEnvironmentID) {
@@ -223,14 +228,6 @@ func newScopeRouter(t *testing.T, projects []ProjectRef, envs map[int][]Environm
 	}
 	slices.SortFunc(r.overrides, func(a, b pathOverride) int { return len(b.prefix) - len(a.prefix) })
 	return r
-}
-
-// mountOf is the corpus mount a secret or policy path is on.
-func mountOf(path string) string {
-	if strings.HasPrefix(path, "kv1/") {
-		return "kv1/"
-	}
-	return "secret/"
 }
 
 // routeByName is where the default convention alone puts secret, whether or not a --path-map
