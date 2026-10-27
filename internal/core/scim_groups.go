@@ -121,6 +121,32 @@ func scimMembersRefused(rejected []uint) error {
 	return fmt.Errorf("%s: %w (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), ErrSCIMMemberNotManaged, rejected)
 }
 
+// SCIMGroupState is a SCIM group as its own write left it: the group row and its
+// members, read INSIDE the write's transaction. The SCIM response needs both, and a
+// read after the commit (GetGroup, then the handler's member list) that fails would
+// report a write that already committed as failed, which an IdP answers by retrying
+// or by resyncing from a state it thinks did not change (SCIM-GROUPS-ERR-1). Read in
+// the transaction, a failed read rolls the write back, so every error is a true "not
+// applied".
+type SCIMGroupState struct {
+	*models.Group
+	Members []*models.User
+}
+
+// readSCIMGroupState reads groupID and its members through tx. Errors keep their
+// storage typing (a missing group stays storage.ErrGroupNotFound).
+func (c *KeyorixCore) readSCIMGroupState(ctx context.Context, tx storage.Storage, groupID uint) (*SCIMGroupState, error) {
+	g, err := tx.GetGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	members, err := tx.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &SCIMGroupState{Group: g, Members: members}, nil
+}
+
 // ProvisionSCIMGroup creates a group from a SCIM Create and adds its initial members.
 // Only SCIM-managed members may be added (scimManagedMember, #167); a non-SCIM-managed
 // id in memberIDs is refused.
@@ -184,7 +210,7 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 
 // ReplaceSCIMGroup applies a SCIM Replace (PUT): an optional rename plus the FULL
 // member set (members not in memberIDs are removed; new ones are added).
-func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uint, displayName string, memberIDs []uint) (*models.Group, error) {
+func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uint, displayName string, memberIDs []uint) (*SCIMGroupState, error) {
 	if len(memberIDs) > maxSCIMGroupMembersPerCall {
 		return nil, fmt.Errorf("%w: memberIDs exceeds the maximum batch size of %d", ErrInvalidInput, maxSCIMGroupMembersPerCall)
 	}
@@ -243,21 +269,25 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 	} else if len(rejected) > 0 {
 		return nil, scimMembersRefused(rejected)
 	}
+	var state *SCIMGroupState
 	if err := c.applyGroupMembershipChanges(ctx, groupID, want, current, toAdd, rename, func(tgt auditTarget) {
 		c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 			fmt.Sprintf("SCIM replaced group %d: removed the members not in the new set", groupID))
 	}, func(tgt auditTarget) {
 		c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 			fmt.Sprintf("SCIM replaced group %d (members=%d)", groupID, len(want)))
+	}, func(tx storage.Storage) (rerr error) {
+		state, rerr = c.readSCIMGroupState(ctx, tx, groupID)
+		return rerr
 	}); err != nil {
 		return nil, err
 	}
-	return c.storage.GetGroup(ctx, groupID)
+	return state, nil
 }
 
 // PatchSCIMGroup applies a SCIM PATCH: an optional rename plus incremental member
 // add/remove. nil newName leaves the name unchanged.
-func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint, newName *string, addIDs, removeIDs []uint) (*models.Group, error) {
+func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint, newName *string, addIDs, removeIDs []uint) (*SCIMGroupState, error) {
 	if len(addIDs) > maxSCIMGroupMembersPerCall || len(removeIDs) > maxSCIMGroupMembersPerCall {
 		return nil, fmt.Errorf("%w: addIDs/removeIDs exceeds the maximum batch size of %d", ErrInvalidInput, maxSCIMGroupMembersPerCall)
 	}
@@ -307,6 +337,7 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	// guard locks, and the adds/rename follow as their own fail-closed commit.
 	var split bool
 	var settle func()
+	var state *SCIMGroupState // the group as the last commit left it (readSCIMGroupState)
 	if err := c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
 		// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
 		// applying any of them, so a PATCH that would strip the install's last route
@@ -378,7 +409,9 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 			}
 			c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 				fmt.Sprintf("SCIM patched group %d (+%d/-%d members)", groupID, len(addIDs), len(removeIDs)))
-			return nil
+			var rerr error
+			state, rerr = c.readSCIMGroupState(ctx, tx, groupID)
+			return rerr
 		}); err != nil {
 			return err
 		}
@@ -408,12 +441,14 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 			}
 			c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 				fmt.Sprintf("SCIM patched group %d (+%d members)", groupID, len(addIDs)))
-			return nil
+			var rerr error
+			state, rerr = c.readSCIMGroupState(ctx, tx, groupID)
+			return rerr
 		}); err != nil {
 			return nil, err
 		}
 	}
-	return c.storage.GetGroup(ctx, groupID)
+	return state, nil
 }
 
 // scimRemovesAMember reports whether removing ids from groupID removes at least one
@@ -545,7 +580,7 @@ func filterNonZero(ids []uint) []uint {
 // (MERGE-FIX-3482G): the removals commit alone under the locks (owed, their row
 // written by auditRemovals), and the rename and adds follow after the locks as their
 // own fail-closed commit (audit writes its row).
-func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint, rename func(tx storage.Storage) error, auditRemovals, audit func(tgt auditTarget)) error {
+func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint, rename func(tx storage.Storage) error, auditRemovals, audit func(tgt auditTarget), readBack func(tx storage.Storage) error) error {
 	var removals []uint
 	for _, u := range current {
 		if !want[u.ID] {
@@ -604,7 +639,7 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 				}
 			}
 			audit(tgt)
-			return nil
+			return readBack(tx)
 		})
 	}); err != nil || !split {
 		return err
@@ -624,7 +659,7 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 			}
 		}
 		audit(tgt)
-		return nil
+		return readBack(tx)
 	})
 }
 

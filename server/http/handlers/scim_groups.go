@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -205,12 +206,14 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		scimError(w, http.StatusRequestEntityTooLarge, errTooManyMembers)
 		return
 	}
-	g, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
+	st, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
 	if err != nil {
 		writeSCIMWriteError(w, r, fmt.Sprintf("replacing SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r, g, http.StatusOK)
+	// The committed state comes from the write's own transaction: a member read after
+	// the commit that failed would answer 500 for a write that was applied.
+	writeSCIM(w, http.StatusOK, toSCIMGroup(st.Group, st.Members))
 }
 
 var scimMemberFilterPath = regexp.MustCompile(`(?i)members\[\s*value\s+eq\s+"([^"]+)"\s*\]`)
@@ -298,22 +301,22 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) { // NO
 		return
 	}
 
-	var g *models.Group
+	var st *core.SCIMGroupState
 	var err error
 	if replaceAll {
 		name := ""
 		if newName != nil {
 			name = *newName
 		}
-		g, err = h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, name, replaceMembers)
+		st, err = h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, name, replaceMembers)
 	} else {
-		g, err = h.coreService.PatchSCIMGroup(r.Context(), 0, id, newName, addIDs, removeIDs)
+		st, err = h.coreService.PatchSCIMGroup(r.Context(), 0, id, newName, addIDs, removeIDs)
 	}
 	if err != nil {
 		writeSCIMWriteError(w, r, fmt.Sprintf("patching SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r, g, http.StatusOK)
+	writeSCIM(w, http.StatusOK, toSCIMGroup(st.Group, st.Members))
 }
 
 // DeleteGroup handles DELETE /scim/v2/Groups/{id}.
