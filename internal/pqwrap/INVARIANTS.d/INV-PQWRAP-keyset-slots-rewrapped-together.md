@@ -8,6 +8,5 @@
   pq-key-wrapping.md §7 "DEK rotation and the hybrid slots", §8. Guard (codec level):
   `TestSealKeyset_DEKRotationRewrapsEverySlot`, `TestRekeyKeyset_KeepsHybridSlotsByteForByte`,
   `TestSameRecipients`. The same rule at the `RotateDEKWithSweep` level (design tests 1-3) is
-  UNGUARDED until the keyset is wired into internal/encryption (ask
-  rd-pqwrap-2-encryption-scope).
+  its own invariant, `INV-PQWRAP-keyset-dek-rotation-rewraps-every-slot`, UNGUARDED (#3758).
 <!-- section: Keyset -->
