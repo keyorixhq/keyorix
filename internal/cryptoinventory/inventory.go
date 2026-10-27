@@ -64,6 +64,11 @@ type BackupInput struct {
 	// EncryptionEnabled is storage.encryption.enabled: when off, the archive's
 	// secret values are plaintext.
 	EncryptionEnabled bool
+	// ShamirShareFiles is how many Shamir KEK share files (shamir_share_files of
+	// the primary key provider and its fallbacks) `admin backup` writes into the
+	// archive. They are plaintext shares: with threshold-many of them the KEK can
+	// be rebuilt from the archive alone.
+	ShamirShareFiles int
 }
 
 // maxCABundleCerts bounds how many CA certificates one bundle file contributes.
@@ -138,9 +143,15 @@ func Build(in Inputs, p Policy, now time.Time) Inventory {
 	}
 	if in.Backup != nil {
 		assets = append(assets, backupAsset(*in.Backup))
-		if !in.Backup.EncryptionEnabled {
+		switch {
+		case !in.Backup.EncryptionEnabled:
 			inv.Warnings = append(inv.Warnings,
 				"encryption is disabled: backup archives carry secret values as plaintext (the archive container is never encrypted either way)")
+		case in.Backup.ShamirShareFiles > 0:
+			inv.Warnings = append(inv.Warnings, fmt.Sprintf(
+				"backup archives carry %d Shamir KEK share file(s) as plaintext: with threshold-many of them the KEK, and every secret value, "+
+					"can be recovered from the archive alone. Protect backups like the KEK itself, or supply the shares through shamir_share_env, which is not backed up",
+				in.Backup.ShamirShareFiles))
 		}
 	}
 	inv.Notes = append(inv.Notes,
@@ -394,10 +405,18 @@ func backupAsset(b BackupInput) Asset {
 	a := Asset{ID: "backup-archive", Name: "Backup archive encryption", Class: ClassBackupEncryption,
 		Primitive: "ae", Algorithm: "AES-256-GCM", KeySizeBits: 256,
 		Storage: "backup archive (tar+gzip): secret values as stored ciphertext, DEK wrapped under the KEK, no archive-level encryption",
-		Notes:   "confidentiality rests on the KEK, which is never written into the archive; the manifest is HMAC-signed"}
-	if !b.EncryptionEnabled {
+		Notes: "confidentiality rests on the KEK, which is not in the archive (a TPM/KMS-wrapped KEK blob may be, and opens only with that TPM/KMS); " +
+			"the manifest is HMAC-signed"}
+	switch {
+	case !b.EncryptionEnabled:
 		a.Algorithm, a.KeySizeBits, a.Primitive = "none", 0, "unknown"
 		a.Notes = "encryption is disabled, so the archive carries secret values as plaintext"
+	case b.ShamirShareFiles > 0:
+		// Fail closed: whether the archive holds threshold-many shares is not
+		// known here, and if it does the stored ciphertext protects nothing.
+		a.Algorithm, a.KeySizeBits, a.Primitive = "unknown", 0, "unknown"
+		a.Notes = fmt.Sprintf("the archive also carries %d plaintext Shamir KEK share file(s); with threshold-many of them the KEK can be "+
+			"rebuilt from the archive alone, so its encryption cannot be credited", b.ShamirShareFiles)
 	}
 	return a
 }

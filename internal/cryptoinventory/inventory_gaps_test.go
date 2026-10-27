@@ -216,6 +216,30 @@ func TestBuild_BackupEncryption(t *testing.T) {
 	assert.Contains(t, gapWarnings(off)[0], "backup archives carry secret values as plaintext")
 }
 
+// Review finding (#3754): plaintext Shamir share files in the archive mean its
+// encryption cannot be credited; the asset fails closed and the inventory warns.
+func TestBuild_BackupWithShamirShareFilesFailsClosed(t *testing.T) {
+	sch := compileCycloneDX16(t)
+	inv := Build(Inputs{Backup: &BackupInput{EncryptionEnabled: true, ShamirShareFiles: 3}}, DefaultPolicy(), riskNow)
+	a := assetByID(t, inv, "backup-archive")
+	assert.Equal(t, "unknown", a.Algorithm)
+	assert.Zero(t, a.KeySizeBits)
+	assert.Equal(t, LevelMedium, a.Risk.Level, "fail closed: the archive may hold threshold-many shares")
+	assert.Contains(t, a.Notes, "3 plaintext Shamir KEK share file(s)")
+	require.Len(t, gapWarnings(inv), 1)
+	assert.Contains(t, gapWarnings(inv)[0], "Shamir KEK share file(s) as plaintext")
+	assert.Contains(t, gapWarnings(inv)[0], "shamir_share_env", "the warning says what to do")
+	doc, err := inv.CBOM(CBOMOptions{})
+	require.NoError(t, err)
+	require.NoError(t, validate(t, sch, doc))
+
+	// encryption disabled is the stronger statement and wins
+	off := Build(Inputs{Backup: &BackupInput{ShamirShareFiles: 3}}, DefaultPolicy(), riskNow)
+	assert.Equal(t, "none", assetByID(t, off, "backup-archive").Algorithm)
+	require.Len(t, gapWarnings(off), 1)
+	assert.Contains(t, gapWarnings(off)[0], "encryption is disabled")
+}
+
 func TestCBOM_GapAssetsValidateAndCarryNoKeyMaterial(t *testing.T) {
 	sch := compileCycloneDX16(t)
 	dir := t.TempDir()

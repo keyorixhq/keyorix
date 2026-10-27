@@ -24,6 +24,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/cryptoinventory"
+	"github.com/keyorixhq/keyorix/internal/keyfiles"
 )
 
 // selfSignedDER returns a real self-signed certificate for pub/priv.
@@ -101,4 +102,38 @@ func TestCryptoInventoryHandler_BadDatabaseTLSIsAWarning(t *testing.T) {
 	w := f.get(t, "", true)
 	require.Equal(t, http.StatusOK, w.Code)
 	assert.Contains(t, w.Body.String(), "database TLS settings could not be read")
+}
+
+// backedUpShamirShareFiles mirrors which share files keyfiles.Registry (the list
+// `admin backup` archives) includes; this keeps the two from drifting apart.
+func TestBackedUpShamirShareFiles_MatchesKeyfilesRegistry(t *testing.T) {
+	dir := t.TempDir()
+	share := func(n string) string { return filepath.Join(dir, n) }
+	for name, kp := range map[string]config.KeyProviderConfig{
+		"passphrase":        {Type: "passphrase"},
+		"shamir primary":    {Type: "shamir", ShamirShareFiles: []string{share("a"), share("b")}},
+		"shamir fallback":   {Type: "tpm", WrappedKeyPath: share("kek.tpm"), Fallbacks: []config.KeyProviderConfig{{Type: "shamir", ShamirShareFiles: []string{share("c")}}}},
+		"both":              {Type: "shamir", ShamirShareFiles: []string{share("d")}, Fallbacks: []config.KeyProviderConfig{{Type: "shamir", ShamirShareFiles: []string{share("e"), share("f")}}}},
+		"files, not shamir": {Type: "passphrase", ShamirShareFiles: []string{share("g")}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			enc := &config.EncryptionConfig{Enabled: true, KeyProvider: kp}
+			specs, err := keyfiles.Registry(enc, dir)
+			require.NoError(t, err)
+			// every configured share path, whatever its provider's type
+			configured := map[string]bool{}
+			for _, p := range append([]config.KeyProviderConfig{kp}, kp.Fallbacks...) {
+				for _, f := range p.ShamirShareFiles {
+					configured[f] = true
+				}
+			}
+			inRegistry := 0
+			for _, s := range specs {
+				if configured[s.Path] {
+					inRegistry++
+				}
+			}
+			assert.Equal(t, inRegistry, backedUpShamirShareFiles(kp))
+		})
+	}
 }

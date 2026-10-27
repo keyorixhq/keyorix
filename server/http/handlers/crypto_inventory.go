@@ -157,7 +157,7 @@ func cryptoInventoryInputs(ctx context.Context, cfg *config.Config, coreService 
 		}
 	}
 
-	in.Backup = &cryptoinventory.BackupInput{EncryptionEnabled: enc.Enabled}
+	in.Backup = &cryptoinventory.BackupInput{EncryptionEnabled: enc.Enabled, ShamirShareFiles: backedUpShamirShareFiles(enc.KeyProvider)}
 	if st := cfg.Storage.Type; st == "postgres" || st == "postgresql" {
 		files, err := config.DatabaseTLSFilesOf(&cfg.Storage.Database)
 		if err != nil {
@@ -219,6 +219,25 @@ func samlInput(p config.SSOProviderConfig) cryptoinventory.SAMLInput {
 		in.Metadata = b
 	}
 	return in
+}
+
+// backedUpShamirShareFiles counts the Shamir share files `admin backup` writes
+// into the archive: keyfiles.Registry backs up shamir_share_files of the primary
+// key provider and of each fallback (one level). Kept equal to the registry by
+// TestBackedUpShamirShareFiles_MatchesKeyfilesRegistry.
+func backedUpShamirShareFiles(kp config.KeyProviderConfig) int {
+	n := 0
+	for _, p := range append([]config.KeyProviderConfig{kp}, kp.Fallbacks...) {
+		if p.Type != "shamir" {
+			continue
+		}
+		for _, f := range p.ShamirShareFiles {
+			if f != "" {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 // dekCreatedAt dates the DEK. The recorded time is the dek.created_at row
