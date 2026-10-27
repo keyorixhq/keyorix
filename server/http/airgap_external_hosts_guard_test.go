@@ -150,7 +150,7 @@ func TestScanExternalHosts_CatchesAndAllows(t *testing.T) {
 
 func TestScanGoMarkupLiterals_UsesSourceLines(t *testing.T) {
 	src := []byte("package x\n\nconst page = `<html>\n<body>\n<script src=\"https://evil.example/a.js\"></script>\n</body></html>`\n\nconst notMarkup = \"https://api.example.com/v1\"\n")
-	got, n := scanGoMarkupLiterals("x.go", src, externalHostAllowlist)
+	got, n := scanGoMarkupLiterals("selftest-source", src, externalHostAllowlist)
 	require.Equal(t, 1, n, "only the markup literal is examined")
 	require.Len(t, got, 1)
 	assert.Equal(t, 5, got[0].line)

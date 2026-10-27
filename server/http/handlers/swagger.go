@@ -73,7 +73,7 @@ func serveSwaggerAsset(w http.ResponseWriter, r *http.Request, name, ctype strin
 	w.Header().Set("Cache-Control", "public, max-age=86400")
 	w.WriteHeader(http.StatusOK)
 	if r.Method != http.MethodHead {
-		_, _ = w.Write(data)
+		_, _ = w.Write(data) // #nosec G705 -- embedded, SHA-pinned vendor file from an allowlist, fixed non-HTML content type, not request-derived
 	}
 }
 
