@@ -218,7 +218,17 @@ func TestFence_RefusesEveryForeignWriteWhileHolderLives(t *testing.T) {
 		}
 		return tx.Exec("UPDATE machine_identity_credentials SET revoked = true WHERE id = ?", w.credID).Error
 	})
-	requireFenced(t, err, "replica-role session")
+	var super bool
+	require.NoError(t, w.foreign.Raw("SELECT rolsuper FROM pg_roles WHERE rolname = current_user").Scan(&super).Error)
+	if super {
+		requireFenced(t, err, "replica-role session")
+	} else {
+		// Setting session_replication_role needs a superuser (or a SET grant
+		// on the parameter): this role cannot reach replica mode at all.
+		require.ErrorContains(t, err, `permission denied to set parameter "session_replication_role"`)
+		t.Log("replica-role case: the test role is not a superuser, so the fence under replica mode is pending a superuser Postgres (CI's service role is one)")
+	}
+	require.False(t, w.revoked(), "the replica-role write must not have been applied")
 
 	// A session on another search_path writing schema-qualified names meets
 	// the same fence (the holder is looked up for the TABLE's schema).
