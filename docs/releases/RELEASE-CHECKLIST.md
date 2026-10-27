@@ -18,10 +18,10 @@ example `v0.96.1`) throughout.
       `internal/core` and `internal/storage/store`):
       `GOMAXPROCS=2 gremlins unleash --workers 2 ./internal/crypto` and the same for
       `./internal/keyfiles`, `./internal/securefiles`, `./internal/recoverykey` and
-      `./internal/evidencesink`, `./internal/netutil` and `./internal/serverguard`, `./internal/auditverify` (the latter also covers `anchorbundle`; use `--workers 1` for securefiles: its RLIMIT tests
+      `./internal/evidencesink`, `./internal/netutil` and `./internal/serverguard`, `./internal/solewriter`, `./internal/auditverify` (the latter also covers `anchorbundle`; use `--workers 1` for securefiles: its RLIMIT tests
       are process-wide). Test efficacy must not be lower than the last recorded
       value (2026-10-23: crypto 98.8% after #3612, keyfiles 100%, securefiles 98.3%,
-      recoverykey 82.4%, evidencesink 100%, netutil 100%, auditverify 99.55%, serverguard 100% (without a Postgres DSN); the three remaining crypto survivors are
+      recoverykey 82.4%, evidencesink 100%, netutil 100%, auditverify 99.55%, serverguard 100%, solewriter 99.26% (both without a Postgres DSN); the three remaining crypto survivors are
       equivalent mutants listed in `internal/crypto/mutation_equivalents_test.go`, the
       rest are listed as equivalent in the MUTANT-SEC-1 commits and `run-mutation.sh`
       holds the floors).
