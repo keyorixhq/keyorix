@@ -41,5 +41,6 @@
   its timeout, 10 s by default; the error makes the overlap visible, it does not prevent it); a
   pooler that reconnects a client to a new backend unseen (only PgBouncer is supported,
   docs/postgresql-poolers.md); the audit list index build lock has no fn hook, so its loss case
-  is covered only through the shared `advisoryLockSession.watch`; a live `admin backup` holds the
-  presence lock shared and does not act on `Presence.Lost` (docs/design/pooler-lock-loss.md).
+  is covered only through the shared `advisoryLockSession.watch`. A live `admin backup` holds the
+  presence lock shared and acts on `Presence.Lost` itself (no archive, non-zero exit:
+  `internal/serverguard` INV-SERVERGUARD-lost-lock-leaves-no-backup).
