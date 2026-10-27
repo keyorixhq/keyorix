@@ -22,7 +22,7 @@ type Inputs struct {
 	DEKPath           string
 	DEKCreatedAt      *time.Time
 	// DEKCreatedAtEstimated is true when DEKCreatedAt is the key file's mtime
-	// rather than a time the DEK epoch or key manifest recorded.
+	// rather than the time the database recorded for this DEK.
 	DEKCreatedAtEstimated bool
 	TLS                   []TLSInput
 	Recovery              *RecoveryInput
@@ -223,7 +223,7 @@ func dekAsset(in Inputs) Asset {
 		a.CreatedAtEstimated = true
 		a.Notes = "created_at is estimated: the key file's last-modified time (creation, last rotation or KEK rewrap)"
 	default:
-		a.Notes = "created_at is the time the DEK epoch was last written in the database (DEK creation, or its last rotation)"
+		a.Notes = "created_at is recorded in the database: the time this DEK became the database's DEK (epoch seeded, or the rotation that made it current)"
 	}
 	return a
 }

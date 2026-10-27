@@ -221,36 +221,21 @@ func samlInput(p config.SSOProviderConfig) cryptoinventory.SAMLInput {
 	return in
 }
 
-// systemMetadataTimes is the optional storage capability behind dekCreatedAt
-// (store.SystemMetadataTimes), asserted structurally so the handler package does
-// not import the store and the Storage interface does not grow a method for it.
-type systemMetadataTimes interface {
-	SystemMetadataUpdatedAt(ctx context.Context, key string) (time.Time, bool, error)
-}
-
-// dekCreatedAt dates the DEK. The DEK epoch row (PostgreSQL) is written when the
-// epoch is seeded and again when a rotation completes, so a settled epoch's
-// updated_at is the best recorded time for the current DEK; the key-set manifest
-// records generations and hashes, no time. Without that row (SQLite, a backend
-// that cannot report row times, a rotation in flight, a read error) it falls back
-// to the key file's mtime, which also moves on KEK rewrap, and says it is
-// estimated. Only the epoch row's metadata and os.Stat are used: the key file is
-// never opened.
+// dekCreatedAt dates the DEK. The recorded time is the dek.created_at row
+// (encryption.DEKCreatedAt, PostgreSQL), written when the epoch is seeded and in
+// the transaction that makes a rotated DEK current, and used only when it names
+// the DEK the settled epoch names. The epoch row's own updated_at is not used: a
+// failed or interrupted rotation rewrites it when its fence is lifted, with the
+// old DEK still current. The key-set manifest records generations and hashes, no
+// time. Without a matching row (SQLite, a rotation in flight, an epoch seeded
+// before the row existed, a read error) it falls back to the key file's mtime,
+// which also moves on KEK rewrap, and says it is estimated. Only system_metadata
+// and os.Stat are used: the key file is never opened.
 func dekCreatedAt(ctx context.Context, dekPath string, st interface {
 	GetSystemMetadata(ctx context.Context, key string) (string, bool, error)
 }) (t *time.Time, estimated bool) {
-	if tm, ok := st.(systemMetadataTimes); ok {
-		v, found, err := st.GetSystemMetadata(ctx, encryption.DEKEpochMetadataKey)
-		switch {
-		case err != nil:
-			log.Printf("crypto inventory: dek epoch: %v", err)
-		case found && v != "" && !encryption.DEKEpochIsRotating(v):
-			if at, ok, err := tm.SystemMetadataUpdatedAt(ctx, encryption.DEKEpochMetadataKey); err != nil {
-				log.Printf("crypto inventory: dek epoch time: %v", err)
-			} else if ok && !at.IsZero() {
-				return &at, false
-			}
-		}
+	if at, ok := recordedDEKCreatedAt(ctx, st); ok {
+		return &at, false
 	}
 	if dekPath == "" {
 		return nil, false
@@ -260,6 +245,28 @@ func dekCreatedAt(ctx context.Context, dekPath string, st interface {
 		return &m, true
 	}
 	return nil, false
+}
+
+func recordedDEKCreatedAt(ctx context.Context, st interface {
+	GetSystemMetadata(ctx context.Context, key string) (string, bool, error)
+}) (time.Time, bool) {
+	epoch, found, err := st.GetSystemMetadata(ctx, encryption.DEKEpochMetadataKey)
+	if err != nil {
+		log.Printf("crypto inventory: dek epoch: %v", err)
+		return time.Time{}, false
+	}
+	if !found {
+		return time.Time{}, false
+	}
+	recorded, found, err := st.GetSystemMetadata(ctx, encryption.DEKCreatedAtMetadataKey)
+	if err != nil {
+		log.Printf("crypto inventory: dek created_at: %v", err)
+		return time.Time{}, false
+	}
+	if !found {
+		return time.Time{}, false
+	}
+	return encryption.DEKCreatedAt(epoch, recorded)
 }
 
 const (

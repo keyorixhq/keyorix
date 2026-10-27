@@ -32,20 +32,23 @@ func (f *cryptoInvFixture) dekAsset(t *testing.T) cryptoinventory.Asset {
 	return cryptoinventory.Asset{}
 }
 
-// The DEK epoch row's updated_at is the recorded time; the key file's mtime
-// (set here to a very different date) must not be used when it exists.
-func TestCryptoInventoryHandler_DEKCreatedAtFromEpochRow(t *testing.T) {
+// The dek.created_at row is the recorded time when it names the epoch's DEK; the
+// key file's mtime (set here to a very different date) and the epoch row's own
+// updated_at (rewritten by a fence lift) must not be used.
+func TestCryptoInventoryHandler_DEKCreatedAtFromRecordedRow(t *testing.T) {
 	f := newCryptoInvFixture(t)
-	epochAt := time.Now().UTC().Add(-200 * 24 * time.Hour).Truncate(time.Second)
-	require.NoError(t, f.db.Create(&models.SystemMetadata{Key: encryption.DEKEpochMetadataKey, Value: "fingerprint-abc", UpdatedAt: epochAt}).Error)
+	createdAt := time.Now().UTC().Add(-200 * 24 * time.Hour).Truncate(time.Second)
+	require.NoError(t, f.db.Create(&models.SystemMetadata{Key: encryption.DEKEpochMetadataKey, Value: "fingerprint-abc", UpdatedAt: time.Now().UTC()}).Error)
+	require.NoError(t, f.db.Create(&models.SystemMetadata{Key: encryption.DEKCreatedAtMetadataKey,
+		Value: "fingerprint-abc " + createdAt.Format(time.RFC3339Nano), UpdatedAt: createdAt}).Error)
 	mtime := time.Now().Add(-3 * 24 * time.Hour)
 	require.NoError(t, os.Chtimes(f.cfg.Storage.Encryption.DEKPath, mtime, mtime))
 
 	a := f.dekAsset(t)
 	require.NotNil(t, a.CreatedAt)
-	assert.WithinDuration(t, epochAt, *a.CreatedAt, time.Second)
-	assert.False(t, a.CreatedAtEstimated, "an epoch-recorded time is not an estimate")
-	assert.Contains(t, a.Notes, "DEK epoch")
+	assert.WithinDuration(t, createdAt, *a.CreatedAt, time.Second)
+	assert.False(t, a.CreatedAtEstimated, "a recorded time is not an estimate")
+	assert.Contains(t, a.Notes, "recorded in the database")
 }
 
 func TestCryptoInventoryHandler_DEKCreatedAtFallsBackToMtimeAsEstimated(t *testing.T) {
@@ -56,6 +59,15 @@ func TestCryptoInventoryHandler_DEKCreatedAtFallsBackToMtimeAsEstimated(t *testi
 		"rotation in flight": func(f *cryptoInvFixture) {
 			require.NoError(t, f.db.Create(&models.SystemMetadata{Key: encryption.DEKEpochMetadataKey,
 				Value: "rotating:fingerprint-old", UpdatedAt: time.Now().Add(-time.Hour)}).Error)
+			recordCreatedAt(t, f, "fingerprint-old")
+		},
+		"recorded row names another DEK": func(f *cryptoInvFixture) {
+			require.NoError(t, f.db.Create(&models.SystemMetadata{Key: encryption.DEKEpochMetadataKey,
+				Value: "fingerprint-new", UpdatedAt: time.Now().Add(-time.Hour)}).Error)
+			recordCreatedAt(t, f, "fingerprint-old")
+		},
+		"recorded row without an epoch": func(f *cryptoInvFixture) {
+			recordCreatedAt(t, f, "fingerprint-old")
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -77,4 +89,11 @@ func TestCryptoInventoryHandler_DEKWithoutAnySourceHasNoCreatedAt(t *testing.T) 
 	a := f.dekAsset(t)
 	assert.Nil(t, a.CreatedAt)
 	assert.False(t, a.CreatedAtEstimated, "nothing to estimate")
+}
+
+func recordCreatedAt(t *testing.T, f *cryptoInvFixture, fingerprint string) {
+	t.Helper()
+	at := time.Now().UTC().Add(-400 * 24 * time.Hour)
+	require.NoError(t, f.db.Create(&models.SystemMetadata{Key: encryption.DEKCreatedAtMetadataKey,
+		Value: fingerprint + " " + at.Format(time.RFC3339Nano), UpdatedAt: at}).Error)
 }
