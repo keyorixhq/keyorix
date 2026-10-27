@@ -248,6 +248,10 @@ func (s *Service) StartDEKEpochGuard(db *gorm.DB, release func()) error {
 	if err := s.clearCompletedRotationMarker(db); err != nil {
 		log.Printf("[WARN] could not clear the redo marker of a completed DEK rotation: %v", err)
 	}
+	// Keeps an older admin binary from rotating this database (rotation_protocol.go).
+	if err := recordDEKRotationProtocol(db); err != nil {
+		return err
+	}
 	w := &dekEpochWatch{db: db, own: own, release: release, base: base, stop: make(chan struct{}), done: make(chan struct{})}
 	w.markMatch(0) // verified just now, after base
 	s.mu.Lock()

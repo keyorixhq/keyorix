@@ -7,6 +7,7 @@ package encryption
 
 import (
 	"errors"
+	"strconv"
 	"testing"
 )
 
@@ -45,4 +46,17 @@ func TestRotateDEKWithSweep_Postgres_PreCommitVerifyFailureKeepsOldEpoch(t *test
 		t.Fatalf("DATA LOSS: versions the old (still active) DEK cannot decrypt: %v", bad)
 	}
 	waitFor(t, "replica B to resume writing", func() bool { return epochWrite(t, b, db, node, 4) == nil })
+}
+
+// DEK-ROTATE-SAFETY-1 item 3: a server start on PostgreSQL records the rotation
+// protocol, so an older admin binary that reads it refuses to rotate.
+func TestDEKEpoch_Postgres_StartRecordsRotationProtocol(t *testing.T) {
+	db := epochPGDB(t)
+	_, _, _, b, _ := epochReplicas(t, db)
+	if err := b.StartDEKEpochGuard(db, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := recordedRotationProtocol(t, db); got != strconv.Itoa(dekRotationProtocol) {
+		t.Fatalf("recorded protocol after server start = %q, want %d", got, dekRotationProtocol)
+	}
 }
