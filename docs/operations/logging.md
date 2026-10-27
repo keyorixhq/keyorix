@@ -49,18 +49,37 @@ Level for the many pre-existing plain log lines is taken from their prefix: `PAN
 - The id travels from the HTTP edge through the request context into core, so a core log line for
   that request (for example a failed audit write) carries it. Audit writes that continue after the
   request has finished keep the same id.
-- gRPC requests do not carry a request id yet.
+- gRPC calls get a server-minted id too (an interceptor right after panic recovery). It is
+  returned in the `x-request-id` response header and stamped on the audit rows the call writes;
+  a client's own `x-request-id` is only recorded as `client_request_id`, never as our id. The
+  gRPC access-log lines do not print it yet.
 
 ### The id on the audit row
 
-Every audit row an HTTP request writes stores the server's id in `audit_events.request_id`
-(NULL for scheduler jobs, startup events, gRPC calls and rows written by a replica older than
-schema epoch 6). Join an audit row with its log lines on it.
+Every audit row an HTTP or gRPC request writes stores the server's id in `audit_events.request_id`
+(NULL for scheduler jobs, startup events and rows written by a replica older than schema
+epoch 6). Join an audit row with its log lines on it. A row owed while the audit log refused
+writes (a plain secret suspend, a degraded break-glass activation) is written later by the
+backfill with the id of the request that caused it (`pending_audit_events.request_id`, schema
+epoch 8).
+
+To go from a log line to its audit rows, filter by the id:
+
+```
+GET /api/v1/audit/logs?request_id=<id>&start_time=<RFC 3339>     # also /audit/search?request_id=
+keyorix audit logs --request-id <id> --since <RFC 3339> --wide
+```
+
+`/audit/export` and `/audit/export.csv` carry `request_id` on every row (CSV: last column). The
+gRPC `AuditService.GetAuditLogs` takes the same filter. The match is exact, rows without an id
+never match, and the column has no index: add a time window on a large audit trail.
 
 The column is **outside the tamper-evident hash chain** and is **advisory**: anyone with write
 access to the database can change it, and audit verification will not notice. After joining on
 `request_id`, confirm the match on the hash-covered fields (the log line's principal and route
-against the audit row's actor, event type and time). The SIEM forwarder's copy of each event
+against the audit row's actor, event type and time). The `request_id=` filter and the
+`request_id` field in every audit API response and export inherit this: they find rows by an
+advisory value, they do not prove who wrote them. The SIEM forwarder's copy of each event
 (`request_id` in its payload) is the off-box record of the value at write time. Design:
 `docs/specs/audit-request-id.md`.
 

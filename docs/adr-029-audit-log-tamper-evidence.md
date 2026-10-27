@@ -47,6 +47,13 @@ semantically meaningful fields: `prev_hash`, `event_type`, `user_id`,
 `actor_type`. The DB-assigned `id` is **deliberately excluded** — it is not
 known before insert, and chain linkage already pins each row's position.
 
+`machine_identity_id` and `request_id` are **deliberately outside the chain** as well:
+`audit_events.request_id` (the server-minted id of the request that wrote the row, joined
+with that request's log lines) is advisory, so a database writer can set, change or clear it
+without verification noticing (`docs/specs/audit-request-id.md` §5; pinned by
+`TestAuditEntryHash_IgnoresRequestID` and `TestVerifyAuditChain_MixedRequestIDs_AndEditIsUndetected`).
+Confirm any join on a request id against the hash-covered fields of the row.
+
 `event_time` is encoded as **Unix microseconds** (`UnixMicro`), and the stored
 `event_time` is truncated to microseconds before both hashing and insert. This
 is required for correctness: PostgreSQL `timestamptz` has microsecond precision,
