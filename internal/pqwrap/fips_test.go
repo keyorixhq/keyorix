@@ -35,6 +35,20 @@ func TestFIPS140OnlyMode(t *testing.T) {
 				t.Fatalf("%v: GenerateKey under fips140=only: %v", s, err)
 			}
 		}
+		// The keyset (KEK slot, MAC, KCV, one hybrid slot) and the legacy
+		// reader and writer run under the same mode.
+		_, pubs := tRecipients(t, "fips-ks")
+		ks := mustSeal(t, tDEK("fips"), tKEK("fips"), tKEKID("fips"), pubs)
+		if _, err := OpenKeyset(ks, tKEK("fips")); err != nil {
+			t.Fatalf("OpenKeyset under fips140=only: %v", err)
+		}
+		legacy, err := SealLegacy(tDEK("fips"), tKEK("fips"))
+		if err != nil {
+			t.Fatalf("SealLegacy under fips140=only: %v", err)
+		}
+		if _, _, err := OpenKeyFile(legacy, tKEK("fips")); err != nil {
+			t.Fatalf("OpenKeyFile(legacy) under fips140=only: %v", err)
+		}
 		return
 	}
 	if testing.Short() {
