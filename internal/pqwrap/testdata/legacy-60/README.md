@@ -1,6 +1,6 @@
 # Frozen legacy-60 key-file fixtures
 
-Each subdirectory is one `dek.key` written by an older Keyorix binary, with
+Each subdirectory holds one `dek.key` (as `wrapped-dek.bin`, because `.gitignore` ignores `*.key`) written by an older Keyorix binary, with
 the KEK that wraps it (`kek.hex`) and the DEK it must yield (`dek.hex`).
 `TestLegacyKeyFileFixtures_StillLoad` opens every one of them on every test run.
 The legacy reader is kept indefinitely (pq-key-wrapping.md §13, Q9).

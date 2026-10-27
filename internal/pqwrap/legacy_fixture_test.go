@@ -36,7 +36,7 @@ func TestLegacyKeyFileFixtures_StillLoad(t *testing.T) {
 		name := e.Name()
 		t.Run(name, func(t *testing.T) {
 			dir := filepath.Join(root, name)
-			raw, err := os.ReadFile(filepath.Join(dir, "dek.key"))
+			raw, err := os.ReadFile(filepath.Join(dir, "wrapped-dek.bin"))
 			if err != nil {
 				t.Fatal(err)
 			}
