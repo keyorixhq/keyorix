@@ -66,7 +66,20 @@ mkdir -p "$MUTATION_STATE_DIR"
 # end, in addition to the relative-regression notice from notify-summary.sh.
 # The remaining survivors in these packages are equivalent mutants (see the item
 # commits), so the floor is the measured value, not 100.
-PACKAGES="internal/core|core
+#
+# The optional fifth field is the floor for a run with KEYORIX_TEST_PG_DSN set
+# (one database per package, MUTATION_WORKERS=1): the PostgreSQL-only tests
+# then run and cover mutants the run without a DSN reports as not covered, so
+# the two efficacies differ. With a DSN set it replaces the fourth field; a
+# package without one keeps the fourth (its result does not depend on the DSN,
+# or its Postgres floor is not measured yet).
+#
+# A quoted heredoc, not a double-quoted string: the comment lines below quote
+# code (backticks, double quotes), which a double-quoted string runs as command
+# substitutions -- under set -e the assignment then exited 127 before any
+# package was measured (FENCE-VERIFY-1; run_mutation_packages_test.py).
+PACKAGES=$(cat <<'EOF'
+internal/core|core
 internal/storage/store|storage-store
 internal/keyfiles|keyfiles||93.55
 internal/securefiles|securefiles||98.31
@@ -84,7 +97,9 @@ internal/netutil|netutil||100
 internal/auditverify|auditverify||99.55
 # internal/serverguard: efficacy 100% (35 killed, measured without KEYORIX_TEST_PG_DSN), 31 not covered: the PostgreSQL-only
 # paths (keyinit.go and the advisory-lock/pooler code), whose tests need a real Postgres
-internal/serverguard|serverguard||100
+# With a DSN (FENCE-VERIFY-1): the survivors are the release paths' 10 s unlock timeouts, the log-only branches of a failed
+# explicit unlock/ROLLBACK and keyinit.go's lock-lost error detail; none decides whether a lock is held
+internal/serverguard|serverguard||100|88.89
 # internal/solewriter: efficacy 99.26% (134 killed, 1 equivalent survivor: tracker.go:269 `len(t.UpdateIgnores) > 0`, because onlySets
 # with no columns is always false), 250 not covered: the PostgreSQL-backed paths (fence install, poller, lock), whose tests need a real Postgres
 internal/solewriter|solewriter||99.26
@@ -92,7 +107,9 @@ internal/solewriter|solewriter||99.26
 # password_policy.go:172 `at > 0`, each shadowed by a later length check), 4 not covered (the `iota + 1` constant and two switch case expressions)
 internal/core/rules|rules||98.06
 # internal/identity: efficacy 100% (3 killed), no survivors, nothing not covered
-internal/identity|identity||100"
+internal/identity|identity||100
+EOF
+)
 
 cd "$KEYORIX_REPO"
 
@@ -103,9 +120,12 @@ git reset --hard origin/main --quiet
 
 below_floor=0
 
-while IFS='|' read -r pkg label timeout_coef min_efficacy; do
+while IFS='|' read -r pkg label timeout_coef min_efficacy min_efficacy_pg; do
   [[ -z "$pkg" ]] && continue
   case "$pkg" in \#*) continue ;; *) ;; esac
+  if [[ -n "${KEYORIX_TEST_PG_DSN:-}" && -n "${min_efficacy_pg:-}" ]]; then
+    min_efficacy="$min_efficacy_pg"
+  fi
   timeout_args=()
   if [[ -n "${timeout_coef:-}" ]]; then
     timeout_args=(--timeout-coefficient "$timeout_coef")
