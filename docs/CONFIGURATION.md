@@ -1978,7 +1978,8 @@ certificate_expiry:
 
 ## audit_checkpoints
 
-An opt-in background scheduler that signs the audit hash-chain head (ADR-029) so
+A background scheduler, **on by default whenever encryption is configured**
+(`server/scheduler_audit_checkpoint.go`), that signs the audit hash-chain head (ADR-029) so
 **tail-truncation and genesis re-seed are detectable on-box**, not just via an
 off-box anchor. Each run records a `(chained_events, head_id, head_hash)`
 checkpoint with an HMAC keyed by a KEK-derived key (`deriveAuditCheckpointKey`, `internal/encryption/keymanager_lifecycle.go`) the database/DBA does not hold;
@@ -1988,6 +1989,11 @@ against the latest checkpoint. Single-replica-gated (ADR-039).
 **Requires encryption enabled** — the signing key is derived from the KEK (not the
 DEK, so a DEK rotation does not change it; a KEK rotation does), so with
 encryption off the scheduler logs a warning and does nothing.
+
+`enabled: true` is therefore redundant (kept for older configs). The only way to turn
+checkpoints off with encryption on is `insecure_disable_audit_checkpoints: true`; the
+server then logs a `WARNING` at every start that the trail is tamper-evident but a
+database-write attacker can recompute the hash chain undetected. Leave it `false`.
 
 ```yaml
 audit_checkpoints:
