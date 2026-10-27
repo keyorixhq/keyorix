@@ -423,6 +423,13 @@ lint:
 .PHONY: openapi-lint
 openapi-lint:
 	GOWORK=off GOFLAGS=-mod=readonly go tool -modfile=devtools/vacuum/go.mod vacuum lint -r .vacuum.yaml --no-update-check server/http/handlers/openapi.yaml
+# Architecture-growth guard: files-per-package and dependents-per-package ceilings
+# (scripts/ci/check-growth-guards.sh, baseline in docs/design/architecture-growth-baseline.md).
+.PHONY: check-growth check-growth-selftest
+check-growth:
+	scripts/ci/check-growth-guards.sh
+check-growth-selftest:
+	scripts/ci/check-growth-guards.sh --self-test
 test:
 	go test -race ./...
 test-cover:
