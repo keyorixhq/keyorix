@@ -163,8 +163,7 @@ const FeaturePill: React.FC<{ label: string; active: boolean }> = ({ label, acti
         borderColor: 'var(--border)',
         color: 'var(--text-muted)',
     };
-    const activeDotColor = isDark ? '#34d399' : '#16a34a';
-    const dotColor = active ? activeDotColor : 'var(--text-muted)';
+    const dotColor = active ? 'var(--success)' : 'var(--text-muted)';
     return (
         <div
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium border"

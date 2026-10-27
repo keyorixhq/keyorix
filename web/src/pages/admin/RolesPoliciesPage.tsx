@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { PlusIcon, PencilSquareIcon, TrashIcon, ShieldCheckIcon } from '@heroicons/react/24/outline';
 import { Button, Modal, Input, Spinner } from '../../components/ui';
+import { apiErrorMessage } from '../../services/client';
 import {
     useRoles,
     usePermissions,
@@ -19,9 +20,14 @@ interface RoleFormData {
     name: string;
     description: string;
     assignable_scope: RoleAssignableScope;
+    // Permission names, as the server takes them. A role needs at least one (min=1).
+    permissions: string[];
 }
 
-const emptyRoleForm: RoleFormData = { name: '', description: '', assignable_scope: 'project' };
+const emptyRoleForm: RoleFormData = { name: '', description: '', assignable_scope: 'project', permissions: [] };
+
+const sameNames = (a: readonly string[], b: readonly string[]): boolean =>
+    a.length === b.length && a.every((n) => b.includes(n));
 
 const isBuiltIn = (name: string): boolean => (BUILT_IN_ROLES as readonly string[]).includes(name);
 
@@ -68,6 +74,79 @@ const AssignableScopeSelect: React.FC<AssignableScopeSelectProps> = ({ id, value
     </div>
 );
 
+interface PermissionChecklistProps {
+    permissions: Permission[];
+    loading: boolean;
+    selected: string[];
+    onChange: (selected: string[]) => void;
+    disabled?: boolean;
+}
+
+// The permissions a role carries, by name. The server refuses a role with none, so the form
+// asks for at least one rather than sending an empty list.
+const PermissionChecklist: React.FC<PermissionChecklistProps> = ({
+    permissions,
+    loading,
+    selected,
+    onChange,
+    disabled = false,
+}) => {
+    const toggle = (name: string) =>
+        onChange(selected.includes(name) ? selected.filter((n) => n !== name) : [...selected, name]);
+    return (
+        <fieldset>
+            <legend className="block text-sm font-medium mb-1" style={{ color: 'var(--text-secondary)' }}>
+                Permissions
+            </legend>
+            {loading ? (
+                <div className="flex justify-center py-4">
+                    <Spinner />
+                </div>
+            ) : (
+                <div
+                    className="max-h-48 overflow-y-auto rounded-md border p-2 space-y-3"
+                    style={{ borderColor: 'var(--border-strong)' }}
+                >
+                    {Object.entries(groupByResource(permissions)).map(([resource, perms]) => (
+                        <div key={resource}>
+                            <h4
+                                className="text-xs font-semibold uppercase tracking-wider mb-1"
+                                style={{ color: 'var(--text-secondary)' }}
+                            >
+                                {resource}
+                            </h4>
+                            {perms.map((perm) => (
+                                <label key={perm.id} className="flex items-center gap-2 px-1 py-1 cursor-pointer">
+                                    <input
+                                        type="checkbox"
+                                        checked={selected.includes(perm.name)}
+                                        onChange={() => toggle(perm.name)}
+                                        disabled={disabled}
+                                        className="h-4 w-4 rounded-sm accent-blue-600"
+                                    />
+                                    <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
+                                        {perm.name}
+                                    </span>
+                                    {perm.description && (
+                                        <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                            {perm.description}
+                                        </span>
+                                    )}
+                                </label>
+                            ))}
+                        </div>
+                    ))}
+                </div>
+            )}
+            {!loading && selected.length === 0 && (
+                <p className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    Select at least one permission.
+                </p>
+            )}
+        </fieldset>
+    );
+};
+
 const groupByResource = (perms: Permission[]): Record<string, Permission[]> =>
     perms.reduce<Record<string, Permission[]>>((acc, p) => {
         const existing = acc[p.resource];
@@ -81,7 +160,7 @@ const groupByResource = (perms: Permission[]): Record<string, Permission[]> =>
 
 interface RoleCardProps {
     role: RoleWithPermissions;
-    onEdit: (role: Role) => void;
+    onEdit: (role: RoleWithPermissions) => void;
     onDelete: (role: Role) => void;
     onManage: (role: RoleWithPermissions) => void;
 }
@@ -168,7 +247,7 @@ export const RolesPoliciesPage: React.FC = () => {
     const [tab, setTab] = useState<Tab>('roles');
     const [formData, setFormData] = useState<RoleFormData>(emptyRoleForm);
     const [createOpen, setCreateOpen] = useState(false);
-    const [editRole, setEditRole] = useState<Role | null>(null);
+    const [editRole, setEditRole] = useState<RoleWithPermissions | null>(null);
     const [deleteRole, setDeleteRole] = useState<Role | null>(null);
     const [manageRoleId, setManageRoleId] = useState<number | null>(null);
 
@@ -190,8 +269,13 @@ export const RolesPoliciesPage: React.FC = () => {
         setCreateOpen(true);
     };
 
-    const openEdit = (role: Role) => {
-        setFormData({ name: role.name, description: role.description, assignable_scope: role.assignable_scope });
+    const openEdit = (role: RoleWithPermissions) => {
+        setFormData({
+            name: role.name,
+            description: role.description,
+            assignable_scope: role.assignable_scope,
+            permissions: role.permissions.map((p) => p.name),
+        });
         updateMutation.reset();
         setEditRole(role);
     };
@@ -201,14 +285,59 @@ export const RolesPoliciesPage: React.FC = () => {
         setDeleteRole(role);
     };
 
+    // The server requires a name, a non-empty description and at least one permission on create.
+    const createReady =
+        formData.name.trim() !== '' && formData.description.trim() !== '' && formData.permissions.length > 0;
+
+    // The server refuses every update to a built-in role (403, whatever the fields), so its
+    // Edit dialog is read-only and Save never sends the PUT.
+    const editBuiltIn = editRole !== null && isBuiltIn(editRole.name);
+    const permsChanged =
+        editRole !== null &&
+        !sameNames(
+            formData.permissions,
+            editRole.permissions.map((p) => p.name)
+        );
+    // The scope is sent only when the admin changed it: the server keeps the stored scope when the
+    // key is absent (read inside its transaction), while echoing the value read when the dialog
+    // opened would undo a narrowing another admin committed in between, as a widening.
+    const scopeChanged = editRole !== null && formData.assignable_scope !== editRole.assignable_scope;
+    // On update the permissions key is optional but, when sent, must hold at least one entry.
+    const editReady =
+        !editBuiltIn && formData.description.trim() !== '' && !(permsChanged && formData.permissions.length === 0);
+
     const handleCreate = () => {
-        if (!formData.name.trim()) return;
+        if (!createReady) return;
         createMutation.mutate(formData, { onSuccess: () => setCreateOpen(false) });
     };
 
     const handleUpdate = () => {
-        if (!editRole || !formData.name.trim()) return;
-        updateMutation.mutate({ id: editRole.id, body: formData }, { onSuccess: () => setEditRole(null) });
+        if (!editRole || editBuiltIn || !editReady) return;
+        const { description, permissions, assignable_scope } = formData;
+        const opened = editRole.permissions.map((p) => p.name);
+        updateMutation.mutate(
+            {
+                id: editRole.id,
+                // No name: the server has no rename. An unchanged scope is left out so the server
+                // keeps the current value.
+                body: {
+                    description,
+                    ...(scopeChanged ? { assignable_scope } : {}),
+                },
+                // Only this admin's own ticks and unticks: useUpdateRole applies them to the set the
+                // server holds at Save, so a permission revoked or granted by someone else while
+                // the dialog was open is not undone.
+                ...(permsChanged
+                    ? {
+                          permissionChanges: {
+                              added: permissions.filter((n) => !opened.includes(n)),
+                              removed: opened.filter((n) => !permissions.includes(n)),
+                          },
+                      }
+                    : {}),
+            },
+            { onSuccess: () => setEditRole(null) }
+        );
     };
 
     const handleDelete = () => {
@@ -423,18 +552,22 @@ export const RolesPoliciesPage: React.FC = () => {
                         value={formData.assignable_scope}
                         onChange={(assignable_scope) => setFormData((d) => ({ ...d, assignable_scope }))}
                     />
+                    <PermissionChecklist
+                        permissions={permissions ?? []}
+                        loading={permsLoading}
+                        selected={formData.permissions}
+                        onChange={(next) => setFormData((d) => ({ ...d, permissions: next }))}
+                    />
                     {createMutation.isError && (
-                        <p className="text-sm text-red-600">Failed to create role. Please try again.</p>
+                        <p className="text-sm text-red-600">
+                            {apiErrorMessage(createMutation.error, 'Failed to create role. Please try again.')}
+                        </p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setCreateOpen(false)}>
                             Cancel
                         </Button>
-                        <Button
-                            loading={createMutation.isPending}
-                            disabled={!formData.name.trim()}
-                            onClick={handleCreate}
-                        >
+                        <Button loading={createMutation.isPending} disabled={!createReady} onClick={handleCreate}>
                             Create
                         </Button>
                     </div>
@@ -444,11 +577,13 @@ export const RolesPoliciesPage: React.FC = () => {
             {/* Edit Role */}
             <Modal isOpen={editRole !== null} onClose={() => setEditRole(null)} title="Edit Role">
                 <div className="space-y-4">
-                    <Input
-                        label="Name"
-                        value={formData.name}
-                        onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
-                    />
+                    {editBuiltIn && (
+                        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                            Built-in roles cannot be edited.
+                        </p>
+                    )}
+                    {/* The server has no rename, so Name is shown read-only. */}
+                    <Input label="Name" value={formData.name} disabled />
                     <div>
                         <label
                             htmlFor="edit-role-description"
@@ -461,8 +596,9 @@ export const RolesPoliciesPage: React.FC = () => {
                             id="edit-role-description"
                             value={formData.description}
                             onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
+                            disabled={editBuiltIn}
                             rows={3}
-                            className="w-full px-3 py-2 rounded-md border text-sm resize-none"
+                            className="w-full px-3 py-2 rounded-md border text-sm resize-none disabled:opacity-60 disabled:cursor-not-allowed"
                             style={{
                                 backgroundColor: 'var(--bg-app)',
                                 borderColor: 'var(--border-strong)',
@@ -472,22 +608,27 @@ export const RolesPoliciesPage: React.FC = () => {
                     </div>
                     <AssignableScopeSelect
                         id="edit-role-assignable-scope"
-                        builtIn={editRole !== null && isBuiltIn(editRole.name)}
+                        builtIn={editBuiltIn}
                         value={formData.assignable_scope}
                         onChange={(assignable_scope) => setFormData((d) => ({ ...d, assignable_scope }))}
                     />
+                    <PermissionChecklist
+                        permissions={permissions ?? []}
+                        loading={permsLoading}
+                        selected={formData.permissions}
+                        onChange={(next) => setFormData((d) => ({ ...d, permissions: next }))}
+                        disabled={editBuiltIn}
+                    />
                     {updateMutation.isError && (
-                        <p className="text-sm text-red-600">Failed to update role. Please try again.</p>
+                        <p className="text-sm text-red-600">
+                            {apiErrorMessage(updateMutation.error, 'Failed to update role. Please try again.')}
+                        </p>
                     )}
                     <div className="flex justify-end gap-2 pt-2">
                         <Button variant="secondary" onClick={() => setEditRole(null)}>
                             Cancel
                         </Button>
-                        <Button
-                            loading={updateMutation.isPending}
-                            disabled={!formData.name.trim()}
-                            onClick={handleUpdate}
-                        >
+                        <Button loading={updateMutation.isPending} disabled={!editReady} onClick={handleUpdate}>
                             Save
                         </Button>
                     </div>
