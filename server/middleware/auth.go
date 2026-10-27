@@ -1909,8 +1909,9 @@ func forbiddenResponse(w http.ResponseWriter, message string) {
 // left unfixed here while gRPC failed closed, a caller could deliberately
 // trigger the same lookup error and pick whichever transport still failed
 // open, reopening exactly the transport-divergence bypass class this
-// function's own doc comment says it exists to prevent. A "project not
-// found" error is deliberately excluded from the fail-closed path: this
+// function's own doc comment says it exists to prevent. A definitive
+// storage.ErrProjectNotFound (matched with storage.IsProjectNotFound, never by
+// text: ERRLOSS-MFA-1) is deliberately excluded from the fail-closed path: this
 // scope was already permission-checked by the caller (finishScopedPermissionRequest
 // only reaches here on allowed==true), so a nonexistent project is not an
 // MFA-policy question — blocking it here would mask the handler's own
@@ -1926,7 +1927,9 @@ func ProjectMFABlocked(r *http.Request, cs *core.KeyorixCore, projectID uint) bo
 	}
 	req, err := cs.ProjectRequiresMFA(r.Context(), projectID)
 	if err != nil {
-		return !strings.Contains(err.Error(), "not found")
+		// ERRLOSS-MFA-1: classify by sentinel, never by text — any storage
+		// error whose message merely contained "not found" used to skip MFA.
+		return !storage.IsProjectNotFound(err)
 	}
 	return req
 }

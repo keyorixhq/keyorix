@@ -29,11 +29,14 @@ import (
 // previously collapsed BOTH cases into "environment %d not found"
 // unconditionally, so a transient storage failure during secret creation
 // surfaced to the caller as a clean 422 validation error instead of the 500
-// it actually is. No sentinel error type exists to check via errors.Is --
-// GetEnvironment returns a plain fmt.Errorf either way -- so this compares
-// the exact literal text GetEnvironment uses for the not-found case.
+// it actually is. ERRLOSS-MFA-1: GetEnvironment now wraps
+// storage.ErrEnvironmentNotFound for the not-found case, so this matches the
+// sentinel, not the text. The text match it replaces also sat on the role
+// scope guard, the machine-role environment check and the access-review
+// report, where a storage error worded "environment not found" was taken
+// for a missing environment.
 func isEnvironmentNotFoundErr(err error) bool {
-	return err != nil && err.Error() == "environment not found"
+	return storage.IsEnvironmentNotFound(err)
 }
 
 // withEnvironmentSecretGuard acquires storage.EnvironmentSecretGuardLockKey

@@ -817,7 +817,9 @@ func (c *KeyorixCore) GetEnvironmentInProject(ctx context.Context, projectID, id
 		return nil, err
 	}
 	if env.ProjectID != projectID {
-		return nil, fmt.Errorf("environment not found")
+		// Another project's environment reads exactly like a missing one
+		// (same sentinel, same text), so a caller cannot tell them apart.
+		return nil, fmt.Errorf("%w", storage.ErrEnvironmentNotFound)
 	}
 	return env, nil
 }

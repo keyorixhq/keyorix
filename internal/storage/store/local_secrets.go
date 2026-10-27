@@ -139,7 +139,7 @@ func (ls *LocalStorage) GetProject(ctx context.Context, id uint) (*models.Projec
 	var project models.Project
 	if err := ls.db.WithContext(ctx).First(&project, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("project not found")
+			return nil, fmt.Errorf("%w", storage.ErrProjectNotFound)
 		}
 		return nil, fmt.Errorf("failed to get project: %w", err)
 	}
@@ -157,7 +157,7 @@ func (ls *LocalStorage) GetProjectByName(ctx context.Context, name string) (*mod
 	var project models.Project
 	if err := ls.db.WithContext(ctx).Where("LOWER(name) = LOWER(?)", name).First(&project).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("project not found")
+			return nil, fmt.Errorf("%w", storage.ErrProjectNotFound)
 		}
 		return nil, fmt.Errorf("failed to get project by name: %w", err)
 	}
@@ -501,7 +501,7 @@ func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.En
 	var env models.Environment
 	if err := ls.db.WithContext(ctx).First(&env, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("environment not found")
+			return nil, fmt.Errorf("%w", storage.ErrEnvironmentNotFound)
 		}
 		return nil, fmt.Errorf("failed to get environment: %w", err)
 	}
