@@ -503,9 +503,12 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		// expired) after the grants above were applied. Best-effort revoke the
 		// membership/role(s) just granted so a revoked invitation can't leave a
 		// live grant behind, then fail closed — no session is minted below.
-		c.revokeInvitationGrants(ctx, inv, user.ID)
+		reverted := "reverted the grant(s) just made"
+		if !c.revokeInvitationGrants(ctx, inv, user.ID) {
+			reverted = "could NOT revert every grant just made (MANUAL CLEANUP REQUIRED, see invitation.accept_race_revoke_failed)"
+		}
 		c.auditProjectScoped(ctx, "invitation.accept_race_reverted", user.ID, inv.ProjectID,
-			fmt.Sprintf("invitation %d was concurrently revoked/resolved while %s (user %d) was accepting it; reverted the grant(s) just made", inv.ID, inv.Email, user.ID))
+			fmt.Sprintf("invitation %d was concurrently revoked/resolved while %s (user %d) was accepting it; %s", inv.ID, inv.Email, user.ID, reverted))
 		return nil, fmt.Errorf("%s: this invitation was revoked", i18n.T("ErrorValidation", nil))
 	}
 

@@ -387,7 +387,7 @@ func tx3Kinds() []grantKind {
 		// again, so secret.resumed commits with the status flip or not at all.
 		{name: "resume-secret",
 			prepare: func(w *satWorld) any {
-				s := w.f.secret(w.tag("g3-rsm"), w.f.adminID)
+				s := w.f.secret(w.tag("g3-rsm"), w.member.ID)
 				_, err := w.c.SuspendSecret(ctx, s.ID, w.f.adminID, "incident")
 				require.NoError(w.t, err)
 				return s
