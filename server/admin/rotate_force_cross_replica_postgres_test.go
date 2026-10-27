@@ -5,13 +5,15 @@ package admin
 // per host, so it does not see the other). Replica B is a live server: it holds
 // the shared presence lock and runs the DEK epoch guard. It encrypts a value
 // while its DEK is still the database's (allowed), stalls, and INSERTs it after
-// replica A's `admin encryption rotate --force` committed its sweep. That row
-// is under the old DEK, and the key set A distributes cannot decrypt it.
+// replica A's `admin encryption rotate --force` (or `admin encryption
+// auth-encryption rotate --force`, the same RotateDEKWithSweep) committed its
+// sweep. That row is under the old DEK, and the key set A distributes cannot
+// decrypt it.
 //
 // The epoch (#3337) fences B's NEW encryptions but cannot see a value encrypted
 // before the fence whose INSERT lands after the sweep's table lock. Only the
-// presence lock keeps that from happening, so `rotate` must not run without it
-// on PostgreSQL, --force or not. Gated on KEYORIX_TEST_PG_DSN.
+// presence lock keeps that from happening, so neither DEK-rotating command may
+// run without it on PostgreSQL, --force or not. Gated on KEYORIX_TEST_PG_DSN.
 
 import (
 	"fmt"
@@ -19,6 +21,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -30,6 +33,21 @@ import (
 )
 
 func TestAdminEncryptionRotate_Postgres_ForceNextToLiveReplica_NoStaleDEKRow(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		confirm *bool
+		run     func(*cobra.Command, []string) error
+	}{
+		{"rotate", &encRotateConfirm, runEncRotate},
+		{"auth-encryption rotate", &authRotateConfirm, runAuthRotate},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testRotateForceNextToLiveReplica(t, tc.confirm, tc.run)
+		})
+	}
+}
+
+func testRotateForceNextToLiveReplica(t *testing.T, confirm *bool, run func(*cobra.Command, []string) error) {
 	const pass = "test-passphrase-1234"
 	require.NoError(t, i18n.InitializeForTesting())
 	t.Setenv("KEYORIX_MASTER_PASSWORD", pass)
@@ -87,9 +105,9 @@ func TestAdminEncryptionRotate_Postgres_ForceNextToLiveReplica_NoStaleDEKRow(t *
 	enc, meta, err := replicaB.EncryptSecretWithAAD([]byte("written-by-replica-b"), aad)
 	require.NoError(t, err)
 
-	forceFlag, encRotateConfirm = true, true
-	defer func() { forceFlag, encRotateConfirm, lockBypass = false, false, "" }()
-	out, rotErr := captureStdout(t, func() error { return runEncRotate(nil, nil) })
+	forceFlag, *confirm = true, true
+	defer func() { forceFlag, *confirm, lockBypass = false, false, "" }()
+	out, rotErr := captureStdout(t, func() error { return run(nil, nil) })
 
 	// ...and its INSERT lands after A's rotation.
 	require.NoError(t, db.Create(&models.SecretVersion{SecretNodeID: node.ID, VersionNumber: 1, EncryptedValue: enc, EncryptionMetadata: models.JSON(meta)}).Error)

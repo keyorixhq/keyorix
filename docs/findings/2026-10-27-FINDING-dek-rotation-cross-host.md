@@ -53,9 +53,13 @@ DATA LOSS: replica B's version (id=1) committed after the rotation is under the 
 
 ## Fix
 
-`admin encryption rotate` on PostgreSQL refuses when `--force` let it past the
-exclusive database lock (`server/admin/rotate_force_guard.go`). A dry run is not
-refused. Closing the window inside the write itself would need the INSERT to re-check the
+`admin encryption rotate` and `admin encryption auth-encryption rotate` (the same
+`RotateDEKWithSweep`) on PostgreSQL refuse when `--force` let them past the exclusive
+database lock (`server/admin/rotate_force_guard.go`). A `rotate --dry-run` is not
+refused. The PG test runs once per command, and
+`server/admin/rotate_force_guard_family_test.go` fails on any admin function that reaches
+`RotateDEKWithSweep` without calling the refusal first (the first version of this fix
+guarded `rotate` only; REVIEW-3750-DEEP-1 F1). Closing the window inside the write itself would need the INSERT to re-check the
 epoch in its own transaction after the table lock, i.e. a change to the storage write
 path or a database trigger that can tell which DEK a ciphertext is under (the
 ciphertext metadata does not carry it; `key_version` is only set by a rotation). The

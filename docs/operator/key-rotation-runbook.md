@@ -49,8 +49,8 @@ does. That matters for the audit chain: section 5.
    before step 3 on SQLite; `verify-audit` on the configured database and `export-checkpoint`
    take the same exclusive lock). All rotation commands refuse to run beside a live server or
    another admin command. `--force` overrides that refusal: do not use it here. On
-   PostgreSQL `encryption rotate` refuses `--force` (`--force cannot override it for a DEK
-   rotation on PostgreSQL`): `dek.lock` only sees replicas on this host, and a replica on
+   PostgreSQL `encryption rotate` and `encryption auth-encryption rotate` refuse `--force`
+   (`--force cannot override it for a DEK rotation on PostgreSQL`): `dek.lock` only sees replicas on this host, and a replica on
    another host that is still running can commit a row under the old DEK after the sweep.
    `rotate-kek` and `migrate-provider` open the database for this lock (#3513) even though
    only key files change, so they fail with `cannot connect to the database to check for a
@@ -245,7 +245,7 @@ restored keys open every row, then start the servers with the restored key set o
 
 - **Do not use `--force`** to run a rotation beside a live server. The lock is what keeps a
   replica from writing under the key you are replacing (on PostgreSQL `encryption rotate`
-  refuses `--force` for that reason).
+  and `encryption auth-encryption rotate` refuse `--force` for that reason).
 - **Do not rotate with an admin binary older than the servers** (preflight step 7), and do not
   start a server holding the old key set after a rotation to "see if it still works".
 - **Do not delete `dek.key.pending`** after a failed or interrupted rotation: after a commit it is

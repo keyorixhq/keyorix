@@ -6,9 +6,10 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 )
 
-// refuseForcedDEKRotation refuses `admin encryption rotate` on PostgreSQL when
-// --force let it past the exclusive database lock (lockBypass set by
-// acquireDatabaseLock). A dry run reads only and is not refused.
+// refuseForcedDEKRotation refuses a DEK rotation (`admin encryption rotate`
+// and `admin encryption auth-encryption rotate`, both RotateDEKWithSweep) on
+// PostgreSQL when --force let it past the exclusive database lock (lockBypass
+// set by acquireDatabaseLock). A dry run reads only and is not refused.
 //
 // Why (DEK-ROTATE-SAFETY-1 item 2, DEK-ROTATION-CROSS-HOST): dek.lock is a
 // flock on one host's key directory, so with several replicas on one database
@@ -18,7 +19,9 @@ import (
 // sweep's table lock commits under the old DEK once the sweep has committed,
 // and it is undecryptable once the old DEK is gone. Nothing short of the
 // presence lock closes that window, so --force cannot drop it for a rotation.
-// Guard: rotate_force_cross_replica_postgres_test.go (pg-gated).
+// Guards: rotate_force_cross_replica_postgres_test.go (pg-gated, both
+// commands) and rotate_force_guard_family_test.go (every admin function that
+// reaches RotateDEKWithSweep calls this first).
 func refuseForcedDEKRotation(cfg *config.Config, dryRun bool) error {
 	if lockBypass == "" || dryRun {
 		return nil

@@ -134,6 +134,11 @@ func runAuthRotate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer lock.Release() //nolint:errcheck
+	// A full DEK rotation (RotateDEKWithSweep), like `admin encryption rotate`:
+	// --force cannot drop the presence lock for it on PostgreSQL.
+	if err := refuseForcedDEKRotation(cfg, false); err != nil {
+		return err
+	}
 	if err := encryptionops.RotateAuthEncryptionWithConfig(cfg, authRotateConfirm, encPassphraseSource); err != nil {
 		return err
 	}
