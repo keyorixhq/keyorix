@@ -125,6 +125,21 @@ reason. Compare against backups and the SIEM copy (`keyorix_siem_forwards_total`
 it keeps alerting until the cause is understood. Design:
 [audit incremental verification](../../docs/specs/audit-incremental-verification.md).
 
+## KeyorixAuditVerifyStateDiscontinuity
+
+**Means.** The persisted audit verification state was deleted, garbled, signed under another key
+epoch, claimed rows past the chain head, or was an older row put back over a recorded break. That
+state held the proof of what was certified, so the server cannot say whether rows were lost before
+this point. `keyorix_audit_verify_failure_recorded` is 1 too (KeyorixAuditChainBreakRecorded). The flag
+is sticky: no verification, `--full` included, clears it, so this alert keeps firing.
+**Check.** The `system.audit_verification_state_discontinuity` audit event names the kind
+(`deleted`, `garbled`, `other key epoch`, `key transition`, `past the chain head`,
+`before a recorded break`). A `before a recorded break` kind can come from an older replica saving
+the state during a rolling upgrade or a binary rollback.
+**Do.** Freeze and keep evidence before touching anything, then treat it like a truncation: follow
+the [audit-chain break runbook](../../docs/operator/audit-chain-break-runbook.md) (sections 2, 5, 6
+and 7) and compare against an external anchor, a backup or the high-water witness file.
+
 ## KeyorixAuditVerifyStateRejected
 
 **Means.** The stored verification state failed its signature or looked replayed or rolled back, so
