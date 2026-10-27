@@ -84,7 +84,7 @@ func (c *KeyorixCore) PlaceLegalHold(ctx context.Context, actorID uint, reason s
 	if adminRole == "" {
 		c.writeAuditEventFailed(ctx, EventLegalHoldPlaced, actorPtr(actorID), nil, "",
 			fmt.Sprintf("legal hold placement DENIED: actor %d is not an admin-tier principal", actorID))
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
 			"only an admin-tier principal may place a legal hold")
 	}
 	if active, err := c.storage.GetActiveLegalHold(ctx); err != nil {
@@ -155,7 +155,7 @@ func (c *KeyorixCore) LiftLegalHold(ctx context.Context, actorID uint, reason st
 		if adminRole == "" {
 			c.writeAuditEventFailed(ctx, EventLegalHoldLifted, actorPtr(actorID), nil, "",
 				fmt.Sprintf("legal hold %d lift DENIED: actor %d is neither the placer (%d) nor an admin-tier principal", hold.ID, actorID, hold.PlacedBy))
-			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
 				"only the placing admin or an admin-tier principal may lift this legal hold")
 		}
 	}

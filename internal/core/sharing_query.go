@@ -144,7 +144,7 @@ func (c *KeyorixCore) ListSecretSharesWithPermissionCheck(ctx context.Context, s
 	if isLiveOwner, err := c.requireLiveOwnerAuthority(ctx, secret, userID); err != nil {
 		return nil, err
 	} else if !isLiveOwner {
-		return nil, fmt.Errorf("not authorized to view shares for this secret")
+		return nil, permissionDeniedf("not authorized to view shares for this secret")
 	}
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())
 	if err != nil {

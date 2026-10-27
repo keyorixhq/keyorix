@@ -206,5 +206,5 @@ var (
 	// codes.Internal and being mistaken by clients/monitoring for a transient failure.
 	// Deliberately worded without "permission"/"denied"/etc so it can't accidentally
 	// satisfy mapMachineError's substring switch and mask a reliance on errors.Is.
-	ErrMachinePrivilegeCeilingDenied = errors.New("machine identity privilege ceiling exceeded")
+	ErrMachinePrivilegeCeilingDenied = newPermissionSentinel("machine identity privilege ceiling exceeded")
 )

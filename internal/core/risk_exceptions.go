@@ -75,7 +75,7 @@ var (
 // PR #1695 fixed for the identically-shaped DeleteSoDPolicy but never swept
 // to this sibling site.
 var (
-	ErrRiskExceptionPermissionDenied = errors.New("risk exception permission denied")
+	ErrRiskExceptionPermissionDenied = newPermissionSentinel("risk exception permission denied")
 	ErrRiskExceptionNotFoundPublic   = errors.New("risk exception not found")
 )
 
@@ -84,9 +84,11 @@ type riskExceptionClassifiedError struct {
 	target error
 }
 
-func (e *riskExceptionClassifiedError) Error() string        { return e.err.Error() }
-func (e *riskExceptionClassifiedError) Unwrap() error        { return e.err }
-func (e *riskExceptionClassifiedError) Is(target error) bool { return target == e.target }
+func (e *riskExceptionClassifiedError) Error() string { return e.err.Error() }
+func (e *riskExceptionClassifiedError) Unwrap() error { return e.err }
+func (e *riskExceptionClassifiedError) Is(target error) bool {
+	return target == e.target || errors.Is(e.target, target)
+}
 
 func wrapRiskExceptionPermissionDenied(err error) error {
 	return &riskExceptionClassifiedError{err: err, target: ErrRiskExceptionPermissionDenied}
