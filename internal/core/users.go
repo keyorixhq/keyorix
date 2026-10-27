@@ -122,8 +122,8 @@ func (c *KeyorixCore) buildUserForCreate(ctx context.Context, req *CreateUserReq
 	// weak password, which is then exposed to online guessing. The policy's user context
 	// also catches username/email-in-password. ADR-025.
 	policyUser := &models.User{Username: req.Username, Email: req.Email, DisplayName: displayName}
-	if err := c.passwordPolicy.Validate(req.Password, policyUser); err != nil {
-		return nil, "", fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	if refusal := c.refuseUnmetRules(req.Password, policyUser); refusal != nil {
+		return nil, "", refusal
 	}
 
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), int(bcryptCost.Load()))

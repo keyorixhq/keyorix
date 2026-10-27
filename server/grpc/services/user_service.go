@@ -379,6 +379,13 @@ func mapUserError(err error) error {
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
 		return status.Error(codes.InvalidArgument, scopeMsg)
 	}
+	// PASSWORD-POLICY-FAMILY-1: a refused new password names the rule it broke, as
+	// HTTP does, so the caller can pick another. The text is fixed policy wording
+	// from core (never derived from the password), so it does not undo GRPC-003's
+	// concern below about echoing raw error text.
+	if ruleMsg, ok := core.PolicyRefusalMessage(err); ok {
+		return status.Error(codes.InvalidArgument, ruleMsg)
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "not found"):
