@@ -255,6 +255,11 @@ func hintFor(action string, statusCode int, eb apiErrorBody) string {
 // the caller has no MFA enrolled (server/middleware/auth.go).
 const errCodeMFAEnrollmentRequired = "MFAEnrollmentRequired"
 
+// errCodePasswordChangeRequired is the code of the same 403 when the account must
+// change its password first: a one-time password (`user create --one-time-password`,
+// `admin recover-admin`). Its message may also ask for MFA enrolment.
+const errCodePasswordChangeRequired = "PasswordChangeRequired"
+
 // Codes the server sends when a secret's own state refuses a value read
 // (ERRMAP-1, server/http/handlers/openapi.yaml's SecretReadRefused): 403 for the
 // schedule, 409 for the others.
@@ -280,6 +285,9 @@ func nextStepHint(eb apiErrorBody) string {
 		return " Next step: this server requires multi-factor authentication. " +
 			"Enrol MFA with `keyorix mfa enroll`, then `keyorix mfa activate`, " +
 			"then log in again with `keyorix login` (it prompts for the code)."
+	case errCodePasswordChangeRequired:
+		return " Next step: set your own password with `keyorix change-password`; " +
+			"if the message above also asks for a second factor, enrol it with `keyorix mfa enroll`, then `keyorix mfa activate`."
 	case errCodeSecretOutsideSchedule:
 		return " Next step: read it inside its access window " +
 			"(`keyorix secret get-schedule <secret-id>` shows it)."
