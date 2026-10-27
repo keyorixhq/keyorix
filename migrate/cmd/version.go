@@ -12,8 +12,8 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the keyorix-migrate version",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		fmt.Printf("keyorix-migrate %s\n", migrateversion.Version)
-		return nil
+		_, err := fmt.Fprintf(cmd.OutOrStdout(), "keyorix-migrate %s\n", migrateversion.Version)
+		return err
 	},
 }
 
