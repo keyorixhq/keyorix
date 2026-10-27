@@ -45,6 +45,7 @@ cli	keyorix anomalies escalation run	cli/cmd/anomalies.go	runEscalationRun	none	
 cli	keyorix anomalies list	cli/cmd/anomalies.go	runAnomalyList	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit	server/admin/audit.go	runAdminAudit	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit	cli/cmd/audit.go		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
+cli	keyorix audit accept-loss	server/admin/audit_accept_loss.go	runAcceptLoss	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit checkpoint	cli/cmd/audit.go	runAuditCheckpoint	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit export	cli/cmd/audit.go	runAuditExport	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit export-checkpoint	server/admin/audit_export_checkpoint.go	runExportCheckpoint	C	audit_export_checkpoint.go runExportCheckpoint: primary artifact write is f.Write(data) to the --output file, committed and reported to the operator first; recordAdminAction is a trailing audit-log write after the export already succeeded on disk -- its failure cannot un-write or corrupt the already-exported checkpoint file.
