@@ -156,6 +156,9 @@ func assetComponent(a Asset, algRef string) cdxComponent {
 			{"keyorix:risk-reasons", strings.Join(a.Risk.Reasons, "; ")},
 		},
 	}
+	if a.CreatedAtEstimated {
+		c.Properties = append(c.Properties, cdxProperty{"keyorix:created-at-estimated", "true"})
+	}
 	if a.Certificate != nil {
 		ci := a.Certificate
 		c.CryptoProperties = cdxCrypto{AssetType: "certificate", Certificate: &cdxCertificate{

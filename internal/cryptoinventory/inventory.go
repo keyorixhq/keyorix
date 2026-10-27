@@ -21,14 +21,17 @@ type Inputs struct {
 	FallbackProviders []string
 	DEKPath           string
 	DEKCreatedAt      *time.Time
-	TLS               []TLSInput
-	Recovery          *RecoveryInput
-	WebAuthnEnabled   bool
-	WebAuthnRPID      string
-	OIDCIssuers       []string
-	SAML              []SAMLInput
-	Database          *DatabaseTLSInput
-	Backup            *BackupInput
+	// DEKCreatedAtEstimated is true when DEKCreatedAt is the key file's mtime
+	// rather than a time the DEK epoch or key manifest recorded.
+	DEKCreatedAtEstimated bool
+	TLS                   []TLSInput
+	Recovery              *RecoveryInput
+	WebAuthnEnabled       bool
+	WebAuthnRPID          string
+	OIDCIssuers           []string
+	SAML                  []SAMLInput
+	Database              *DatabaseTLSInput
+	Backup                *BackupInput
 }
 
 // SAMLInput is one SAML provider's IdP metadata (public: entity, endpoints and
@@ -202,8 +205,13 @@ func dekAsset(in Inputs) Asset {
 	a := Asset{ID: "dek", Name: "Data encryption key (DEK)", Class: ClassDEK,
 		Primitive: "ae", Algorithm: "AES-256-GCM", KeySizeBits: 256, CreatedAt: in.DEKCreatedAt,
 		Storage: "file " + path + ", wrapped with AES-256-GCM under the KEK"}
-	if in.DEKCreatedAt != nil {
-		a.Notes = "created_at is the key file's last-modified time (creation or last rotation)"
+	switch {
+	case in.DEKCreatedAt == nil:
+	case in.DEKCreatedAtEstimated:
+		a.CreatedAtEstimated = true
+		a.Notes = "created_at is estimated: the key file's last-modified time (creation, last rotation or KEK rewrap)"
+	default:
+		a.Notes = "created_at is the time the DEK epoch was last written in the database (DEK creation, or its last rotation)"
 	}
 	return a
 }

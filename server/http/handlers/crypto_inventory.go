@@ -13,6 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/cryptoinventory"
+	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/version"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -112,13 +113,8 @@ func cryptoInventoryInputs(ctx context.Context, cfg *config.Config, coreService 
 	for _, fb := range enc.KeyProvider.Fallbacks {
 		in.FallbackProviders = append(in.FallbackProviders, fb.Type)
 	}
-	if enc.Enabled && enc.DEKPath != "" {
-		// The key file's mtime is the closest thing to a creation date (it moves on
-		// DEK rotation and KEK rewrap). Only os.Stat: the file is never opened.
-		if st, err := os.Stat(enc.DEKPath); err == nil {
-			t := st.ModTime().UTC()
-			in.DEKCreatedAt = &t
-		}
+	if enc.Enabled {
+		in.DEKCreatedAt, in.DEKCreatedAtEstimated = dekCreatedAt(ctx, enc.DEKPath, coreService.Storage())
 	}
 
 	// A listener that is switched off holds no live certificate, whatever its
@@ -212,4 +208,45 @@ func samlInput(p config.SSOProviderConfig) cryptoinventory.SAMLInput {
 		in.Metadata = b
 	}
 	return in
+}
+
+// systemMetadataTimes is the optional storage capability behind dekCreatedAt
+// (store.SystemMetadataTimes), asserted structurally so the handler package does
+// not import the store and the Storage interface does not grow a method for it.
+type systemMetadataTimes interface {
+	SystemMetadataUpdatedAt(ctx context.Context, key string) (time.Time, bool, error)
+}
+
+// dekCreatedAt dates the DEK. The DEK epoch row (PostgreSQL) is written when the
+// epoch is seeded and again when a rotation completes, so a settled epoch's
+// updated_at is the best recorded time for the current DEK; the key-set manifest
+// records generations and hashes, no time. Without that row (SQLite, a backend
+// that cannot report row times, a rotation in flight, a read error) it falls back
+// to the key file's mtime, which also moves on KEK rewrap, and says it is
+// estimated. Only the epoch row's metadata and os.Stat are used: the key file is
+// never opened.
+func dekCreatedAt(ctx context.Context, dekPath string, st interface {
+	GetSystemMetadata(ctx context.Context, key string) (string, bool, error)
+}) (t *time.Time, estimated bool) {
+	if tm, ok := st.(systemMetadataTimes); ok {
+		v, found, err := st.GetSystemMetadata(ctx, encryption.DEKEpochMetadataKey)
+		switch {
+		case err != nil:
+			log.Printf("crypto inventory: dek epoch: %v", err)
+		case found && v != "" && !encryption.DEKEpochIsRotating(v):
+			if at, ok, err := tm.SystemMetadataUpdatedAt(ctx, encryption.DEKEpochMetadataKey); err != nil {
+				log.Printf("crypto inventory: dek epoch time: %v", err)
+			} else if ok && !at.IsZero() {
+				return &at, false
+			}
+		}
+	}
+	if dekPath == "" {
+		return nil, false
+	}
+	if fi, err := os.Stat(dekPath); err == nil {
+		m := fi.ModTime().UTC()
+		return &m, true
+	}
+	return nil, false
 }

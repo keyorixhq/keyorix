@@ -245,3 +245,27 @@ func TestCBOM_GapAssetsValidateAndCarryNoKeyMaterial(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, validate(t, sch, doc), "a plaintext-backup asset ('none' / unknown primitive) must validate too")
 }
+
+func TestBuild_DEKCreatedAtEstimatedIsMarked(t *testing.T) {
+	sch := compileCycloneDX16(t)
+	at := riskNow.Add(-90 * 24 * time.Hour)
+	for _, tc := range []struct {
+		name      string
+		estimated bool
+	}{{"recorded", false}, {"estimated", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			inv := Build(Inputs{EncryptionEnabled: true, DEKCreatedAt: &at, DEKCreatedAtEstimated: tc.estimated}, DefaultPolicy(), riskNow)
+			dek := assetByID(t, inv, "dek")
+			assert.Equal(t, tc.estimated, dek.CreatedAtEstimated)
+			assert.Equal(t, tc.estimated, strings.Contains(dek.Notes, "estimated"))
+
+			doc, err := inv.CBOM(CBOMOptions{})
+			require.NoError(t, err)
+			require.NoError(t, validate(t, sch, doc))
+			assert.Equal(t, tc.estimated, strings.Contains(string(doc), "keyorix:created-at-estimated"))
+		})
+	}
+	// no DEK time at all: nothing is marked
+	inv := Build(Inputs{EncryptionEnabled: true, DEKCreatedAtEstimated: true}, DefaultPolicy(), riskNow)
+	assert.False(t, assetByID(t, inv, "dek").CreatedAtEstimated)
+}
