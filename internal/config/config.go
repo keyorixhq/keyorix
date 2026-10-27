@@ -336,22 +336,14 @@ func (c *Config) SecretFilePaths() []string {
 	return paths
 }
 
-// EnforceSecretFilePermissions applies the key-material permission policy
-// (secretenv.CheckPermissions: 0600/0400, plus group-read only for an
-// orchestrator-owned file in a group the process holds) to the files named by
-// SecretFilePaths. It is the one implementation behind both the server's boot
-// check and every `keyorix-server admin` command, so the two refuse the same
-// file with the same message.
-//
-// Key-material secrets (master password, KEK, Shamir shares) are refused
-// unconditionally where they are read (secretenv.LookupChecked, no grace); here a
-// key-material file gets the same warn-or-refuse decision, but its message never
-// offers the override. Everything follows the ADR-112 upgrade grace like the key
-// files: refuse when security.enable_file_permission_check is on and
-// allow_unsafe_file_permissions is off, otherwise warn. graceSoftened is true
-// when the upgrade grace turned a refusal into a warning, so the caller can
-// avoid recording that boot as "enforced".
-func (c *Config) EnforceSecretFilePermissions() (graceSoftened bool, err error) {
+// SecretFilePermissionProblems judges every file SecretFilePaths names by the
+// key-material permission policy (secretenv's owner + mode rule) and returns one
+// message per file that fails it: the *_FILE variable or config key, the path
+// (through secretenv.DescribeFile, so a relative one is not shown) and the
+// reason -- never the contents. keyProblems are the key-material secrets'. It
+// applies no policy: EnforceSecretFilePermissions refuses or warns on the result,
+// and `admin validate --posture` names the files in its deviation line (F7).
+func (c *Config) SecretFilePermissionProblems() (problems, keyProblems []string) {
 	keyMaterial := map[string]bool{} // the key-material secrets, by variable name
 	for _, n := range c.keyMaterialSecretEnvNames() {
 		keyMaterial[n] = true
@@ -359,7 +351,6 @@ func (c *Config) EnforceSecretFilePermissions() (graceSoftened bool, err error) 
 	// Each file is named by the variable or config key it came from, through
 	// secretenv.DescribeFile (CheckPermissionsNamed): a relative path is never
 	// shown, it may be the secret itself (SECRETENV-REVIEW-1 F4).
-	var problems, keyProblems []string
 	seen := map[string]bool{}
 	for _, fv := range secretenv.FileVars(c.secretEnvNames()...) {
 		if seen[fv.Path] {
@@ -396,6 +387,26 @@ func (c *Config) EnforceSecretFilePermissions() (graceSoftened bool, err error) 
 			problems = append(problems, err.Error())
 		}
 	}
+	return problems, keyProblems
+}
+
+// EnforceSecretFilePermissions applies the key-material permission policy
+// (secretenv.CheckPermissions: 0600/0400, plus group-read only for an
+// orchestrator-owned file in a group the process holds) to the files named by
+// SecretFilePaths. It is the one implementation behind both the server's boot
+// check and every `keyorix-server admin` command, so the two refuse the same
+// file with the same message.
+//
+// Key-material secrets (master password, KEK, Shamir shares) are refused
+// unconditionally where they are read (secretenv.LookupChecked, no grace); here a
+// key-material file gets the same warn-or-refuse decision, but its message never
+// offers the override. Everything follows the ADR-112 upgrade grace like the key
+// files: refuse when security.enable_file_permission_check is on and
+// allow_unsafe_file_permissions is off, otherwise warn. graceSoftened is true
+// when the upgrade grace turned a refusal into a warning, so the caller can
+// avoid recording that boot as "enforced".
+func (c *Config) EnforceSecretFilePermissions() (graceSoftened bool, err error) {
+	problems, keyProblems := c.SecretFilePermissionProblems()
 	if len(problems)+len(keyProblems) == 0 {
 		return false, nil
 	}
