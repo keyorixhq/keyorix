@@ -115,6 +115,7 @@ var secretNodesSweepExemptFiles = map[string]string{
 var secretNodesSoftDeleteAllowlist = map[string]string{
 	"internal/storage/store/local_secrets.go:deleteProjectCascade":                "revokes ShareRecords for every secret in the project via a subquery that must ALSO reach the secrets this same transaction just soft-deleted (#119 residual / #370) -- filtering deleted_at would skip exactly the rows it exists for",
 	"internal/storage/store/local_secret_acl.go:DeleteSecretACLsByUserAndProject": "offboarding (RemoveProjectMember, CWE-284): removes the user's ACL grants on soft-deleted secrets too -- otherwise a later restore would silently revive access for a user no longer in the project",
+	"internal/storage/store/secret_node_cache_epoch_integrity.go:bumpAllSecretNodeCacheEpochsTx": "invalidates the node cache of every secret after the cache-epoch trigger was tampered with -- a soft-deleted secret that is restored later must not be served from an entry cached before the tamper, so filtering deleted_at would skip exactly the rows it exists for",
 }
 
 // secretNodesSweepKnownSites are functions the recogniser must find as

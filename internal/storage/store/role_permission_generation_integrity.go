@@ -235,28 +235,44 @@ func (c *rolePermGenerationIntegrityChecker) check(ctx context.Context) (bool, e
 	return true, nil
 }
 
-// StartRolePermissionsGenerationIntegrityCheck runs the check every
-// rolePermGenerationIntegrityInterval in the background, the first one now.
-// PostgreSQL only (a no-op on SQLite); Close stops it. A failed check is
-// logged and retried at the next tick, never fatal: the per-statement proof
-// still fails closed for a missing or disabled trigger in the meantime.
+// triggerIntegrityCheck is one check the periodic job runs each tick.
+type triggerIntegrityCheck struct {
+	name  string
+	check func(context.Context) (bool, error)
+}
+
+// StartRolePermissionsGenerationIntegrityCheck runs the trigger integrity
+// checks every rolePermGenerationIntegrityInterval in the background, the first
+// one now: the role-permission generation triggers and the secret_nodes
+// cache-epoch trigger, each with its own tick timeout so one cannot starve the
+// other. (The name is the factory's call site; one job and one Close path serve
+// both.) PostgreSQL only (a no-op on SQLite); Close stops it. A failed check is
+// logged and retried at the next tick, never fatal: the per-statement proofs
+// still fail closed for a missing or disabled trigger in the meantime.
 func (ls *LocalStorage) StartRolePermissionsGenerationIntegrityCheck(logf func(string, ...any)) {
 	if ls.db.Dialector.Name() != "postgres" || ls.rolePermIntegrity != nil {
 		return
 	}
 	ctx, job := newBackgroundJob()
 	ls.rolePermIntegrity = job
-	c := &rolePermGenerationIntegrityChecker{ls: ls, logf: logf}
+	rp := &rolePermGenerationIntegrityChecker{ls: ls, logf: logf}
+	ce := &secretNodeCacheEpochIntegrityChecker{ls: ls, logf: logf}
+	checks := []triggerIntegrityCheck{
+		{"role-permission generation", rp.check},
+		{"secret_nodes cache-epoch", ce.check},
+	}
 	go func() {
 		defer job.exit()
 		tick := time.NewTicker(rolePermGenerationIntegrityInterval)
 		defer tick.Stop()
 		for {
-			tctx, tcancel := context.WithTimeout(ctx, rolePermGenerationIntegrityTickTimeout)
-			_, err := c.check(tctx)
-			tcancel()
-			if err != nil && ctx.Err() == nil {
-				logf("role-permission generation integrity check: %v", err)
+			for _, c := range checks {
+				tctx, tcancel := context.WithTimeout(ctx, rolePermGenerationIntegrityTickTimeout)
+				_, err := c.check(tctx)
+				tcancel()
+				if err != nil && ctx.Err() == nil {
+					logf("%s integrity check: %v", c.name, err)
+				}
 			}
 			select {
 			case <-ctx.Done():

@@ -19,6 +19,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -54,6 +55,30 @@ const (
 // future key picked the same careless way would have to spell out "KEYA" plus
 // a 4-letter tag that ALSO happens to already exist, not guess a 19-bit int.
 const postgresCacheEpochLockKey = 0x4B455941_4345504F // "KEYACEPO"
+
+// postgresSecretNodeCacheEpochFuncBody is the PL/pgSQL body of
+// secretNodeCacheEpochFunc exactly as pg_proc.prosrc stores it: the installer
+// creates it and the integrity check compares the installed function against
+// it, so the two cannot drift.
+const postgresSecretNodeCacheEpochFuncBody = `
+BEGIN
+  NEW.cache_epoch := OLD.cache_epoch + 1;
+  RETURN NEW;
+END;
+`
+
+// pgSecretNodeCacheEpochFuncOK is true, over pg_proc p joined to pg_language l,
+// when p is exactly the function this file installs: the body bound to its one
+// placeholder, plpgsql, the pinned search_path and no other per-function
+// setting, not SECURITY DEFINER (pgRolePermGenerationFuncOK's twin).
+const pgSecretNodeCacheEpochFuncOK = "p.proname = '" + secretNodeCacheEpochFunc + "' AND p.pronargs = 0 AND p.prosrc = ? AND l.lanname = 'plpgsql' AND " + pgTriggerFuncConfigOK + " AND NOT p.prosecdef"
+
+// pgSecretNodeCacheEpochTriggerDefOK is true, over pg_trigger t, when t has the
+// shape this file creates: BEFORE, FOR EACH ROW, on UPDATE alone (tgtype
+// 1|2|16), no UPDATE OF column list, no WHEN clause, no arguments, not a
+// constraint trigger. Re-created as AFTER, or with a WHEN clause, it passes the
+// presence proof but stops stamping some updates.
+const pgSecretNodeCacheEpochTriggerDefOK = "t.tgtype = 19 AND t.tgnargs = 0 AND t.tgqual IS NULL AND t.tgconstraint = 0 AND COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) = 0"
 
 // sqliteCacheEpochTriggerSQL is the EXACT text of the SQLite trigger, kept as
 // one constant so the convergence check below can compare it byte-for-byte
@@ -185,21 +210,47 @@ func ensurePostgresCacheEpochTrigger(tx *gorm.DB) error {
 	// Dollar-quoted with a NAMED tag rather than bare $$, so the body can never
 	// be mistaken for a pgx $N placeholder. The search_path is pinned
 	// (pgTriggerFuncSetClause): the body's operator then resolves the same way
-	// whatever the writing session's search_path is. CREATE OR REPLACE on
-	// every boot converges an older release's unpinned function.
-	if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + secretNodeCacheEpochFunc + `() RETURNS trigger
-LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$
-BEGIN
-  NEW.cache_epoch := OLD.cache_epoch + 1;
-  RETURN NEW;
-END;
-$keyorix$`).Error; err != nil {
-		return fmt.Errorf("failed to create %s(): %w", secretNodeCacheEpochFunc, err)
+	// whatever the writing session's search_path is.
+	//
+	// Rewritten only when missing or different (an older release's unpinned
+	// function, or tampering), like the role-permission installer: a rewrite of
+	// a correct function gives its pg_proc row a new xmin on every boot of every
+	// replica, which the integrity check (secret_node_cache_epoch_integrity.go)
+	// reads as tampering and answers with an epoch flush on every replica.
+	var current []bool
+	if err := tx.Raw(`SELECT `+pgSecretNodeCacheEpochFuncOK+` FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_language l ON l.oid = p.prolang
+WHERE p.proname = '`+secretNodeCacheEpochFunc+`' AND p.pronargs = 0
+  AND p.pronamespace = (SELECT n.oid FROM pg_catalog.pg_namespace n WHERE n.nspname = pg_catalog.current_schema())`,
+		postgresSecretNodeCacheEpochFuncBody).Scan(&current).Error; err != nil {
+		return fmt.Errorf("failed to read %s() definition: %w", secretNodeCacheEpochFunc, err)
 	}
-	var state []string
-	if err := tx.Raw("SELECT tgenabled::text FROM pg_trigger WHERE NOT tgisinternal AND tgrelid = 'secret_nodes'::regclass AND tgname = ?",
+	if len(current) == 0 || !current[0] {
+		if len(current) > 0 {
+			log.Printf("secret_nodes cache epoch: replacing a %s() whose definition differs from this release's (an upgrade from an older release, or tampering)", secretNodeCacheEpochFunc)
+		}
+		if err := tx.Exec(`CREATE OR REPLACE FUNCTION ` + secretNodeCacheEpochFunc + `() RETURNS trigger
+LANGUAGE plpgsql ` + pgTriggerFuncSetClause + ` AS $keyorix$` + postgresSecretNodeCacheEpochFuncBody + `$keyorix$`).Error; err != nil {
+			return fmt.Errorf("failed to create %s(): %w", secretNodeCacheEpochFunc, err)
+		}
+	}
+	var state []struct {
+		State string
+		DefOK bool
+	}
+	if err := tx.Raw(`SELECT t.tgenabled::text AS state, (`+pgSecretNodeCacheEpochTriggerDefOK+` AND t.tgfoid = '`+secretNodeCacheEpochFunc+`()'::regprocedure) AS def_ok
+FROM pg_catalog.pg_trigger t WHERE NOT t.tgisinternal AND t.tgrelid = 'secret_nodes'::regclass AND t.tgname = ?`,
 		SecretNodeCacheEpochTrigger).Scan(&state).Error; err != nil {
 		return fmt.Errorf("failed to read %s state: %w", SecretNodeCacheEpochTrigger, err)
+	}
+	if len(state) > 0 && !state[0].DefOK {
+		// Same name, different trigger (AFTER, on fewer events, with a WHEN
+		// clause, calling another function): replaced inside this transaction,
+		// so no other session sees the table without one.
+		log.Printf("secret_nodes cache epoch: re-creating %s, whose definition differs from this release's", SecretNodeCacheEpochTrigger)
+		if err := tx.Exec("DROP TRIGGER " + SecretNodeCacheEpochTrigger + " ON secret_nodes").Error; err != nil {
+			return fmt.Errorf("failed to drop outdated %s: %w", SecretNodeCacheEpochTrigger, err)
+		}
+		state = nil
 	}
 	if len(state) == 0 {
 		// Absent: create it. When present its body is whatever the function now
@@ -221,7 +272,7 @@ $keyorix$`).Error; err != nil {
 	// trigger is never absent, so there is no window. It also converges a
 	// trigger an older binary created as an ordinary one, or one that
 	// pg_restore --disable-triggers re-enabled as ordinary on its way out.
-	if len(state) == 0 || state[0] != "A" {
+	if len(state) == 0 || state[0].State != "A" {
 		if err := tx.Exec("ALTER TABLE secret_nodes ENABLE ALWAYS TRIGGER " + SecretNodeCacheEpochTrigger).Error; err != nil {
 			return fmt.Errorf("failed to enable %s: %w", SecretNodeCacheEpochTrigger, err)
 		}
