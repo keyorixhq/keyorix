@@ -399,11 +399,36 @@ func TestClassifyWebAuthnKey_MLDSAIsPostQuantum(t *testing.T) {
 	k, err := ClassifyWebAuthnKey(b)
 	require.NoError(t, err)
 	assert.True(t, k.PostQuantum)
-	assert.Contains(t, k.Algorithm, "COSE")
+	assert.Contains(t, k.Algorithm, "ML-DSA-44")
 
 	inv := Build(Inputs{WebAuthnEnabled: true, WebAuthnEnumerated: true,
 		WebAuthnCredentials: []WebAuthnCredentialInput{{PublicKey: b, CreatedAt: riskNow}}}, DefaultPolicy(), riskNow)
 	require.Len(t, inv.Assets, 1)
 	assert.False(t, inv.Assets[0].Risk.QuantumVulnerable)
 	assert.Equal(t, LevelLow, inv.Assets[0].Risk.Level)
+}
+
+// Review findings (#3754): an AKP key whose algorithm is not ML-DSA is
+// unclassifiable, not post-quantum. An EC2 key on a curve outside P-256/384/521
+// (e.g. secp256k1) is unclassifiable, not "ECDSA-P0": go-webauthn v0.18.2's
+// ParsePublicKey already rejects it, so that half passes without
+// ClassifyWebAuthnKey's own curve check, which is kept in case a later
+// go-webauthn accepts more curves.
+func TestClassifyWebAuthnKey_UnmodelledAKPAlgAndEC2CurveAreUnclassifiable(t *testing.T) {
+	akp, err := webauthncbor.Marshal(webauthncose.PublicKeyData{KeyType: int64(webauthncose.AKP), Algorithm: -7})
+	require.NoError(t, err)
+	_, err = ClassifyWebAuthnKey(akp)
+	assert.Error(t, err, "AKP with a non-ML-DSA alg must not be classified post-quantum")
+
+	ec, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	k1, err := webauthncbor.Marshal(webauthncose.EC2PublicKeyData{
+		PublicKeyData: webauthncose.PublicKeyData{KeyType: int64(webauthncose.EllipticKey), Algorithm: int64(webauthncose.AlgES256)},
+		Curve:         8, // secp256k1, under an alg go-webauthn parses
+		XCoord:        ec.X.FillBytes(make([]byte, 32)),
+		YCoord:        ec.Y.FillBytes(make([]byte, 32)),
+	})
+	require.NoError(t, err)
+	_, err = ClassifyWebAuthnKey(k1)
+	assert.Error(t, err, "an unmodelled curve must not be labelled ECDSA-P0")
 }

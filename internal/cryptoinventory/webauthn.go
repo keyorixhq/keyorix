@@ -36,8 +36,13 @@ func ClassifyWebAuthnKey(coseKey []byte) (WebAuthnKey, error) {
 	}
 	coseAlg := webauthncose.COSEAlgorithmIdentifier(hdr.Algorithm).String()
 	if webauthncose.COSEKeyType(hdr.KeyType) == webauthncose.AKP {
-		// ML-DSA parameter sets (FIPS 204): the only algorithms registered for AKP.
-		return WebAuthnKey{Algorithm: "COSE " + coseAlg, PostQuantum: true}, nil
+		// Only the ML-DSA parameter sets (FIPS 204) are post-quantum; any other
+		// algorithm on an AKP key is not modelled and must not score as PQ.
+		name, ok := coseMLDSA[hdr.Algorithm]
+		if !ok {
+			return WebAuthnKey{}, errors.New("credential AKP public key names an algorithm that is not ML-DSA")
+		}
+		return WebAuthnKey{Algorithm: fmt.Sprintf("%s (COSE %d)", name, hdr.Algorithm), PostQuantum: true}, nil
 	}
 	pub, err := webauthncose.ParsePublicKey(coseKey)
 	if err != nil {
@@ -45,7 +50,10 @@ func ClassifyWebAuthnKey(coseKey []byte) (WebAuthnKey, error) {
 	}
 	switch k := pub.(type) {
 	case webauthncose.EC2PublicKeyData:
-		bits := map[int64]int{int64(webauthncose.P256): 256, int64(webauthncose.P384): 384, int64(webauthncose.P521): 521}[k.Curve]
+		bits, ok := map[int64]int{int64(webauthncose.P256): 256, int64(webauthncose.P384): 384, int64(webauthncose.P521): 521}[k.Curve]
+		if !ok {
+			return WebAuthnKey{}, errors.New("credential EC2 public key is on a curve that is not modelled")
+		}
 		return WebAuthnKey{Algorithm: fmt.Sprintf("ECDSA-P%d (COSE %s)", bits, coseAlg), KeySizeBits: bits}, nil
 	case webauthncose.RSAPublicKeyData:
 		bits := rsaBits(k.Modulus)
@@ -55,6 +63,10 @@ func ClassifyWebAuthnKey(coseKey []byte) (WebAuthnKey, error) {
 	}
 	return WebAuthnKey{}, errors.New("credential public key type is not modelled")
 }
+
+// coseMLDSA names the COSE algorithm identifiers registered for ML-DSA
+// (draft-ietf-cose-dilithium); go-webauthn does not export them.
+var coseMLDSA = map[int64]string{-48: "ML-DSA-44", -49: "ML-DSA-65", -50: "ML-DSA-87"}
 
 func rsaBits(modulus []byte) int {
 	for len(modulus) > 0 && modulus[0] == 0 {
