@@ -15,8 +15,12 @@
   replayed or incomplete seal, a removed event, a row removed or put back around the gap, or
   a state from another seal segment reads broken. Key changes carry the record (the
   transition names its digest, completion re-signs it first). `recover-admin` never seals.
+  The writes go record, event, checkpoint and high-water mark, state; an acceptance stopped
+  after any of them reads broken until a re-run of the command completes it, which first
+  checks the chain still holds what the seal recorded as surviving.
   Why: AUDIT-ACCEPT-LOSS-1, constraints 1-8 of docs/design/recovery-options.md §2. Guard:
-  `TestAuditSeal_*` (`internal/core`, SQLite and PostgreSQL), `TestSealDifferential_*`
+  `TestAuditSeal_*` (`internal/core`, SQLite and PostgreSQL; `_CrashAtEveryStepResumes`,
+  `_DeletedSealKeepsStatePin`), `TestSealDifferential_*`
   (`internal/auditverify`), `TestPerformRecoverAdmin_NeverSealsALoss`,
   `TestAcceptLoss_RequiresConfirmThenSeals`, `scripts/drills/accept-loss.sh`. Not covered: a
   verification state discontinuity with an intact chain cannot be accepted (it stays

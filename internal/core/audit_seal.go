@@ -11,8 +11,9 @@
 // key. Deleting, altering, moving or replaying the row reads BROKEN:
 //
 //   - every record has an in-chain system.audit_loss_accepted event naming its
-//     digest, and every such event names a record (a deleted row, a replayed
-//     shorter row and a record left without its event all fail);
+//     digest, and every such event names a record (a replayed shorter row and
+//     a record left without its event fail; a deleted row is caught by the
+//     walk, the bound checkpoints and the state's seal count below);
 //   - a checkpoint or high-water mark written after a seal signs the v2
 //     canonical form, which carries the number of seals and the newest record's
 //     digest (checkpointCanonicalSealed), so it authenticates only against the
