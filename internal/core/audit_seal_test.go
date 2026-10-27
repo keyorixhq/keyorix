@@ -513,3 +513,80 @@ func TestAuditSeal_CrashAtEveryStepResumes(t *testing.T) {
 		})
 	}
 }
+
+// (5) A tail truncation made after a completed seal is not laundered through
+// the resume path: a seal-record discontinuity recorded while the record was
+// briefly corrupt makes the state look like an unfinished acceptance, but the
+// checkpoint and high-water mark signed under the seal certify rows that are
+// gone, so the re-run refuses and writes nothing (REVIEW-3757-DEEP-2 F1).
+func TestAuditSeal_ResumeRefusesPostSealTruncation(t *testing.T) {
+	fcRun(t, func(t *testing.T, e *fcEnv) {
+		ctx := context.Background()
+		c, _ := sealedEnv(t, e)
+		assertSealed(t, e, c, 1)
+		for range 4 {
+			fcTick(t, e, c) // certified activity after the seal
+		}
+		cp, err := c.storage.LatestAuditCheckpoint(ctx)
+		require.NoError(t, err)
+		require.NotNil(t, cp)
+		require.True(t, c.checkpointSignatureValid(cp), "precondition: a checkpoint signed under the seal")
+		require.Greater(t, cp.HeadID, uint(2))
+		require.NoError(t, e.db.Exec("DELETE FROM audit_events WHERE id >= ?", cp.HeadID-2).Error)
+
+		good := sealsValue(t, e.db)
+		parts := strings.Split(good, auditVerifyStateSep)
+		payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+		require.NoError(t, err)
+		parts[1] = base64.RawURLEncoding.EncodeToString([]byte(strings.Replace(string(payload), "ops-oncall", "someone-else", 1)))
+		setSealsValue(t, e.db, strings.Join(parts, auditVerifyStateSep))
+		fcTick(t, e, e.restart()) // a server records the seal-record discontinuity
+		setSealsValue(t, e.db, good)
+		c2 := e.restart()
+		for range 3 {
+			fcTick(t, e, c2)
+		}
+		hwBefore, err := c2.authenticatedHighWaterBase(ctx)
+		require.NoError(t, err)
+
+		sealRefused(t, e.restart(), sealReq(), "rows certified after the seal are gone")
+		hwAfter, err := e.restart().authenticatedHighWaterBase(ctx)
+		require.NoError(t, err)
+		assert.Equal(t, hwBefore, hwAfter, "nothing is written: the mark is not lowered")
+		assert.NotEqual(t, AuditVerifyStatusSealed, incrVerify(t, e.restart()).Status)
+	})
+}
+
+// (3) A resumed acceptance completes the recorded seal only: ids that are not
+// the ones it recorded are refused, not silently ignored (REVIEW-3757-DEEP-2
+// F2).
+func TestAuditSeal_ResumeRefusesOtherIDs(t *testing.T) {
+	fcRun(t, func(t *testing.T, e *fcEnv) {
+		ctx := context.Background()
+		fcCertify(t, e)
+		resume := sealDeleteRow(t, e, e.c, 3)
+		plan, err := e.c.PlanAuditLossAcceptance(ctx, sealReq(resume))
+		require.NoError(t, err)
+		crash := errors.New("crash")
+		e.c.auditSealHook = func(s string) error {
+			if s == "record" {
+				return crash
+			}
+			return nil
+		}
+		_, err = e.c.AcceptAuditLoss(ctx, plan)
+		require.ErrorIs(t, err, crash)
+
+		sealRefused(t, e.restart(), sealReq(resume+5), "acceptance did not finish")
+		sealRefused(t, e.restart(), sealReq(resume, resume+5), "acceptance did not finish")
+		again, err := e.restart().PlanAuditLossAcceptance(ctx, sealReq(resume))
+		require.NoError(t, err, "the recorded ids complete it")
+		assert.True(t, again.Resume)
+		c := e.restart()
+		again, err = c.PlanAuditLossAcceptance(ctx, sealReq())
+		require.NoError(t, err)
+		_, err = c.AcceptAuditLoss(ctx, again)
+		require.NoError(t, err)
+		assertSealed(t, e, e.restart(), 1)
+	})
+}

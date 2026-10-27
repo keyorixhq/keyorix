@@ -148,11 +148,14 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 	}
 	if f.resume {
 		last := f.seals.recs[len(f.seals.recs)-1]
+		if named := last.namedIDs(); len(req.BrokenIDs) > 0 && !sameIDs(req.BrokenIDs, named) {
+			return nil, auditLossRefused("seal #%d was recorded for audit events %v but its acceptance did not finish: re-run without --first-broken-id (or with %v) to complete it, then accept a new loss", last.Seq, named, named)
+		}
 		if err := c.auditLossResumeCheck(ctx, f, last); err != nil {
 			return nil, err
 		}
 		return &AuditLossPlan{Seq: last.Seq, Gaps: last.Gaps, Truncation: last.Truncation, Before: last.Before, After: last.After,
-			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: last.Accepted, Resume: true, seal: last}, nil
+			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: auditLossResumeAccepted(last, f.state), Resume: true, seal: last}, nil
 	}
 	if len(req.BrokenIDs) == 0 {
 		return nil, auditLossRefused("name the id where the walk breaks (--first-broken-id)")
@@ -348,7 +351,97 @@ func (c *KeyorixCore) auditLossResumeCheck(ctx context.Context, f *auditLossFind
 			return auditLossRefused("audit event #%d, the surviving head seal #%d recorded, is missing or rewritten: investigate", last.After.HeadID, last.Seq)
 		}
 	}
+	// Rows certified after the seal are not what it recorded as surviving. A
+	// checkpoint or high-water mark signed under the current seal list (this
+	// acceptance's re-seal, or a server since) only ever certified the sealed
+	// chain, so one that certifies a head or count the chain no longer has is
+	// a new loss. Completing over it would lower the mark and seal the loss
+	// unrecorded.
+	certs, err := c.auditLossSealedCertifications(ctx)
+	if err != nil {
+		return err
+	}
+	for _, cert := range certs {
+		if cert.Events > v.ChainedEvents+anchorPurgedEvents(f.anchor) {
+			return auditLossRefused("%s certifies %d events through #%d under seal #%d, only %d remain: rows certified after the seal are gone, which seal #%d did not accept; investigate",
+				cert.Source, cert.Events, cert.HeadID, last.Seq, v.ChainedEvents+anchorPurgedEvents(f.anchor), last.Seq)
+		}
+		if cert.HeadID == 0 || (f.anchor != nil && cert.HeadID < f.anchor.RowID) {
+			continue // purged under the authenticated retention anchor
+		}
+		hash, found, err := c.storage.AuditEntryHashByID(ctx, cert.HeadID)
+		if err != nil {
+			return err
+		}
+		if !found || hash != cert.HeadHash {
+			return auditLossRefused("audit event #%d, certified by %s under seal #%d, is missing or rewritten: rows certified after the seal are gone, which seal #%d did not accept; investigate",
+				cert.HeadID, cert.Source, last.Seq, last.Seq)
+		}
+	}
 	return nil
+}
+
+// auditLossSealedCertifications are the latest checkpoint and the high-water
+// mark that authenticate under the current seal binding (a certification under
+// fewer seals predates the acceptance and certified the lost rows).
+func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context) ([]AuditSealCount, error) {
+	var out []AuditSealCount
+	cp, err := c.storage.LatestAuditCheckpoint(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if cp != nil && c.checkpointSignatureValid(cp) {
+		out = append(out, AuditSealCount{Events: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, Source: fmt.Sprintf("signed checkpoint #%d", cp.ID)})
+	}
+	hw, err := c.authenticatedHighWaterBase(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if hw != nil {
+		out = append(out, AuditSealCount{Events: hw.ChainedEvents, HeadID: hw.HeadID, HeadHash: hw.HeadHash, Source: "the signed high-water mark"})
+	}
+	return out, nil
+}
+
+// auditLossResumeAccepted is what a resumed acceptance clears: what seal s
+// accepted, plus any discontinuity or failure the state carries that s does
+// not list (one a server recorded in between), so none is dropped silently.
+func auditLossResumeAccepted(s *auditSeal, st *auditVerifyState) []AuditSealAccepted {
+	out := slices.Clone(s.Accepted)
+	has := func(what, kind, reason string) bool {
+		return slices.ContainsFunc(out, func(a AuditSealAccepted) bool { return a.What == what && a.Kind == kind && a.Reason == reason })
+	}
+	if d := st.Discontinuity; d != nil && !has("discontinuity", d.Kind, d.Reason) {
+		at := d.DetectedAt
+		out = append(out, AuditSealAccepted{What: "discontinuity", Kind: d.Kind, Reason: d.Reason, DetectedAt: &at})
+	}
+	if fl := st.Failure; fl != nil && !has("failure", fl.Source, fl.Reason) {
+		at := fl.DetectedAt
+		out = append(out, AuditSealAccepted{What: "failure", Kind: fl.Source, Reason: fl.Reason, DetectedAt: &at})
+	}
+	return out
+}
+
+// namedIDs are the ids an operator names for s: the row resuming each gap and
+// the missing certified head of a truncation.
+func (s *auditSeal) namedIDs() []uint {
+	var ids []uint
+	for _, g := range s.Gaps {
+		ids = append(ids, g.ResumeID)
+	}
+	if t := s.Truncation; t != nil {
+		ids = append(ids, t.CertifiedHeadID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// sameIDs reports whether a and b name the same ids (order ignored).
+func sameIDs(a, b []uint) bool {
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
 }
 
 // auditEventByID reads one audit row with its hashes (nil when absent).
@@ -619,7 +712,7 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 		if err := c.sealHook("high-water"); err != nil {
 			return err
 		}
-		return c.saveSealedAuditVerifyState(ctx, last, cp)
+		return c.saveSealedAuditVerifyState(ctx, last.Seq, plan.Accepted, cp)
 	})
 	if err != nil {
 		return nil, err
@@ -670,18 +763,19 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 	return cp, hw, nil
 }
 
-// saveSealedAuditVerifyState saves the state after seal s: what s accepted is
-// moved to the accepted list, the pin and last tail check restart at cp, and no
-// full verification is claimed (not_proven until one completes, then sealed).
-func (c *KeyorixCore) saveSealedAuditVerifyState(ctx context.Context, s *auditSeal, cp *models.AuditCheckpoint) error {
+// saveSealedAuditVerifyState saves the state after seal seq: what the plan
+// accepted is moved to the accepted list, the pin and last tail check restart
+// at cp, and no full verification is claimed (not_proven until one completes,
+// then sealed).
+func (c *KeyorixCore) saveSealedAuditVerifyState(ctx context.Context, seq int, accepted []AuditSealAccepted, cp *models.AuditCheckpoint) error {
 	prev, _, err := c.loadAuditVerifyStateUnobserved(ctx)
 	if err != nil {
 		return err
 	}
-	if prev.Seals == s.Seq && prev.Discontinuity == nil {
+	if prev.Seals == seq && prev.Discontinuity == nil {
 		return nil // saved by an earlier run
 	}
-	st := &auditVerifyState{V: 1, KeyEpoch: prev.KeyEpoch, Accepted: append(slices.Clone(prev.Accepted), s.Accepted...)}
+	st := &auditVerifyState{V: 1, KeyEpoch: prev.KeyEpoch, Accepted: append(slices.Clone(prev.Accepted), accepted...)}
 	st.Gen = max(prev.Gen, c.auditVerifyGenSeen.Load(), c.auditVerifyFailureGenFloor()) + 1
 	now := c.now()
 	st.LastCheck = &auditTailCheck{At: now, Valid: true, CheckpointID: cp.ID, ThroughID: cp.HeadID, HeadHash: cp.HeadHash,
