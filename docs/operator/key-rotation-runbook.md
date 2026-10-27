@@ -48,7 +48,10 @@ does. That matters for the audit chain: section 5.
 4. **Keep every server stopped** on the database from here to the end of section 3 (stop them
    before step 3 on SQLite; `verify-audit` on the configured database and `export-checkpoint`
    take the same exclusive lock). All rotation commands refuse to run beside a live server or
-   another admin command. `--force` overrides that refusal: do not use it here.
+   another admin command. `--force` overrides that refusal: do not use it here. On
+   PostgreSQL `encryption rotate` refuses `--force` (`--force cannot override it for a DEK
+   rotation on PostgreSQL`): `dek.lock` only sees replicas on this host, and a replica on
+   another host that is still running can commit a row under the old DEK after the sweep.
    `rotate-kek` and `migrate-provider` open the database for this lock (#3513) even though
    only key files change, so they fail with `cannot connect to the database to check for a
    running server` while the database is unreachable: make sure it is up (and reachable with
@@ -58,6 +61,17 @@ does. That matters for the audit chain: section 5.
    world-readable). There is no flag that takes a passphrase as an argument, by design.
 6. Run on the server host. With `storage.type: remote` the rotation commands refuse ("must run on
    the server host").
+7. **Rotate with the same version as the servers, never an older admin binary or image.**
+   Check `keyorix-server admin version` against the running servers' version. An admin binary
+   that predates part of the rotation does that part wrong without knowing it: a v0.96.x
+   `admin encryption rotate` against a database a v0.97 server has used re-encrypts every row
+   but leaves the DEK epoch naming the old DEK, so replicas with the new key set refuse to start
+   and replicas still holding the old key set start and write rows nobody can read later
+   (recovery: section 6, "rotated with an older admin binary"). From v0.97 on the database records
+   the newest rotation protocol of the servers that used it (`dek.rotation_protocol`), and an
+   older admin binary that reads it refuses (`this binary's DEK rotation is older than the one
+   this database's servers use`); v0.96.x binaries do not read it, so for them this rule is the
+   only protection.
 
 ## 3. Run it
 
@@ -67,6 +81,15 @@ DEK, preview then do it ([j6](j6-key-rotation.md) shows the output):
 keyorix-server admin encryption rotate --config ./keyorix.yaml --dry-run
 keyorix-server admin encryption rotate --config ./keyorix.yaml --confirm
 ```
+
+Before it commits, the rotation checks its own work inside the sweep transaction: it first
+round-trips a sample of the newest secret versions through the new DEK, then reads back every
+row it rewrote, in every swept table, and decrypts it with the new DEK. Any row that does not
+decrypt stops the rotation before the commit, with the table and row id in the error
+(`pre-commit verification of the DEK rotation failed: nothing was committed and the old DEK
+stays active: secret_versions id=2 ...`). The log ends with `[sweep] pre-commit verification:
+all N re-encrypted values decrypt under the new DEK` on success. The check reads every row a
+second time, so plan for the sweep to take longer than the dry run.
 
 KEK:
 
@@ -92,6 +115,17 @@ keyorix-server admin encryption validate --config ./keyorix.yaml
 keyorix secret get --id <id> --show-value        # the value is unchanged
 keyorix audit logs --limit 20                    # admin.encryption.rotate / admin.encryption.rotate_kek
 keyorix audit verify --full
+```
+
+`encryption validate` checks the key files and their permissions, not that the DEK opens the
+data: with another install's `dek.key` in place it still prints `Encryption setup is valid`.
+The check that the active key set decrypts every row is the dry run (server stopped; it
+decrypts every row and writes nothing):
+
+```bash
+keyorix-server admin encryption rotate --dry-run --config ./keyorix.yaml
+# good:  ✅ Dry run complete — no changes were made
+# wrong: Error: dry-run rotation preview failed: ... failed to decrypt secret_version id=1: ...
 ```
 
 Then take a second backup (`admin backup`, as in the preflight) with the post-rotation keys, and
@@ -143,13 +177,41 @@ of which key version signed them; do not overwrite them.
 
 ## 6. Rollback
 
+There is no command that reverses a DEK rotation. The two ways back are **roll forward**
+(finish the rotation, or get the new key set to where it is needed) and **restore the
+pre-rotation archive** (below). Roll forward whenever you can: a restore loses every write made
+since the archive was taken.
+
+### 6.1 A DEK rotation that failed midway
+
+Every one of these leaves exactly one DEK under which every row decrypts. Rehearsed on SQLite
+with the commands below (DEK-ROTATE-SAFETY-1); the PostgreSQL fence and epoch steps are covered
+by the pg-gated tests named in `internal/encryption/INVARIANTS.d/`, not by a drill.
+
+| What you see | State | What to do | What is lost |
+|---|---|---|---|
+| `pre-commit verification of the DEK rotation failed: nothing was committed and the old DEK stays active: <table> id=<n> ...`, or `re-encryption sweep failed — old DEK remains active: ... failed to decrypt <table> id=<n>` | Rolled back. `dek.key` is unchanged and `dek.key.pending` was removed; on PostgreSQL the epoch fence was lifted, so servers write again once started. | The named row does not decrypt under the **current** DEK either (a `canary ... does not decrypt under the current DEK` message says so): the damage predates the rotation. Find the row's last good copy: restore the latest archive that has it (the whole archive, below), or, if the row is an old version nobody needs, have it removed through the normal delete path. Then re-run `rotate --dry-run` (it must complete) and the rotation. If the row decrypts under the current DEK but not the new one (`... does not decrypt under the new DEK`), stop and report it: the rewrite itself was wrong. | Nothing the rotation did. The damaged row was already unreadable. |
+| The command was killed, the host lost power, or the database connection dropped during the sweep (no `✅ DEK rotated` line) | The sweep transaction was rolled back. `dek.key` is the old DEK; a `dek.key.pending` may be left. | Run `encryption status`, then `rotate --dry-run` (must complete under the old DEK), then re-run the rotation: it discards the stale `dek.key.pending` first. Do not delete or copy `dek.key.pending` by hand. | Nothing. |
+| `re-encryption sweep failed and may have committed — <dek_path>.pending was kept` or `failed to promote pending DEK to active after the re-encryption sweep committed` | The rows may already be under the new DEK, and `dek.key.pending` is its only copy. | Fix the cause the message names (disk full, read-only remount), then **on this host** run `encryption upgrade-aad` (it does not change the DEK; like every key-writing command it finishes an interrupted rotation first; `rotate --dry-run` does not) or start the server: either promotes `dek.key.pending` when the database's redo marker committed and discards it otherwise. Then `rotate --dry-run` must complete. Back up the key directory first; never delete `dek.key.pending`. | Nothing, if `dek.key.pending` survives. If it is lost after the commit, every swept row is lost with it: restore the archive. |
+| PostgreSQL: `refusing to rotate: the database's DEK epoch is "..." but this host's DEK fingerprint is "..."` | Refused before anything was written. | This host's key files are not the database's current key set (another host rotated). Copy the current key files here, or run the rotation on the host that has them. | Nothing. |
+| `this binary's DEK rotation is older than the one this database's servers use` | Refused before anything was written. | Run the rotation with the servers' version (preflight step 7). | Nothing. |
+
+### 6.2 A DEK rotation that succeeded but was wrong
+
+| What happened | How it shows | What to do | What is lost |
+|---|---|---|---|
+| The new key set did not reach every replica | That replica refuses to start (`the database's DEK epoch is ... this server's DEK fingerprint is ...` on PostgreSQL; a key-set manifest refusal without the new manifest). | Copy the current key files, `keyset.manifest.json` included, from the host that rotated and start it ([j6](j6-key-rotation.md)). | Nothing: no row was written under the old DEK. |
+| The new `dek.key` was overwritten with the old one (config management, a stale volume snapshot) and no copy of the new one is left | `rotate --dry-run` fails with `failed to decrypt secret_version id=...` on every row; `encryption validate` still says valid. | Look for the new key set first: the rotating host's key directory, a post-rotation backup, `*.pre-restore-*` files. If it exists, put it back (roll forward). If not, restore the pre-rotation archive with `--allow-rollback` (below). | With a restore: every write since the archive (rehearsal: the one version written after the rotation was gone), and every revocation since comes back. |
+| Rotated with an older admin binary (v0.96.x against a v0.97 database) | Replicas with the new key set refuse to start (`DEK epoch ... is not this server's DEK`); replicas with the old key set start but cannot read the swept rows. | Stop every server at once: an old-key replica writes rows nobody can read later. Distribute the new key set to every host. Then, with every server stopped, remove the stale epoch with the emergency SQL `DELETE FROM system_metadata WHERE key = 'dek.epoch';` and start **one** server with the new key set: it records the epoch again only after its DEK decrypts the newest secret version. If it refuses (`cannot decrypt its newest secret version`), an old-key replica wrote after the rotation: restore the pre-rotation archive. | Without a restore, nothing, provided no old-key replica wrote. With one, every write since the archive. |
+| The rotation was fine but you want the old DEK back | Nothing is wrong. | Do not. Rotate again (roll forward) if the new DEK is suspect. Restoring the archive is the only way back to the old DEK. | With a restore: every write since the archive. |
+
+### 6.3 Other rotations
+
 | Where it went wrong | What to do |
 |---|---|
-| The command was killed or the host lost power mid-way | Nothing special: both rotations are crash-safe. A DEK sweep is one transaction, so either the old or the new DEK is active and every row decrypts; an interrupted promote is finished by the next admin command. A KEK re-wrap leaves either the old or the new wrapped-DEK file, never a torn one. Run `encryption validate`, then re-run the rotation if you still want it. |
+| A KEK re-wrap (`rotate-kek`, `migrate-provider`) was killed or the host lost power | Nothing special: it leaves either the old or the new wrapped-DEK file, never a torn one. Run `encryption validate`, then re-run it if you still want it. |
 | `rotate-kek` done, the server will not start (`wrong passphrase or corrupted key file`) | The configured passphrase is still the old one. Set the new one; nothing is lost. |
 | `rotate-kek` done, and you want the old passphrase back | Rotate again with the sources swapped: `--passphrase-file ./new_master_password --new-passphrase-file ./old_master_password`. This re-wraps the same DEK under a fresh salt and again changes the checkpoint key (section 5). |
-| A DEK rotation you want to undo | There is no reverse command. Roll forward if you can. Otherwise restore the pre-rotation archive (below). It loses every write made since the backup, and resurrects any revocation made since (SELF_HOSTING.md §5). |
-| A replica was left with the old `dek.key` | Copy the current key files, `keyset.manifest.json` included, to it and start it ([j6](j6-key-rotation.md)). Nothing was written under the old DEK. |
 | `migrate-provider` was interrupted after the re-wrap | The previous wrapped DEK is on disk as `<dek_path>.migrate-backup.*` for a human to restore; the DEK's plaintext value did not change. Keep it until you have verified. |
 
 Restoring the archive (server stopped, same config and key paths, passphrase current when the
@@ -164,12 +226,31 @@ than truncating it. The restore verifies the archive's signed manifest before wr
 `verify-audit` and fails on BROKEN. It refuses an archive that is behind the host's
 `.audit-highwater-witness`; `--allow-rollback` overrides that, and records an
 `admin.restore_rollback_override` audit event. Whether a pre-rotation archive trips that check
-depends on whether the rotation advanced the witness; be ready for either.
+depends on whether the rotation advanced the witness; be ready for either. In the rehearsal
+(SQLite, one rotation and one write after the archive) it did:
+
+```text
+$ keyorix-server admin restore --input ./backups/pre-rotation-2.tar.gz --overwrite-existing
+Error: refusing to restore: this backup's audit trail (6 event(s)) is 1 event(s) BEHIND this host's own last known state (8 event(s)) ...
+$ keyorix-server admin restore --input ./backups/pre-rotation-2.tar.gz --overwrite-existing --allow-rollback
+verify-audit on the restored database: VALID
+```
+
+Afterwards every version from the archive decrypted under the restored key set and the version
+written after the archive was gone. Run `rotate --dry-run` after a restore to confirm the
+restored keys open every row, then start the servers with the restored key set on every host
+(with several replicas, every host gets the restored key files, or it refuses to start).
 
 ## 7. What not to do
 
 - **Do not use `--force`** to run a rotation beside a live server. The lock is what keeps a
-  replica from writing under the key you are replacing.
+  replica from writing under the key you are replacing (on PostgreSQL `encryption rotate`
+  refuses `--force` for that reason).
+- **Do not rotate with an admin binary older than the servers** (preflight step 7), and do not
+  start a server holding the old key set after a rotation to "see if it still works".
+- **Do not delete `dek.key.pending`** after a failed or interrupted rotation: after a commit it is
+  the only copy of the DEK the rows are under. The next key-writing admin command or server start
+  on that host settles it.
 - **Do not skip the backup**, and do not keep it only on the host that is being rotated.
 - **Do not lose the old passphrase** while any archive taken before a `rotate-kek` is still one
   you may need.
@@ -194,11 +275,21 @@ depends on whether the rotation advanced the witness; be ready for either.
 `scripts/drills/key-rotation.sh` and `scripts/drills/rotation-under-load.sh` rehearse the offline
 operations on a throwaway instance (see the end of [j6](j6-key-rotation.md)). The Kubernetes and
 container variants, cloud KMS, TPM and Shamir providers are not covered by them: pending the e2e VM.
+The recovery paths in section 6 were run with the real `keyorix-server admin` commands on a
+scratch SQLite instance (DEK-ROTATE-SAFETY-1: a rotation refused over a damaged row, a rotation
+killed with SIGKILL during the sweep, a lost new `dek.key` recovered by restoring the archive);
+the PostgreSQL-only rows (epoch, `--force` refusal, older admin binary) are covered by pg-gated
+tests, not by a drill.
 
 Gaps in the product today:
 
 - No online rotation: the window is the servers being stopped.
-- No command to reverse a DEK rotation other than restoring an archive.
+- No command to reverse a DEK rotation other than restoring an archive (by decision: roll
+  forward, or restore).
+- No command repairs a DEK epoch left stale by a rotation with an older admin binary; section 6.2
+  uses emergency SQL for it.
+- The pre-commit check proves every rewritten row decrypts under the new DEK, not that it
+  decrypts to the same value; only its sample compares values.
 - `verify-audit` checks the latest checkpoint and the key transition records, not every older
   checkpoint: older-epoch checkpoints other than the one each transition names are not
   re-verified (section 5).
