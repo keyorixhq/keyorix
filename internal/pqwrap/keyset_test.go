@@ -2,8 +2,11 @@ package pqwrap
 
 import (
 	"bytes"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hkdf"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
@@ -372,6 +375,61 @@ func TestKeyset_HybridSlotStructureCheckedAtBoot(t *testing.T) {
 			t.Fatalf("got %v, want ErrKeysetMalformed", err)
 		}
 	})
+	t.Run("duplicate recipient", func(t *testing.T) {
+		// Same slot count, so the KEK slot still opens and the MAC is
+		// recomputed: only the parser's no-repeat rule refuses it.
+		s := []tSlot{slots[0], slots[1], slots[1]}
+		if _, err := OpenKeyset(tJoin(t, header, s, nil, kek), kek); !errors.Is(err, ErrKeysetMalformed) {
+			t.Fatalf("got %v, want ErrKeysetMalformed", err)
+		}
+	})
+}
+
+// tSealKEKSlot builds a KEK slot body (kek_id || nonce || AES-256-GCM(KEK,
+// DEK)) for header the way §7 specifies, with AAD = header || 0, independently
+// of keyset.go.
+func tSealKEKSlot(t *testing.T, kek, dek, header []byte, id [KEKIDSize]byte) []byte {
+	t.Helper()
+	blk, err := aes.NewCipher(kek)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := cipher.NewGCM(blk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonce := make([]byte, a.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		t.Fatal(err)
+	}
+	body := append(id[:], nonce...)
+	return a.Seal(body, nonce, dek, append(bytes.Clone(header), 0))
+}
+
+// TestKeyset_WrongKCVRefusedUnderValidMAC: a keyset whose header KCV does not
+// match the DEK in its KEK slot is refused with ErrKCV even when the KEK slot
+// opens under that header and the MAC verifies. Only a KEK holder can build
+// it (a writer bug, not an attacker), so this is the KCV leg of
+// INV-PQWRAP-keyset-boot-dek-authenticated-by-kek on its own.
+func TestKeyset_WrongKCVRefusedUnderValidMAC(t *testing.T) {
+	_, pubs := tRecipients(t, "wkcv-a")
+	kek, dek, id := tKEK("wkcv"), tDEK("wkcv"), tKEKID("wkcv")
+	header, slots, _ := tSplit(t, mustSeal(t, dek, kek, id, pubs))
+
+	// Control: the hand-built KEK slot under the unchanged header boots, so
+	// the refusal below is the KCV and not the test's own construction.
+	s := append([]tSlot(nil), slots...)
+	s[0] = tSlot{typ: 1, body: tSealKEKSlot(t, kek, dek, header, id)}
+	if ks, err := OpenKeyset(tJoin(t, header, s, nil, kek), kek); err != nil || !bytes.Equal(ks.DEK, dek) {
+		t.Fatalf("control keyset: got %v, want it to open to the sealed DEK", err)
+	}
+
+	h := bytes.Clone(header)
+	copy(h[tOffKCV:], tKCV(t, tDEK("wkcv-other")))
+	s[0] = tSlot{typ: 1, body: tSealKEKSlot(t, kek, dek, h, id)}
+	if _, err := OpenKeyset(tJoin(t, h, s, nil, kek), kek); !errors.Is(err, ErrKCV) {
+		t.Fatalf("got %v, want ErrKCV", err)
+	}
 }
 
 // TestKeyset_EveryByteFlipFails: no single-byte change to a keyset opens.

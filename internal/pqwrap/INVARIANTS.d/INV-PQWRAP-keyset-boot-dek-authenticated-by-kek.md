@@ -7,6 +7,7 @@
   keyset the server boots from. Why: pq-key-wrapping.md §6, §7. Guard:
   `TestKeyset_DEKSubstitutionRefused` (mutation-checked: removing the MAC comparison fails it,
   `TestKeyset_SlotFromOlderKeysetRefused` and `TestKeyset_EveryByteFlipFails`),
-  `TestKeyset_WrongKEKRefused`, `FuzzOpenKeyFile` (a successful open only ever yields the one
+  `TestKeyset_WrongKEKRefused`, `TestKeyset_WrongKCVRefusedUnderValidMAC` (the KCV leg on its
+  own: mutation-checked, removing the KCV comparison fails it), `FuzzOpenKeyFile` (a successful open only ever yields the one
   DEK sealed under the fuzz KEK).
 <!-- section: Keyset -->

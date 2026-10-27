@@ -5,7 +5,9 @@
   no byte follows the MAC. A key file is detected as legacy-60 (exactly 60 bytes), keyset-v1, or
   unknown, and unknown is refused, never guessed; a keyset of a newer version is refused with
   `ErrKeysetVersion`. Why: pq-key-wrapping.md §5, §7, §12. Guard:
-  `TestKeyset_HybridSlotStructureCheckedAtBoot`, `TestKeyset_TruncationAndTrailingRefused`,
+  `TestKeyset_HybridSlotStructureCheckedAtBoot` (its "duplicate recipient" case is
+  mutation-checked: removing the parser's no-repeat check fails it),
+  `TestKeyset_TruncationAndTrailingRefused`,
   `TestDetectFormat`, `TestOpenKeyFile_UnknownFormatRefused`,
   `TestKeyset_NewerVersionFailsClosedWithClearError`, `FuzzOpenKeyFile`.
 <!-- section: Keyset -->
