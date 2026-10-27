@@ -33,11 +33,9 @@ license.path
 license_expiry.enabled
 license_expiry.lead_days
 license_expiry.schedule
-membership.domain_allowlist
 minimum_cli_version
 notifications.email.broadcast_to
 notifications.webhook.signing_secret
-oidc.issuers.max_token_age_seconds
 read_quota_alerts.enabled
 read_quota_alerts.schedule
 secret_name_policy.enabled
@@ -47,12 +45,4 @@ secret_value_policy.enabled
 secret_value_policy.extra_denylist
 secret_value_policy.min_length
 secret_value_policy.reject_common
-sso.providers.saml.acs_url
-sso.providers.saml.email_attribute
-sso.providers.saml.groups_attribute
-sso.providers.saml.idp_metadata_file
-sso.providers.saml.idp_metadata_xml
-sso.providers.saml.name_attribute
-sso.providers.saml.sp_entity_id
-sso.providers.type
 storage.encryption.key_provider.kms_encryption_context

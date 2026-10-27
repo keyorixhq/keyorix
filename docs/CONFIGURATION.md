@@ -1437,7 +1437,17 @@ oidc:
       issuer: https://kubernetes.default.svc          # must equal the JWT `iss`
       jwks_uri: https://kubernetes.default.svc/openid/v1/jwks   # https required
       audiences: ["keyorix"]                            # JWT `aud` must contain one
+      max_token_age_seconds: 3600                       # optional; default 86400 (24h)
 ```
+
+**`oidc.issuers[].max_token_age_seconds`** (integer seconds, default `0` = 24 hours)
+bounds how long ago a token was *issued*: a token whose `iat` is older than this
+(plus a fixed 60 s clock-skew allowance) is refused, and so is a token with no `iat`.
+`exp` alone does not do this. Without the bound, a token minted with a far-future
+`exp` by a misconfigured or malicious issuer or CI pipeline would verify for as long
+as that `exp`. Zero, unset or a negative value all mean the 24-hour default; there is
+no way to turn the bound off. Lower it for issuers that mint short-lived tokens
+(Kubernetes projected tokens, CI job tokens). It is per issuer entry.
 
 ## session
 
@@ -2264,6 +2274,64 @@ must return an `email` claim (request the `email` scope), or the login is refuse
 > reserved `sso:<provider>:<sub>` scheme, so SCIM get, list, update, deactivate, delete
 > and group membership all refuse it, and a SCIM push for it is not reconciled to it.
 
+### SAML 2.0 providers (`sso.providers[].type: saml`)
+
+`sso.providers[].type` is `oidc` (the default; also what any value other than
+`saml` builds) or `saml` (compared case-insensitively). A `saml` provider is built
+from its own `saml:` block with no OIDC discovery, and the OIDC fields above
+(`issuer`, `client_id`, `client_secret`, `redirect_url`, `scopes`, `groups_claim`)
+are ignored for it. `auto_provision`, `default_role`, `group_sync` and
+`group_role_map` apply to both types.
+
+```yaml
+sso:
+  enabled: true
+  providers:
+    - name: adfs                 # also the URL slug
+      type: saml
+      saml:
+        idp_metadata_file: /etc/keyorix/adfs-metadata.xml   # or idp_metadata_xml: "<EntityDescriptor ...>"
+        sp_entity_id: https://keyorix.example.com/auth/saml/adfs/metadata
+        acs_url: https://keyorix.example.com/auth/saml/adfs/acs
+        email_attribute: ""      # default: the emailaddress claim URI (see below)
+        name_attribute: ""
+        groups_attribute: ""
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `sso.providers[].saml.idp_metadata_xml` | none | The IdP's SAML metadata, inline: its entity ID, SSO URL and signing certificate. Takes precedence over `idp_metadata_file` when both are set. |
+| `sso.providers[].saml.idp_metadata_file` | none | Path to the same metadata. Read only when `idp_metadata_xml` is empty; it must be a regular file. Metadata that is missing or cannot be parsed means the provider is skipped (see below). |
+| `sso.providers[].saml.sp_entity_id` | none, required | Keyorix's own entity ID (conventionally its metadata URL). It must parse as a URL. An assertion is refused unless it has an `AudienceRestriction` naming exactly this value; a missing element is a rejection, not a pass. |
+| `sso.providers[].saml.acs_url` | none, required | The Assertion Consumer Service URL the IdP POSTs the response to, `<public-host>/auth/saml/<name>/acs`. Register this exact value at the IdP. The browser is sent back to `<scheme>://<host of acs_url>/auth/sso/complete`, so it must be an absolute URL with a host. |
+| `sso.providers[].saml.email_attribute` | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress` | The assertion attribute holding the user's email. |
+| `sso.providers[].saml.name_attribute` | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/displayname` | The attribute holding the display name. |
+| `sso.providers[].saml.groups_attribute` | `http://schemas.xmlsoap.org/claims/Group` | The attribute holding group names, used by `group_sync` and `group_role_map`. (`groups_claim` is OIDC-only.) |
+
+An attribute is matched by its `Name` exactly, or by its `FriendlyName` ignoring
+case. For email and name the first non-blank value of the attribute is used; for
+groups, every non-blank value. The empty-versus-absent groups rule is below.
+
+A provider that is misconfigured (no `saml:` block, missing `acs_url` or
+`sp_entity_id`, unreadable or unparseable metadata) is **skipped with a log line**
+at start-up; it does not stop the server, but logging in through it fails.
+
+Two SAML-only opt-outs, both off by default:
+
+- `sso.providers[].insecure_trust_saml_asserted_email` (default `false`). SAML has
+  no per-assertion "email verified" signal. With this off, a SAML login can create a
+  **new** account (when `auto_provision` is on) but cannot take over an **existing**
+  one by asserting its email address. Turning it on lets a SAML login claim an
+  existing account by the email the assertion carries (the account-takeover risk
+  `admin validate --posture` reports it for); enable it only for an IdP that verifies
+  every email it asserts. (OIDC providers check `email_verified` per login instead and
+  ignore this key.)
+- `sso.providers[].saml.insecure_allow_idp_initiated_saml`: **refused at start-up**
+  when `true` (the old name `allow_idp_initiated` too). IdP-initiated responses carry
+  no `InResponseTo`, and Keyorix keeps no assertion replay cache, so such a response is
+  rejected at the ACS whatever this says; the server refuses to boot rather than let
+  the setting look effective.
+
 ### Offboarding an SSO / JIT account
 
 **Disabling a user at the IdP, or deactivating them over SCIM, does not offboard a JIT or
@@ -2389,7 +2457,23 @@ Project-membership onboarding mode (ADR-022).
 ```yaml
 membership:
   validation_mode: allowlist    # open | allowlist (default) | idp
+  domain_allowlist: []          # e.g. ["example.com"]; empty (default) = no restriction
 ```
+
+**`membership.domain_allowlist`** restricts which email domains may be onboarded.
+**It is empty by default, which means any domain is accepted**; set it on any
+install where only your own organisation's addresses should hold accounts. The
+list is handed to the core service once at start-up (`server/wire_membership.go`),
+so a change needs a restart.
+
+- A domain matches when it equals an entry, ignoring case. Subdomains do not match
+  (`example.com` does not admit `a@mail.example.com`) and there are no wildcards.
+- An address with no `@`, an empty local part or domain, or more than one `@` is
+  refused rather than having its domain guessed.
+- It applies to project and global invitations, to adding a member or changing a
+  member's project role by user ID, to joining a group that confers a role at the
+  matching scope, to accounts created by SCIM, and to SSO just-in-time
+  provisioning. An account that already exists and signs in is not re-checked.
 
 ## credential_delivery
 
