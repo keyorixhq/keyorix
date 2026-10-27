@@ -870,6 +870,56 @@ config. They are deleted after one minor release.
 | `secrets.chunking.max_chunks_per_secret` | (never implemented) | `0` | Remove it. |
 | `secrets.limits.max_secrets_per_user` | (never enforced) | `0` | Remove it. To cap value size use `secrets.limits.max_secret_size`. |
 
+## secret_value_policy
+
+An opt-in quality gate on secret **values**. **Off by default**: with no block, or
+`enabled: false`, any value is accepted and the other keys are not read.
+
+```yaml
+secret_value_policy:
+  enabled: true
+  min_length: 16          # default 0 = no minimum
+  reject_common: true     # default false
+  extra_denylist: ["acme2024", "company-secret"]   # default empty
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `secret_value_policy.enabled` | `false` | Turns the gate on. The server logs `Secret-value policy enabled` at start-up. |
+| `secret_value_policy.min_length` | `0` | Rejects a value shorter than this many **bytes** (not characters; a multi-byte character counts for more than one). `0` or less means no minimum. |
+| `secret_value_policy.reject_common` | `false` | Rejects a value that, trimmed and lower-cased, equals an entry of a small built-in list (`changeme`, `password`, `secret`, `123456`, `qwerty`, `admin`, `root`, `letmein`, `todo`, `tbd`, and similar, plus the empty value). |
+| `secret_value_policy.extra_denylist` | empty | More rejected values, compared the same way (trimmed, case-insensitive, the **whole** value, never a substring). Applies even when `reject_common` is `false`. |
+
+The gate runs when a secret is created, when an update changes the value, and on
+rotation and rollback (`internal/core/secrets.go`). Values already stored are not
+re-checked. A rejection says why but never echoes the value. This is a guard against
+placeholder values, not a strength meter: it does not check entropy or character
+classes.
+
+## secret_name_policy
+
+An opt-in naming convention for secret **names**. **Off by default**: with no block,
+or `enabled: false`, any valid name is accepted and `pattern` and `max_length` are
+not read.
+
+```yaml
+secret_name_policy:
+  enabled: true
+  pattern: "[A-Z][A-Z0-9_]*"   # RE2; default empty = no pattern check
+  max_length: 64               # default 0 = no maximum
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `secret_name_policy.enabled` | `false` | Turns the policy on. The server logs `Secret-name policy enabled` at start-up. |
+| `secret_name_policy.pattern` | empty | An RE2 regular expression the whole name must match. The server always wraps it as `^(?:pattern)$`, so an unanchored pattern still has to match the entire name. A pattern that does not compile stops the server at start-up (`Invalid secret_name_policy`). |
+| `secret_name_policy.max_length` | `0` | Rejects a name longer than this many characters (Unicode code points). `0` or less means no maximum. |
+
+The policy is checked when a secret is created and when secrets are renamed in bulk.
+Existing secrets are not re-checked, so adding a policy can leave non-conforming names
+behind; the secret-name conformance report lists them so they can be renamed
+(`internal/core/secret_name_conformance.go`).
+
 ## security
 
 File-permission self-checks, plus the **deployment-wide MFA mandate** (ADR-034).
@@ -2081,7 +2131,26 @@ identity, for instance — is **always denied** when this is on: there is no
 ```yaml
 classification:
   restricted_requires_approval: false   # opt-in; see above before enabling
+  restricted_requires_permission: false # opt-in; see below
+  restricted_requires_mfa_stepup: false # opt-in; see below
+  restricted_mfa_stepup_window_minutes: 15   # default 15 (0 = 15)
+  mfa_stepup_grant_retention_days: 30        # default 30 (0 = 30)
 ```
+
+Three independent gates can guard a "restricted" secret's value. **All three are off
+by default** (so `restricted` stays informational until you turn one on). When
+several are on, **every** enabled gate must pass. A read with no identifiable user
+(a machine credential, the embedded-mode CLI) is denied whenever any gate is on.
+Any failure to confirm a gate, including a storage error, denies the read. The
+restricted-read permission in the table is named `secrets.read.restricted`.
+
+| Key | Default | What the code does |
+|---|---|---|
+| `classification.restricted_requires_approval` | `false` | The approved, secret-scoped access request described above. |
+| `classification.restricted_requires_permission` | `false` | The user must hold the restricted-read permission for the secret's project and environment (checked with the normal authorization path). Only tightens access: it never grants a read. Grant the permission to the roles that should see restricted values *before* enabling, or no one passes. |
+| `classification.restricted_requires_mfa_stepup` | `false` | The user must hold an unexpired MFA step-up grant for restricted-secret reads. A grant is minted by an explicit MFA step-up verification, or ambiently by a WebAuthn login. It is a separate purpose from the re-authentication step-up used for account-security changes; neither satisfies the other. |
+| `classification.restricted_mfa_stepup_window_minutes` | `15` | How long, in minutes, a step-up grant stays valid. `0` or a negative value means 15. Only used when `restricted_requires_mfa_stepup` is on. |
+| `classification.mfa_stepup_grant_retention_days` | `30` | How many days an *expired* grant row is kept before a maintenance sweep deletes it. `0` or a negative value means 30. The sweep (`mfa_stepup_grant_prune`) runs every 6 hours whether or not the step-up gate is on; it is bookkeeping, and each grant's creation is audited as `mfa.stepup_verified` separately. It does not change how long a grant is active. |
 
 ## anomaly_alerts
 

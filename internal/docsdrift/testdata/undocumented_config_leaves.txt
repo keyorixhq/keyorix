@@ -14,10 +14,6 @@ auto_rotation.backends.region
 auto_rotation.backends.type
 auto_rotation.enabled
 auto_rotation.schedule
-classification.mfa_stepup_grant_retention_days
-classification.restricted_mfa_stepup_window_minutes
-classification.restricted_requires_mfa_stepup
-classification.restricted_requires_permission
 client.auth.api_key
 client.auth.type
 client.endpoint
@@ -38,11 +34,4 @@ notifications.email.broadcast_to
 notifications.webhook.signing_secret
 read_quota_alerts.enabled
 read_quota_alerts.schedule
-secret_name_policy.enabled
-secret_name_policy.max_length
-secret_name_policy.pattern
-secret_value_policy.enabled
-secret_value_policy.extra_denylist
-secret_value_policy.min_length
-secret_value_policy.reject_common
 storage.encryption.key_provider.kms_encryption_context
