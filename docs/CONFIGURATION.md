@@ -2277,7 +2277,7 @@ restricted-read permission in the table is named `secrets.read.restricted`.
 | `classification.restricted_requires_permission` | `false` | The user must hold the restricted-read permission for the secret's project and environment (checked with the normal authorization path). Only tightens access: it never grants a read. Grant the permission to the roles that should see restricted values *before* enabling, or no one passes. |
 | `classification.restricted_requires_mfa_stepup` | `false` | The user must hold an unexpired MFA step-up grant for restricted-secret reads. A grant is minted by an explicit MFA step-up verification, or ambiently by a WebAuthn login. It is a separate purpose from the re-authentication step-up used for account-security changes; neither satisfies the other. |
 | `classification.restricted_mfa_stepup_window_minutes` | `15` | How long, in minutes, a step-up grant stays valid. `0` or a negative value means 15. Only used when `restricted_requires_mfa_stepup` is on. |
-| `classification.mfa_stepup_grant_retention_days` | `30` | How many days an *expired* grant row is kept before a maintenance sweep deletes it. `0` or a negative value means 30. The sweep (`mfa_stepup_grant_prune`) runs every 6 hours whether or not the step-up gate is on; it is bookkeeping, and each grant's creation is audited as `mfa.stepup_verified` separately. It does not change how long a grant is active. |
+| `classification.mfa_stepup_grant_retention_days` | `30` | How many days an *expired* grant row is kept before a maintenance sweep deletes it. `0` or a negative value means 30. The sweep (`mfa_stepup_grant_prune`) runs every 6 hours whether or not the step-up gate is on; it is bookkeeping. Each explicit step-up is audited as `mfa.stepup_verified`; a grant minted by a WebAuthn login is covered by that login's audit event. It does not change how long a grant is active. |
 
 ## anomaly_alerts
 
@@ -2485,8 +2485,18 @@ than that, or on a different major version. It is meant for forcing operators on
 that carries a security fix. The server only *publishes* the value, on the
 unauthenticated `GET /api/v1/version` (so a CLI can check before it has credentials); the
 refusal is made by the CLI itself (`cli/internal/skew`), so it cannot stop an old
-CLI that skips the check, or a raw API client. With the key empty the CLI still applies its
-own same-major-version rule.
+CLI that skips the check, or a raw API client.
+
+The major-version refusal exists only while this key is set: with the key empty there is
+no floor at all, and a CLI on another major line gets at most an API-version warning and
+proceeds. The floor also fails open in two cases, both silently:
+
+- The server does not validate the value. The CLI applies the floor only when the value
+  has the form `MAJOR.MINOR.PATCH` (an optional leading `v` and a `-pre`/`+build` suffix
+  are allowed). Any other value, for example `"1.2"`, turns the floor off without a
+  warning on either side. Always write all three numbers.
+- A CLI build whose own version is not of that form (a `dev` or other non-release build)
+  skips the floor.
 
 ## sso
 
