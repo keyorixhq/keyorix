@@ -72,7 +72,7 @@ func ancestorLoopErrStorage(inner corestorage.Storage, directID uint, loopErr er
 		},
 		GetSecretACL: func(_ corestorage.Storage, _ context.Context, secretID, _ uint) (*models.SecretACL, error) {
 			if secretID == directID {
-				return nil, errors.New("record not found")
+				return nil, corestorage.ErrSecretACLNotFound
 			}
 			return nil, loopErr
 		},

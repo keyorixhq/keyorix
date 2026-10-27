@@ -7,7 +7,6 @@ package coretests
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -15,13 +14,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 const g10UnauthorizedActor = uint(999)
 
-var errNotFoundForTest = errors.New("record not found")
+// errNotFoundForTest is the "no ACL row" answer GetSecretACL gives for a missing row.
+var errNotFoundForTest = storage.ErrSecretACLNotFound
 
 func TestListGroupShares_RefusesUnauthorizedActor(t *testing.T) {
 	t.Parallel()

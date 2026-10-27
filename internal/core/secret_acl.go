@@ -195,7 +195,11 @@ func (c *KeyorixCore) HasSecretACL(ctx context.Context, userID, secretID uint, p
 func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID uint, perm string) (bool, error) {
 	acl, err := c.storage.GetSecretACL(ctx, nodeID, userID)
 	if err != nil {
-		if isNotFound(err) {
+		// Only a definitive "no ACL row" is "no grant". Anything else (DB outage,
+		// cancelled context) propagates and denies with an error: matching the
+		// error text made an outage a silent "no grant" in English and a 500 in
+		// other locales (ERRLOSS-ACL-1).
+		if storage.IsSecretACLNotFound(err) {
 			return false, nil
 		}
 		return false, err
