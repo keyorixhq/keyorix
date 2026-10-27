@@ -2,7 +2,10 @@ package admin
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"slices"
+	"sync"
 
 	"github.com/keyorixhq/keyorix/internal/serverguard"
 )
@@ -19,6 +22,45 @@ const lostDatabaseLockMsg = "ERROR: this admin command's exclusive database lock
 // tests can observe it instead of exiting.
 var exitOnLostDatabaseLock = func() { os.Exit(1) }
 
+// lostLockCleanups run, in registration order, before the process exits on a
+// lost lock: os.Exit skips every deferred cleanup, so a command that writes an
+// output file in place registers its removal here (onLostDatabaseLock).
+// lostLockMu also orders that exit against a command's own last step
+// (lostLockCleanup.commit): one of the two runs first, never both interleaved.
+var (
+	lostLockMu       sync.Mutex
+	lostLockCleanups = map[int]func(){}
+	lostLockNextID   int
+)
+
+// lostLockCleanup is one registered cleanup (onLostDatabaseLock).
+type lostLockCleanup struct{ id int }
+
+// onLostDatabaseLock registers fn to run if the exclusive lock is found lost
+// before the returned cleanup is committed or dropped.
+func onLostDatabaseLock(fn func()) *lostLockCleanup {
+	lostLockMu.Lock()
+	defer lostLockMu.Unlock()
+	c := &lostLockCleanup{id: lostLockNextID}
+	lostLockNextID++
+	lostLockCleanups[c.id] = fn
+	return c
+}
+
+// commit runs fn while no lost-lock exit can start, then drops the cleanup, so
+// a command's last check-then-commit (backup: is the lock still held? close the
+// archive) is never interleaved with the exit removing what it committed. If
+// the exit already started, it never returns: the process is ending.
+func (c *lostLockCleanup) commit(fn func()) {
+	lostLockMu.Lock()
+	defer lostLockMu.Unlock()
+	fn()
+	delete(lostLockCleanups, c.id)
+}
+
+// drop unregisters the cleanup. Safe to call more than once.
+func (c *lostLockCleanup) drop() { c.commit(func() {}) }
+
 // stopOnLostDatabaseLock stops the admin command, with exit status 1, when its
 // exclusive lock is found lost (serverguard.Exclusive.Lost): from that moment
 // the lock no longer keeps servers and other admin commands off the database,
@@ -26,7 +68,8 @@ var exitOnLostDatabaseLock = func() { os.Exit(1) }
 // keeps them off the key files (docs/multi-replica-keys.md). Stopping part-way
 // is what a crash does, which every state-changing admin command already has to
 // survive (DEK rotation's crash recovery, transactions rolled back with the
-// connection); running on beside a server is not.
+// connection); running on beside a server is not. Output written in place is
+// removed first, by the cleanups registered with onLostDatabaseLock.
 //
 // PostgreSQL: the lock's connection died. SQLite: the <database>.server.lock
 // sidecar was deleted or replaced (the watch keeps the new file locked, so no
@@ -42,6 +85,12 @@ func stopOnLostDatabaseLock(lock *serverguard.Exclusive) {
 	}
 	go func() {
 		<-lost
+		lostLockMu.Lock()
+		defer lostLockMu.Unlock()
+		for _, id := range slices.Sorted(maps.Keys(lostLockCleanups)) {
+			lostLockCleanups[id]()
+			delete(lostLockCleanups, id)
+		}
 		fmt.Fprint(os.Stderr, lostDatabaseLockMsg)
 		exitOnLostDatabaseLock()
 	}()

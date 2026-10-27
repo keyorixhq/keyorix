@@ -127,6 +127,13 @@ Not changed, and why:
   the snapshot reads are cancelled, the partial file is removed and the backup fails
   with the reason (`TestAdminBackup_Postgres_RealPresenceLockLost_NoArchive`,
   `TestAdminBackup_Postgres_PresenceLostMidWrite_RemovesTheArchiveAndFails`).
+  SERVERGUARD-LOCK-TAILS-1 made this hold at every point up to the close (the lock is
+  looked at again after the file is closed) and on the exclusive path too (SQLite,
+  `--exclusive`), where the stop is an `os.Exit`: the archive's removal is registered
+  before the first byte and runs before the exit (`onLostDatabaseLock`). The error says
+  the backup is not usable (`TestAdminBackup_SQLiteLockLost_NoArchiveAndNonZeroExit`,
+  `TestAdminBackup_Postgres_LivePresenceLost_NoArchiveAndNonZeroExit`: before the first
+  byte, mid-stream, after the last byte before close).
 - **The overlap window itself** for named and scheduler locks: closing it needs D per
   section.
 
