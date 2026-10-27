@@ -252,6 +252,11 @@ var (
 	// validation can still be in flight, same bound #2423's own PR comment
 	// uses.
 	clearedAt = map[string]time.Time{}
+	// userEvictedAt records, per user ID, the moment InvalidateUserTokenCache last
+	// ran for it: the per-user counterpart of clearedAt, for the same reason (a
+	// slow-path validation already in flight for a key that was not cached at
+	// eviction time has no per-key marker to check). Pruned after validTokenTTL.
+	userEvictedAt = map[uint]time.Time{}
 )
 
 // currentMachineCacheGen returns the machine-cache generation. The slow path
@@ -326,6 +331,11 @@ func cacheSetValidatedGen(key string, userCtx *UserContext, validatedAt time.Tim
 		// via the separate clearedAt map since a clear's own tokenCache marker (if any)
 		// does not survive an intervening cacheGet long enough to check here directly.
 	}
+	if userCtx != nil && userCtx.UserID != 0 {
+		if ea, ok := userEvictedAt[userCtx.UserID]; ok && ea.After(validatedAt) {
+			return // the user's cache entries were evicted (InvalidateUserTokenCache) during our validation
+		}
+	}
 	entry := tokenCacheEntry{userCtx: userCtx, expiresAt: expiresAt}
 	if isMachineEntry(userCtx) {
 		if gen != machineCacheGen {
@@ -364,6 +374,11 @@ func pruneLocked() {
 		for k, ca := range clearedAt {
 			if now.After(ca.Add(validTokenTTL)) {
 				delete(clearedAt, k)
+			}
+		}
+		for u, ea := range userEvictedAt {
+			if now.After(ea.Add(validTokenTTL)) {
+				delete(userEvictedAt, u)
 			}
 		}
 		lastPurge = now
@@ -2089,6 +2104,30 @@ func ClearTokenCacheIfCached(hash string) {
 	delete(tokenCache, hash)
 	clearedAt[hash] = time.Now()
 	tokenCacheMu.Unlock()
+}
+
+// InvalidateUserTokenCache drops every cache entry (session and PAT) that resolved to
+// the human user userID, so each of their credentials re-validates against storage on
+// its next request. Fail-closed fallback for the session-revocation paths in
+// internal/core (session_eviction.go) when ListSessionTokenHashesForUser failed after
+// the revocation committed and the exact cache keys are therefore unknown. It deletes
+// rather than tombstones, like InvalidateAllMachineTokenCache: an unrelated credential
+// of the user simply misses and re-validates (still-valid ones get 200), and
+// userEvictedAt makes cacheSetValidatedGen drop a slow-path validation that began
+// before this call, which a per-key tombstone cannot cover for a key not in the map.
+// Machine entries (UserID 0) are never matched.
+func InvalidateUserTokenCache(userID uint) {
+	if userID == 0 {
+		return
+	}
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	userEvictedAt[userID] = time.Now()
+	for k, e := range tokenCache {
+		if e.userCtx != nil && !isMachineEntry(e.userCtx) && e.userCtx.UserID == userID {
+			delete(tokenCache, k)
+		}
+	}
 }
 
 // InvalidateAllMachineTokenCache drops every positive cache entry attributed to a

@@ -266,8 +266,11 @@ func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
 			log.Printf("SECURITY: evictUserSessionCache panicked for user %d (best-effort, primary operation already succeeded): %v", userID, r)
 		}
 	}()
-	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
-	c.clearCachedTokens(hashes...)
+	// A listing failure (after one retry) evicts every cache entry of the user instead
+	// and is logged and audited: see session_eviction.go. Some callers hold a named lock
+	// here; the audit write on that failure path is a single non-waiting best-effort
+	// append, not an owed row.
+	c.evictSessionsAndAudit(ctx, userID, c.listSessionHashesForEviction(ctx, userID), evictClearNarrowing, "evictUserSessionCache")
 }
 
 // EventSessionRevocationPanicked audits a panic recovered inside
@@ -366,14 +369,20 @@ func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID,
 			err = nil
 		}
 	}()
-	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	ev := c.listSessionHashesForEviction(ctx, userID)
 	err = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
 	if err != nil {
 		log.Printf("SECURITY: deleteSessionsForUserAndEvict failed to purge sessions for user %d (best-effort, primary operation already succeeded): %v", userID, err)
 		c.writeAuditEventFailedFull(ctx, EventSessionRevocationFailed, &userID, nil, nil, "",
 			fmt.Sprintf("failed to purge sessions for user %d: %v — sessions may not have been fully revoked, review manually", userID, err))
 	}
-	for _, h := range hashes {
+	if ev.ListErr != nil {
+		// Without the hash list the kept session cannot be told apart, so the fallback
+		// evicts it too: it re-validates once on its next request and stays logged in.
+		c.evictSessionsAndAudit(ctx, userID, ev, evictTombstone, "deleteSessionsForUserAndEvict")
+		return err
+	}
+	for _, h := range ev.Hashes {
 		if h != "" && h != keepHash {
 			c.invalidateTokenCache(h)
 		}
