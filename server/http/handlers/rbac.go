@@ -180,6 +180,9 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	auditCtx := core.WithClientOrigin(r.Context(), r.Header.Get(core.ClientOriginHeader))
 	role, assignedPerms, err := h.coreService.CreateRoleWithScope(auditCtx, userCtx.UserID, req.Name, req.Description, permissionIDs, req.AssignableScope)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating role: %v", err)
 		msg := err.Error()
 		switch {
@@ -371,6 +374,9 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	// sequenced calls the way it used to be.
 	updated, perms, err := h.coreService.UpdateRole(r.Context(), userCtx.UserID, role, newPermissionIDs)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error updating role: %v", err)
 		if sendPartialMutation(w, err) {
 			return
@@ -499,6 +505,9 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		err = h.coreService.AssignUserRole(ctx, userCtx.UserID, req.UserID, req.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
 	}
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error assigning role: %v", err)
 		if sendRoleScopeError(w, err) {
 			return
@@ -695,6 +704,9 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		ctx = core.WithSelfMachineGranter(ctx, userCtx.PrincipalID())
 	}
 	if err := h.coreService.AssignPermissionToRole(ctx, userCtx.UserID, roleID, body.PermissionID, isMachineActor(r)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error assigning permission to role: %v", err)
 		switch {
 		case strings.Contains(err.Error(), errNotFound):
@@ -821,6 +833,9 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 		err = h.coreService.AssignRoleToGroup(ctx, userCtx.UserID, groupID, body.RoleID, scope, userCtx.ActorKind() == core.ActorTypeMachine)
 	}
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error assigning role to group: %v", err)
 		if sendRoleScopeError(w, err) {
 			return

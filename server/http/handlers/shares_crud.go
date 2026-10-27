@@ -73,6 +73,9 @@ func (h *ShareHandler) ShareSecret(w http.ResponseWriter, r *http.Request) {
 
 	if shareErr != nil {
 		log.Printf("Error sharing secret: %v", shareErr)
+		if sendAuditUnavailable(w, shareErr) {
+			return
+		}
 		if strings.Contains(shareErr.Error(), errNotFound) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else if reason, ok := core.ShareRefusalMessage(shareErr); ok {
@@ -127,6 +130,9 @@ func (h *ShareHandler) UpdateSharePermission(w http.ResponseWriter, r *http.Requ
 		ClearExpiry: reqBody.ClearExpiry,
 	})
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error updating share permission: %v", err)
 		if sendPartialMutation(w, err) {
 			return

@@ -63,6 +63,9 @@ func (h *CatalogHandler) OpenAccessReviewCampaign(w http.ResponseWriter, r *http
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	result, err := h.coreService.OpenAccessReviewCampaign(r.Context(), userCtx.UserID, machineID(r), uint(projectID), body.Name)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		sendCampaignError(w, "opening access-review campaign", err)
 		return
 	}
@@ -173,6 +176,9 @@ func (h *CatalogHandler) CloseAccessReviewCampaign(w http.ResponseWriter, r *htt
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	result, err := h.coreService.CloseAccessReviewCampaign(r.Context(), userCtx.UserID, machineID(r), uint(projectID), uint(campaignID), body.Force)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		sendCampaignError(w, "closing access-review campaign", err)
 		return
 	}

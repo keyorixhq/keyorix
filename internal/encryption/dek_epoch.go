@@ -39,8 +39,10 @@
 // whose encryption happened before its replica saw the fence and whose INSERT
 // starts more than dekEpochFenceWait - dekEpochMaxStaleness later (a stall of
 // several seconds between the two). That needs the presence guard to have
-// been bypassed or lost as well: `admin encryption rotate` normally refuses
-// while any server is attached to the database (internal/serverguard). A
+// been lost as well: `admin encryption rotate` refuses while any server is
+// attached to the database (internal/serverguard), and on PostgreSQL --force
+// cannot override that (server/admin/rotate_force_guard.go,
+// DEK-ROTATE-SAFETY-1; before it, --force ran next to live replicas). A
 // server binary that predates this file does not check the epoch at all;
 // upgrade every replica before rotating.
 package encryption
@@ -245,6 +247,10 @@ func (s *Service) StartDEKEpochGuard(db *gorm.DB, release func()) error {
 	// when this key directory has no pending DEK).
 	if err := s.clearCompletedRotationMarker(db); err != nil {
 		log.Printf("[WARN] could not clear the redo marker of a completed DEK rotation: %v", err)
+	}
+	// Keeps an older admin binary from rotating this database (rotation_protocol.go).
+	if err := recordDEKRotationProtocol(db); err != nil {
+		return err
 	}
 	w := &dekEpochWatch{db: db, own: own, release: release, base: base, stop: make(chan struct{}), done: make(chan struct{})}
 	w.markMatch(0) // verified just now, after base
