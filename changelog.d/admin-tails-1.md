@@ -6,3 +6,4 @@
 
 ### Changed
 - **A DEK that does not unwrap names the leftovers of an interrupted key operation.** The `failed to unwrap DEK — wrong passphrase or corrupted key file` error now names an existing `<salt_path>.pending` (a `rotate-kek` killed between its DEK and salt renames: `mv` it over the salt and start with the new passphrase) and the newest `<dek_path>.migrate-backup.*` (a `migrate-provider` killed after its re-wrap: point `key_provider` at the target), with the recovery from docs/operator/key-rotation-runbook.md, "Interrupted rotate-kek or migrate-provider". What is accepted or refused is unchanged.
+- **Admin commands name an unreadable server lock file.** When the SQLite `<database>.server.lock` cannot be opened (a foreign-owned or `0000` file), the refusal now says `cannot open the server lock file: <path>: <error>` and what to fix, instead of `cannot connect to the database`.
