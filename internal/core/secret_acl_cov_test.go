@@ -300,17 +300,3 @@ func TestAuthorizeSecret_HasSecretACLError(t *testing.T) {
 	assert.ErrorIs(t, err, wantErr)
 	assert.False(t, ok)
 }
-
-// --- isNotFound ---
-
-func TestIsNotFound_Nil(t *testing.T) {
-	t.Parallel()
-	assert.False(t, isNotFound(nil))
-}
-
-func TestIsNotFound_Messages(t *testing.T) {
-	t.Parallel()
-	assert.True(t, isNotFound(errors.New("record not found")))
-	assert.True(t, isNotFound(errors.New("entry not found")))
-	assert.False(t, isNotFound(errors.New("some other error")))
-}

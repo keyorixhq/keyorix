@@ -25,7 +25,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -254,13 +253,4 @@ func (c *KeyorixCore) requireSecretOrFolderNode(ctx context.Context, id uint) (*
 		return nil, fmt.Errorf("%s: node %d: %w", i18n.T("ErrorRetrievalFailed", nil), id, err)
 	}
 	return node, nil
-}
-
-// isNotFound reports whether err looks like a "not found" storage error.
-func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "not found") || strings.Contains(msg, "record not found")
 }
