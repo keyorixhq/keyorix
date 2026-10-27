@@ -163,25 +163,50 @@ func TestSecretNodeCacheEpochIntegrity_TriggerRecreatedAsAfterIsRestored_Postgre
 	requireEpochStaleThenFlushed(t, w)
 }
 
+// replaceCacheEpochBodyKeepingOldEpoch installs the tampered body every test
+// here uses: one that keeps OLD.cache_epoch, so a direct write goes unstamped.
+func replaceCacheEpochBodyKeepingOldEpoch(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	require.NoError(t, db.Exec("CREATE OR REPLACE FUNCTION "+secretNodeCacheEpochFunc+"() RETURNS trigger LANGUAGE plpgsql "+pgTriggerFuncSetClause+" AS $x$BEGIN NEW.cache_epoch := OLD.cache_epoch; RETURN NEW; END;$x$").Error)
+}
+
+func nodeCacheEpoch(t *testing.T, db *gorm.DB, id uint) int64 {
+	t.Helper()
+	var e int64
+	require.NoError(t, db.Raw("SELECT cache_epoch FROM secret_nodes WHERE id = ?", id).Scan(&e).Error)
+	return e
+}
+
+// shortRepairLockTimeout makes a lock wait fail in 100 ms instead of 1 s.
+func shortRepairLockTimeout(t *testing.T) {
+	old := rolePermGenerationRepairLockTimeout
+	rolePermGenerationRepairLockTimeout = 100 * time.Millisecond
+	t.Cleanup(func() { rolePermGenerationRepairLockTimeout = old })
+}
+
 // TestSecretNodeCacheEpochIntegrity_FailedRepairIsRetriedNotAdopted_Postgres:
-// with a bad definition the invalidation runs only after the repair (it goes
-// through the trigger). A repair that cannot get its lock must leave the
-// checker pending, and the next tick must still flush once it can, even if
-// the body was restored in between.
+// the invalidation goes through the trigger, so with a bad definition it runs
+// only after the repair. A repair that cannot get its lock (here the
+// installer's advisory lock, held by another session) must leave the checker
+// pending, and the next tick must still flush, even if the body was restored
+// in between.
 func TestSecretNodeCacheEpochIntegrity_FailedRepairIsRetriedNotAdopted_Postgres(t *testing.T) {
+	shortRepairLockTimeout(t)
 	w := newEpochIntegrityWorld(t)
-	require.NoError(t, w.db.Exec("CREATE OR REPLACE FUNCTION "+secretNodeCacheEpochFunc+"() RETURNS trigger LANGUAGE plpgsql "+pgTriggerFuncSetClause+" AS $x$BEGIN NEW.cache_epoch := OLD.cache_epoch; RETURN NEW; END;$x$").Error)
+	replaceCacheEpochBodyKeepingOldEpoch(t, w.db)
 	w.setStatusDirect(t, w.db, "suspended")
+	epoch := nodeCacheEpoch(t, w.db, w.created.ID)
 
 	lock := w.db.Begin()
 	require.NoError(t, lock.Error)
-	require.NoError(t, lock.Exec("SELECT id FROM secret_nodes WHERE id = ? FOR UPDATE", w.created.ID).Error)
+	require.NoError(t, lock.Exec("SELECT pg_advisory_xact_lock(?)", int64(postgresCacheEpochLockKey)).Error)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	flushed, err := w.c.check(ctx)
 	cancel()
 	require.NoError(t, lock.Rollback().Error)
-	require.Error(t, err, "premise: the repair's invalidation cannot lock the row")
+	require.ErrorContains(t, err, "restore the", "premise: the repair cannot get the installer's lock")
 	require.False(t, flushed)
+	require.Equal(t, epoch, nodeCacheEpoch(t, w.db, w.created.ID), "nothing is invalidated through the bad trigger")
 
 	require.NoError(t, EnsureSecretNodeCacheEpoch(w.db), "the body is restored without a bump")
 	requireEpochStaleThenFlushed(t, w)

@@ -28,24 +28,32 @@
 //     rewrite neither row when they are already correct, so a clean boot of
 //     another replica changes nothing here.
 //
-// A bad definition: log, count, invalidate, then re-install (under a
-// lock_timeout) and invalidate again. Changed row versions with a good
-// definition: log, count and invalidate. Each target invalidates every
-// replica's cache through the database, not this process's memory:
+// A bad definition: log, count, re-install (under a lock_timeout) and
+// invalidate. Changed row versions with a good definition: log, count and
+// invalidate. Each target invalidates every replica's cache through the
+// database, not this process's memory:
 //
 //   - role-permission generation: bump role_permissions_generation. The first
-//     bump commits in its own transaction, so a repair that cannot get its
-//     lock or fails outright never holds the invalidation back.
-//   - secret_nodes cache epoch: move cache_epoch on every live row. That bump
-//     goes through the trigger it is checking (a BEFORE trigger overwrites
-//     NEW.cache_epoch), so with a bad definition it runs only after the
-//     repair, in the repair's transaction; a repair that cannot commit leaves
-//     the node cache unflushed until a tick's repair does.
+//     bump commits in its own transaction before the repair, so a repair that
+//     cannot get its lock or fails outright never holds the invalidation back,
+//     and the repair's transaction bumps again. Until a repair commits and the
+//     re-read is clean every tick invalidates again.
+//   - secret_nodes cache epoch (checkRepairFirst): move cache_epoch on every
+//     live row. That bump goes through the trigger it is checking (a BEFORE
+//     trigger overwrites NEW.cache_epoch), so it runs only after the repair,
+//     which commits in its own transaction first: a row lock the bump waits
+//     on never rolls the repair back. The bump is an UPDATE per live row, so
+//     it runs in committed batches by id that keep their place across ticks
+//     (pending is cleared after the last one), and a problem the repair
+//     cannot fix (a session not in 'origin') is invalidated once per reading,
+//     not every tick.
 //
-// Until a repair commits and the re-read is clean every tick invalidates
-// again. A false alarm (a catalog rewrite this file does not foresee, such as
-// a pg_upgrade) costs one cache refill (for the cache epoch, one UPDATE of
-// every live secret_nodes row per replica) and changes no decision.
+// A false alarm (a catalog rewrite this file does not foresee, such as a
+// pg_upgrade or an older release's replica rewriting the function at boot
+// during a rolling upgrade) changes no decision. It costs one cache refill:
+// for the role-permission target one bump; for the cache epoch one UPDATE of
+// every live secret_nodes row per replica per detection, in batches of secretNodeCacheEpochInvalidateBatch rows, spread
+// over as many ticks as the table needs.
 //
 // Limits, stated: the window is one interval (plus at most one tick timeout),
 // also while a repair keeps failing, for deliberate DDL only (the accidental
@@ -62,6 +70,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -80,9 +89,15 @@ var rolePermGenerationIntegrityTickTimeout = 10 * time.Second
 
 // rolePermGenerationRepairLockTimeout is the repair's lock_timeout: how long
 // its DROP TRIGGER may queue for the table's lock (stalling the table's
-// readers behind it) before the repair gives up until the next tick. The
-// cache-epoch invalidation's row locks use it too.
+// readers behind it) before the repair gives up until the next tick. Each
+// cache-epoch invalidation batch's row locks use it too.
 var rolePermGenerationRepairLockTimeout = time.Second
+
+// secretNodeCacheEpochInvalidateBatch is how many secret_nodes rows one
+// committed invalidation batch moves (a var so tests can shrink it). Small
+// enough that a batch holds its row locks briefly and fits a tick many times
+// over; the batches of one invalidation continue across ticks.
+var secretNodeCacheEpochInvalidateBatch = 5000
 
 var rolePermGenerationTamperTotal = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "keyorix_role_permission_generation_tamper_total",
@@ -106,9 +121,11 @@ type triggerIntegrityTarget struct {
 	funcName string
 	// invalidate makes every replica's cache miss, inside tx.
 	invalidate func(ctx context.Context, tx *gorm.DB) error
-	// invalidateNeedsRepair: invalidate goes through the trigger being
-	// checked, so with a bad definition it runs only after the repair.
-	invalidateNeedsRepair bool
+	// invalidateFrom, set instead of invalidate, is an invalidation that goes
+	// through the trigger being checked and whose cost grows with the table:
+	// inside tx it makes the next limit live rows with an id above after miss
+	// and returns their ids. Such a target is checked by checkRepairFirst.
+	invalidateFrom func(ctx context.Context, tx *gorm.DB, after uint, limit int) ([]uint, error)
 	// repair re-installs the triggers inside tx.
 	repair func(tx *gorm.DB) error
 	tamper prometheus.Counter
@@ -119,26 +136,32 @@ type triggerSpec struct{ table, trigger string }
 // triggerIntegritySQL reads one row per trigger: its enabled state, whether
 // its definition and its function are this binary's, and its row versions,
 // joined to this connection's session_replication_role so a row comes back
-// even when no trigger does. One native bind ($1): the expected body.
+// even when no trigger does. One native bind ($1): the expected body, which
+// is funcOK's single `?`. triggerDefOK takes no bind, and a `?` in it panics
+// at package init instead of silently taking the body's place.
 func triggerIntegritySQL(triggers []triggerSpec, triggerDefOK, funcOK string) string {
+	if strings.Contains(triggerDefOK, "?") || strings.Count(funcOK, "?") != 1 {
+		panic("triggerIntegritySQL: the trigger shape takes no bind and the function check exactly one (the body)")
+	}
 	var conds []string
 	for _, t := range triggers {
 		conds = append(conds, "(t.tgrelid = '"+t.table+"'::regclass AND t.tgname = '"+t.trigger+"')")
 	}
-	return strings.Replace(`SELECT s.repl, g.name, g.state, g.def_ok, g.func_ok, g.version
+	funcOK = strings.Replace(funcOK, "?", "$1", 1)
+	return `SELECT s.repl, g.name, g.state, g.def_ok, g.func_ok, g.version
 FROM (SELECT pg_catalog.current_setting('session_replication_role') AS repl) s
 LEFT JOIN (
   SELECT t.tgname::text AS name, t.tgenabled::text AS state,
-    (`+triggerDefOK+`) AS def_ok,
-    COALESCE(`+funcOK+` AND p.pronamespace = c.relnamespace, false) AS func_ok,
+    (` + triggerDefOK + `) AS def_ok,
+    COALESCE(` + funcOK + ` AND p.pronamespace = c.relnamespace, false) AS func_ok,
     t.tgfoid::text || ':' || t.xmin::text || ':' || COALESCE(p.xmin::text, '-') AS version
   FROM pg_catalog.pg_trigger t
   JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
   LEFT JOIN pg_catalog.pg_proc p ON p.oid = t.tgfoid
   LEFT JOIN pg_catalog.pg_language l ON l.oid = p.prolang
-  WHERE NOT t.tgisinternal AND (`+strings.Join(conds, " OR ")+`)
+  WHERE NOT t.tgisinternal AND (` + strings.Join(conds, " OR ") + `)
 ) g ON true
-ORDER BY g.name`, "?", "$1", 1)
+ORDER BY g.name`
 }
 
 var rolePermGenerationIntegrityTarget = func() *triggerIntegrityTarget {
@@ -169,16 +192,19 @@ var secretNodeCacheEpochIntegrityTarget = &triggerIntegrityTarget{
 	triggers: 1,
 	funcName: secretNodeCacheEpochFunc,
 	// Every live row: a soft-deleted row never hits (readLiveNodeStamp), and
-	// undeleting it is an UPDATE the restored trigger stamps.
-	invalidate: func(ctx context.Context, tx *gorm.DB) error {
+	// undeleting it is an UPDATE the restored trigger stamps. A row an earlier
+	// batch already passed is stamped by that trigger when it changes again.
+	invalidateFrom: func(ctx context.Context, tx *gorm.DB, after uint, limit int) ([]uint, error) {
 		if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
-			return err
+			return nil, err
 		}
-		return tx.WithContext(ctx).Exec("UPDATE secret_nodes SET cache_epoch = cache_epoch + 1 WHERE deleted_at IS NULL").Error
+		var ids []uint
+		err := tx.WithContext(ctx).Raw(`WITH b AS (SELECT id FROM secret_nodes WHERE deleted_at IS NULL AND id > ? ORDER BY id LIMIT ?)
+UPDATE secret_nodes s SET cache_epoch = s.cache_epoch + 1 FROM b WHERE s.id = b.id RETURNING s.id`, after, limit).Scan(&ids).Error
+		return ids, err
 	},
-	invalidateNeedsRepair: true,
-	repair:                ensurePostgresCacheEpochTrigger,
-	tamper:                secretNodeCacheEpochTamperTotal,
+	repair: ensurePostgresCacheEpochTrigger,
+	tamper: secretNodeCacheEpochTamperTotal,
 }
 
 // triggerIntegrityState is one reading: problem is "" when the definition is
@@ -263,13 +289,26 @@ type triggerIntegrityChecker struct {
 	// replace that is restored after the failed attempt leaves every warm
 	// cache stale with nothing left to see (fail closed).
 	pending bool
+	// checkRepairFirst only: round is the reading (integrityKey) the
+	// invalidation under way is for, cursor the last id its committed batches
+	// reached, and doneFor a reading the repair could not fix whose
+	// invalidation has finished.
+	round   string
+	cursor  uint
+	doneFor string
 }
+
+// integrityKey identifies a reading, problem included.
+func integrityKey(st triggerIntegrityState) string { return st.problem + "\x00" + st.version }
 
 // check runs one tick and reports whether it invalidated the caches. The
 // first tick records the baseline (and repairs a bad definition like any
 // other tick).
 func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	t := c.target
+	if t.invalidateFrom != nil {
+		return c.checkRepairFirst(ctx)
+	}
 	st, err := readTriggerIntegrity(ctx, c.ls.db, t)
 	if err != nil {
 		return false, fmt.Errorf("read the %s triggers: %w", t.what, err)
@@ -287,19 +326,16 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	}
 	t.tamper.Inc()
 	c.pending = true
-	flushed := false
-	if st.problem == "" || !t.invalidateNeedsRepair {
-		// The invalidation commits on its own first: it never waits on, or
-		// rolls back with, a repair that cannot finish.
-		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-			return t.invalidate(ctx, tx)
-		}); err != nil {
-			// pending stays set and the baseline is left alone: the next tick
-			// invalidates (and repairs) again, never adopts the current reading.
-			return false, fmt.Errorf("invalidate the %s: %w", t.cache, err)
-		}
-		flushed = true
+	// The invalidation commits on its own first: it never waits on, or rolls
+	// back with, a repair that cannot finish.
+	if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return t.invalidate(ctx, tx)
+	}); err != nil {
+		// pending stays set and the baseline is left alone: the next tick
+		// invalidates (and repairs) again, never adopts the current reading.
+		return false, fmt.Errorf("invalidate the %s: %w", t.cache, err)
 	}
+	flushed := true
 	if st.problem != "" {
 		// The repair invalidates again in its own transaction, so a write made
 		// through the wrong trigger after the first invalidation is flushed
@@ -330,6 +366,106 @@ func (c *triggerIntegrityChecker) check(ctx context.Context) (bool, error) {
 	}
 	c.baseline = after.version
 	c.pending = false
+	return flushed, nil
+}
+
+// checkRepairFirst is check for a target whose invalidation goes through the
+// trigger being checked and costs an UPDATE per live row (invalidateFrom):
+//
+//   - a bad definition is repaired in its own transaction, committed before
+//     any invalidation. After it the trigger is this release's, so an
+//     invalidation that follows is as complete as one inside the repair, and
+//     a row lock the invalidation waits on can neither roll the repair back
+//     nor keep the repair's ACCESS EXCLUSIVE lock on the table;
+//   - the invalidation runs in committed batches of
+//     secretNodeCacheEpochInvalidateBatch rows by id and keeps its place
+//     across ticks; pending is cleared only after the last batch. A different
+//     reading, or a repair that commits, starts it again from the first row;
+//   - a reading the repair cannot fix (a session not in 'origin') is reported
+//     every tick but invalidated once, not again on every tick.
+func (c *triggerIntegrityChecker) checkRepairFirst(ctx context.Context) (bool, error) {
+	t := c.target
+	st, err := readTriggerIntegrity(ctx, c.ls.db, t)
+	if err != nil {
+		return false, fmt.Errorf("read the %s triggers: %w", t.what, err)
+	}
+	switch {
+	case st.problem != "":
+		c.logf("SECURITY: %s triggers cannot be trusted: %s. Restoring them and invalidating every replica's %s; find who has DDL on this schema or changed the server role's database settings.", t.what, st.problem, t.cache)
+	case c.pending && integrityKey(st) == c.round:
+		c.logf("SECURITY: continuing the %s invalidation after id %d (catalog row versions %s, last good %s).", t.cache, c.cursor, st.version, c.baseline)
+	case c.pending:
+		c.logf("SECURITY: %s triggers read as this release's (catalog row versions %s, last good %s) while an invalidation is owed. Invalidating every replica's %s from the first row.", t.what, st.version, c.baseline, t.cache)
+	case c.baseline == "" || st.version == c.baseline:
+		c.baseline = st.version
+		return false, nil
+	default:
+		c.logf("SECURITY: %s trigger or function rewritten outside this server (catalog row versions %s, were %s), now matching this release again. Invalidating every replica's %s; find who has DDL on this schema.", t.what, st.version, c.baseline, t.cache)
+	}
+	if !c.pending || integrityKey(st) != c.round {
+		t.tamper.Inc()
+	}
+	c.pending = true
+	if st.problem != "" {
+		// lock_timeout: its DROP TRIGGER takes an ACCESS EXCLUSIVE lock on the
+		// table, and a request queued behind an open transaction would stall
+		// every reader of the table behind it.
+		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			if err := tx.Exec(fmt.Sprintf("SET LOCAL lock_timeout = %d", rolePermGenerationRepairLockTimeout.Milliseconds())).Error; err != nil {
+				return err
+			}
+			return t.repair(tx)
+		}); err != nil {
+			// The trigger may have been wrong while earlier batches ran: the
+			// invalidation starts again once a repair commits.
+			c.round = ""
+			return false, fmt.Errorf("restore the %s triggers: %w", t.what, err)
+		}
+		if st, err = readTriggerIntegrity(ctx, c.ls.db, t); err != nil {
+			c.round = ""
+			return false, fmt.Errorf("re-read the %s triggers after the repair: %w", t.what, err)
+		}
+		if st.problem == "" {
+			c.round = "" // the repair rewrote the definition: from the first row
+		}
+	}
+	if key := integrityKey(st); key != c.round {
+		c.round, c.cursor = key, 0
+	}
+	unfixed := func() error {
+		return fmt.Errorf("%s triggers still not this release's after the repair: %q", t.what, st.problem)
+	}
+	if st.problem != "" && c.doneFor == c.round {
+		return false, unfixed() // invalidated once for this reading already
+	}
+	flushed := false
+	for {
+		var ids []uint
+		if err := c.ls.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+			var err error
+			ids, err = t.invalidateFrom(ctx, tx, c.cursor, secretNodeCacheEpochInvalidateBatch)
+			return err
+		}); err != nil {
+			// pending stays set and the committed batches stay done: the next
+			// tick continues after c.cursor.
+			return flushed, fmt.Errorf("invalidate the %s (continuing after id %d at the next tick): %w", t.cache, c.cursor, err)
+		}
+		flushed = true
+		if len(ids) > 0 {
+			c.cursor = slices.Max(ids)
+		}
+		if len(ids) < secretNodeCacheEpochInvalidateBatch {
+			break
+		}
+	}
+	if st.problem != "" {
+		c.doneFor = c.round
+		return flushed, unfixed()
+	}
+	// A change made while the batches ran shows as a new version at the next
+	// tick, which compares against this one.
+	c.baseline = st.version
+	c.pending, c.round, c.cursor, c.doneFor = false, "", 0, ""
 	return flushed, nil
 }
 
