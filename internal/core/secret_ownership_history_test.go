@@ -139,7 +139,7 @@ func TestGetSecretOwnershipHistory_PermissionDenied(t *testing.T) {
 	// CheckGroupPermissions → GetUserGroupsAt needed.
 	store.On("GetUserGroupsAt", ctx, uint(42), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): no direct grant, and no ancestor folder grant either → deny.
-	store.On("GetSecretACL", mock.Anything, uint(100), uint(42)).Return(nil, errors.New("record not found"))
+	store.On("GetSecretACL", mock.Anything, uint(100), uint(42)).Return(nil, stg.ErrSecretACLNotFound)
 	store.On("GetSecretAncestors", mock.Anything, uint(100)).Return([]uint{}, nil)
 	// RBAC fallback (r124): no roles → deny.
 	store.On("GetUserRoleIDsAt", mock.Anything, uint(42), mock.Anything).Return([]uint{}, nil)

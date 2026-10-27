@@ -634,7 +634,7 @@ func (ls *LocalStorage) RestoreGroup(ctx context.Context, id uint) error {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("group not found or not deleted")
+		return fmt.Errorf("group not found or not deleted: %w", storage.ErrGroupNotFound)
 	}
 	return nil
 }

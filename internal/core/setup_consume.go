@@ -199,7 +199,7 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 	// Validate the password BEFORE consuming the token, so a policy rejection lets
 	// the user retry with the same link instead of dead-ending on a spent token.
 	if err := c.validateNewPassword(ctx, user, newPassword); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSetupPassword, err)
 	}
 
 	// Accounts with any second factor (TOTP or a passkey) enrolled must NOT get an
@@ -409,12 +409,6 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), eerr)
 	}
 
-	// Validate the password before consuming (a weak password must not burn the link).
-	// No account exists yet, so this is policy-only (no history to check).
-	if err := c.passwordPolicy.Validate(newPassword, nil); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
-	}
-
 	// Lazily create the account with the chosen password (active — they just set it).
 	// SECURITY (#155): create the account BEFORE consuming the token, not after. If a
 	// concurrent account-creation for the same email (e.g. another invite, an admin
@@ -437,10 +431,19 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	if err != nil {
 		return nil, err
 	}
+	// Validate the password before creating the account or consuming the link (a weak
+	// password must not burn it). No account exists yet, so this is policy-only (no
+	// history to check), but against the identity CreateUser will build: checked
+	// without it, a password embedding the invitee's own email passed here and was
+	// refused inside CreateUser, which the handler answers as a dead link.
+	displayName := displayNameFromEmail(inv.Email)
+	if refusal := c.refuseUnmetRules(newPassword, &models.User{Username: username, Email: inv.Email, DisplayName: displayName}); refusal != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSetupPassword, refusal)
+	}
 	user, err := c.CreateUser(ctx, &CreateUserRequest{
 		Username:    username,
 		Email:       inv.Email,
-		DisplayName: displayNameFromEmail(inv.Email),
+		DisplayName: displayName,
 		Password:    newPassword,
 	})
 	if err != nil {
@@ -509,8 +512,16 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		if !c.revokeInvitationGrants(ctx, inv, user.ID) {
 			reverted = "could NOT revert every grant just made (MANUAL CLEANUP REQUIRED, see invitation.accept_race_revoke_failed)"
 		}
+		// The account created for this accept goes too (AUDIT-503-MAP-1): with no grant,
+		// no accepted invitation and a spent link it would be an orphan that can still
+		// log in and shows in every user list. The invitation stays as the winner left
+		// it (revoked or expired): unlike a failed step, nobody should resend it.
+		account := fmt.Sprintf("the account created for it (user %d) was removed", user.ID)
+		if !c.removeInvitationAcceptAccount(ctx, inv, user, "the invitation was concurrently revoked/resolved, ending the accept") {
+			account = fmt.Sprintf("the account created for it (user %d) could NOT be removed (MANUAL CLEANUP REQUIRED, see invitation.accept_orphaned_account_cleanup_failed)", user.ID)
+		}
 		c.auditProjectScoped(ctx, "invitation.accept_race_reverted", user.ID, inv.ProjectID,
-			fmt.Sprintf("invitation %d was concurrently revoked/resolved while %s (user %d) was accepting it; %s", inv.ID, inv.Email, user.ID, reverted))
+			fmt.Sprintf("invitation %d was concurrently revoked/resolved while %s (user %d) was accepting it; %s; %s", inv.ID, inv.Email, user.ID, reverted, account))
 		return nil, fmt.Errorf("%s: this invitation was revoked", i18n.T("ErrorValidation", nil))
 	}
 
@@ -556,13 +567,8 @@ func (c *KeyorixCore) abandonInvitationAccept(ctx context.Context, inv *models.P
 	if step != invitationAcceptStepConsume { // nothing is granted before the token is spent
 		reverted = c.revokeInvitationGrants(ctx, inv, user.ID)
 	}
-	removed := true
-	if derr := c.storage.DeleteUser(ctx, user.ID); derr != nil {
-		removed = false
-		c.auditProjectScopedFailed(ctx, "invitation.accept_orphaned_account_cleanup_failed", user.ID, inv.ProjectID,
-			fmt.Sprintf("invitation %d: %s failed for %s (user %d): %s -- AND cleaning up the resulting account also failed: %v -- MANUAL CLEANUP REQUIRED (delete or complete this account by hand, or the invitee is stuck)",
-				inv.ID, step, inv.Email, user.ID, invitationAcceptCause(cause), derr))
-	}
+	removed := c.removeInvitationAcceptAccount(ctx, inv, user,
+		fmt.Sprintf("%s failed for %s (user %d): %s", step, inv.Email, user.ID, invitationAcceptCause(cause)))
 	var b strings.Builder
 	fmt.Fprintf(&b, "invitation %d for %s could not be accepted: %s failed (%s). ", inv.ID, inv.Email, step, invitationAcceptCause(cause))
 	if step != invitationAcceptStepConsume {
@@ -585,6 +591,22 @@ func (c *KeyorixCore) abandonInvitationAccept(ctx context.Context, inv *models.P
 	msg := b.String()
 	c.auditProjectScopedFailed(ctx, "invitation.accept_failed", user.ID, inv.ProjectID, msg)
 	return fmt.Errorf("%w: %s", ErrInvitationAcceptAbandoned, msg)
+}
+
+// removeInvitationAcceptAccount soft-deletes the account an invitation accept created
+// for itself, once that accept can no longer succeed, and reports whether it could.
+// A failed removal leaves a live account that nothing grants and nothing will
+// complete, so it is reported loudly (invitation.accept_orphaned_account_cleanup_failed,
+// MANUAL CLEANUP REQUIRED) rather than swallowed. what says why the accept ended.
+func (c *KeyorixCore) removeInvitationAcceptAccount(ctx context.Context, inv *models.ProjectInvitation, user *models.User, what string) bool {
+	derr := c.storage.DeleteUser(ctx, user.ID)
+	if derr == nil {
+		return true
+	}
+	c.auditProjectScopedFailed(ctx, "invitation.accept_orphaned_account_cleanup_failed", user.ID, inv.ProjectID,
+		fmt.Sprintf("invitation %d: %s -- AND cleaning up the resulting account also failed: %v -- MANUAL CLEANUP REQUIRED (delete or complete this account by hand, or the invitee is stuck)",
+			inv.ID, what, derr))
+	return false
 }
 
 // invitationAcceptCause names a failing step's error for abandonInvitationAccept's

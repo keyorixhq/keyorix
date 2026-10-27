@@ -53,6 +53,9 @@ func (h *AdminJobsHandler) SuspendInactiveUsers(w http.ResponseWriter, r *http.R
 		DryRun:       req.DryRun,
 	})
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error running suspend-inactive-users job: %v", err)
 		sendError(w, "Error", clientSafe(err), http.StatusInternalServerError, nil)
 		return

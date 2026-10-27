@@ -25,7 +25,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -195,7 +194,11 @@ func (c *KeyorixCore) HasSecretACL(ctx context.Context, userID, secretID uint, p
 func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID uint, perm string) (bool, error) {
 	acl, err := c.storage.GetSecretACL(ctx, nodeID, userID)
 	if err != nil {
-		if isNotFound(err) {
+		// Only a definitive "no ACL row" is "no grant". Anything else (DB outage,
+		// cancelled context) propagates and denies with an error: matching the
+		// error text made an outage a silent "no grant" in English and a 500 in
+		// other locales (ERRLOSS-ACL-1).
+		if storage.IsSecretACLNotFound(err) {
 			return false, nil
 		}
 		return false, err
@@ -241,16 +244,13 @@ func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID ui
 func (c *KeyorixCore) requireSecretOrFolderNode(ctx context.Context, id uint) (*models.SecretNode, error) {
 	node, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s: node %d not found", i18n.T("ErrorNotFound", nil), id)
+		// Only a definitive absence (GetSecret wraps ErrSecretNotFound for a missing
+		// secret or folder node) is "not found"; a storage failure is reported as
+		// one, not as a missing node (ERRLOSS-ACL-1).
+		if storage.IsSecretNotFound(err) {
+			return nil, fmt.Errorf("%s: node %d not found: %w", i18n.T("ErrorNotFound", nil), id, storage.ErrSecretNotFound)
+		}
+		return nil, fmt.Errorf("%s: node %d: %w", i18n.T("ErrorRetrievalFailed", nil), id, err)
 	}
 	return node, nil
-}
-
-// isNotFound reports whether err looks like a "not found" storage error.
-func isNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "not found") || strings.Contains(msg, "record not found")
 }

@@ -5,8 +5,8 @@
 package handlers
 
 import (
-	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,6 +14,9 @@ import (
 	"strconv"
 	"strings"
 
+	chimw "github.com/go-chi/chi/v5/middleware"
+
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -65,9 +68,15 @@ func (p *scimGroupPayload) memberIDs() []uint {
 	return out
 }
 
-// renderGroup writes a group with its current members at the given status.
-func (h *SCIMHandler) renderGroup(w http.ResponseWriter, ctx context.Context, g *models.Group, status int) {
-	members, _ := h.coreService.GetGroupMembers(ctx, g.ID)
+// renderGroup writes a group with its current members at the given status. A failed
+// member read answers the SCIM error instead: rendering the group with an empty member
+// list would tell the IdP the group has no members, and it would remove them all.
+func (h *SCIMHandler) renderGroup(w http.ResponseWriter, r *http.Request, g *models.Group, status int) {
+	members, err := h.coreService.GetGroupMembers(r.Context(), g.ID)
+	if err != nil {
+		writeSCIMWriteError(w, r, fmt.Sprintf("reading members of SCIM group %d", g.ID), err)
+		return
+	}
 	writeSCIM(w, status, toSCIMGroup(g, members))
 }
 
@@ -127,7 +136,11 @@ func (h *SCIMHandler) ListGroups(w http.ResponseWriter, r *http.Request) {
 	// of running across the whole directory.
 	resources := make([]map[string]any, 0, len(page))
 	for _, g := range page {
-		members, _ := h.coreService.GetGroupMembers(r.Context(), g.ID)
+		members, err := h.coreService.GetGroupMembers(r.Context(), g.ID)
+		if err != nil {
+			writeSCIMWriteError(w, r, fmt.Sprintf("listing members of SCIM group %d", g.ID), err)
+			return
+		}
 		resources = append(resources, toSCIMGroup(g, members))
 	}
 	writeSCIM(w, http.StatusOK, listResponsePaged(resources, total, startIndex))
@@ -155,7 +168,7 @@ func (h *SCIMHandler) GetGroup(w http.ResponseWriter, r *http.Request) {
 		writeSCIMWriteError(w, r, fmt.Sprintf("reading SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusOK)
+	h.renderGroup(w, r, g, http.StatusOK)
 }
 
 // CreateGroup handles POST /scim/v2/Groups — provision a group with initial members.
@@ -173,12 +186,15 @@ func (h *SCIMHandler) CreateGroup(w http.ResponseWriter, r *http.Request) {
 		scimError(w, http.StatusRequestEntityTooLarge, errTooManyMembers)
 		return
 	}
-	g, err := h.coreService.ProvisionSCIMGroup(r.Context(), 0, p.DisplayName, p.memberIDs())
+	st, err := h.coreService.ProvisionSCIMGroup(r.Context(), 0, p.DisplayName, p.memberIDs())
 	if err != nil {
 		writeSCIMWriteError(w, r, fmt.Sprintf("provisioning SCIM group %q", p.DisplayName), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusCreated)
+	// Read in the create's own transaction, like PUT/PATCH: a member read after the
+	// commit that failed would answer 500 for a group that exists, and the IdP's retry
+	// of the POST would then hit 409 on the duplicate name.
+	writeSCIM(w, http.StatusCreated, toSCIMGroup(st.Group, st.Members))
 }
 
 // ReplaceGroup handles PUT /scim/v2/Groups/{id} — rename + full member replace.
@@ -196,12 +212,17 @@ func (h *SCIMHandler) ReplaceGroup(w http.ResponseWriter, r *http.Request) {
 		scimError(w, http.StatusRequestEntityTooLarge, errTooManyMembers)
 		return
 	}
-	g, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
+	st, err := h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, p.DisplayName, p.memberIDs())
 	if err != nil {
+		// Including core.ErrSCIMGroupStateUnavailable (a pure removal applied, its
+		// read-back failed): a PUT must return the resource (RFC 7644 §3.5.1), so it
+		// answers the SCIM error as before; the IdP's retry is an idempotent no-op.
 		writeSCIMWriteError(w, r, fmt.Sprintf("replacing SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusOK)
+	// The committed state comes from the write's own transaction (after the commit
+	// for a pure removal, see core.SCIMGroupState).
+	writeSCIM(w, http.StatusOK, toSCIMGroup(st.Group, st.Members))
 }
 
 var scimMemberFilterPath = regexp.MustCompile(`(?i)members\[\s*value\s+eq\s+"([^"]+)"\s*\]`)
@@ -289,22 +310,30 @@ func (h *SCIMHandler) PatchGroup(w http.ResponseWriter, r *http.Request) { // NO
 		return
 	}
 
-	var g *models.Group
+	var st *core.SCIMGroupState
 	var err error
 	if replaceAll {
 		name := ""
 		if newName != nil {
 			name = *newName
 		}
-		g, err = h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, name, replaceMembers)
+		st, err = h.coreService.ReplaceSCIMGroup(r.Context(), 0, id, name, replaceMembers)
 	} else {
-		g, err = h.coreService.PatchSCIMGroup(r.Context(), 0, id, newName, addIDs, removeIDs)
+		st, err = h.coreService.PatchSCIMGroup(r.Context(), 0, id, newName, addIDs, removeIDs)
+	}
+	if errors.Is(err, core.ErrSCIMGroupStateUnavailable) {
+		// A pure member removal committed and only its read-back failed: report it as
+		// applied, without a body (RFC 7644 §3.5.2 allows 204 for a PATCH). A 500 would
+		// tell the IdP the revocation did not happen.
+		log.Printf("SCIM patching group %d applied, but the group could not be read back (HTTP 204, request %s): %v", id, chimw.GetReqID(r.Context()), err)
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
 	if err != nil {
 		writeSCIMWriteError(w, r, fmt.Sprintf("patching SCIM group %d", id), err)
 		return
 	}
-	h.renderGroup(w, r.Context(), g, http.StatusOK)
+	writeSCIM(w, http.StatusOK, toSCIMGroup(st.Group, st.Members))
 }
 
 // DeleteGroup handles DELETE /scim/v2/Groups/{id}.

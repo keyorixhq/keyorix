@@ -19,10 +19,12 @@ package services
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/testhelper"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -38,22 +40,22 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestGroupError_NotFound(t *testing.T) {
-	err := groupError(errors.New("group not found"))
+	err := groupError(fmt.Errorf("get group: %w", storage.ErrGroupNotFound))
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestGroupError_AlreadyExists(t *testing.T) {
-	err := groupError(errors.New("group already exists"))
+	err := groupError(fmt.Errorf("create group: %w", storage.ErrDuplicateGroupName))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
 func TestGroupError_Duplicate(t *testing.T) {
-	err := groupError(errors.New("duplicate group entry"))
+	err := groupError(fmt.Errorf("%w: UNIQUE constraint failed: groups.name", storage.ErrDuplicateGroupName))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
 func TestGroupError_InUse(t *testing.T) {
-	err := groupError(errors.New("name is in use by another group"))
+	err := groupError(fmt.Errorf("rename group: %w", storage.ErrDuplicateGroupName))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
@@ -88,7 +90,7 @@ func TestGroupError_AdministratorCanGrant(t *testing.T) {
 }
 
 func TestGroupError_RefusingToRemoveLast(t *testing.T) {
-	err := groupError(errors.New("refusing to remove the last member"))
+	err := groupError(fmt.Errorf("remove member: %w", core.ErrLastAdminGroupGuard))
 	assert.Equal(t, codes.FailedPrecondition, status.Code(err))
 }
 

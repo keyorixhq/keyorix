@@ -71,9 +71,12 @@ reported unmappable (metadata-only): Keyorix has no permission that lists withou
 
 Under the default convention "secret/data/team-a/prod/x" and "kv1/team-a/prod/x" land in the
 same environment, so plan-access lists every KV mount's <project>/ and <project>/<env>/ keys
-(names only). A default-convention policy maps only when no other KV mount holds paths in its
-scope; otherwise, or when a mount cannot be listed, it is reported unmappable
-(cross-mount-scope). apply-access lists again and applies nothing if that changed.
+(names only). A policy maps only when no other KV mount holds paths in its scope; otherwise, or
+when a mount cannot be listed, it is reported unmappable (cross-mount-scope). This holds for a
+--path-map scope too: kv1/team-a/dev/x lands in team-a/dev by name, which is the scope
+--path-map secret/data=<team-a>:<dev> maps the secret mount into. Send the other mount's paths
+to their own scope with --path-map to clear it. apply-access lists again and applies nothing if
+that changed.
 
 secrets.read in Keyorix also lists secret names and reads version metadata. When a policy's
 grant adds that (no matching metadata/ list/read stanza in Vault), the report lists the policy

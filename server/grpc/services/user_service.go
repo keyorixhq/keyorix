@@ -365,6 +365,10 @@ func optStringValue(s string) *string {
 
 // mapUserError translates core user errors into gRPC status codes.
 func mapUserError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	// S1 (CLI-split inventory #2012): checked via errors.Is, not the substring
 	// switch below, so the specific permission name requireEqualOrGreaterAdminAuthority
 	// wraps into the error text never reaches this function's substring matching
@@ -378,6 +382,13 @@ func mapUserError(err error) error {
 	// #3546: e.g. a project-tier role requested as the global system role.
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
 		return status.Error(codes.InvalidArgument, scopeMsg)
+	}
+	// PASSWORD-POLICY-FAMILY-1: a refused new password names the rule it broke, as
+	// HTTP does, so the caller can pick another. The text is fixed policy wording
+	// from core (never derived from the password), so it does not undo GRPC-003's
+	// concern below about echoing raw error text.
+	if ruleMsg, ok := core.PolicyRefusalMessage(err); ok {
+		return status.Error(codes.InvalidArgument, ruleMsg)
 	}
 	msg := strings.ToLower(err.Error())
 	switch {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/utils/safeconv"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
@@ -159,8 +160,9 @@ func authorizeScopedTarget(ctx context.Context, cs *core.KeyorixCore, actor *int
 // (AuthorizePrincipal, core.Authorize) — a ProjectRequiresMFA lookup error (a
 // transient storage timeout, a cancelled context) used to fall through to
 // `return nil`, silently treating the caller as MFA-compliant regardless of the
-// project's real policy or the session's real factor state. A "project not
-// found" error is deliberately excluded from the fail-closed path: this scope
+// project's real policy or the session's real factor state. A definitive
+// storage.ErrProjectNotFound (storage.IsProjectNotFound, never matched by
+// text: ERRLOSS-MFA-1) is deliberately excluded from the fail-closed path: this scope
 // was already permission-checked by the caller (authorizeScoped only reaches
 // this line after AuthorizePrincipal allowed it), so a nonexistent project
 // isn't an MFA-policy question — denying here would mask the RPC's own
@@ -175,7 +177,9 @@ func enforceProjectMFA(ctx context.Context, cs *core.KeyorixCore, actor *interce
 	}
 	required, err := cs.ProjectRequiresMFA(ctx, projectID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		// ERRLOSS-MFA-1: classify by sentinel, never by text — any storage
+		// error whose message merely contained "not found" used to skip MFA.
+		if storage.IsProjectNotFound(err) {
 			return nil
 		}
 		return status.Error(codes.Internal, "unable to verify project MFA policy; please try again")

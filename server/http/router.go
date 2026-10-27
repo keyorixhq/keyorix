@@ -1464,6 +1464,20 @@ func noDirListing(fsys http.FileSystem, h http.Handler) http.Handler {
 	})
 }
 
+// fontContentType sets the media type for font files before the file server runs;
+// http.ServeContent keeps a Content-Type that is already set.
+func fontContentType(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch strings.ToLower(path.Ext(r.URL.Path)) {
+		case ".woff2":
+			w.Header().Set(hdrContentType, "font/woff2")
+		case ".woff":
+			w.Header().Set(hdrContentType, "font/woff")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // registerWebUI wires the SPA's static assets and the client-side-routing
 // fallback against fsys, which is rooted at the dist directory (so request paths
 // map directly: /assets/x -> dist/assets/x). fsys is either an on-disk build
@@ -1483,9 +1497,16 @@ func registerWebUI(r chi.Router, fsys http.FileSystem) {
 	}
 	serveStatic("/assets/*", assetServer, setCacheHeaders)
 	serveStatic("/static/*", assetServer, setCacheHeaders)
+	// /fonts/* holds the self-hosted Inter and JetBrains Mono the SPA's index.css
+	// loads (copied from web/public/fonts by Vite). Unregistered, a font request fell
+	// through to the SPA shell and the UI silently used system fonts. The font
+	// Content-Type is set explicitly: Go's mime table has no .woff2 and a minimal
+	// image has no /etc/mime.types, and nosniff is on, so it must not be left to chance.
+	serveStatic("/fonts/*", fontContentType(assetServer), setCacheHeaders)
 	serveStatic("/sw.js", assetServer)
 	serveStatic("/manifest.json", assetServer)
 	serveStatic("/favicon.ico", assetServer)
+	serveStatic("/favicon.svg", assetServer) // the <link rel="icon"> in index.html
 
 	// A known path with an unregistered method: JSON 405 (chi's default is an empty body).
 	r.MethodNotAllowed(func(w http.ResponseWriter, _ *http.Request) {

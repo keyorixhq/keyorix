@@ -103,7 +103,7 @@ func (c *KeyorixCore) ReissueOneTimePassword(ctx context.Context, adminID, userI
 	now := c.now()
 	expiresAt := now.Add(c.effectiveOneTimePasswordExpiry()).UTC()
 	var target *models.User
-	var evict []string
+	var evict sessionEvictions
 	// A reissue narrows access (the account is restricted to a password change and
 	// every session ends) and widens it (a new credential, a cleared lockout): a mixed
 	// request, so two commits (MERGE-FIX-3482G, audit_split.go). Commit 1, the
@@ -141,7 +141,7 @@ func (c *KeyorixCore) ReissueOneTimePassword(ctx context.Context, adminID, userI
 	var settle func()
 	err = underAccountStateMu(func() (rerr error) {
 		settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
-			evict = nil // fn may run again (the owed fallback)
+			evict = sessionEvictions{} // fn may run again (the owed fallback)
 			locked, lerr := lockValid(tx)
 			if lerr != nil {
 				return lerr
@@ -171,7 +171,7 @@ func (c *KeyorixCore) ReissueOneTimePassword(ctx context.Context, adminID, userI
 	}
 	// After commit, so a rolled-back reissue never evicts a still-valid cache entry;
 	// before the owed row and before commit 2, so the restriction binds at once.
-	c.invalidateTokenCache(evict...)
+	c.evictSessionsAndAudit(ctx, userID, evict, evictTombstone, "ReissueOneTimePassword")
 	settle()
 
 	err = underAccountStateMu(func() error {

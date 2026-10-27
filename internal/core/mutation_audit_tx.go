@@ -46,9 +46,15 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
+// MutationAuditUnavailableMessage is the fixed, client-safe sentence a transport
+// sends for ErrMutationAuditUnavailable (REST 503, gRPC Unavailable). It is the
+// sentinel's own text and never carries the wrapped cause, which names the audit
+// event and the storage failure.
+const MutationAuditUnavailableMessage = "could not record the change in the audit log; nothing was changed, retry"
+
 // ErrMutationAuditUnavailable: a security-relevant mutation's audit row could
 // not be written, so its transaction rolled back and nothing was changed.
-var ErrMutationAuditUnavailable = errors.New("could not record the change in the audit log; nothing was changed, retry")
+var ErrMutationAuditUnavailable = errors.New(MutationAuditUnavailableMessage)
 
 // errMutationWroteNoAudit is returned when fn committed nothing to the audit
 // log. Every caller of withAuditedMutation writes at least one row, so this is

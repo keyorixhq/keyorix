@@ -443,7 +443,7 @@ func revKinds() []revKind {
 			prepare: func(w *satWorld) any {
 				g, err := w.c.ProvisionSCIMGroup(ctx, 0, w.tag("rev-sg"), nil)
 				require.NoError(w.t, err)
-				return g
+				return g.Group
 			},
 			mutate: func(w *satWorld, c *KeyorixCore, s any) error {
 				return c.DeprovisionSCIMGroup(ctx, 0, s.(*models.Group).ID)

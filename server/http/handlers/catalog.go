@@ -171,6 +171,9 @@ func (h *CatalogHandler) RestoreProject(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := h.coreService.RestoreProject(r.Context(), actorID(r), id); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, errNotFound) {
@@ -266,6 +269,9 @@ func (h *CatalogHandler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		project, err = h.coreService.CreateProject(ctx, body.Name, body.Description)
 	}
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating project: %v", err)
 		switch {
 		case strings.Contains(err.Error(), "already exists"):
@@ -390,6 +396,9 @@ func (h *CatalogHandler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	// transaction, attributed to the tagged actor.
 	project, err := h.coreService.UpdateProject(core.WithMutationAuditActor(r.Context(), actor.UserID), id, body.Name, body.Description, body.RequireMFA)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if sendPartialMutation(w, err) {
 			log.Printf("Update of project %d partially applied: %v", id, err)
 			return
@@ -472,6 +481,9 @@ func (h *CatalogHandler) CreateProjectEnvironment(w http.ResponseWriter, r *http
 	// AUDIT-TX-2: core writes environment.created inside the create's transaction.
 	env, err := h.coreService.CreateEnvironment(core.WithMutationAuditActor(r.Context(), actorID(r)), uint(id), body.Name)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating environment for project %d: %v", id, err)
 		if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 			sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
@@ -604,6 +616,9 @@ func (h *CatalogHandler) RestoreEnvironment(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.coreService.RestoreEnvironment(r.Context(), actorID(r), uint(projectID), uint(id)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		if strings.Contains(msg, errNotFound) {

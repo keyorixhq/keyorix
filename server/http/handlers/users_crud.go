@@ -106,6 +106,9 @@ type projectAssignmentBody struct {
 func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, actorID uint) {
 	created, otp, err := h.coreService.CreateUserWithOneTimePassword(r.Context(), req, actorID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating user with one-time password: %v", err)
 		if errors.Is(err, core.ErrUserAlreadyExists) {
 			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
@@ -127,6 +130,9 @@ func (h *UserHandler) createUserWithOTP(w http.ResponseWriter, r *http.Request, 
 func (h *UserHandler) createUserWithSetupLink(w http.ResponseWriter, r *http.Request, req *core.CreateUserRequest, actorID uint) {
 	created, prov, err := h.coreService.CreateUserWithSetupLink(r.Context(), req, actorID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating user with setup link: %v", err)
 		if errors.Is(err, core.ErrUserAlreadyExists) {
 			sendError(w, "ConflictError", "User already exists", http.StatusConflict, nil)
@@ -181,6 +187,9 @@ func (h *UserHandler) createUserClassic(w http.ResponseWriter, r *http.Request, 
 		created, err = h.coreService.CreateUserAudited(r.Context(), req, userCtx.UserID)
 	}
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error creating user: %v", err)
 		if sendRoleScopeError(w, err) {
 			return
@@ -381,6 +390,9 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 
 	updated, err := h.coreService.UpdateUser(r.Context(), req)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error updating user: %v", err)
 		if sendPartialMutation(w, err) {
 			return
@@ -467,6 +479,9 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.RestoreUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error restoring user: %v", err)
 		switch {
 		case errors.Is(err, core.ErrInsufficientAdminAuthority):
@@ -495,6 +510,9 @@ func (h *UserHandler) UnlockUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.coreService.UnlockUser(r.Context(), userCtx.UserID, uint(id)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), errNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
@@ -633,6 +651,9 @@ func (h *UserHandler) ReissueOneTimePassword(w http.ResponseWriter, r *http.Requ
 	}
 	res, err := h.coreService.ReissueOneTimePassword(r.Context(), admin.UserID, uint(id))
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if sendPartialMutation(w, err) {
 			log.Printf("reissue one-time password for user %d partially applied: %v", uint(id), err)
 			return

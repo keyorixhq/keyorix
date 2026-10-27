@@ -65,6 +65,14 @@ path "auth/+/role" {
 path "auth/+/role/+" {
   capabilities = ["read"]
 }
+# userpass users, read by `vault plan-access` / `apply-access` / `audit-access` for the report
+# (names and attached token policies; Vault has no API that returns a password).
+path "auth/+/users" {
+  capabilities = ["list"]
+}
+path "auth/+/users/+" {
+  capabilities = ["read"]
+}
 
 # checkPolicySprawl / checkWildcardSudoPolicies (item g).
 path "sys/policies/acl" {
@@ -91,12 +99,18 @@ path "+/config" {
 path "+/metadata/*" {
   capabilities = ["list", "read"]
 }
-# KV v1 mounts have no metadata/: the stanza above does not let plan-access/apply-access list
-# them, so every default-convention policy whose project/environment a v1 mount could hold is
-# reported unmappable (cross-mount-scope, fail closed) and the run warns "could not list". To
-# check a KV v1 mount, add a stanza granting "list" on <mount>/* (for a mount kv1/: kv1/*).
-# "list" returns key names only, never values. No example stanza is written out here: the
-# keyorix-migrate policy parser does not skip comments, so it would read one as granted.
+
+# KV v1 mounts. A v1 mount has no metadata/ twin, so the +/metadata/* stanza above never matches
+# it. The scan's top-level secret count and the tree read of `vault plan-access` / `apply-access`
+# / `audit-access` LIST <mount>/ and <mount>/<project>/ directly: "list" is all they need (a v1
+# mount has no metadata or config to read, and nothing here ever reads a value). Key names only.
+# Add one stanza per KV v1 mount, replacing kv1 with the mount's path (sys/mounts shows a v1
+# mount as type "kv" without options.version "2"). A v1 mount without a stanza is not fatal:
+# plan-access warns "could not list KV mount <mount>" and reports the default-convention policies
+# that mount could hold as unmappable (cross-mount-scope, fail closed) until you add it.
+path "kv1/*" {
+  capabilities = ["list"]
+}
 
 # checkTLSListener (item j) — usually sudo/root-only in a locked-down policy; expect this one to
 # show up as "not checked" often, which is fine.

@@ -6317,6 +6317,24 @@ export interface components {
                 };
             };
         };
+        /** @description The change was refused because its audit row could not be recorded (AUDIT-503-MAP-1). Security-relevant mutations (role and permission grants, group and project membership, shares, machine identities, user lifecycle, policies, ...) commit together with their audit row; when the audit log cannot take the row the transaction rolls back and NOTHING was changed. The answer is 503 with a `Retry-After` header (seconds) and the stable `error` code `audit_unavailable`; `message` is a fixed sentence. The request is safe to retry unchanged once the audit log is back. A revocation is never refused for this reason (its audit row is owed, not required). The suspend endpoints that clear synced copies keep their own code, `SuspendAuditUnavailable`. The gRPC twin is `Unavailable` with the same message. */
+        AuditUnavailable: {
+            headers: {
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    success?: boolean;
+                    /** @description Always 503. */
+                    code?: number;
+                    /** @description Always `audit_unavailable`. */
+                    error?: string;
+                    message?: string;
+                };
+            };
+        };
         /** @description The caller may read this secret, but the secret's own state refuses the value read (ERRMAP-1). `error` is a stable code clients can branch on and `message` a fixed, client-safe sentence: SecretExpired (its expiration has passed; an operator can extend or clear it), SecretSuspended (resume it to allow reads), SecretMaxReadsExhausted (its max_reads budget is spent; an operator can raise it). A SecretSuspended answer whose suspension asked for the synced Kubernetes copies to be cleared also carries `details: {clear_synced_copies: true}`, which the operator and k8s-sync read. A read outside the secret's access schedule is a permission decision and answers 403 with error SecretAccessOutsideSchedule instead. 409, not 410: each state is reversible. Only a caller who may read the secret ever sees these; any other caller gets the same 403/404 as for a secret it cannot see. The gRPC GetSecretValue twin is FailedPrecondition (PermissionDenied for the schedule) with the same message and an ErrorInfo detail (domain keyorix.secrets, reason = the code). */
         SecretReadRefused: {
             headers: {
@@ -7415,6 +7433,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     getProject: {
@@ -8392,6 +8411,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     cloneEnvironment: {
@@ -13013,6 +13033,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     getGroup: {
@@ -13269,6 +13290,7 @@ export interface operations {
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     removeRoleFromGroup: {
@@ -13394,6 +13416,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     getRole: {

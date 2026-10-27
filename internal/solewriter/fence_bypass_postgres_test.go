@@ -39,9 +39,15 @@ func (w *swWorld) foreignTx(stmts ...string) error {
 func (w *swWorld) dmlRole() string {
 	w.t.Helper()
 	role := "swdml_" + w.schema
+	var db string
+	require.NoError(w.t, w.foreign.Raw("SELECT current_database()").Scan(&db).Error)
 	for _, s := range []string{
 		"DROP ROLE IF EXISTS " + role,
 		"CREATE ROLE " + role + " NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE",
+		"GRANT " + role + " TO CURRENT_USER", // SET ROLE needs it on a non-superuser (privRole)
+		// TEMP is PUBLIC's by default; a database that revoked it (kpg) would
+		// refuse the temp-table cases before the fence is reached.
+		`GRANT TEMPORARY ON DATABASE "` + db + `" TO ` + role,
 		"GRANT USAGE ON SCHEMA " + w.schema + " TO " + role,
 		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA " + w.schema + " TO " + role,
 	} {

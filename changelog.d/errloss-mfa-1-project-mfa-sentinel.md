@@ -1,0 +1,5 @@
+### Security
+- **Per-project MFA gate no longer fails open on a "not found" error text.** The HTTP (`ProjectMFABlocked`) and gRPC (`enforceProjectMFA`) per-project MFA checks let an interactive session without a second factor through whenever the project lookup failed with an error whose text contained "not found". They now pass only a genuinely missing project (the new `storage.ErrProjectNotFound` sentinel, so the endpoint's own 404/NotFound still answers) and deny on every other lookup error, in every locale. `GetProject`, `GetProjectByName` and `GetEnvironment` wrap `ErrProjectNotFound` / `ErrEnvironmentNotFound` for a missing row only; the error text is unchanged.
+
+### Fixed
+- **Environment lookups on the role scope guard, the machine-role environment check and the environment-without-project grants report classify by sentinel.** A storage error worded "environment not found" was taken for a missing environment (a 400 refusal instead of a 500, and in the access-review report a live grant described as "environment no longer exists"). It is now reported as the storage failure it is.
