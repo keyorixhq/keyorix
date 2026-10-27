@@ -399,11 +399,8 @@ func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User
 // "must differ from the current password": for any other caller that wording would
 // confirm a guess at the current password for free.
 func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.User, newPassword string, currentVerified bool) error {
-	// The refusal text is assembled from the policy's fixed wording for each broken
-	// rule. It is never built from, or wrapping, an error returned by a check that
-	// was handed the candidate: the text must not be derivable from the password.
-	if unmet := c.passwordPolicy.Unmet(newPassword, user); len(unmet) > 0 {
-		return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": password must " + c.passwordPolicy.DescribeAll(unmet)}
+	if refusal := c.refuseUnmetRules(newPassword, user); refusal != nil {
+		return refusal
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
 	if c.passwordHistoryEnabled() {
@@ -420,6 +417,20 @@ func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.Us
 		if c.passwordInHistory(ctx, user, newPassword) {
 			return newHistoryRefusal()
 		}
+	}
+	return nil
+}
+
+// refuseUnmetRules is the policy half of every new-password check (change, setup
+// consume, user create, bootstrap): nil when newPassword meets the configured
+// rules, else a policyRefusal (ErrPasswordPolicy) naming each broken rule. user
+// supplies the personal-info context and may be nil. The text is assembled from the
+// policy's fixed wording for each broken rule. It is never built from, or wrapping,
+// an error returned by a check that was handed the candidate: the text must not be
+// derivable from the password.
+func (c *KeyorixCore) refuseUnmetRules(newPassword string, user *models.User) error {
+	if unmet := c.passwordPolicy.Unmet(newPassword, user); len(unmet) > 0 {
+		return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": password must " + c.passwordPolicy.DescribeAll(unmet)}
 	}
 	return nil
 }
