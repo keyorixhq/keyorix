@@ -1,0 +1,2 @@
+### Security
+- **keyorix-mcp: `KEYORIX_TOKEN_FILE`.** The MCP server can read its machine-identity token from a file (Docker secret, Kubernetes Secret volume) instead of the environment, where `/proc/<pid>/environ` and child processes see it. The file is judged like server key material (regular file, 0600/0400 owned by the running user or root, or a root-owned 0440 mount in a held group; 1 MiB cap; one trailing newline stripped), and setting both `KEYORIX_TOKEN` and `KEYORIX_TOKEN_FILE` is refused. Guarded by `TestMainSubprocess_TokenFile_*` (cmd/keyorix-mcp).
