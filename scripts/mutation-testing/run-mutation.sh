@@ -75,7 +75,24 @@ internal/evidencesink|evidencesink||100
 # internal/saml: efficacy 97.70% (85 killed, 2 equivalent survivors), 21 not covered; needs the timeout coefficient (see above)
 internal/saml|saml|40
 # internal/secretenv: efficacy 100% (31 killed), 4 not covered (switch case expressions, pinned by a truth table)
-internal/secretenv|secretenv"
+internal/secretenv|secretenv
+# internal/netutil (egress and SSRF guards): efficacy 100% (35 killed), no survivors, nothing not covered
+internal/netutil|netutil||100
+# internal/auditverify (the run includes internal/auditverify/anchorbundle): efficacy 99.55% (223 killed, 1 equivalent survivor,
+# db.go:56 sql.Open("pgx") never errors at open), 16 not covered (switch case expressions and string-constant concatenations that
+# gremlins cannot instrument), 4 timed out (high-water mutants in verify.go that hang, counted as neither killed nor lived)
+internal/auditverify|auditverify||99.55
+# internal/serverguard: efficacy 100% (35 killed, measured without KEYORIX_TEST_PG_DSN), 31 not covered: the PostgreSQL-only
+# paths (keyinit.go and the advisory-lock/pooler code), whose tests need a real Postgres
+internal/serverguard|serverguard||100
+# internal/solewriter: efficacy 99.26% (134 killed, 1 equivalent survivor: tracker.go:269 `len(t.UpdateIgnores) > 0`, because onlySets
+# with no columns is always false), 250 not covered: the PostgreSQL-backed paths (fence install, poller, lock), whose tests need a real Postgres
+internal/solewriter|solewriter||99.26
+# internal/core/rules: efficacy 98.06% (101 killed, 2 equivalent survivors: secret_value_policy.go:44 `MinLength > 0` and
+# password_policy.go:172 `at > 0`, each shadowed by a later length check), 4 not covered (the `iota + 1` constant and two switch case expressions)
+internal/core/rules|rules||98.06
+# internal/identity: efficacy 100% (3 killed), no survivors, nothing not covered
+internal/identity|identity||100"
 
 cd "$KEYORIX_REPO"
 
