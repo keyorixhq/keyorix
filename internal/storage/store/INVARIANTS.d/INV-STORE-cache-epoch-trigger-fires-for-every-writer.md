@@ -17,4 +17,5 @@
   `TestCreateStorage_Postgres_RefusesNonOriginReplicationRole` (per-database, per-role-in-database
   and DSN settings); chart: `deploy` `TestHelmPostgresSettings`. The role-permission generation
   proof (`rolePermGenerationTriggersPresentExpr`) uses the same condition since STORAGE-HARDEN-1
-  (INV-STORE-role-permission-generation-trigger-maintained).
+  (INV-STORE-role-permission-generation-trigger-maintained). That proof shows the trigger exists
+  and fires; what it runs is checked periodically by INV-STORE-cache-epoch-trigger-integrity-checked.

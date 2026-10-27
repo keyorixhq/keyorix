@@ -177,8 +177,11 @@ interval. C costs a table scan for little gain over B. D leaves a silent, unboun
   now expects exactly the pinned `proconfig`, and the installers re-create an older unpinned
   function on the next boot.
 - The `secret_nodes` cache-epoch trigger (`secret_node_cache_epoch.go`) has the same owner-level
-  exposure as this trigger. B's job is built so that a second function can be registered; that is
-  a follow-up.
+  exposure as this trigger. TRIGGER-HARDEN-1 added the same check for it
+  (`secret_node_cache_epoch_integrity.go`), run by the same background job: body, settings and
+  trigger definition against the compiled-in ones, row versions against the previous reading, and
+  on a difference a log line, `keyorix_secret_node_cache_epoch_tamper_total`, a repair and a bump of
+  every row's `cache_epoch`. The same residuals apply.
 - The check covers the triggers and their function, not the row they write. The owner can make
   the bump a no-op on `system_metadata` itself (a `BEFORE UPDATE` trigger on the generation key
   that keeps `OLD.value`, a rule, or forced row-level security that hides the row from the

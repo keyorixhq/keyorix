@@ -41,3 +41,6 @@
   `TestSecretNodeCacheEpoch_WriterSearchPathCannotShadowTheBump_Postgres` (all red on the PR base);
   `TestRolePermissionGeneration_EnsureLeavesCorrectFunctionRowAlone_Postgres`,
   `_EnsureRestoresRecreatedTrigger_Postgres` (both red on the base by behaviour).
+  The same job (one ticker, one `Close` path) also runs the secret_nodes cache-epoch check
+  (`secretNodeCacheEpochIntegrityChecker`, INV-STORE-cache-epoch-trigger-integrity-checked),
+  each check with its own tick timeout.
