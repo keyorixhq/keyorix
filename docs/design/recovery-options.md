@@ -121,6 +121,11 @@ Playwright spec for B.
 
 ## 2. Sealing a genuine audit-chain break
 
+**Implemented** (AUDIT-ACCEPT-LOSS-1): Andrei chose option A of `docs/design-audit-reseal-options.md`
+on 2026-10-23, `keyorix-server admin audit accept-loss`, with the eight constraints below as its
+acceptance list. Guards: `INV-CORE-audit-seal-never-valid-tamper-broken` and
+`INV-AUDITVERIFY-seals-authenticated-never-valid`.
+
 **Coordination.** AUDIT-VERIFY-STATE-1 owns the options for the seal command itself: who may run
 it, what it records, how it appears in the chain, and how verification treats the gap afterwards.
 They will be in "audit-reseal-options.md" next to this file, on branch `audit-verify-state-1/fail-closed`,

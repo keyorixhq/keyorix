@@ -204,9 +204,9 @@ type auditVerifyPin struct {
 }
 
 // auditVerifyDiscontinuity records that the persisted state could not be
-// continued (see the package comment). Sticky: nothing in this package clears
-// it; accepting a real loss needs an audited operator action
-// (docs/design-audit-reseal-options.md).
+// continued (see the package comment). Sticky: no verification clears it; only
+// accepting a proven loss of rows (`admin audit accept-loss`, audit_seal.go)
+// moves it to the state's accepted list.
 type auditVerifyDiscontinuity struct {
 	DetectedAt time.Time `json:"detected_at"`
 	Kind       string    `json:"kind"`

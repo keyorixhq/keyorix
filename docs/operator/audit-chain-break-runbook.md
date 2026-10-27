@@ -154,6 +154,15 @@ reports the same mismatch as BROKEN, so compare the key version on the `Checkpoi
 with your rotation history before reading it as tampering. See
 [key-rotation-runbook.md](key-rotation-runbook.md).
 
+On an install that has had a **retention purge**, a key change that did not carry the state
+over (an older binary) also leaves the retention anchor signed under the old key. The online
+walk then ignores it, needs genesis and reads broken, and a fresh checkpoint does **not** clear
+that: the checkpoint write refuses the broken walk. A rotation with the current binary re-signs
+the anchor and is not affected (RECOVERY-OPTIONS-1 F2, `TestAuditKeyTransition_PurgedInstallStaysValid`).
+After an older-binary rotation on a purged install, rotate back to the previous passphrase with
+the current binary, then rotate forward again with it. `admin audit accept-loss` refuses this case:
+it is a key mismatch, not a lost row.
+
 **d. An older binary.** After a retention purge, anchors use the v2 layout (`retanchor-v2`).
 A server older than that release reports the chain broken (`docs/CONFIGURATION.md`,
 `audit_checkpoints`). Do not downgrade after a purge; upgrade the verifier.
@@ -200,6 +209,10 @@ Keep it together, read-only, with a `sha256sum` of each file, and note who held 
   for the window (restores, PITR, snapshot reverts, who held database credentials).
 - Delete the exported checkpoint key (`checkpoint.key`) after use, or store it with the offline
   auditor's media, never on the audited host.
+- Before sealing a break (section 7, option 3), compute the digest `accept-loss` records as
+  `--evidence-sha256`. Take one SHA-256 over the evidence you keep, for example a manifest of the
+  per-file digests: `sha256sum keyorix.db* verify-audit-*.json > evidence.sha256` and then
+  `sha256sum evidence.sha256`. The seal pins that digest; keep the files it names.
 
 ## 7. Containment and the "re-anchor" question
 
@@ -223,8 +236,9 @@ What exists, and none of it repairs a break:
   `export-checkpoint` refuses an existing `--output` path and fails if no checkpoint has been
   written yet.
 
-For a **genuine** break there is no re-seal. The two options are the security owner's call, and
-neither deletes the evidence:
+For a **genuine** break there are three options. They are the security owner's call, and none
+deletes the evidence. While a break stands, every checkpoint is refused, so **new** tampering
+after the break is not notarised: decide soon.
 
 1. **Keep running on the same database.** The break stays in every future report as the first
    broken id; the sticky alarm stays on; checkpoints stay refused. Record the decision.
@@ -232,12 +246,56 @@ neither deletes the evidence:
    [AIRGAP_RUNBOOK.md](../AIRGAP_RUNBOOK.md)), keep the broken one offline as the exhibit. The
    restore runs `verify-audit` itself and fails on BROKEN. Expect `--allow-rollback` and the
    revocation caveat in section 5.
+3. **Seal the loss and continue** (`keyorix-server admin audit accept-loss`). The loss is
+   accepted with the checkpoint key and recorded in the chain, in a signed seal record and in the
+   signed verification state. Checkpoints resume for the rows written from then on. The chain
+   reads **sealed** from then on, never valid again. Only for rows that are **gone**: a gap (the walk
+   breaks at the first row after the lost ones) or a tail truncation that a signed checkpoint
+   proves. It refuses a modified row, the pre-#1452 encoding (4a), a key mismatch (4c), an
+   unauthenticated store, an untrusted verification state and an altered earlier seal.
+
+   With the server stopped (every replica), after the evidence in section 6:
+
+   ```bash
+   # what will be accepted (writes nothing; exits 1 with "nothing was written")
+   keyorix-server admin audit accept-loss --first-broken-id <id from verify-audit> \
+     --operator "<your name>" --reason "<incident or ticket, no secrets>" \
+     --evidence-sha256 <digest from section 6> [--anchor /media/anchor/checkpoint-<date>.json] \
+     --config ./keyorix.yaml
+   # the same with --confirm to write it
+   ```
+
+   - `--first-broken-id` is the id `verify-audit` reports as first broken (repeat it for several
+     gaps), or for a truncation the missing certified head. A wrong id is refused.
+   - `--anchor` binds the acceptance to an `export-checkpoint` file taken after the lost rows
+     existed. It must authenticate under the checkpoint key and cover the lost range, and it
+     measures the loss. `--anchor-sha256` only records the digest of one kept elsewhere.
+   - It writes the seal record, **one** `system.audit_loss_accepted` event, a fresh checkpoint
+     and high-water mark of what survives, and the verification state, in that order. If it stops
+     part way the chain reads broken; run the same command again, which completes it.
+   - `--reason` and `--operator` are stored in the audit chain. Put no secrets in them.
+
+   Afterwards:
+
+   | View | Reads |
+   |---|---|
+   | `keyorix audit verify`, `GET /api/v1/audit/verify`, posture | `not_proven` until a full verification completes, then `sealed` (`state_reason` names each seal); `valid` is false |
+   | `keyorix-server admin verify-audit --checkpoint-key-file ...` | `Verdict: SEALED`, exit code 4, the seals listed; without the key, BROKEN (a seal is only trusted with the key) |
+   | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers |
+
+   Then write and export a fresh anchor (above) and keep it with the evidence. A `rotate-kek` or
+   `migrate-provider` carries the seal over. A restore of an archive taken before the seal
+   is refused as a rollback unless `--allow-rollback` is given. `admin recover-admin` never seals:
+   it records a break in its event and leaves the decision to this command.
 
 ## 8. Gaps in the product today
 
-- No operator command to accept a verified break and start a new, marked chain segment (the
-  design asked for one in `docs/design-b2-recover-admin.md` §4; `recover_admin_logic.go` records
-  that it was not implemented). A sticky failure therefore cannot be cleared after a real break.
+- A verification state discontinuity with an intact chain (a deleted or garbled state row, a
+  key epoch problem) cannot be accepted: `accept-loss` seals only lost rows (section 7, option 3),
+  and those discontinuities stay sticky.
+- A tail truncation is sealed against the newest certification the database still holds. If
+  rows were written after the truncation on SQLite and reused the lost ids, the certified head
+  reads rewritten and the command refuses; seal before restarting the server when you can.
 - `verify-audit` has no key-version awareness, so a pre-rotation checkpoint under a rotated KEK
   reads BROKEN offline (section 4c).
 - No documented way to take a consistent evidence snapshot of a broken chain with the product's
