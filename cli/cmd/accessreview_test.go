@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -44,6 +45,85 @@ func TestRunAccessReview_RequiresProjectID(t *testing.T) {
 	accessReviewProject = 0
 	if err := runAccessReview(accessReviewCmd, nil); err == nil || !containsAll(err.Error(), "--project-id is required") {
 		t.Fatalf("err = %v, want the missing-project-id error", err)
+	}
+}
+
+// The warning prints what the server said degraded the campaign. A campaign can be
+// degraded by an unreadable share OR by a {project 0, environment X} grant, so the
+// headline must not claim one cause.
+func TestPrintCampaignDegradedWarning_PrintsTheServersReasons(t *testing.T) {
+	out := captureStdout(t, func() {
+		printCampaignDegradedWarning(campaignView{
+			Degraded: true,
+			DegradedReasons: []string{
+				"role scope: role project_viewer granted to user 4 on environment 7 without a project",
+			},
+		})
+	})
+	if !containsAll(out, "DEGRADED SNAPSHOT", "role scope: role project_viewer granted to user 4 on environment 7 without a project") {
+		t.Fatalf("warning missing the server's reason: %q", out)
+	}
+	for _, stale := range []string{"shares could not be read", "share item"} {
+		if strings.Contains(out, stale) {
+			t.Fatalf("warning still claims a share cause (%q): %q", stale, out)
+		}
+	}
+}
+
+func TestPrintCampaignDegradedWarning_ListsEveryReason(t *testing.T) {
+	out := captureStdout(t, func() {
+		printCampaignDegradedWarning(campaignView{
+			Degraded:        true,
+			DegradedReasons: []string{"group shares: read failed", "role scope: environment 9 without a project"},
+		})
+	})
+	if !containsAll(out, "    - group shares: read failed\n", "    - role scope: environment 9 without a project\n") {
+		t.Fatalf("not every reason printed: %q", out)
+	}
+}
+
+// A degraded flag with no reasons still has to say so, and say the server gave none.
+func TestPrintCampaignDegradedWarning_NoReasonsStillWarns(t *testing.T) {
+	out := captureStdout(t, func() { printCampaignDegradedWarning(campaignView{Degraded: true}) })
+	if !containsAll(out, "DEGRADED SNAPSHOT", "no reason") {
+		t.Fatalf("degraded without reasons printed %q", out)
+	}
+}
+
+func TestPrintCampaignDegradedWarning_SilentWhenNotDegraded(t *testing.T) {
+	out := captureStdout(t, func() {
+		printCampaignDegradedWarning(campaignView{DegradedReasons: []string{"ignored without the flag"}})
+	})
+	if out != "" {
+		t.Fatalf("a complete campaign printed %q", out)
+	}
+}
+
+// End to end through the command: the reasons in the opened campaign reach the terminal.
+func TestRunAccessReviewCampaignOpen_PrintsDegradedReasons(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/projects/3/access-review/campaigns" || r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprint(w, `{"data":{"campaign":{"id":7,"project_id":3,"name":"Q4","state":"open","degraded":true,`+
+			`"degraded_reasons":["role scope: environment 7 granted without a project"]},`+
+			`"progress":{"total":1,"pending":1,"attested":0,"revoked":0}}}`)
+	}))
+	defer srv.Close()
+	setAccessReviewCreds(t, srv)
+	campaignProject = 3
+	campaignName = "Q4"
+	defer func() { campaignProject, campaignName = 0, "" }()
+
+	out := captureStdout(t, func() {
+		if err := accessReviewCampaignOpenCmd.RunE(accessReviewCampaignOpenCmd, nil); err != nil {
+			t.Fatalf("campaign open: %v", err)
+		}
+	})
+	if !containsAll(out, "DEGRADED SNAPSHOT", "role scope: environment 7 granted without a project") {
+		t.Fatalf("degraded reasons not printed: %q", out)
 	}
 }
 

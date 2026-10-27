@@ -43,7 +43,10 @@ const sourceDetail = (e: AccessReviewEntry): string => {
  * kept) or revoke (remove the grant). Ownership can't be revoked here.
  */
 export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ projectId }) => {
-    const { data: entries = [], isLoading, isError } = useAccessReview(projectId);
+    const { data: report, isLoading, isError } = useAccessReview(projectId);
+    const entries = report?.entries ?? [];
+    const degraded = report?.degraded === true;
+    const degradedReasons = report?.degradedReasons ?? [];
     const attest = useAttestAccessReview(projectId);
     const revoke = useRevokeAccessReview(projectId);
 
@@ -71,8 +74,9 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
         });
     };
 
+    // A degraded review is incomplete, so an empty list must not read as "no access".
     const emptyOrList =
-        entries.length === 0 ? (
+        entries.length === 0 && degraded ? null : entries.length === 0 ? (
             <div className="p-10 text-center">
                 <ShieldCheckIcon className="h-10 w-10 mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
                 <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
@@ -221,6 +225,27 @@ export const ProjectAccessReviewTab: React.FC<ProjectAccessReviewTabProps> = ({ 
                     was reviewed and kept, or revoke it to remove the access. Both are audited.
                 </p>
             </div>
+
+            {degraded && !isLoading && !isError && (
+                <div
+                    data-testid="access-review-degraded"
+                    role="alert"
+                    className="rounded-lg px-3 py-2 text-sm mb-3"
+                    style={{ backgroundColor: 'var(--warning-subtle)', color: 'var(--warning)' }}
+                >
+                    <p className="font-medium">
+                        This review may be incomplete: part of it could not be computed, so some access may be missing
+                        from the list.
+                    </p>
+                    {degradedReasons.length > 0 && (
+                        <ul className="mt-1 list-disc pl-5 text-xs">
+                            {degradedReasons.map((reason) => (
+                                <li key={reason}>{reason}</li>
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
 
             {error && (
                 <div

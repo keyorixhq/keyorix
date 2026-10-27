@@ -65,6 +65,15 @@ export interface AccessReviewEntry {
     activityWindowDays?: number;
 }
 
+// The access review as the server reports it. degraded means a part of the review
+// could not be computed (or a grant could not be scoped), so entries may be
+// incomplete: degradedReasons says what, and an empty list is not proof of no access.
+export interface AccessReviewReport {
+    entries: AccessReviewEntry[];
+    degraded: boolean;
+    degradedReasons: string[];
+}
+
 // A recertification decision identifying one entry to attest (keep) or revoke.
 export interface AccessReviewDecision {
     source: string;
@@ -382,11 +391,18 @@ export const projectsApi = {
         return normalizeRotationPlan(response.data.data ?? response.data);
     },
 
-    async accessReview(projectId: number): Promise<AccessReviewEntry[]> {
+    async accessReview(projectId: number): Promise<AccessReviewReport> {
         const response = await apiClient.get(`/api/v1/projects/${projectId}/access-review`);
-        const entries = response.data.data?.entries ?? response.data.entries ?? [];
-        const windowDays = response.data.data?.activity_window_days ?? response.data.activity_window_days ?? undefined;
-        return entries.map((e: any) => ({ ...normalizeAccessReviewEntry(e), activityWindowDays: windowDays }));
+        const body = response.data.data ?? response.data;
+        const windowDays = body?.activity_window_days ?? undefined;
+        return {
+            entries: (body?.entries ?? []).map((e: any) => ({
+                ...normalizeAccessReviewEntry(e),
+                activityWindowDays: windowDays,
+            })),
+            degraded: body?.degraded === true,
+            degradedReasons: Array.isArray(body?.degraded_reasons) ? body.degraded_reasons : [],
+        };
     },
 
     async attestAccessReview(projectId: number, decision: AccessReviewDecision): Promise<void> {
