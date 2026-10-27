@@ -78,6 +78,7 @@ var secretLookupFuncs = map[string]int{
 var dynamicSecretNameSites = map[string]string{
 	"internal/config/config.go":               "SecretEnvVars, SSO providers, auto_rotation dsn_env, connect vault token_env, key_provider env_var/shamir_share_env (secretEnvNames)",
 	"internal/config/configured_secrets.go":   "secretEnvNames",
+	"internal/config/secret_snapshot.go":      "secretEnvNames (snapshotSecrets, SecretFilePermissionProblems)",
 	"internal/config/config_auto_rotation.go": "auto_rotation backend dsn_env",
 	"internal/config/config_sso.go":           "SSO provider client secret",
 	"server/wire_backend_rotation.go":         "connect vault token_env (default VAULT_TOKEN)",
@@ -201,9 +202,11 @@ func discoverSecretFileVars(t *testing.T) []string {
 			if !ok || idx >= len(call.Args) {
 				return true
 			}
-			if fn == "Lookup" { // only secretenv.Lookup / an in-package lookup, not e.g. os.LookupEnv
+			// only secretenv.Lookup, internal/config's secretSnapshot.Lookup (a
+			// secretenv.Snapshot) or an in-package lookup, not e.g. os.LookupEnv
+			if fn == "Lookup" {
 				if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-					if id, ok := sel.X.(*ast.Ident); !ok || id.Name != "secretenv" {
+					if id, ok := sel.X.(*ast.Ident); !ok || (id.Name != "secretenv" && id.Name != "secretSnapshot") {
 						return true
 					}
 				}

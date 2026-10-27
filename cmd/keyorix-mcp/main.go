@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -107,17 +108,16 @@ func resolveAllowedRefs(raw string) ([]string, error) {
 // an error (DEPLOY-2: no silent precedence). Errors name the variable and, for an
 // absolute path, the path -- never the token.
 func resolveToken() (string, error) {
-	const name = "KEYORIX_TOKEN"
-	token, found, err := secretenv.LookupChecked(name)
+	token, found, err := secretenv.LookupChecked("KEYORIX_TOKEN")
 	if err != nil {
 		return "", err
 	}
-	if found && os.Getenv(name) != "" {
+	if found && os.Getenv("KEYORIX_TOKEN") != "" {
 		// From the environment: trimmed as before, for compatibility.
 		token = strings.TrimSpace(token)
 	}
 	if token == "" {
-		return "", fmt.Errorf("%s is required (a least-privilege Keyorix machine-identity token; or set %s%s to the path of a 0600 file holding it)", name, name, secretenv.FileSuffix)
+		return "", errors.New("KEYORIX_TOKEN is required (a least-privilege Keyorix machine-identity token; or set KEYORIX_TOKEN_FILE to the path of a 0600 file holding it)")
 	}
 	return token, nil
 }
