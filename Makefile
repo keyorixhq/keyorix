@@ -428,8 +428,10 @@ openapi-lint:
 .PHONY: check-growth check-growth-selftest
 check-growth:
 	scripts/ci/check-growth-guards.sh
+	scripts/ci/check-no-new-ledger.sh
 check-growth-selftest:
 	scripts/ci/check-growth-guards.sh --self-test
+	scripts/ci/check-no-new-ledger.sh --self-test
 test:
 	go test -race ./...
 test-cover:

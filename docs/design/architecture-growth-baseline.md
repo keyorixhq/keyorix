@@ -70,6 +70,34 @@ choice, so it is raised as a recommendation in the PR, not built here.
 Raise a ceiling only in the PR that causes the growth, with the reason added to
 this file. Prefer splitting the package.
 
+## Append-only ledger check: threshold evidence
+
+`scripts/ci/check-no-new-ledger.sh` warns (never fails) when a PR gains more
+than 50 lines and removes none in an existing ledger-shaped file (`md tsv txt conf
+json yaml yml csv toml`) that is not already handled by the auto-resolve list.
+Data: `git log origin/main --first-parent -m --diff-filter=M --numstat` over
+2026-09-27..2026-10-27, 984 merged PRs (git instead of `gh pr list` because a
+squash/merge commit's numstat is the PR's diff and it has no 1000-row cap).
+
+- The smallest append-only diff on a non-known file is 1 line (a README line, a
+  Helm template line). Any threshold taken from "the smallest observed" would flag
+  every PR, so it cannot be the threshold.
+- Of the append-only modified files, 1179 of 1705 were Go source: code growth,
+  not a ledger. Go and other code extensions are out of scope.
+- Replayed with the script's exact rules, by threshold N: N=30 flags 37 PRs
+  (3.8%), N=50 flags 16 (1.6%), N=100 flags 3 (0.3%). N=50 is the knee: about one
+  warning every two days, few enough to be read.
+- The better ledger signal is recurrence, not size. Files appended (no deletions)
+  by 3+ PRs in the window: `docs/SELF_HOSTING.md` 15, `deploy/helm/keyorix/values.yaml`
+  13, `docs/API_REFERENCE.md` 9, `docs/security/hardening-guide.md` 9,
+  `docs/operations/metrics.md` 9, `.github/workflows/ci.yml` 9, `docs/README.md` 8.
+  A per-diff check cannot see recurrence; a check over the last N merged PRs could
+  (follow-up, not built here).
+
+Warn-only because the shape is a heuristic: a legitimate one-off section in a
+runbook looks identical to a new shared ledger. Once the warnings have been
+observed to be mostly right it can be made fail-closed (one `exit` in the script).
+
 ## Full table (sorted by files, descending)
 
 | package | files | LOC | dependents |
