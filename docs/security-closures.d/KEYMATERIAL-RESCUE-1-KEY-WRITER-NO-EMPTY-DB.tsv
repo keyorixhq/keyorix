@@ -1,0 +1,1 @@
+KEYMATERIAL-RESCUE-1-KEY-WRITER-NO-EMPTY-DB	./internal/encryptionops	TestKeyWriters_MissingKeys_CreateNoDatabase	default-ci	pending-merge	-	rotate/upgrade-aad/rotate-kek/migrate-provider opened (and on SQLite created) the database before refusing missing keys, leaving an empty database behind (KEYMATERIAL-TAILS-1 item 5, ATOMIC-OWED-1); the missing-keys refusal now comes first.
