@@ -16,6 +16,7 @@ import (
 // Fixed client-facing texts of the target refusals. Transports send these
 // constants, never err.Error().
 const (
+	MFAResetUserRequiredMessage     = "a user (id, email or username) is required"
 	MFAResetTargetNotFoundMessage   = "no such user"
 	MFAResetMachineIdentityMessage  = "that name is a machine identity: machine identities have no second factor to reset; rotate or revoke its credentials instead"
 	MFAResetExternalIdentityMessage = "this account is managed by an external identity provider, which owns its second factor; reset it there"
@@ -24,6 +25,7 @@ const (
 )
 
 var (
+	ErrMFAResetUserRequired     = errors.New(MFAResetUserRequiredMessage)
 	ErrMFAResetTargetNotFound   = errors.New(MFAResetTargetNotFoundMessage)
 	ErrMFAResetMachineIdentity  = errors.New(MFAResetMachineIdentityMessage)
 	ErrMFAResetExternalIdentity = errors.New(MFAResetExternalIdentityMessage)
@@ -38,7 +40,7 @@ var (
 func ResolveMFAResetTarget(ctx context.Context, st storage.Storage, ref string) (*models.User, error) {
 	ref = strings.TrimSpace(ref)
 	if ref == "" {
-		return nil, fmt.Errorf("a user (id, email or username) is required")
+		return nil, ErrMFAResetUserRequired
 	}
 	var (
 		u   *models.User

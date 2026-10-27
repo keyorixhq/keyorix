@@ -11,14 +11,23 @@
   transition (`DecideMFAResetRequestIfPending`) and its `mfa.reset_approved` / `mfa.reset`
   rows. The host command (`server/admin/reset_mfa_logic.go`) applies the same function with
   its `admin.reset_mfa` row in its own transaction. Global admins, SSO/SCIM, suspended or
-  inactive accounts and machine identities are refused on both paths. Why: a reset that
+  inactive accounts and machine identities are refused on both paths. At approval the
+  requester must still be an active, not login-blocked global admin, and the requester
+  and target rules are re-checked on their row locks inside the approval transaction; at
+  most one request per target is pending (decided on the target's row lock in the create
+  transaction). Why: a reset that
   keeps the password turns a stolen password into a takeover, and a one-admin reset is the
   single-admin takeover REISSUE-1 closed (docs/design/recovery-options.md §1). Guard:
   `mfa_reset_test.go` (`TestMFAReset_SelfApprovalRefusedAndAudited`,
   `TestMFAReset_SameAdminTwiceRefused`, `TestMFAReset_NonAdminOrMachineApproverRefused`,
   `TestMFAReset_TargetRulesRefused`, `TestMFAReset_ReplayOfApprovedRequestRefused`,
   `TestMFAReset_TwoAdmins_FullCredentialReset_EverySessionAndPATDead`,
-  `TestMFAReset_AuditOutage_LeavesMFAIntact`), `server/admin` `reset_mfa_test.go`.
+  `TestMFAReset_AuditOutage_LeavesMFAIntact`), `mfa_reset_dual_control_test.go`
+  (`TestMFAReset_RequesterNoLongerActive_ApprovalRefused`,
+  `TestMFAReset_RequesterChangedInsideApproval_Refused`,
+  `TestMFAReset_TargetChangedInsideApproval_Refused`,
+  `TestMFAReset_ConcurrentRequestForSameTarget_OnlyOnePending`), `server/admin`
+  `reset_mfa_test.go`.
   **UNGUARDED**: no static guard restricts the callers of `DeleteMFAForUser` /
   `DeleteWebAuthnCredential` to the reviewed paths (design §1 asks for one; follow-up), and
   the account-setup gate does not yet read `mfa_enrolment_required`.

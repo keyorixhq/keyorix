@@ -35,7 +35,7 @@ import (
 // mfaResetRefusals is every typed refusal the MFA reset routes can receive from core.
 var mfaResetRefusals = []error{
 	core.ErrMFAResetAdminRequired, core.ErrMFAResetActorNeedsMFA, core.ErrMFAResetSelfApproval,
-	core.ErrInsufficientAdminAuthority, core.ErrCannotActOnSelf, core.ErrMFAResetInput,
+	core.ErrInsufficientAdminAuthority, core.ErrCannotActOnSelf, core.ErrMFAResetInput, core.ErrMFAResetUserRequired,
 	core.ErrMFAResetTargetNotFound, core.ErrMFAResetRequestNotFound, core.ErrMFAResetMachineIdentity,
 	core.ErrMFAResetGlobalAdmin, core.ErrMFAResetExternalIdentity, core.ErrMFAResetAccountBlocked,
 	core.ErrMFAResetNoSecondAdmin, core.ErrMFAResetAlreadyPending, core.ErrMFAResetRequestDecided,

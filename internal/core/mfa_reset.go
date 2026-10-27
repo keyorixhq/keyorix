@@ -56,7 +56,7 @@ const (
 	MFAResetRequestNotFoundMessage  = "MFA reset request not found"
 	MFAResetRequestDecidedMessage   = "this MFA reset request was already approved or cancelled"
 	MFAResetRequestExpiredMessage   = "this MFA reset request has expired; open a new one"
-	MFAResetRequesterChangedMessage = "the requester no longer holds a global-admin role; open a new request"
+	MFAResetRequesterChangedMessage = "the requester is no longer an active global administrator; open a new request"
 	MFAResetInputMessage            = "reason is required and verified_by must be one of in_person, video, ticket, other"
 )
 
@@ -189,14 +189,8 @@ func (c *KeyorixCore) RequestMFAReset(ctx context.Context, actorID uint, actorIs
 		return nil, ErrMFAResetNoSecondAdmin
 	}
 	now := c.now().UTC()
-	pending, err := c.storage.ListMFAResetRequests(ctx, true)
-	if err != nil {
+	if err := refuseIfMFAResetPending(ctx, c.storage, target.ID, now); err != nil {
 		return nil, err
-	}
-	for _, p := range pending {
-		if p.TargetUserID == target.ID && p.ExpiresAt.After(now) {
-			return nil, ErrMFAResetAlreadyPending
-		}
 	}
 	// Last, after every cheap refusal, so a refused request does not spend the code.
 	if err := c.requireReauth(ctx, actor, in.Code, "mfa_reset_request"); err != nil {
@@ -205,6 +199,15 @@ func (c *KeyorixCore) RequestMFAReset(ctx context.Context, actorID uint, actorIs
 
 	var created *models.MFAResetRequest
 	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		// Decided again on the target's row lock: a request for the same target that
+		// committed after the read above makes this one fail, so at most one is
+		// pending per target (the schema does not enforce it).
+		if _, lerr := tx.LockUserForUpdate(ctx, target.ID); lerr != nil {
+			return lerr
+		}
+		if perr := refuseIfMFAResetPending(ctx, tx, target.ID, now); perr != nil {
+			return perr
+		}
 		r, cerr := tx.CreateMFAResetRequest(ctx, &models.MFAResetRequest{
 			TargetUserID: target.ID, RequestedBy: actorID, Reason: in.Reason,
 			VerifiedBy: in.VerifiedBy, Evidence: in.Evidence,
@@ -225,6 +228,60 @@ func (c *KeyorixCore) RequestMFAReset(ctx context.Context, actorID uint, actorIs
 		fmt.Sprintf("Administrator %d asked for the second factor of %q (user %d) to be reset (request %d, reason: %s). A different administrator must approve it within 24 hours; if this is unexpected, cancel it.",
 			actorID, target.Username, target.ID, created.ID, in.Reason))
 	return created, nil
+}
+
+// refuseIfMFAResetPending returns ErrMFAResetAlreadyPending when a request for
+// targetID is still pending and unexpired, read through st.
+func refuseIfMFAResetPending(ctx context.Context, st storage.Storage, targetID uint, now time.Time) error {
+	pending, err := st.ListMFAResetRequests(ctx, true)
+	if err != nil {
+		return err
+	}
+	for _, p := range pending {
+		if p.TargetUserID == targetID && p.ExpiresAt.After(now) {
+			return ErrMFAResetAlreadyPending
+		}
+	}
+	return nil
+}
+
+// refuseMFAResetRequesterChanged checks that the requester is still a usable
+// global admin: active, not login-blocked, and holding the role, read through st.
+// Dual control needs two CURRENT admins: suspending a compromised admin must also
+// stop their pending requests from being approved by someone else.
+func refuseMFAResetRequesterChanged(ctx context.Context, st storage.Storage, requester *models.User) error {
+	if !requester.IsActive || AccountLoginBlocked(requester.ID, requester.AccountState) {
+		return ErrMFAResetRequesterChanged
+	}
+	role, err := isGlobalAdminRoleNameOn(ctx, st, requester.ID)
+	if err != nil {
+		return fmt.Errorf("check requester's admin role: %w", err)
+	}
+	if role == "" {
+		return ErrMFAResetRequesterChanged
+	}
+	return nil
+}
+
+// mfaResetRequester reads (or, with lock, row-locks) the requester through st; a
+// requester who no longer exists is ErrMFAResetRequesterChanged.
+func mfaResetRequester(ctx context.Context, st storage.Storage, id uint, lock bool) (*models.User, error) {
+	var (
+		u   *models.User
+		err error
+	)
+	if lock {
+		u, err = st.LockUserForUpdate(ctx, id)
+	} else {
+		u, err = st.GetUser(ctx, id)
+	}
+	if err != nil {
+		if storage.IsUserNotFound(err) {
+			return nil, ErrMFAResetRequesterChanged
+		}
+		return nil, fmt.Errorf("read requester: %w", err)
+	}
+	return u, nil
 }
 
 func evidenceSuffix(e string) string {
@@ -287,10 +344,12 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 			fmt.Sprintf("MFA reset request %d approval DENIED: user %d is the target", requestID, actorID))
 		return nil, ErrCannotActOnSelf
 	}
-	if role, rerr := c.isGlobalAdminRoleName(ctx, req.RequestedBy); rerr != nil {
-		return nil, fmt.Errorf("check requester's admin role: %w", rerr)
-	} else if role == "" {
-		return nil, ErrMFAResetRequesterChanged
+	requester, err := mfaResetRequester(ctx, c.storage, req.RequestedBy, false)
+	if err != nil {
+		return nil, err
+	}
+	if err := refuseMFAResetRequesterChanged(ctx, c.storage, requester); err != nil {
+		return nil, err
 	}
 	target, err := c.storage.GetUser(ctx, req.TargetUserID)
 	if err != nil {
@@ -327,12 +386,27 @@ func (c *KeyorixCore) ApproveMFAReset(ctx context.Context, actorID uint, actorIs
 			if !matched {
 				return ErrMFAResetRequestDecided
 			}
+			// Every rule read before the transaction holds again on the row locks
+			// (requester first, then target): a suspension, demotion, IdP link or
+			// promotion that committed in between refuses the approval.
+			lockedRequester, qerr := mfaResetRequester(ctx, tx, req.RequestedBy, true)
+			if qerr != nil {
+				return qerr
+			}
+			if qerr := refuseMFAResetRequesterChanged(ctx, tx, lockedRequester); qerr != nil {
+				return qerr
+			}
 			locked, lerr := tx.LockUserForUpdate(ctx, req.TargetUserID)
 			if lerr != nil {
 				return lerr
 			}
 			if verr := validateMFAResetTarget(locked); verr != nil {
 				return verr
+			}
+			if role, gerr := isGlobalAdminRoleNameOn(ctx, tx, locked.ID); gerr != nil {
+				return fmt.Errorf("check target's admin role: %w", gerr)
+			} else if role != "" {
+				return ErrMFAResetGlobalAdmin
 			}
 			e, rerr := ResetMFACredentialsInTx(ctx, tx, locked, string(hash), expiresAt, now)
 			if rerr != nil {

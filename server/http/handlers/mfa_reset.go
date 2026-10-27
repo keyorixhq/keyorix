@@ -32,6 +32,7 @@ func sendMFAResetError(w http.ResponseWriter, op string, err error) {
 		{core.ErrInsufficientAdminAuthority, http.StatusForbidden, "PermissionDenied", "insufficient admin authority over this user"},
 		{core.ErrCannotActOnSelf, http.StatusBadRequest, "BadRequest", "an MFA reset cannot target your own account; use a recovery code or `keyorix-server admin recover-admin`"},
 		{core.ErrMFAResetInput, http.StatusBadRequest, "ValidationError", core.MFAResetInputMessage},
+		{core.ErrMFAResetUserRequired, http.StatusBadRequest, "ValidationError", core.MFAResetUserRequiredMessage},
 		{core.ErrMFAResetTargetNotFound, http.StatusNotFound, "NotFound", core.MFAResetTargetNotFoundMessage},
 		{core.ErrMFAResetRequestNotFound, http.StatusNotFound, "NotFound", core.MFAResetRequestNotFoundMessage},
 		{core.ErrMFAResetMachineIdentity, http.StatusUnprocessableEntity, "UnprocessableEntity", core.MFAResetMachineIdentityMessage},
