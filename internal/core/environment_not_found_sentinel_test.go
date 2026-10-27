@@ -23,13 +23,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
 )
 
-// envLookalikeErr has exactly the legacy not-found text but is NOT the sentinel.
-var envLookalikeErr = errors.New("environment not found")
+// errEnvLookalike has exactly the legacy not-found text but is NOT the sentinel.
+var errEnvLookalike = errors.New("environment not found")
 
 func envLookalikeCore(t *testing.T, st storage.Storage) (*KeyorixCore, *faultstorage.FaultyStorage) {
 	t.Helper()
 	fs := faultstorage.NewFaultyStorage(st, &faultstorage.FaultSpec{
-		Method: "GetEnvironment", NthCall: 1, Kind: faultstorage.KindError, Err: envLookalikeErr,
+		Method: "GetEnvironment", NthCall: 1, Kind: faultstorage.KindError, Err: errEnvLookalike,
 	})
 	return NewKeyorixCore(fs), fs
 }

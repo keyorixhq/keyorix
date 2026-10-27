@@ -34,9 +34,9 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/store"
 )
 
-// lookalikeNotFoundErr reads like an absence but is a storage failure: it
+// errLookalikeNotFound reads like an absence but is a storage failure: it
 // carries the words "not found" and is NOT storage.ErrProjectNotFound.
-var lookalikeNotFoundErr = errors.New("failed to get project: replica 3: relation snapshot not found")
+var errLookalikeNotFound = errors.New("failed to get project: replica 3: relation snapshot not found")
 
 func pmsLocales(t *testing.T, fn func(t *testing.T)) {
 	t.Helper()
@@ -83,7 +83,7 @@ func servePMS(cs *core.KeyorixCore, projectID uint) (code int, reached bool) {
 func TestProjectMFABlocked_LookalikeNotFoundErrorDenies(t *testing.T) {
 	pmsLocales(t, func(t *testing.T) {
 		fs := faultstorage.NewFaultyStorage(newPMSStorage(t), &faultstorage.FaultSpec{
-			Method: "GetProject", NthCall: 1, Kind: faultstorage.KindError, Err: lookalikeNotFoundErr,
+			Method: "GetProject", NthCall: 1, Kind: faultstorage.KindError, Err: errLookalikeNotFound,
 		})
 		cs := core.NewKeyorixCore(fs)
 		code, reached := servePMS(cs, 1)
@@ -91,7 +91,7 @@ func TestProjectMFABlocked_LookalikeNotFoundErrorDenies(t *testing.T) {
 		assert.False(t, reached, "a storage error that only says \"not found\" must not let the request through")
 		assert.Equal(t, http.StatusForbidden, code)
 
-		fs.Arm(&faultstorage.FaultSpec{Method: "GetProject", NthCall: 1, Kind: faultstorage.KindError, Err: lookalikeNotFoundErr})
+		fs.Arm(&faultstorage.FaultSpec{Method: "GetProject", NthCall: 1, Kind: faultstorage.KindError, Err: errLookalikeNotFound})
 		sessionNoMFA := &UserContext{UserID: 1, ActorType: core.ActorTypeUser, SessionAuth: true, MFAEnabled: false}
 		assert.True(t, ProjectsMFABlocked(reqWithUser(sessionNoMFA), cs, []uint{1}),
 			"the aggregate gate must deny on the same lookalike error")

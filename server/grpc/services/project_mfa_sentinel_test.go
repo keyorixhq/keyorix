@@ -24,9 +24,9 @@ import (
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
-// pmsLookalikeErr reads like an absence but is a storage failure: it carries
+// errPMSLookalike reads like an absence but is a storage failure: it carries
 // the words "not found" and is NOT storage.ErrProjectNotFound.
-var pmsLookalikeErr = errors.New("failed to get project: replica 3: relation snapshot not found")
+var errPMSLookalike = errors.New("failed to get project: replica 3: relation snapshot not found")
 
 func pmsGRPCLocales(t *testing.T, fn func(t *testing.T, r *mfaAggregateTestRig)) {
 	t.Helper()
@@ -50,7 +50,7 @@ func pmsGRPCLocales(t *testing.T, fn func(t *testing.T, r *mfaAggregateTestRig))
 func TestEnforceProjectMFA_LookalikeNotFoundErrorDenies(t *testing.T) {
 	pmsGRPCLocales(t, func(t *testing.T, r *mfaAggregateTestRig) {
 		fs := faultstorage.NewFaultyStorage(store.NewLocalStorage(r.db), &faultstorage.FaultSpec{
-			Method: "GetProject", NthCall: 1, Kind: faultstorage.KindError, Err: pmsLookalikeErr,
+			Method: "GetProject", NthCall: 1, Kind: faultstorage.KindError, Err: errPMSLookalike,
 		})
 		svc := NewProjectService(core.NewKeyorixCore(fs))
 
