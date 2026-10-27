@@ -312,11 +312,20 @@ func TestKeyset_SlotFromOlderKeysetRefused(t *testing.T) {
 	if _, err := OpenKeyset(spliced, kek); !errors.Is(err, ErrKeysetMAC) {
 		t.Fatalf("boot: got %v, want ErrKeysetMAC", err)
 	}
-	if _, err := OpenKeyset(tJoin(t, header, slots, nil, kek), kek); err == nil {
-		t.Fatal("boot accepted a stale slot even after a KEK holder re-MACed it")
-	}
 	if _, err := UnwrapRecipientSlot(spliced, 1, privs[0]); err == nil {
 		t.Fatal("escrow holder opened a slot spliced from an older keyset")
+	}
+	// A KEK holder who re-MACs the stale slot (a writer bug, not an
+	// attacker) passes boot: the server holds no escrow private key and
+	// cannot open hybrid slots. The escrow holder still refuses it, which is
+	// why every writer rebuilds all slots through SealKeyset (INV-PQWRAP-
+	// keyset-slots-rewrapped-together) and the tests open every slot.
+	remaced := tJoin(t, header, slots, nil, kek)
+	if _, err := OpenKeyset(remaced, kek); err != nil {
+		t.Fatalf("structurally valid, re-MACed keyset refused at boot: %v", err)
+	}
+	if _, err := UnwrapRecipientSlot(remaced, 1, privs[0]); err == nil {
+		t.Fatal("escrow holder opened a stale slot after a re-MAC")
 	}
 }
 
@@ -558,16 +567,18 @@ func TestSealKeyset_RefusesBadInput(t *testing.T) {
 		many[i] = testKey(t, RecipientSuite, fmt.Sprintf("many-%d", i)).PublicKey()
 	}
 	cases := map[string]func() ([]byte, error){
-		"short DEK":         func() ([]byte, error) { return SealKeyset(make([]byte, 16), tKEK("b"), tKEKID("b"), nil) },
-		"short KEK":         func() ([]byte, error) { return SealKeyset(tDEK("b"), make([]byte, 16), tKEKID("b"), nil) },
-		"zero KEK":          func() ([]byte, error) { return SealKeyset(tDEK("b"), make([]byte, 32), tKEKID("b"), nil) },
-		"zero DEK":          func() ([]byte, error) { return SealKeyset(make([]byte, 32), tKEK("b"), tKEKID("b"), nil) },
-		"nil recipient":     func() ([]byte, error) { return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), []*PublicKey{nil}) },
-		"768 recipient":     func() ([]byte, error) { return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), []*PublicKey{k768}) },
-		"duplicate":         func() ([]byte, error) { return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), []*PublicKey{pubs[0], pubs[0]}) },
-		"too many":          func() ([]byte, error) { return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), many) },
-		"legacy short DEK":  func() ([]byte, error) { return SealLegacy(make([]byte, 16), tKEK("b")) },
-		"legacy short KEK":  func() ([]byte, error) { return SealLegacy(tDEK("b"), make([]byte, 16)) },
+		"short DEK":     func() ([]byte, error) { return SealKeyset(make([]byte, 16), tKEK("b"), tKEKID("b"), nil) },
+		"short KEK":     func() ([]byte, error) { return SealKeyset(tDEK("b"), make([]byte, 16), tKEKID("b"), nil) },
+		"zero KEK":      func() ([]byte, error) { return SealKeyset(tDEK("b"), make([]byte, 32), tKEKID("b"), nil) },
+		"zero DEK":      func() ([]byte, error) { return SealKeyset(make([]byte, 32), tKEK("b"), tKEKID("b"), nil) },
+		"nil recipient": func() ([]byte, error) { return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), []*PublicKey{nil}) },
+		"768 recipient": func() ([]byte, error) { return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), []*PublicKey{k768}) },
+		"duplicate": func() ([]byte, error) {
+			return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), []*PublicKey{pubs[0], pubs[0]})
+		},
+		"too many":         func() ([]byte, error) { return SealKeyset(tDEK("b"), tKEK("b"), tKEKID("b"), many) },
+		"legacy short DEK": func() ([]byte, error) { return SealLegacy(make([]byte, 16), tKEK("b")) },
+		"legacy short KEK": func() ([]byte, error) { return SealLegacy(tDEK("b"), make([]byte, 16)) },
 	}
 	for name, f := range cases {
 		if _, err := f(); err == nil {
