@@ -4,3 +4,6 @@
   - Online, two administrators: `POST /api/v1/mfa-reset-requests` (admin A), `POST /api/v1/mfa-reset-requests/{id}/approve` (a different admin B, returns the one-time password once), `.../cancel`, `GET /api/v1/mfa-reset-requests`. Both admins must be human global admins with a second factor, proven afresh for each step; neither may be the target. Self-approval is refused and audited, a request is single-use and expires after 24 h. Audited as `mfa.reset_requested`, `mfa.reset_approved`, `mfa.reset`, `mfa.reset_cancelled`; the user and every admin are notified.
   - Refused for global admins (use `recover-admin`), SSO/SCIM accounts, suspended or inactive accounts and machine identities. Schema epoch 8, floor unchanged (docs/UPGRADING.md). Runbook: docs/operator/lost-totp-runbook.md §4.
   - Not yet: the account-setup gate does not read `mfa_enrolment_required`, so the new enrolment is forced only where `security.require_mfa` is on; no `keyorix` CLI subcommand for the online flow yet.
+
+### Fixed
+- **`keyorix-server admin recover-admin` no longer leaves a passkey admin locked out.** It removed every WebAuthn credential but left `WebAuthnEnabled` set, so the next login asked for a passkey the account no longer had. The flag is now cleared in the same transaction (`TestPerformRecoverAdmin_ClearsWebAuthnFlag`).
