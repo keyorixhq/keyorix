@@ -329,7 +329,7 @@ func (c *KeyorixCore) setAccountStateUnsettled(ctx context.Context, adminID, use
 	// cached is simply not in the map to delete.
 	needsCacheClearSweep := !needsCacheEvictionSweep
 
-	var sessionHashes []string
+	var sessionEv sessionEvictions
 	// AUDIT-TX-3: a transition into a login-blocked or restricted state is a
 	// revocation: never blocked by the audit log, its row owed from this transaction
 	// (appended after the cache eviction below). Returning to active restores access,
@@ -354,8 +354,8 @@ func (c *KeyorixCore) setAccountStateUnsettled(ctx context.Context, adminID, use
 					return errAccountStateDirectionChanged
 				}
 			}
-			hashes, serr := c.setAccountStateInTx(ctx, tx, userID, state)
-			sessionHashes = hashes
+			ev, serr := c.setAccountStateInTx(ctx, tx, userID, state)
+			sessionEv = ev
 			if serr != nil {
 				return serr
 			}
@@ -379,15 +379,21 @@ func (c *KeyorixCore) setAccountStateUnsettled(ctx context.Context, adminID, use
 	// CLEARS an existing entry, never creates a new negative one (see needsCacheClearSweep's
 	// doc comment above for why these need different primitives, not just a different
 	// condition on the same one).
-	if needsCacheEvictionSweep {
-		c.invalidateTokenCache(sessionHashes...)
-	} else if needsCacheClearSweep {
-		c.clearCachedTokens(sessionHashes...)
+	//
+	// A failed session listing (ERRLOSS-REVOKE-1) is logged and swept per user here; its
+	// audit row is written by the returned settle, i.e. after accountStateMu is released.
+	mode := evictTombstone
+	if needsCacheClearSweep {
+		mode = evictClearWidening
 	}
+	c.evictSessions(userID, sessionEv, mode, "setAccountState")
 	if AccountLoginBlocked(userID, state) {
 		purgeStepUpGrants(ctx, c.storage, userID)
 	}
-	return settle, nil
+	return func() {
+		settle()
+		c.auditSessionListFailure(ctx, userID, sessionEv, mode, "setAccountState")
+	}, nil
 }
 
 // accountStateNeedsEvictionSweep reports whether a transition to state needs the
@@ -446,15 +452,15 @@ func (c *KeyorixCore) currentAccountStateForDirection(ctx context.Context, userI
 // Writing the hashes to the caller rather than evicting here is deliberate: the
 // eviction must not happen until the transaction has actually committed, or a
 // rolled-back change evicts a still-valid cache entry.
-func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storage, userID uint, state string) ([]string, error) {
+func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storage, userID uint, state string) (sessionEvictions, error) {
 	needsCacheEvictionSweep := accountStateNeedsEvictionSweep(userID, state)
 	needsCacheClearSweep := !needsCacheEvictionSweep
-	var sessionHashes []string
+	var ev sessionEvictions
 	{
 		// The lock-guarded read is still needed for serialization (row lock + existence
 		// check) even though its returned user struct is no longer written back wholesale.
 		if _, err := tx.LockUserForUpdate(ctx, userID); err != nil {
-			return nil, err
+			return sessionEvictions{}, err
 		}
 		if needsCacheEvictionSweep || needsCacheClearSweep {
 			// Capture the user's current session-token HASHES BEFORE mutating so we can
@@ -463,7 +469,12 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 			// suspend/deactivate/restrict would not take effect until the positive-cache
 			// TTL — a window where a blocked user keeps full access. The stored
 			// session_token IS the SHA-256 hash, which is exactly the cache key.
-			sessionHashes, _ = tx.ListSessionTokenHashesForUser(ctx, userID)
+			//
+			// The read stays on tx but runs in a savepoint with one retry, so a failed
+			// listing can neither abort the enclosing PostgreSQL transaction nor silently
+			// skip the eviction: the failure is carried out in ev.ListErr and handled
+			// after commit (evictSessions), never logged or audited in here.
+			ev = listSessionHashesInTx(ctx, tx, userID)
 			// Also collect PAT hashes — for a transition INTO a blocked or restricted
 			// state (e.g. password_reset_required), without this a cached PAT bypasses
 			// the restriction for up to validTokenTTL (30 s): ValidatePATToken sees the
@@ -472,12 +483,12 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 			// states below. For a transition TOWARD active, this is what lets the clear
 			// sweep below reach a stale negative PAT entry too, not just session ones.
 			if pats, _ := tx.ListPersonalAccessTokensByUser(ctx, userID); len(pats) > 0 {
-				sessionHashes = append(sessionHashes, activePATHashes(pats)...)
+				ev.Hashes = append(ev.Hashes, activePATHashes(pats)...)
 			}
 		}
 
 		if err := tx.SetAccountState(ctx, userID, state, c.now()); err != nil {
-			return nil, err
+			return sessionEvictions{}, err
 		}
 		// A state that blocks login must also terminate the user's existing sessions AND
 		// PATs, so suspension is effective immediately instead of lingering until the
@@ -495,13 +506,13 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 			_ = tx.WithTransaction(ctx, func(sp storage.Storage) error {
 				hashes, herr := sp.RevokeAllPersonalAccessTokensForUser(ctx, userID)
 				if herr == nil {
-					sessionHashes = append(sessionHashes, hashes...)
+					ev.Hashes = append(ev.Hashes, hashes...)
 				}
 				return herr
 			})
 		}
 	}
-	return sessionHashes, nil
+	return ev, nil
 }
 
 // purgeStepUpGrants deletes every MFA step-up grant (re-auth and
