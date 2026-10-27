@@ -37,10 +37,11 @@ import (
 // FileSuffix is appended to a variable name to form its file-variant.
 const FileSuffix = "_FILE"
 
-// maxSecretFileSize bounds what Lookup will read. No legitimate secret in this
-// product is larger; the cap stops a mis-pointed X_FILE (a log, a device) from
-// being slurped into memory.
-const maxSecretFileSize = 1 << 20
+// MaxSecretFileSize bounds what Lookup (and ReadCapped's other callers, e.g.
+// --passphrase-file) will read. No legitimate secret in this product is larger;
+// the cap stops a mis-pointed X_FILE (a log, a device) from being slurped into
+// memory.
+const MaxSecretFileSize = 1 << 20
 
 // Lookup resolves the secret called name.
 //
@@ -221,21 +222,34 @@ func readSecretFile(path string, checkPerms bool) (string, error) {
 			return "", err
 		}
 	}
-	if info.Size() > maxSecretFileSize {
-		return "", fmt.Errorf("secret file is too large (%d bytes, limit %d)", info.Size(), maxSecretFileSize)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxSecretFileSize+1))
+	data, err := ReadCapped(f, info)
 	if err != nil {
-		return "", fmt.Errorf("cannot read secret file: %w", unwrapPathError(err))
-	}
-	if len(data) > maxSecretFileSize {
-		return "", fmt.Errorf("secret file is too large (limit %d bytes)", maxSecretFileSize)
+		return "", err
 	}
 	v := trimOneTerminator(string(data))
 	if v == "" {
 		return "", fmt.Errorf("secret file is empty")
 	}
 	return v, nil
+}
+
+// ReadCapped reads a secret file opened by OpenRegular (f, with its fstat info)
+// up to MaxSecretFileSize bytes, and refuses a larger one -- by its fstat size
+// before reading, and by what was read for a file that reports size 0 (/proc) or
+// grows. The error names the cap; it never carries the contents. It is the one
+// size rule for X_FILE secrets and --passphrase-file (SECRETENV-TAILS-2 F11).
+func ReadCapped(f *os.File, info os.FileInfo) ([]byte, error) {
+	if info.Size() > MaxSecretFileSize {
+		return nil, fmt.Errorf("secret file is too large (%d bytes, limit %d)", info.Size(), MaxSecretFileSize)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, MaxSecretFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read secret file: %w", unwrapPathError(err))
+	}
+	if len(data) > MaxSecretFileSize {
+		return nil, fmt.Errorf("secret file is too large (limit %d bytes)", MaxSecretFileSize)
+	}
+	return data, nil
 }
 
 // trimOneTerminator strips one trailing "\n", then one trailing "\r": a "\n",
