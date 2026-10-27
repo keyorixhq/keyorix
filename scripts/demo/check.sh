@@ -865,12 +865,27 @@ step_audit_logs() {
 }
 
 step_audit_verify() {
-  req GET /api/v1/audit/verify "$ADMIN_TOKEN"
-  [ "$HTTP_CODE" = "200" ] || { echo "GET /api/v1/audit/verify returned $HTTP_CODE: $RESP_BODY"; return 1; }
-  local valid; valid="$(jget 'd["data"]["valid"]')"
+  # A plain GET /audit/verify is the server's INCREMENTAL check (rolling re-walk plus the
+  # rows after the last checkpoint): a tampered OLD row stays VALID until the walk reaches
+  # it. Run the full walk (what `keyorix audit verify --full` does) so this step actually
+  # proves the whole chain.
+  req GET "/api/v1/audit/verify?full=true" "$ADMIN_TOKEN"
+  [ "$HTTP_CODE" = "202" ] || { echo "GET /api/v1/audit/verify?full=true returned $HTTP_CODE, expected 202: $RESP_BODY"; return 1; }
+  local job; job="$(jget 'd["data"]["job_id"]')"
+  [ -n "$job" ] || { echo "full audit verify returned no job_id: $RESP_BODY"; return 1; }
+  local state="running"
+  for _ in $(seq 1 120); do
+    req GET "/api/v1/audit/verify/jobs/$job" "$ADMIN_TOKEN"
+    [ "$HTTP_CODE" = "200" ] || { echo "GET /api/v1/audit/verify/jobs/$job returned $HTTP_CODE: $RESP_BODY"; return 1; }
+    state="$(jget 'd["data"]["state"]')"
+    [ "$state" = "running" ] || break
+    sleep 1
+  done
+  [ "$state" = "succeeded" ] || { echo "full audit verify job $job ended '$state' after up to 120s: $RESP_BODY"; return 1; }
+  local valid; valid="$(jget 'd["data"]["result"]["valid"]')"
   [ "$valid" = "True" ] || {
-    local first_broken; first_broken="$(jget 'd["data"].get("first_broken_id")')"
-    echo "audit chain verify: BROKEN (first broken id: $first_broken) -- internal/core audit chain, admin verify-audit"
+    local first_broken; first_broken="$(jget 'd["data"]["result"].get("first_broken_id")')"
+    echo "audit chain verify (full walk): BROKEN (first broken id: $first_broken) -- internal/core audit chain, admin verify-audit"
     return 1
   }
   return 0
