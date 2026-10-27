@@ -49,12 +49,12 @@ func withTTYStdin(t *testing.T, input string) (stderrPath string, master *os.Fil
 
 // resolveWithDeadline runs ResolvePassphrase on the pty stdin and fails the test after
 // a deadline instead of hanging the package until the go test timeout (CI hung for 30
-// minutes on the Ctrl-D case: an end-of-file typed before term.ReadPassword switches the
-// terminal mode did not reach the read that followed). If eof is set, a Ctrl-D is typed
-// every 50ms while the read is pending, so one lands on an empty line of the read that
-// is actually waiting. On deadline the master is closed, which hangs the slave up and
-// lets the blocked read return.
-func resolveWithDeadline(t *testing.T, master *os.File, eof bool) ([]byte, error) {
+// minutes on the Ctrl-D case, and a Ctrl-D typed every 50ms still never ended the read
+// on the CI runner). If hangup is set, the master is closed once the read is pending:
+// the terminal goes away under the prompt, the blocked read returns an error and
+// term.ReadPassword reports it. Closing the master is also what unblocks the read on
+// deadline.
+func resolveWithDeadline(t *testing.T, master *os.File, hangup bool) ([]byte, error) {
 	t.Helper()
 	type result struct {
 		got []byte
@@ -73,8 +73,9 @@ func resolveWithDeadline(t *testing.T, master *os.File, eof bool) ([]byte, error
 		case r := <-done:
 			return r.got, r.err
 		case <-tick.C:
-			if eof {
-				_, _ = master.WriteString("\x04")
+			if hangup {
+				_ = master.Close()
+				hangup = false
 			}
 		case <-deadline:
 			_ = master.Close()
@@ -107,7 +108,7 @@ func TestResolvePassphrase_Stdin_Terminal(t *testing.T) {
 	})
 
 	t.Run("end of input at the prompt is a read error, not an empty passphrase", func(t *testing.T) {
-		_, master := withTTYStdin(t, "") // Ctrl-D is typed while the read waits
+		_, master := withTTYStdin(t, "") // the terminal is hung up while the read waits
 		got, err := resolveWithDeadline(t, master, true)
 		require.Error(t, err)
 		assert.Nil(t, got)
