@@ -51,6 +51,25 @@ into a review that has to consider every dependent.
   `internal/core/storage` (47 files, 21 dependents) are the only packages with
   both 40+ files and 20+ dependents. These are where a split pays the most.
 
+## Ceilings chosen from this table
+
+| Check | Today's max | Set by | Ceiling | Headroom |
+|---|---:|---|---:|---:|
+| files per package | 226 | `internal/core` | 260 | 34 files (1.15x) |
+| dependents per package | 38 | `internal/core/ports` | 44 | 6 dependents (1.16x) |
+
+Both ceilings sit just above today's worst package, so no existing package
+violates them and nothing needs grandfathering. The consequence to know about:
+a single global ceiling only constrains the package that sets it. `internal/core`
+is held at 260, but `server/http/handlers` (130 files) could still double and
+`internal/storage/store` (96) could nearly triple before the guard speaks. A
+per-package ratchet (each package capped at its own measured value plus
+headroom, new packages at a small default) would close that; it is a policy
+choice, so it is raised as a recommendation in the PR, not built here.
+
+Raise a ceiling only in the PR that causes the growth, with the reason added to
+this file. Prefer splitting the package.
+
 ## Full table (sorted by files, descending)
 
 | package | files | LOC | dependents |
