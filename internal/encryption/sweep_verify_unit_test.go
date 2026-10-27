@@ -86,7 +86,9 @@ func TestSweptTableReaders_CoverEverySweptModel(t *testing.T) {
 		}
 		var queried string
 		probe := db.Session(&gorm.Session{DryRun: true})
-		probe.Callback().Query().Before("gorm:query").Register("test:table-probe", func(tx *gorm.DB) { queried = tx.Statement.Table })
+		if err := probe.Callback().Query().Before("gorm:query").Register("test:table-probe", func(tx *gorm.DB) { queried = tx.Statement.Table }); err != nil {
+			t.Fatal(err)
+		}
 		_, _, _ = readers[i](probe, 0, 1)
 		_ = probe.Callback().Query().Remove("test:table-probe")
 		if queried != stmt.Schema.Table {
