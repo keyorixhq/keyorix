@@ -60,6 +60,8 @@ const postgresCacheEpochLockKey = 0x4B455941_4345504F // "KEYACEPO"
 // secretNodeCacheEpochFunc exactly as pg_proc.prosrc stores it: the installer
 // creates it and the integrity check compares the installed function against
 // it, so the two cannot drift.
+//
+// #nosec G101 -- PL/pgSQL function body ("cache_epoch" assignment), not a credential
 const postgresSecretNodeCacheEpochFuncBody = `
 BEGIN
   NEW.cache_epoch := OLD.cache_epoch + 1;
@@ -78,7 +80,7 @@ const pgSecretNodeCacheEpochFuncOK = "p.proname = '" + secretNodeCacheEpochFunc 
 // 1|2|16), no UPDATE OF column list, no WHEN clause, no arguments, not a
 // constraint trigger. Re-created as AFTER, or with a WHEN clause, it passes the
 // presence proof but stops stamping some updates.
-const pgSecretNodeCacheEpochTriggerDefOK = "t.tgtype = 19 AND t.tgnargs = 0 AND t.tgqual IS NULL AND t.tgconstraint = 0 AND COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) = 0"
+const pgSecretNodeCacheEpochTriggerDefOK = "t.tgtype = 19 AND t.tgnargs = 0 AND t.tgqual IS NULL AND t.tgconstraint = 0 AND COALESCE(pg_catalog.array_length(t.tgattr::pg_catalog.int2[], 1), 0) = 0" // #nosec G101 -- catalog predicate, not a credential
 
 // sqliteCacheEpochTriggerSQL is the EXACT text of the SQLite trigger, kept as
 // one constant so the convergence check below can compare it byte-for-byte
