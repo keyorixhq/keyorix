@@ -10,6 +10,12 @@ import (
 // gone?" — should match it with errors.Is rather than treating any error as absence.
 var ErrUserNotFound = errors.New("user not found")
 
+// ErrGroupNotFound is returned (wrapped) by GetGroup and DeleteGroup when the group
+// positively does not exist (no live row), as distinct from a retrieval failure. The
+// SCIM transport answers 404 only for this; any other storage failure is a 5xx the IdP
+// retries (#3620). Match it with errors.Is, never by the i18n text.
+var ErrGroupNotFound = errors.New("group not found")
+
 // ErrMFAChallengeInvalid is returned (wrapped or bare) by ConsumeMFAChallenge
 // when no unused, unexpired challenge matches — the expected negative result for
 // a stale, replayed or guessed challenge token — as distinct from a genuine

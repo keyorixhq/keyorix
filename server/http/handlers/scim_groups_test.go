@@ -162,7 +162,8 @@ func TestSCIM_CreateGroup_DBErrorSanitized(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.CreateGroup(w, httptest.NewRequest(http.MethodPost, "/scim/v2/Groups", bytes.NewReader([]byte(body))))
 
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	// A storage failure is a 500 the IdP retries, never a 400 it does not (#3620).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
 }
 
@@ -186,7 +187,8 @@ func TestSCIM_ReplaceGroup_DBErrorSanitized(t *testing.T) {
 	w = httptest.NewRecorder()
 	h.ReplaceGroup(w, withID(httptest.NewRequest(http.MethodPut, "/scim/v2/Groups/"+gid, bytes.NewReader([]byte(put))), gid))
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// A storage failure is a 500 the IdP retries, never a 404 it reads as "gone" (#3620).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
 }
 
@@ -209,7 +211,8 @@ func TestSCIM_PatchGroup_DBErrorSanitized(t *testing.T) {
 	w = httptest.NewRecorder()
 	h.PatchGroup(w, withID(httptest.NewRequest(http.MethodPatch, "/scim/v2/Groups/"+gid, bytes.NewReader([]byte(patch))), gid))
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// A storage failure is a 500 the IdP retries, never a 404 it reads as "gone" (#3620).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
 }
 
@@ -232,7 +235,8 @@ func TestSCIM_DeleteGroup_DBErrorSanitized(t *testing.T) {
 	w = httptest.NewRecorder()
 	h.DeleteGroup(w, withID(httptest.NewRequest(http.MethodDelete, "/scim/v2/Groups/"+gid, nil), gid))
 
-	assert.Equal(t, http.StatusNotFound, w.Code)
+	// A storage failure is a 500 the IdP retries, never a 404 it reads as "gone" (#3620).
+	assert.Equal(t, http.StatusInternalServerError, w.Code)
 	assertSCIMNoRawDBLeak(t, w, logBuf, "groups")
 }
 

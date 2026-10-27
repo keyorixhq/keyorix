@@ -241,18 +241,16 @@ func TestGetGroupMembers_BadID_S13(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
-// TestGetGroupMembers_NonExistent_S13 — when the group doesn't exist the error
-// message is "Data retrieval failed: ErrorGroupNotFound" (the key returned by
-// i18n.T as fallback). That string does NOT contain the literal "not found", so
-// the handler falls through to the 500 branch rather than the 404 branch.
+// TestGetGroupMembers_NonExistent_S13 — a group that does not exist is a 404. This
+// used to be a 500 only by accident: the handler matches "not found" in the error text,
+// and with the i18n key as the fallback text ("ErrorGroupNotFound") that never matched.
+// storage.ErrGroupNotFound (#3620) carries the text, so the handler now answers 404.
 func TestGetGroupMembers_NonExistent_S13(t *testing.T) {
 	h := newGroupHandlerS13(t)
 	req := withUserCtx(withChiParam(httptest.NewRequest(http.MethodGet, "/", nil), "id", "999999"))
 	w := httptest.NewRecorder()
 	h.GetGroupMembers(w, req)
-	// The handler's "not found" check doesn't match the i18n key fallback, so
-	// it returns 500 for a non-existent group.
-	assert.Equal(t, http.StatusInternalServerError, w.Code)
+	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 // ── groups_members.go: AddGroupMember ────────────────────────────────────────

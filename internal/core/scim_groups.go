@@ -7,6 +7,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 
@@ -68,14 +69,18 @@ func (c *KeyorixCore) ListSCIMGroupsPage(ctx context.Context, startIndex, count 
 // group carries an admin-conferring role (a common "IdP group X = Keyorix admins"
 // integration pattern), membership alone grants the role immediately, with no SSO
 // step required (#167 — the group-membership sibling of #120's user-level guard).
-// Fails CLOSED (treats a lookup error as not-managed) so an inability to verify never
-// opens the add.
-func (c *KeyorixCore) scimManagedMember(ctx context.Context, uid uint) bool {
+// Fails CLOSED: a user that positively does not exist is not managed (false, nil), and
+// an inability to verify returns the error, so the add never opens, and the caller
+// answers a server error the IdP retries rather than a refusal it would not (#3620).
+func (c *KeyorixCore) scimManagedMember(ctx context.Context, uid uint) (bool, error) {
 	user, err := c.storage.GetUser(ctx, uid)
 	if err != nil {
-		return false
+		if errors.Is(err, storage.ErrUserNotFound) {
+			return false, nil
+		}
+		return false, err
 	}
-	return scimOwned(user)
+	return scimOwned(user), nil
 }
 
 // maxSCIMGroupMembersPerCall bounds how many member ids a single SCIM group
@@ -91,19 +96,29 @@ const maxSCIMGroupMembersPerCall = 500
 
 // filterSCIMManaged splits ids into (allowed, rejected) member ids based on
 // scimManagedMember, so callers can add only the SCIM-managed subset and report the
-// rest as refused rather than silently dropping them.
-func (c *KeyorixCore) filterSCIMManaged(ctx context.Context, ids []uint) (allowed, rejected []uint) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- all three callers (ProvisionSCIMGroup, ReplaceSCIMGroup, PatchSCIMGroup) enforce maxSCIMGroupMembersPerCall on their raw incoming id list before calling this
+// rest as refused rather than silently dropping them. A failed lookup is returned as
+// an error, not counted as a rejection.
+func (c *KeyorixCore) filterSCIMManaged(ctx context.Context, ids []uint) (allowed, rejected []uint, err error) { // nosemgrep: keyorix-unbounded-bulk-slice-param -- all three callers (ProvisionSCIMGroup, ReplaceSCIMGroup, PatchSCIMGroup) enforce maxSCIMGroupMembersPerCall on their raw incoming id list before calling this
 	for _, id := range ids {
 		if id == 0 {
 			continue
 		}
-		if c.scimManagedMember(ctx, id) {
+		managed, merr := c.scimManagedMember(ctx, id)
+		if merr != nil {
+			return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), merr)
+		}
+		if managed {
 			allowed = append(allowed, id)
 		} else {
 			rejected = append(rejected, id)
 		}
 	}
-	return allowed, rejected
+	return allowed, rejected, nil
+}
+
+// scimMembersRefused is the refusal for member ids the group sync may not add.
+func scimMembersRefused(rejected []uint) error {
+	return fmt.Errorf("%s: %w (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), ErrSCIMMemberNotManaged, rejected)
 }
 
 // ProvisionSCIMGroup creates a group from a SCIM Create and adds its initial members.
@@ -111,14 +126,17 @@ func (c *KeyorixCore) filterSCIMManaged(ctx context.Context, ids []uint) (allowe
 // id in memberIDs is refused.
 func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*models.Group, error) {
 	if displayName == "" {
-		return nil, fmt.Errorf("displayName is required")
+		return nil, fmt.Errorf("%w: displayName is required", ErrInvalidInput)
 	}
 	if len(memberIDs) > maxSCIMGroupMembersPerCall {
-		return nil, fmt.Errorf("memberIDs exceeds the maximum batch size of %d", maxSCIMGroupMembersPerCall)
+		return nil, fmt.Errorf("%w: memberIDs exceeds the maximum batch size of %d", ErrInvalidInput, maxSCIMGroupMembersPerCall)
 	}
-	allowed, rejected := c.filterSCIMManaged(ctx, memberIDs)
+	allowed, rejected, ferr := c.filterSCIMManaged(ctx, memberIDs)
+	if ferr != nil {
+		return nil, ferr
+	}
 	if len(rejected) > 0 {
-		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
+		return nil, scimMembersRefused(rejected)
 	}
 	// #1642: SCIM-provisioned group names come from an external IdP and
 	// bypass core.CreateGroup entirely (see the storage-direct note below),
@@ -126,7 +144,7 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 	// treatment (scim.go).
 	foldedName, ferr := identity.NewFoldedName(displayName)
 	if ferr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+		return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorValidation", nil), ErrInvalidInput, ferr)
 	}
 	// Storage-direct: the SCIM path emits its own scim.group_provisioned event below,
 	// so it must not also fire the generic group.created from CreateGroup.
@@ -168,7 +186,7 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 // member set (members not in memberIDs are removed; new ones are added).
 func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uint, displayName string, memberIDs []uint) (*models.Group, error) {
 	if len(memberIDs) > maxSCIMGroupMembersPerCall {
-		return nil, fmt.Errorf("memberIDs exceeds the maximum batch size of %d", maxSCIMGroupMembersPerCall)
+		return nil, fmt.Errorf("%w: memberIDs exceeds the maximum batch size of %d", ErrInvalidInput, maxSCIMGroupMembersPerCall)
 	}
 	group, err := c.storage.GetGroup(ctx, groupID)
 	if err != nil {
@@ -182,7 +200,7 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 		// the group's actual display name.
 		foldedName, ferr := identity.NewFoldedName(displayName)
 		if ferr != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+			return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorValidation", nil), ErrInvalidInput, ferr)
 		}
 		// #2697: column-scoped, conditional on the group row still being live —
 		// a full-row Save here resurrected a group a concurrent
@@ -200,7 +218,7 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 			}
 			if !matched {
-				return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+				return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrGroupNotFound)
 			}
 			return nil
 		}
@@ -213,13 +231,17 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 	toAdd := computeSCIMToAdd(want, have)
 	// SCIM must not be able to grant administrative access by adding members to a group
 	// that carries an admin role. Block the add (de-escalating removals are still fine).
-	if len(toAdd) > 0 && c.scimGroupConfersAdmin(ctx, groupID) {
-		return nil, fmt.Errorf("%s: SCIM cannot add members to a group that grants administrative roles", i18n.T("ErrorNotAuthorized", nil))
+	if len(toAdd) > 0 {
+		if err := c.refuseAddToAdminGroup(ctx, groupID); err != nil {
+			return nil, err
+		}
 	}
 	// Every add must target a SCIM-managed account (#167); a native/non-SCIM id in the
 	// requested member set is refused outright rather than silently skipped.
-	if _, rejected := c.filterSCIMManaged(ctx, toAdd); len(rejected) > 0 {
-		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
+	if _, rejected, ferr := c.filterSCIMManaged(ctx, toAdd); ferr != nil {
+		return nil, ferr
+	} else if len(rejected) > 0 {
+		return nil, scimMembersRefused(rejected)
 	}
 	if err := c.applyGroupMembershipChanges(ctx, groupID, want, current, toAdd, rename, func(tgt auditTarget) {
 		c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
@@ -237,7 +259,7 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 // add/remove. nil newName leaves the name unchanged.
 func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint, newName *string, addIDs, removeIDs []uint) (*models.Group, error) {
 	if len(addIDs) > maxSCIMGroupMembersPerCall || len(removeIDs) > maxSCIMGroupMembersPerCall {
-		return nil, fmt.Errorf("addIDs/removeIDs exceeds the maximum batch size of %d", maxSCIMGroupMembersPerCall)
+		return nil, fmt.Errorf("%w: addIDs/removeIDs exceeds the maximum batch size of %d", ErrInvalidInput, maxSCIMGroupMembersPerCall)
 	}
 	group, err := c.storage.GetGroup(ctx, groupID)
 	if err != nil {
@@ -248,20 +270,25 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	if newName != nil && *newName != "" && *newName != group.Name {
 		foldedName, ferr := identity.NewFoldedName(*newName)
 		if ferr != nil {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr)
+			return nil, fmt.Errorf("%s: %w: %w", i18n.T("ErrorValidation", nil), ErrInvalidInput, ferr)
 		}
 		// #2697: see ReplaceSCIMGroup's identical rename above (AUDIT-TX-3: it runs
 		// in the membership transaction below).
 		renaming, folded = true, foldedName.Folded()
 	}
-	if hasSCIMAdditions(addIDs) && c.scimGroupConfersAdmin(ctx, groupID) {
-		return nil, fmt.Errorf("%s: SCIM cannot add members to a group that grants administrative roles", i18n.T("ErrorNotAuthorized", nil))
+	if hasSCIMAdditions(addIDs) {
+		if err := c.refuseAddToAdminGroup(ctx, groupID); err != nil {
+			return nil, err
+		}
 	}
 	// Every add must target a SCIM-managed account (#167); a native/non-SCIM id in the
 	// requested add set is refused outright rather than silently skipped.
-	allowedAdds, rejected := c.filterSCIMManaged(ctx, addIDs)
+	allowedAdds, rejected, ferr := c.filterSCIMManaged(ctx, addIDs)
+	if ferr != nil {
+		return nil, ferr
+	}
 	if len(rejected) > 0 {
-		return nil, fmt.Errorf("%s: SCIM can only add SCIM-managed users to a group (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), rejected)
+		return nil, scimMembersRefused(rejected)
 	}
 	// SESSION-AT #2352: guard checks + the write both now run under
 	// withGroupProjectAdminGuardLocks (global key + every project key this
@@ -336,7 +363,7 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 					return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 				}
 				if !matched {
-					return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+					return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrGroupNotFound)
 				}
 			}
 			for _, id := range allowedAdds {
@@ -371,7 +398,7 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 					return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 				}
 				if !matched {
-					return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+					return fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), storage.ErrGroupNotFound)
 				}
 			}
 			for _, id := range allowedAdds {
@@ -406,23 +433,30 @@ func (c *KeyorixCore) scimRemovesAMember(ctx context.Context, groupID uint, ids 
 	return false
 }
 
-// scimGroupConfersAdmin reports whether membership in groupID grants an escalation-tier
-// role, so the SCIM group-sync paths (and the SSO group-membership path, sso.go) can refuse
-// to add members to it. "Escalation-tier" is the shared idpAutoGrantOfRoleIsEscalation
-// predicate: a canonical admin role, an admin-bypass role, OR a role carrying roles.assign
-// (the role-granting primitive — a self-service group member who obtains it becomes a
-// privilege pump). This is the SAME backstop the SSO GroupRoleMap path now uses; the two
-// were inconsistent before (SCIM: bypass flag only; SSO: admin name only) and both missed
-// the roles.assign case. Fails CLOSED (treats the group as escalation-bearing) on a
-// GetGroupRoles lookup error — and idpAutoGrantOfRoleIsEscalation itself fails closed on a
-// per-role resolution error (#G17-style: a lookup failure must not be indistinguishable
-// from a legitimate negative result) — so an inability to verify never opens the grant.
-func (c *KeyorixCore) scimGroupConfersAdmin(ctx context.Context, groupID uint) bool {
+// refuseAddToAdminGroup is the SCIM group-sync backstop against privilege escalation:
+// it returns ErrSCIMGroupConfersAdmin when membership in groupID grants an
+// escalation-tier role, so the SCIM paths refuse to add members to it (the SSO
+// group-membership path, sso.go, applies the same predicate). "Escalation-tier" is the
+// shared idpAutoGrantOfRoleIsEscalation predicate: a canonical admin role, an
+// admin-bypass role, OR a role carrying roles.assign (the role-granting primitive — a
+// self-service group member who obtains it becomes a privilege pump). Fails CLOSED on a
+// GetGroupRoles lookup error — and idpAutoGrantOfRoleIsEscalation itself fails closed on
+// a per-role resolution error (#G17-style: a lookup failure must not be
+// indistinguishable from a legitimate negative result) — so an inability to verify never
+// opens the grant. The lookup failure is returned as itself, not as the refusal: it is
+// a server error the IdP retries, where the refusal is permanent (#3620).
+func (c *KeyorixCore) refuseAddToAdminGroup(ctx context.Context, groupID uint) error {
 	confers, err := c.idpGroupConfersAdminVerdict(ctx, groupID)
-	return confers || err != nil
+	if confers {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorNotAuthorized", nil), ErrSCIMGroupConfersAdmin)
+	}
+	if err != nil {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return nil
 }
 
-// idpGroupConfersAdminVerdict is scimGroupConfersAdmin with a lookup failure
+// idpGroupConfersAdminVerdict is refuseAddToAdminGroup's predicate with a lookup failure
 // kept apart from the verdict (err != nil: nothing decided). See
 // idpAutoGrantEscalationVerdict for why SSO reconcile needs the difference.
 // A role that IS an escalation decides the answer even if a sibling role's

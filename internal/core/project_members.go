@@ -488,7 +488,7 @@ func (c *KeyorixCore) guardProjectAdminSurvivesGroupChange(ctx context.Context, 
 		return fmt.Errorf("failed to check project %d administrators: %w", projectID, err)
 	}
 	if len(holders) == 0 {
-		return fmt.Errorf("project %d's last administrative role grant would be lost, leaving no roles.assign holder", projectID)
+		return fmt.Errorf("project %d's last administrative role grant would be lost, leaving no roles.assign holder: %w", projectID, ErrLastAdminGroupGuard)
 	}
 	return nil
 }

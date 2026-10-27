@@ -82,6 +82,22 @@ var (
 	// the caller retries). SCIM: 409.
 	ErrLastAdminDeactivation = errors.New("refusing to deactivate the last install administrator")
 
+	// ErrSCIMMemberNotManaged is returned (wrapped) by the SCIM group writes when a
+	// requested member is not a SCIM-managed account (a native or SSO account, or no
+	// such user, #167). The request's fault: SCIM 400 invalidValue (#3620).
+	ErrSCIMMemberNotManaged = errors.New("SCIM can only add SCIM-managed users to a group")
+
+	// ErrSCIMGroupConfersAdmin is returned (wrapped) by the SCIM group writes when the
+	// change would add members to a group that grants an escalation-tier role. A
+	// deliberate, permanent refusal, never retried: SCIM 403 (#3620).
+	ErrSCIMGroupConfersAdmin = errors.New("SCIM cannot add members to a group that grants administrative roles")
+
+	// ErrLastAdminGroupGuard is returned (wrapped) when a group delete or membership
+	// change is refused because it would leave the install, or a project, with no
+	// administrator (the guardLast*Group* family). A permanent refusal, unlike a storage
+	// failure while a guard reads (that one stays a server error). SCIM: 409 (#3620).
+	ErrLastAdminGroupGuard = errors.New("refusing a group change that would remove the last administrator")
+
 	// ErrNotProjectMember is returned by RemoveProjectMember when the target
 	// user holds no role grant in the project — a benign no-op distinguishable
 	// (via errors.Is) from a real refusal such as guardLastProjectAdmin's,

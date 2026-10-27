@@ -37,12 +37,13 @@ type scimErrorClass struct {
 	detail   string // "" = clientSafe's generic text
 }
 
-// classifySCIMError maps a core error from a SCIM user operation to its SCIM answer:
+// classifySCIMError maps a core error from a SCIM user or group operation to its SCIM answer:
 //
-//   - the user positively does not exist, or is not SCIM-managed      -> 404
-//   - email/externalId taken by another user                          -> 409 uniqueness
+//   - the user/group positively does not exist, or the user is not SCIM-managed -> 404
+//   - email/externalId (user) or displayName (group) taken by another  -> 409 uniqueness
 //   - the last-admin guard refused (permanent, not retried)           -> 409
-//   - invalid attribute value                                         -> 400 invalidValue
+//   - invalid attribute value, or a group member SCIM does not manage -> 400 invalidValue
+//   - adding members to a group that grants an admin role (permanent) -> 403
 //   - SQLite write-gate contention, or a concurrent state change lost
 //     the conditional write (nothing written, safe to retry)          -> 503 + Retry-After
 //   - anything else: transient, deadlock, rolled back, canceled       -> 500, generic detail
@@ -52,6 +53,16 @@ func classifySCIMError(err error) scimErrorClass {
 	switch {
 	case errors.Is(err, corestorage.ErrUserNotFound), errors.Is(err, core.ErrNotSCIMManaged):
 		return scimErrorClass{status: http.StatusNotFound, detail: "user not found"}
+	case errors.Is(err, corestorage.ErrGroupNotFound):
+		return scimErrorClass{status: http.StatusNotFound, detail: "group not found"}
+	case errors.Is(err, corestorage.ErrDuplicateGroupName):
+		return scimErrorClass{status: http.StatusConflict, scimType: scimTypeUniqueness, detail: corestorage.ErrDuplicateGroupName.Error()}
+	case errors.Is(err, core.ErrSCIMMemberNotManaged):
+		return scimErrorClass{status: http.StatusBadRequest, scimType: scimTypeInvalidValue, detail: "a member is not a SCIM-managed user"}
+	case errors.Is(err, core.ErrSCIMGroupConfersAdmin):
+		return scimErrorClass{status: http.StatusForbidden, detail: core.ErrSCIMGroupConfersAdmin.Error()}
+	case errors.Is(err, core.ErrLastAdminGroupGuard), errors.Is(err, corestorage.ErrWouldStrandLastAdmin):
+		return scimErrorClass{status: http.StatusConflict, detail: core.ErrLastAdminGroupGuard.Error()}
 	case errors.Is(err, core.ErrSCIMUserExists):
 		return scimErrorClass{status: http.StatusConflict, scimType: scimTypeUniqueness, detail: core.ErrSCIMUserExists.Error()}
 	case errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail):
@@ -69,10 +80,11 @@ func classifySCIMError(err error) scimErrorClass {
 	}
 }
 
-// writeSCIMWriteError answers err from a SCIM user operation (what names it for the
-// log). The full error goes to the server log with the request id; the client gets
-// only the class's fixed detail. Every SCIM user handler's error path goes through
-// here (TestSCIM_UserWriteStorageError_Is500NotNotFound).
+// writeSCIMWriteError answers err from a SCIM user or group operation (what names it
+// for the log). The full error goes to the server log with the request id; the client
+// gets only the class's fixed detail. Every SCIM user and group handler's error path
+// goes through here (TestSCIM_UserWriteStorageError_Is500NotNotFound,
+// TestSCIM_GroupStorageError_Is500NotNotFound).
 func writeSCIMWriteError(w http.ResponseWriter, r *http.Request, what string, err error) {
 	if scimPartialMutation(w, err) {
 		log.Printf("SCIM %s partially applied (HTTP 503, request %s): %v", what, chimw.GetReqID(r.Context()), err)
