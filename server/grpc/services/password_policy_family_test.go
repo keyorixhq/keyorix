@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
@@ -30,7 +31,12 @@ var grpcPasswordPolicyRPCs = map[string]struct{}{
 // not a new credential, with the reason.
 var grpcPasswordNotNew = map[string]string{}
 
+// It sweeps every proto RPC, so it reports through guardrules.Rollout
+// (docs/guard-rollout-contract.md rule 2): report-only on pull requests while
+// docs/guard-rollout.d/TestGRPCPasswordPolicyRPCsAreAllListed.tsv exists,
+// blocking on main.
 func TestGRPCPasswordPolicyRPCsAreAllListed(t *testing.T) {
+	g := guardrules.Rollout(t)
 	var found []string
 	services := pb.File_keyorix_proto.Services()
 	for i := range services.Len() {
@@ -45,12 +51,12 @@ func TestGRPCPasswordPolicyRPCsAreAllListed(t *testing.T) {
 			found = append(found, full)
 			_, listed := grpcPasswordPolicyRPCs[full]
 			_, excused := grpcPasswordNotNew[full]
-			assert.True(t, listed || excused,
+			assert.True(g, listed || excused,
 				"%s takes a password but is not in grpcPasswordPolicyRPCs: add it with a policy-violating case to TestGRPCPasswordPolicyRefusalIsInvalidArgument (or to grpcPasswordNotNew with the reason)", full)
 		}
 	}
 	for full := range grpcPasswordPolicyRPCs {
-		assert.Contains(t, found, full, "%s is listed but the proto has no such RPC with a password field", full)
+		assert.Contains(g, found, full, "%s is listed but the proto has no such RPC with a password field", full)
 	}
 }
 

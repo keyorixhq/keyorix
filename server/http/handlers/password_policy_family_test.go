@@ -31,6 +31,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -81,16 +82,21 @@ func TestPasswordPolicyFamily_RefusalIsA400NamingTheRule(t *testing.T) {
 	}
 }
 
+// It sweeps every OpenAPI operation, so it reports through guardrules.Rollout
+// (docs/guard-rollout-contract.md rule 2): report-only on pull requests while
+// docs/guard-rollout.d/TestPasswordPolicyFamily_EveryPasswordOperationIsListed.tsv
+// exists, blocking on main.
 func TestPasswordPolicyFamily_EveryPasswordOperationIsListed(t *testing.T) {
+	g := guardrules.Rollout(t)
 	raw, err := os.ReadFile("openapi.yaml")
-	require.NoError(t, err)
+	require.NoError(g, err)
 	var doc struct {
 		Paths      map[string]map[string]yaml.Node `yaml:"paths"`
 		Components struct {
 			Schemas map[string]yaml.Node `yaml:"schemas"`
 		} `yaml:"components"`
 	}
-	require.NoError(t, yaml.Unmarshal(raw, &doc))
+	require.NoError(g, yaml.Unmarshal(raw, &doc))
 
 	var found []string
 	for path, methods := range doc.Paths {
@@ -111,7 +117,7 @@ func TestPasswordPolicyFamily_EveryPasswordOperationIsListed(t *testing.T) {
 					found = append(found, op.OperationID)
 					_, listed := policyFamilyCases[op.OperationID]
 					_, excused := policyFamilyNotNewPassword[op.OperationID]
-					assert.True(t, listed || excused,
+					assert.True(g, listed || excused,
 						"%s %s (%s) takes a password but is not in policyFamilyCases: add a row that sends a policy-violating password (or excuse it in policyFamilyNotNewPassword with the reason)",
 						strings.ToUpper(method), path, op.OperationID)
 				}
@@ -120,10 +126,10 @@ func TestPasswordPolicyFamily_EveryPasswordOperationIsListed(t *testing.T) {
 	}
 	sort.Strings(found)
 	for opID := range policyFamilyCases {
-		assert.Contains(t, found, opID, "%s is in policyFamilyCases but openapi.yaml has no such operation with a password field", opID)
+		assert.Contains(g, found, opID, "%s is in policyFamilyCases but openapi.yaml has no such operation with a password field", opID)
 	}
 	for opID := range policyFamilyNotNewPassword {
-		assert.Contains(t, found, opID, "%s is excused but no longer has a password field: remove the entry", opID)
+		assert.Contains(g, found, opID, "%s is excused but no longer has a password field: remove the entry", opID)
 	}
 }
 
