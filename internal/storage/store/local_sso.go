@@ -9,6 +9,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -36,7 +37,7 @@ func (ls *LocalStorage) ConsumeSSOLoginState(ctx context.Context, state string) 
 	var s models.SSOLoginState
 	err := ls.db.WithContext(ctx).Where("state = ?", state).First(&s).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, storage.NotFound(storage.ErrSSOLoginStateNotFound, i18n.T("ErrorNotFound", nil), err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

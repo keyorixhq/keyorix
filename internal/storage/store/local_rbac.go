@@ -1003,7 +1003,7 @@ func (ls *LocalStorage) GetPermission(ctx context.Context, id uint) (*models.Per
 	var permission models.Permission
 	if err := ls.db.WithContext(ctx).First(&permission, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+			return nil, storage.NotFound(storage.ErrPermissionNotFound, i18n.T("ErrorNotFound", nil), err)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

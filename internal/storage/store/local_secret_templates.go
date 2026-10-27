@@ -26,7 +26,7 @@ func (ls *LocalStorage) GetSecretTemplate(ctx context.Context, id uint) (*models
 	var tmpl models.SecretTemplate
 	if err := ls.db.WithContext(ctx).First(&tmpl, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("secret template not found")
+			return nil, fmt.Errorf("%w", storage.ErrSecretTemplateNotFound)
 		}
 		return nil, fmt.Errorf("failed to get secret template: %w", err)
 	}
@@ -37,7 +37,7 @@ func (ls *LocalStorage) GetSecretTemplateByName(ctx context.Context, name string
 	var tmpl models.SecretTemplate
 	if err := ls.db.WithContext(ctx).Where("name = ?", name).First(&tmpl).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("secret template not found")
+			return nil, fmt.Errorf("%w", storage.ErrSecretTemplateNotFound)
 		}
 		return nil, fmt.Errorf("failed to get secret template by name: %w", err)
 	}

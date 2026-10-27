@@ -88,7 +88,7 @@ func (ls *LocalStorage) GetMachineIdentityCredentialByID(ctx context.Context, id
 		// genuine not-found (gorm.ErrRecordNotFound) from everything else, matching
 		// GetUser's (local_users.go) already-established pattern.
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+			return nil, storage.NotFound(storage.ErrMachineCredentialNotFound, i18n.T("ErrorNotFound", nil)+": "+err.Error(), err)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
@@ -361,7 +361,7 @@ func (ls *LocalStorage) GetOIDCBindingByID(ctx context.Context, id uint) (*model
 	var b models.MachineIdentityOIDCBinding
 	err := ls.db.WithContext(ctx).First(&b, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, storage.NotFound(storage.ErrOIDCBindingNotFound, i18n.T("ErrorNotFound", nil), err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
