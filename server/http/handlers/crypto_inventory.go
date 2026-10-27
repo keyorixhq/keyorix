@@ -13,6 +13,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/cryptoinventory"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 	"github.com/keyorixhq/keyorix/internal/version"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
@@ -140,9 +141,24 @@ func cryptoInventoryInputs(ctx context.Context, cfg *config.Config, coreService 
 	}
 	if cfg.SSO.Enabled {
 		for _, p := range cfg.SSO.Providers {
-			if p.Type == "" || p.Type == "oidc" {
+			switch {
+			case p.Type == "" || p.Type == "oidc":
 				in.OIDCIssuers = append(in.OIDCIssuers, p.Issuer)
+			case p.Type == "saml" && p.SAML != nil:
+				in.SAML = append(in.SAML, samlInput(p))
 			}
+		}
+	}
+
+	in.Backup = &cryptoinventory.BackupInput{EncryptionEnabled: enc.Enabled}
+	if st := cfg.Storage.Type; st == "postgres" || st == "postgresql" {
+		files, err := config.DatabaseTLSFilesOf(&cfg.Storage.Database)
+		if err != nil {
+			log.Printf("crypto inventory: database TLS settings: %v", err)
+			warnings = append(warnings, "the database TLS settings could not be read; the database TLS certificates are missing from this inventory")
+		} else {
+			in.Database = &cryptoinventory.DatabaseTLSInput{SSLMode: files.SSLMode, RootCertFile: files.RootCert,
+				RootCertSystem: files.RootCertSystem, ClientCertFile: files.ClientCert, ClientKeyFile: files.ClientKey}
 		}
 	}
 
@@ -179,4 +195,21 @@ func keyProviderRef(kp config.KeyProviderConfig) string {
 		return kp.KMSKeyID
 	}
 	return ""
+}
+
+// samlInput reads one SAML provider's IdP metadata (inline or from its file), the
+// same two sources the provider itself is built from (server/wire_sso.go). A read
+// failure is carried in the input so it surfaces as a warning, not a silent gap.
+func samlInput(p config.SSOProviderConfig) cryptoinventory.SAMLInput {
+	in := cryptoinventory.SAMLInput{Name: p.Name, Metadata: []byte(p.SAML.IDPMetadataXML)}
+	if len(in.Metadata) == 0 && p.SAML.IDPMetadataFile != "" {
+		b, err := secretenv.ReadRegularFile("idp_metadata_file", p.SAML.IDPMetadataFile)
+		if err != nil {
+			log.Printf("crypto inventory: saml provider %q metadata: %v", p.Name, err)
+			in.MetadataErr = "idp_metadata_file could not be read"
+			return in
+		}
+		in.Metadata = b
+	}
+	return in
 }

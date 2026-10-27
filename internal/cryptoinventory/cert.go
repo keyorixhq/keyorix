@@ -21,30 +21,51 @@ const maxCertFileBytes = 1 << 20
 // stored in the same file (a common combined-PEM layout) is skipped without being
 // parsed, and errors never echo file content.
 func LoadCertificateInfo(path string) (CertInfo, error) {
-	f, err := os.Open(path) // #nosec G304 -- operator-configured TLS certificate path (server.*.tls.cert_file)
+	infos, err := LoadCertificates(path, 1)
 	if err != nil {
-		return CertInfo{}, fmt.Errorf("open certificate: %w", err)
+		return CertInfo{}, err
+	}
+	return infos[0], nil
+}
+
+// LoadCertificates parses up to limit CERTIFICATE blocks of a PEM file (a CA bundle
+// holds several) with the same guarantees as LoadCertificateInfo: other block
+// types are skipped unparsed and errors never echo file content. It fails when
+// the file has no certificate or when any selected block is not valid X.509.
+func LoadCertificates(path string, limit int) ([]CertInfo, error) {
+	f, err := os.Open(path) // #nosec G304 -- operator-configured certificate path (tls.cert_file, database ssl_root_cert / sslcert)
+	if err != nil {
+		return nil, fmt.Errorf("open certificate: %w", err)
 	}
 	defer func() { _ = f.Close() }()
 	data, err := io.ReadAll(io.LimitReader(f, maxCertFileBytes))
 	if err != nil {
-		return CertInfo{}, fmt.Errorf("read certificate: %w", err)
+		return nil, fmt.Errorf("read certificate: %w", err)
 	}
-	for {
+	return certificatesFromPEM(data, limit)
+}
+
+func certificatesFromPEM(data []byte, limit int) ([]CertInfo, error) {
+	var out []CertInfo
+	for len(out) < limit {
 		var block *pem.Block
 		block, data = pem.Decode(data)
 		if block == nil {
-			return CertInfo{}, errors.New("no CERTIFICATE block found")
+			break
 		}
 		if block.Type != "CERTIFICATE" {
 			continue
 		}
 		cert, err := x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return CertInfo{}, errors.New("certificate block is not a valid X.509 certificate")
+			return nil, errors.New("certificate block is not a valid X.509 certificate")
 		}
-		return certInfo(cert), nil
+		out = append(out, certInfo(cert))
 	}
+	if len(out) == 0 {
+		return nil, errors.New("no CERTIFICATE block found")
+	}
+	return out, nil
 }
 
 func certInfo(c *x509.Certificate) CertInfo {

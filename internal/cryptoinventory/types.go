@@ -25,6 +25,14 @@ const (
 	ClassJWTKey         Class = "jwt-key"
 	ClassWebAuthn       Class = "webauthn"
 	ClassAuditHMACKey   Class = "audit-hmac-key"
+	// ClassSAMLCertificate is an IdP signing certificate Keyorix trusts to verify
+	// SAML responses (the SP itself holds no signing key).
+	ClassSAMLCertificate Class = "saml-certificate"
+	// ClassDatabaseTLSCert is the PostgreSQL client certificate or the CA that
+	// verifies the database server.
+	ClassDatabaseTLSCert Class = "database-tls-certificate"
+	// ClassBackupEncryption is the protection applied to a backup archive.
+	ClassBackupEncryption Class = "backup-encryption"
 )
 
 // Risk levels.

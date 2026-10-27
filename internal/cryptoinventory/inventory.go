@@ -1,6 +1,7 @@
 package cryptoinventory
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -25,7 +26,41 @@ type Inputs struct {
 	WebAuthnEnabled   bool
 	WebAuthnRPID      string
 	OIDCIssuers       []string
+	SAML              []SAMLInput
+	Database          *DatabaseTLSInput
+	Backup            *BackupInput
 }
+
+// SAMLInput is one SAML provider's IdP metadata (public: entity, endpoints and
+// signing certificates). MetadataErr is set instead when it could not be read.
+type SAMLInput struct {
+	Name        string
+	Metadata    []byte
+	MetadataErr string
+}
+
+// DatabaseTLSInput is the PostgreSQL connection's TLS material, as locations only.
+type DatabaseTLSInput struct {
+	SSLMode string
+	// RootCertFile is the CA bundle file; RootCertSystem means the OS trust store
+	// (nothing to read).
+	RootCertFile   string
+	RootCertSystem bool
+	// ClientCertFile / ClientKeyFile come from the DSN's sslcert / sslkey. The key
+	// is recorded as a location only and never opened.
+	ClientCertFile string
+	ClientKeyFile  string
+}
+
+// BackupInput describes what protects a backup archive.
+type BackupInput struct {
+	// EncryptionEnabled is storage.encryption.enabled: when off, the archive's
+	// secret values are plaintext.
+	EncryptionEnabled bool
+}
+
+// maxCABundleCerts bounds how many CA certificates one bundle file contributes.
+const maxCABundleCerts = 16
 
 // TLSInput is one TLS listener's certificate configuration.
 type TLSInput struct {
@@ -75,6 +110,23 @@ func Build(in Inputs, p Policy, now time.Time) Inventory {
 	}
 	for i, iss := range in.OIDCIssuers {
 		assets = append(assets, oidcAsset(i, iss))
+	}
+	for _, sp := range in.SAML {
+		sa, warns := samlAssets(sp)
+		assets = append(assets, sa...)
+		inv.Warnings = append(inv.Warnings, warns...)
+	}
+	if in.Database != nil {
+		da, warns := databaseTLSAssets(*in.Database)
+		assets = append(assets, da...)
+		inv.Warnings = append(inv.Warnings, warns...)
+	}
+	if in.Backup != nil {
+		assets = append(assets, backupAsset(*in.Backup))
+		if !in.Backup.EncryptionEnabled {
+			inv.Warnings = append(inv.Warnings,
+				"encryption is disabled: backup archives carry secret values as plaintext (the archive container is never encrypted either way)")
+		}
 	}
 	inv.Notes = append(inv.Notes,
 		"Keyorix signs no JWTs of its own: sessions are opaque tokens stored hashed. JWT keys listed are external issuers' verification keys.")
@@ -227,4 +279,105 @@ func oidcAsset(i int, issuer string) Asset {
 		AssumedLifetimeDays: 365,
 		Storage:             "fetched from the issuer's JWKS endpoint " + issuer + " (public keys only)",
 		Notes:               "verification only; the issuer holds the private keys and controls the migration"}
+}
+
+// certAsset is the shared shape of a certificate-backed asset.
+func certAsset(id, name string, class Class, ci CertInfo) Asset {
+	nb, na := ci.NotBefore, ci.NotAfter
+	return Asset{ID: id, Name: name, Class: class, Primitive: "signature", Asymmetric: true,
+		Algorithm: ci.KeyAlgorithm, KeySizeBits: ci.KeySizeBits, CreatedAt: &nb, ExpiresAt: &na,
+		Certificate: &ci, Notes: "signed with " + ci.SignatureAlgorithm}
+}
+
+// unreadableCertAsset records a certificate that could not be inspected. It is
+// scored by the fail-closed rule for an unclassifiable algorithm.
+func unreadableCertAsset(id, name string, class Class, storage string, err error) Asset {
+	return Asset{ID: id, Name: name, Class: class, Primitive: "signature", Algorithm: "unknown",
+		Storage: storage, Notes: "certificate could not be read: " + err.Error()}
+}
+
+// samlAssets inventories the IdP signing certificates Keyorix trusts for one
+// SAML provider. Keyorix holds no SAML signing key of its own.
+func samlAssets(sp SAMLInput) ([]Asset, []string) {
+	id := "saml." + sp.Name
+	name := "SAML IdP signing certificate (" + sp.Name + ")"
+	storage := "IdP metadata of SSO provider " + sp.Name + " (public certificate only)"
+	var cause error
+	if sp.MetadataErr != "" {
+		cause = errors.New(sp.MetadataErr)
+	}
+	var infos []CertInfo
+	if cause == nil {
+		infos, cause = SAMLSigningCertificates(sp.Metadata)
+	}
+	if cause != nil {
+		return []Asset{unreadableCertAsset(id, name, ClassSAMLCertificate, storage, cause)},
+			[]string{fmt.Sprintf("SAML provider %q signing certificates could not be inspected: %v", sp.Name, cause)}
+	}
+	assets := make([]Asset, 0, len(infos))
+	for i, ci := range infos {
+		a := certAsset(fmt.Sprintf("%s.%d", id, i), name, ClassSAMLCertificate, ci)
+		a.Storage = storage
+		a.Notes += "; verification only, the IdP holds the private key and controls the migration"
+		assets = append(assets, a)
+	}
+	return assets, nil
+}
+
+// databaseTLSAssets inventories the PostgreSQL client certificate and the CA
+// bundle that verifies the server.
+func databaseTLSAssets(d DatabaseTLSInput) ([]Asset, []string) {
+	var assets []Asset
+	var warns []string
+	if d.ClientCertFile != "" {
+		storage := "certificate " + d.ClientCertFile
+		if d.ClientKeyFile != "" {
+			storage += "; private key " + d.ClientKeyFile
+		}
+		const id, name = "database-tls.client", "Database TLS client certificate"
+		infos, err := LoadCertificates(d.ClientCertFile, 1)
+		if err != nil {
+			assets = append(assets, unreadableCertAsset(id, name, ClassDatabaseTLSCert, storage, err))
+			warns = append(warns, fmt.Sprintf("database TLS client certificate could not be inspected: %v", err))
+		} else {
+			a := certAsset(id, name, ClassDatabaseTLSCert, infos[0])
+			a.Storage = storage
+			assets = append(assets, a)
+		}
+	}
+	switch {
+	case d.RootCertSystem:
+		// the OS trust store is not a file Keyorix can read
+	case d.RootCertFile != "":
+		const name = "Database TLS CA certificate"
+		storage := "CA bundle " + d.RootCertFile
+		infos, err := LoadCertificates(d.RootCertFile, maxCABundleCerts)
+		if err != nil {
+			assets = append(assets, unreadableCertAsset("database-tls.ca.0", name, ClassDatabaseTLSCert, storage, err))
+			warns = append(warns, fmt.Sprintf("database TLS CA certificate could not be inspected: %v", err))
+			break
+		}
+		for i, ci := range infos {
+			a := certAsset(fmt.Sprintf("database-tls.ca.%d", i), name, ClassDatabaseTLSCert, ci)
+			a.Storage = storage
+			assets = append(assets, a)
+		}
+	}
+	return assets, warns
+}
+
+// backupAsset describes the protection of a backup archive. The archive is a
+// tar+gzip container that is not encrypted as a whole: secret values travel as
+// the AES-256-GCM ciphertext already stored, the DEK travels wrapped under the
+// KEK, and the manifest is HMAC-signed (see the backup-manifest-hmac asset).
+func backupAsset(b BackupInput) Asset {
+	a := Asset{ID: "backup-archive", Name: "Backup archive encryption", Class: ClassBackupEncryption,
+		Primitive: "ae", Algorithm: "AES-256-GCM", KeySizeBits: 256,
+		Storage: "backup archive (tar+gzip): secret values as stored ciphertext, DEK wrapped under the KEK, no archive-level encryption",
+		Notes:   "confidentiality rests on the KEK, which is never written into the archive; the manifest is HMAC-signed"}
+	if !b.EncryptionEnabled {
+		a.Algorithm, a.KeySizeBits, a.Primitive = "none", 0, "unknown"
+		a.Notes = "encryption is disabled, so the archive carries secret values as plaintext"
+	}
+	return a
 }

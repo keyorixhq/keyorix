@@ -180,8 +180,10 @@ func relatedType(a Asset) string {
 	switch a.Class {
 	case ClassKEK, ClassDEK, ClassSigningKey, ClassAuditHMACKey:
 		return "secret-key"
-	case ClassWebAuthn, ClassJWTKey:
+	case ClassWebAuthn, ClassJWTKey, ClassSAMLCertificate, ClassDatabaseTLSCert:
 		return "public-key"
+	case ClassBackupEncryption:
+		return "other"
 	case ClassRecoveryKey:
 		return "digest"
 	default:
