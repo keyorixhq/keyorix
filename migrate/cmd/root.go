@@ -3,6 +3,8 @@
 package cmd
 
 import (
+	"io"
+
 	"github.com/spf13/cobra"
 )
 
@@ -19,9 +21,16 @@ updated, skipped, or flagged as a conflict) without writing anything. Pass
 
 See docs/design-keyorix-migrate.md for the full design.`,
 	SilenceUsage: true,
+	// main prints the returned error once ("Error: ..."); without this cobra printed it a second
+	// time first. Applies to every subcommand: cobra checks the root's flag as well as the command's.
+	SilenceErrors: true,
 }
 
-// Execute runs the root command.
-func Execute() error {
+// Execute runs the root command with the given arguments, writing command output to stdout and
+// stderr. It returns the command's error without printing it: the caller prints it exactly once.
+func Execute(args []string, stdout, stderr io.Writer) error {
+	rootCmd.SetArgs(args)
+	rootCmd.SetOut(stdout)
+	rootCmd.SetErr(stderr)
 	return rootCmd.Execute()
 }

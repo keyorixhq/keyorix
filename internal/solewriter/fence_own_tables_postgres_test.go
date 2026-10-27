@@ -25,6 +25,11 @@ func (w *swWorld) privRole(tag, privs string) string {
 	for _, s := range []string{
 		"DROP ROLE IF EXISTS " + role,
 		"CREATE ROLE " + role + " NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE",
+		// asRole's SET ROLE needs membership. A superuser has it implicitly;
+		// a CREATEROLE role on PostgreSQL 16+ gets only ADMIN on a role it
+		// creates (createrole_self_grant is empty by default), and SET ROLE
+		// then fails with "permission denied to set role" (kpg, FENCE-VERIFY-1).
+		"GRANT " + role + " TO CURRENT_USER",
 		"GRANT USAGE ON SCHEMA " + w.schema + " TO " + role,
 		"GRANT " + privs + " ON ALL TABLES IN SCHEMA " + w.schema + " TO " + role,
 	} {
@@ -141,31 +146,109 @@ func TestPoll_HolderRowChangeLeavesAuthoritative(t *testing.T) {
 	}
 }
 
+// lockAs opens a foreign transaction as role and takes an ACCESS EXCLUSIVE
+// lock on table. The lock is held until the returned transaction ends. An
+// error here (a role that cannot SET ROLE or LOCK) fails the test with the
+// database's text: a lock that was never taken must not read as a guard that
+// stayed authoritative.
+func (w *swWorld) lockAs(role, table string) *gorm.DB {
+	w.t.Helper()
+	tx := w.foreign.Begin()
+	require.NoError(w.t, tx.Error)
+	w.t.Cleanup(func() { tx.Rollback() })
+	require.NoError(w.t, tx.Exec("SET LOCAL ROLE "+role).Error, "SET ROLE %s", role)
+	require.NoError(w.t, tx.Exec("LOCK TABLE "+table+" IN ACCESS EXCLUSIVE MODE").Error, "LOCK %s as %s", table, role)
+	return tx
+}
+
+// pollOpens reports whether the poll statement needs a lock on table: it
+// reads both own tables, and pg_get_triggerdef (fingerprintSQL) opens the
+// table of a trigger with a WHEN clause (AccessShareLock) to deparse it.
+func (w *swWorld) pollOpens(table string) bool {
+	w.t.Helper()
+	if table == HolderTable || table == EpochTable {
+		return true
+	}
+	var when bool
+	require.NoError(w.t, w.foreign.Raw(`SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid = t.tgrelid
+  JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = ? AND c.relname = ? AND NOT t.tgisinternal AND t.tgqual IS NOT NULL)`,
+		w.schema, table).Scan(&when).Error)
+	return when
+}
+
 // TestPoll_OwnTableLockKeepsTheHolderLock (REVIEW-SINGLE-WRITER-3 N6): a role
-// with UPDATE on an own table locks it for longer than pollTimeout. The poll
-// blocks; the lease runs out (fail closed). It must not cost the guard its
-// lock session: once the lock is released the holder pid still holds the
-// lock and the guard is authoritative again.
+// with table privileges holds an ACCESS EXCLUSIVE lock on a covered table
+// (coveredTableNames: every fenced table and both own tables) and, under that
+// lock, tries to write it. Fail closed each time:
+//   - the write is refused by the fence and changes no row, the epoch
+//     included;
+//   - when the poll needs a lock on the table (pollOpens), the poll blocks:
+//     the lease runs out and is not renewed for as long as the lock is held
+//     (a poll that renewed it without its answer would be a fail-open);
+//   - otherwise polls keep succeeding during the lock;
+//   - the lock never costs the guard its lock session: once it is released
+//     the holder pid still holds the lock and the guard is authoritative.
+//
+// The lock is held until the test releases it, not for a fixed sleep, so a
+// slow runner stretches the wait instead of racing the lock's end.
 func TestPoll_OwnTableLockKeepsTheHolderLock(t *testing.T) {
-	for _, table := range []string{EpochTable, HolderTable} {
+	tables := coveredTableNames()
+	require.Len(t, tables, len(FencedTables)+2)
+	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			w := newSWWorld(t)
 			g := w.start(Options{})
 			require.Eventually(t, g.Authoritative, 2*time.Second, 20*time.Millisecond)
-			role := w.privRole("l", "SELECT, INSERT, UPDATE, DELETE")
-			done := make(chan error, 1)
-			go func() {
-				done <- w.asRole(role, "LOCK TABLE "+table+" IN ACCESS EXCLUSIVE MODE", "SELECT pg_sleep(2.5)")
-			}()
-			d := waitFor(t, 2500*time.Millisecond, func() bool { return !g.Authoritative() })
-			require.GreaterOrEqual(t, d, time.Duration(0), "a blocked poll must let the lease run out")
-			require.NoError(t, <-done)
-			d = waitFor(t, 2*time.Second, g.Authoritative)
+			role := w.privRole("l", "SELECT, INSERT, UPDATE, DELETE, TRUNCATE")
+			before, epoch := w.ownRows(), w.epoch(w.foreign)
+			blocks := w.pollOpens(table)
+			t.Logf("%s: the poll needs a lock on it: %v", table, blocks)
+			tx := w.lockAs(role, table)
+			locked := time.Now()
+
+			// A write under the lock: TRUNCATE fires the statement-level
+			// guard whether or not the table has rows (CASCADE: some are
+			// referenced by others). A savepoint keeps the lock.
+			require.NoError(t, tx.SavePoint("w").Error)
+			requireFenced(t, tx.Exec("TRUNCATE "+table+" CASCADE").Error, "TRUNCATE "+table+" under its lock")
+			require.NoError(t, tx.RollbackTo("w").Error)
+
+			if blocks {
+				d := waitFor(t, 5*LeaseDuration, func() bool { return !g.Authoritative() })
+				require.GreaterOrEqual(t, d, time.Duration(0), "a blocked poll must let the lease run out")
+				// Every poll in this window blocks on the lock: none may renew
+				// the lease.
+				hold := time.Now().Add(3 * LeaseDuration)
+				for time.Now().Before(hold) {
+					require.False(t, g.Authoritative(), "the lease was renewed while %s was locked", table)
+					time.Sleep(20 * time.Millisecond)
+				}
+				// The last good poll was sent before the lock was granted.
+				elapsed := time.Since(locked).Milliseconds()
+				st := g.Status()
+				require.Equal(t, StateConfirming, st.State)
+				require.Contains(t, st.Reason, "lease expired", "the lapse is the lease, not a permanent leave")
+				require.NotEmpty(t, st.LastPollError, "the poll must have failed on the lock")
+				require.GreaterOrEqual(t, st.LastPollAgeMS, elapsed, "a poll succeeded while %s was locked", table)
+			} else {
+				time.Sleep(3 * LeaseDuration)
+				// A good poll was sent after the lock was granted.
+				elapsed := time.Since(locked).Milliseconds()
+				st := g.Status()
+				require.Less(t, st.LastPollAgeMS, elapsed,
+					"no poll succeeded during a lock on %s, which the poll does not need: state=%s reason=%q lastErr=%q", table, st.State, st.Reason, st.LastPollError)
+			}
+
+			require.NoError(t, tx.Rollback().Error)
+			d := waitFor(t, 2*time.Second, g.Authoritative)
 			st := g.Status()
 			require.GreaterOrEqual(t, d, time.Duration(0), "not authoritative again after the lock cleared: state=%s reason=%q lastErr=%q", st.State, st.Reason, st.LastPollError)
 			pid, err := holderPID(context.Background(), mustSQLConn(t, w), w.schema)
 			require.NoError(t, err)
 			require.Equal(t, g.PID(), pid, "the holder lost its lock session")
+			require.Equal(t, before, w.ownRows(), "an own-table row changed")
+			require.Equal(t, epoch, w.epoch(w.foreign), "the epoch moved")
+			require.False(t, w.revoked())
 		})
 	}
 }

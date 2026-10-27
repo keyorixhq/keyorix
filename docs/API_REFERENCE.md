@@ -508,6 +508,7 @@ note near the top of this document):
 - `ConflictError` - Resource with same identifier exists
 - `InternalError` - Server-side error
 - `ServiceUnavailable` - Temporarily unable to take the request; retry after the `Retry-After` interval (see below)
+- `audit_unavailable` - A security-relevant change was refused because its audit row could not be recorded; nothing was changed, retry (see below)
 
 ### HTTP status codes for overload and contention
 
@@ -515,6 +516,7 @@ note near the top of this document):
 |--------|---------|---------|---------|---------------|
 | `429` | `RateLimited` / `TooManyRequests` | `Retry-After` | **You** sent too much: a per-principal or per-IP rate limit or the login-attempt budget was exceeded. | Slow down; retry after `Retry-After`. |
 | `503` | `ServiceUnavailable` | `Retry-After` (seconds) | **The server** could not take a write right now: on SQLite deployments the single-writer lock was still busy after the 10 s wait bound (sustained write contention), or a transient storage fault kept a request from being authenticated. Fixed message, no internal detail. | Retry after `Retry-After`. Safe to retry idempotent requests blindly; for others, check state first. |
+| `503` | `audit_unavailable` | `Retry-After` (seconds) | **The audit log** could not take the row a security-relevant change must be committed with (role and permission grants, memberships, shares, machine identities, user lifecycle, policies, ...). The change was rolled back: **nothing was changed**. Fixed message, no internal detail. A revocation is never refused for this reason. The suspend endpoints that clear synced copies keep their own code, `SuspendAuditUnavailable` (500). | Retry the same request after `Retry-After`; it is safe to repeat. gRPC: `UNAVAILABLE` with the same message. |
 | `500` | `InternalError` | — | An unexpected server failure not known to be transient. | Do not retry blindly; report with the request ID. |
 
 `429` is reserved for caller-caused overload; write-lock contention is the

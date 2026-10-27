@@ -142,7 +142,7 @@ func listKVScopeTree(ctx context.Context, vc *healthscan.Client, mounts []health
 	}
 	var warnings []string
 	notListed := func(what string, status int) {
-		warnings = append(warnings, fmt.Sprintf("could not list %s (HTTP %d) — default-convention policies whose project/environment it could hold are reported unmappable (cross-mount-scope); grant this token \"list\" there (KV v2: <mount>/metadata/*) to check it", what, status))
+		warnings = append(warnings, fmt.Sprintf("could not list %s (HTTP %d) — default-convention policies whose project/environment it could hold are reported unmappable (cross-mount-scope); grant this token \"list\" there (KV v2: <mount>/metadata/*, KV v1: <mount>/*) to check it", what, status))
 	}
 	tree := make(map[string]accessplan.KVMountListing, len(mounts))
 	for _, mount := range mounts {

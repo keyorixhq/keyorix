@@ -30,8 +30,9 @@ type Config struct {
 	// MinimumCLIVersion is the lowest CLI semantic version (e.g. "1.2.0") this server
 	// accepts, per the tiered version-skew rule (ADR-108 §Decision 3): a CLI build older
 	// than this is refused outright, not just warned. Set this after shipping a CLI-side
-	// security fix, to force operators onto it. Empty (the default) means no floor beyond
-	// the same-major-version rule the CLI applies on its own. Read by
+	// security fix, to force operators onto it. Empty (the default) means no floor at all:
+	// the CLI's major-version refusal also applies only while this is set. The value is not
+	// validated; the CLI skips the floor unless it is MAJOR.MINOR.PATCH. Read by
 	// GET /api/v1/version (server/http/handlers/version.go) -- unauthenticated, so a CLI
 	// can check compatibility before it has credentials.
 	MinimumCLIVersion string `yaml:"minimum_cli_version,omitempty"`

@@ -13,7 +13,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -283,12 +282,12 @@ func (c *KeyorixCore) bootstrapSystemLocked(ctx context.Context, req *BootstrapR
 	// and a rejection there used to land after permissions and roles were already
 	// committed, leaving the install unable to bootstrap again (every retry hit a
 	// duplicate-permission 500; FINDINGS-inbox, Session J, 2026-09-28).
-	if err := c.passwordPolicy.Validate(req.Password, &models.User{
+	if refusal := c.refuseUnmetRules(req.Password, &models.User{
 		Username:    req.Username,
 		Email:       req.Email,
 		DisplayName: displayName,
-	}); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+	}); refusal != nil {
+		return nil, refusal
 	}
 
 	// Everything that writes happens in ONE transaction: permission / role
