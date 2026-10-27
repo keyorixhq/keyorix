@@ -6,8 +6,11 @@ package encryption
 import (
 	"bytes"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 )
 
 // TestRotateDEKWithSweep_PreCommitVerify_ErrorIsTyped: the refusal wraps
@@ -62,5 +65,48 @@ func TestRewrapCanary_RefusesBrokenNewDEK(t *testing.T) {
 	}
 	if err := rewrapCanary(f.db, f.svc.encryptionService, f.svc.encryptionService, "v-canary"); err != nil {
 		t.Fatalf("positive control: a working new DEK must pass the canary: %v", err)
+	}
+}
+
+// TestSweptTableReaders_CoverEverySweptModel keeps the verifier in step with
+// the sweep: one reader per swept model, each reading that model's table, and
+// every per-table count of SweepResult in sweptRowCount. A table added to the
+// sweep but not here would otherwise be committed unverified.
+func TestSweptTableReaders_CoverEverySweptModel(t *testing.T) {
+	db := newTestDB(t)
+	readers := sweptTableReaders(map[uint]uint{})
+	models := sweptModels()
+	if len(readers) != len(models) {
+		t.Fatalf("%d verifier readers for %d swept models", len(readers), len(models))
+	}
+	for i, m := range models {
+		stmt := &gorm.Statement{DB: db}
+		if err := stmt.Parse(m); err != nil {
+			t.Fatal(err)
+		}
+		var queried string
+		probe := db.Session(&gorm.Session{DryRun: true})
+		probe.Callback().Query().Before("gorm:query").Register("test:table-probe", func(tx *gorm.DB) { queried = tx.Statement.Table })
+		_, _, _ = readers[i](probe, 0, 1)
+		_ = probe.Callback().Query().Remove("test:table-probe")
+		if queried != stmt.Schema.Table {
+			t.Errorf("verifier reader %d reads table %q, swept model %d is %q", i, queried, i, stmt.Schema.Table)
+		}
+	}
+
+	var r SweepResult
+	v := reflect.ValueOf(&r).Elem()
+	n := 0
+	for i := 0; i < v.NumField(); i++ {
+		if f := v.Type().Field(i); strings.HasSuffix(f.Name, "Swept") {
+			v.Field(i).SetInt(1)
+			n++
+		}
+	}
+	if n != len(models) {
+		t.Errorf("SweepResult has %d per-table counts for %d swept models", n, len(models))
+	}
+	if got := r.sweptRowCount(); got != n {
+		t.Errorf("sweptRowCount sums %d of the %d per-table counts", got, n)
 	}
 }

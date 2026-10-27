@@ -70,18 +70,8 @@ func verifySweptRows(tx *gorm.DB, newSvc *EncryptionService) (int, error) {
 		nodeProject[n.ID] = n.ProjectID
 	}
 
-	readers := []sweptTableReader{
-		readSweptSecretVersions(nodeProject),
-		readSweptAPITokens,
-		readSweptAPIClients,
-		readSweptPasswordResets,
-		readSweptMFASecrets,
-		readSweptDynamicSecretConfigs,
-		readSweptDynamicSecretLeases,
-		readSweptNotificationChannels,
-	}
 	total := 0
-	for _, read := range readers {
+	for _, read := range sweptTableReaders(nodeProject) {
 		var after uint
 		for {
 			batch, last, err := read(tx, after, sweepBatchSize)
@@ -101,6 +91,21 @@ func verifySweptRows(tx *gorm.DB, newSvc *EncryptionService) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+// sweptTableReaders has one reader per swept table, in sweptModels order
+// (TestSweptTableReaders_CoverEverySweptModel).
+func sweptTableReaders(nodeProject map[uint]uint) []sweptTableReader {
+	return []sweptTableReader{
+		readSweptSecretVersions(nodeProject),
+		readSweptAPITokens,
+		readSweptAPIClients,
+		readSweptPasswordResets,
+		readSweptMFASecrets,
+		readSweptDynamicSecretConfigs,
+		readSweptDynamicSecretLeases,
+		readSweptNotificationChannels,
+	}
 }
 
 // openSwept decrypts one read-back value with the new DEK.
