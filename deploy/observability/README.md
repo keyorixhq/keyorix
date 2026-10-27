@@ -30,8 +30,8 @@ scrape_configs:
     static_configs: [{ targets: ["keyorix.internal:8080"] }]
 ```
 
-The four audit-verification alerts (`KeyorixAuditChainBreakRecorded`, `KeyorixAuditVerifyStateRejected`,
-`KeyorixAuditVerifyStale`, `KeyorixAuditVerifyNeverPassed`) and the dashboard panels that say "needs the
+The five audit-verification alerts (`KeyorixAuditChainBreakRecorded`, `KeyorixAuditVerifyStateDiscontinuity`,
+`KeyorixAuditVerifyStateRejected`, `KeyorixAuditVerifyStale`, `KeyorixAuditVerifyNeverPassed`) and the dashboard panels that say "needs the
 keyorix-protected scrape job" depend on the second job. Without it
 `KeyorixAuditVerifyNeverPassed` fires after two days, which is the intended signal.
 `KeyorixAuditOwedPending` and the owed-audit age and unreadable alerts
@@ -47,6 +47,9 @@ none). Defaults, as literals in the `expr` of each rule, in seconds:
 |---|---|---|---|
 | `KeyorixAuditOwedOldestPendingWarn` | warning | `> 3600` (1 hour) | the number in its `expr` |
 | `KeyorixAuditOwedOldestPendingCritical` | critical | `> 86400` (24 hours) | the number in its `expr` |
+
+`TestAlertRules_OwedAgeThresholdsArePinned` (`internal/metricsdoc`) reads these numbers from the rule
+file and compares them with a table, so changing one is a visible diff in that test as well.
 
 Each also waits `for: 5m`. Keep warn below critical. The critical alert fires together with the
 warning; route by severity or inhibit the warning with the critical in Alertmanager. The gauge
@@ -81,5 +84,10 @@ test also runs `promtool check rules`; run it yourself with:
 ```
 promtool check rules deploy/observability/prometheus-alerts.yaml
 ```
+
+`TestAlertRules_FileCheckIsGreenAndWatchedRed` runs the same checks on text, so it also proves they fail
+on a copy of the file with a misspelt metric, a missing severity or an alert with neither `runbook_url`
+nor `description`. A recording rule (`record:`) defined in the file may be used by other rules; one that
+reuses a registered metric's name is rejected.
 
 Not checked by tests: that the PromQL evaluates the way the description says.

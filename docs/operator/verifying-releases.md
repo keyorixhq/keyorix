@@ -83,6 +83,10 @@ you already downloaded), `--skip-binaries` (skip the ~540 MB of binaries; SBOMs 
 checked), `--offline` (never call api.github.com), `--cosign-args "..."` (extra cosign
 flags). `scripts/release/verify-release.sh --help` lists all of them.
 
+Open issues labelled `release-blocker` are not part of a verification: they are about the
+next release, not the tag you check, and the script does not look at them unless a
+maintainer passes `--check-blockers` before tagging (see `RELEASING.md`).
+
 The GitHub API allows 60 anonymous requests per hour per IP address and one full run uses
 about 12. When the limit is reached the affected checks are reported as SKIP ("GitHub API
 rate limit reached"), not FAIL; set `GITHUB_TOKEN` (any token, no scopes) or wait, and
@@ -198,7 +202,7 @@ Read the limits first; they decide what "verified" can mean inside.
 |-----------------------|-------------------------------------|
 | `release.checksums.*` (every file against `checksums.txt`), `release.assets`, `release.sbom` | **Verifying the signature of `checksums.txt` with cosign.** Neither `--offline` nor `--insecure-ignore-tlog=true` makes this work (details below) |
 | `release.signature.cert` (PARTIAL: the certificate *claims* the right workflow and tag) and `release.signature.offline` (the signature matches the certificate's key over `checksums.txt`, checked with `openssl`). Neither proves who signed | Anything that calls api.github.com: workflow-run evidence, GitHub SLSA attestations, binary provenance (SKIPped with `--offline`) |
-| On a mirror: `image.*.tag`, `.platforms`, `.sbom`, `.buildkit-provenance`, `chart.*.version` (registry content only) | cosign verification of image and chart signatures: it needs a Sigstore trust root; this guide has **not** tested a transferred-trust-root flow, so treat it as unavailable |
+| On a mirror: `image.*.tag`, `.platforms`, `.sbom`, `.buildkit-provenance`, `chart.*.version` (registry content only) | cosign verification of image and chart signatures: it needs a Sigstore trust root. A transferred-trust-root flow (cosign 3 `--trusted-root` with a root copied from a connected host) is **untested, pending e2e VM**; treat it as unavailable |
 
 `release.signature.cert` and `.offline` are reported as PARTIAL, consistency only. **Without
 cosign they prove nothing about who signed.** They show what the certificate *claims* (the
@@ -255,8 +259,11 @@ over the digest). Tested on v0.96.3, with the results on a local `registry:2`:
 | `crane copy` (0.20.6) | yes | **no** | `no signatures found` |
 | `helm pull` + `helm push` (charts) | **no** (new digest) | no | cannot apply: the digest is different |
 
-`skopeo copy --all` was not tested; do not use a tool for mirroring until `cosign verify`
-passes on its output. The guide previously said `cosign copy` copies signatures and that
+`skopeo copy --all` (copies every manifest of a multi-arch index; whether it also carries the
+OCI referrers, and so the signature, depends on the skopeo version) is **untested, pending
+e2e VM**: do not use any tool for mirroring until `cosign verify` passes on its output. An
+index copy without `--all` copies one platform only and changes what the digest means. The
+guide previously said `cosign copy` copies signatures and that
 mirrored copies keep their digests; both are wrong for these releases.
 
 Use `oras cp -r` (`-r` copies the referrers). One command copies the version tag **and**
@@ -325,6 +332,8 @@ Sigstore chain and the transparency-log entry, until `checksums.txt.bundle` is p
 
 Offline flags vary between cosign versions. Whatever you choose, confirm it against a
 known-good tag in your environment before relying on it for a release you have not seen.
+Offline steps that need a Sigstore trust root (`--trusted-root`, `cosign initialize` from a
+copied TUF root) have not been run end to end: **pending e2e VM**.
 
 ## Limits of this check
 
