@@ -60,9 +60,8 @@ func TestParseJWK_RSAExponentBoundsAreExact(t *testing.T) {
 	require.Error(t, err, "e = 0 (one zero byte)")
 	assert.Contains(t, err.Error(), "out of range")
 
-	one, err := ParseJWK(rsaJWK(MinRSABits, exp(big.NewInt(1))))
-	require.NoError(t, err, "e = 1 is positive and in range here")
-	assert.Equal(t, 1, one.(*rsa.PublicKey).E)
+	// e = 1 is deliberately not pinned as accepted: crypto/rsa refuses it at
+	// verify time, and ParseJWK may later refuse it (and even exponents) too.
 
 	huge := new(big.Int).Lsh(big.NewInt(1), 70)
 	_, err = ParseJWK(rsaJWK(MinRSABits, exp(huge)))

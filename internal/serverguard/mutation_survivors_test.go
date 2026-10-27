@@ -108,6 +108,7 @@ func TestOpenLockFile_CreatesMissingParentDirectories(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, fi.IsDir())
 	assert.Equal(t, os.FileMode(0o750), fi.Mode().Perm()&0o750)
+	assert.Zero(t, fi.Mode().Perm()&0o007, "no access for others")
 }
 
 func TestOpenLockFile_BareNameUsesTheWorkingDirectory(t *testing.T) {
