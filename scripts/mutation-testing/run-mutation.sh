@@ -90,7 +90,9 @@ internal/serverguard|serverguard||100
 internal/solewriter|solewriter||99.26
 # internal/core/rules: efficacy 98.06% (101 killed, 2 equivalent survivors: secret_value_policy.go:44 `MinLength > 0` and
 # password_policy.go:172 `at > 0`, each shadowed by a later length check), 4 not covered (the `iota + 1` constant and two switch case expressions)
-internal/core/rules|rules||98.06"
+internal/core/rules|rules||98.06
+# internal/identity: efficacy 100% (3 killed), no survivors, nothing not covered
+internal/identity|identity||100"
 
 cd "$KEYORIX_REPO"
 
