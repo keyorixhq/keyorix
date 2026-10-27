@@ -33,7 +33,7 @@ type AuditIntegrityPosture struct {
 	ChainedEvents int64  `json:"chained_events"`
 	Checkpointed  bool   `json:"checkpointed"`
 	Reason        string `json:"reason,omitempty"` // failure/notes when not fully verified
-	// VerificationStatus is valid | broken | not_proven
+	// VerificationStatus is valid | broken | not_proven | sealed
 	// (docs/specs/audit-incremental-verification.md §4); ChainVerified is true
 	// only for valid. LastFullVerificationAt is when the last full verification
 	// (rolling cycle or full job) completed; LastCheckedAt when the scheduler last
@@ -668,6 +668,9 @@ func applyAuditIntegrityPosture(p *CompliancePosture, snap *complianceSnapshot) 
 	switch {
 	case v.Status == AuditVerifyStatusNotProven:
 		p.AuditIntegrity.Reason = v.NotProvenReason
+	case v.Status == AuditVerifyStatusSealed:
+		// An accepted audit loss (audit_seal.go): not verified, not broken.
+		p.AuditIntegrity.Reason = v.StateReason
 	case !v.Valid:
 		p.AuditIntegrity.Reason = v.Reason
 	case v.CheckpointReason != "":

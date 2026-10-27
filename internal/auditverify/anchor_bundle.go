@@ -52,11 +52,19 @@ func checkpointFromAnchorBundle(b *ExternalAnchorBundle) *Checkpoint {
 // chain-length comparison — see buildNotProven.
 func crossCheckExternalAnchor(ctx context.Context, db *DB, opts Options, result *Result) error {
 	b := opts.ExternalAnchor
-	cp := checkpointFromAnchorBundle(b)
-
 	result.ExternalAnchor.Supplied = true
 
+	// An anchor exported before an accepted audit loss (seal.go) is bound to
+	// the seals that existed then: try the current binding first, then each
+	// earlier one. preSeal is the number of seals it was exported under.
+	preSeal := len(result.sealRecs)
+	cp := checkpointFromAnchorBundle(b).bound(result.seals)
 	keyAuthenticated := len(opts.CheckpointKey) > 0 && CheckpointSignatureValid(cp, opts.CheckpointKey)
+	for k := len(result.sealRecs) - 1; k >= 0 && !keyAuthenticated && len(opts.CheckpointKey) > 0; k-- {
+		if c := checkpointFromAnchorBundle(b).bound(sealBindingOf(result.sealRecs[:k])); CheckpointSignatureValid(c, opts.CheckpointKey) {
+			cp, preSeal, keyAuthenticated = c, k, true
+		}
+	}
 
 	tokenVerified := false
 	if len(b.AnchorToken) > 0 && opts.TSARoots != nil {
@@ -74,6 +82,9 @@ func crossCheckExternalAnchor(ctx context.Context, db *DB, opts Options, result 
 		return nil // unauthenticated bundle — advisory only, see buildNotProven
 	}
 	result.ExternalAnchor.Authenticated = true
+	if preSeal < len(result.sealRecs) {
+		return crossCheckPreSealAnchor(ctx, db, result, b, preSeal)
+	}
 
 	// result.PurgedEvents is non-zero only when the retention anchor
 	// authenticated under the supplied key (#3257): a bundle checked with TSA
@@ -102,6 +113,44 @@ func crossCheckExternalAnchor(ctx context.Context, db *DB, opts Options, result 
 				"audit event #%d hash differs from the externally-held anchor (certified head was rewritten)", b.HeadID))
 			return nil
 		}
+	}
+	return nil
+}
+
+// crossCheckPreSealAnchor checks an authenticated anchor exported before seal
+// #k+1: it may know rows the later seals accepted as lost, never more. Its
+// certified count must not exceed what seal #k+1 recorded as certified before
+// its loss (that seal measured the loss against it or a newer certification),
+// and its head row must survive unchanged unless a later seal accepted it as
+// lost or a sanctioned purge removed it.
+func crossCheckPreSealAnchor(ctx context.Context, db *DB, result *Result, b *ExternalAnchorBundle, k int) error {
+	next := result.sealRecs[k]
+	switch {
+	case next.Before == nil:
+		result.escalate(VerdictIndeterminate, fmt.Sprintf(
+			"the externally-held anchor (%d events through #%d) predates seal #%d, which recorded no certified count before its loss: "+
+				"whether the seal accepted everything this anchor knew cannot be checked", b.ChainedEvents, b.HeadID, next.Seq))
+		return nil
+	case b.ChainedEvents > next.Before.Events:
+		result.escalate(VerdictBroken, fmt.Sprintf(
+			"the externally-held anchor certified %d events before seal #%d, more than the %d the seal accepted a loss against: "+
+				"rows were lost beyond the accepted ones", b.ChainedEvents, next.Seq, next.Before.Events))
+		return nil
+	}
+	if b.HeadID == 0 {
+		return nil
+	}
+	hash, found, err := db.AuditEntryHashByID(ctx, b.HeadID)
+	switch {
+	case err != nil:
+		return err
+	case found && hash != b.HeadHash:
+		result.escalate(VerdictBroken, fmt.Sprintf(
+			"audit event #%d hash differs from the externally-held anchor (certified head was rewritten)", b.HeadID))
+	case !found && !sealsCover(result.sealRecs, k, b.HeadID) &&
+		!(result.RetentionGap.Sanctioned && b.HeadID < result.RetentionGap.RowID):
+		result.escalate(VerdictBroken, fmt.Sprintf(
+			"audit event #%d certified by the externally-held anchor is missing, outside every accepted loss", b.HeadID))
 	}
 	return nil
 }

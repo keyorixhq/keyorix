@@ -42,14 +42,19 @@ const (
 	// distinct from both VALID and BROKEN: reporting it as either would be
 	// a false alarm or a false assurance (design §5).
 	VerdictIndeterminate Verdict = "INDETERMINATE"
+	// VerdictSealed means every check passed for the rows that remain, but a
+	// loss of audit events was accepted with the checkpoint key (`admin audit
+	// accept-loss`, seal.go): the chain is not whole. Never VALID again.
+	VerdictSealed Verdict = "SEALED"
 )
 
 // verdictRank orders verdicts by severity so escalate() only ever moves a
 // Result toward the more severe finding, regardless of check order.
 var verdictRank = map[Verdict]int{
 	VerdictValid:         0,
-	VerdictIndeterminate: 1,
-	VerdictBroken:        2,
+	VerdictSealed:        1,
+	VerdictIndeterminate: 2,
+	VerdictBroken:        3,
 }
 
 // Range bounds the audit_events rows this run actually walked.
@@ -129,6 +134,8 @@ type Result struct {
 	// KeyTransition reports the checkpoint-key transition records written by
 	// rotate-kek / migrate-provider (docs/design-audit-key-transition.md).
 	KeyTransition KeyTransitionStatus `json:"key_transition"`
+	// Seal reports the accepted audit losses (seal.go).
+	Seal SealStatus `json:"seal"`
 
 	// AnchorSource records how this run resolved its Options.ExternalAnchor
 	// bundle: "flag" (the caller's --anchor was passed explicitly), "config
@@ -152,8 +159,13 @@ type Result struct {
 	VerifierVersion string    `json:"verifier_version"`
 
 	// keyTransitionEvents are the in-chain system.audit_key_transition rows
-	// the walk saw.
+	// the walk saw; sealEvents the system.audit_loss_accepted rows.
 	keyTransitionEvents []keyTransitionEvent
+	sealEvents          []sealEvent
+	// seals is the binding checkpoints are checked under; sealRecs the
+	// authenticated records it was taken from.
+	seals    sealBinding
+	sealRecs []*Seal
 }
 
 // escalate raises r's verdict to v (with reason) only if v outranks the
@@ -169,7 +181,8 @@ func (r *Result) escalate(v Verdict, reason string) {
 // ExitCode maps this run's verdict to the process exit code
 // docs/design-b4-offline-audit-verify.md §6 specifies: 0 VALID, 1 BROKEN
 // (tamper detected), 2 INDETERMINATE (could not fully verify — e.g. an
-// unauthenticated retention gap, or no key to check a real truncation).
+// unauthenticated retention gap, or no key to check a real truncation), and
+// 4 SEALED (verified since an accepted audit loss; the chain is not whole).
 // Never 0 when something was silently unverified — that distinction is the
 // single most important behavior of the whole command (design §6). Exit
 // code 3 (usage/input error) is NOT represented here: that is a condition
@@ -184,6 +197,8 @@ func (r *Result) ExitCode() int {
 		return 1
 	case VerdictIndeterminate:
 		return 2
+	case VerdictSealed:
+		return 4
 	default:
 		return 1
 	}
@@ -256,8 +271,32 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 		}
 	}
 
-	if err := walkChain(ctx, db, batchSize, result, anchor, anchorAuthenticated); err != nil {
+	seals, err := loadSeals(ctx, db, opts)
+	if err != nil {
 		return nil, err
+	}
+	var gaps []sealedGap
+	if seals.authenticated {
+		gaps = sealedGaps(seals.recs)
+		result.seals, result.sealRecs = sealBindingOf(seals.recs), seals.recs
+	}
+	if len(seals.recs) > 0 || seals.problem != "" {
+		result.Seal = SealStatus{Present: true, Records: len(seals.recs)}
+	}
+
+	if err := walkChain(ctx, db, batchSize, result, anchor, anchorAuthenticated, gaps); err != nil {
+		return nil, err
+	}
+	if seals.problem != "" {
+		// Not stepped over: the walk broke at the gap (and the checkpoints
+		// written since are bound to the seal), so this explains it.
+		why := "the audit seal record cannot be trusted: " + seals.problem
+		if result.Verdict == VerdictBroken {
+			result.Reason += " (" + why + ")"
+		}
+		result.escalate(VerdictBroken, why)
+	} else if seals.authenticated && result.Verdict != VerdictBroken {
+		checkSealEvents(result, seals)
 	}
 
 	// A genuine content/linkage break (or an authenticated-but-mismatched
@@ -290,6 +329,13 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 
 	checkOwedBreakGlass(ctx, db, result)
 
+	if seals.authenticated && len(seals.recs) > 0 {
+		result.Seal.Authenticated = result.Verdict != VerdictBroken
+		result.Seal.Seals = summarizeSeals(seals.recs)
+		result.escalate(VerdictSealed, fmt.Sprintf("the audit chain is sealed: %d loss(es) of audit events were accepted with the checkpoint key "+
+			"(admin audit accept-loss); the rows that remain verify, the chain is not whole", len(seals.recs)))
+	}
+
 	result.NotProven = buildNotProven(opts, result)
 	return result, nil
 }
@@ -299,12 +345,22 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 // walk exactly except for the retention-gap seeding, which additionally
 // distinguishes an authenticated sanction from an unauthenticated one
 // (design §5 — the online code has no INDETERMINATE concept to report).
-func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, anchor *RetentionAnchor, anchorAuthenticated bool) error {
+//
+// gaps are the authenticated sealed gaps (seal.go), stepped over only at the
+// exact rows each names: the row before the gap must be the recorded last
+// surviving one (with its hash), and the first row after it must carry the
+// recorded hash, which covers its prev_hash.
+func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, anchor *RetentionAnchor, anchorAuthenticated bool, gaps []sealedGap) error {
 	prevHash := GenesisHash
 	started := false
 	firstBatch := true
-	var lastID uint64
+	var lastID, lastChained uint64
 	var chainedEvents, unchained int64
+	broken := func(id uint64, reason string) {
+		result.FirstBrokenID = &id
+		result.escalate(VerdictBroken, reason)
+		result.ChainedEvents, result.UnchainedLegacyEvents = chainedEvents, unchained
+	}
 
 	for {
 		batch, err := db.StreamAuditEvents(ctx, lastID, batchSize)
@@ -344,6 +400,11 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 					result.ChainedEvents, result.UnchainedLegacyEvents = chainedEvents, unchained
 					return nil
 
+				case anchor == nil && sealedGapAt(gaps, head.ID) != nil:
+					// The first surviving row resumes an accepted gap at the
+					// chain start: not a retention gap; the gap check below links it.
+					result.RetentionGap = RetentionGapStatus{}
+
 				default:
 					// No usable anchor: seed from the row's own claimed
 					// prev_hash so the REST of the chain can still be
@@ -362,6 +423,33 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 		}
 
 		for _, e := range batch {
+			// Gaps a sanctioned purge removed, or whose resume row is gone.
+			for len(gaps) > 0 && gaps[0].ResumeID < e.ID {
+				if chainedEvents == 0 {
+					gaps = gaps[1:] // purged with the rows before this one
+					continue
+				}
+				g := gaps[0]
+				broken(g.ResumeID, fmt.Sprintf("audit event #%d, the first surviving row after sealed gap #%d, is missing", g.ResumeID, g.seq))
+				return nil
+			}
+			if len(gaps) > 0 && gaps[0].ResumeID == e.ID && e.EntryHash != "" {
+				g := gaps[0]
+				gaps = gaps[1:]
+				if chainedEvents == 0 && result.RetentionGap.Sanctioned {
+					// A sanctioned purge left the resume row first: the
+					// retention anchor already authenticated its prev_hash.
+					g.LastGoodID, g.LastGoodHash = lastChained, prevHash
+				}
+				if lastChained != g.LastGoodID || (g.LastGoodID != 0 && prevHash != g.LastGoodHash) || e.EntryHash != g.ResumeHash {
+					broken(e.ID, fmt.Sprintf("the rows around sealed gap #%d (after #%d, resuming at #%d) are not the ones the seal recorded: rows were removed, rewritten or put back around an accepted loss",
+						g.seq, g.LastGoodID, g.ResumeID))
+					return nil
+				}
+				// Accept the link the seal names; the recompute below still
+				// checks the row's own contents and prev_hash.
+				prevHash, started = e.PrevHash, true
+			}
 			if !started {
 				if e.EntryHash == "" {
 					unchained++
@@ -402,10 +490,17 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 				result.ChainedEvents, result.UnchainedLegacyEvents = chainedEvents, unchained
 				return nil
 			}
-			prevHash = e.EntryHash
+			prevHash, lastChained = e.EntryHash, e.ID
 			chainedEvents++
-			if e.EventType == auditKeyTransitionEvent {
+			switch e.EventType {
+			case auditKeyTransitionEvent:
 				result.keyTransitionEvents = append(result.keyTransitionEvents, keyTransitionEvent{id: e.ID, description: e.Description})
+			case auditSealEvent:
+				se := sealEvent{id: e.ID}
+				if m := sealEventDigestRE.FindStringSubmatch(e.Description); m != nil {
+					se.digest = m[1]
+				}
+				result.sealEvents = append(result.sealEvents, se)
 			}
 		}
 
@@ -414,8 +509,23 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 			break
 		}
 	}
+	if len(gaps) > 0 {
+		g := gaps[0]
+		broken(g.ResumeID, fmt.Sprintf("audit event #%d, the first surviving row after sealed gap #%d, is missing", g.ResumeID, g.seq))
+		return nil
+	}
 
 	result.ChainedEvents, result.UnchainedLegacyEvents = chainedEvents, unchained
+	return nil
+}
+
+// sealedGapAt returns the gap resuming at id, if any.
+func sealedGapAt(gaps []sealedGap, id uint64) *sealedGap {
+	for i := range gaps {
+		if gaps[i].ResumeID == id {
+			return &gaps[i]
+		}
+	}
 	return nil
 }
 
@@ -462,7 +572,11 @@ func enforceCheckpoint(ctx context.Context, db *DB, opts Options, result *Result
 	markAuthenticated := false
 	if hwFound {
 		if hwCP, hwSig, parsed := ParseHighWater(hwVal); parsed {
-			if HighWaterSigMatches(hwCP, hwSig, opts.CheckpointKey) {
+			if hwCP.Seals != result.seals.N || hwCP.SealDigest != result.seals.Digest {
+				result.escalate(VerdictBroken, fmt.Sprintf(
+					"audit high-water mark was written under %d accepted audit loss(es), but the authenticated seal record holds %d "+
+						"(the mark or the seal record was replaced)", hwCP.Seals, result.seals.N))
+			} else if HighWaterSigMatches(hwCP, hwSig, opts.CheckpointKey) {
 				markAuthenticated = true
 				floor = hwCP.ChainedEvents
 			} else {
@@ -488,10 +602,7 @@ func enforceCheckpoint(ctx context.Context, db *DB, opts Options, result *Result
 		return nil
 	}
 
-	if !CheckpointSignatureValid(&Checkpoint{
-		ChainedEvents: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash,
-		KeyVersion: cp.KeyVersion, Signature: cp.Signature,
-	}, opts.CheckpointKey) {
+	if !CheckpointSignatureValid(cp.bound(result.seals), opts.CheckpointKey) {
 		result.escalate(VerdictBroken, fmt.Sprintf(
 			"audit checkpoint #%d does not verify under the supplied checkpoint key — it fails its signature "+
 				"(tampered, or the wrong key was supplied)", cp.ID))
@@ -525,7 +636,7 @@ func enforceCheckpoint(ctx context.Context, db *DB, opts Options, result *Result
 	}
 
 	if result.Anchor.Present && opts.TSARoots != nil {
-		localCP := &Checkpoint{ChainedEvents: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, KeyVersion: cp.KeyVersion}
+		localCP := (&Checkpoint{ChainedEvents: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, KeyVersion: cp.KeyVersion}).bound(result.seals)
 		if _, err := notary.VerifyReceipt(opts.TSARoots, []byte(checkpointCanonical(localCP)), cp.AnchorToken); err != nil {
 			result.escalate(VerdictBroken, fmt.Sprintf(
 				"audit checkpoint #%d external anchor failed verification against the configured trust root: %v",
@@ -592,6 +703,17 @@ func buildNotProven(opts Options, result *Result) []string {
 			"the old-key signature of %d of %d key transition record(s) was not checked: pass the earlier checkpoint key(s) "+
 				"with --previous-checkpoint-key-file to prove the pre-rotation state was not forged by a holder of the new key",
 			kt.Records-kt.OldKeyVerified, kt.Records))
+	}
+	if st := result.Seal; st.Present && st.Authenticated {
+		for _, sl := range st.Seals {
+			lost := "an unmeasured number of"
+			if sl.LostEvents >= 0 {
+				lost = fmt.Sprintf("%d", sl.LostEvents)
+			}
+			notProven = append(notProven, fmt.Sprintf(
+				"anything about the %s audit event(s) seal #%d accepted as lost (%s, by %s: %s): they are gone, and this run "+
+					"proves only the rows that remain", lost, sl.Seq, sl.At.UTC().Format(time.RFC3339), sl.Operator, sl.Reason))
+		}
 	}
 	if result.ExternalAnchor.Supplied && !result.ExternalAnchor.Authenticated {
 		notProven = append(notProven,

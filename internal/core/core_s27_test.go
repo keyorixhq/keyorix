@@ -485,6 +485,7 @@ func TestAuditCheckpointsAvailable_WithKey(t *testing.T) {
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	assert.True(t, c.AuditCheckpointsAvailable())
 }
 

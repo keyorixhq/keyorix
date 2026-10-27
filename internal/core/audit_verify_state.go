@@ -48,6 +48,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -235,7 +236,12 @@ type auditVerifyState struct {
 	Discontinuity *auditVerifyDiscontinuity `json:"discontinuity,omitempty"`
 	// KeyEpoch names the key transition that carried this state over to the
 	// key that signs it (audit_key_transition.go); nil before any.
-	KeyEpoch  *auditKeyEpoch      `json:"key_epoch,omitempty"`
+	KeyEpoch *auditKeyEpoch `json:"key_epoch,omitempty"`
+	// Seals is the number of accepted losses (audit_seal.go) when the row was
+	// saved; it must equal the seal record's count. Accepted lists what the
+	// acceptances cleared (a discontinuity, a failure, the walk's break).
+	Seals     int                 `json:"seals,omitempty"`
+	Accepted  []AuditSealAccepted `json:"accepted,omitempty"`
 	Cycle     *auditVerifyCycle   `json:"cycle,omitempty"`
 	LastFull  *auditFullResult    `json:"last_full,omitempty"`
 	LastCheck *auditTailCheck     `json:"last_check,omitempty"`
@@ -278,6 +284,23 @@ type auditVerifyEvidence struct {
 	failureGen                                          uint64
 	failureOther                                        uint
 	maxFailureGen                                       uint64
+	// seal is the newest system.audit_loss_accepted event; sealNamed maps the
+	// seal record digest each such event names to its id (audit_seal.go).
+	seal      uint
+	sealNamed map[string]uint
+}
+
+// noteSeal adds one accepted-loss event.
+func (ev *auditVerifyEvidence) noteSeal(id uint, description string) {
+	ev.seal = max(ev.seal, id)
+	m := auditSealEventDigestRE.FindStringSubmatch(description)
+	if m == nil {
+		return
+	}
+	if ev.sealNamed == nil {
+		ev.sealNamed = map[string]uint{}
+	}
+	ev.sealNamed[m[1]] = max(ev.sealNamed[m[1]], id)
 }
 
 // noteFailure adds one failure event. The result does not depend on the order
@@ -353,7 +376,7 @@ func (c *KeyorixCore) scanAuditVerifyEvidence(ctx context.Context) (auditVerifyE
 	for after < head {
 		from := after
 		evs, _, err := c.storage.GetAuditLogs(ctx, &storage.AuditFilter{
-			Actions:   []string{auditVerifyStateMarkerEvent, auditChainVerificationFailedEvent, auditVerifyStateDiscontinuityEvent, auditKeyTransitionEvent},
+			Actions:   []string{auditVerifyStateMarkerEvent, auditChainVerificationFailedEvent, auditVerifyStateDiscontinuityEvent, auditKeyTransitionEvent, auditSealEvent},
 			AfterID:   &from,
 			UpToID:    &head,
 			Ascending: true,
@@ -376,13 +399,17 @@ func (c *KeyorixCore) scanAuditVerifyEvidence(ctx context.Context) (auditVerifyE
 				idx.ev.discontinuity = max(idx.ev.discontinuity, e.ID)
 			case auditKeyTransitionEvent:
 				idx.ev.keyTransition = max(idx.ev.keyTransition, e.ID)
+			case auditSealEvent:
+				idx.ev.noteSeal(e.ID, e.Description)
 			}
 			after = max(after, e.ID)
 		}
 	}
 	idx.through = max(idx.through, head)
 	idx.ev.head = head
-	return idx.ev, nil
+	ev := idx.ev
+	ev.sealNamed = maps.Clone(idx.ev.sealNamed)
+	return ev, nil
 }
 
 // discontinuedAuditVerifyState is the state a load returns for a row that cannot
@@ -394,6 +421,7 @@ func (c *KeyorixCore) discontinuedAuditVerifyState(prev *auditVerifyState, kind,
 	st := &auditVerifyState{V: 1, Discontinuity: d, detected: d}
 	if prev != nil {
 		st.Gen, st.Pin, st.Failure, st.Job, st.KeyEpoch = prev.Gen, prev.Pin, prev.Failure, prev.Job, prev.KeyEpoch
+		st.Seals, st.Accepted = prev.Seals, prev.Accepted
 		if prev.Discontinuity != nil {
 			st.Discontinuity = prev.Discontinuity
 		}
@@ -474,6 +502,11 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	if !c.AuditCheckpointsAvailable() {
 		return &auditVerifyState{V: 1}, "", nil
 	}
+	// The checkpoint trail below is signed under the seal list (audit_seal.go).
+	seals, err := c.loadAuditSeals(ctx)
+	if err != nil {
+		return nil, "", err
+	}
 	// The trail is read BEFORE the row: a writer saves the row after the
 	// checkpoint it binds to, so a concurrent write can only make the row newer
 	// than what was read here, never look stale.
@@ -516,6 +549,9 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	if s == nil {
 		return c.discontinuedAuditVerifyState(nil, kind, why), "", nil
 	}
+	if why := auditVerifyStateSealProblem(s, seals, ev); why != "" {
+		return c.discontinuedAuditVerifyState(s, auditDiscSeal, why), "", nil
+	}
 	// A row that already carries a discontinuity has raised the alarm: the
 	// checks below would only find the same gap again.
 	if s.Discontinuity == nil {
@@ -556,7 +592,7 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 		return c.discontinuedAuditVerifyState(s, auditDiscBeforeBreak, why), "", nil
 	}
 	untrusted := func(why string) (*auditVerifyState, string, error) {
-		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job, KeyEpoch: s.KeyEpoch},
+		return &auditVerifyState{V: 1, Gen: s.Gen, Failure: s.Failure, Discontinuity: s.Discontinuity, Job: s.Job, KeyEpoch: s.KeyEpoch, Seals: s.Seals, Accepted: s.Accepted},
 			"the persisted verification state " + why + " (a replayed or rolled-back row) and was ignored", nil
 	}
 	if s.Gen < seen {
@@ -568,6 +604,27 @@ func (c *KeyorixCore) loadAuditVerifyStateUnobserved(ctx context.Context) (st *a
 	}
 	c.bumpAuditVerifyGen(s.Gen)
 	return s, "", nil
+}
+
+// auditVerifyStateSealProblem compares an authentic state row with the seal
+// record: a record that cannot be trusted, or a row saved under another number
+// of seals (an older row put back over an acceptance, or a seal record deleted
+// or replaced since), is a discontinuity. A row that already carries a
+// discontinuity keeps it (the checks would only find the same gap again).
+func auditVerifyStateSealProblem(s *auditVerifyState, seals *auditSealSet, ev auditVerifyEvidence) string {
+	switch {
+	case s.Discontinuity != nil:
+		return ""
+	case len(seals.recs) == 0 && seals.problem == "" && ev.seal > 0:
+		return fmt.Sprintf("audit event #%d records an accepted loss, but the audit_seals record is missing", ev.seal)
+	case seals.problem != "":
+		return "the audit seal record cannot be trusted: " + seals.problem
+	case s.Seals < len(seals.recs):
+		return fmt.Sprintf("the persisted verification state was saved before accepted loss #%d (an older row put back over an acceptance)", s.Seals+1)
+	case s.Seals > len(seals.recs):
+		return fmt.Sprintf("the persisted verification state was saved after %d accepted loss(es), but the audit_seals record holds %d (the seal record was deleted or replaced)", s.Seals, len(seals.recs))
+	}
+	return ""
 }
 
 // auditVerifyStateUnplaced judges an authentic row without Placed, which this
@@ -604,7 +661,7 @@ func (c *KeyorixCore) auditCheckpointTrailUnauthenticated(ctx context.Context) (
 	if err != nil || !ok {
 		return "", err
 	}
-	if hw, sig, parsed := parseAuditHighWater(val); !parsed || !c.checkpointSigMatches(hw, sig) {
+	if hw, sig, parsed := c.parseAuditHighWaterBound(val); !parsed || !c.checkpointSigMatches(hw, sig) {
 		return "the audit high-water mark exists but does not authenticate under the current key", nil
 	}
 	return "", nil
@@ -701,6 +758,16 @@ func (c *KeyorixCore) signedAuditVerifyPin(ctx context.Context) (*auditVerifyPin
 	if s == nil {
 		return nil, err
 	}
+	// A pin certified before an accepted loss is not a floor for the chain
+	// after it (accept-loss re-baselines the pin); the state load reports a row
+	// that disagrees with the seal record.
+	seals, err := c.loadAuditSeals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if seals.problem == "" && s.Seals != len(seals.recs) {
+		return nil, nil
+	}
 	var pin auditVerifyPin
 	switch {
 	case s.Pin != nil:
@@ -775,6 +842,13 @@ func (c *KeyorixCore) saveAuditVerifyState(ctx context.Context, st *auditVerifyS
 	}
 	st.V = 1
 	st.KID = c.auditCkptKeyVersion
+	if seals, err := c.loadAuditSeals(ctx); err != nil {
+		return err
+	} else if seals.problem == "" {
+		// A row that cannot be checked against the seal record keeps its own
+		// count; the load reports the discontinuity.
+		st.Seals = len(seals.recs)
+	}
 	st.Bind = bind
 	st.AuditHead = head
 	st.Placed = true
