@@ -114,8 +114,7 @@ func runResetMFA(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("One-time password (shown once — copy it now, it cannot be retrieved again):")
 	// Intentional one-time display to the operator (same contract as recover-admin).
-	// codeql[go/clear-text-logging]
-	fmt.Printf("  %s\n", summary.oneTimePassword)
+	printOneTimePassword(summary.oneTimePassword)
 	fmt.Printf("Expires: %s (UTC). Give it to the user out of band, after confirming who they are.\n",
 		summary.oneTimePasswordExpiresAt.UTC().Format(time.RFC3339))
 	fmt.Printf("They sign in as %q with it, set a new password, and must enrol a new second factor.\n", summary.username)
