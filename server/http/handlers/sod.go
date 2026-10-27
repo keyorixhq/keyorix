@@ -48,6 +48,9 @@ func (h *CatalogHandler) CreateSoDPolicy(w http.ResponseWriter, r *http.Request)
 	}
 	policy, err := h.coreService.CreateSoDPolicy(r.Context(), actor.UserID, body.Name, body.Description, body.PermissionA, body.PermissionB)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
@@ -78,6 +81,9 @@ func (h *CatalogHandler) DeleteSoDPolicy(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := h.coreService.DeleteSoDPolicy(r.Context(), actor.UserID, uint(id)); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {

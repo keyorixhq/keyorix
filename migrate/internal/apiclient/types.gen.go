@@ -307,6 +307,17 @@ type SecretListEntry struct {
 // SecretReadRefusalCode Stable code of a 409 secret-state read refusal (see the SecretReadRefused response).
 type SecretReadRefusalCode string
 
+// AuditUnavailable defines model for AuditUnavailable.
+type AuditUnavailable struct {
+	// Code Always 503.
+	Code *int `json:"code,omitempty"`
+
+	// Error Always `audit_unavailable`.
+	Error   *string `json:"error,omitempty"`
+	Message *string `json:"message,omitempty"`
+	Success *bool   `json:"success,omitempty"`
+}
+
 // Error defines model for Error.
 type Error struct {
 	Code    *int                    `json:"code,omitempty"`

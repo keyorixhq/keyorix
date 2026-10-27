@@ -77,6 +77,9 @@ func (h *SecretHandler) ResumeProjectSecrets(w http.ResponseWriter, r *http.Requ
 	}
 	n, err := h.coreService.ResumeProjectSecrets(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		h.sendError(w, "InternalError", "Failed to resume project secrets", http.StatusInternalServerError, nil)
 		return
 	}

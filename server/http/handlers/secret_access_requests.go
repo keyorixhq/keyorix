@@ -50,6 +50,9 @@ func (h *CatalogHandler) CreateSecretAccessRequest(w http.ResponseWriter, r *htt
 	}
 	req, err := h.coreService.RequestSecretAccess(r.Context(), body.SecretID, actor.UserID, body.Reason)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
@@ -152,6 +155,9 @@ func (h *CatalogHandler) ResolveSecretAccessRequest(w http.ResponseWriter, r *ht
 		return
 	}
 	if resolveErr != nil {
+		if sendAuditUnavailable(w, resolveErr) {
+			return
+		}
 		status := http.StatusInternalServerError
 		msg := resolveErr.Error()
 		switch {
