@@ -450,8 +450,10 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 
 	// Consume the token (single-use, atomic) now that the account exists. tok was
 	// already inspected by CompleteSetup, so consume it directly (no re-lookup).
+	// A failure here removes the account just created (#155's retry of the SAME link
+	// must not then hit the "account already exists" guard above).
 	if err := c.consumeInspectedToken(ctx, tok, SetupPurposeInvitationAccept); err != nil {
-		return nil, err
+		return nil, c.abandonInvitationAccept(ctx, inv, user, invitationAcceptStepConsume, err)
 	}
 
 	// Materialize the invitation's grants under the invite-time validation mode. For a
@@ -464,21 +466,20 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	// grants behind it.
 	if err := c.applyInvitationGrants(ctx, inv, user.ID); err != nil {
 		// Session O follow-up (2026-09-29, coordinator hand-found candidate): the
-		// account just created above has zero grants and the setup token that led
-		// here is already spent (single-use, by design) -- without reverting the
-		// account, the invitee is stuck permanently: the SAME link can't be
-		// replayed (token consumed), and a resent link (a fresh token for this
-		// same still-pending invitation) hits the "account already exists" guard
-		// above on the very next attempt, with no self-service way out. Soft-delete
-		// the orphaned account so a resend starts clean — both the email and
-		// username uniqueness indexes are partial (`WHERE deleted_at IS NULL`,
-		// see models.User's own doc comments), so this is safe: a subsequent
-		// CreateUser for the same address does not collide with the deleted row.
-		if derr := c.storage.DeleteUser(ctx, user.ID); derr != nil {
-			c.auditProjectScopedFailed(ctx, "invitation.accept_orphaned_account_cleanup_failed", user.ID, inv.ProjectID,
-				fmt.Sprintf("invitation %d: grants failed for %s (user %d): %v -- AND cleaning up the resulting ungranted account also failed: %v -- MANUAL CLEANUP REQUIRED (delete or complete this account by hand, or the invitee is stuck)", inv.ID, inv.Email, user.ID, err, derr))
-		}
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// setup token that led here is already spent (single-use, by design) --
+		// without reverting the account, the invitee is stuck permanently: the SAME
+		// link can't be replayed (token consumed), and a resent link (a fresh token
+		// for this same still-pending invitation) hits the "account already exists"
+		// guard above on the very next attempt, with no self-service way out. The
+		// account is soft-deleted so a resend starts clean — both the email and
+		// username uniqueness indexes are partial (`WHERE deleted_at IS NULL`, see
+		// models.User's own doc comments), so a subsequent CreateUser for the same
+		// address does not collide with the deleted row. A global invite grants in
+		// several commits, so a grant made before the failing one is reverted first
+		// (it would otherwise stay on the deleted account and come back with a
+		// RestoreUser), and the error says what happened instead of passing on the
+		// grant's own "nothing was changed, retry" (CORE-REVOCATION-TAILS-1 item 4).
+		return nil, c.abandonInvitationAccept(ctx, inv, user, invitationAcceptStepGrant, err)
 	}
 
 	// Mark the invitation accepted (only now that account + membership both exist).
@@ -492,16 +493,24 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	inv.AcceptedAt = &now
 	ok, uerr := c.storage.UpdateProjectInvitation(ctx, inv)
 	if uerr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
+		// The grants are live but the invitation still reads pending: undo them and
+		// the account, like a failed grant, so a resend starts clean. If the write
+		// actually committed (ambiguous error), the row reads accepted with no grants
+		// and no account: fail-closed, but the "still pending" message is then wrong.
+		inv.State, inv.AcceptedAt = InvitationPending, nil
+		return nil, c.abandonInvitationAccept(ctx, inv, user, invitationAcceptStepAccept, uerr)
 	}
 	if !ok {
 		// Lost the race: the invitation was concurrently revoked (or lazily
 		// expired) after the grants above were applied. Best-effort revoke the
 		// membership/role(s) just granted so a revoked invitation can't leave a
 		// live grant behind, then fail closed — no session is minted below.
-		c.revokeInvitationGrants(ctx, inv, user.ID)
+		reverted := "reverted the grant(s) just made"
+		if !c.revokeInvitationGrants(ctx, inv, user.ID) {
+			reverted = "could NOT revert every grant just made (MANUAL CLEANUP REQUIRED, see invitation.accept_race_revoke_failed)"
+		}
 		c.auditProjectScoped(ctx, "invitation.accept_race_reverted", user.ID, inv.ProjectID,
-			fmt.Sprintf("invitation %d was concurrently revoked/resolved while %s (user %d) was accepting it; reverted the grant(s) just made", inv.ID, inv.Email, user.ID))
+			fmt.Sprintf("invitation %d was concurrently revoked/resolved while %s (user %d) was accepting it; %s", inv.ID, inv.Email, user.ID, reverted))
 		return nil, fmt.Errorf("%s: this invitation was revoked", i18n.T("ErrorValidation", nil))
 	}
 
@@ -513,9 +522,79 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	// cannot get.
 	session, err := c.mintLoginSession(ctx, user.ID, userAgent, ip, false)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+		// Everything else committed: the account exists with its grants and the
+		// invitation is accepted. Only the automatic sign-in failed.
+		return nil, fmt.Errorf("%s: invitation %d was accepted and account %d created with its grants, but signing in failed; log in with the new password: %w",
+			i18n.T("ErrorStorageFailed", nil), inv.ID, user.ID, err)
 	}
 	return &SetupConsumeResult{Session: session, User: user}, nil
+}
+
+// The steps of completeInvitationAccept that can fail after the account exists.
+const (
+	invitationAcceptStepConsume = "spending the setup link"
+	invitationAcceptStepGrant   = "granting the invitation's roles"
+	invitationAcceptStepAccept  = "marking the invitation accepted"
+)
+
+// ErrInvitationAcceptAbandoned is returned (wrapped) by an invitation accept that
+// failed after it had created the account: the account was removed again and any
+// grant already made reverted (abandonInvitationAccept). The error text says what
+// happened and what the invitee must do next. It never wraps the failing step's
+// error, whose own text ("nothing was changed, retry") would not be true of the
+// accept as a whole.
+var ErrInvitationAcceptAbandoned = errors.New("invitation accept failed after the account was created")
+
+// abandonInvitationAccept undoes a failed invitation accept once the account exists:
+// every grant the invitation made is reverted (revokeInvitationGrants: owed
+// revocations, never blocked by the audit log; a grant never made is skipped), then
+// the account is soft-deleted. The invitation itself is left pending, so the inviter
+// can resend it. The outcome, including whatever could NOT be undone, is in the
+// returned error and in an invitation.accept_failed audit row.
+func (c *KeyorixCore) abandonInvitationAccept(ctx context.Context, inv *models.ProjectInvitation, user *models.User, step string, cause error) error {
+	reverted := true
+	if step != invitationAcceptStepConsume { // nothing is granted before the token is spent
+		reverted = c.revokeInvitationGrants(ctx, inv, user.ID)
+	}
+	removed := true
+	if derr := c.storage.DeleteUser(ctx, user.ID); derr != nil {
+		removed = false
+		c.auditProjectScopedFailed(ctx, "invitation.accept_orphaned_account_cleanup_failed", user.ID, inv.ProjectID,
+			fmt.Sprintf("invitation %d: %s failed for %s (user %d): %s -- AND cleaning up the resulting account also failed: %v -- MANUAL CLEANUP REQUIRED (delete or complete this account by hand, or the invitee is stuck)",
+				inv.ID, step, inv.Email, user.ID, invitationAcceptCause(cause), derr))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "invitation %d for %s could not be accepted: %s failed (%s). ", inv.ID, inv.Email, step, invitationAcceptCause(cause))
+	if step != invitationAcceptStepConsume {
+		if reverted {
+			b.WriteString("Every role it had granted was reverted. ")
+		} else {
+			b.WriteString("Some role it had granted could NOT be reverted (MANUAL CLEANUP REQUIRED, see the audit log). ")
+		}
+	}
+	if removed {
+		fmt.Fprintf(&b, "The account created for it (user %d) was removed. ", user.ID)
+	} else {
+		fmt.Fprintf(&b, "The account created for it (user %d) could NOT be removed (MANUAL CLEANUP REQUIRED). ", user.ID)
+	}
+	if step == invitationAcceptStepConsume {
+		b.WriteString("Retry the setup link; if it was used meanwhile, ask the inviter to resend the invitation.")
+	} else {
+		b.WriteString("The setup link is used up: the inviter must resend the invitation, which is still pending.")
+	}
+	msg := b.String()
+	c.auditProjectScopedFailed(ctx, "invitation.accept_failed", user.ID, inv.ProjectID, msg)
+	return fmt.Errorf("%w: %s", ErrInvitationAcceptAbandoned, msg)
+}
+
+// invitationAcceptCause names a failing step's error for abandonInvitationAccept's
+// message. A grant refused by the audit log says so in its own words: its error
+// text ("nothing was changed, retry") is true of that one grant, not of the accept.
+func invitationAcceptCause(err error) string {
+	if errors.Is(err, ErrMutationAuditUnavailable) {
+		return "the audit log could not record the grant"
+	}
+	return err.Error()
 }
 
 // expireInvitationIfOverdue lazily marks an invitation expired when it is still

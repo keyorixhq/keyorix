@@ -133,6 +133,8 @@ from core, as before, so there are no duplicates.
 | **User update** (anything but a deactivation that leaves username and email alone: profile, email, username, re-activate flag; a deactivation that also changes the username or email) | `UpdateUser` (also `UpdateOwnProfile`) | `user.updated` | after commit | in tx |
 | **User reactivate** | `ReactivateUser` → `setAccountState` (to active) | `account.reactivated` | after commit | in tx |
 | **User restore** | `RestoreUser` | `user.restored` | after commit | in tx |
+| **User unlock** (admin clears the login lockout) | `UnlockUser` | `account.unlocked` | after commit | in tx (UNLOCK-AUDIT-1, #3599) |
+| **Secret resume** (a suspended secret becomes readable again) | `ResumeSecret` | `secret.resumed` | after commit | in tx, after the live-project check (UNLOCK-AUDIT-1, #3599) |
 | **OTP reissue** (the credential half) | `ReissueOneTimePassword` | `user.one_time_password_reissued` | after commit | in tx, after the owed narrowing commit ("Mixed requests") |
 | **SCIM user provision** | `ProvisionSCIMUser` | `scim.user_provisioned` | after commit | in tx |
 | **SCIM first IdP login** (pending_first_login -> active, restricted to access granted) | `completeIdPFirstLogin` (CompleteSSO / CompleteSAML) | `scim.first_login_completed` | after commit | in tx |
