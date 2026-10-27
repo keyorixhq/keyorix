@@ -1,0 +1,1 @@
+TestNamedLockOverlap_EveryCallSiteIsInventoried	internal/core/guards	#3753	new repo-wide guard (NAMEDLOCK-OVERLAP-1), report-only until its first green nightly on main
