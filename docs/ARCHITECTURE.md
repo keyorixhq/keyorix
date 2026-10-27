@@ -144,3 +144,33 @@ SDK to exclude; the Kubernetes dynamic-secrets backend is hand-rolled REST, not
 offline drill (`scripts/airgap-e2e.sh`, see
 [AIRGAP_RUNBOOK.md](AIRGAP_RUNBOOK.md)). `docs/adr-109-core-depends-on-interfaces.md`
 ("Step 6") records how the profile was built.
+
+## Growth ceilings
+
+A package that keeps growing, or that more and more packages depend on, makes every
+later change touch more files, collide with more open PRs, rebuild more of the tree and
+cost more CI and review. Nobody pays that bill when the design is chosen (the
+architecture-cost lesson: AI does not feel the pain, and a reviewer rarely asks about
+CI cost at design time), so the build pays it for us. `make check-growth` runs
+`scripts/ci/check-growth-guards.sh`, which re-measures the root module with `go list`
+and fails when a package under `internal/` or `server/` is over a ceiling:
+
+| Check | Ceiling | Today's max (2026-10-27) |
+|---|---:|---|
+| non-test `.go` files per package | 260 | 226, `internal/core` |
+| transitive dependents per package (in the module) | 44 | 38, `internal/core/ports` |
+
+Files rather than lines because generated code (`server/proto/pb`, `internal/faultstorage`)
+inflates lines without being design growth. The failure line names the package and by how
+much it is over. When it fires, split the package (a sub-package, or a leaf with a narrow
+interface); if the growth is intended, raise the ceiling in the same PR and give the reason
+in `docs/design/architecture-growth-baseline.md`, which also holds the full per-package
+table and the method.
+
+**Do not add a new shared append-only file.** A file every PR appends to (a ledger, a
+registry list, a running log) conflicts with every other PR touching it: 19 of 152 merges
+in one sample against zero conflicts in 139 merges for per-item files. Add one fragment
+file per item and a build or reduce step that assembles them, the way `changelog.d/` and
+`docs/security-closures.d/` already do (`scripts/ci/check-no-new-ledger.sh` warns when a PR
+only appends more than 50 lines to an existing doc or data file). The package invariant is
+`internal/core/INVARIANTS.d/INV-CORE-package-file-ceiling.md`.
