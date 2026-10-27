@@ -146,6 +146,9 @@ var typeScopedPresenceOnlyFields = map[string]map[string]string{
 	"AuditEvent": {
 		"RequestID": "server-minted random id of the HTTP request that wrote the row (AUDIT-REQUEST-ID-1, middleware.LogContext) -- the reference and fault worlds never mint the same one. Presence still compared: a request-written row (set) versus a scheduler/startup row (NULL) stays distinguishable. Table-scoped because AccessRequestApproval.RequestID is a deterministic foreign key that must stay byte-compared (TestCanonicalRow_AccessRequestApprovalRequestIDStillCompared).",
 	},
+	"PendingAuditEvent": {
+		"RequestID": "server-minted random id of the request that owes the row (AUDIT-REQUEST-ID-2, copied from the holder when the pending record is written) -- the reference and fault worlds never mint the same one. Presence still compared: a request-owed record (set) versus a scheduler-owed one (NULL) stays distinguishable.",
+	},
 	"LoginAttempt": {
 		"ReservationKey": "generateSecureToken()-random reservation identifier minted by core.ReserveLoginAttempt per request (#2956 follow-up, models.go LoginAttempt.ReservationKey) — the reference and fault worlds never mint the same one, so without this every reserved LoginAttempt row differs byte-for-byte. Presence still compared: a reservation row versus a plain RecordLoginAttempt row (nil key) stays distinguishable.",
 	},

@@ -646,7 +646,7 @@ This release raises the schema compatibility floor to 3 (ADR-101); its schema ep
 is 7 (epochs 4 to 7 are additive and leave the floor at 3, see 6o.1 and 6z).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
-epoch of 3 (database schema epoch 7)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
+epoch of 3 (database schema epoch 8)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
 database:
 
 - **The v2 audit retention anchor (#3258).** v0.96.x reads it as malformed, so its
@@ -1310,7 +1310,7 @@ database records a compatibility floor above its own schema epoch (ADR-101).
   both binaries.
 - **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
   binary refuses with `database declares a minimum compatible schema epoch of 3 (database
-  schema epoch 7)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
+  schema epoch 8)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
   v0.96.x binary never starts again on a database a v0.97 server has started against. A database written by a binary with a newer epoch but
   without a recorded floor is refused with `database schema epoch N is newer than this
   binary's schema epoch M` (ADR-097).

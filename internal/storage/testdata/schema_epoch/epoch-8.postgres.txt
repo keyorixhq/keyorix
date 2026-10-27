@@ -1,4 +1,4 @@
-# schema of a fresh postgres install at currentSchemaEpoch 7; see schema_epoch_snapshot_test.go
+# schema of a fresh postgres install at currentSchemaEpoch 8; see schema_epoch_snapshot_test.go
 column access_request_approvals.approver_id bigint nullable=NO default=<none>
 column access_request_approvals.approver_machine_identity_id bigint nullable=NO default=0
 column access_request_approvals.created_at timestamp with time zone nullable=YES default=<none>
@@ -382,6 +382,7 @@ column pending_audit_events.event text nullable=NO default=<none>
 column pending_audit_events.event_type character varying nullable=NO default=<none>
 column pending_audit_events.id bigint nullable=NO default=nextval('pending_audit_events_id_seq'::regclass)
 column pending_audit_events.last_error text nullable=YES default=<none>
+column pending_audit_events.request_id text nullable=YES default=<none>
 column pending_audit_events.updated_at timestamp with time zone nullable=YES default=<none>
 column permissions.action text nullable=NO default=<none>
 column permissions.description text nullable=YES default=<none>

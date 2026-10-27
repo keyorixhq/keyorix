@@ -37,10 +37,10 @@ package storage
 
 import "testing"
 
-func TestCurrentSchemaEpoch_Is7_SeeADR101(t *testing.T) {
-	if currentSchemaEpoch != 7 {
+func TestCurrentSchemaEpoch_Is8_SeeADR101(t *testing.T) {
+	if currentSchemaEpoch != 8 {
 		t.Fatalf(
-			"currentSchemaEpoch is now %d (expected 7) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
+			"currentSchemaEpoch is now %d (expected 8) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
 				"requires every bump to also decide minCompatibleSchemaEpoch (additive-and-safe leaves it "+
 				"unchanged; a migration an older binary cannot safely run against raises it to the new epoch). "+
 				"Make that decision in factory.go, THEN update this test's expected value alongside your "+

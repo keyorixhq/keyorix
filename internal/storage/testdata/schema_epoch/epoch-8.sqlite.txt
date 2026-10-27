@@ -1,4 +1,4 @@
-# schema of a fresh sqlite install at currentSchemaEpoch 7; see schema_epoch_snapshot_test.go
+# schema of a fresh sqlite install at currentSchemaEpoch 8; see schema_epoch_snapshot_test.go
 column access_request_approvals.approver_id INTEGER notnull=1 default=<none> pk=0
 column access_request_approvals.approver_machine_identity_id INTEGER notnull=1 default=0 pk=0
 column access_request_approvals.created_at DATETIME notnull=0 default=<none> pk=0
@@ -382,6 +382,7 @@ column pending_audit_events.event TEXT notnull=1 default=<none> pk=0
 column pending_audit_events.event_type TEXT notnull=1 default=<none> pk=0
 column pending_audit_events.id INTEGER notnull=0 default=<none> pk=1
 column pending_audit_events.last_error TEXT notnull=0 default=<none> pk=0
+column pending_audit_events.request_id TEXT notnull=0 default=<none> pk=0
 column pending_audit_events.updated_at DATETIME notnull=0 default=<none> pk=0
 column permissions.action TEXT notnull=1 default=<none> pk=0
 column permissions.description TEXT notnull=0 default=<none> pk=0

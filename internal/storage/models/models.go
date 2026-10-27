@@ -1777,6 +1777,12 @@ type PendingAuditEvent struct {
 	// backfill keeps such a row's original event time and, when it writes the last
 	// one of an activation, marks the activation settled in the same transaction.
 	BreakGlassActivationID uint `gorm:"index;not null;default:0"`
+	// RequestID is the server-minted id of the request that owes the row
+	// (logging.ServerRequestID at the time it was recorded), so the backfill can write
+	// the row with the id of the request that caused it (docs/specs/audit-request-id.md
+	// §10). NULL when the request had none (a scheduler tick) and on rows recorded
+	// before epoch 8. Advisory like audit_events.request_id; never a hash input.
+	RequestID *string
 }
 
 type SystemMetadata struct {
