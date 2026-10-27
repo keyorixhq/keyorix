@@ -97,10 +97,14 @@ verify_audit "$INST"
     || fail "audit trail did not grow across the upgrade (before ${audit_before:-?}, after ${AUDIT_COUNT:-?})"
 ok "audit trail grew: $audit_before -> $AUDIT_COUNT chained events"
 
-# UPGRADING.md 7.4: once the database's schema epoch has advanced, the OLD binary must
-# refuse to start on it ("database schema epoch N is newer than this binary's schema
-# epoch M"). If the two versions share an epoch the old binary may legitimately start;
-# either way it must not corrupt anything, so report which happened.
+# UPGRADING.md 6q: once the database's schema epoch has advanced past what the OLD binary
+# supports, the OLD binary must refuse to start on it. The refusal is either the ADR-101
+# floor text ("database declares a minimum compatible schema epoch of N ...") or, when no
+# floor is recorded, the ADR-097 text ("database schema epoch N is newer than this
+# binary's schema epoch M"); both contain "schema epoch", which is what is matched below.
+# If the two versions share an epoch, or the recorded floor is at or below the old
+# binary's epoch, the old binary may legitimately start; either way it must not corrupt
+# anything, so report which happened.
 step "downgrade probe: the OLD binary on the migrated data"
 : >"$DRILL_DIR/$INST/server.log"
 if (srv_start "$INST" "$PORT" "$DRILL_OLD_SERVER_BIN") >"$DRILL_DIR/downgrade-probe.out" 2>&1; then
