@@ -50,8 +50,10 @@ func (ls *LocalStorage) ConsumeSSOLoginState(ctx context.Context, state string) 
 		// Lost the race: another caller's concurrent DELETE already consumed this
 		// state. Report it exactly like an unknown/already-used state, not a
 		// distinct error — that distinction isn't observable to a legitimate caller
-		// and shouldn't be to a replaying one either.
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		// and shouldn't be to a replaying one either. The row is definitively gone,
+		// so this is the same typed not-found (sentinel and gorm cause) as the read
+		// above returns.
+		return nil, storage.NotFound(storage.ErrSSOLoginStateNotFound, i18n.T("ErrorNotFound", nil), gorm.ErrRecordNotFound)
 	}
 	return &s, nil
 }
