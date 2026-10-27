@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/ports"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/notifychan"
 	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
 )
@@ -79,7 +80,7 @@ func wireNotificationChannels(cw *coreWiring) error {
 			return fmt.Errorf("failed to init notification webhook channel: %w", werr)
 		}
 		broadcastSinks = append(broadcastSinks, sink)
-		log.Printf("Notification webhook channel enabled (endpoint=%s)", wc.Endpoint)
+		log.Printf("Notification webhook channel enabled (endpoint=%s)", netutil.RedactURLHost(wc.Endpoint))
 	}
 	if ec := cfg.Notifications.Email; ec.Enabled {
 		sink, eerr := notifychan.NewEmail(notifychan.EmailConfig{

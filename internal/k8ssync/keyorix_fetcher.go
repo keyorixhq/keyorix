@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // ErrUpstreamGone is a sentinel a Fetch error wraps when the failure is DEFINITIVE —
@@ -205,7 +207,7 @@ func NewKeyorixFetcher(baseURL, token string, projectID uint) *KeyorixFetcher {
 // bearer-token-bearing request to an internal host (e.g. cloud IMDS) at request
 // time, even though baseURL itself was validated at config-load time (CWE-918).
 func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	return fmt.Errorf("k8ssync: refusing to follow redirect to %q", req.URL)
+	return fmt.Errorf("k8ssync: refusing to follow redirect to %q", netutil.RedactURLHost(req.URL.String()))
 }
 
 // validateFetcherBaseURL checks that baseURL is a well-formed absolute http(s) URL,

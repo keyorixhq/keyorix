@@ -1,2 +1,0 @@
-### Security
-- **The evidence-delivery webhook no longer logs or returns its configured endpoint URL (REDACT-URLS-1).** The endpoint can carry a token in the userinfo, path or query. The `insecure_skip_verify` startup warning, the endpoint-validation errors (invalid URL, plaintext `http://`, unsupported scheme, private target) and the delivery errors from a failed POST all printed it, the last two through the wrapped `*url.Error`. They now name the destination as scheme and host only and drop the `*url.Error` layer, keeping `errors.Is` on the underlying failure.
