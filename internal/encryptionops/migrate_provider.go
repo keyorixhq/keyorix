@@ -521,10 +521,27 @@ func PrintMigrateSummary(tgt config.EncryptionConfig, backupRel string) {
 // MigrateProviderCleanupWithConfig is the testable core of `encryption
 // migrate-provider cleanup`: no flag parsing, an explicit baseDir instead of
 // os.Getwd().
+//
+// It holds the exclusive key-directory lock (dek.lock) for its whole run,
+// --dry-run included (REVIEW-ENCRYPTIONOPS-1 R2). The database-presence lock
+// the admin tree takes is not enough: `--force` goes past it in flock mode, and
+// a cleanup beside a migration whose verification then fails would delete the
+// backup RestoreBackup needs, leaving the DEK wrapped under a KEK that may not
+// work. migrate-provider holds dek.lock exclusively from start to finish, so it
+// and cleanup now exclude each other whatever --force says. A live server
+// holds dek.lock too (flock mode), so cleanup needs the server stopped, like
+// every other key writer. Exclusive rather than shared: cleanup deletes files
+// in the key directory, and the shared lock is only offered to an initialized
+// Service, which would make cleanup need the passphrase it never needed.
 func MigrateProviderCleanupWithConfig(cfg *config.Config, baseDir string, dryRun, confirm bool) error {
 	if !cfg.Storage.Encryption.Enabled {
 		return fmt.Errorf("encryption is disabled in configuration")
 	}
+	lockSvc := encryption.NewService(&cfg.Storage.Encryption, baseDir)
+	if err := lockSvc.AcquireExclusiveKeyLock(); err != nil {
+		return fmt.Errorf("refusing to clean up migrate-backup files: %w — a live server or an in-progress migrate-provider or rotation is using this key directory, and a running migration may still need its backup to restore the DEK. Stop the server, or let the other command finish, then retry", err)
+	}
+	defer lockSvc.Shutdown()
 	matches, err := FindMigrateBackups(baseDir, cfg.Storage.Encryption.DEKPath)
 	if err != nil {
 		return fmt.Errorf("failed to scan for migrate-backup files: %w", err)

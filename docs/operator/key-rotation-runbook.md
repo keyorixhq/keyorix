@@ -180,7 +180,8 @@ depends on whether the rotation advanced the witness; be ready for either.
   turns off the mixed-set check for that start.
 - **Do not delete `*.migrate-backup.*` or `*.pre-restore-*` files** until the result is verified.
   `admin encryption migrate-provider cleanup --dry-run`, then `--confirm`, is the supported
-  deletion.
+  deletion. It takes the key-directory lock (`dek.lock`) exclusively, so it refuses while a
+  server or a `migrate-provider`/rotation runs, `--force` or not: stop the server first.
 - **Do not put a passphrase on a command line, in shell history or in a shared log.** Use a
   `0600` file, a descriptor, or stdin; the new passphrase on a `migrate-provider` back to the
   password provider comes from `KEYORIX_NEW_MASTER_PASSWORD` or the `--new-passphrase-*` flags.
