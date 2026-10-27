@@ -1,0 +1,2 @@
+### Fixed
+- **SCIM Groups: the "storage failure is not a 404" guarantee is now pinned end to end (#3620).** The status change itself shipped with the entry above; this adds the tests that keep it from regressing: a missing or soft-deleted group is the typed `ErrGroupNotFound` and a database failure never is (SQLite and Postgres), `core.GetGroup` keeps the storage error chain, and each group write (`POST`, `PUT`, `PATCH`, `DELETE`) answers write contention `503` with `Retry-After` and leaves the group unchanged. No behaviour change.
