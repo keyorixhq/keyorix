@@ -38,6 +38,23 @@ func authPassphrase(cfg *config.Config, passSrc crypto.PassphraseSource) (string
 	return MasterPassphrase(cfg, passSrc)
 }
 
+// requireAuthKeysBeforeDB refuses missing keys BEFORE an auth-encryption
+// command opens the database: opening a SQLite path creates the file, so a run
+// from the wrong directory (or with a wrong dek_path) refused for missing keys
+// but left a fresh empty database behind (KEYMATERIAL-RESCUE-1, the #3523
+// family; openKeyWriter has the same order). With allowPending, a leftover
+// dek.key.pending skips the check: the crash recovery of rotate and migrate may
+// still promote it into the DEK, and openAuthKeyWriter checks again after it.
+func requireAuthKeysBeforeDB(cfg *config.Config, allowPending bool) error {
+	if !cfg.Storage.Encryption.Enabled || (allowPending && pendingDEKExists(cfg, ".")) {
+		return nil
+	}
+	if encryption.NewService(&cfg.Storage.Encryption, ".").WrappedDEKExists() {
+		return nil
+	}
+	return missingKeysError(cfg, ".")
+}
+
 func openDatabase(cfg *config.Config) (*gorm.DB, error) {
 	// Honor cfg.Storage.Type via the storage package instead of hardwiring SQLite
 	// (ADR-049). OpenGormDB does not migrate — these auth-encryption operations
@@ -94,10 +111,14 @@ func ShowAuthEncryptionStats(db *gorm.DB, encryptionEnabled bool) error {
 // AuthStatusWithConfig is the testable core of `encryption auth-encryption
 // status`. Read-only.
 func AuthStatusWithConfig(cfg *config.Config, passSrc crypto.PassphraseSource) error {
+	if err := requireAuthKeysBeforeDB(cfg, false); err != nil {
+		return err
+	}
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+	defer closeGormDB(db)
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
 	if cfg.Storage.Encryption.Enabled && !authEnc.WrappedDEKExists() {
 		return missingKeysError(cfg, ".")
@@ -157,6 +178,7 @@ func EnableAuthEncryptionWithConfig(cfg *config.Config, force bool, passSrc cryp
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+	defer closeGormDB(db)
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
 	// #2915: "already enabled" is read from disk BEFORE Initialize — a fresh
 	// AuthEncryption is never initialized, so IsInitialized() here could never be
@@ -220,10 +242,14 @@ func RotateAuthEncryptionWithConfig(cfg *config.Config, confirm bool, passSrc cr
 	if err != nil {
 		return err
 	}
+	if err := requireAuthKeysBeforeDB(cfg, true); err != nil {
+		return err
+	}
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+	defer closeGormDB(db)
 	authEnc, err := openAuthKeyWriter(cfg, db, passphrase, "rotate")
 	if err != nil {
 		return err
@@ -249,10 +275,14 @@ func MigrateAuthDataWithConfig(cfg *config.Config, dryRun bool, passSrc crypto.P
 	if err != nil {
 		return err
 	}
+	if err := requireAuthKeysBeforeDB(cfg, true); err != nil {
+		return err
+	}
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+	defer closeGormDB(db)
 	// migrate writes under the current DEK without rotating it, exactly like
 	// upgrade-aad: exclusive, after crash recovery, so it never writes under a
 	// DEK an interrupted rotation has already retired (#292/G62 took only the
@@ -329,10 +359,14 @@ func ValidateAuthEncryptionWithConfig(cfg *config.Config, verbose bool, passSrc 
 	if err != nil {
 		return err
 	}
+	if err := requireAuthKeysBeforeDB(cfg, false); err != nil {
+		return err
+	}
 	db, err := openDatabase(cfg)
 	if err != nil {
 		return fmt.Errorf("failed to open database: %w", err)
 	}
+	defer closeGormDB(db)
 	authEnc := encryption.NewAuthEncryption(&cfg.Storage.Encryption, ".", db)
 	if !authEnc.WrappedDEKExists() {
 		return missingKeysError(cfg, ".")
