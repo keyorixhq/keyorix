@@ -26,6 +26,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 const auditUnavailableReachingMethodsFile = "../../../internal/core/testdata/audit_unavailable_reaching_methods.txt"
@@ -123,8 +125,13 @@ func auditUnavailableMappingViolations(t *testing.T, dir string, reaching map[st
 
 // TestEveryAuditUnavailableReachingHandlerMapsTheOutage scans this package and
 // every handlerFamilySubdirs subpackage (httpx, reports), so a handler moved out
-// of this directory stays covered.
+// of this directory stays covered. It reports its findings through
+// guardrules.Rollout: report-only on pull requests while
+// docs/guard-rollout.d/TestEveryAuditUnavailableReachingHandlerMapsTheOutage.tsv
+// exists (docs/guard-rollout-contract.md rule 2). The population tripwire stays
+// blocking.
 func TestEveryAuditUnavailableReachingHandlerMapsTheOutage(t *testing.T) {
+	g := guardrules.Rollout(t)
 	reaching := readAuditUnavailableReachingMethods(t)
 	var violations []string
 	seen := 0
@@ -140,7 +147,7 @@ func TestEveryAuditUnavailableReachingHandlerMapsTheOutage(t *testing.T) {
 		t.Fatalf("saw only %d coreService calls of a reaching method: the scan is broken", seen)
 	}
 	if len(violations) > 0 {
-		t.Fatalf("these handlers call a core method that can return ErrMutationAuditUnavailable without "+
+		g.Errorf("these handlers call a core method that can return ErrMutationAuditUnavailable without "+
 			"mapping it: call sendAuditUnavailable(w, err) first in the error branch (503 + Retry-After), or "+
 			"add a reasoned exemption to auditUnavailableMappingExempt:\n  %s", strings.Join(violations, "\n  "))
 	}

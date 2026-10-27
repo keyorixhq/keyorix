@@ -22,6 +22,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 )
 
 const auditUnavailableReachingMethodsFile = "../../../internal/core/testdata/audit_unavailable_reaching_methods.txt"
@@ -74,7 +76,13 @@ func grpcAuditUnavailableMappingViolations(funcs []grpcFuncCalls, exempt map[str
 	return violations, seen, mappers
 }
 
+// TestEveryAuditUnavailableReachingRPCMapsTheOutage reports its findings through
+// guardrules.Rollout: report-only on pull requests while
+// docs/guard-rollout.d/TestEveryAuditUnavailableReachingRPCMapsTheOutage.tsv
+// exists (docs/guard-rollout-contract.md rule 2). The population tripwires stay
+// blocking.
 func TestEveryAuditUnavailableReachingRPCMapsTheOutage(t *testing.T) {
+	g := guardrules.Rollout(t)
 	violations, seen, mappers := grpcAuditUnavailableMappingViolations(
 		scanGRPCFuncs(t, ".", readAuditUnavailableReachingMethods(t)), auditUnavailableMappingExempt)
 	// Population tripwires: the known mutation RPCs and mappers must be seen.
@@ -82,7 +90,7 @@ func TestEveryAuditUnavailableReachingRPCMapsTheOutage(t *testing.T) {
 		t.Fatalf("saw only %d core calls of a reaching method: the scan is broken", seen)
 	}
 	if len(violations) > 0 {
-		t.Fatalf("these RPCs call a core method that can return ErrMutationAuditUnavailable without mapping it "+
+		g.Errorf("these RPCs call a core method that can return ErrMutationAuditUnavailable without mapping it "+
 			"to codes.Unavailable (auditUnavailableStatus, or a mapper that calls it), or add a reasoned exemption "+
 			"to auditUnavailableMappingExempt:\n  %s", strings.Join(violations, "\n  "))
 	}

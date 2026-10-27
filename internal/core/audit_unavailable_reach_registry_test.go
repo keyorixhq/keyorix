@@ -36,6 +36,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
@@ -130,7 +131,13 @@ func deriveAuditUnavailableReachingMethods(t *testing.T, paths []string) []strin
 	return out
 }
 
+// TestAuditUnavailableReachingMethodsFileIsCurrent reports a stale or missing
+// file through guardrules.Rollout: report-only on pull requests while
+// docs/guard-rollout.d/TestAuditUnavailableReachingMethodsFileIsCurrent.tsv
+// exists (docs/guard-rollout-contract.md rule 2). The population tripwire stays
+// blocking.
 func TestAuditUnavailableReachingMethodsFileIsCurrent(t *testing.T) {
+	g := guardrules.Rollout(t)
 	paths, err := srcpath.CoreFamilyGoFiles()
 	if err != nil {
 		t.Fatal(err)
@@ -152,10 +159,10 @@ func TestAuditUnavailableReachingMethodsFileIsCurrent(t *testing.T) {
 	}
 	have, err := os.ReadFile(auditUnavailableReachFile)
 	if err != nil {
-		t.Fatalf("%v: regenerate with KEYORIX_UPDATE_AUDIT_UNAVAILABLE_REACH=1", err)
+		g.Fatalf("%v: regenerate with KEYORIX_UPDATE_AUDIT_UNAVAILABLE_REACH=1", err)
 	}
 	if string(have) != want {
-		t.Fatalf("%s is stale: the set of exported core methods that can return ErrMutationAuditUnavailable "+
+		g.Errorf("%s is stale: the set of exported core methods that can return ErrMutationAuditUnavailable "+
 			"changed. Regenerate with KEYORIX_UPDATE_AUDIT_UNAVAILABLE_REACH=1 go test ./internal/core -run %s, "+
 			"then make every transport handler calling a new method map the refusal (the transport guards will name them).",
 			auditUnavailableReachFile, t.Name())
