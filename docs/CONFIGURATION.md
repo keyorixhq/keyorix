@@ -13,10 +13,10 @@ The config file is located via, in order: an explicit path argument, then
 - [Environment variables](#environment-variables)
 - [environment](#environment) · [locale](#locale) · [server](#server) · [storage](#storage)
 - [storage.encryption + key_provider](#encryption--kek-providers) (ADR-004, ADR-038)
-- [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
+- [secrets](#secrets) · [secret_value_policy](#secret_value_policy) · [secret_name_policy](#secret_name_policy) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035, ADR-058) — includes [revocation semantics by backend](#credential-revocation-semantics-by-backend)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [expiry_reminders](#expiry_reminders) · [license_expiry](#license_expiry) · [read_quota_alerts](#read_quota_alerts) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
 - [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028) · [crypto_inventory](#crypto_inventory)
 
 ---
@@ -209,7 +209,8 @@ server:
 for a local, internal-only, or air-gapped deployment. For those, set `cert_file`/
 `key_file` to a PEM cert and key instead (gRPC's `tls:` block takes the same two
 fields, `server.grpc.tls.cert_file` and `server.grpc.tls.key_file`;
-`domains`/`cert_cache_dir`/`allowed_ciphers` apply to HTTP only). `auto_cert`
+`domains` and `cert_cache_dir` apply to HTTP only; `allowed_ciphers` applies to both
+listeners). `auto_cert`
 is HTTP-only: `server.grpc.tls.auto_cert: true` is refused at start-up, because gRPC has
 no ACME client and the flag used to start a listener whose every handshake failed. A quick
 self-signed pair for local use:
@@ -275,6 +276,19 @@ only. The keys parse under `server.grpc` too (`server.grpc.trusted_proxies` and
 `server.grpc.hsts_preload`; both listeners share one config shape) but the gRPC
 server never reads them, so setting either there logs a `WARNING` at every start and
 has no effect. Set them under `server.http`.
+
+**Keys that parse under both listeners but only one reads.** `server.http` and
+`server.grpc` share one config shape, so every key of the block above parses under
+either. A key set under a listener that does not read it is ignored **without a
+warning** (only `trusted_proxies` and `hsts_preload` above warn):
+
+| Key | What the code does with it |
+|---|---|
+| `server.grpc.swagger_enabled`, `server.grpc.web_assets_path`, `server.grpc.allowed_origins`, `server.grpc.domain` | Not read. The Swagger UI, the web UI path, the CORS allow-list and the domain come from `server.http` only. |
+| `server.http.reflection_enabled` | Not read. gRPC reflection is switched by `server.grpc.reflection_enabled` (default `false`; it lists the gRPC services to any client that can connect, so keep it off in production). |
+| `server.grpc.tls.domains`, `server.grpc.tls.cert_cache_dir` | Not read: they configure ACME, which exists only on the HTTP listener. |
+| `server.grpc.tls.allowed_ciphers` | Read, with the same rules as the HTTP key: an empty list keeps the built-in AEAD-only TLS 1.2 suites, a name outside the secure list refuses start-up, and under `tls_mode: strict` it has no effect and logs a warning. |
+| `server.grpc.metrics_token`, `server.grpc.metrics_token_file` | Not used to protect anything: `/metrics` is served by the HTTP listener only. They are still validated (both set, or an unreadable `metrics_token_file`, refuses start-up) and the file is covered by the secret-file permission check. `admin validate --posture` reports `server.insecure_allow_unauthenticated_metrics` unless **both** listeners have a token, even when gRPC is disabled; `admin init` writes both for that reason. |
 
 The web container's nginx makes its own HSTS decision and strips the backend's
 header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
@@ -529,6 +543,24 @@ paste them as they are. Things to know:
 forms too. The tests create their own throwaway databases on that server by
 swapping the database name, keeping the other settings as written (including
 `sslmode` and a percent-encoded password).
+
+### PostgreSQL connection fields (without a `dsn`)
+
+When `storage.database.dsn` is empty, the server builds the connection string
+from the individual fields (`internal/config/postgres_dsn.go`). When `dsn` is set,
+it is used as written and these fields are not read for the connection.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `storage.database.host` | string | `localhost` | PostgreSQL host name or address. |
+| `storage.database.port` | string | `5432` | TCP port. |
+| `storage.database.name` | string | none | Database name (`dbname`). Not defaulted: set it. |
+| `storage.database.user` | string | none | Role the server connects as. Not defaulted: set it. |
+
+`ssl_mode` (default `require`), `ssl_root_cert` and the password (see below) go
+with these fields. Every value is quoted when the string is built, so a space in
+a field cannot add a second setting. The same TLS checks apply as for a `dsn`
+(see [PostgreSQL TLS](#postgresql-tls)).
 
 ### PostgreSQL password precedence
 
@@ -799,6 +831,21 @@ storage:
   resource name, or an Azure Key Vault key identifier URL.
   `KEYORIX_MASTER_PASSWORD` is **not** required. Startup needs the KMS reachable
   (fail-closed).
+  **`storage.encryption.key_provider.kms_encryption_context`** (a map of string to
+  string, default empty = no binding) is passed as the AWS `EncryptionContext` (aws-kms)
+  or the GCP additional authenticated data (gcp-kms) when the KEK is wrapped and
+  unwrapped, so another install that shares the same KMS key cannot unwrap this
+  install's wrapped KEK. Give it a value unique to the install, for example
+  `{keyorix-install: <id>}`. Left empty there is no binding, so on a KMS key shared with
+  other installs the wrapped KEK is not tied to this one. `azure-kms` does not support it (its RSA
+  wrap has no AAD input): setting it there is a **hard start-up error**, not a silent
+  downgrade. A context is applied only when a fresh KEK is wrapped, so adding one to
+  an existing install is `admin encryption migrate-provider --to-kms-encryption-context
+  … ` with a **new** `--to-wrapped-key-path` (it refuses the current path). Once the
+  context is set, a wrapped KEK that does not decrypt under it **fails start-up**; the
+  transitional escape hatch is `insecure_allow_kms_context_fallback` (see the
+  renamed-settings table), which retries without a context, is logged at every use,
+  and is refused at start-up as soon as the blob decrypts under its context.
 
 > Rotating the **DEK** (`keyorix-server admin encryption rotate`) re-encrypts all rows under a
 > new DEK and is independent of the provider.
@@ -837,6 +884,56 @@ config. They are deleted after one minor release.
 | `secrets.chunking.max_chunk_size_kb` | (never implemented) | `0` | Remove it. |
 | `secrets.chunking.max_chunks_per_secret` | (never implemented) | `0` | Remove it. |
 | `secrets.limits.max_secrets_per_user` | (never enforced) | `0` | Remove it. To cap value size use `secrets.limits.max_secret_size`. |
+
+## secret_value_policy
+
+An opt-in quality gate on secret **values**. **Off by default**: with no block, or
+`enabled: false`, any value is accepted and the other keys are not read.
+
+```yaml
+secret_value_policy:
+  enabled: true
+  min_length: 16          # default 0 = no minimum
+  reject_common: true     # default false
+  extra_denylist: ["acme2024", "company-secret"]   # default empty
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `secret_value_policy.enabled` | `false` | Turns the gate on. The server logs `Secret-value policy enabled` at start-up. |
+| `secret_value_policy.min_length` | `0` | Rejects a value shorter than this many **bytes** (not characters; a multi-byte character counts for more than one). `0` or less means no minimum. |
+| `secret_value_policy.reject_common` | `false` | Rejects a value that, trimmed and lower-cased, equals an entry of a small built-in list (`changeme`, `password`, `secret`, `123456`, `qwerty`, `admin`, `root`, `letmein`, `todo`, `tbd`, and similar, plus the empty value). |
+| `secret_value_policy.extra_denylist` | empty | More rejected values, compared the same way (trimmed, case-insensitive, the **whole** value, never a substring). Applies even when `reject_common` is `false`. |
+
+The gate runs when a secret is created, when an update changes the value, and on
+rotation and rollback (`internal/core/secrets.go`). Values already stored are not
+re-checked. A rejection says why but never echoes the value. This is a guard against
+placeholder values, not a strength meter: it does not check entropy or character
+classes.
+
+## secret_name_policy
+
+An opt-in naming convention for secret **names**. **Off by default**: with no block,
+or `enabled: false`, any valid name is accepted and `pattern` and `max_length` are
+not read.
+
+```yaml
+secret_name_policy:
+  enabled: true
+  pattern: "[A-Z][A-Z0-9_]*"   # RE2; default empty = no pattern check
+  max_length: 64               # default 0 = no maximum
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `secret_name_policy.enabled` | `false` | Turns the policy on. The server logs `Secret-name policy enabled` at start-up. |
+| `secret_name_policy.pattern` | empty | An RE2 regular expression the whole name must match. The server always wraps it as `^(?:pattern)$`, so an unanchored pattern still has to match the entire name. A pattern that does not compile stops the server at start-up (`Invalid secret_name_policy`). |
+| `secret_name_policy.max_length` | `0` | Rejects a name longer than this many characters (Unicode code points). `0` or less means no maximum. |
+
+The policy is checked when a secret is created and when secrets are renamed in bulk.
+Existing secrets are not re-checked, so adding a policy can leave non-conforming names
+behind; the secret-name conformance report lists them so they can be renamed
+(`internal/core/secret_name_conformance.go`).
 
 ## security
 
@@ -1405,7 +1502,17 @@ oidc:
       issuer: https://kubernetes.default.svc          # must equal the JWT `iss`
       jwks_uri: https://kubernetes.default.svc/openid/v1/jwks   # https required
       audiences: ["keyorix"]                            # JWT `aud` must contain one
+      max_token_age_seconds: 3600                       # optional; default 86400 (24h)
 ```
+
+**`oidc.issuers[].max_token_age_seconds`** (integer seconds, default `0` = 24 hours)
+bounds how long ago a token was *issued*: a token whose `iat` is older than this
+(plus a fixed 60 s clock-skew allowance) is refused, and so is a token with no `iat`.
+`exp` alone does not do this. Without the bound, a token minted with a far-future
+`exp` by a misconfigured or malicious issuer or CI pipeline would verify for as long
+as that `exp`. Zero, unset or a negative value all mean the 24-hour default; there is
+no way to turn the bound off. Lower it for issuers that mint short-lived tokens
+(Kubernetes projected tokens, CI job tokens). It is per issuer entry.
 
 ## session
 
@@ -1548,14 +1655,26 @@ External delivery channels for the in-app notifications Keyorix already creates 
 access-request approvals, anomaly alerts, rotation and recertification reminders, and
 break-glass activations (ISO 27001 A.5.5 / SOC 2 operational alerting). Each
 notification is still written to the in-app bell; when a channel is enabled it is
-**also** fanned out, best-effort and asynchronously (a slow or down endpoint drops
+**also** sent out, best-effort and asynchronously (a slow or down endpoint drops
 rather than stalling the triggering action).
 
-Two channels are available; enable either or both (both → each notification is
-delivered to all). The **webhook** channel POSTs each notification as a JSON body
-(`{user_id, email, type, title, message, project_id, link}`) to `endpoint`,
-optionally bearer-authenticated. The **email** channel sends a plaintext message to
-the recipient via the operator's SMTP relay (same settings as `credential_delivery`).
+Four channels exist (`webhook`, `email`, `slack`, `teams`), but they do **not** all
+carry the same notifications (`server/wire_notifications.go`):
+
+- **Per-user and per-project notifications** (a secret shared with you, an access
+  request, an anomaly alert, a break-glass activation, a reminder addressed to an admin)
+  go out over the **email** channel only, to that user's own address. Webhook, Slack and
+  Teams are deliberately not used for them: they are one fixed destination, and sending
+  one user's event there would show it to everyone who can see the channel.
+- **Deployment-wide broadcasts** go to every enabled channel: the scheduled
+  [compliance digest](#compliance_digest) and auto-rotation-failure alerts. Those are the
+  only notifications webhook, Slack and Teams receive. Email sends them to
+  `notifications.email.broadcast_to`.
+
+The **webhook** channel POSTs a JSON body (`{user_id, email, type, title, message,
+project_id, link}`) to `endpoint`, optionally bearer-authenticated. The **email** channel
+sends a plaintext message via the operator's SMTP relay (same settings as
+`credential_delivery`).
 
 ```yaml
 notifications:
@@ -1564,6 +1683,7 @@ notifications:
     endpoint: "https://hooks.example.com/keyorix"
     token: ""                    # prefer the KEYORIX_NOTIFY_WEBHOOK_TOKEN env var
     insecure_skip_verify: false  # TLS verification off — self-signed endpoints only
+    signing_secret: ""           # prefer the KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET env var; default empty = unsigned
   email:
     enabled: true
     host: "smtp.example.com"
@@ -1572,6 +1692,7 @@ notifications:
     password: ""                 # prefer the KEYORIX_NOTIFY_SMTP_PASSWORD env var
     from: "keyorix@example.com"
     tls: "starttls"              # starttls | implicit | none(dev-only) — none requires KEYORIX_ALLOW_INSECURE_SMTP=true
+    broadcast_to: ""             # address for deployment-wide broadcasts (see below); default empty
   slack:
     enabled: true
     webhook_url: ""              # prefer the KEYORIX_NOTIFY_SLACK_WEBHOOK env var
@@ -1583,6 +1704,26 @@ notifications:
 The **slack** and **teams** channels POST to an incoming-webhook URL (Slack: a
 `{text}` message; Teams: a MessageCard). The webhook URL embeds the platform's secret
 token, so set it via the env var.
+
+**`notifications.webhook.signing_secret`** (default empty: payloads are **not**
+signed). When set, each webhook POST carries `X-Keyorix-Signature:
+sha256=<hex>`, the HMAC-SHA256 of the request body keyed with this secret, so the
+receiver can check the request came from Keyorix and was not altered. Recompute the HMAC
+over the raw body and compare in constant time. Without it, anyone who learns the
+endpoint URL can post forged notifications to it, unless `token` is also set and
+checked on the receiving side. The value comes from
+`KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET` (or its `_FILE` form) when set, otherwise from
+the file.
+
+**`notifications.email.broadcast_to`** (default empty) is the single address that
+receives *broadcast* notifications over the email channel: the scheduled
+[compliance digest](#compliance_digest) and auto-rotation-failure alerts. Those have
+no one recipient, whereas a per-user notification is mailed to that user's own
+address. With `broadcast_to` empty, an email channel drops every broadcast (logged as
+`email dropped a broadcast notification`, and counted as a dropped delivery). If email
+is the **only** enabled channel and `broadcast_to` is empty, the server logs a
+`WARNING` at start-up saying so. If Slack, Teams or the webhook is also enabled, the
+broadcast still reaches those.
 
 > Secrets are read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` / `KEYORIX_NOTIFY_SMTP_PASSWORD`
 > / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
@@ -1746,6 +1887,78 @@ rotation_reminders:
   schedule: "24h"         # Go duration between reminder runs (default 24h)
 ```
 
+## expiry_reminders
+
+An opt-in background scheduler that notifies project admins (in-app, and by email where
+that channel is enabled) of secrets that are **already expired or expire within
+`lead_days`**, going by each secret's own `expiration` field. **Off by default**: with
+no block, nobody is told that a secret is about to lapse. One standing reminder per
+project per admin, de-duplicated like the rotation reminder: an unread reminder is
+not repeated, but it is raised in place from Warning to Critical once any secret in the
+project has actually expired. Single-replica-gated (ADR-039).
+
+```yaml
+expiry_reminders:
+  enabled: true
+  schedule: "24h"         # Go duration between runs (default 24h)
+  lead_days: 14           # warn this many days ahead (default 14)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `expiry_reminders.enabled` | `false` | Starts the scheduler; the server logs `Expiry-reminder scheduler enabled`. |
+| `expiry_reminders.schedule` | `24h` | Go duration. An empty, unparseable or non-positive value silently becomes `24h`. |
+| `expiry_reminders.lead_days` | `14` | Days ahead of `expiration` to start warning. `0` or a negative value means 14. |
+
+The same scan can be run by hand with `POST /api/v1/admin/jobs/expiry-reminders?lead_days=N`.
+
+## license_expiry
+
+An opt-in background reminder for the offline commercial license (ADR-065). **Off by
+default.** When enabled, it tells every install-wide admin (in-app) that the license is
+within `lead_days` of its expiry or already expired, so a lapse does not silently turn
+commercial features off. It acts only on a validly signed license that has an expiry
+date: with no license (the community baseline) or an invalid or untrusted one it says
+nothing (a bad license is reported at start-up and on the license status endpoint
+instead). It never changes whether the license gate lets a feature through. An unread
+reminder is not repeated, but is raised in place from Warning (expiring, which includes
+the [`license.grace_hours`](#license) grace period) to Critical (expired past the grace
+period). Single-replica-gated (ADR-039).
+
+```yaml
+license_expiry:
+  enabled: true
+  schedule: "24h"         # Go duration between checks (default 24h)
+  lead_days: 30           # remind this many days before expiry (default 30)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `license_expiry.enabled` | `false` | Starts the reminder; the server logs `License-expiry reminder enabled`. |
+| `license_expiry.schedule` | `24h` | Go duration. An empty, unparseable or non-positive value silently becomes `24h`. |
+| `license_expiry.lead_days` | `30` | Days before expiry to start reminding. `0` or a negative value means 30. |
+
+## read_quota_alerts
+
+An opt-in background scan of secrets that have a read limit (`max_reads`). **Off by
+default.** It notifies each such secret's **owner** (in-app) when the read count reaches
+80% of the limit (Warning), 95% (Critical), or 100% (Critical, "exhausted"). One unread
+reminder per secret and owner; it is raised in place when the severity goes up and
+otherwise not repeated. Single-replica-gated (ADR-039).
+
+```yaml
+read_quota_alerts:
+  enabled: true
+  schedule: "24h"         # Go duration between scans (default 24h)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `read_quota_alerts.enabled` | `false` | Starts the scan; the server logs `Read-quota alert scheduler enabled`. |
+| `read_quota_alerts.schedule` | `24h` | Go duration. An empty, unparseable or non-positive value silently becomes `24h`. |
+
+The 80% and 95% thresholds are fixed in code, not configurable.
+
 ## certificate_expiry
 
 An opt-in background scan (ADR-055) that parses **certificate-typed** secrets and
@@ -1765,7 +1978,8 @@ certificate_expiry:
 
 ## audit_checkpoints
 
-An opt-in background scheduler that signs the audit hash-chain head (ADR-029) so
+A background scheduler, **on by default whenever encryption is configured**
+(`server/scheduler_audit_checkpoint.go`), that signs the audit hash-chain head (ADR-029) so
 **tail-truncation and genesis re-seed are detectable on-box**, not just via an
 off-box anchor. Each run records a `(chained_events, head_id, head_hash)`
 checkpoint with an HMAC keyed by a KEK-derived key (`deriveAuditCheckpointKey`, `internal/encryption/keymanager_lifecycle.go`) the database/DBA does not hold;
@@ -1775,6 +1989,11 @@ against the latest checkpoint. Single-replica-gated (ADR-039).
 **Requires encryption enabled** — the signing key is derived from the KEK (not the
 DEK, so a DEK rotation does not change it; a KEK rotation does), so with
 encryption off the scheduler logs a warning and does nothing.
+
+`enabled: true` is therefore redundant (kept for older configs). The only way to turn
+checkpoints off with encryption on is `insecure_disable_audit_checkpoints: true`; the
+server then logs a `WARNING` at every start that the trail is tamper-evident but a
+database-write attacker can recompute the hash chain undetected. Leave it `false`.
 
 ```yaml
 audit_checkpoints:
@@ -2039,7 +2258,26 @@ identity, for instance — is **always denied** when this is on: there is no
 ```yaml
 classification:
   restricted_requires_approval: false   # opt-in; see above before enabling
+  restricted_requires_permission: false # opt-in; see below
+  restricted_requires_mfa_stepup: false # opt-in; see below
+  restricted_mfa_stepup_window_minutes: 15   # default 15 (0 = 15)
+  mfa_stepup_grant_retention_days: 30        # default 30 (0 = 30)
 ```
+
+Three independent gates can guard a "restricted" secret's value. **All three are off
+by default** (so `restricted` stays informational until you turn one on). When
+several are on, **every** enabled gate must pass. A read with no identifiable user
+(a machine credential, the embedded-mode CLI) is denied whenever any gate is on.
+Any failure to confirm a gate, including a storage error, denies the read. The
+restricted-read permission in the table is named `secrets.read.restricted`.
+
+| Key | Default | What the code does |
+|---|---|---|
+| `classification.restricted_requires_approval` | `false` | The approved, secret-scoped access request described above. |
+| `classification.restricted_requires_permission` | `false` | The user must hold the restricted-read permission for the secret's project and environment (checked with the normal authorization path). Only tightens access: it never grants a read. Grant the permission to the roles that should see restricted values *before* enabling, or no one passes. |
+| `classification.restricted_requires_mfa_stepup` | `false` | The user must hold an unexpired MFA step-up grant for restricted-secret reads. A grant is minted by an explicit MFA step-up verification, or ambiently by a WebAuthn login. It is a separate purpose from the re-authentication step-up used for account-security changes; neither satisfies the other. |
+| `classification.restricted_mfa_stepup_window_minutes` | `15` | How long, in minutes, a step-up grant stays valid. `0` or a negative value means 15. Only used when `restricted_requires_mfa_stepup` is on. |
+| `classification.mfa_stepup_grant_retention_days` | `30` | How many days an *expired* grant row is kept before a maintenance sweep deletes it. `0` or a negative value means 30. The sweep (`mfa_stepup_grant_prune`) runs every 6 hours whether or not the step-up gate is on; it is bookkeeping. Each explicit step-up is audited as `mfa.stepup_verified`; a grant minted by a WebAuthn login is covered by that login's audit event. It does not change how long a grant is active. |
 
 ## anomaly_alerts
 
@@ -2056,7 +2294,33 @@ anomalies reach your SOC). Each anomaly is announced once. Single-replica-gated
 anomaly_alerts:
   enabled: true
   schedule: "1h"          # Go duration between scan+alert passes (default 1h)
+  business_hours:
+    timezone: "America/New_York"   # IANA name; default "" = UTC
+    off_hours_start: 22            # hour 0-23; default 22
+    off_hours_end: 6               # hour 0-23; default 6
+  baseline_quarantine: "24h"       # Go duration; default 24h; "0" turns it off
 ```
+
+**`anomaly_alerts.business_hours`** sets what the *off-hours* rule treats as off hours:
+access at an hour inside the band `[off_hours_start, off_hours_end)` (wrapping midnight,
+so `22` to `6` is 22:00 to 05:59) as seen in `timezone`. Left unset, the band is 22:00 to
+06:00 UTC, which on a non-UTC site flags ordinary local working hours (or misses real
+night access); `timezone` alone is the usual fix. Set `off_hours_start` and
+`off_hours_end` **together**: if either is non-zero, both are taken literally, so
+`off_hours_start: 20` alone means 20:00 to 00:00, not 20:00 to 06:00. Both `0` keeps the
+default band. An unknown `timezone`, an hour outside 0-23, or equal start and end is
+**rejected**; the server does not stop, it logs `Anomaly off-hours config ignored` and
+carries on with the UTC 22:00 to 06:00 default, so check the log after changing these.
+A configuration saved at runtime through the API is applied on top of these file values
+at start-up and before every scan, and takes precedence for the settings it carries.
+
+**`anomaly_alerts.baseline_quarantine`** (default `24h`) is how long an IP address or
+user must have been seen, before the scan window, to be trusted as "known" by the
+new-IP and new-user rules. Without a delay, an attacker's first successful access would
+become part of the baseline one scan later and those rules would go quiet for it. An
+address or user also has to be seen at least 3 times to count as known. `0` or `0s`
+**turns the quarantine off**, which weakens that protection; an unparseable or negative
+value silently becomes `24h`.
 
 ### anomaly_alerts.ml — Isolation Forest detection (ADR-050)
 
@@ -2098,7 +2362,27 @@ audit:
     endpoint: https://siem.example.com/services/collector
     # token: ""                 # prefer KEYORIX_SIEM_TOKEN
     insecure_skip_verify: false # never true in production
+    # spool_dir: /var/lib/keyorix/siem-spool   # default empty: no on-disk backlog
 ```
+
+- **`audit.siem.token`** is the credential sent to the SIEM: `Authorization: Splunk
+  <token>` for `splunk`, `DD-API-KEY: <token>` for `datadog`, `Authorization: Bearer
+  <token>` for `webhook` (omitted if empty). When `KEYORIX_SIEM_TOKEN` (or
+  `KEYORIX_SIEM_TOKEN_FILE`) is set it is used instead of the file value; setting both
+  of those two is refused at start-up. A token written in the config file is only as
+  safe as that file, so prefer the environment variable or the `_FILE` form.
+- **`audit.siem.spool_dir`** (default empty) turns on a durable on-disk backlog. Without
+  it, forwarding is best-effort: an event that cannot be delivered (queue full, retries
+  used up) is lost *from the SIEM copy*. With it, such events are appended to
+  `<spool_dir>/siem-spool.jsonl` and re-sent every 30 seconds (and once at start-up)
+  until the SIEM accepts them. The directory is created `0700` (an existing one is
+  tightened to `0700`) and the file is `0600`, because the events carry secret names,
+  usernames, IP addresses and justifications. The backlog is capped at 100 MiB; past
+  that, new events are dropped from the SIEM copy, logged, and counted in
+  `keyorix_siem_forwards_total{outcome="dropped"}`. The local audit chain keeps every event either way, so a
+  full spool never loses the audit record itself. A line over 4 MiB is skipped and
+  logged. The path needs to be writable by the server user and on a volume that
+  survives restarts (in a container, a mounted volume).
 
 ## scim
 
@@ -2170,6 +2454,50 @@ crypto_inventory:
   unbounded_lifetime_years: 10    # default; lifetime assumed for a key with no expiry
 ```
 
+## license
+
+The offline commercial license (ADR-065), checked locally with no phone-home. **Fail-safe:
+a missing, unreadable, expired or invalid license never blocks start-up or denies access to
+existing data**; the license gate falls back to the community baseline and the server
+keeps running. A build without an embedded license key evaluates every token to the
+baseline.
+
+```yaml
+license:
+  path: /etc/keyorix/license.token   # default empty = community baseline
+  deployment_id: ""                  # default empty
+  grace_hours: 336                   # default 336 (14 days)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `license.path` | empty | File holding the license token, as written by `keyorix license install`. Empty means the community baseline. A file that is missing, unreadable or not a regular file logs a `WARNING` and also means the baseline. The file is read **once, at start-up**; after installing a renewed license, restart the server. |
+| `license.deployment_id` | empty | Only matters for a license bound to a deployment. For such a license this must be set and equal to the license's `deployment_id`; if it is empty or different, the license is treated as invalid (community baseline). A license not bound to a deployment ignores this key. |
+| `license.grace_hours` | `336` | Hours after the license's expiry date during which its features are kept (with a "renew now" warning). `0` or a negative value means 336 (14 days). After the grace window the license counts as expired and the baseline applies. |
+
+See [`license_expiry`](#license_expiry) for the optional admin reminder.
+
+## minimum_cli_version
+
+A top-level string, empty by default (no floor). Set it to a semantic version such as
+`"1.2.0"` to make the CLI refuse to run against this server when the CLI build is older
+than that, or on a different major version. It is meant for forcing operators onto a CLI
+that carries a security fix. The server only *publishes* the value, on the
+unauthenticated `GET /api/v1/version` (so a CLI can check before it has credentials); the
+refusal is made by the CLI itself (`cli/internal/skew`), so it cannot stop an old
+CLI that skips the check, or a raw API client.
+
+The major-version refusal exists only while this key is set: with the key empty there is
+no floor at all, and a CLI on another major line gets at most an API-version warning and
+proceeds. The floor also fails open in two cases, both silently:
+
+- The server does not validate the value. The CLI applies the floor only when the value
+  has the form `MAJOR.MINOR.PATCH` (an optional leading `v` and a `-pre`/`+build` suffix
+  are allowed). Any other value, for example `"1.2"`, turns the floor off without a
+  warning on either side. Always write all three numbers.
+- A CLI build whose own version is not of that form (a `dev` or other non-release build)
+  skips the floor.
+
 ## sso
 
 Human single-sign-on login via **OIDC** (authorization-code flow). When enabled, the
@@ -2231,6 +2559,64 @@ must return an `email` claim (request the `email` scope), or the login is refuse
 > **A JIT account is not managed by SCIM** (since #3493). Its `externalId` is in the
 > reserved `sso:<provider>:<sub>` scheme, so SCIM get, list, update, deactivate, delete
 > and group membership all refuse it, and a SCIM push for it is not reconciled to it.
+
+### SAML 2.0 providers (`sso.providers[].type: saml`)
+
+`sso.providers[].type` is `oidc` (the default; also what any value other than
+`saml` builds) or `saml` (compared case-insensitively). A `saml` provider is built
+from its own `saml:` block with no OIDC discovery, and the OIDC fields above
+(`issuer`, `client_id`, `client_secret`, `redirect_url`, `scopes`, `groups_claim`)
+are ignored for it. `auto_provision`, `default_role`, `group_sync` and
+`group_role_map` apply to both types.
+
+```yaml
+sso:
+  enabled: true
+  providers:
+    - name: adfs                 # also the URL slug
+      type: saml
+      saml:
+        idp_metadata_file: /etc/keyorix/adfs-metadata.xml   # or idp_metadata_xml: "<EntityDescriptor ...>"
+        sp_entity_id: https://keyorix.example.com/auth/saml/adfs/metadata
+        acs_url: https://keyorix.example.com/auth/saml/adfs/acs
+        email_attribute: ""      # default: the emailaddress claim URI (see below)
+        name_attribute: ""
+        groups_attribute: ""
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `sso.providers[].saml.idp_metadata_xml` | none | The IdP's SAML metadata, inline: its entity ID, SSO URL and signing certificate. Takes precedence over `idp_metadata_file` when both are set. |
+| `sso.providers[].saml.idp_metadata_file` | none | Path to the same metadata. Read only when `idp_metadata_xml` is empty; it must be a regular file. Metadata that is missing or cannot be parsed means the provider is skipped (see below). |
+| `sso.providers[].saml.sp_entity_id` | none, required | Keyorix's own entity ID (conventionally its metadata URL). It must parse as a URL. An assertion is refused unless it has an `AudienceRestriction` naming exactly this value; a missing element is a rejection, not a pass. |
+| `sso.providers[].saml.acs_url` | none, required | The Assertion Consumer Service URL the IdP POSTs the response to, `<public-host>/auth/saml/<name>/acs`. Register this exact value at the IdP. The browser is sent back to `<scheme>://<host of acs_url>/auth/sso/complete`, so it must be an absolute URL with a host. |
+| `sso.providers[].saml.email_attribute` | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/emailaddress` | The assertion attribute holding the user's email. |
+| `sso.providers[].saml.name_attribute` | `http://schemas.xmlsoap.org/ws/2005/05/identity/claims/displayname` | The attribute holding the display name. |
+| `sso.providers[].saml.groups_attribute` | `http://schemas.xmlsoap.org/claims/Group` | The attribute holding group names, used by `group_sync` and `group_role_map`. (`groups_claim` is OIDC-only.) |
+
+An attribute is matched by its `Name` exactly, or by its `FriendlyName` ignoring
+case. For email and name the first non-blank value of the attribute is used; for
+groups, every non-blank value. The empty-versus-absent groups rule is below.
+
+A provider that is misconfigured (no `saml:` block, missing `acs_url` or
+`sp_entity_id`, unreadable or unparseable metadata) is **skipped with a log line**
+at start-up; it does not stop the server, but logging in through it fails.
+
+Two SAML-only opt-outs, both off by default:
+
+- `sso.providers[].insecure_trust_saml_asserted_email` (default `false`). SAML has
+  no per-assertion "email verified" signal. With this off, a SAML login can create a
+  **new** account (when `auto_provision` is on) but cannot take over an **existing**
+  one by asserting its email address. Turning it on lets a SAML login claim an
+  existing account by the email the assertion carries (the account-takeover risk
+  `admin validate --posture` reports it for); enable it only for an IdP that verifies
+  every email it asserts. (OIDC providers check `email_verified` per login instead and
+  ignore this key.)
+- `sso.providers[].saml.insecure_allow_idp_initiated_saml`: **refused at start-up**
+  when `true` (the old name `allow_idp_initiated` too). IdP-initiated responses carry
+  no `InResponseTo`, and Keyorix keeps no assertion replay cache, so such a response is
+  rejected at the ACS whatever this says; the server refuses to boot rather than let
+  the setting look effective.
 
 ### Offboarding an SSO / JIT account
 
@@ -2357,7 +2743,23 @@ Project-membership onboarding mode (ADR-022).
 ```yaml
 membership:
   validation_mode: allowlist    # open | allowlist (default) | idp
+  domain_allowlist: []          # e.g. ["example.com"]; empty (default) = no restriction
 ```
+
+**`membership.domain_allowlist`** restricts which email domains may be onboarded.
+**It is empty by default, which means any domain is accepted**; set it on any
+install where only your own organisation's addresses should hold accounts. The
+list is handed to the core service once at start-up (`server/wire_membership.go`),
+so a change needs a restart.
+
+- A domain matches when it equals an entry, ignoring case. Subdomains do not match
+  (`example.com` does not admit `a@mail.example.com`) and there are no wildcards.
+- An address with no `@`, an empty local part or domain, or more than one `@` is
+  refused rather than having its domain guessed.
+- It applies to project and global invitations, to adding a member or changing a
+  member's project role by user ID, to joining a group that confers a role at the
+  matching scope, to accounts created by SCIM, and to SSO just-in-time
+  provisioning. An account that already exists and signs in is not re-checked.
 
 ## credential_delivery
 
@@ -2376,6 +2778,13 @@ credential_delivery:
     from: keyorix@example.com
     tls: starttls               # starttls | implicit | none (dev only)
 ```
+
+**`credential_delivery.smtp.password`** is the relay password. When
+`KEYORIX_SMTP_PASSWORD` (or `KEYORIX_SMTP_PASSWORD_FILE`) is set, that value is used
+and the file value is ignored; setting both of those two is refused at start-up. Keep
+it out of `keyorix.yaml`: a password written there is readable by anyone who can read
+the config file. (The notification email channel has its own,
+`notifications.email.password` / `KEYORIX_NOTIFY_SMTP_PASSWORD`.)
 
 `out_of_band` / `log` return or log the link instead of emailing it (useful when no
 mail relay is available). A link-producing mode with an empty `base_url` is a

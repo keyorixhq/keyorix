@@ -53,7 +53,7 @@ cli	keyorix audit logs	cli/cmd/audit.go	runAuditLogs	none	single/no write-shaped
 cli	keyorix audit migrate-chain-encoding	cli/cmd/audit.go	runAuditMigrateChain	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit search	cli/cmd/audit.go	runAuditSearch	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix audit verify	cli/cmd/audit.go	runAuditVerify	none	single/no write-shaped call found by a 1-hop scan of the handler body
-cli	keyorix backup	server/admin/backup.go	runAdminBackup	REVIEW	8 write-shaped call(s) found by a 1-hop scan of the handler body: storage.OpenGormDB, os.OpenFile, f.Close, os.Remove, f.Close, os.Remove, f.Close, os.Remove
+cli	keyorix backup	server/admin/backup.go	runAdminBackup	REVIEW	5 write-shaped call(s) found by a 1-hop scan of the handler body: storage.OpenGormDB, os.OpenFile, os.Remove, f.Close, os.Remove
 cli	keyorix billing	cli/cmd/billing.go		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix billing report	cli/cmd/billing.go	runBillingReport	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix break-glass	cli/cmd/breakglass.go		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
