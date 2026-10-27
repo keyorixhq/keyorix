@@ -129,6 +129,7 @@ type auditLossFindings struct {
 	seals  *auditSealSet
 	anchor *storage.AuditChainAnchor
 	state  *auditVerifyState
+	resume bool
 }
 
 // PlanAuditLossAcceptance verifies first and returns what accept-loss would
@@ -145,8 +146,11 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 	if err != nil {
 		return nil, err
 	}
-	if f.seals.pending {
+	if f.resume {
 		last := f.seals.recs[len(f.seals.recs)-1]
+		if err := c.auditLossResumeCheck(ctx, f, last); err != nil {
+			return nil, err
+		}
 		return &AuditLossPlan{Seq: last.Seq, Gaps: last.Gaps, Truncation: last.Truncation, Before: last.Before, After: last.After,
 			LostEvents: last.LostEvents, Anchor: last.Anchor, Accepted: last.Accepted, Resume: true, seal: last}, nil
 	}
@@ -233,6 +237,16 @@ func (c *KeyorixCore) auditLossPreflight(ctx context.Context) (*auditLossFinding
 	if seals.problem != "" && !seals.pending {
 		return nil, auditLossRefused("the audit seal record cannot be trusted (%s): that is tampering with an earlier acceptance, not a row loss", seals.problem)
 	}
+	// An acceptance that stopped part way: its event is missing, or the
+	// checkpoint, high-water mark and state were not all written yet (an
+	// authentic state saved under fewer seals). A re-run completes it; the
+	// half-written artifacts are not judged, they are rewritten.
+	resume := seals.pending
+	if !resume && len(seals.recs) > 0 {
+		if resume, err = c.auditStateBehindSeals(ctx, len(seals.recs)); err != nil {
+			return nil, err
+		}
+	}
 	ev, err := c.scanAuditVerifyEvidence(ctx)
 	if err != nil {
 		return nil, err
@@ -246,7 +260,7 @@ func (c *KeyorixCore) auditLossPreflight(ctx context.Context) (*auditLossFinding
 	if err != nil {
 		return nil, err
 	}
-	if cp != nil && !seals.pending && !c.checkpointSignatureValid(cp) {
+	if cp != nil && !resume && !c.checkpointSignatureValid(cp) {
 		if cp.KeyVersion != c.auditCkptKeyVersion {
 			return nil, auditLossRefused("key mismatch: the latest checkpoint #%d claims key version %q, not the current %q (a key change that did not carry the state over); follow the key-rotation runbook", cp.ID, cp.KeyVersion, c.auditCkptKeyVersion)
 		}
@@ -254,7 +268,7 @@ func (c *KeyorixCore) auditLossPreflight(ctx context.Context) (*auditLossFinding
 	}
 	if val, ok, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey); err != nil {
 		return nil, err
-	} else if ok && !seals.pending {
+	} else if ok && !resume {
 		hw, sig, parsed := c.parseAuditHighWaterBound(val)
 		switch {
 		case !parsed:
@@ -281,14 +295,60 @@ func (c *KeyorixCore) auditLossPreflight(ctx context.Context) (*auditLossFinding
 	if stReason != "" {
 		return nil, auditLossRefused("the verification state is untrusted (%s): not proven, run a full verification first", stReason)
 	}
-	if d := st.Discontinuity; d != nil && !seals.pending {
+	if d := st.Discontinuity; d != nil && !resume {
 		switch d.Kind {
 		case auditDiscDeleted, auditDiscPastHead, auditDiscBeforeBreak:
 		default:
 			return nil, auditLossRefused("the verification state discontinuity (%s: %s) is not a row loss: follow its runbook path", d.Kind, d.Reason)
 		}
 	}
-	return &auditLossFindings{seals: seals, anchor: anchor, state: st}, nil
+	return &auditLossFindings{seals: seals, anchor: anchor, state: st, resume: resume}, nil
+}
+
+// auditStateBehindSeals reports whether the stored verification state is
+// authentic and behind the n authentic seals: saved under fewer, or carrying
+// the seal-record discontinuity a server started in between recorded. That is
+// an acceptance stopped between its event and its state save. A missing or
+// garbled state is not "behind" (a discontinuity a re-run does not rewrite).
+func (c *KeyorixCore) auditStateBehindSeals(ctx context.Context, n int) (bool, error) {
+	val, ok, err := c.storage.GetSystemMetadata(ctx, auditVerifyStateKey)
+	if err != nil || !ok {
+		return false, err
+	}
+	s, _, _, err := c.decodeAuditVerifyStateCarried(ctx, val)
+	if err != nil || s == nil {
+		return false, err
+	}
+	// A server started in between saves the state with the seal-record
+	// discontinuity (saved before the acceptance) under the current count.
+	return s.Seals < n || (s.Discontinuity != nil && s.Discontinuity.Kind == auditDiscSeal), nil
+}
+
+// auditLossResumeCheck: completing an acceptance rewrites the checkpoint and
+// high-water mark from the sealed walk, so the chain must still hold at least
+// what the seal recorded as surviving, with its head unchanged (nothing was
+// cut since the record was written).
+func (c *KeyorixCore) auditLossResumeCheck(ctx context.Context, f *auditLossFindings, last *auditSeal) error {
+	v, err := c.walkAuditChainGaps(ctx, storage.AuditChainSegment{Anchor: f.anchor}, sealedGaps(f.seals.recs, nil))
+	if err != nil {
+		return err
+	}
+	if !v.Valid {
+		return auditLossRefused("the sealed chain does not verify (%s): investigate before completing seal #%d", v.Reason, last.Seq)
+	}
+	if got := v.ChainedEvents + anchorPurgedEvents(f.anchor); got < last.After.Events {
+		return auditLossRefused("seal #%d recorded %d surviving events, only %d remain: rows were removed since, investigate", last.Seq, last.After.Events, got)
+	}
+	if last.After.HeadID != 0 {
+		hash, found, err := c.storage.AuditEntryHashByID(ctx, last.After.HeadID)
+		if err != nil {
+			return err
+		}
+		if !found || hash != last.After.HeadHash {
+			return auditLossRefused("audit event #%d, the surviving head seal #%d recorded, is missing or rewritten: investigate", last.After.HeadID, last.Seq)
+		}
+	}
+	return nil
 }
 
 // auditEventByID reads one audit row with its hashes (nil when absent).
@@ -528,6 +588,9 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 			if err := c.storage.SetSystemMetadata(ctx, auditSealsKey, encodeAuditSeals(append(recs, r))); err != nil {
 				return fmt.Errorf("accept-loss: write the seal record: %w", err)
 			}
+			if err := c.sealHook("record"); err != nil {
+				return err
+			}
 			if set, err = c.loadAuditSeals(ctx); err != nil {
 				return err
 			}
@@ -537,6 +600,9 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 		if set.pending {
 			if !c.writeAuditEventFull(ctx, auditSealEvent, nil, nil, nil, "", auditSealEventText(last)) {
 				return fmt.Errorf("accept-loss: the in-chain %s event could not be appended (the seal stays incomplete and reads broken; re-run)", auditSealEvent)
+			}
+			if err := c.sealHook("event"); err != nil {
+				return err
 			}
 			if set, err = c.loadAuditSeals(ctx); err != nil {
 				return err
@@ -550,12 +616,22 @@ func (c *KeyorixCore) AcceptAuditLoss(ctx context.Context, plan *AuditLossPlan) 
 			return err
 		}
 		res.Checkpoint, res.HighWater = cp, hw
+		if err := c.sealHook("high-water"); err != nil {
+			return err
+		}
 		return c.saveSealedAuditVerifyState(ctx, last, cp)
 	})
 	if err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+func (c *KeyorixCore) sealHook(step string) error {
+	if c.auditSealHook == nil {
+		return nil
+	}
+	return c.auditSealHook(step)
 }
 
 // resealAuditCheckpoint writes a checkpoint and high-water mark of the sealed
@@ -579,6 +655,9 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 		return nil, "", fmt.Errorf("accept-loss: write the checkpoint: %w", err)
 	}
 	c.anchorCheckpoint(ctx, cp)
+	if err := c.sealHook("checkpoint"); err != nil {
+		return nil, "", err
+	}
 	hw := auditHighWaterValueSealed(cp, c.sealBinding(), c.signCheckpoint(cp))
 	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, hw); err != nil {
 		return nil, "", fmt.Errorf("accept-loss: write the high-water mark: %w", err)

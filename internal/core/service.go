@@ -470,6 +470,9 @@ type KeyorixCore struct {
 	auditSealBind auditSealBinding
 	auditSealSeen int
 	auditSealRecs []*auditSeal
+	// auditSealHook, when set (tests only), runs after each write step of
+	// AcceptAuditLoss; an error stops it there, as a crash would.
+	auditSealHook func(step string) error
 	// auditKeyTransitionHook, when set (tests only), runs after each step of
 	// CompleteAuditKeyTransition; an error stops it there, as a crash would.
 	auditKeyTransitionHook func(step string) error

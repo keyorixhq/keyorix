@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -464,4 +465,51 @@ func TestAuditSeal_DeletedSealKeepsStatePin(t *testing.T) {
 		require.NoError(t, err)
 		assert.True(t, tampered, "a re-baseline below the pin is refused: %s", reason)
 	})
+}
+
+// An acceptance stopped after any of its writes reads broken (a server started
+// in between included) until a re-run completes it.
+func TestAuditSeal_CrashAtEveryStepResumes(t *testing.T) {
+	for _, step := range []string{"record", "event", "checkpoint", "high-water"} {
+		t.Run(step, func(t *testing.T) {
+			t.Parallel()
+			fcRun(t, func(t *testing.T, e *fcEnv) {
+				ctx := context.Background()
+				fcCertify(t, e)
+				resume := sealDeleteRow(t, e, e.c, 3)
+				plan, err := e.c.PlanAuditLossAcceptance(ctx, sealReq(resume))
+				require.NoError(t, err)
+				crash := errors.New("crash")
+				e.c.auditSealHook = func(s string) error {
+					if s == step {
+						return crash
+					}
+					return nil
+				}
+				_, err = e.c.AcceptAuditLoss(ctx, plan)
+				require.ErrorIs(t, err, crash)
+
+				c := e.restart()
+				if step == "high-water" {
+					// Record, event, checkpoint and mark are complete (the walk
+					// reads sealed); the state is behind and reads broken.
+					assert.Equal(t, AuditVerifyStatusBroken, incrVerify(t, c).Status)
+				} else {
+					assertBroken(t, e, c)
+				}
+				fcTick(t, e, c) // a server ran before the operator re-ran the command
+				assert.NotEqual(t, AuditVerifyStatusSealed, incrVerify(t, c).Status)
+
+				again, err := e.restart().PlanAuditLossAcceptance(ctx, sealReq())
+				require.NoError(t, err, "a re-run resumes")
+				assert.True(t, again.Resume)
+				c2 := e.restart()
+				again, err = c2.PlanAuditLossAcceptance(ctx, sealReq())
+				require.NoError(t, err)
+				_, err = c2.AcceptAuditLoss(ctx, again)
+				require.NoError(t, err)
+				assertSealed(t, e, e.restart(), 1)
+			})
+		})
+	}
 }
