@@ -87,7 +87,10 @@ internal/auditverify|auditverify||99.55
 internal/serverguard|serverguard||100
 # internal/solewriter: efficacy 99.26% (134 killed, 1 equivalent survivor: tracker.go:269 `len(t.UpdateIgnores) > 0`, because onlySets
 # with no columns is always false), 250 not covered: the PostgreSQL-backed paths (fence install, poller, lock), whose tests need a real Postgres
-internal/solewriter|solewriter||99.26"
+internal/solewriter|solewriter||99.26
+# internal/core/rules: efficacy 98.06% (101 killed, 2 equivalent survivors: secret_value_policy.go:44 `MinLength > 0` and
+# password_policy.go:172 `at > 0`, each shadowed by a later length check), 4 not covered (the `iota + 1` constant and two switch case expressions)
+internal/core/rules|rules||98.06"
 
 cd "$KEYORIX_REPO"
 
