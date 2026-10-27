@@ -1,0 +1,2 @@
+### Security
+- **`encryption migrate-provider` never tears the DEK on rollback and never overwrites an earlier backup.** When verification under the target provider fails, the previous wrapped DEK is now written to `<backup>.restoring` and renamed over `dek_path` (it used to be rewritten in place, so a crash or a full disk mid-restore left a torn `dek.key`). Each run's backup is created with O_EXCL as `<dek_path>.migrate-backup.<nanoseconds>-<random>`; the old one-second name let a second run in the same second overwrite the first backup.

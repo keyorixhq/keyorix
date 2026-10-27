@@ -150,7 +150,8 @@ of which key version signed them; do not overwrite them.
 | `rotate-kek` done, and you want the old passphrase back | Rotate again with the sources swapped: `--passphrase-file ./new_master_password --new-passphrase-file ./old_master_password`. This re-wraps the same DEK under a fresh salt and again changes the checkpoint key (section 5). |
 | A DEK rotation you want to undo | There is no reverse command. Roll forward if you can. Otherwise restore the pre-rotation archive (below). It loses every write made since the backup, and resurrects any revocation made since (SELF_HOSTING.md §5). |
 | A replica was left with the old `dek.key` | Copy the current key files, `keyset.manifest.json` included, to it and start it ([j6](j6-key-rotation.md)). Nothing was written under the old DEK. |
-| `migrate-provider` was interrupted after the re-wrap | The previous wrapped DEK is on disk as `<dek_path>.migrate-backup.*` for a human to restore; the DEK's plaintext value did not change. Keep it until you have verified. |
+| `migrate-provider` was interrupted after the re-wrap | The previous wrapped DEK is on disk as `<dek_path>.migrate-backup.<nanoseconds>-<random>` (each run creates its own and never overwrites an earlier one); the DEK's plaintext value did not change. Keep it until you have verified. The server then names it in its start error; follow [Interrupted `rotate-kek` or `migrate-provider`](#interrupted-rotate-kek-or-migrate-provider). |
+| `migrate-provider` failed verification and restored the previous DEK | The restore writes `<backup>.restoring` and renames it over `dek_path`, so `dek_path` is either the re-wrapped or the restored file, never a torn one. If the command was killed during the restore, a leftover `<backup>.restoring` is a complete copy of the backup; `migrate-provider cleanup` lists and removes it with the backups. |
 
 Restoring the archive (server stopped, same config and key paths, passphrase current when the
 archive was taken):
