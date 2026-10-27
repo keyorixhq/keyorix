@@ -2,8 +2,6 @@ package config
 
 import (
 	"strings"
-
-	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // ConfiguredSecretValues returns every secret this config resolves, keyed by a
@@ -14,7 +12,8 @@ import (
 // names, never the values.
 //
 // Covered: every SecretEnvVars name and the operator-named variables
-// (secretEnvNames), each from the variable or its _FILE; the config-file
+// (secretEnvNames), each from the variable or its _FILE (a _FILE value from the
+// snapshot Load took, the bytes the accessors use: F5); the config-file
 // fallbacks of the resolveSecret accessors; the HTTP and gRPC metrics tokens.
 // Not covered: a master passphrase given only on the command line
 // (--passphrase-fd/-file/-stdin), which is read after this runs, and key
@@ -27,7 +26,7 @@ func (c *Config) ConfiguredSecretValues() map[string]string {
 		}
 	}
 	for _, n := range c.secretEnvNames() {
-		if v, found, err := secretenv.Lookup(n); err == nil && found {
+		if v, found, err := secretSnapshot.Lookup(n); err == nil && found {
 			add(n, v)
 		}
 	}

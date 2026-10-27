@@ -18,6 +18,7 @@ import (
 // DescribeFile (cli/cmd/secretfile.go: its copy, describeSecretFile).
 var fileEnvReaders = []string{
 	"internal/secretenv/secretenv.go",
+	"internal/secretenv/snapshot.go", // Snapshot: names a path only through NewFileError
 	"cli/cmd/secretfile.go",
 }
 

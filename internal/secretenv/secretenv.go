@@ -208,29 +208,39 @@ func ReadRegularFile(what, path string) ([]byte, error) {
 }
 
 func readSecretFile(path string, checkPerms bool) (string, error) {
+	v, _, _, err := readSecretFileJudged(path, checkPerms)
+	return v, err
+}
+
+// readSecretFileJudged reads a secret file and judges the descriptor it read:
+// permErr is checkInfo's verdict on the fstat of that descriptor, and judged says
+// whether the file got far enough to be judged (it was opened and is regular).
+// With refuse set, a failed judgment is returned as err before anything is read
+// (LookupChecked); without it, it is only reported in permErr (the caller applies
+// the warn-or-refuse matrix).
+func readSecretFileJudged(path string, refuse bool) (v string, permErr error, judged bool, err error) {
 	f, info, err := OpenRegular(path, 0)
 	if err != nil {
 		if errors.Is(err, ErrNotRegular) {
-			return "", err
+			return "", nil, false, err
 		}
-		return "", fmt.Errorf("cannot open secret file: %w", unwrapPathError(err))
+		return "", nil, false, fmt.Errorf("cannot open secret file: %w", unwrapPathError(err))
 	}
 	defer func() { _ = f.Close() }()
 
-	if checkPerms {
-		if err := checkInfo(info); err != nil {
-			return "", err
-		}
+	permErr = checkInfo(info)
+	if refuse && permErr != nil {
+		return "", permErr, true, permErr
 	}
 	data, err := ReadCapped(f, info)
 	if err != nil {
-		return "", err
+		return "", permErr, true, err
 	}
-	v := trimOneTerminator(string(data))
+	v = trimOneTerminator(string(data))
 	if v == "" {
-		return "", fmt.Errorf("secret file is empty")
+		return "", permErr, true, fmt.Errorf("secret file is empty")
 	}
-	return v, nil
+	return v, permErr, true, nil
 }
 
 // ReadCapped reads a secret file opened by OpenRegular (f, with its fstat info)

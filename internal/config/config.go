@@ -194,8 +194,13 @@ func parseDurationDefault(raw string, def time.Duration) time.Duration {
 // the operator intended. The accessors that call this return a bare string, so
 // the error itself is reported by Config.ValidateSecretSources, which
 // Config.Validate runs at startup; the server refuses to boot on it.
+//
+// A *_FILE secret is answered from secretSnapshot, read once by Load from the
+// descriptor whose permissions EnforceSecretFilePermissions judges, so every
+// accessor call and every boot check sees the same bytes (SECRETENV-REVIEW-1
+// F5/F6).
 func resolveSecret(envVar, fallback string) string {
-	v, found, err := secretenv.Lookup(envVar)
+	v, found, err := secretSnapshot.Lookup(envVar)
 	if err != nil {
 		return ""
 	}
@@ -203,6 +208,30 @@ func resolveSecret(envVar, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// secretSnapshot holds the *_FILE secrets Load read (secretenv.Snapshot): each
+// source once per process, with the verdict on the descriptor it was read from.
+// Process-wide because the accessors (SCIMConfig.GetToken, ...) have no *Config to
+// hang it on and the environment it mirrors is process-wide too; an entry answers
+// only while the environment still names the same file.
+var secretSnapshot = secretenv.NewSnapshot()
+
+// snapshotSecrets records the non-key-material *_FILE secrets this config uses.
+// Key material is read and judged by its own consumer (secretenv.LookupChecked)
+// and is not kept.
+func (c *Config) snapshotSecrets() {
+	keyMaterial := map[string]bool{}
+	for _, n := range c.keyMaterialSecretEnvNames() {
+		keyMaterial[n] = true
+	}
+	var names []string
+	for _, n := range c.secretEnvNames() {
+		if !keyMaterial[n] {
+			names = append(names, n)
+		}
+	}
+	secretSnapshot.Take(names...)
 }
 
 // SecretEnvVars lists every fixed-name secret the server resolves through
@@ -271,7 +300,7 @@ func (c *Config) secretEnvNames() []string {
 func (c *Config) ValidateSecretSources() error {
 	var problems []string
 	for _, n := range c.secretEnvNames() {
-		if _, _, err := secretenv.Lookup(n); err != nil {
+		if _, _, err := secretSnapshot.Lookup(n); err != nil {
 			problems = append(problems, err.Error())
 		}
 	}
@@ -337,7 +366,17 @@ func (c *Config) EnforceSecretFilePermissions() (graceSoftened bool, err error) 
 			continue
 		}
 		seen[fv.Path] = true
-		if err := secretenv.CheckPermissionsNamed(fv.Var(), fv.Path); err != nil {
+		// Judged on the descriptor the value was read from when the snapshot holds
+		// it (F6: a separate stat could judge a different file than the one used);
+		// key material and files the snapshot could not open are stat'd here.
+		err, judged := error(nil), false
+		if !keyMaterial[fv.Name] {
+			err, judged = secretSnapshot.CheckPermissions(fv.Name)
+		}
+		if !judged {
+			err = secretenv.CheckPermissionsNamed(fv.Var(), fv.Path)
+		}
+		if err != nil {
 			if keyMaterial[fv.Name] {
 				keyProblems = append(keyProblems, err.Error())
 				continue
@@ -551,6 +590,7 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.DeprecatedSettingWarnings = deprecatedWarnings
 
+	cfg.snapshotSecrets()
 	return &cfg, nil
 }
 

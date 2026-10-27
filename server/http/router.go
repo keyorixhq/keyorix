@@ -300,13 +300,17 @@ func NewRouter(cfg *config.Config, coreService *core.KeyorixCore) (http.Handler,
 		// Fail startup on a too-short SCIM bearer token rather than silently serving
 		// the provisioning endpoint behind a weak, brute-forceable credential (unlike
 		// a PAT/machine token, this one is operator-supplied, not server-generated).
-		if err := core.ValidateSCIMTokenStrength(cfg.SCIM.GetToken()); err != nil {
+		// Read once: the token judged here is the token the middleware compares
+		// against (SECRETENV-REVIEW-1 F5; GetToken also serves a _FILE token from
+		// the snapshot config.Load took).
+		scimToken := cfg.SCIM.GetToken()
+		if err := core.ValidateSCIMTokenStrength(scimToken); err != nil {
 			return nil, fmt.Errorf("scim: %w", err)
 		}
 		scimHandler := handlers.NewSCIMHandler(coreService)
 		r.Route("/scim/v2", func(r chi.Router) {
 			// no-store is covered by the router's global default (above).
-			r.Use(customMiddleware.SCIMToken(cfg.SCIM.GetToken()))
+			r.Use(customMiddleware.SCIMToken(scimToken))
 			r.Get("/ServiceProviderConfig", scimHandler.GetServiceProviderConfig)
 			r.Get("/Users", scimHandler.ListUsers)
 			r.Post("/Users", scimHandler.CreateUser)
