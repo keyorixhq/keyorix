@@ -677,7 +677,8 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	// GUARD-2: as in UpdateSCIMUser above, accountStateMu alone is cross-replica-unsafe
 	// — wrap it in storage.WithNamedLock(lastAdminGuardLockKey), the same lock
 	// SuspendUser/UpdateUser/DeleteUser already take for this exact guard.
-	var sessionHashes, patEvict []string
+	var sessionEv sessionEvictions
+	var patEvict []string
 	var username string
 	var guardErr error
 	var settle func()
@@ -692,7 +693,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 		}
 		// Capture the user's session-token hashes BEFORE the transaction so they can be
 		// evicted from the auth cache after commit (the stored token is the SHA-256 cache key).
-		sessionHashes, _ = c.storage.ListSessionTokenHashesForUser(ctx, id)
+		sessionEv = c.listSessionHashesForEviction(ctx, id)
 		// Suspend + terminate sessions + soft-delete atomically: a SCIM DELETE either fully
 		// deprovisions or leaves the account untouched, so a mid-way storage failure can't
 		// leave it half-deprovisioned (suspended but not deleted), which would make retries
@@ -813,7 +814,7 @@ func (c *KeyorixCore) DeprovisionSCIMUser(ctx context.Context, actorID, id uint)
 	// Evict the terminated sessions from the auth cache AFTER commit, so a deprovisioned
 	// (offboarded) user's live session stops authenticating immediately instead of
 	// lingering for the cache TTL.
-	c.invalidateTokenCache(sessionHashes...)
+	c.evictSessionsAndAudit(ctx, id, sessionEv, evictTombstone, "DeprovisionSCIMUser")
 	c.invalidateTokenCache(patEvict...)
 	purgeStepUpGrants(ctx, c.storage, id)
 	settle()
