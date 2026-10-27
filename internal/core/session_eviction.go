@@ -79,7 +79,7 @@ func (c *KeyorixCore) listSessionHashesForEviction(ctx context.Context, userID u
 // is logged or audited here; the caller does that after commit via evictSessions.
 func listSessionHashesInTx(ctx context.Context, tx storage.Storage, userID uint) sessionEvictions {
 	var ev sessionEvictions
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		ev = sessionEvictions{}
 		err := tx.WithTransaction(ctx, func(sp storage.Storage) error {
 			hashes, lerr := sp.ListSessionTokenHashesForUser(ctx, userID)
