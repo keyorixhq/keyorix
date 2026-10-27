@@ -8,7 +8,8 @@
 //     environment update / restore, group create / update / restore, user
 //     update / reactivate / restore, invitations, access-request create / reject,
 //     config changes: notification channels, anomaly config, rotation policies,
-//     risk exceptions, legal hold, alert escalation policies) commit their audit row
+//     risk exceptions, legal hold, alert escalation policies; admin unlock and secret
+//     resume since UNLOCK-AUDIT-1) commit their audit row
 //     in their own transaction. With the first audit append (LogAuditEvent#1)
 //     faulted the request must fail and change NOTHING, audit_events included. No
 //     tolerance and no accept-by-design applies.
@@ -75,6 +76,9 @@ var auditTx3FailClosedOps = []string{
 	"REST PATCH /api/v1/projects/{id}/machine-identities/{machineId}/tokens/{tokenId}/classification",
 	"GRPC keyorix.v1.MachineIdentityService.ClassifyMachineIdentity",
 	"GRPC keyorix.v1.MachineIdentityService.ClassifyMachineToken",
+	// UNLOCK-AUDIT-1 (#3599): lifting a lockout or a suspension restores access.
+	"REST POST /api/v1/users/{id}/unlock",
+	"REST POST /api/v1/secrets/{id}/resume",
 }
 
 // auditTx3RevocationOps are the catalog revocations: never blocked by the audit

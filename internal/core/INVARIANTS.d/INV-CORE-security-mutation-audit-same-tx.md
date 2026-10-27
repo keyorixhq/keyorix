@@ -15,7 +15,8 @@
   invitations, access request create / partial approval, notification channel and retry
   policy changes, anomaly config, rotation policies, alert escalation policies,
   risk exception create/approve, legal hold place/lift, machine and token
-  classification, access review campaign open/close) writes its audit row(s)
+  classification, access review campaign open/close; since UNLOCK-AUDIT-1, an admin
+  login-lockout unlock and a secret resume) writes its audit row(s)
   through the transaction-scoped store as the LAST statements of its own
   transaction, via `withAuditedMutation` (`mutation_audit_tx.go`). A write that
   does not persist (error or panic) returns `ErrMutationAuditUnavailable` and the
@@ -40,12 +41,13 @@
   Guard: `internal/core` `TestSecurityMutationAudit_RowExistsIffMutationCommitted`
   (SQLite always, PostgreSQL pg-gated; error, effect-then-error, panic, and a
   goroutine death at the append), `TestWithAuditedMutation_NoRowFailsClosed`,
-  `TestSecurityMutationAudit3_RowExistsIffMutationCommitted` (AUDIT-TX-3: 40
-  kinds, same matrix), `server/faultops`
+  `TestSecurityMutationAudit3_RowExistsIffMutationCommitted` (AUDIT-TX-3: 42
+  kinds incl. `unlock-user` and `resume-secret`, same matrix), `server/faultops`
   `TestSecurityMutationAuditFailure_FailsClosedChangesNothing` (28 REST/gRPC ops,
   no tolerance; break-glass activation:
   `TestBreakGlassActivation_AuditFailure_CommitsDegradedWithOwedRecords`) and
-  `TestAuditTx3Mutation_AuditFailureFailsClosedChangesNothing` (40 more), the
+  `TestAuditTx3Mutation_AuditFailureFailsClosedChangesNothing` (39 more, unlock and
+  secret resume included), the
   per-call classification by
   `TestSecurityMutationAudit_UpdateRole_ByDirection`,
   `TestSecurityMutationAudit_UpdateSharePermission_ByDirection` and

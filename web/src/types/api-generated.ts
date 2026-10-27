@@ -5989,6 +5989,10 @@ export interface components {
             id?: number;
             name?: string;
             description?: string;
+            /** @description Project the grant applies to; 0 = not project-scoped (global when environment_id is also 0). */
+            project_id?: number;
+            /** @description Environment the grant applies to; 0 = not environment-scoped. */
+            environment_id?: number;
             /**
              * Format: date-time
              * @description Omitted (never null) for a permanent grant.

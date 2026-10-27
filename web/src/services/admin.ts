@@ -3,11 +3,13 @@ import { ApiResponse, PaginatedResponse, User } from '../types';
 import type { Permission } from '../types/rbac';
 
 // Normalize role object — handles Go-serialized uppercase field names
-function normalizeRole(r: any): { id: number; name: string; description: string } {
+function normalizeRole(r: any): { id: number; name: string; description: string; assignable_scope?: string } {
     return {
         id: r.id ?? r.ID ?? 0,
         name: r.name ?? r.Name ?? '',
         description: r.description ?? r.Description ?? '',
+        // Only the role list carries it; the user-roles shape (id, name) does not.
+        ...(r.assignable_scope ? { assignable_scope: r.assignable_scope as string } : {}),
     };
 }
 
@@ -22,7 +24,7 @@ export const adminApi = {
         return response.data.data;
     },
 
-    async getRoles(): Promise<{ id: number; name: string; description: string }[]> {
+    async getRoles(): Promise<{ id: number; name: string; description: string; assignable_scope?: string }[]> {
         const response = await apiClient.get('/api/v1/roles');
         const data = response.data.data;
         const roles = Array.isArray(data) ? data : (data?.roles ?? []);

@@ -309,6 +309,51 @@ func TestRBACReal_GetGroupRoles_CarriesExpiry(t *testing.T) {
 	assert.NotEmpty(t, byName["jit-role-g"]["expires_at"], "a time-bound grant carries expires_at")
 }
 
+// GetGroupRoles surfaces where each grant applies: the same role held globally,
+// on a project and on one environment comes back as three distinguishable rows
+// (project_id / environment_id), so a UI can tell one scoped grant from another.
+func TestRBACReal_GetGroupRoles_CarriesGrantScope(t *testing.T) {
+	handler, _, db := setupRBACTestWithDB(t)
+	group := mustCreateGroup(t, db, "scope-team")
+	role := mustCreateRole(t, db, "scoped-viewer")
+	proj := &models.Project{Name: "scope-proj"}
+	require.NoError(t, db.Create(proj).Error)
+	env := &models.Environment{Name: "scope-env", ProjectID: proj.ID}
+	require.NoError(t, db.Create(env).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: group.ID, RoleID: role.ID}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: group.ID, RoleID: role.ID, ProjectID: proj.ID}).Error)
+	require.NoError(t, db.Create(&models.GroupRole{GroupID: group.ID, RoleID: role.ID, ProjectID: proj.ID, EnvironmentID: env.ID}).Error)
+
+	req := withUserCtx(withChiParam(
+		httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/v1/groups/%d/roles", group.ID), nil),
+		"id", fmt.Sprintf("%d", group.ID)))
+	w := httptest.NewRecorder()
+
+	handler.GetGroupRoles(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var resp struct {
+		Data struct {
+			Roles []struct {
+				ID            uint `json:"id"`
+				ProjectID     uint `json:"project_id"`
+				EnvironmentID uint `json:"environment_id"`
+			} `json:"roles"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+	type scope struct{ project, environment uint }
+	got := map[scope]bool{}
+	for _, r := range resp.Data.Roles {
+		assert.Equal(t, role.ID, r.ID)
+		got[scope{r.ProjectID, r.EnvironmentID}] = true
+	}
+	assert.Len(t, resp.Data.Roles, 3)
+	assert.True(t, got[scope{0, 0}], "the global grant reports project_id 0, environment_id 0")
+	assert.True(t, got[scope{proj.ID, 0}], "the project grant reports its project_id")
+	assert.True(t, got[scope{proj.ID, env.ID}], "the environment grant reports both ids")
+}
+
 func TestRBACReal_AssignRoleToGroup201(t *testing.T) {
 	handler, _, db := setupRBACTestWithDB(t)
 	group := mustCreateGroup(t, db, "ops-team")

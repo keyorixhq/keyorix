@@ -13,8 +13,9 @@ import (
 var rbacListRolesCmd = &cobra.Command{
 	Use:   "list-roles",
 	Short: "List all available roles",
-	Long:  "List all roles in the system",
-	RunE:  runRBACListRoles,
+	Long: "List all roles in the system. [assignable: ...] says where a role may be granted: " +
+		"global (install-wide, no project), project (needs a project) or any.",
+	RunE: runRBACListRoles,
 }
 
 func init() {
@@ -40,7 +41,13 @@ func runRBACListRoles(cmd *cobra.Command, args []string) error {
 		}
 		fmt.Println("Available roles:")
 		for _, role := range roles {
-			fmt.Printf("  - %s: %s\n", derefStr(role.Name), derefStr(role.Description))
+			line := fmt.Sprintf("  - %s: %s", derefStr(role.Name), derefStr(role.Description))
+			// Where the role may be granted: global = no project, project = needs a
+			// project, any = either. A server that predates the field prints nothing.
+			if role.AssignableScope != nil {
+				line += fmt.Sprintf(" [assignable: %s]", *role.AssignableScope)
+			}
+			fmt.Println(line)
 		}
 		return nil
 	})

@@ -72,6 +72,19 @@ describe('adminApi.getRoles', () => {
         expect(roles[0]).toMatchObject({ id: 3, name: 'editor' });
     });
 
+    // The user role editor decides from assignable_scope which roles it may submit.
+    it('keeps assignable_scope when the server sends it and omits it when it does not', async () => {
+        mock.get.mockResolvedValueOnce(
+            ok([
+                { id: 4, name: 'project_developer', description: '', assignable_scope: 'project' },
+                { id: 5, name: 'legacy', description: '' },
+            ])
+        );
+        const roles = await adminApi.getRoles();
+        expect(roles[0]).toEqual({ id: 4, name: 'project_developer', description: '', assignable_scope: 'project' });
+        expect(roles[1]).not.toHaveProperty('assignable_scope');
+    });
+
     it('returns [] for null/missing data', async () => {
         mock.get.mockResolvedValueOnce(ok(null));
         await expect(adminApi.getRoles()).resolves.toEqual([]);

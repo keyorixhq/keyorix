@@ -263,6 +263,95 @@ describe('useUpdateRole', () => {
     });
 });
 
+// The server's PUT replaces the whole permission set, so the hook applies the admin's own
+// additions and removals to the set the server holds at Save, never to the one read when the
+// dialog opened (REVIEW-3726-DEEP-3 F1).
+describe('useUpdateRole — permission changes', () => {
+    const perm = (id: number, name: string) => ({ id, name, description: '', resource: 'r', action: 'a' });
+    const serverHolds = (...names: string[]) =>
+        rbacApiMock.getRolePermissions.mockResolvedValueOnce({
+            role_id: 4,
+            role_name: 'developer',
+            permissions: names.map((n, i) => perm(i + 1, n)),
+        });
+    const run = async (permissionChanges: { added: string[]; removed: string[] }) => {
+        const { result } = renderHook(() => useUpdateRole(), { wrapper: createWrapper() });
+        await act(async () => {
+            await result.current.mutateAsync({ id: 4, body: { description: 'd' }, permissionChanges });
+        });
+    };
+
+    it('does not re-grant a permission revoked after the dialog opened', async () => {
+        // Opened with {Read, View Roles}; another admin revoked View Roles; this admin ticks Write.
+        serverHolds('Read Secrets');
+        rbacApiMock.updateRole.mockResolvedValueOnce({ id: 4 });
+
+        await run({ added: ['Write Secrets'], removed: [] });
+
+        expect(rbacApiMock.getRolePermissions).toHaveBeenCalledWith(4);
+        expect(rbacApiMock.updateRole).toHaveBeenCalledWith(4, {
+            description: 'd',
+            permissions: ['Read Secrets', 'Write Secrets'],
+        });
+    });
+
+    it('keeps a permission granted after the dialog opened', async () => {
+        serverHolds('Read Secrets', 'Rotate Secrets');
+        rbacApiMock.updateRole.mockResolvedValueOnce({ id: 4 });
+
+        await run({ added: [], removed: ['Read Secrets'] });
+
+        expect(rbacApiMock.updateRole).toHaveBeenCalledWith(4, { description: 'd', permissions: ['Rotate Secrets'] });
+    });
+
+    it('leaves the permissions key out when the changes are already in place', async () => {
+        serverHolds('Read Secrets', 'Write Secrets');
+        rbacApiMock.updateRole.mockResolvedValueOnce({ id: 4 });
+
+        await run({ added: ['Write Secrets'], removed: ['View Roles'] });
+
+        expect(rbacApiMock.updateRole).toHaveBeenCalledWith(4, { description: 'd' });
+    });
+
+    it('does not read the server set when no permission changed', async () => {
+        rbacApiMock.updateRole.mockResolvedValueOnce({ id: 4 });
+
+        await run({ added: [], removed: [] });
+
+        expect(rbacApiMock.getRolePermissions).not.toHaveBeenCalled();
+        expect(rbacApiMock.updateRole).toHaveBeenCalledWith(4, { description: 'd' });
+    });
+
+    it('refuses to send an empty set and sends nothing', async () => {
+        // The admin removed Read; another admin had already removed everything else.
+        serverHolds('Read Secrets');
+        const { result } = renderHook(() => useUpdateRole(), { wrapper: createWrapper() });
+
+        await expect(
+            result.current.mutateAsync({
+                id: 4,
+                body: { description: 'd' },
+                permissionChanges: { added: [], removed: ['Read Secrets'] },
+            })
+        ).rejects.toThrow(/at least one permission/);
+        expect(rbacApiMock.updateRole).not.toHaveBeenCalled();
+    });
+
+    it('sends nothing when the current set cannot be read', async () => {
+        rbacApiMock.getRolePermissions.mockRejectedValueOnce(new Error('read failed'));
+        const { result } = renderHook(() => useUpdateRole(), { wrapper: createWrapper() });
+
+        await expect(
+            result.current.mutateAsync({
+                id: 4,
+                body: { description: 'd' },
+                permissionChanges: { added: ['Write Secrets'], removed: [] },
+            })
+        ).rejects.toThrow('read failed');
+        expect(rbacApiMock.updateRole).not.toHaveBeenCalled();
+    });
+});
+
 // ── useDeleteRole ─────────────────────────────────────────────────────────
 
 describe('useDeleteRole', () => {

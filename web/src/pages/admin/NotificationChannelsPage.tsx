@@ -114,7 +114,7 @@ const ChannelRow: React.FC<ChannelRowProps> = ({ channel, onEdit, onDelete, onRe
                     className="text-xs px-2 py-0.5 rounded-full font-medium"
                     style={
                         channel.enabled
-                            ? { backgroundColor: 'rgba(34,197,94,0.15)', color: '#16a34a' }
+                            ? { backgroundColor: 'var(--success-subtle)', color: 'var(--success)' }
                             : { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' }
                     }
                 >

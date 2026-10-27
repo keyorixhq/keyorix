@@ -281,10 +281,15 @@ func printCampaignDegradedWarning(c campaignView) {
 	if !c.Degraded {
 		return
 	}
-	fmt.Println("*** DEGRADED SNAPSHOT — one or more secrets' shares could not be read when this campaign was opened ***")
-	fmt.Println("*** This campaign may be MISSING a direct/group-share item for them.                                ***")
+	// The server names the cause (an unreadable share, a grant it could not scope, ...):
+	// print what it said rather than guessing one.
+	fmt.Println("*** DEGRADED SNAPSHOT — part of this review could not be computed when this campaign was opened ***")
+	fmt.Println("*** This campaign may be MISSING items. Reported by the server:                                  ***")
 	for _, reason := range c.DegradedReasons {
 		fmt.Printf("    - %s\n", reason)
+	}
+	if len(c.DegradedReasons) == 0 {
+		fmt.Println("    (the server gave no reason)")
 	}
 	fmt.Println()
 }

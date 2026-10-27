@@ -3,9 +3,9 @@ import React from 'react';
 type BadgeVariant = 'shipped' | 'in-progress' | 'planned' | 'roadmap';
 
 const BADGE_STYLES: Record<BadgeVariant, React.CSSProperties> = {
-    shipped: { backgroundColor: 'rgba(34,197,94,0.15)', color: '#16a34a' },
+    shipped: { backgroundColor: 'var(--success-subtle)', color: 'var(--success)' },
     'in-progress': { backgroundColor: 'var(--accent-subtle)', color: 'var(--accent-text)' },
-    planned: { backgroundColor: 'rgba(245,158,11,0.15)', color: '#d97706' },
+    planned: { backgroundColor: 'var(--warning-subtle)', color: 'var(--warning)' },
     roadmap: { backgroundColor: 'var(--bg-muted)', color: 'var(--text-muted)' },
 };
 

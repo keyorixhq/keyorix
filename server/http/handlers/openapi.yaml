@@ -8862,6 +8862,8 @@ components:
         id: {type: integer}
         name: {type: string}
         description: {type: string}
+        project_id: {type: integer, description: "Project the grant applies to; 0 = not project-scoped (global when environment_id is also 0)."}
+        environment_id: {type: integer, description: "Environment the grant applies to; 0 = not environment-scoped."}
         expires_at: {type: string, format: date-time, description: "Omitted (never null) for a permanent grant."}
     RoleRef:
       type: object

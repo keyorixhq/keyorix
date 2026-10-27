@@ -25,7 +25,9 @@ package crypto
 //     reaches 0, so with `>= 0` the loop never ends.
 //
 // NOT COVERED BY CONSTRUCTION (gremlins decides "covered" from the Go coverage
-// profile, which has no block for a const declaration or for a `case` expression):
+// profile, which has no block for a const declaration or for a `case` expression).
+// No test can move these out of the NOT COVERED count; each was instead applied by
+// hand to a scratch copy (MUTANT-RESIDUAL-1) and the named test fails under it:
 //
 //   - exec_provider.go:16:27, kms_provider.go:48:27  `30 * time.Second`
 //     (TestTimeoutConstants pins both values).
@@ -35,10 +37,17 @@ package crypto
 //     ResolvePassphrase / Describe. Both behaviours are asserted
 //     (TestResolvePassphrase_File*, TestPassphraseSource_Describe); the case
 //     expression is simply not a coverage block.
+//   - shamir_provider.go:39:44  `+ KEKSize` -> `- KEKSize` makes the const
+//     negative, so the package no longer compiles (gremlins: not viable).
 //
 // NOT COVERED, REACHABLE ONLY WITH A TERMINAL:
 //
 //   - passphrase.go:181:10, :184:13  the term.ReadPassword error / empty-input
 //     branches of readPassphraseStdin run only when stdin is a TTY. Exercising
-//     them needs a pty, and there is no pty helper in go.mod; adding a dependency
-//     for two error branches was left out of this test-only change.
+//     them needs a pty. MUTANT-RESIDUAL-1 tried one (no new dependency: x/sys
+//     is already direct): opening /dev/ptmx fails with "operation not permitted"
+//     in the macOS sandbox these sessions run in, so no pty test is committed
+//     (an unrun test proves nothing). A pty test is the way to kill them where
+//     /dev/ptmx opens: type "s3cret\n", "\n" and Ctrl-D on the master with the
+//     slave as os.Stdin and expect the passphrase, "no passphrase entered" and
+//     "reading passphrase from terminal: ...".

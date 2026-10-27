@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"time"
@@ -285,6 +286,16 @@ func acquireDatabaseLock(cfg *config.Config) (*serverguard.Exclusive, error) {
 			// who copy an old `docker compose exec backend ... admin ...` line land here,
 			// and the refusal itself is correct (the command needs the database to itself).
 			return nil, fmt.Errorf("a Keyorix server (or another admin command) appears to be using this database (%v) — admin commands must not run concurrently with either; stop it first, or pass --force if you are certain this is safe.\n%s", err, stoppedServerHint())
+		}
+		// SQLite: the guard is the <database>.server.lock sidecar. An open
+		// error on it (EACCES on a foreign-owned or 0000 file, a missing
+		// directory it cannot create) is a file problem, not a database
+		// connection (REVIEW-SERVERGUARD-RECOVERYKEY-1 F7). Postgres is left
+		// out: its driver can return a path error too (an sslrootcert file),
+		// and that one is a connection failure.
+		var lockFileErr *fs.PathError
+		if !isPostgresStorage(cfg) && errors.As(err, &lockFileErr) {
+			return nil, fmt.Errorf("cannot open the server lock file: %s: %v — admin commands must not run concurrently with a server, and this file is how they tell; make it readable and writable by the user running this command (the same user the server runs as), or pass --force if you are certain no server is running", lockFileErr.Path, lockFileErr.Err)
 		}
 		return nil, fmt.Errorf("cannot connect to the database to check for a running server: %v — admin commands must not run concurrently with a server, but this could not be verified; pass --force if you are certain this is safe", err)
 	}
