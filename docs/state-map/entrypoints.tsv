@@ -229,6 +229,7 @@ cli	keyorix request rejection-templates list	cli/cmd/request.go	runRejectionTemp
 cli	keyorix request review	cli/cmd/request.go	runRequestReview	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix request secret-access	cli/cmd/request.go	runRequestSecretAccess	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix request withdraw	cli/cmd/request.go	runRequestWithdraw	none	single/no write-shaped call found by a 1-hop scan of the handler body
+cli	keyorix reset-mfa	server/admin/reset_mfa.go	runResetMFA	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix restore	server/admin/restore.go	runAdminRestore	none	single/no write-shaped call found by a 1-hop scan of the handler body
 cli	keyorix risk	cli/cmd/risk.go		none	no RunE/Run set on this cobra.Command (a parent/grouping command with no direct action)
 cli	keyorix risk add	cli/cmd/risk.go	<expr>	D	risk.go:92-136 makes exactly one mutating call.

@@ -41,6 +41,7 @@ LegalHold	db_table	internal/storage/models	1
 LoginAttempt	db_table	internal/storage/models	1
 MFAChallenge	db_table	internal/storage/models	1
 MFARecoveryCode	db_table	internal/storage/models	1
+MFAResetRequest	db_table	internal/storage/models	1
 MFASecret	db_table	internal/storage/models	1
 MFAStepUpGrant	db_table	internal/storage/models	1
 MFAStepupToken	db_table	internal/storage/models	1
