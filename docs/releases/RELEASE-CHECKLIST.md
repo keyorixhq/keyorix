@@ -127,10 +127,16 @@ cosign verify-blob --key scratch-key.pub --signature checksums.txt.sig \
 
 ## 3. Tag
 
+**Release gate first (hard step).** `scripts/release/check-release-blockers.sh` must print
+`release gate: PASS`: it fails while any issue labelled `release-blocker` is open and lists
+them (RELEASING.md step 4). Exit 3 or 4 (list not obtainable, no token) is a stop too.
+The block is one `&&` chain, so a gate that does not pass stops it before `git tag`:
+
 ```sh
-git switch main && git pull
-git tag vX.Y.Z
-git push origin vX.Y.Z      # fires release.yml, docker-publish.yml
+scripts/release/check-release-blockers.sh &&
+  git switch main && git pull &&
+  git tag vX.Y.Z &&
+  git push origin vX.Y.Z      # fires release.yml, docker-publish.yml
 ```
 
 (Andrei only: nothing in the dry run pushed a tag.)
@@ -155,6 +161,10 @@ cosign verify \
 helm show chart oci://ghcr.io/keyorixhq/charts/keyorix --version X.Y.Z
 curl -fsSL https://raw.githubusercontent.com/keyorixhq/keyorix/main/install.sh | sh && keyorix --version
 ```
+
+The `cosign verify` line (images, charts) needs cosign >= 3; with cosign 2.x it prints
+`no signatures found` for a good image ([guide](../operator/verifying-releases.md#tools)).
+`scripts/release/verify-release.sh vX.Y.Z` runs all of this and says which tool is too old.
 
 These are the commands SECURITY.md and RELEASING.md give users. In the dry run the
 `cosign verify-blob` line was run unchanged except for two offline flags
