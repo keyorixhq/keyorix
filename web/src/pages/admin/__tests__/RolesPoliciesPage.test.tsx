@@ -466,7 +466,50 @@ describe('RolesPoliciesPage — edit role', () => {
 
         fireEvent.click(within(dialog).getByLabelText(/Write Secrets/));
         fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-        expect(updateMutate.mock.calls[0]?.[0].body.permissions).toEqual(['Read Secrets', 'Write Secrets']);
+        // Only the admin's own change goes out; useUpdateRole applies it to the set the server
+        // holds at Save.
+        const vars = updateMutate.mock.calls[0]?.[0];
+        expect(vars.permissionChanges).toEqual({ added: ['Write Secrets'], removed: [] });
+        expect(vars.body).not.toHaveProperty('permissions');
+    });
+
+    // REVIEW-3726-DEEP-3 F1: the server's PUT replaces the whole set, so sending the set read
+    // when the dialog opened re-granted a permission another admin revoked in between.
+    it('does not send the as-opened set once the role changed underneath the dialog', () => {
+        useRoles.mockReturnValue({
+            data: [{ ...roleDeveloper, permissions: [permRead, permViewRoles] }, roleAdmin],
+            isLoading: false,
+            error: null,
+        });
+        const { rerender } = render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+
+        // Another admin revokes View Roles; the roles query re-renders with the fresh role.
+        useRoles.mockReturnValue({ data: [roleDeveloper, roleAdmin], isLoading: false, error: null });
+        rerender(<RolesPoliciesPage />);
+
+        const dialog = screen.getByRole('dialog');
+        fireEvent.click(within(dialog).getByLabelText(/Write Secrets/));
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+
+        const vars = updateMutate.mock.calls[0]?.[0];
+        expect(vars.body).not.toHaveProperty('permissions');
+        expect(vars.permissionChanges).toEqual({ added: ['Write Secrets'], removed: [] });
+        expect(JSON.stringify(vars)).not.toContain('View Roles');
+    });
+
+    it('sends a removal as a removal', () => {
+        useRoles.mockReturnValue({
+            data: [{ ...roleDeveloper, permissions: [permRead, permViewRoles] }, roleAdmin],
+            isLoading: false,
+            error: null,
+        });
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+        const dialog = screen.getByRole('dialog');
+        fireEvent.click(within(dialog).getByLabelText(/View Roles/));
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+        expect(updateMutate.mock.calls[0]?.[0].permissionChanges).toEqual({ added: [], removed: ['View Roles'] });
     });
 
     it('does not allow removing the last permission or blanking the description', () => {

@@ -314,16 +314,27 @@ export const RolesPoliciesPage: React.FC = () => {
     const handleUpdate = () => {
         if (!editRole || editBuiltIn || !editReady) return;
         const { description, permissions, assignable_scope } = formData;
+        const opened = editRole.permissions.map((p) => p.name);
         updateMutation.mutate(
             {
                 id: editRole.id,
-                // No name: the server has no rename. Unchanged permissions and scope are left out
-                // so the server keeps the current values.
+                // No name: the server has no rename. An unchanged scope is left out so the server
+                // keeps the current value.
                 body: {
                     description,
-                    ...(permsChanged ? { permissions } : {}),
                     ...(scopeChanged ? { assignable_scope } : {}),
                 },
+                // Only this admin's own ticks and unticks: useUpdateRole applies them to the set the
+                // server holds at Save, so a permission revoked or granted by someone else while
+                // the dialog was open is not undone.
+                ...(permsChanged
+                    ? {
+                          permissionChanges: {
+                              added: permissions.filter((n) => !opened.includes(n)),
+                              removed: opened.filter((n) => !permissions.includes(n)),
+                          },
+                      }
+                    : {}),
             },
             { onSuccess: () => setEditRole(null) }
         );
