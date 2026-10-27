@@ -219,6 +219,10 @@ func groupMemberToProto(u *models.User) *pb.GroupMember {
 // never forwarded — only safe static messages reach the caller to prevent
 // internal detail leakage.
 func groupError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "not found"):

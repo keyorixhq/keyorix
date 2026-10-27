@@ -365,6 +365,10 @@ func optStringValue(s string) *string {
 
 // mapUserError translates core user errors into gRPC status codes.
 func mapUserError(err error) error {
+	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
+	if aerr, ok := auditUnavailableStatus(err); ok {
+		return aerr
+	}
 	// S1 (CLI-split inventory #2012): checked via errors.Is, not the substring
 	// switch below, so the specific permission name requireEqualOrGreaterAdminAuthority
 	// wraps into the error text never reaches this function's substring matching
