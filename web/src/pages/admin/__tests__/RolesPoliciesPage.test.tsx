@@ -85,6 +85,7 @@ const roleDeveloper: RoleWithPermissions = {
     id: 1,
     name: 'developer',
     description: 'Writes and ships code',
+    assignable_scope: 'any',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     permissions: [permRead],
@@ -93,6 +94,7 @@ const roleAdmin: RoleWithPermissions = {
     id: 2,
     name: 'admin',
     description: '',
+    assignable_scope: 'global',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
     permissions: [permRead, permWrite],
@@ -323,15 +325,20 @@ describe('RolesPoliciesPage — create role', () => {
         expect(screen.getByText('Failed to create role. Please try again.')).toBeInTheDocument();
     });
 
-    it("shows the server's validation message when the create is refused", () => {
+    // The server's specific refusal message (here the bundling ceiling, a 403) is shown. A
+    // validation failure only carries the server's generic "Invalid request data" as message.
+    it("shows the server's message when the create is refused", () => {
         mutationState.create = {
             isPending: false,
             isError: true,
-            error: serverError(400, 'Key: CreateRoleRequest.Permissions failed on the min validation'),
+            error: serverError(
+                403,
+                'cannot bundle permission "Write Secrets" into a role: you do not hold it yourself'
+            ),
         };
         render(<RolesPoliciesPage />);
         fireEvent.click(screen.getByRole('button', { name: 'New Role' }));
-        expect(screen.getByText(/Permissions failed on the min validation/)).toBeInTheDocument();
+        expect(screen.getByText(/cannot bundle permission "Write Secrets" into a role/)).toBeInTheDocument();
         expect(screen.queryByText('Failed to create role. Please try again.')).not.toBeInTheDocument();
     });
 
@@ -416,12 +423,37 @@ describe('RolesPoliciesPage — edit role', () => {
         fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Updated description' } });
         fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
 
-        // Permissions untouched: the key is omitted so the server keeps the current set.
+        // Permissions and scope untouched: both keys are omitted so the server keeps the stored
+        // values (read inside its transaction). The server has no rename, so no name either.
         expect(updateMutate).toHaveBeenCalledWith(
-            { id: 1, body: { name: 'developer', description: 'Updated description' } },
+            { id: 1, body: { description: 'Updated description' } },
             expect.anything()
         );
-        expect(updateMutate.mock.calls[0]?.[0].body).not.toHaveProperty('permissions');
+        const body = updateMutate.mock.calls[0]?.[0].body;
+        expect(body).not.toHaveProperty('permissions');
+        expect(body).not.toHaveProperty('assignable_scope');
+        expect(body).not.toHaveProperty('name');
+    });
+
+    // Echoing the scope read when the dialog opened would undo a narrowing another admin
+    // committed in between (a widening), so it is sent only when the admin changes it.
+    it('sends "Can be granted" only when it differs from the role as opened', () => {
+        render(<RolesPoliciesPage />);
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
+        const dialog = screen.getByRole('dialog');
+        expect((within(dialog).getByLabelText('Can be granted') as HTMLSelectElement).value).toBe('any');
+
+        fireEvent.change(within(dialog).getByLabelText('Can be granted'), { target: { value: 'project' } });
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+        expect(updateMutate.mock.calls[0]?.[0].body).toEqual({
+            description: 'Writes and ships code',
+            assignable_scope: 'project',
+        });
+
+        // Changed and changed back: nothing to send.
+        fireEvent.change(within(dialog).getByLabelText('Can be granted'), { target: { value: 'any' } });
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+        expect(updateMutate.mock.calls[1]?.[0].body).not.toHaveProperty('assignable_scope');
     });
 
     it('prefills the role permissions and sends them only once they change', () => {
@@ -532,13 +564,14 @@ describe('RolesPoliciesPage — edit role', () => {
         expect(within(screen.getByRole('dialog')).getByLabelText('Can be granted')).not.toBeDisabled();
     });
 
-    it('lets the name be edited directly and closes on Cancel without submitting', () => {
+    // The server has no rename (UpdateRoleRequest carries no name), so Name is read-only on Edit.
+    it('shows the name read-only for a custom role and closes on Cancel without submitting', () => {
         render(<RolesPoliciesPage />);
         fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
 
         const dialog = screen.getByRole('dialog');
-        fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'developer-renamed' } });
-        expect((within(dialog).getByLabelText('Name') as HTMLInputElement).value).toBe('developer-renamed');
+        expect(within(dialog).getByLabelText('Name')).toBeDisabled();
+        expect((within(dialog).getByLabelText('Name') as HTMLInputElement).value).toBe('developer');
 
         fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
         expect(screen.queryByRole('dialog')).not.toBeInTheDocument();

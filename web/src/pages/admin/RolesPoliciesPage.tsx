@@ -298,12 +298,13 @@ export const RolesPoliciesPage: React.FC = () => {
             formData.permissions,
             editRole.permissions.map((p) => p.name)
         );
+    // The scope is sent only when the admin changed it: the server keeps the stored scope when the
+    // key is absent (read inside its transaction), while echoing the value read when the dialog
+    // opened would undo a narrowing another admin committed in between, as a widening.
+    const scopeChanged = editRole !== null && formData.assignable_scope !== editRole.assignable_scope;
     // On update the permissions key is optional but, when sent, must hold at least one entry.
     const editReady =
-        !editBuiltIn &&
-        formData.name.trim() !== '' &&
-        formData.description.trim() !== '' &&
-        !(permsChanged && formData.permissions.length === 0);
+        !editBuiltIn && formData.description.trim() !== '' && !(permsChanged && formData.permissions.length === 0);
 
     const handleCreate = () => {
         if (!createReady) return;
@@ -312,15 +313,16 @@ export const RolesPoliciesPage: React.FC = () => {
 
     const handleUpdate = () => {
         if (!editRole || editBuiltIn || !editReady) return;
-        const { permissions, assignable_scope, ...rest } = formData;
+        const { description, permissions, assignable_scope } = formData;
         updateMutation.mutate(
             {
                 id: editRole.id,
+                // No name: the server has no rename. Unchanged permissions and scope are left out
+                // so the server keeps the current values.
                 body: {
-                    ...rest,
-                    // Unchanged permissions are left out so the server keeps the current set.
+                    description,
                     ...(permsChanged ? { permissions } : {}),
-                    assignable_scope,
+                    ...(scopeChanged ? { assignable_scope } : {}),
                 },
             },
             { onSuccess: () => setEditRole(null) }
@@ -569,12 +571,8 @@ export const RolesPoliciesPage: React.FC = () => {
                             Built-in roles cannot be edited.
                         </p>
                     )}
-                    <Input
-                        label="Name"
-                        value={formData.name}
-                        onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
-                        disabled={editBuiltIn}
-                    />
+                    {/* The server has no rename, so Name is shown read-only. */}
+                    <Input label="Name" value={formData.name} disabled />
                     <div>
                         <label
                             htmlFor="edit-role-description"

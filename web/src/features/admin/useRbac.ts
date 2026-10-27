@@ -57,7 +57,6 @@ export const useUpdateRole = () => {
         }: {
             id: number;
             body: {
-                name: string;
                 description: string;
                 permissions?: string[];
                 assignable_scope?: RoleAssignableScope;

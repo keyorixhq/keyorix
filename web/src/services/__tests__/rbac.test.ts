@@ -285,19 +285,17 @@ describe('rbacApi.createRole', () => {
 // ── updateRole ────────────────────────────────────────────────────────────────
 
 describe('rbacApi.updateRole', () => {
-    it('omits the permissions key when the permissions are unchanged', async () => {
-        mocked.put.mockResolvedValueOnce({ data: { data: { id: 1, name: 'admin-v2' } } });
-        await rbacApi.updateRole(1, { name: 'admin-v2', description: 'Updated' });
+    it('omits the permissions and scope keys when they are not given', async () => {
+        mocked.put.mockResolvedValueOnce({ data: { data: { id: 1, name: 'dev' } } });
+        await rbacApi.updateRole(1, { description: 'Updated' });
         const sent = mocked.put.mock.calls[0]?.[1] as Record<string, unknown>;
-        expect(sent).not.toHaveProperty('permissions');
-        expect(sent).toMatchObject({ name: 'admin-v2', description: 'Updated' });
+        expect(sent).toEqual({ description: 'Updated' });
     });
 
     it('sends the permissions when they are given', async () => {
         mocked.put.mockResolvedValueOnce({ data: { data: { id: 1 } } });
-        await rbacApi.updateRole(1, { name: 'dev', description: 'Updated', permissions: ['secrets.read'] });
+        await rbacApi.updateRole(1, { description: 'Updated', permissions: ['secrets.read'] });
         expect(mocked.put).toHaveBeenCalledWith('/api/v1/roles/1', {
-            name: 'dev',
             description: 'Updated',
             permissions: ['secrets.read'],
         });

@@ -150,7 +150,8 @@ test('the role form creates and edits a role, and shows the server refusal', asy
         const kept = (await (await api.get(`/api/v1/roles/${created!.id}/permissions`)).json()) as RolePermissionsBody;
         expect(kept.data.permissions.map((p) => p.name)).toContain('secrets.read');
 
-        // A refusal shows the server's reason, not the generic text: a name that is too short.
+        // A refusal shows the server's message, not the generic text: a name that is too short. For a
+        // validation failure that message is the server's generic "Invalid request data".
         await page.getByRole('button', { name: 'New Role' }).click();
         await dialog.getByLabel('Name', { exact: true }).fill('ab');
         await dialog.getByLabel('Description').fill('too short');

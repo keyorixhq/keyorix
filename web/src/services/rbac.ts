@@ -89,9 +89,11 @@ export const rbacApi = {
 
     async updateRole(
         id: number,
-        body: { name: string; description: string; permissions?: string[]; assignable_scope?: RoleAssignableScope }
+        body: { description: string; permissions?: string[]; assignable_scope?: RoleAssignableScope }
     ): Promise<Role> {
-        // `permissions` is sent only when given: a present key must hold at least one entry.
+        // There is no name: the server has no rename. `permissions` and `assignable_scope` are sent
+        // only when given: a present permissions key must hold at least one entry, and an absent
+        // scope keeps the stored one.
         const res = await apiClient.put<ApiResponse<Role>>(`/api/v1/roles/${id}`, body);
         return res.data.data;
     },
