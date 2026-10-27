@@ -65,7 +65,4 @@ sso.providers.saml.idp_metadata_xml
 sso.providers.saml.name_attribute
 sso.providers.saml.sp_entity_id
 sso.providers.type
-storage.database.name
-storage.database.port
-storage.database.user
 storage.encryption.key_provider.kms_encryption_context

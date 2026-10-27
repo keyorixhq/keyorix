@@ -530,6 +530,24 @@ forms too. The tests create their own throwaway databases on that server by
 swapping the database name, keeping the other settings as written (including
 `sslmode` and a percent-encoded password).
 
+### PostgreSQL connection fields (without a `dsn`)
+
+When `storage.database.dsn` is empty, the server builds the connection string
+from the individual fields (`internal/config/postgres_dsn.go`). When `dsn` is set,
+it is used as written and these fields are not read for the connection.
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `storage.database.host` | string | `localhost` | PostgreSQL host name or address. |
+| `storage.database.port` | string | `5432` | TCP port. |
+| `storage.database.name` | string | none | Database name (`dbname`). Not defaulted: set it. |
+| `storage.database.user` | string | none | Role the server connects as. Not defaulted: set it. |
+
+`ssl_mode` (default `require`), `ssl_root_cert` and the password (see below) go
+with these fields. Every value is quoted when the string is built, so a space in
+a field cannot add a second setting. The same TLS checks apply as for a `dsn`
+(see [PostgreSQL TLS](#postgresql-tls)).
+
 ### PostgreSQL password precedence
 
 The database password comes from `KEYORIX_DB_PASSWORD`, or the file named by
