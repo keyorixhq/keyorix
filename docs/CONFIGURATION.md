@@ -13,10 +13,10 @@ The config file is located via, in order: an explicit path argument, then
 - [Environment variables](#environment-variables)
 - [environment](#environment) · [locale](#locale) · [server](#server) · [storage](#storage)
 - [storage.encryption + key_provider](#encryption--kek-providers) (ADR-004, ADR-038)
-- [secrets](#secrets) · [security + require_mfa](#security) (ADR-034)
+- [secrets](#secrets) · [secret_value_policy](#secret_value_policy) · [secret_name_policy](#secret_name_policy) · [security + require_mfa](#security) (ADR-034)
 - [webauthn](#webauthn) (ADR-036) · [dynamic_secrets](#dynamic_secrets) (ADR-035, ADR-058) — includes [revocation semantics by backend](#credential-revocation-semantics-by-backend)
 - [oidc](#oidc) (ADR-031) · [session](#session) · [password_policy](#password_policy) (ADR-025)
-- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
+- [soft_delete + purge](#soft_delete--purge) (ADR-032) · [data_retention](#data_retention) (A.5.33) · [recertification](#recertification) (A.5.18) · [notifications](#notifications) · [compliance_digest](#compliance_digest) · [evidence_delivery](#evidence_delivery) · [rotation_reminders](#rotation_reminders) · [expiry_reminders](#expiry_reminders) · [license_expiry](#license_expiry) · [read_quota_alerts](#read_quota_alerts) · [audit_checkpoints](#audit_checkpoints) (ADR-029) · [jit_access_expiry](#jit_access_expiry) · [break_glass](#break_glass) · [dual_control](#dual_control) (A.5.3) · [classification](#classification) (A.5.12/A.5.13) · [audit.siem](#auditsiem)
 - [scim](#scim) (RFC 7644) · [sso](#sso) (OIDC) · [membership](#membership) (ADR-022) · [credential_delivery](#credential_delivery) (ADR-028) · [crypto_inventory](#crypto_inventory)
 
 ---
@@ -1640,14 +1640,26 @@ External delivery channels for the in-app notifications Keyorix already creates 
 access-request approvals, anomaly alerts, rotation and recertification reminders, and
 break-glass activations (ISO 27001 A.5.5 / SOC 2 operational alerting). Each
 notification is still written to the in-app bell; when a channel is enabled it is
-**also** fanned out, best-effort and asynchronously (a slow or down endpoint drops
+**also** sent out, best-effort and asynchronously (a slow or down endpoint drops
 rather than stalling the triggering action).
 
-Two channels are available; enable either or both (both → each notification is
-delivered to all). The **webhook** channel POSTs each notification as a JSON body
-(`{user_id, email, type, title, message, project_id, link}`) to `endpoint`,
-optionally bearer-authenticated. The **email** channel sends a plaintext message to
-the recipient via the operator's SMTP relay (same settings as `credential_delivery`).
+Four channels exist (`webhook`, `email`, `slack`, `teams`), but they do **not** all
+carry the same notifications (`server/wire_notifications.go`):
+
+- **Per-user and per-project notifications** (a secret shared with you, an access
+  request, an anomaly alert, a break-glass activation, a reminder addressed to an admin)
+  go out over the **email** channel only, to that user's own address. Webhook, Slack and
+  Teams are deliberately not used for them: they are one fixed destination, and sending
+  one user's event there would show it to everyone who can see the channel.
+- **Deployment-wide broadcasts** go to every enabled channel: the scheduled
+  [compliance digest](#compliance_digest) and auto-rotation-failure alerts. Those are the
+  only notifications webhook, Slack and Teams receive. Email sends them to
+  `notifications.email.broadcast_to`.
+
+The **webhook** channel POSTs a JSON body (`{user_id, email, type, title, message,
+project_id, link}`) to `endpoint`, optionally bearer-authenticated. The **email** channel
+sends a plaintext message via the operator's SMTP relay (same settings as
+`credential_delivery`).
 
 ```yaml
 notifications:
@@ -1656,6 +1668,7 @@ notifications:
     endpoint: "https://hooks.example.com/keyorix"
     token: ""                    # prefer the KEYORIX_NOTIFY_WEBHOOK_TOKEN env var
     insecure_skip_verify: false  # TLS verification off — self-signed endpoints only
+    signing_secret: ""           # prefer the KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET env var; default empty = unsigned
   email:
     enabled: true
     host: "smtp.example.com"
@@ -1664,6 +1677,7 @@ notifications:
     password: ""                 # prefer the KEYORIX_NOTIFY_SMTP_PASSWORD env var
     from: "keyorix@example.com"
     tls: "starttls"              # starttls | implicit | none(dev-only) — none requires KEYORIX_ALLOW_INSECURE_SMTP=true
+    broadcast_to: ""             # address for deployment-wide broadcasts (see below); default empty
   slack:
     enabled: true
     webhook_url: ""              # prefer the KEYORIX_NOTIFY_SLACK_WEBHOOK env var
@@ -1675,6 +1689,26 @@ notifications:
 The **slack** and **teams** channels POST to an incoming-webhook URL (Slack: a
 `{text}` message; Teams: a MessageCard). The webhook URL embeds the platform's secret
 token, so set it via the env var.
+
+**`notifications.webhook.signing_secret`** (default empty: payloads are **not**
+signed). When set, each webhook POST carries `X-Keyorix-Signature:
+sha256=<hex>`, the HMAC-SHA256 of the request body keyed with this secret, so the
+receiver can check the request came from Keyorix and was not altered. Recompute the HMAC
+over the raw body and compare in constant time. Without it, anyone who learns the
+endpoint URL can post forged notifications to it, unless `token` is also set and
+checked on the receiving side. The value comes from
+`KEYORIX_NOTIFY_WEBHOOK_SIGNING_SECRET` (or its `_FILE` form) when set, otherwise from
+the file.
+
+**`notifications.email.broadcast_to`** (default empty) is the single address that
+receives *broadcast* notifications over the email channel: the scheduled
+[compliance digest](#compliance_digest) and auto-rotation-failure alerts. Those have
+no one recipient, whereas a per-user notification is mailed to that user's own
+address. With `broadcast_to` empty, an email channel drops every broadcast (logged as
+`email dropped a broadcast notification`, and counted as a dropped delivery). If email
+is the **only** enabled channel and `broadcast_to` is empty, the server logs a
+`WARNING` at start-up saying so. If Slack, Teams or the webhook is also enabled, the
+broadcast still reaches those.
 
 > Secrets are read from `KEYORIX_NOTIFY_WEBHOOK_TOKEN` / `KEYORIX_NOTIFY_SMTP_PASSWORD`
 > / `KEYORIX_NOTIFY_SLACK_WEBHOOK` / `KEYORIX_NOTIFY_TEAMS_WEBHOOK` when set, falling
@@ -1837,6 +1871,77 @@ rotation_reminders:
   enabled: true
   schedule: "24h"         # Go duration between reminder runs (default 24h)
 ```
+
+## expiry_reminders
+
+An opt-in background scheduler that notifies project admins (in-app, and by email where
+that channel is enabled) of secrets that are **already expired or expire within
+`lead_days`**, going by each secret's own `expiration` field. **Off by default**: with
+no block, nobody is told that a secret is about to lapse. One standing reminder per
+project per admin, de-duplicated like the rotation reminder: an unread reminder is
+not repeated, but it is raised in place from Warning to Critical once any secret in the
+project has actually expired. Single-replica-gated (ADR-039).
+
+```yaml
+expiry_reminders:
+  enabled: true
+  schedule: "24h"         # Go duration between runs (default 24h)
+  lead_days: 14           # warn this many days ahead (default 14)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `expiry_reminders.enabled` | `false` | Starts the scheduler; the server logs `Expiry-reminder scheduler enabled`. |
+| `expiry_reminders.schedule` | `24h` | Go duration. An empty, unparseable or non-positive value silently becomes `24h`. |
+| `expiry_reminders.lead_days` | `14` | Days ahead of `expiration` to start warning. `0` or a negative value means 14. |
+
+The same scan can be run by hand with `POST /api/v1/admin/jobs/expiry-reminders?lead_days=N`.
+
+## license_expiry
+
+An opt-in background reminder for the offline commercial license (ADR-065). **Off by
+default.** When enabled, it tells every install-wide admin (in-app) that the license is
+within `lead_days` of its expiry or already expired, so a lapse does not silently turn
+commercial features off. It acts only on a validly signed license that has an expiry
+date: with no license (the community baseline) or an invalid or untrusted one it says
+nothing (a bad license is reported at start-up and on the license status endpoint
+instead). It never changes whether the license gate lets a feature through. An unread
+reminder is not repeated, but is raised in place from Warning (expiring) to Critical
+(expired). Single-replica-gated (ADR-039).
+
+```yaml
+license_expiry:
+  enabled: true
+  schedule: "24h"         # Go duration between checks (default 24h)
+  lead_days: 30           # remind this many days before expiry (default 30)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `license_expiry.enabled` | `false` | Starts the reminder; the server logs `License-expiry reminder enabled`. |
+| `license_expiry.schedule` | `24h` | Go duration. An empty, unparseable or non-positive value silently becomes `24h`. |
+| `license_expiry.lead_days` | `30` | Days before expiry to start reminding. `0` or a negative value means 30. |
+
+## read_quota_alerts
+
+An opt-in background scan of secrets that have a read limit (`max_reads`). **Off by
+default.** It notifies each such secret's **owner** (in-app) when the read count reaches
+80% of the limit (Warning), 95% (Critical), or 100% (Critical, "exhausted"). One unread
+reminder per secret and owner; it is raised in place when the severity goes up and
+otherwise not repeated. Single-replica-gated (ADR-039).
+
+```yaml
+read_quota_alerts:
+  enabled: true
+  schedule: "24h"         # Go duration between scans (default 24h)
+```
+
+| Key | Default | What the code does |
+|---|---|---|
+| `read_quota_alerts.enabled` | `false` | Starts the scan; the server logs `Read-quota alert scheduler enabled`. |
+| `read_quota_alerts.schedule` | `24h` | Go duration. An empty, unparseable or non-positive value silently becomes `24h`. |
+
+The 80% and 95% thresholds are fixed in code, not configurable.
 
 ## certificate_expiry
 
@@ -2167,7 +2272,33 @@ anomalies reach your SOC). Each anomaly is announced once. Single-replica-gated
 anomaly_alerts:
   enabled: true
   schedule: "1h"          # Go duration between scan+alert passes (default 1h)
+  business_hours:
+    timezone: "America/New_York"   # IANA name; default "" = UTC
+    off_hours_start: 22            # hour 0-23; default 22
+    off_hours_end: 6               # hour 0-23; default 6
+  baseline_quarantine: "24h"       # Go duration; default 24h; "0" turns it off
 ```
+
+**`anomaly_alerts.business_hours`** sets what the *off-hours* rule treats as off hours:
+access at an hour inside the band `[off_hours_start, off_hours_end)` (wrapping midnight,
+so `22` to `6` is 22:00 to 05:59) as seen in `timezone`. Left unset, the band is 22:00 to
+06:00 UTC, which on a non-UTC site flags ordinary local working hours (or misses real
+night access); `timezone` alone is the usual fix. Set `off_hours_start` and
+`off_hours_end` **together**: if either is non-zero, both are taken literally, so
+`off_hours_start: 20` alone means 20:00 to 00:00, not 20:00 to 06:00. Both `0` keeps the
+default band. An unknown `timezone`, an hour outside 0-23, or equal start and end is
+**rejected**; the server does not stop, it logs `Anomaly off-hours config ignored` and
+carries on with the UTC 22:00 to 06:00 default, so check the log after changing these.
+A configuration saved at runtime through the API is applied on top of these file values
+at start-up and before every scan, and takes precedence for the settings it carries.
+
+**`anomaly_alerts.baseline_quarantine`** (default `24h`) is how long an IP address or
+user must have been seen, before the scan window, to be trusted as "known" by the
+new-IP and new-user rules. Without a delay, an attacker's first successful access would
+become part of the baseline one scan later and those rules would go quiet for it. An
+address or user also has to be seen at least 3 times to count as known. `0` or `0s`
+**turns the quarantine off**, which weakens that protection; an unparseable or negative
+value silently becomes `24h`.
 
 ### anomaly_alerts.ml — Isolation Forest detection (ADR-050)
 
@@ -2209,7 +2340,27 @@ audit:
     endpoint: https://siem.example.com/services/collector
     # token: ""                 # prefer KEYORIX_SIEM_TOKEN
     insecure_skip_verify: false # never true in production
+    # spool_dir: /var/lib/keyorix/siem-spool   # default empty: no on-disk backlog
 ```
+
+- **`audit.siem.token`** is the credential sent to the SIEM: `Authorization: Splunk
+  <token>` for `splunk`, `DD-API-KEY: <token>` for `datadog`, `Authorization: Bearer
+  <token>` for `webhook` (omitted if empty). When `KEYORIX_SIEM_TOKEN` (or
+  `KEYORIX_SIEM_TOKEN_FILE`) is set it is used instead of the file value; setting both
+  of those two is refused at start-up. A token written in the config file is only as
+  safe as that file, so prefer the environment variable or the `_FILE` form.
+- **`audit.siem.spool_dir`** (default empty) turns on a durable on-disk backlog. Without
+  it, forwarding is best-effort: an event that cannot be delivered (queue full, retries
+  used up) is lost *from the SIEM copy*. With it, such events are appended to
+  `<spool_dir>/siem-spool.jsonl` and re-sent every 30 seconds (and once at start-up)
+  until the SIEM accepts them. The directory is created `0700` (an existing one is
+  tightened to `0700`) and the file is `0600`, because the events carry secret names,
+  usernames, IP addresses and justifications. The backlog is capped at 100 MiB; past
+  that, new events are dropped from the SIEM copy, logged, and counted in
+  `keyorix_siem_forwards_total{outcome="dropped"}`. The local audit chain keeps every event either way, so a
+  full spool never loses the audit record itself. A line over 4 MiB is skipped and
+  logged. The path needs to be writable by the server user and on a volume that
+  survives restarts (in a container, a mounted volume).
 
 ## scim
 
@@ -2561,6 +2712,13 @@ credential_delivery:
     from: keyorix@example.com
     tls: starttls               # starttls | implicit | none (dev only)
 ```
+
+**`credential_delivery.smtp.password`** is the relay password. When
+`KEYORIX_SMTP_PASSWORD` (or `KEYORIX_SMTP_PASSWORD_FILE`) is set, that value is used
+and the file value is ignored; setting both of those two is refused at start-up. Keep
+it out of `keyorix.yaml`: a password written there is readable by anyone who can read
+the config file. (The notification email channel has its own,
+`notifications.email.password` / `KEYORIX_NOTIFY_SMTP_PASSWORD`.)
 
 `out_of_band` / `log` return or log the link instead of emailing it (useful when no
 mail relay is available). A link-producing mode with an empty `base_url` is a
