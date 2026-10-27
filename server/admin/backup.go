@@ -21,6 +21,7 @@
 package admin
 
 import (
+	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -151,6 +152,55 @@ func acquireLiveBackupPresence(cfg *config.Config) (*serverguard.Presence, error
 	return presence, nil
 }
 
+// liveBackupPresence is what a live Postgres backup holds while it runs
+// (*serverguard.Presence; a nil one holds nothing and is never lost).
+type liveBackupPresence interface {
+	Lost() <-chan struct{}
+	Release() error
+}
+
+// Test seams, never changed in production: acquireLiveBackupPresenceFn takes
+// the presence lock (a test returns a fake whose Lost it closes), and
+// backupOutputWriteHook runs after each write to the archive.
+var (
+	acquireLiveBackupPresenceFn = func(cfg *config.Config) (liveBackupPresence, error) {
+		return acquireLiveBackupPresence(cfg)
+	}
+	backupOutputWriteHook func()
+)
+
+// errLiveBackupPresenceLost stops a live backup whose presence lock was lost.
+var errLiveBackupPresenceLost = errors.New("the server-presence lock was lost")
+
+// presenceLost reports whether lost (nil: a lock that cannot be lost) is closed.
+func presenceLost(lost <-chan struct{}) bool {
+	select {
+	case <-lost:
+		return true
+	default:
+		return false
+	}
+}
+
+// presenceWatchWriter refuses every write once the presence lock is lost, so
+// backupfmt.WriteBackup stops at its next write instead of finishing an archive
+// a key rotation may have raced.
+type presenceWatchWriter struct {
+	w    io.Writer
+	lost <-chan struct{}
+}
+
+func (p *presenceWatchWriter) Write(b []byte) (int, error) {
+	if presenceLost(p.lost) {
+		return 0, errLiveBackupPresenceLost
+	}
+	n, err := p.w.Write(b)
+	if hook := backupOutputWriteHook; hook != nil {
+		hook()
+	}
+	return n, err
+}
+
 func runAdminBackup(cmd *cobra.Command, args []string) error {
 	if backupOutput == "" {
 		return fmt.Errorf("--output is required")
@@ -176,6 +226,10 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 	// deployment's other replicas are never blocked from (re)starting for
 	// the backup's duration, the whole reason those deployments choose
 	// Postgres over SQLite in the first place.
+	// presenceLostCh is the live backup's presence lock's Lost channel (nil when
+	// it holds none, or on the exclusive path, whose lock loss stops the
+	// command at once: stopOnLostDatabaseLock).
+	var presenceLostCh <-chan struct{}
 	if !isPostgresStorage(cfg) || backupExclusive {
 		lock, err := acquireDatabaseLock(cfg)
 		if err != nil {
@@ -188,11 +242,12 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		}
 		defer lock.Release() //nolint:errcheck
 	} else {
-		presence, perr := acquireLiveBackupPresence(cfg)
+		presence, perr := acquireLiveBackupPresenceFn(cfg)
 		if perr != nil {
 			return perr
 		}
 		defer presence.Release() //nolint:errcheck
+		presenceLostCh = presence.Lost()
 	}
 
 	if err := preflightBackupFreeSpace(cfg); err != nil {
@@ -292,7 +347,26 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create %q: %w", backupOutput, err)
 	}
 
-	manifest, werr := backupfmt.WriteBackup(readDB, storage.CurrentSchemaEpoch(), highWater, manifestKey, keyEntries, keyBlobs, f)
+	// The presence lock (key_dir_lock: database) is what keeps a key rotation
+	// or restore out while this live backup reads. Once it is lost one may run
+	// beside it, so the archive is not finished: writes stop at the next one,
+	// the database reads are cancelled, and the check after the last read
+	// below fails the backup and removes the partial file.
+	out := io.Writer(f)
+	if presenceLostCh != nil {
+		out = &presenceWatchWriter{w: f, lost: presenceLostCh}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		go func() {
+			select {
+			case <-presenceLostCh:
+				cancel()
+			case <-ctx.Done():
+			}
+		}()
+		readDB = readDB.WithContext(ctx)
+	}
+	manifest, werr := backupfmt.WriteBackup(readDB, storage.CurrentSchemaEpoch(), highWater, manifestKey, keyEntries, keyBlobs, out)
 	releaseSnapshotTx() // all reads are done -- release before anything below opens another connection
 	if werr == nil && liveServer {
 		// Belt and braces for any key-file writer that does NOT take the
@@ -302,6 +376,14 @@ func runAdminBackup(cmd *cobra.Command, args []string) error {
 			backupLiveAfterReadHook()
 		}
 		werr = verifyKeyFilesUnchanged(cfg, keyEntries)
+	}
+	if presenceLost(presenceLostCh) {
+		_ = f.Close()
+		_ = os.Remove(backupOutput)
+		return fmt.Errorf("live backup stopped: the server-presence lock it holds (storage.encryption.key_dir_lock: database) was lost while it ran "+
+			"(its database connection died, see docs/postgresql-poolers.md, \"When a lock is lost\"), so a key rotation or restore may have run "+
+			"during the backup and the archive may not match its keys. The partial archive %s was removed. Check that no key rotation or "+
+			"restore is running, then re-run the backup", backupOutput)
 	}
 	if werr != nil {
 		_ = f.Close()
