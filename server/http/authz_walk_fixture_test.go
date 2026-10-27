@@ -20,7 +20,7 @@
 //   - Methods the router registers for /metrics other than GET (CONNECT, OPTIONS,
 //     TRACE, QUERY, ...) and HEAD: chi expands one Handle() to every method; they
 //     are one handler, the metrics scrape, not API routes.
-//   - Static assets (/assets/*, /static/*, /favicon.ico, /manifest.json, /sw.js,
+//   - Static assets (/assets/*, /static/*, /fonts/*, /favicon.ico, /favicon.svg, /manifest.json, /sw.js,
 //     /status, /status-es): file serving, no principal.
 //   - SCIM (/scim/v2/*): authenticated by a static operator bearer token, not by
 //     sessions/PATs/machine tokens; only registered when cfg.SCIM.Enabled.
@@ -90,6 +90,8 @@ var awPublicRoutes = map[string]string{
 	"GET /sw.js":                              "static",
 	"GET /assets/*":                           "static",
 	"GET /static/*":                           "static",
+	"GET /fonts/*":                            "static (self-hosted web fonts, AIRGAP-WEBUI-1)",
+	"GET /favicon.svg":                        "static",
 }
 
 // awSkipped reports whether a route is one of the non-API shapes the header says
