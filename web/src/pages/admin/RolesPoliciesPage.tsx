@@ -79,11 +79,18 @@ interface PermissionChecklistProps {
     loading: boolean;
     selected: string[];
     onChange: (selected: string[]) => void;
+    disabled?: boolean;
 }
 
 // The permissions a role carries, by name. The server refuses a role with none, so the form
 // asks for at least one rather than sending an empty list.
-const PermissionChecklist: React.FC<PermissionChecklistProps> = ({ permissions, loading, selected, onChange }) => {
+const PermissionChecklist: React.FC<PermissionChecklistProps> = ({
+    permissions,
+    loading,
+    selected,
+    onChange,
+    disabled = false,
+}) => {
     const toggle = (name: string) =>
         onChange(selected.includes(name) ? selected.filter((n) => n !== name) : [...selected, name]);
     return (
@@ -114,6 +121,7 @@ const PermissionChecklist: React.FC<PermissionChecklistProps> = ({ permissions, 
                                         type="checkbox"
                                         checked={selected.includes(perm.name)}
                                         onChange={() => toggle(perm.name)}
+                                        disabled={disabled}
                                         className="h-4 w-4 rounded-sm accent-blue-600"
                                     />
                                     <span className="text-sm" style={{ color: 'var(--text-primary)' }}>
@@ -281,6 +289,8 @@ export const RolesPoliciesPage: React.FC = () => {
     const createReady =
         formData.name.trim() !== '' && formData.description.trim() !== '' && formData.permissions.length > 0;
 
+    // The server refuses every update to a built-in role (403, whatever the fields), so its
+    // Edit dialog is read-only and Save never sends the PUT.
     const editBuiltIn = editRole !== null && isBuiltIn(editRole.name);
     const permsChanged =
         editRole !== null &&
@@ -290,6 +300,7 @@ export const RolesPoliciesPage: React.FC = () => {
         );
     // On update the permissions key is optional but, when sent, must hold at least one entry.
     const editReady =
+        !editBuiltIn &&
         formData.name.trim() !== '' &&
         formData.description.trim() !== '' &&
         !(permsChanged && formData.permissions.length === 0);
@@ -300,17 +311,16 @@ export const RolesPoliciesPage: React.FC = () => {
     };
 
     const handleUpdate = () => {
-        if (!editRole || !editReady) return;
+        if (!editRole || editBuiltIn || !editReady) return;
         const { permissions, assignable_scope, ...rest } = formData;
         updateMutation.mutate(
             {
                 id: editRole.id,
                 body: {
                     ...rest,
-                    // Unchanged permissions are left out so the server keeps the current set; a built-in
-                    // role's scope is not editable (the server answers 403 to it).
+                    // Unchanged permissions are left out so the server keeps the current set.
                     ...(permsChanged ? { permissions } : {}),
-                    ...(editBuiltIn ? {} : { assignable_scope }),
+                    assignable_scope,
                 },
             },
             { onSuccess: () => setEditRole(null) }
@@ -554,10 +564,16 @@ export const RolesPoliciesPage: React.FC = () => {
             {/* Edit Role */}
             <Modal isOpen={editRole !== null} onClose={() => setEditRole(null)} title="Edit Role">
                 <div className="space-y-4">
+                    {editBuiltIn && (
+                        <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+                            Built-in roles cannot be edited.
+                        </p>
+                    )}
                     <Input
                         label="Name"
                         value={formData.name}
                         onChange={(e) => setFormData((d) => ({ ...d, name: e.target.value }))}
+                        disabled={editBuiltIn}
                     />
                     <div>
                         <label
@@ -571,8 +587,9 @@ export const RolesPoliciesPage: React.FC = () => {
                             id="edit-role-description"
                             value={formData.description}
                             onChange={(e) => setFormData((d) => ({ ...d, description: e.target.value }))}
+                            disabled={editBuiltIn}
                             rows={3}
-                            className="w-full px-3 py-2 rounded-md border text-sm resize-none"
+                            className="w-full px-3 py-2 rounded-md border text-sm resize-none disabled:opacity-60 disabled:cursor-not-allowed"
                             style={{
                                 backgroundColor: 'var(--bg-app)',
                                 borderColor: 'var(--border-strong)',
@@ -591,6 +608,7 @@ export const RolesPoliciesPage: React.FC = () => {
                         loading={permsLoading}
                         selected={formData.permissions}
                         onChange={(next) => setFormData((d) => ({ ...d, permissions: next }))}
+                        disabled={editBuiltIn}
                     />
                     {updateMutation.isError && (
                         <p className="text-sm text-red-600">

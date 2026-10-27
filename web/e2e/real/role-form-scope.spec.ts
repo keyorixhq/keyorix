@@ -2,8 +2,8 @@
 // The role form's "Can be granted" selector (assignable scope):
 //   1. the New Role form and a new custom role default to "Per project only";
 //   2. widening it to "Install-wide or per project" is saved and audited (role.updated);
-//   3. a built-in role's scope cannot be changed: the form disables the selector, the server refuses (403)
-//      and the stored scope stays;
+//   3. a built-in role cannot be edited at all: the server refuses any update to one (403) and the
+//      stored scope stays; the Edit dialog is read-only and Save is disabled;
 //   4. the form itself creates and edits a role: Create/Save send the ticked permissions and the
 //      description, and a refusal shows the server's own message.
 import { test, expect, request as apiRequestFactory, type APIRequestContext } from '@playwright/test';
@@ -75,14 +75,19 @@ test('the role form: new roles default to project, widening is audited, built-in
         await expect(page.getByRole('dialog').getByLabel('Can be granted')).toHaveValue('any');
         await page.getByRole('dialog').getByRole('button', { name: 'Cancel' }).click();
 
-        // 3. A built-in role's scope is not editable: the server refuses (403) and project_viewer stays
-        // project-only; the form shows its stored scope in a disabled selector, with the reason.
+        // 3. A built-in role is not editable: the server refuses any update to one (403), a scope change
+        // and a description-only change alike, and project_viewer stays project-only; the Edit dialog shows
+        // the stored values read-only, with the reason, and Save stays disabled.
         const builtIn = (await listRoles(api)).find((r) => r.name === 'project_viewer')!;
         expect(builtIn.assignable_scope).toBe('project');
         const direct = await api.put(`/api/v1/roles/${builtIn.id}`, {
             data: { name: builtIn.name, description: builtIn.description, assignable_scope: 'any' },
         });
         expect(direct.status()).toBe(403);
+        const descriptionOnly = await api.put(`/api/v1/roles/${builtIn.id}`, {
+            data: { name: builtIn.name, description: `${builtIn.description} (edited)` },
+        });
+        expect(descriptionOnly.status()).toBe(403);
         expect((await listRoles(api)).find((r) => r.name === 'project_viewer')!.assignable_scope).toBe('project');
         const builtInCard = page.locator('div.rounded-xl', {
             has: page.getByRole('heading', { name: 'project_viewer' }),
@@ -91,9 +96,9 @@ test('the role form: new roles default to project, widening is audited, built-in
         await builtInCard.getByTitle('Edit role').click();
         await expect(page.getByRole('dialog').getByLabel('Can be granted')).toHaveValue('project');
         await expect(page.getByRole('dialog').getByLabel('Can be granted')).toBeDisabled();
-        await expect(
-            page.getByRole('dialog').getByText('Built-in roles cannot change where they can be granted.')
-        ).toBeVisible();
+        await expect(page.getByRole('dialog').getByText('Built-in roles cannot be edited.')).toBeVisible();
+        await expect(page.getByRole('dialog').getByLabel('Description')).toBeDisabled();
+        await expect(page.getByRole('dialog').getByRole('button', { name: 'Save' })).toBeDisabled();
     } finally {
         await api.dispose();
     }

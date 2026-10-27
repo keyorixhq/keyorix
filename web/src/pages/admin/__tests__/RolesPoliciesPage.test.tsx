@@ -478,13 +478,29 @@ describe('RolesPoliciesPage — edit role', () => {
         expect(screen.queryByText('Failed to update role. Please try again.')).not.toBeInTheDocument();
     });
 
-    it('disables "Can be granted" with an explanation for a built-in role', () => {
+    // The server refuses every update to a built-in role (403, whatever the fields), so the form
+    // shows the role read-only and never sends the PUT.
+    const expectBuiltInReadOnly = (dialog: HTMLElement) => {
+        expect(within(dialog).getByText('Built-in roles cannot be edited.')).toBeInTheDocument();
+        expect(within(dialog).getByLabelText('Name')).toBeDisabled();
+        expect(within(dialog).getByLabelText('Description')).toBeDisabled();
+        expect(within(dialog).getByLabelText('Can be granted')).toBeDisabled();
+        for (const box of within(dialog).getAllByRole('checkbox')) expect(box).toBeDisabled();
+        expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled();
+    };
+
+    it('shows a built-in role read-only and never sends an update', () => {
         render(<RolesPoliciesPage />);
         fireEvent.click(within(getRoleCard('admin')).getByTitle('Edit role'));
 
         const dialog = screen.getByRole('dialog');
-        expect(within(dialog).getByLabelText('Can be granted')).toBeDisabled();
-        expect(within(dialog).getByText(/Built-in roles cannot change where they can be granted/)).toBeInTheDocument();
+        expectBuiltInReadOnly(dialog);
+        // Its stored permissions are still shown.
+        expect(within(dialog).getByLabelText(/Read Secrets/)).toBeChecked();
+        expect(within(dialog).getByLabelText(/Write Secrets/)).toBeChecked();
+
+        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
+        expect(updateMutate).not.toHaveBeenCalled();
     });
 
     it('treats the ADR-021 named roles as built-in too (project_viewer)', () => {
@@ -495,16 +511,19 @@ describe('RolesPoliciesPage — edit role', () => {
         });
         render(<RolesPoliciesPage />);
         fireEvent.click(within(getRoleCard('project_viewer')).getByTitle('Edit role'));
-        expect(within(screen.getByRole('dialog')).getByLabelText('Can be granted')).toBeDisabled();
+        expectBuiltInReadOnly(screen.getByRole('dialog'));
+        fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Save' }));
+        expect(updateMutate).not.toHaveBeenCalled();
     });
 
-    it('does not send assignable_scope when saving a built-in role (the server answers 403 to it)', () => {
+    it('keeps the form editable for a custom role', () => {
         render(<RolesPoliciesPage />);
-        fireEvent.click(within(getRoleCard('admin')).getByTitle('Edit role'));
+        fireEvent.click(within(getRoleCard('developer')).getByTitle('Edit role'));
         const dialog = screen.getByRole('dialog');
-        fireEvent.change(within(dialog).getByLabelText('Description'), { target: { value: 'Administrators' } });
-        fireEvent.click(within(dialog).getByRole('button', { name: 'Save' }));
-        expect(updateMutate.mock.calls[0]?.[0].body).not.toHaveProperty('assignable_scope');
+        expect(within(dialog).queryByText('Built-in roles cannot be edited.')).not.toBeInTheDocument();
+        expect(within(dialog).getByLabelText('Description')).not.toBeDisabled();
+        for (const box of within(dialog).getAllByRole('checkbox')) expect(box).not.toBeDisabled();
+        expect(within(dialog).getByRole('button', { name: 'Save' })).not.toBeDisabled();
     });
 
     it('keeps "Can be granted" editable for a custom role', () => {
