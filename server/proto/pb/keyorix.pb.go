@@ -3571,8 +3571,12 @@ type AuditLog struct {
 	Impersonation  bool    `protobuf:"varint,13,opt,name=impersonation,proto3" json:"impersonation,omitempty"`
 	ImpersonatedBy *string `protobuf:"bytes,14,opt,name=impersonated_by,json=impersonatedBy,proto3,oneof" json:"impersonated_by,omitempty"`
 	ActingAs       *string `protobuf:"bytes,15,opt,name=acting_as,json=actingAs,proto3,oneof" json:"acting_as,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Server-minted id of the request that wrote the row (the x-request-id response
+	// header of that call); unset when the row has none. Advisory: NOT covered by the
+	// audit hash chain (docs/specs/audit-request-id.md).
+	RequestId     *string `protobuf:"bytes,16,opt,name=request_id,json=requestId,proto3,oneof" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *AuditLog) Reset() {
@@ -3710,6 +3714,13 @@ func (x *AuditLog) GetActingAs() string {
 	return ""
 }
 
+func (x *AuditLog) GetRequestId() string {
+	if x != nil && x.RequestId != nil {
+		return *x.RequestId
+	}
+	return ""
+}
+
 // Newest-first (event_time DESC, id DESC). page/page_size reach at most the
 // newest 10000 events (InvalidArgument beyond); deeper pages follow
 // next_cursor. See docs/specs/audit-list-keyset.md.
@@ -3727,7 +3738,10 @@ type GetAuditLogsRequest struct {
 	Cursor *string `protobuf:"bytes,9,opt,name=cursor,proto3,oneof" json:"cursor,omitempty"`
 	// Exact total (a full count over the filter). Without it, total is exact
 	// up to 10000 and capped there (total_exact false).
-	IncludeTotal  bool `protobuf:"varint,10,opt,name=include_total,json=includeTotal,proto3" json:"include_total,omitempty"`
+	IncludeTotal bool `protobuf:"varint,10,opt,name=include_total,json=includeTotal,proto3" json:"include_total,omitempty"`
+	// Exact match on AuditLog.request_id. Not indexed: pair it with start_time /
+	// end_time. Rows without an id never match.
+	RequestId     *string `protobuf:"bytes,11,opt,name=request_id,json=requestId,proto3,oneof" json:"request_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3830,6 +3844,13 @@ func (x *GetAuditLogsRequest) GetIncludeTotal() bool {
 		return x.IncludeTotal
 	}
 	return false
+}
+
+func (x *GetAuditLogsRequest) GetRequestId() string {
+	if x != nil && x.RequestId != nil {
+		return *x.RequestId
+	}
+	return ""
 }
 
 type GetAuditLogsResponse struct {
@@ -11526,7 +11547,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\auser_id\x18\x01 \x01(\rR\x06userId\x12\x1a\n" +
 	"\busername\x18\x02 \x01(\tR\busername\x12\x14\n" +
 	"\x05email\x18\x03 \x01(\tR\x05email\x12&\n" +
-	"\x05roles\x18\x04 \x03(\v2\x10.keyorix.v1.RoleR\x05roles\"\xcb\x04\n" +
+	"\x05roles\x18\x04 \x03(\v2\x10.keyorix.v1.RoleR\x05roles\"\xfe\x04\n" +
 	"\bAuditLog\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\rR\x02id\x12\x1d\n" +
 	"\n" +
@@ -11548,7 +11569,9 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x04diff\x18\f \x01(\tH\x03R\x04diff\x88\x01\x01\x12$\n" +
 	"\rimpersonation\x18\r \x01(\bR\rimpersonation\x12,\n" +
 	"\x0fimpersonated_by\x18\x0e \x01(\tH\x04R\x0eimpersonatedBy\x88\x01\x01\x12 \n" +
-	"\tacting_as\x18\x0f \x01(\tH\x05R\bactingAs\x88\x01\x01B\n" +
+	"\tacting_as\x18\x0f \x01(\tH\x05R\bactingAs\x88\x01\x01\x12\"\n" +
+	"\n" +
+	"request_id\x18\x10 \x01(\tH\x06R\trequestId\x88\x01\x01B\n" +
 	"\n" +
 	"\b_user_idB\r\n" +
 	"\v_project_idB\f\n" +
@@ -11557,7 +11580,8 @@ const file_keyorix_proto_rawDesc = "" +
 	"\x05_diffB\x12\n" +
 	"\x10_impersonated_byB\f\n" +
 	"\n" +
-	"_acting_as\"\xee\x03\n" +
+	"_acting_asB\r\n" +
+	"\v_request_id\"\xa1\x04\n" +
 	"\x13GetAuditLogsRequest\x12\"\n" +
 	"\n" +
 	"event_type\x18\x01 \x01(\tH\x00R\teventType\x88\x01\x01\x12\x1c\n" +
@@ -11573,7 +11597,9 @@ const file_keyorix_proto_rawDesc = "" +
 	"\tpage_size\x18\b \x01(\rR\bpageSize\x12\x1b\n" +
 	"\x06cursor\x18\t \x01(\tH\x06R\x06cursor\x88\x01\x01\x12#\n" +
 	"\rinclude_total\x18\n" +
-	" \x01(\bR\fincludeTotalB\r\n" +
+	" \x01(\bR\fincludeTotal\x12\"\n" +
+	"\n" +
+	"request_id\x18\v \x01(\tH\aR\trequestId\x88\x01\x01B\r\n" +
 	"\v_event_typeB\n" +
 	"\n" +
 	"\b_user_idB\r\n" +
@@ -11581,7 +11607,8 @@ const file_keyorix_proto_rawDesc = "" +
 	"\v_actor_typeB\r\n" +
 	"\v_start_timeB\v\n" +
 	"\t_end_timeB\t\n" +
-	"\a_cursor\"\xff\x01\n" +
+	"\a_cursorB\r\n" +
+	"\v_request_id\"\xff\x01\n" +
 	"\x14GetAuditLogsResponse\x12(\n" +
 	"\x04logs\x18\x01 \x03(\v2\x14.keyorix.v1.AuditLogR\x04logs\x12\x14\n" +
 	"\x05total\x18\x02 \x01(\rR\x05total\x12\x12\n" +

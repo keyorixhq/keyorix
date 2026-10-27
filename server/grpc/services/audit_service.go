@@ -194,6 +194,7 @@ func (s *AuditGRPCService) GetAuditLogs(ctx context.Context, req *pb.GetAuditLog
 		UserID:    optUint(req.UserId),
 		ProjectID: optUint(req.ProjectId),
 		ActorType: optString(req.ActorType),
+		RequestID: optString(req.RequestId),
 		StartTime: tsToTimePtr(req.GetStartTime()),
 		EndTime:   tsToTimePtr(req.GetEndTime()),
 	}
@@ -572,6 +573,9 @@ func auditEventToProto(e *models.AuditEvent, names, machineNames map[uint]string
 		EventTime:     timestamppb.New(e.EventTime),
 		Impersonation: e.Impersonation,
 		Diff:          optStringValue(e.Diff),
+	}
+	if e.RequestID != nil {
+		out.RequestId = optStringValue(*e.RequestID)
 	}
 	if e.UserID != nil {
 		out.UserId = ptrU32(*e.UserID)

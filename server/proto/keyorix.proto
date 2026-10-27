@@ -668,6 +668,10 @@ message AuditLog {
   bool impersonation = 13;
   optional string impersonated_by = 14;
   optional string acting_as = 15;
+  // Server-minted id of the request that wrote the row (the x-request-id response
+  // header of that call); unset when the row has none. Advisory: NOT covered by the
+  // audit hash chain (docs/specs/audit-request-id.md).
+  optional string request_id = 16;
 }
 
 // Newest-first (event_time DESC, id DESC). page/page_size reach at most the
@@ -687,6 +691,9 @@ message GetAuditLogsRequest {
   // Exact total (a full count over the filter). Without it, total is exact
   // up to 10000 and capped there (total_exact false).
   bool include_total = 10;
+  // Exact match on AuditLog.request_id. Not indexed: pair it with start_time /
+  // end_time. Rows without an id never match.
+  optional string request_id = 11;
 }
 
 message GetAuditLogsResponse {

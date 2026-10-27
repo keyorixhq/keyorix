@@ -65,6 +65,9 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		// deferred bookkeeping runs on the way out.
 		grpc.ChainUnaryInterceptor(
 			interceptors.RecoveryInterceptor(),
+			// Mints the request id every audit row written by the call is stamped with
+			// (docs/specs/audit-request-id.md); outside everything that can write one.
+			interceptors.RequestIDInterceptor(),
 			interceptors.MetricsInterceptor(),
 			interceptors.LoggingInterceptor(),
 			// Cap each unary RPC at the same 60s the HTTP API's Timeout middleware
@@ -116,6 +119,7 @@ func NewServer(cfg *config.Config, coreService *core.KeyorixCore) (*grpc.Server,
 		// folded into this reordering.
 		grpc.ChainStreamInterceptor(
 			interceptors.StreamRecoveryInterceptor(),
+			interceptors.StreamRequestIDInterceptor(),
 			interceptors.StreamLoggingInterceptor(),
 			interceptors.StreamAuthInterceptor(coreService, cfg.Security.RequireMFA),
 			// Per-principal token-bucket rate limit on stream OPEN, the streaming
