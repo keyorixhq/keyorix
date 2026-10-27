@@ -252,6 +252,11 @@ var (
 	// validation can still be in flight, same bound #2423's own PR comment
 	// uses.
 	clearedAt = map[string]time.Time{}
+	// userEvictedAt records, per user ID, the moment InvalidateUserTokenCache last
+	// ran for it: the per-user counterpart of clearedAt, for the same reason (a
+	// slow-path validation already in flight for a key that was not cached at
+	// eviction time has no per-key marker to check). Pruned after validTokenTTL.
+	userEvictedAt = map[uint]time.Time{}
 )
 
 // currentMachineCacheGen returns the machine-cache generation. The slow path
@@ -326,6 +331,9 @@ func cacheSetValidatedGen(key string, userCtx *UserContext, validatedAt time.Tim
 		// via the separate clearedAt map since a clear's own tokenCache marker (if any)
 		// does not survive an intervening cacheGet long enough to check here directly.
 	}
+	if userEvictedDuringLocked(userCtx, validatedAt) {
+		return // the user's cache entries were evicted (InvalidateUserTokenCache) during our validation
+	}
 	entry := tokenCacheEntry{userCtx: userCtx, expiresAt: expiresAt}
 	if isMachineEntry(userCtx) {
 		if gen != machineCacheGen {
@@ -364,6 +372,11 @@ func pruneLocked() {
 		for k, ca := range clearedAt {
 			if now.After(ca.Add(validTokenTTL)) {
 				delete(clearedAt, k)
+			}
+		}
+		for u, ea := range userEvictedAt {
+			if now.After(ea.Add(validTokenTTL)) {
+				delete(userEvictedAt, u)
 			}
 		}
 		lastPurge = now
@@ -1909,8 +1922,9 @@ func forbiddenResponse(w http.ResponseWriter, message string) {
 // left unfixed here while gRPC failed closed, a caller could deliberately
 // trigger the same lookup error and pick whichever transport still failed
 // open, reopening exactly the transport-divergence bypass class this
-// function's own doc comment says it exists to prevent. A "project not
-// found" error is deliberately excluded from the fail-closed path: this
+// function's own doc comment says it exists to prevent. A definitive
+// storage.ErrProjectNotFound (matched with storage.IsProjectNotFound, never by
+// text: ERRLOSS-MFA-1) is deliberately excluded from the fail-closed path: this
 // scope was already permission-checked by the caller (finishScopedPermissionRequest
 // only reaches here on allowed==true), so a nonexistent project is not an
 // MFA-policy question — blocking it here would mask the handler's own
@@ -1926,7 +1940,9 @@ func ProjectMFABlocked(r *http.Request, cs *core.KeyorixCore, projectID uint) bo
 	}
 	req, err := cs.ProjectRequiresMFA(r.Context(), projectID)
 	if err != nil {
-		return !strings.Contains(err.Error(), "not found")
+		// ERRLOSS-MFA-1: classify by sentinel, never by text — any storage
+		// error whose message merely contained "not found" used to skip MFA.
+		return !storage.IsProjectNotFound(err)
 	}
 	return req
 }
@@ -2086,6 +2102,61 @@ func ClearTokenCacheIfCached(hash string) {
 	delete(tokenCache, hash)
 	clearedAt[hash] = time.Now()
 	tokenCacheMu.Unlock()
+}
+
+// InvalidateUserTokenCache drops every cache entry (session and PAT) that resolved to
+// the human user userID, plus impersonation sessions userID started (ImpersonatedBy),
+// so each of those credentials re-validates against storage on its next request. Fail-closed fallback for the session-revocation paths in
+// internal/core (session_eviction.go) when ListSessionTokenHashesForUser failed after
+// the revocation committed and the exact cache keys are therefore unknown. It deletes
+// rather than tombstones, like InvalidateAllMachineTokenCache: an unrelated credential
+// of the user simply misses and re-validates (still-valid ones get 200), and
+// userEvictedAt makes cacheSetValidatedGen drop a slow-path validation that began
+// before this call, which a per-key tombstone cannot cover for a key not in the map.
+// Machine entries (UserID 0) are never matched.
+func InvalidateUserTokenCache(userID uint) {
+	if userID == 0 {
+		return
+	}
+	tokenCacheMu.Lock()
+	defer tokenCacheMu.Unlock()
+	userEvictedAt[userID] = time.Now()
+	for k, e := range tokenCache {
+		if e.userCtx != nil && !isMachineEntry(e.userCtx) && userCacheEntryOf(e.userCtx, userID) {
+			delete(tokenCache, k)
+		}
+	}
+}
+
+// userCacheEntryOf reports whether a human cache entry belongs to userID for per-user
+// eviction: the user's own credentials, plus impersonation sessions the user started
+// (UserID = the target, ImpersonatedBy = userID), matching the user_id OR impersonated_by
+// union of ListSessionTokenHashesForUser that InvalidateUserTokenCache stands in for.
+func userCacheEntryOf(userCtx *UserContext, userID uint) bool {
+	return userCtx.UserID == userID || (userCtx.ImpersonatedBy != nil && *userCtx.ImpersonatedBy == userID)
+}
+
+// userEvictedDuringLocked reports whether InvalidateUserTokenCache ran for the entry's
+// user or impersonator at or after validatedAt. A tie counts as evicted: a validation that
+// began on the eviction's own clock tick cannot be ordered after it, and this is a
+// fail-closed fallback, so the stale positive must not win. Caller holds tokenCacheMu.
+func userEvictedDuringLocked(userCtx *UserContext, validatedAt time.Time) bool {
+	if userCtx == nil {
+		return false
+	}
+	ids := []uint{userCtx.UserID}
+	if userCtx.ImpersonatedBy != nil {
+		ids = append(ids, *userCtx.ImpersonatedBy)
+	}
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		if ea, ok := userEvictedAt[id]; ok && !ea.Before(validatedAt) {
+			return true
+		}
+	}
+	return false
 }
 
 // InvalidateAllMachineTokenCache drops every positive cache entry attributed to a

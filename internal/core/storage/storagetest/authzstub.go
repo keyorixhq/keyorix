@@ -1,8 +1,6 @@
 package storagetest
 
 import (
-	"errors"
-
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/mock"
@@ -50,7 +48,7 @@ func StubNoShares(ms *MockStorage, actorID uint) {
 // SecretACL grant, no folder-ancestor inheritance) — the standard shape for a test that
 // isn't itself about ACL/inheritance behavior.
 func StubAuthorizedSecretPrincipal(ms *MockStorage, actorID, secretID uint, scope storage.Scope, perm string) {
-	ms.On("GetSecretACL", mock.Anything, secretID, actorID).Return(nil, errors.New("record not found")).Maybe()
+	ms.On("GetSecretACL", mock.Anything, secretID, actorID).Return(nil, storage.ErrSecretACLNotFound).Maybe()
 	ms.On("GetSecretAncestors", mock.Anything, secretID).Return([]uint{}, nil).Maybe()
 	StubAuthorizedPrincipal(ms, actorID, scope, perm)
 }

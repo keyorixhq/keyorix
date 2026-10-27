@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/stretchr/testify/assert"
@@ -25,10 +26,11 @@ func newMockACLCore(ms *storagetest.MockStorage) *core.KeyorixCore {
 
 // --- helpers ---
 
-// mockNoACL registers a GetSecretACL expectation that returns nil (no entry, not found error).
+// mockNoACL registers a GetSecretACL expectation that returns nil and the
+// "no ACL row" sentinel (storage.ErrSecretACLNotFound).
 func mockNoACL(ms *storagetest.MockStorage, secretID, userID uint) {
 	ms.On("GetSecretACL", mock.Anything, secretID, userID).
-		Return((*models.SecretACL)(nil), fmt.Errorf("not found"))
+		Return((*models.SecretACL)(nil), fmt.Errorf("Resource not found: %w", storage.ErrSecretACLNotFound))
 }
 
 // mockAllowLiveMember is the fixed project ID mockAllowACL stubs GetSecret /

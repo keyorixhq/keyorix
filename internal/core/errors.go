@@ -92,6 +92,12 @@ var (
 	// deliberate, permanent refusal, never retried: SCIM 403 (#3620).
 	ErrSCIMGroupConfersAdmin = errors.New("SCIM cannot add members to a group that grants administrative roles")
 
+	// ErrSCIMGroupStateUnavailable is returned (wrapping the read's error) by
+	// ReplaceSCIMGroup and PatchSCIMGroup when a pure member removal COMMITTED but the
+	// group could not be read back afterwards. The change is applied: a revocation's
+	// read-back runs after its commit, never inside it (REVIEW-3775 F1). SCIM PATCH: 204.
+	ErrSCIMGroupStateUnavailable = errors.New("the SCIM group change was applied, but the group could not be read back")
+
 	// ErrLastAdminGroupGuard is returned (wrapped) when a group delete or membership
 	// change is refused because it would leave the install, or a project, with no
 	// administrator (the guardLast*Group* family). A permanent refusal, unlike a storage

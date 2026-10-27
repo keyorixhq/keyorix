@@ -133,6 +133,11 @@ var owedAuditMoreOps = []string{
 	// scenarios keep the set and, over gRPC, change the description).
 	"REST PUT /api/v1/roles/{id}",
 	"GRPC keyorix.v1.RoleService.UpdateRole",
+	// SCIM-TAILS-1: the SCIM user ops whose scenario deactivates (UpdateSCIMUser with
+	// active=false, DeprovisionSCIMUser) run the revoking path of scim.go.
+	"REST PUT /scim/v2/Users/{id}",
+	"REST PATCH /scim/v2/Users/{id}",
+	"REST DELETE /scim/v2/Users/{id}",
 }
 
 // owedAuditScopedOps is the rule's op scope, the single list the rule and its sweep read.

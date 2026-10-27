@@ -122,7 +122,7 @@ func TestApplyGroupMembershipChanges_RemoveAndAdd(t *testing.T) {
 	audit := func(tgt auditTarget) {
 		c.writeAuditEventFullOn(context.Background(), tgt, EventSCIMGroupUpdated, nil, nil, nil, "", "test")
 	}
-	require.NoError(t, c.applyGroupMembershipChanges(context.Background(), 10, want, current, toAdd, nil, audit, audit))
+	require.NoError(t, c.applyGroupMembershipChanges(context.Background(), 10, want, current, toAdd, nil, audit, audit, func(storage.Storage) error { return nil }))
 	ms.AssertExpectations(t)
 }
 
