@@ -635,7 +635,10 @@ func (ls *LocalStorage) GetSecret(ctx context.Context, id uint) (*models.SecretN
 			// Nil-safe by construction: a tx-derived store (&LocalStorage{db: tx})
 			// has no cache, and eviction on one is a no-op, not a panic.
 			ls.secretMetaCache.evictNode(id)
-			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			// Wraps the sentinel (as GetSecretByName does) so callers tell "no such
+			// node" (secret or folder) from a retrieval failure by errors.Is, not by
+			// the localized text (ERRLOSS-ACL-1).
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), storage.ErrSecretNotFound)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}

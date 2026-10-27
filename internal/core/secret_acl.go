@@ -245,7 +245,13 @@ func (c *KeyorixCore) aclGrantsPermission(ctx context.Context, nodeID, userID ui
 func (c *KeyorixCore) requireSecretOrFolderNode(ctx context.Context, id uint) (*models.SecretNode, error) {
 	node, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s: node %d not found", i18n.T("ErrorNotFound", nil), id)
+		// Only a definitive absence (GetSecret wraps ErrSecretNotFound for a missing
+		// secret or folder node) is "not found"; a storage failure is reported as
+		// one, not as a missing node (ERRLOSS-ACL-1).
+		if storage.IsSecretNotFound(err) {
+			return nil, fmt.Errorf("%s: node %d not found: %w", i18n.T("ErrorNotFound", nil), id, storage.ErrSecretNotFound)
+		}
+		return nil, fmt.Errorf("%s: node %d: %w", i18n.T("ErrorRetrievalFailed", nil), id, err)
 	}
 	return node, nil
 }
