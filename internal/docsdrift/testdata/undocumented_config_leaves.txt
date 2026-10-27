@@ -47,16 +47,6 @@ secret_value_policy.enabled
 secret_value_policy.extra_denylist
 secret_value_policy.min_length
 secret_value_policy.reject_common
-server.grpc.allowed_origins
-server.grpc.domain
-server.grpc.metrics_token
-server.grpc.metrics_token_file
-server.grpc.swagger_enabled
-server.grpc.tls.allowed_ciphers
-server.grpc.tls.cert_cache_dir
-server.grpc.tls.domains
-server.grpc.web_assets_path
-server.http.reflection_enabled
 sso.providers.saml.acs_url
 sso.providers.saml.email_attribute
 sso.providers.saml.groups_attribute

@@ -209,7 +209,8 @@ server:
 for a local, internal-only, or air-gapped deployment. For those, set `cert_file`/
 `key_file` to a PEM cert and key instead (gRPC's `tls:` block takes the same two
 fields, `server.grpc.tls.cert_file` and `server.grpc.tls.key_file`;
-`domains`/`cert_cache_dir`/`allowed_ciphers` apply to HTTP only). `auto_cert`
+`domains` and `cert_cache_dir` apply to HTTP only; `allowed_ciphers` applies to both
+listeners). `auto_cert`
 is HTTP-only: `server.grpc.tls.auto_cert: true` is refused at start-up, because gRPC has
 no ACME client and the flag used to start a listener whose every handshake failed. A quick
 self-signed pair for local use:
@@ -275,6 +276,19 @@ only. The keys parse under `server.grpc` too (`server.grpc.trusted_proxies` and
 `server.grpc.hsts_preload`; both listeners share one config shape) but the gRPC
 server never reads them, so setting either there logs a `WARNING` at every start and
 has no effect. Set them under `server.http`.
+
+**Keys that parse under both listeners but only one reads.** `server.http` and
+`server.grpc` share one config shape, so every key of the block above parses under
+either. A key set under a listener that does not read it is ignored **without a
+warning** (only `trusted_proxies` and `hsts_preload` above warn):
+
+| Key | What the code does with it |
+|---|---|
+| `server.grpc.swagger_enabled`, `server.grpc.web_assets_path`, `server.grpc.allowed_origins`, `server.grpc.domain` | Not read. The Swagger UI, the web UI path, the CORS allow-list and the domain come from `server.http` only. |
+| `server.http.reflection_enabled` | Not read. gRPC reflection is switched by `server.grpc.reflection_enabled` (default `false`; it lists the gRPC services to any client that can connect, so keep it off in production). |
+| `server.grpc.tls.domains`, `server.grpc.tls.cert_cache_dir` | Not read: they configure ACME, which exists only on the HTTP listener. |
+| `server.grpc.tls.allowed_ciphers` | Read, with the same rules as the HTTP key: an empty list keeps the built-in AEAD-only TLS 1.2 suites, a name outside the secure list refuses start-up, and under `tls_mode: strict` it has no effect and logs a warning. |
+| `server.grpc.metrics_token`, `server.grpc.metrics_token_file` | Not used to protect anything: `/metrics` is served by the HTTP listener only. They are still validated (both set, or an unreadable `metrics_token_file`, refuses start-up) and the file is covered by the secret-file permission check. `admin validate --posture` reports `server.insecure_allow_unauthenticated_metrics` unless **both** listeners have a token, even when gRPC is disabled; `admin init` writes both for that reason. |
 
 The web container's nginx makes its own HSTS decision and strips the backend's
 header from proxied API responses ([SELF_HOSTING.md](SELF_HOSTING.md), "HSTS
