@@ -371,6 +371,13 @@ func OverrideOwnershipForTest(fileUID, processUIDValue int) (restore func()) {
 	return func() { processUID, fileOwner = oldUID, oldOwner }
 }
 
+// CheckInfo applies CheckPermissions' rule (mode and owner) to info, which must
+// come from OpenRegular: the fstat of the descriptor the caller then reads, so
+// the verdict is about the bytes used, not about a path that may have been
+// swapped since a separate stat. The policy on a failure (refuse or warn) is the
+// caller's; the error names the problem, never the contents.
+func CheckInfo(info os.FileInfo) error { return checkInfo(info) }
+
 func checkInfo(info os.FileInfo) error {
 	mode := info.Mode()
 	perm := mode.Perm()
