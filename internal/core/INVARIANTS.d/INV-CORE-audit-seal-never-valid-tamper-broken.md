@@ -17,10 +17,14 @@
   transition names its digest, completion re-signs it first). `recover-admin` never seals.
   The writes go record, event, checkpoint and high-water mark, state; an acceptance stopped
   after any of them reads broken until a re-run of the command completes it, which first
-  checks the chain still holds what the seal recorded as surviving.
+  checks the chain still holds what the seal recorded as surviving and everything the latest
+  checkpoint and the high-water mark signed under the current seals certify (a post-seal
+  truncation is refused, never completed over), refuses ids other than the seal's own, and
+  keeps any discontinuity or failure the state carries in its accepted list.
   Why: AUDIT-ACCEPT-LOSS-1, constraints 1-8 of docs/design/recovery-options.md §2. Guard:
   `TestAuditSeal_*` (`internal/core`, SQLite and PostgreSQL; `_CrashAtEveryStepResumes`,
-  `_DeletedSealKeepsStatePin`), `TestSealDifferential_*`
+  `_DeletedSealKeepsStatePin`,
+  `_ResumeRefusesPostSealTruncation`, `_ResumeRefusesOtherIDs`), `TestSealDifferential_*`
   (`internal/auditverify`), `TestPerformRecoverAdmin_NeverSealsALoss`,
   `TestAcceptLoss_RequiresConfirmThenSeals`, `scripts/drills/accept-loss.sh`. Not covered: a
   verification state discontinuity with an intact chain cannot be accepted (it stays
