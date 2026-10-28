@@ -145,6 +145,60 @@ def parse_diff(text):
 # coverage profile
 # --------------------------------------------------------------------------
 
+def hunk_removed(text):
+    """{path: [removed lines of each hunk, in parse_diff's order]} for the same
+    `git diff -U0` text (new-side paths; deleted files are left out)."""
+    out, cur, hunk, in_hunk = {}, None, None, False
+    for line in text.splitlines():
+        if line.startswith("diff --git"):
+            cur, hunk, in_hunk = None, None, False
+        elif not in_hunk and line.startswith("+++ "):
+            target = line[4:].split("\t", 1)[0]
+            cur = None if target == "/dev/null" else (target[2:] if target.startswith("b/") else target)
+        elif line.startswith("@@") and cur is not None:
+            in_hunk = HUNK.match(line) is not None
+            hunk = []
+            if in_hunk:
+                out.setdefault(cur, []).append(hunk)
+        elif in_hunk and line.startswith("-"):
+            hunk.append(line[1:])
+    return out
+
+
+def inert_removed(line):
+    """A removed line that cannot have changed behaviour: blank, a plain
+    comment, closing punctuation or a plain import."""
+    s = line.strip()
+    if s == "" or CLOSERS.match(s):
+        return True
+    if s.startswith("//"):
+        return not DIRECTIVE.match(s)
+    return bool(IMPORT_SPEC.match(s)) and not re.match(r"^[_.]\s", s)
+
+
+def apply_removed(changes, removed):
+    """Use what the diff removed. A pure-deletion cut whose removed lines are all
+    inert stops being a deletion marker (its neighbours are judged normally).
+    A hunk that adds lines but removed real code must not have its added lines
+    ignored as comment-only: they are returned in `noignore` {path: set(lines)}.
+    A file whose hunks do not line up with parse_diff's keeps its markers."""
+    new, noignore = {}, {}
+    for f, rngs in changes.items():
+        rem = removed.get(f)
+        if rem is None or len(rem) != len(rngs):
+            new[f] = rngs
+            noignore[f] = {ln for s, e, d in rngs for ln in range(s, e + 1)}
+            continue
+        out, no = [], set()
+        for (s, e, d), r in zip(rngs, rem):
+            inert = all(inert_removed(x) for x in r)
+            out.append((s, e, False) if d and inert else (s, e, d))
+            if not d and not inert:
+                no.update(range(s, e + 1))
+        new[f], noignore[f] = out, no
+    return new, noignore
+
+
 def parse_profile(text, module=MODULE):
     """Coverage profile -> {repo-relative path: [(start, end, count)]}.
 
@@ -827,6 +881,7 @@ def shadow(args, out, run):
     packages = sa.load_packages() if sa else {}
     dir_to_pkg = package_dirs(packages, repo)
 
+    all_ranges, noignore = apply_removed(all_ranges, hunk_removed(diff_go))
     changes, coverpkg, ignorable_by_file, generated = {}, set(), {}, []
     for f, rngs in all_ranges.items():
         if f.endswith("_test.go"):
@@ -841,7 +896,7 @@ def shadow(args, out, run):
                 src = fh.read()
         except OSError:
             src = ""
-        ignorable_by_file[f] = ignorable_lines(src)
+        ignorable_by_file[f] = ignorable_lines(src) - noignore.get(f, set())
         if "Code generated" in src[:600] and "DO NOT EDIT" in src[:600]:
             generated.append(f)
     deleted_files = [f for f in deleted_files if not f.endswith("_test.go")]

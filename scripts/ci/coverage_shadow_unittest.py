@@ -312,6 +312,34 @@ DECLS_BLOCKS = [(10, 10, 1), (14, 14, 0), (24, 24, 0), (32, 32, 0), (42, 42, 0)]
 DECLS_FILE = "pkg/decls.go"
 
 
+class RemovedLines(unittest.TestCase):
+    DIFF = (
+        "diff --git a/p/a.go b/p/a.go\n--- a/p/a.go\n+++ b/p/a.go\n"
+        "@@ -5 +4,0 @@\n-\t\"slices\"\n"          # cut: a plain import removed
+        "@@ -20,2 +18,0 @@\n-\tx := f()\n-\treturn x\n"  # cut: real code removed
+        "@@ -30 +26 @@\n-\tx := f()\n+\t// x := f()\n"  # code replaced by a comment
+        "@@ -40 +36 @@\n-// old note\n+// new note\n"
+    )
+
+    def test_inert_cut_stops_being_a_deletion_marker_and_real_code_stays(self):
+        ranges, _ = cs.parse_diff(self.DIFF)
+        new, noignore = cs.apply_removed(ranges, cs.hunk_removed(self.DIFF))
+        got = new["p/a.go"]
+        self.assertEqual([d for _, _, d in got], [False, True, False, False])
+        self.assertEqual(noignore["p/a.go"], {26})  # only the comment that replaced code
+
+    def test_misaligned_hunks_keep_every_marker_and_forbid_ignoring(self):
+        new, noignore = cs.apply_removed({"p/a.go": [(1, 2, True)]}, {})
+        self.assertEqual(new["p/a.go"], [(1, 2, True)])
+        self.assertEqual(noignore["p/a.go"], {1, 2})
+
+    def test_inert_removed_lines(self):
+        for line in ("", "  ", "\t}", "// note", '\t"slices"', '\talias "x/y"'):
+            self.assertTrue(cs.inert_removed(line), repr(line))
+        for line in ("\tx := 1", "//go:build linux", '\t_ "x/y"', "const A = 1", "/* c */"):
+            self.assertFalse(cs.inert_removed(line), repr(line))
+
+
 class DeclarationRefinement(unittest.TestCase):
     """Real Go source through the real scripts/ci/declrefs helper (go/ast), then
     the same matcher + refinement the shadow runs. Profile blocks are written by
