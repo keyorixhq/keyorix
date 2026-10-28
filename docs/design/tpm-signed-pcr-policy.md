@@ -19,7 +19,7 @@ loader, the kernel or UKI, and the TPM firmware.
 
 | Mode | Firmware | Secure Boot db/dbx | Boot loader or kernel |
 |---|---|---|---|
-| `signed-uki` | nothing | nothing | nothing, as long as the new UKI is signed with the same key. A new key means planning a recovery (§2) |
+| `signed-uki` | usually nothing; `status` says if PCR 7 will move | **plan a recovery**: PCR 7 will change (D10.2) | nothing, as long as the new UKI is signed with the same key. A new key means planning a recovery (§2) |
 | `pcrlock` | host: `systemd-pcrlock unlock-firmware-code`, update, then `make-policy` ([S4]) | host: `unlock-firmware-config`, update, then `make-policy` ([S4]) | host: add the new kernel's `.pcrlock` variant, then `make-policy` ([S4]) |
 | `secure-boot` | usually nothing ([S2]). `status` says if PCR 7 will move | **plan a recovery**: PCR 7 will change | usually nothing, while the same authority signs it [VERIFY] |
 | `custom` with 0, 2 or 4 | plan a recovery | plan a recovery | plan a recovery |

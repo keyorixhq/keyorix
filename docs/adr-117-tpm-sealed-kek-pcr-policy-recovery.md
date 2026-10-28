@@ -6,7 +6,8 @@ PR B of the design note) may start. It is not Accepted, and no production key pa
 the implementation PRs merge. **Amendment A (2026-10-27, RD-TIER-ADR117-1, Proposed, not yet
 approved):** D10 to D13 below. Signed PCR policy is preferred over raw PCR binding, plus the update
 and recovery flow, the fail-closed principle and the claims-vs-evidence table. Until Andrei
-approves the amendment, D2 and Decision 2 stand as written.
+approves the amendment, D2 and Decision 2 stand as written, except D10.5 (the default chain and
+its Secure Boot condition), which Andrei resolved 2026-10-28; see open question 2 below.
 **Date:** 2026-10-23 (amended 2026-10-27)
 **Session:** RD-TPM-SEAL-1, against origin/main `760e92e32`.
 **Design note:** [design-rd-tpm-seal.md](design-rd-tpm-seal.md) (formats, flows, CLI, test plan,
@@ -185,7 +186,9 @@ only as protected as the weakest wrap of it that was ever written.**
 ## Amendment A (2026-10-27): signed PCR policy, update and recovery flow, claims
 
 Session RD-TIER-ADR117-1, against origin/main `6144d535f`. Status: **Proposed**. Andrei has not
-approved it (asks listed in the session report). It changes no code. The step-by-step operator
+approved the amendment as a whole (open questions 1 and 3 below remain); he resolved open
+question 2, D10.5's default chain and its Secure Boot condition, on 2026-10-28 (asks listed in the
+session report). It changes no code. The step-by-step operator
 procedures are in [design/tpm-signed-pcr-policy.md](design/tpm-signed-pcr-policy.md).
 
 ### Sources read for this amendment
@@ -217,7 +220,7 @@ Proposed modes for `key_provider.tpm.pcr_policy`, in order of preference:
 
 | Mode | TPM policy on the sealed object | Who decides which boot states unseal |
 |---|---|---|
-| `signed-uki` (preferred) | PolicyAuthorize against the UKI PCR public key, over PCR 11 | The holder of the private key that signs UKI PCR 11 predictions (systemd-measure / ukify, [S3]) |
+| `signed-uki` (preferred) | PolicyAuthorize against the UKI PCR public key, over PCR 11, plus PolicyPCR over PCR 7 (D10.5; TPM-enforced, Secure Boot must be on) | The holder of the private key that signs UKI PCR 11 predictions (systemd-measure / ukify, [S3]) |
 | `pcrlock` (alternative) | PolicyAuthorizeNV on the host's systemd-pcrlock NV index ([S4]) | Whoever can update that NV index on the host (see D10.3) |
 | `secure-boot` (fallback, D2) | PolicyPCR over PCR 7 | Nobody after sealing. The value at seal time is fixed in the object |
 | `custom` | PolicyPCR over an explicit list | As above. A list that includes 0, 2 or 4 gets a warning (D10.4) |
@@ -434,7 +437,7 @@ and audited recovery as the PCR modes. It also publishes the comparison and the 
 | Simulator is not hardware | Claims could overreach | D8: lab validation pending; nothing claimed beyond the reference implementation |
 | `signed-uki`: rollback to an older signed UKI (Amendment A) | An old, vulnerable kernel signed with the same key still unseals | Stated limit (D10 table). Mitigation outside Keyorix: rotate the signing key per release line, or revoke old binaries through dbx/SBAT [VERIFY]. `pcrlock` is the mode that revokes |
 | `signed-uki`: UKI signing key compromised | The attacker signs a PCR 11 value for their own UKI, and it unseals | The key belongs to the OS vendor or the operator's build system, not Keyorix. Recovery: reseal to a new key, then rotate the recovery code and run the DEK sweep (D9) |
-| `signed-uki`: PCR 12 not bound (command line overrides, add-ons, credentials, [S5]) | Boot inputs outside the UKI sections are not covered | Stated limit. A combined policy is deferred. Lab check of what systemd-stub accepts under Secure Boot [VERIFY] |
+| `signed-uki`: PCR 12 not bound (command line overrides, add-ons, credentials, [S5]) | Boot inputs outside the UKI sections are not covered | Closed by the Secure Boot condition (D10.2), not by binding PCR 12 directly: with Secure Boot off, `signed-uki` is not offered (D10.5), so the override path needs a real Secure Boot bypass, not just an unsigned command line. Lab check of what systemd-stub accepts under Secure Boot [VERIFY] |
 | `pcrlock`: the authority is the host administrator (D10.3) | Root can bless new states for future boots | No change to the root-on-host row (root can unseal anyway). It is a weaker statement than `signed-uki` with an off-host key; documented |
 | systemd file formats (`.pcrsig` JSON, `pcrlock.json`) change; systemd-measure is marked experimental ([S3]) | Parsing breaks, so unseal refuses (closed) | Pin the parser to the documented fields; a format mismatch is class `blob-corrupt`-like, never a downgrade. Lab run per supported systemd version [VERIFY] |
 | A host without a UKI or pcrlock (most current lab and customer hosts [VERIFY]) | Only `secure-boot` or `none` are available there | D10.5 default chain. `status` reports the mode actually in use and why |
@@ -478,8 +481,8 @@ chosen; the obligations below follow from those options and bind the implementat
    `pcrlock` in the blob v2 `pcr_policy` object. A later PR adds them after a lab host with a
    signed UKI exists.
 2. **Default chain for new installs (D10.5, replaces Decision 2):** `signed-uki` → `pcrlock` →
-   `secure-boot` → `none`. Recommended: yes. Alternative: keep Decision 2 (`secure-boot` first)
-   and make the signed modes opt-in.
+   `secure-boot` → `none`. **Resolved 2026-10-28, Andrei: yes**, with `signed-uki` conditioned on
+   Secure Boot being on (D10.2/D10.5) so it cannot be reached by turning Secure Boot off.
 3. **Shamir K-of-N custody of the recovery code (D11.3).** Recommended: allow it as an option for
    offline custody, never as the default. It reuses the existing Shamir code, with the
    check kept outside the shares.
