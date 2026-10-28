@@ -44,6 +44,12 @@ type lockLossOverlap struct {
 	t      *testing.T
 	key    string
 	second func(ctx context.Context) error
+	// when, if set, delays the loss to the first of A's transactions (under
+	// the key) at whose start it reports true: a section that opens more than
+	// one transaction is then cut at a chosen step (e.g. after its state CAS
+	// committed), the same step on code that opens a transaction for that CAS
+	// and on code that does not.
+	when func() bool
 
 	mu        sync.Mutex
 	granted   bool // the key was granted to A
@@ -76,8 +82,10 @@ func (o *lockLossOverlap) store(inner storage.Storage) storage.Storage {
 		WithTransaction: func(next storage.Storage, ctx context.Context, fn func(storage.Storage) error) error {
 			if ctx.Value(overlapHolderKey{}) != nil {
 				o.mu.Lock()
-				run := !o.fired
-				o.fired = true
+				run := !o.fired && (o.when == nil || o.when())
+				if run {
+					o.fired = true
+				}
 				o.mu.Unlock()
 				if run {
 					// The lock is lost here: B takes the key and finishes.

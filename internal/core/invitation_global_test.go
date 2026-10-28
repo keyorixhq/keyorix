@@ -218,7 +218,10 @@ func TestApplyInvitationGrants_GlobalInvite(t *testing.T) {
 		store.On("GetActiveProjectMembership", ctx, a.pid, uint(20)).Return(nil, assertNotFoundErr())
 		store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 			return m.ProjectID == a.pid && m.UserID == 20
-		})).Return(&models.ProjectMembership{ProjectID: a.pid, UserID: 20, Role: a.role, State: MembershipActive}, nil)
+		})).Return(&models.ProjectMembership{ID: 100 + a.pid, ProjectID: a.pid, UserID: 20, Role: a.role, State: MembershipActive}, nil)
+		// NAMEDLOCK-OVERLAP-2: the activation grant re-reads the membership in its
+		// own transaction (membershipActiveFence) and grants only if still active.
+		store.On("GetProjectMembership", ctx, 100+a.pid).Return(&models.ProjectMembership{ID: 100 + a.pid, ProjectID: a.pid, UserID: 20, Role: a.role, State: MembershipActive}, nil)
 		store.On("GetRole", ctx, a.roleID).Return(&models.Role{ID: a.roleID, Name: a.role}, nil) // #3546 role-scope check
 		store.On("AssignRole", ctx, uint(20), a.roleID, storage.Scope{ProjectID: a.pid}).Return(nil)
 	}

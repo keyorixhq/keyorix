@@ -541,6 +541,13 @@ func (c *KeyorixCore) withOrderedUserSoDLocks(ctx context.Context, ids []uint, f
 // this closes that sibling instance by threading the real value through
 // instead of hardcoding false.
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
+	return c.assignUserRole(ctx, noTxFence, actorID, userID, roleID, scope, actorIsMachine)
+}
+
+// assignUserRole is AssignUserRole with a caller fence run first in the grant's
+// transaction, before its own separation-of-duties fence (txFence): a
+// membership activation passes membershipActiveFence.
+func (c *KeyorixCore) assignUserRole(ctx context.Context, first txFence, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
@@ -554,7 +561,7 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.grantUserRoleAudited(ctx, sodUserGrantFence(userID, []uint{roleID}, Scope{}), actorID, userID, roleID, scope, nil, false)
+		return c.grantUserRoleAudited(ctx, chainTxFences(first, sodUserGrantFence(userID, []uint{roleID}, Scope{})), actorID, userID, roleID, scope, nil, false)
 	})
 }
 

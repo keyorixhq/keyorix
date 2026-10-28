@@ -31,6 +31,12 @@ func (c *KeyorixCore) ListProjectMembers(ctx context.Context, projectID uint) ([
 // mint a project_admin (or any role bundling permissions they don't hold) through
 // this direct entry point.
 func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
+	return c.addProjectMember(ctx, noTxFence, actorID, projectID, userID, roleName, actorIsMachine)
+}
+
+// addProjectMember is AddProjectMember with a caller fence run first in the
+// grant's transaction (assignUserRole).
+func (c *KeyorixCore) addProjectMember(ctx context.Context, first txFence, actorID, projectID, userID uint, roleName string, actorIsMachine bool) error {
 	if err := c.domainAllowedForUser(ctx, userID); err != nil {
 		return err
 	}
@@ -38,7 +44,7 @@ func (c *KeyorixCore) AddProjectMember(ctx context.Context, actorID, projectID, 
 	if err != nil {
 		return fmt.Errorf("unknown role %q: %w", roleName, err)
 	}
-	return c.AssignUserRole(ctx, actorID, userID, role.ID, Scope{ProjectID: projectID}, actorIsMachine)
+	return c.assignUserRole(ctx, first, actorID, userID, role.ID, Scope{ProjectID: projectID}, actorIsMachine)
 }
 
 // SetProjectMemberRole replaces the user's role(s) at the project scope with

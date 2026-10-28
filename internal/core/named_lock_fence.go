@@ -36,6 +36,19 @@ type txFence func(ctx context.Context, tx storage.Storage) error
 // grant, which carries no project's roles.assign authority).
 func noTxFence(context.Context, storage.Storage) error { return nil }
 
+// chainTxFences runs fences in order, stopping at the first error. The caller
+// orders them by the lock order above (named keys before rows).
+func chainTxFences(fences ...txFence) txFence {
+	return func(ctx context.Context, tx storage.Storage) error {
+		for _, f := range fences {
+			if err := f(ctx, tx); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+}
+
 // lockNamedKeysInTxOn takes every key with tx.LockNamedKeyInTx, in the order
 // given, and refuses (taking nothing more) an order storage.NamedLockOrder does
 // not allow: two transactions taking the same keys in opposite orders would
