@@ -8,12 +8,9 @@ package core
 
 import (
 	"context"
-	"fmt"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 // SecretVersionDiff holds the metadata diff between two versions of a secret.
@@ -50,31 +47,31 @@ type SecretVersionChange struct {
 // included in the result as a snapshot.
 func (c *KeyorixCore) DiffSecretVersions(ctx context.Context, secretID uint, fromVersion, toVersion int) (*SecretVersionDiff, error) {
 	if secretID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID is required")
+		return nil, errVersionDiffInvalidf("secret ID is required")
 	}
 	if fromVersion <= 0 || toVersion <= 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "version numbers must be positive")
+		return nil, errVersionDiffInvalidf("version numbers must be positive")
 	}
 	if fromVersion == toVersion {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "from and to versions must differ")
+		return nil, errVersionDiffInvalidf("from and to versions must differ")
 	}
 
 	// Load the parent secret node for name + metadata fields (classification,
 	// expiry). These are stored on the node, not the version row.
 	node, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+		return nil, secretLookupError(err)
 	}
 
 	// Load the two version rows — we need at minimum their ReadCount for the
 	// per-version counter diff. GetSecretVersion already validates versionNumber > 0.
 	from, err := c.GetSecretVersion(ctx, secretID, fromVersion)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
+		return nil, diffVersionLookupError(err)
 	}
 	to, err := c.GetSecretVersion(ctx, secretID, toVersion)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
+		return nil, diffVersionLookupError(err)
 	}
 
 	var changes []SecretVersionChange

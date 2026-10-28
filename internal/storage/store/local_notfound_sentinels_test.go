@@ -55,6 +55,13 @@ func TestLocalStorage_NotFoundSentinels(t *testing.T) {
 			func(ls *LocalStorage) error { _, err := ls.CheckSharePermission(ctx, 1, 1, time.Now()); return err }},
 		{"rotation policy by secret (secret missing)", []any{&models.SecretNode{}, &models.RotationPolicy{}}, storage.ErrSecretNotFound,
 			func(ls *LocalStorage) error { _, err := ls.GetRotationPolicyBySecret(ctx, 1); return err }},
+		{"secret dependency", []any{&models.SecretDependency{}}, storage.ErrSecretDependencyNotFound,
+			func(ls *LocalStorage) error { _, err := ls.GetSecretDependency(ctx, 1); return err }},
+		// The Delete arms map RowsAffected==0 (no gorm cause) to the sentinel.
+		{"secret dependency (delete)", []any{&models.SecretDependency{}}, storage.ErrSecretDependencyNotFound,
+			func(ls *LocalStorage) error { return ls.DeleteSecretDependency(ctx, 1) }},
+		{"version comment (delete)", []any{&models.SecretVersionComment{}}, storage.ErrVersionCommentNotFound,
+			func(ls *LocalStorage) error { return ls.DeleteSecretVersionComment(ctx, 1, 1, 1) }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -7,10 +7,10 @@ import (
 
 // ErrPermissionDenied is matched (errors.Is) by these core authorization
 // refusals: the i18n "ErrorPermissionDenied" refusals, the "not authorized: ..."
-// share/ownership refusals, and the specific refusal sentinels
-// (ErrSoDPermissionDenied, ErrRiskExceptionPermissionDenied,
-// ErrMachinePrivilegeCeilingDenied, the ErrShare* refusals), so a handler maps
-// one sentinel to 403/PermissionDenied.
+// share/ownership refusals, the restricted-classification gate refusals, and the
+// specific refusal sentinels (ErrSoDPermissionDenied,
+// ErrRiskExceptionPermissionDenied, ErrMachinePrivilegeCeilingDenied, the
+// ErrShare* refusals), so a handler maps one sentinel to 403/PermissionDenied.
 //
 // Not every refusal matches it yet. TestEveryErrorPermissionDeniedRefusalIsTyped
 // checks only literal i18n.T("ErrorPermissionDenied") calls under the i18n
