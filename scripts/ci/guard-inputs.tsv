@@ -72,7 +72,7 @@ scripts/ci/codeql_web_gate_test.go	.github/workflows/codeql.yml,!web/**,!README.
 scripts/ci/codeql_gate_realdata_test.go	scripts/ci/codeql-gate.sh,scripts/ci/testdata/codeql/**,!demo/app.js	the gate script against recorded SARIF in testdata/codeql; demo/app.js is a finding location inside the recorded data, not a file read
 scripts/ci/global_guards_test.go	scripts/ci/global-guards.txt,!scripts/**	every listed guard package exists
 scripts/ci/select_affected_test.go	scripts/ci/select-affected.py,scripts/ci-test-legs.sh,scripts/ci-test-quick.py,!**	the selection script; other paths are fake changed-file inputs
-scripts/ci/coverage_shadow_test.go	scripts/ci/coverage-shadow.py,scripts/ci/coverage_shadow_unittest.py,scripts/ci/select-affected.py	the lever-C shadow script's unit tests (they also load select-affected.py's helpers)
+scripts/ci/coverage_shadow_test.go	scripts/ci/coverage-shadow.py,scripts/ci/coverage_shadow_unittest.py,scripts/ci/select-affected.py,scripts/ci/declrefs/**	the lever-C shadow script's unit tests (they also load select-affected.py's helpers and build scripts/ci/declrefs)
 scripts/demo/demo_scripts_test.go	scripts/demo/**/*.sh	demo shell scripts
 scripts/demo/native_up_helpers_test.go	scripts/demo/**/*.sh	native-up helpers
 server/container_bind_configs_test.go	scripts/dast/keyorix-dast.yaml,scripts/demo/up.sh	container bind configs used by DAST and the demo
