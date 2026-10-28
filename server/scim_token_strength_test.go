@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
@@ -28,13 +29,33 @@ func scimConfig(t *testing.T, token string) *config.Config {
 	return cfg
 }
 
-func captureSCIMLog(t *testing.T) *bytes.Buffer {
+// syncLogBuffer is a bytes.Buffer safe for concurrent use: the standard logger is
+// process-global, so a goroutine an earlier test left behind can write while this
+// test reads.
+type syncLogBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func captureSCIMLog(t *testing.T) *syncLogBuffer {
 	t.Helper()
-	var buf bytes.Buffer
+	buf := &syncLogBuffer{}
 	prev := log.Writer()
-	log.SetOutput(&buf)
+	log.SetOutput(buf)
 	t.Cleanup(func() { log.SetOutput(prev) })
-	return &buf
+	return buf
 }
 
 func TestEnforceSCIMTokenStrength(t *testing.T) {
