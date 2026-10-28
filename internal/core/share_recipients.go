@@ -46,7 +46,7 @@ const ShareRecipientSearchDeniedMessage = "You can only search for share recipie
 	"Ask a project admin to give you a role in the project."
 
 // ErrShareRecipientSearchDenied: the caller may not search recipients in this project.
-var ErrShareRecipientSearchDenied = errors.New("not authorized: share recipient search needs a role in the project that allows sharing")
+var ErrShareRecipientSearchDenied = newPermissionSentinel("not authorized: share recipient search needs a role in the project that allows sharing")
 
 const (
 	shareRecipientDefaultPageSize = 20

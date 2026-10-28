@@ -159,6 +159,11 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 			}
 		}
 		summary.webAuthnCredentialsCleared = len(creds)
+		// The flag with the rows: a WebAuthnEnabled account with no credential is
+		// asked at login for a passkey it no longer has (a permanent lockout).
+		if err := tx.SetUserWebAuthnEnabled(ctx, user.ID, false); err != nil {
+			return fmt.Errorf("clear WebAuthn flag: %w", err)
+		}
 		if err := tx.UpdateLoginLockoutState(ctx, user.ID, 0, nil, nil, 0); err != nil {
 			return fmt.Errorf("clear login-lockout state: %w", err)
 		}

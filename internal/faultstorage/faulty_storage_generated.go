@@ -1100,6 +1100,23 @@ func (w *FaultyStorage) CreateMFARecoveryCodes(ctx context.Context, userID uint,
 	return w.real.CreateMFARecoveryCodes(ctx, userID, codeHashes)
 }
 
+func (w *FaultyStorage) CreateMFAResetRequest(ctx context.Context, r *models.MFAResetRequest) (*models.MFAResetRequest, error) {
+	fire, kind, injected := w.check("CreateMFAResetRequest")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 *models.MFAResetRequest
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.CreateMFAResetRequest(ctx, r)
+			return rv1, injected
+		}
+	}
+	return w.real.CreateMFAResetRequest(ctx, r)
+}
+
 func (w *FaultyStorage) CreateMFAStepUpGrant(ctx context.Context, grant *models.MFAStepUpGrant) error {
 	fire, kind, injected := w.check("CreateMFAStepUpGrant")
 	if fire {
@@ -1647,6 +1664,23 @@ func (w *FaultyStorage) CreateWebAuthnSession(ctx context.Context, s *models.Web
 		}
 	}
 	return w.real.CreateWebAuthnSession(ctx, s)
+}
+
+func (w *FaultyStorage) DecideMFAResetRequestIfPending(ctx context.Context, id uint, status string, decidedBy uint, now time.Time) (bool, error) {
+	fire, kind, injected := w.check("DecideMFAResetRequestIfPending")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 bool
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.DecideMFAResetRequestIfPending(ctx, id, status, decidedBy, now)
+			return rv1, injected
+		}
+	}
+	return w.real.DecideMFAResetRequestIfPending(ctx, id, status, decidedBy, now)
 }
 
 func (w *FaultyStorage) DeleteAlertEscalationPolicy(ctx context.Context, id uint) error {
@@ -2661,6 +2695,23 @@ func (w *FaultyStorage) GetLatestSecretVersion(ctx context.Context, secretID uin
 		}
 	}
 	return w.real.GetLatestSecretVersion(ctx, secretID)
+}
+
+func (w *FaultyStorage) GetMFAResetRequest(ctx context.Context, id uint) (*models.MFAResetRequest, error) {
+	fire, kind, injected := w.check("GetMFAResetRequest")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 *models.MFAResetRequest
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.GetMFAResetRequest(ctx, id)
+			return rv1, injected
+		}
+	}
+	return w.real.GetMFAResetRequest(ctx, id)
 }
 
 func (w *FaultyStorage) GetMFASecret(ctx context.Context, userID uint) (*models.MFASecret, error) {
@@ -4806,6 +4857,23 @@ func (w *FaultyStorage) ListLiveSecretNamesByProject(ctx context.Context, projec
 		}
 	}
 	return w.real.ListLiveSecretNamesByProject(ctx, projectIDs, limit)
+}
+
+func (w *FaultyStorage) ListMFAResetRequests(ctx context.Context, pendingOnly bool) ([]*models.MFAResetRequest, error) {
+	fire, kind, injected := w.check("ListMFAResetRequests")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			var zero1 []*models.MFAResetRequest
+			return zero1, injected
+		case KindEffectThenError:
+			rv1, _ := w.real.ListMFAResetRequests(ctx, pendingOnly)
+			return rv1, injected
+		}
+	}
+	return w.real.ListMFAResetRequests(ctx, pendingOnly)
 }
 
 func (w *FaultyStorage) ListMachineCredentialUsageByMachineIDs(ctx context.Context, machineIDs []uint) (map[uint][]*models.MachineIdentityCredential, error) {
@@ -7110,6 +7178,22 @@ func (w *FaultyStorage) SetUserMFAEnabled(ctx context.Context, userID uint, enab
 		}
 	}
 	return w.real.SetUserMFAEnabled(ctx, userID, enabled)
+}
+
+func (w *FaultyStorage) SetUserMFAEnrolmentRequired(ctx context.Context, userID uint, required bool) error {
+	fire, kind, injected := w.check("SetUserMFAEnrolmentRequired")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.SetUserMFAEnrolmentRequired(ctx, userID, required)
+			return injected
+		}
+	}
+	return w.real.SetUserMFAEnrolmentRequired(ctx, userID, required)
 }
 
 func (w *FaultyStorage) SetUserWebAuthnEnabled(ctx context.Context, userID uint, enabled bool) error {

@@ -25,7 +25,7 @@ import (
 // column encodes). NOT bumped for pure comment/refactor changes that don't
 // touch what gets written to the database. Every bump must also decide
 // minCompatibleSchemaEpoch below (ADR-101).
-const currentSchemaEpoch = 8
+const currentSchemaEpoch = 9
 
 // schemaEpochMetadataKey is the system_metadata (see models.SystemMetadata)
 // key checkSchemaEpoch/recordSchemaEpoch read and write. #nosec G101 --
@@ -101,9 +101,16 @@ const schemaEpochMetadataKey = "schema_epoch"
 // at the global scope by name (the Phase 1 rule), so for the length of the rollout
 // it accepts what epoch 6 always accepted, never more.
 //
-// Epoch 8 (pending_audit_events.request_id, AUDIT-REQUEST-ID-2) leaves it at 3: an
-// epoch-7 replica never writes the column, so an owed row it records has NULL, which
-// means "no request id", and a backfill pass of an epoch-8 replica then writes that row
+// Epoch 8 (users.mfa_enrolment_required and the mfa_reset_requests table,
+// RECOVERY-MFA-RESET-1) leaves it at 3: an epoch-7 replica never reads or writes
+// either. A reset account also carries password_reset_required and a one-time
+// password, which every older binary honours, so an older replica still confines
+// it to a password change; what it does not do is demand the new enrolment
+// (docs/UPGRADING.md: finish or cancel pending resets before a downgrade).
+//
+// Epoch 9 (pending_audit_events.request_id, AUDIT-REQUEST-ID-2) leaves it at 3: an
+// epoch-8 replica never writes the column, so an owed row it records has NULL, which
+// means "no request id", and a backfill pass of an epoch-9 replica then writes that row
 // with no id, exactly what the row had before. It never reads the column back into
 // anything but the audit row's advisory request_id, which is outside the hash chain.
 const minCompatibleSchemaEpoch = 3

@@ -117,17 +117,17 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 		if actorIsMachine {
 			granterID, tagged := selfMachineGranterFromContext(ctx)
 			if !tagged {
-				return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
+				return fmt.Errorf("cannot assign permission %q to a role: %w", perm.Name, ErrActorLacksPermission)
 			}
 			if ok, aerr := c.AuthorizePrincipal(ctx, ActorTypeMachine, granterID, perm.Name, Scope{}); aerr != nil {
 				return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 			} else if !ok {
-				return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
+				return fmt.Errorf("cannot assign permission %q to a role: %w", perm.Name, ErrActorLacksPermission)
 			}
 		} else if ok, aerr := c.Authorize(ctx, actorID, perm.Name, Scope{}); aerr != nil {
 			return fmt.Errorf("failed to resolve actor authority: %w", aerr)
 		} else if !ok {
-			return fmt.Errorf("cannot assign permission %q to a role: you do not hold it yourself", perm.Name)
+			return fmt.Errorf("cannot assign permission %q to a role: %w", perm.Name, ErrActorLacksPermission)
 		}
 	}
 	builtinTarget := IsBuiltinRole(role.Name)
@@ -135,11 +135,11 @@ func (c *KeyorixCore) AssignPermissionToRole(ctx context.Context, actorID, roleI
 	if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 		if err := tx.AssignPermissionToRole(ctx, roleID, permissionID); err != nil {
 			if errors.Is(err, storage.ErrDuplicateRolePermission) {
-				// Distinguishable message (matched by server/http/handlers/rbac.go's
-				// AssignPermissionToRole via the same strings.Contains classification
-				// idiom that function already uses for "do not hold it yourself" a few
-				// lines above) so this maps to 409 Conflict, not a generic 500.
-				return fmt.Errorf("role %q already has permission %q", role.Name, perm.Name)
+				// Still matches storage.ErrDuplicateRolePermission (the handler maps it
+				// to 409 Conflict by errors.Is, not a generic 500); the readable
+				// message names the role and permission.
+				return storage.Typed(storage.ErrDuplicateRolePermission,
+					fmt.Sprintf("role %q already has permission %q", role.Name, perm.Name), err)
 			}
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}

@@ -27,7 +27,6 @@ package core
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 
@@ -41,7 +40,7 @@ const OwnedShareListDeniedMessage = "You can only list the shares you created in
 	"Ask a project admin to give you a role in the project."
 
 // ErrOwnedShareListDenied: the caller may not use the owner-scoped share list.
-var ErrOwnedShareListDenied = errors.New("not authorized: the owner-scoped share list needs a user with a project role")
+var ErrOwnedShareListDenied = newPermissionSentinel("not authorized: the owner-scoped share list needs a user with a project role")
 
 // ListOwnedShareViews returns the shares actorID created on secrets in projects
 // actorID is currently a member of, enriched like ListUserShareViews and ordered by

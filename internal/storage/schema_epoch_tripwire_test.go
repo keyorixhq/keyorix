@@ -33,14 +33,20 @@
 // 6 -> 7 for roles.assignable_scope (GROUP-ROLE-SCOPE-1 Phase 2, #3546): an epoch-6
 // binary's new roles take the column default (project, fail closed) and its grant
 // check is the Phase 1 name rule. The floor stays 3.
+// 7 -> 8 for users.mfa_enrolment_required and the mfa_reset_requests table
+// (RECOVERY-MFA-RESET-1): an epoch-7 binary never reads or writes either, and a reset
+// account is also password_reset_required, which it honours. The floor stays 3.
+// 8 -> 9 for pending_audit_events.request_id (AUDIT-REQUEST-ID-2), a nullable column an
+// epoch-8 binary never writes (its owed rows read as "no request id") and outside the
+// hash chain. The floor stays 3.
 package storage
 
 import "testing"
 
-func TestCurrentSchemaEpoch_Is8_SeeADR101(t *testing.T) {
-	if currentSchemaEpoch != 8 {
+func TestCurrentSchemaEpoch_Is9_SeeADR101(t *testing.T) {
+	if currentSchemaEpoch != 9 {
 		t.Fatalf(
-			"currentSchemaEpoch is now %d (expected 8) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
+			"currentSchemaEpoch is now %d (expected 9) -- STOP: docs/adr-101-schema-epoch-compatibility-floor.md "+
 				"requires every bump to also decide minCompatibleSchemaEpoch (additive-and-safe leaves it "+
 				"unchanged; a migration an older binary cannot safely run against raises it to the new epoch). "+
 				"Make that decision in factory.go, THEN update this test's expected value alongside your "+

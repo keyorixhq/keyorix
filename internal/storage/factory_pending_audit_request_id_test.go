@@ -1,6 +1,6 @@
 package storage
 
-// AUDIT-REQUEST-ID-2 (schema epoch 8): an install migrated by an epoch-7 binary has
+// AUDIT-REQUEST-ID-2 (schema epoch 9): an install migrated by an epoch-8 binary has
 // pending_audit_events without request_id. migrateDatabase must add it (nullable, no
 // default: catalog-only on PostgreSQL), or a request that owes an audit row cannot
 // record its id and the upgraded install fails every owed-audit write.
@@ -22,7 +22,7 @@ func requirePendingAuditRequestIDAddedOnUpgrade(t *testing.T, db *gorm.DB, relfi
 	require.NoError(t, f.migrateDatabase(db))
 	require.True(t, columnExists(db, "pending_audit_events", "request_id"), "a fresh install has the column")
 
-	// The epoch-7 shape: the table as it was, holding a record an epoch-7 binary wrote.
+	// The epoch-8 shape: the table as it was, holding a record an epoch-8 binary wrote.
 	require.NoError(t, db.Exec("ALTER TABLE pending_audit_events DROP COLUMN request_id").Error)
 	require.False(t, columnExists(db, "pending_audit_events", "request_id"))
 	require.NoError(t, db.Exec(`INSERT INTO pending_audit_events (event_type, event, attempts) VALUES ('secret.suspended', '{}', 0)`).Error)
@@ -31,14 +31,14 @@ func requirePendingAuditRequestIDAddedOnUpgrade(t *testing.T, db *gorm.DB, relfi
 	if relfilenode != nil {
 		before = relfilenode()
 	}
-	require.NoError(t, f.migrateDatabase(db), "the epoch-8 upgrade migration")
+	require.NoError(t, f.migrateDatabase(db), "the epoch-9 upgrade migration")
 	require.True(t, columnExists(db, "pending_audit_events", "request_id"), "the upgrade adds the column")
 	if relfilenode != nil {
 		require.Equal(t, before, relfilenode(), "adding the nullable column must not rewrite pending_audit_events")
 	}
 	require.NoError(t, f.migrateDatabase(db), "re-running the migration must be a no-op")
 
-	// The record an epoch-7 binary left behind reads as "no request id".
+	// The record an epoch-8 binary left behind reads as "no request id".
 	var old models.PendingAuditEvent
 	require.NoError(t, db.First(&old).Error)
 	require.Nil(t, old.RequestID)

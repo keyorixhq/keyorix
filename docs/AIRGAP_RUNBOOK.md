@@ -54,6 +54,19 @@ that goes through a local resolver stub is sent by the resolver, not by the serv
 account, so this rule does not count it; the server log is the other witness: it had no
 `dial`, `lookup` or `no such host` line.)
 
+**The web UI and the API docs page make no external requests.** The server hands the operator's
+browser the whole UI itself: the page shell, scripts and styles (`/assets`), the Inter and
+JetBrains Mono fonts (`/fonts`) and the icon, and, when `server.http.swagger_enabled` is on
+(default off), the API documentation at `/swagger/`, whose Swagger UI is vendored into the binary
+(swagger-ui-dist 4.15.5, pinned by SHA-256, online validator off) instead of loaded from a CDN.
+A test (`TestAirgapServedMarkupNamesNoExternalHost`
+in `server/http`) fails with `file:line` if any HTML or CSS file the server serves, or any HTML/CSS
+string literal in `server/http`, names an `http(s)://` or `//` host other than the XML namespace
+URI `www.w3.org`. It does not read JavaScript, so it cannot see a `fetch()` inside a bundle; to
+check that on your own installation, open the UI with the browser's network tab recording (or from
+a machine whose firewall drops everything but your Keyorix host) and look for any request to another
+host. The firewall rule above watches the server's account, not your browser.
+
 ## What a complete backup is
 
 A complete backup is **two files' worth of content, bundled into one

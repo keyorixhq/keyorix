@@ -59,6 +59,9 @@ var keylessModeAllowedFiles = map[string]string{
 		"are required for THIS invocation of the offline, host-side `recover-admin` CLI command — never writes " +
 		"it. No HTTP or gRPC transport is involved in reaching this code path at all (ADR-108 §B: no admin " +
 		"command starts a network listener).",
+	"server/admin/reset_mfa.go": "reads it once, after config.Load, to decide whether --recovery-key/stdin " +
+		"are required for THIS invocation of the offline, host-side `reset-mfa` CLI command (RECOVERY-MFA-RESET-1), " +
+		"exactly like recover-admin above -- never writes it, and no network listener is involved (ADR-108 §B).",
 	"server/admin/diagnose.go": "reads it once in diagnoseRecoveryKey, after config.Load, to report [SKIP] " +
 		"instead of [WARN] for a missing recovery key on keyless-mode installs, inside the offline, host-side " +
 		"`diagnose` CLI command -- never writes it. No HTTP or gRPC transport reaches this code path (ADR-108 " +

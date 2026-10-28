@@ -1,0 +1,1 @@
+TestEveryErrorPermissionDeniedRefusalIsTyped	internal/core	#3779	new go/ast guard over the core family (every i18n ErrorPermissionDenied refusal is typed with core.ErrPermissionDenied, ERRLOSS-SENTINELS-1), report-only until its first green nightly on main

@@ -427,6 +427,11 @@ type KeyorixCore struct {
 	// TransitionMachineIdentity when it cannot determine exactly which credential
 	// hashes to evict individually (see evictMachineIdentityCacheOrFlush's doc comment).
 	machineTokenCacheFlusher func()
+	// userTokenCacheEvictor drops every HTTP auth-cache entry of one user (session and PAT)
+	// without knowing the token hashes. Wired at startup (SetUserTokenCacheEvictor); nil in
+	// tests/remote mode. Fail-closed fallback when listing the user's session hashes failed
+	// (session_eviction.go).
+	userTokenCacheEvictor func(userID uint)
 	// auditMaxCertified is an in-memory monotonic high-water mark of the greatest
 	// chained-events count this process has ever certified or verified. It backstops
 	// the persistent signed high-water (SystemMetadata) against an online attacker who

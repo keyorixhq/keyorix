@@ -115,6 +115,7 @@ var notifierRegistry = map[string]notifierDecl{
 	// --- install-wide admins (no project subject) ---
 	"ScanLicenseExpiry":       {kind: kindGlobalAdmins, doc: "license expiry: every install-wide admin"},
 	"notifyMachineCredAdmins": {kind: kindGlobalAdmins, via: "checkMachineCredExpiry", doc: "machine-credential expiry: every install-wide admin"},
+	"notifyMFAResetAdmins":    {kind: kindGlobalAdmins, doc: "MFA reset requested / approved / cancelled: every install-wide admin (RECOVERY-MFA-RESET-1)"},
 
 	// --- one user the event is about ---
 	"notifyMembershipActivated":        {kind: kindExplicitUser, doc: "the inviter"},
@@ -131,6 +132,7 @@ var notifierRegistry = map[string]notifierDecl{
 	"rejectIfCloned":                   {kind: kindExplicitUser, doc: "the passkey owner (clone suspected)"},
 	"CheckRoleExpiry":                  {kind: kindExplicitUser, doc: "the holder of the expiring role grant"},
 	"CheckReadQuotas":                  {kind: kindExplicitUser, doc: "the secret owner"},
+	"notifyMFAResetTarget":             {kind: kindExplicitUser, doc: "the user whose MFA was reset"},
 
 	// --- operator-configured broadcast channel ---
 	"notifyRotationFailures": {kind: kindDeploymentChannel, doc: "deployment-wide channel; secret names only, never failure detail"},

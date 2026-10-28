@@ -61,7 +61,7 @@ func (k *KeyorixCore) ExportSecretAccessLog(ctx context.Context, actorKind strin
 	if allowed, err := k.AuthorizeSecretPrincipal(ctx, actorKind, actorID, secretID, permSecretsRead); err != nil {
 		return nil, "", fmt.Errorf("ExportSecretAccessLog: %w", err)
 	} else if !allowed {
-		return nil, "", fmt.Errorf("not authorized: insufficient permissions")
+		return nil, "", permissionDeniedf("not authorized: insufficient permissions")
 	}
 
 	action := exportAccessAction

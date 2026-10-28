@@ -323,6 +323,17 @@ column mfa_recovery_codes.code_hash TEXT notnull=0 default=<none> pk=0
 column mfa_recovery_codes.id INTEGER notnull=0 default=<none> pk=1
 column mfa_recovery_codes.used_at DATETIME notnull=0 default=<none> pk=0
 column mfa_recovery_codes.user_id INTEGER notnull=0 default=<none> pk=0
+column mfa_reset_requests.created_at DATETIME notnull=0 default=<none> pk=0
+column mfa_reset_requests.decided_at DATETIME notnull=0 default=<none> pk=0
+column mfa_reset_requests.decided_by INTEGER notnull=0 default=<none> pk=0
+column mfa_reset_requests.evidence TEXT notnull=0 default=<none> pk=0
+column mfa_reset_requests.expires_at DATETIME notnull=0 default=<none> pk=0
+column mfa_reset_requests.id INTEGER notnull=0 default=<none> pk=1
+column mfa_reset_requests.reason TEXT notnull=0 default=<none> pk=0
+column mfa_reset_requests.requested_by INTEGER notnull=1 default=<none> pk=0
+column mfa_reset_requests.status TEXT notnull=1 default="pending" pk=0
+column mfa_reset_requests.target_user_id INTEGER notnull=1 default=<none> pk=0
+column mfa_reset_requests.verified_by TEXT notnull=0 default=<none> pk=0
 column mfa_secrets.activated NUMERIC notnull=0 default=false pk=0
 column mfa_secrets.created_at DATETIME notnull=0 default=<none> pk=0
 column mfa_secrets.id INTEGER notnull=0 default=<none> pk=1
@@ -382,7 +393,6 @@ column pending_audit_events.event TEXT notnull=1 default=<none> pk=0
 column pending_audit_events.event_type TEXT notnull=1 default=<none> pk=0
 column pending_audit_events.id INTEGER notnull=0 default=<none> pk=1
 column pending_audit_events.last_error TEXT notnull=0 default=<none> pk=0
-column pending_audit_events.request_id TEXT notnull=0 default=<none> pk=0
 column pending_audit_events.updated_at DATETIME notnull=0 default=<none> pk=0
 column permissions.action TEXT notnull=1 default=<none> pk=0
 column permissions.description TEXT notnull=0 default=<none> pk=0
@@ -678,6 +688,7 @@ column users.last_login_at DATETIME notnull=0 default=<none> pk=0
 column users.login_locked_until DATETIME notnull=0 default=<none> pk=0
 column users.login_lockout_count INTEGER notnull=0 default=0 pk=0
 column users.mfa_enabled NUMERIC notnull=0 default=false pk=0
+column users.mfa_enrolment_required NUMERIC notnull=0 default=false pk=0
 column users.one_time_password_expires_at DATETIME notnull=0 default=<none> pk=0
 column users.password_changed_at DATETIME notnull=0 default=<none> pk=0
 column users.password_hash TEXT notnull=0 default=<none> pk=0
@@ -747,6 +758,9 @@ index idx_mfa_challenges_token_hash on mfa_challenges: CREATE UNIQUE INDEX `idx_
 index idx_mfa_challenges_user_id on mfa_challenges: CREATE INDEX `idx_mfa_challenges_user_id` ON `mfa_challenges`(`user_id`)
 index idx_mfa_recovery_codes_code_hash on mfa_recovery_codes: CREATE INDEX `idx_mfa_recovery_codes_code_hash` ON `mfa_recovery_codes`(`code_hash`)
 index idx_mfa_recovery_codes_user_id on mfa_recovery_codes: CREATE INDEX `idx_mfa_recovery_codes_user_id` ON `mfa_recovery_codes`(`user_id`)
+index idx_mfa_reset_requests_expires_at on mfa_reset_requests: CREATE INDEX `idx_mfa_reset_requests_expires_at` ON `mfa_reset_requests`(`expires_at`)
+index idx_mfa_reset_requests_status on mfa_reset_requests: CREATE INDEX `idx_mfa_reset_requests_status` ON `mfa_reset_requests`(`status`)
+index idx_mfa_reset_requests_target_user_id on mfa_reset_requests: CREATE INDEX `idx_mfa_reset_requests_target_user_id` ON `mfa_reset_requests`(`target_user_id`)
 index idx_mfa_secrets_user_id on mfa_secrets: CREATE UNIQUE INDEX `idx_mfa_secrets_user_id` ON `mfa_secrets`(`user_id`)
 index idx_mfa_step_up_grants_purpose on mfa_step_up_grants: CREATE INDEX `idx_mfa_step_up_grants_purpose` ON `mfa_step_up_grants`(`purpose`)
 index idx_mfa_step_up_grants_user_id on mfa_step_up_grants: CREATE INDEX `idx_mfa_step_up_grants_user_id` ON `mfa_step_up_grants`(`user_id`)
@@ -859,6 +873,7 @@ table machine_identity_oidc_bindings
 table machine_identity_roles
 table mfa_challenges
 table mfa_recovery_codes
+table mfa_reset_requests
 table mfa_secrets
 table mfa_step_up_grants
 table mfa_stepup_tokens

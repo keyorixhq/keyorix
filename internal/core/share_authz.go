@@ -132,7 +132,7 @@ func ShareElevatesAction(a SecretAction) bool { return secretActionShareElevates
 
 // ErrShareActionNotElevated: the actor's share covers secrets.write on this secret,
 // but the action is not one a share may elevate.
-var ErrShareActionNotElevated = errors.New("not authorized: a share does not grant this action")
+var ErrShareActionNotElevated = newPermissionSentinel("not authorized: a share does not grant this action")
 
 // ShareActionNotElevatedMessage is the fixed user-facing reason for
 // ErrShareActionNotElevated, used by HTTP and gRPC alike.
@@ -146,15 +146,15 @@ const ShareActionNotElevatedMessage = "A share on this secret only lets you upda
 // user-facing reason.
 var (
 	// ErrShareNotOwner: only the secret's owner may share it or change its shares.
-	ErrShareNotOwner = errors.New("not authorized: only the secret's owner can share it")
+	ErrShareNotOwner = newPermissionSentinel("not authorized: only the secret's owner can share it")
 	// ErrShareOwnerNotMember: the actor owns the secret but is not a live member of
 	// its project (RBAC-001). A global role makes nobody a member of any project.
-	ErrShareOwnerNotMember = errors.New("not authorized: the owner is not a member of the secret's project")
+	ErrShareOwnerNotMember = newPermissionSentinel("not authorized: the owner is not a member of the secret's project")
 	// ErrShareRecipientNotMember: shares never apply to non-members.
-	ErrShareRecipientNotMember = errors.New("not authorized: the recipient is not a member of the secret's project")
+	ErrShareRecipientNotMember = newPermissionSentinel("not authorized: the recipient is not a member of the secret's project")
 	// ErrShareGroupNotInProject: the recipient group holds no role in the secret's
 	// project.
-	ErrShareGroupNotInProject = errors.New("not authorized: the recipient group has no role in the secret's project")
+	ErrShareGroupNotInProject = newPermissionSentinel("not authorized: the recipient group has no role in the secret's project")
 )
 
 // shareRefusal wraps a share-management sentinel so it reads as a permission denial

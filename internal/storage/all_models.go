@@ -55,6 +55,7 @@ func AllModels() []any {
 		&models.MachineIdentityRole{},
 		&models.MFAChallenge{},
 		&models.MFARecoveryCode{},
+		&models.MFAResetRequest{},
 		&models.MFASecret{},
 		&models.MFAStepUpGrant{},
 		&models.MFAStepupToken{},

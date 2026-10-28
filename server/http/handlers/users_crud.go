@@ -240,7 +240,7 @@ func (h *UserHandler) GetUser(w http.ResponseWriter, r *http.Request) {
 	u, err := h.coreService.GetUser(r.Context(), uint(id))
 	if err != nil {
 		log.Printf("Error getting user: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
@@ -277,7 +277,7 @@ func (h *UserHandler) GetUserByEmail(w http.ResponseWriter, r *http.Request) {
 	u, err := h.coreService.GetUserByEmail(r.Context(), email)
 	if err != nil {
 		log.Printf("Error getting user by email: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
@@ -306,7 +306,7 @@ func (h *UserHandler) GetUserByUsername(w http.ResponseWriter, r *http.Request) 
 	u, err := h.coreService.GetUserByUsername(r.Context(), username)
 	if err != nil {
 		log.Printf("Error getting user by username: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
@@ -334,7 +334,7 @@ func (h *UserHandler) GetUserByExternalID(w http.ResponseWriter, r *http.Request
 	u, err := h.coreService.GetUserByExternalID(r.Context(), externalID)
 	if err != nil {
 		log.Printf("Error getting user by external id: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
@@ -402,7 +402,7 @@ func (h *UserHandler) UpdateUser(w http.ResponseWriter, r *http.Request) {
 			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
 		case errors.Is(err, core.ErrCannotActOnSelf):
 			sendError(w, "BadRequest", "Cannot deactivate your own account", http.StatusBadRequest, nil)
-		case strings.Contains(err.Error(), errNotFound):
+		case errors.Is(err, storage.ErrUserNotFound):
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		case errors.Is(err, core.ErrUserAlreadyExists):
 			sendError(w, "ConflictError", errUserAlreadyExists, http.StatusConflict, nil)
@@ -454,7 +454,7 @@ func (h *UserHandler) DeleteUser(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, core.ErrInsufficientAdminAuthority):
 			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
-		case strings.Contains(err.Error(), errNotFound):
+		case errors.Is(err, storage.ErrUserNotFound):
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "last install administrator"):
 			sendError(w, "Conflict", err.Error(), http.StatusConflict, nil)
@@ -486,7 +486,7 @@ func (h *UserHandler) RestoreUser(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, core.ErrInsufficientAdminAuthority):
 			sendError(w, "PermissionDenied", clientSafe(err), http.StatusForbidden, nil)
-		case strings.Contains(err.Error(), errNotFound):
+		case errors.Is(err, storage.ErrUserNotFound):
 			sendError(w, "NotFound", "User not found or not soft-deleted", http.StatusNotFound, nil)
 		default:
 			sendError(w, "InternalError", "Failed to restore user", http.StatusInternalServerError, nil)
@@ -513,7 +513,7 @@ func (h *UserHandler) UnlockUser(w http.ResponseWriter, r *http.Request) {
 		if sendAuditUnavailable(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 			return
 		}
@@ -571,7 +571,7 @@ func (h *UserHandler) accountStateAction(w http.ResponseWriter, r *http.Request,
 			// message ADR-108 PR 6 set out to remove.
 			status = http.StatusConflict
 			msg = err.Error()
-		case strings.Contains(err.Error(), errNotFound):
+		case errors.Is(err, storage.ErrUserNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("account state transition error for user %d: %v", uint(id), err)
@@ -622,7 +622,7 @@ func (h *UserHandler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, core.ErrInsufficientAdminAuthority):
 			status = http.StatusForbidden
-		case strings.Contains(err.Error(), errNotFound):
+		case errors.Is(err, storage.ErrUserNotFound):
 			status = http.StatusNotFound
 		default:
 			log.Printf("revoke sessions error for user %d: %v", uint(id), err)
@@ -714,12 +714,18 @@ func (h *UserHandler) ResendSetupLink(w http.ResponseWriter, r *http.Request) {
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
-		case strings.Contains(msg, errNotFound):
+		case errors.Is(err, storage.ErrUserNotFound):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "limit") || strings.Contains(msg, "wait"):
 			status = http.StatusTooManyRequests
 		case strings.Contains(msg, "base_url") || strings.Contains(msg, "suspended"):
 			status = http.StatusBadRequest
+		}
+		if status == http.StatusInternalServerError {
+			// An unclassified failure (a storage fault) must not reach the client
+			// as raw error text.
+			log.Printf("resend setup link error for user %d: %v", uint(id), err)
+			msg = clientSafe(err)
 		}
 		sendError(w, "Error", msg, status, nil)
 		return

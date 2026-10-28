@@ -504,6 +504,11 @@ type User struct {
 	// security key (ADR-036); like MFAEnabled it makes login a two-step flow, with
 	// a WebAuthn assertion as the second factor (see WebAuthnCredential).
 	WebAuthnEnabled bool `gorm:"default:false"`
+	// MFAEnrolmentRequired is set by an administrator MFA reset (RECOVERY-MFA-RESET-1:
+	// `keyorix-server admin reset-mfa`, or an approved two-admin request): every
+	// factor was removed, and the account owes a new enrolment whether or not
+	// security.require_mfa is on. False on every other row.
+	MFAEnrolmentRequired bool `gorm:"default:false" json:"-"`
 	// ExternalID is the IdP's stable identifier for a SCIM-provisioned user (SCIM
 	// externalId, RFC 7644). Empty for locally-created users. Uniqueness (among
 	// live, non-empty rows) is enforced by a PARTIAL unique index, created in
@@ -1781,7 +1786,7 @@ type PendingAuditEvent struct {
 	// (logging.ServerRequestID at the time it was recorded), so the backfill can write
 	// the row with the id of the request that caused it (docs/specs/audit-request-id.md
 	// §10). NULL when the request had none (a scheduler tick) and on rows recorded
-	// before epoch 8. Advisory like audit_events.request_id; never a hash input.
+	// before epoch 9. Advisory like audit_events.request_id; never a hash input.
 	RequestID *string
 }
 

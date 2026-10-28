@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -86,4 +89,57 @@ func TestConcurrency_ConsumeSSOLoginState_OnlyOneWins(t *testing.T) {
 	var count int64
 	require.NoError(t, db.Model(&models.SSOLoginState{}).Where("state = ?", "race-state").Count(&count).Error)
 	assert.Zero(t, count, "the row must be gone after the winning consume, regardless of how many racers competed")
+}
+
+// TestConsumeSSOLoginState_LostRaceIsTheSameNotFound pins the contract in
+// ConsumeSSOLoginState's lost-race branch: a caller whose initial read found the
+// row but whose DELETE affected nothing (a concurrent consumer got there first)
+// must get the same error class as an unknown/already-used state — the typed
+// ErrSSOLoginStateNotFound sentinel and gorm.ErrRecordNotFound — so no caller can
+// tell a replay that lost the race from one that arrived late. The race is forced
+// deterministically: a delete callback removes the row between the read and the
+// scoped DELETE, exactly the interleaving the concurrent test can only hit by chance.
+func TestConsumeSSOLoginState_LostRaceIsTheSameNotFound(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&models.SSOLoginState{}))
+	ls := NewLocalStorage(db)
+	ctx := context.Background()
+
+	require.NoError(t, ls.CreateSSOLoginState(ctx, &models.SSOLoginState{
+		State: "lost-race", Nonce: "n-1", Provider: "okta", ExpiresAt: time.Now().Add(10 * time.Minute),
+	}))
+
+	var fired bool
+	require.NoError(t, db.Callback().Delete().Before("gorm:delete").Register(
+		"test:concurrent-consumer-deletes-sso-state-first",
+		func(tx *gorm.DB) {
+			if fired {
+				return
+			}
+			if _, ok := tx.Statement.Dest.(*models.SSOLoginState); !ok {
+				return
+			}
+			fired = true
+			require.NoError(t, tx.Exec("DELETE FROM sso_login_states WHERE state = ?", "lost-race").Error)
+		},
+	))
+
+	_, raceErr := ls.ConsumeSSOLoginState(ctx, "lost-race")
+	require.True(t, fired, "the callback must have fired, otherwise the lost-race branch was not exercised")
+	require.Error(t, raceErr)
+
+	// The ordinary not-found (state already gone before the read).
+	_, goneErr := ls.ConsumeSSOLoginState(ctx, "lost-race")
+	require.Error(t, goneErr)
+
+	for name, e := range map[string]error{"lost race": raceErr, "already consumed": goneErr} {
+		wrapped := fmt.Errorf("handler: %w", e)
+		assert.True(t, errors.Is(wrapped, storage.ErrSSOLoginStateNotFound), "%s must match ErrSSOLoginStateNotFound; got %v", name, e)
+		assert.True(t, errors.Is(wrapped, gorm.ErrRecordNotFound), "%s must match gorm.ErrRecordNotFound; got %v", name, e)
+	}
+	assert.Equal(t, goneErr.Error(), raceErr.Error(), "the lost race must render exactly like an unknown/already-used state")
 }

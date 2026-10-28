@@ -357,7 +357,7 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 			return fmt.Errorf("loading machine identity: %w", err)
 		}
 		if machine.CreatedBy == actorID {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
+			return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "independent reviewer required for machine identities you provisioned")
 		}
 	}
 	targetDecision, err := targetDecisionForAction(action)
@@ -409,7 +409,7 @@ func (c *KeyorixCore) DecideAccessReviewItem(ctx context.Context, actorID, proje
 // attributable, independent human reviewer, which the SOC2/ISO/NIS2 control requires.
 func requireHumanReviewer(actorID uint) error {
 	if actorID == 0 {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "access reviews require an attributable human reviewer (a machine identity cannot act as a reviewer)")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "access reviews require an attributable human reviewer (a machine identity cannot act as a reviewer)")
 	}
 	return nil
 }

@@ -199,7 +199,7 @@ func (c *KeyorixCore) completePasswordSetup(ctx context.Context, tok *models.Set
 	// Validate the password BEFORE consuming the token, so a policy rejection lets
 	// the user retry with the same link instead of dead-ending on a spent token.
 	if err := c.validateNewPassword(ctx, user, newPassword); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSetupPassword, err)
 	}
 
 	// Accounts with any second factor (TOTP or a passkey) enrolled must NOT get an
@@ -409,12 +409,6 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), eerr)
 	}
 
-	// Validate the password before consuming (a weak password must not burn the link).
-	// No account exists yet, so this is policy-only (no history to check).
-	if err := c.passwordPolicy.Validate(newPassword, nil); err != nil {
-		return nil, fmt.Errorf("%w: %v", ErrInvalidSetupPassword, err)
-	}
-
 	// Lazily create the account with the chosen password (active — they just set it).
 	// SECURITY (#155): create the account BEFORE consuming the token, not after. If a
 	// concurrent account-creation for the same email (e.g. another invite, an admin
@@ -437,10 +431,19 @@ func (c *KeyorixCore) completeInvitationAccept(ctx context.Context, tok *models.
 	if err != nil {
 		return nil, err
 	}
+	// Validate the password before creating the account or consuming the link (a weak
+	// password must not burn it). No account exists yet, so this is policy-only (no
+	// history to check), but against the identity CreateUser will build: checked
+	// without it, a password embedding the invitee's own email passed here and was
+	// refused inside CreateUser, which the handler answers as a dead link.
+	displayName := displayNameFromEmail(inv.Email)
+	if refusal := c.refuseUnmetRules(newPassword, &models.User{Username: username, Email: inv.Email, DisplayName: displayName}); refusal != nil {
+		return nil, fmt.Errorf("%w: %w", ErrInvalidSetupPassword, refusal)
+	}
 	user, err := c.CreateUser(ctx, &CreateUserRequest{
 		Username:    username,
 		Email:       inv.Email,
-		DisplayName: displayNameFromEmail(inv.Email),
+		DisplayName: displayName,
 		Password:    newPassword,
 	})
 	if err != nil {

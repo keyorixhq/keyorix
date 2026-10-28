@@ -218,6 +218,18 @@ not applicable to the bundled Helm chart, which is pinned to 1 replica.
   to a 0.95.x chart afterwards needs the volume chowned back to 999. Details: §5
   "Bundled PostgreSQL uid". Compose volumes need nothing.
 
+### Administrator MFA reset (schema epoch 8): before a downgrade
+
+The next release adds `users.mfa_enrolment_required` and the `mfa_reset_requests` table
+(`keyorix-server admin reset-mfa` and the two-admin `POST /api/v1/mfa-reset-requests`
+flow, [lost-totp-runbook.md](operator/lost-totp-runbook.md) §4). Both are additive and the
+compatibility floor stays at 3, so an older replica keeps booting during a rolling
+upgrade. An older binary does not read either. A user who was reset but has not yet
+signed in still has `password_reset_required` and a one-time password, which every
+binary honours, but an older binary will not demand the new MFA enrolment. Before a
+downgrade, cancel pending requests (`POST /api/v1/mfa-reset-requests/{id}/cancel`) and
+make sure reset users have enrolled again.
+
 ### Upgrading Docker Compose from v0.96.x to the next release: Postgres over TLS
 
 The bundled Postgres now serves TLS, and the server connects to it with
@@ -646,7 +658,7 @@ This release raises the schema compatibility floor to 3 (ADR-101); its schema ep
 is 7 (epochs 4 to 7 are additive and leave the floor at 3, see 6o.1 and 6z).
 Once a server of this release has started against a database, a v0.96.x (epoch 2)
 binary refuses to start on it: `database declares a minimum compatible schema
-epoch of 3 (database schema epoch 8)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
+epoch of 3 (database schema epoch 9)`. That is deliberate. Two formats v0.96.x cannot handle are now in the
 database:
 
 - **The v2 audit retention anchor (#3258).** v0.96.x reads it as malformed, so its
@@ -1217,7 +1229,14 @@ Two more shapes, both in every release that shipped `plan-access`:
   (names only) and reports such grants. It sees today's Vault tree: a mount emptied since the
   migration is not reported, and a mount it cannot list counts as holding paths (reported).
   A `plan-access` file written before this release is refused by `apply-access`: re-run
-  `plan-access`.
+  `plan-access`. The same holds for a `--path-map` scope: `--path-map secret/data=<team-a>:<dev>`
+  maps the secret mount into team-a/dev, and `kv1/team-a/dev/x` lands in team-a/dev by name, so
+  a grant there reaches it too. `plan-access` and `audit-access` now report such a policy as
+  `cross-mount-scope` and print the other mount's path; send that mount's paths to their own
+  scope with another `--path-map` entry to clear it. The policy's own mount counts too: with
+  `--path-map secret/data/legacy=<team-a>:<dev>`, `secret/team-a/dev/x` lies outside
+  `secret/data/legacy/*` and lands in team-a/dev by name, so the report prints
+  `secret/team-a/dev/: present (policy mount, outside the policy)`.
 - **`secrets.read` implies listing** (known residual, not revocable by an upgrade): a migrated
   `secrets.read` grant also lists secret names and reads version metadata in its scope, which
   a Vault policy with `read` on `data/` but no `list`/`read` on `metadata/` did not allow.
@@ -1310,7 +1329,7 @@ database records a compatibility floor above its own schema epoch (ADR-101).
   both binaries.
 - **Floor raised (v0.96.x → v0.97.0, floor 3, §6q): restore the backup.** The old
   binary refuses with `database declares a minimum compatible schema epoch of 3 (database
-  schema epoch 8)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
+  schema epoch 9)`, and nothing lowers the floor. For v0.97.0, rollback is a restore: a
   v0.96.x binary never starts again on a database a v0.97 server has started against. A database written by a binary with a newer epoch but
   without a recorded floor is refused with `database schema epoch N is newer than this
   binary's schema epoch M` (ADR-097).
