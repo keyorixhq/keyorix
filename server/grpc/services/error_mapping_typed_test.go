@@ -53,6 +53,7 @@ func TestMapProjectError_ClassifiesBySentinel(t *testing.T) {
 func TestMapRoleError_ClassifiesBySentinel(t *testing.T) {
 	runTypedMapCases(t, mapRoleError, []typedMapCase{
 		{"missing role", fmt.Errorf("get role: %w", storage.ErrRoleNotFound), codes.NotFound},
+		{"missing user", fmt.Errorf("user not found: %w", storage.ErrUserNotFound), codes.NotFound},
 		{"reserved name", fmt.Errorf("create role: %w", core.ErrRoleNameReserved), codes.AlreadyExists},
 		{"built-in role", fmt.Errorf("permission denied: cannot update %w: x", core.ErrBuiltinRole), codes.FailedPrecondition},
 		{"validation", fmt.Errorf("create role: %w", core.ErrRoleValidation), codes.InvalidArgument},

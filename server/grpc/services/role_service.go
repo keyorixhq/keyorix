@@ -420,6 +420,12 @@ func mapRoleError(err error) error {
 	switch {
 	case errors.Is(err, storage.ErrRoleNotFound), errors.Is(err, storage.ErrPermissionNotFound):
 		return status.Error(codes.NotFound, "role not found")
+	// GetUserRoles: core.GetUserRoleAssignment wraps storage's GetUser miss.
+	// Assign/remove never return a user, project or environment not-found:
+	// storage writes the grant row without looking them up, and a missing
+	// environment is a RoleScopeError (InvalidArgument, above).
+	case errors.Is(err, storage.ErrUserNotFound):
+		return status.Error(codes.NotFound, "user not found")
 	case errors.Is(err, core.ErrRoleNameReserved):
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
 	// Not yet typed: storage's CreateRole/UpdateRole return the raw driver error
