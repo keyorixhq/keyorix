@@ -45,6 +45,7 @@ const (
 
 // Completion steps, named for CompleteAuditKeyTransition's test hook.
 const (
+	aktStepSeals      = "seals"
 	aktStepAnchor     = "anchor"
 	aktStepHighWater  = "high-water"
 	aktStepCheckpoint = "checkpoint"
@@ -72,7 +73,10 @@ type auditKeyTransition struct {
 	Anchor       string    `json:"anchor"`
 	CheckpointID uint      `json:"checkpoint_id"`
 	Checkpoint   string    `json:"checkpoint"`
-	Prev         string    `json:"prev"`
+	// Seals is the digest of the audit_seals row (audit_seal.go), named only
+	// when it authenticated under the old key; completion re-signs it first.
+	Seals string `json:"seals,omitempty"`
+	Prev  string `json:"prev"`
 	// Reset names the damage of the previous record list this one replaced.
 	Reset string `json:"reset,omitempty"`
 
@@ -402,6 +406,7 @@ func (c *KeyorixCore) buildAuditKeyTransition(ctx context.Context, recs []*audit
 		}},
 		{auditHighWaterKey, &rec.HighWater, c.auditHighWaterAuthentic},
 		{auditRetentionAnchorKey, &rec.Anchor, c.auditRetentionAnchorAuthentic},
+		{auditSealsKey, &rec.Seals, c.auditSealsAuthentic},
 	} {
 		val, ok, err := c.storage.GetSystemMetadata(ctx, a.key)
 		if err != nil {
@@ -429,7 +434,7 @@ func (c *KeyorixCore) buildAuditKeyTransition(ctx context.Context, recs []*audit
 // auditHighWaterAuthentic reports whether a stored high-water value is signed
 // under the current key and names the current key version.
 func (c *KeyorixCore) auditHighWaterAuthentic(val string) bool {
-	hw, sig, ok := parseAuditHighWater(val)
+	hw, sig, ok := c.parseAuditHighWaterBound(val)
 	return ok && hw.KeyVersion == c.auditCkptKeyVersion && c.checkpointSigMatches(hw, sig)
 }
 
@@ -479,6 +484,19 @@ func (c *KeyorixCore) CompleteAuditKeyTransition(ctx context.Context) (bool, err
 		}
 		if t.State != "" && (st == nil || st.KeyEpoch == nil || st.KeyEpoch.Seq != t.Seq) {
 			return fmt.Errorf("key transition #%d: the verification state changed after the transition was prepared (%s): not completed", t.Seq, why)
+		}
+		// The seal record first: the high-water mark and the checkpoint below
+		// are signed bound to it (audit_seal.go).
+		sealed, err := c.resignCarriedSeals(ctx, t)
+		if err != nil {
+			return fmt.Errorf("key transition #%d (%s): %w", t.Seq, aktStepSeals, err)
+		}
+		done = done || sealed
+		if _, err := c.loadAuditSeals(ctx); err != nil {
+			return err
+		}
+		if err := c.aktHook(aktStepSeals); err != nil {
+			return err
 		}
 		for _, s := range []struct {
 			name string
@@ -575,7 +593,7 @@ func (c *KeyorixCore) resignCarriedHighWater(ctx context.Context, t *auditKeyTra
 		return false, nil
 	}
 	hw.KeyVersion = c.auditCkptKeyVersion
-	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, auditHighWaterValue(hw, c.signCheckpoint(hw))); err != nil {
+	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, auditHighWaterValueSealed(hw, c.sealBinding(), c.signCheckpoint(hw))); err != nil {
 		return false, err
 	}
 	c.bumpWatermark(hw.ChainedEvents)

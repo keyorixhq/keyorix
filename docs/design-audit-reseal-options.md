@@ -1,6 +1,11 @@
 # Design: accepting a real audit-row loss (audit re-seal options)
 
-Status: **proposal, for Andrei to decide**. Nothing here is implemented. Area: ADR-029
+Status: **option A decided** (Andrei, 2026-10-23, ask avs1-reseal-command-choice) and
+implemented by AUDIT-ACCEPT-LOSS-1 as `keyorix-server admin audit accept-loss`, with C's anchor
+binding as an optional input (`internal/core/audit_seal.go`, `audit_seal_accept.go`). The
+status after an acceptance is `sealed`, never `VALID` (constraint 1 of
+`docs/design/recovery-options.md` §2), rather than the `VALID` with an accepted-gaps list
+sketched below. The text below is the proposal as decided. Area: ADR-029
 (signed checkpoints), ADR-112 (loud, audited opt-outs), RECOVERY-DESIGN-1 item 4.
 
 ## Why this is needed now

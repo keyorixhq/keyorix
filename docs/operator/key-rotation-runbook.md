@@ -175,6 +175,16 @@ carried over, not cleared.
 Rotate with the new binary only. Keep the old anchors, the old checkpoint keys and the note
 of which key version signed them; do not overwrite them.
 
+**Installs with purged audit history.** On an install that has had a retention purge, a key change
+by an older binary leaves the retention anchor signed under the old key. The online walk then
+needs genesis and reads broken, and a fresh checkpoint does **not** re-baseline it: the write
+refuses the broken walk (RECOVERY-OPTIONS-1 F2). The current binary re-signs the anchor during the
+transition, so this only follows a rotation done without it. To recover, rotate back to the previous
+passphrase with the current binary, then rotate forward again with it.
+
+A seal (an accepted audit loss, `admin audit accept-loss`) is carried over like the other signed
+artifacts: the chain still reads `sealed` after the rotation, online and with the new key offline.
+
 ## 6. Rollback
 
 There is no command that reverses a DEK rotation. The two ways back are **roll forward**
@@ -261,7 +271,9 @@ verify-audit on the restored database: VALID
 Afterwards every version from the archive decrypted under the restored key set and the version
 written after the archive was gone. Run `rotate --dry-run` after a restore to confirm the
 restored keys open every row, then start the servers with the restored key set on every host
-(with several replicas, every host gets the restored key files, or it refuses to start).
+(with several replicas, every host gets the restored key files, or it refuses to start). An
+archive from before an accepted audit loss is refused as a rollback the same way, whatever its
+event count.
 
 ## 7. What not to do
 

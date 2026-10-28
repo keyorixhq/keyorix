@@ -463,6 +463,16 @@ type KeyorixCore struct {
 	// auditVerifyEvidence caches the in-chain verification-state events seen so
 	// far (audit_verify_state.go), so a load scans only new rows.
 	auditVerifyEvidence auditVerifyEvidenceIndex
+	// auditSealMu guards auditSealBind, the seal binding checkpoint signatures
+	// use (audit_seal.go), and auditSealSeen, the most seals this process read
+	// (a later read of fewer is a replaced record).
+	auditSealMu   sync.Mutex
+	auditSealBind auditSealBinding
+	auditSealSeen int
+	auditSealRecs []*auditSeal
+	// auditSealHook, when set (tests only), runs after each write step of
+	// AcceptAuditLoss; an error stops it there, as a crash would.
+	auditSealHook func(step string) error
 	// auditKeyTransitionHook, when set (tests only), runs after each step of
 	// CompleteAuditKeyTransition; an error stops it there, as a crash would.
 	auditKeyTransitionHook func(step string) error

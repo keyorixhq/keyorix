@@ -29,10 +29,14 @@ import (
 )
 
 // Verification statuses (spec §4). Valid is reported only for StatusValid.
+// Sealed: everything a valid report requires holds for the rows that remain,
+// but a loss of audit events was accepted (audit_seal.go), so the chain is not
+// whole; it is never reported valid again.
 const (
 	AuditVerifyStatusValid     = "valid"
 	AuditVerifyStatusBroken    = "broken"
 	AuditVerifyStatusNotProven = "not_proven"
+	AuditVerifyStatusSealed    = "sealed"
 )
 
 // Report modes.
@@ -177,12 +181,16 @@ func (c *KeyorixCore) auditVerifyCycleDuration() time.Duration {
 func fullAuditVerifyReport(v *storage.AuditChainVerification) *AuditVerifyReport {
 	r := reportFromVerification(v)
 	r.Mode = AuditVerifyModeFull
-	if v.Valid {
-		r.Status = AuditVerifyStatusValid
-	} else {
+	switch {
+	case !v.Valid:
 		r.Status = AuditVerifyStatusBroken
+	case v.Seals > 0:
+		r.Status = AuditVerifyStatusSealed
+		r.StateReason = v.SealReason
+	default:
+		r.Status = AuditVerifyStatusValid
 	}
-	r.Valid = v.Valid
+	r.Valid = r.Status == AuditVerifyStatusValid
 	return r
 }
 
@@ -222,6 +230,10 @@ type auditTail struct {
 // auditTailCheck runs the tail check (spec §2.2) from the latest checkpoint.
 // maxRows bounds the walk (0 = unbounded). It never writes.
 func (c *KeyorixCore) auditTailCheck(ctx context.Context, maxRows int, forWrite bool) (*auditTail, error) {
+	// Checkpoint signatures are checked under the seal list (audit_seal.go).
+	if _, err := c.loadAuditSeals(ctx); err != nil {
+		return nil, err
+	}
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
 		return nil, err
@@ -269,7 +281,7 @@ func (c *KeyorixCore) auditTailCheck(ctx context.Context, maxRows int, forWrite 
 		hwReason = "audit high-water mark is missing or malformed although signed checkpoints exist — the anti-rollback mark was deleted or tampered with"
 	}
 
-	w, err := c.storage.VerifyAuditChainSegment(ctx, storage.AuditChainSegment{
+	w, err := c.walkAuditChain(ctx, storage.AuditChainSegment{
 		AfterID: cp.HeadID, SeedHash: cp.HeadHash, MaxRows: maxRows,
 	})
 	if err != nil {
@@ -319,7 +331,7 @@ func (c *KeyorixCore) authenticatedHighWaterBase(ctx context.Context) (*models.A
 	if err != nil || !ok {
 		return nil, err
 	}
-	hw, sig, parsed := parseAuditHighWater(val)
+	hw, sig, parsed := c.parseAuditHighWaterBound(val)
 	if !parsed || !c.checkpointSigMatches(hw, sig) {
 		return nil, nil
 	}
@@ -408,6 +420,11 @@ func (c *KeyorixCore) applyAuditStateToReport(r *AuditVerifyReport, st *auditVer
 	case !tailComplete:
 		r.Status = AuditVerifyStatusNotProven
 		r.NotProvenReason = "the tail after the latest checkpoint was not fully verified"
+	case st.Seals > 0:
+		// Everything above holds for the rows since the seal; the chain is not
+		// whole (audit_seal.go).
+		r.Status = AuditVerifyStatusSealed
+		r.StateReason = c.auditSealStateText(st)
 	default:
 		r.Status = AuditVerifyStatusValid
 	}
@@ -696,7 +713,7 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 	} else {
 		seg.AfterID, seg.SeedHash = cyc.SeedID, cyc.SeedHash
 	}
-	w, err := c.storage.VerifyAuditChainSegment(ctx, seg)
+	w, err := c.walkAuditChain(ctx, seg)
 	if err != nil {
 		return fmt.Errorf("failed to verify audit chain segment: %w", err)
 	}
@@ -760,6 +777,9 @@ func (c *KeyorixCore) advanceAuditRollingCycle(ctx context.Context, res *AuditVe
 // interval.
 func (c *KeyorixCore) AuditCheckpointFirstTickDelay(ctx context.Context, interval time.Duration) time.Duration {
 	if !c.AuditCheckpointsAvailable() || interval <= 0 {
+		return 0
+	}
+	if _, err := c.loadAuditSeals(ctx); err != nil {
 		return 0
 	}
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)

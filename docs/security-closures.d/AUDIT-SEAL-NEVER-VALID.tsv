@@ -1,0 +1,1 @@
+AUDIT-SEAL-NEVER-VALID	./internal/core	TestAuditSeal_GapSealedNeverValid	default-ci	pending	-	a sealed audit chain reports status sealed (valid false) on the incremental view, the full walk, the full job and the posture, before and after a full verification, never valid (posture: TestAuditSeal_PostureShowsSealed; offline exit 4: auditverify TestSealDifferential_GapSealed)

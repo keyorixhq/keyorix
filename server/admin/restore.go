@@ -950,8 +950,10 @@ type rollbackCheckOutcome struct {
 // this check.
 func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor, archiveRaw, newerSubstantive int64) (rollbackCheckOutcome, error) {
 	var archiveSigned int64
+	archiveCP := &auditverify.Checkpoint{}
 	if highWaterEncoded != "" {
-		archiveCP, _, ok := auditverify.ParseHighWater(highWaterEncoded)
+		var ok bool
+		archiveCP, _, ok = auditverify.ParseHighWater(highWaterEncoded)
 		if !ok {
 			return rollbackCheckOutcome{}, fmt.Errorf(
 				"backup archive's manifest carries an audit high-water value that does not parse -- " +
@@ -982,7 +984,26 @@ func checkRollbackProtection(highWaterEncoded, dbPath string, destinationFloor, 
 	if newerSubstantive > 0 {
 		gap, archiveEvents, reference = newerSubstantive, archiveRaw, destinationFloor
 	}
-	if found && witnessCP.ChainedEvents > archiveSigned && witnessCP.ChainedEvents-archiveSigned > gap {
+	// Sealed marks (admin audit accept-loss): a mark written under more seals
+	// is newer whatever its count, because an accepted loss lowers the count.
+	// An archive from before a seal this host accepted is behind (it would
+	// bring back the state the seal replaced); one from after a seal the
+	// witness has not seen is not.
+	switch {
+	case found && witnessCP.Seals > archiveCP.Seals:
+		if !restoreAllowRollback {
+			return rollbackCheckOutcome{}, fmt.Errorf(
+				"refusing to restore: this backup was taken before audit loss acceptance #%d recorded on this host "+
+					"(the archive's audit trail is under %d seal(s), this host's under %d) -- restoring it would bring back the "+
+					"state that acceptance replaced and un-revoke access revoked since. Pass --allow-rollback if this is a "+
+					"genuine disaster-recovery restore of an intentionally older backup", archiveCP.Seals+1, archiveCP.Seals, witnessCP.Seals)
+		}
+		fmt.Printf("WARNING: --allow-rollback is in effect. This backup was taken before audit loss acceptance #%d recorded "+
+			"on this host. Recording this override to the audit trail.\n", archiveCP.Seals+1)
+		return rollbackCheckOutcome{overrodeRollback: true, gapEvents: max(gap, 1), archiveEncoded: highWaterEncoded}, nil
+	case found && witnessCP.Seals < archiveCP.Seals:
+		// The archive is newer by seal order; only the raw comparison applies.
+	case found && witnessCP.ChainedEvents > archiveSigned && witnessCP.ChainedEvents-archiveSigned > gap:
 		gap, archiveEvents, reference = witnessCP.ChainedEvents-archiveSigned, archiveSigned, witnessCP.ChainedEvents
 	}
 	if gap == 0 {
