@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -199,7 +198,7 @@ func (c *KeyorixCore) updateSecretWithNewVersion(ctx context.Context, secret *mo
 				return uerr
 			}
 			if !matched {
-				return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+				return errSecretNotFoundText()
 			}
 			if inTx != nil {
 				if err := inTx(tx); err != nil {
