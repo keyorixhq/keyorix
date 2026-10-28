@@ -13903,7 +13903,7 @@ export interface operations {
                 resource_id?: number;
                 /** @description Exact originating IP address. */
                 ip?: string;
-                /** @description Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with start_time/end_time. */
+                /** @description Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with since/until. */
                 request_id?: string;
                 /** @description Filter by operation success/failure. */
                 success?: "true" | "false";

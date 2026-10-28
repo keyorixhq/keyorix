@@ -1589,7 +1589,7 @@ type SearchAuditLogsParams struct {
 	// Ip Exact originating IP address.
 	Ip *string `form:"ip,omitempty" json:"ip,omitempty"`
 
-	// RequestId Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with start_time/end_time.
+	// RequestId Exact server-minted request id (the X-Request-ID the server returned and logged). Advisory: the id is not covered by the audit hash chain. Unindexed, so pair it with since/until.
 	RequestId *string `form:"request_id,omitempty" json:"request_id,omitempty"`
 
 	// Success Filter by operation success/failure.
