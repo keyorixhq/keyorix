@@ -1,6 +1,9 @@
 package sqlitepath
 
-import "testing"
+import (
+	"path/filepath"
+	"testing"
+)
 
 // REVFIX-3732-2 (REVIEW-3732-DEEP-1 M1): modernc.org/sqlite strips the query
 // off a name that does not start with "file:" before sqlite3_open_v2, so
@@ -33,6 +36,15 @@ func TestDatabaseFile(t *testing.T) {
 		{"file:/data/secrets.db#f?mode=memory", "/data/secrets.db", true},
 		// A decoded %00 drops the rest of its key: the last key is "mode".
 		{"file:/data/secrets.db?mode=memory&mode%00x=rwc", "/data/secrets.db", true},
+		// REVFIX-3732-4 (REVIEW-3732-DEEP-3 F1): SQLite decodes the path
+		// per %HH, keeps a "%" without two hex digits literal and ends the
+		// path at a decoded %00; url.PathUnescape rejected the whole path
+		// on one malformed escape and kept the NUL.
+		{"file:/data/my%20dir/%zz.db", "/data/my dir/%zz.db", true},
+		{"file:/data/100%/my%20dir/a.db", "/data/100%/my dir/a.db", true},
+		{"file:/data/my%20dir/a.db%00junk", "/data/my dir/a.db", true},
+		{"file:/data/a.db%00junk?mode=memory", "", false},
+		{"file:%00", "", false},
 		{"", "", false},
 		{":memory:", "", false},
 		{":memory:?_busy_timeout=5000", "", false},
@@ -55,9 +67,16 @@ func TestDatabaseFile(t *testing.T) {
 // The shared tables agree with DatabaseFile, so a spelling moved between them
 // is checked here as well as by every caller's tests.
 func TestSharedSpellingTables(t *testing.T) {
-	for _, s := range URISpellings("/data/my data/secrets.db") {
-		if _, real := DatabaseFile(s); !real {
+	const canonical = "/data/my data 100%/secrets.db"
+	for _, s := range URISpellings(canonical) {
+		got, real := DatabaseFile(s)
+		if !real {
 			t.Errorf("URISpellings entry %q resolves to no file", s)
+		}
+		// The one relative entry ("file:secrets.db") names canonical from
+		// its own directory.
+		if got != canonical && got != filepath.Base(canonical) {
+			t.Errorf("URISpellings entry %q resolves to %q, not %q", s, got, canonical)
 		}
 	}
 	for _, s := range InMemorySpellings {

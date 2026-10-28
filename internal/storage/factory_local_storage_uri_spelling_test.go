@@ -22,11 +22,11 @@ import (
 // process on the URI and one on the plain path took different migration
 // locks on one database.
 
-// uriSpellingDir is a fresh working directory with a space in its name, and
-// the canonical database path in it.
+// uriSpellingDir is a fresh working directory with a space and a literal "%"
+// (no hex digits after it) in its name, and the canonical database path in it.
 func uriSpellingDir(t *testing.T) (dir, canonical string) {
 	t.Helper()
-	dir = filepath.Join(t.TempDir(), "my data")
+	dir = filepath.Join(t.TempDir(), "my data 100%")
 	require.NoError(t, os.MkdirAll(dir, 0o700))
 	t.Chdir(dir)
 	return dir, filepath.Join(dir, "secrets.db")

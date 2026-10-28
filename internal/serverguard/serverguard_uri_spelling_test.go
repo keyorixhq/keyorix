@@ -46,7 +46,7 @@ func sqliteSameDatabase(t *testing.T, spelling, canonical, table string) {
 
 func TestSQLiteURISpellings_MeetOnTheSameLock(t *testing.T) {
 	dir := t.TempDir()
-	data := filepath.Join(dir, "my data")
+	data := filepath.Join(dir, "my data 100%")
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		t.Fatal(err)
 	}

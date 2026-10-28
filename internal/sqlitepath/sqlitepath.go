@@ -5,7 +5,6 @@
 package sqlitepath
 
 import (
-	"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,7 +14,11 @@ import (
 // SQLite opens, and reports whether there is one at all. A SQLite URI filename
 // ("file:/data/secrets.db", "file:///...", "file://localhost/...",
 // percent-encoded, with a query or fragment) resolves to the same path as its
-// plain spelling; a query (DSN parameters) is never part of the path. Only
+// plain spelling; a query (DSN parameters) is never part of the path. The
+// path is decoded as sqlite3ParseUri decodes it: each valid %HH on its own, a
+// "%" without two hex digits kept literal, and a decoded %00 ending the path
+// ("file:/d/100%/my%20db" is "/d/100%/my db", "file:/d/a.db%00x" is
+// "/d/a.db"). Only
 // a "file:" URI's query marks a database in-memory, when its last "mode" key
 // is exactly "memory" (a directory named "mode=memory" is a real directory,
 // "_journal_mode=memory" is a real file), besides ":memory:" itself. The
@@ -39,9 +42,9 @@ func DatabaseFile(dbPath string) (path string, isRealFile bool) {
 				rest = "/" + p
 			}
 		}
-		if dec, err := url.PathUnescape(rest); err == nil {
-			rest = dec
-		}
+		// Decoded per octet like the query, not with url.PathUnescape, which
+		// rejects the whole path on one malformed "%" and keeps a NUL.
+		rest = sqliteURIUnescape(rest)
 		if rest == "" || rest == ":memory:" || uriModeIsMemory(query) {
 			return "", false
 		}
@@ -98,7 +101,8 @@ func sqliteURIUnescape(s string) string {
 
 // URISpellings are spellings SQLite opens as the database file at
 // canonical (an absolute path whose directory is the working directory and
-// contains a space). The tests of every DatabaseFile caller share this
+// contains a space and a literal "%" not followed by two hex digits, so the
+// %20 spelling mixes a valid escape with a malformed one). The tests of every DatabaseFile caller share this
 // table (internal/serverguard's TestSQLiteURISpellings_MeetOnTheSameLock, internal/storage's
 // file-permission and migration-lock tests), so a spelling added for one is
 // checked for all.
@@ -111,6 +115,8 @@ func URISpellings(canonical string) []string {
 		"file:" + canonical + "#frag",
 		"file:" + filepath.Base(canonical),
 		"file:" + strings.ReplaceAll(canonical, " ", "%20"),
+		// A decoded %00 ends the path.
+		"file:" + canonical + "%00junk",
 		// A plain name's query is dropped before the open, "mode=memory"
 		// included: this is the real file, not an in-memory database.
 		canonical + "?_busy_timeout=5000&mode=memory",
