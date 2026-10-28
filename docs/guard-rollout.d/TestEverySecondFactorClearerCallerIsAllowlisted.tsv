@@ -1,0 +1,1 @@
+TestEverySecondFactorClearerCallerIsAllowlisted	internal/core/guards	#3788	new go/ast allowlist over callers of DeleteMFAForUser and DeleteWebAuthnCredential (MFA-RESET-TESTS-1), report-only until its first green nightly on main

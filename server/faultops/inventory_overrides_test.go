@@ -350,6 +350,11 @@ var operationOverrides = map[string]overrideEntry{
 	"REST PUT /scim/v2/Users/{id}":    {StatusFuzzed, "opCatalog[\"REST PUT /scim/v2/Users/{id}\"] — SCIM-TAILS-1"},
 	"REST PATCH /scim/v2/Users/{id}":  {StatusFuzzed, "opCatalog[\"REST PATCH /scim/v2/Users/{id}\"] — SCIM-TAILS-1"},
 	"REST DELETE /scim/v2/Users/{id}": {StatusFuzzed, "opCatalog[\"REST DELETE /scim/v2/Users/{id}\"] — SCIM-TAILS-1"},
+	// MFA-RESET-TESTS-1: the two-administrator MFA reset (zz_mfa_reset_ops_catalog_test.go),
+	// swept by TestMFAResetOpsFaultSweep with oracle (g).
+	"REST POST /api/v1/mfa-reset-requests":              {StatusFuzzed, "opCatalog[\"REST POST /api/v1/mfa-reset-requests\"] — MFA-RESET-TESTS-1"},
+	"REST POST /api/v1/mfa-reset-requests/{id}/approve": {StatusFuzzed, "opCatalog[\"REST POST /api/v1/mfa-reset-requests/{id}/approve\"] — MFA-RESET-TESTS-1"},
+	"REST POST /api/v1/mfa-reset-requests/{id}/cancel":  {StatusFuzzed, "opCatalog[\"REST POST /api/v1/mfa-reset-requests/{id}/cancel\"] — MFA-RESET-TESTS-1"},
 	// Session FI2: the two WebAuthn "finish" ceremonies, driven with real W3C
 	// spec test vectors (webauthn_finish_ops_test.go) — go-webauthn's actual
 	// signature-verification path, not a stub.

@@ -85,6 +85,7 @@ internal/core/guards/g80_1530_machine_actor_attribution_guard_test.go	operator/*
 internal/core/guards/interleave_production_purity_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
 internal/core/guards/mfa_stepup_purpose_guard_test.go	operator/**/*.go	repo-root walk
 internal/core/guards/role_read_wrapper_forwarding_guard_test.go	operator/**/*.go	repo-root walk
+internal/core/guards/second_factor_clearer_callers_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for DeleteMFAForUser / DeleteWebAuthnCredential callers; operator/ included
 internal/core/guards/session_auth_read_wrapper_forwarding_guard_test.go	operator/**/*.go	repo-root walk
 internal/crypto/password_provider_iterations_guard_test.go	operator/**/*.go	repo-root walk
 internal/statemap/no_time_local_assignment_guard_test.go	operator/**/*.go	repo-root walk over _test.go files
