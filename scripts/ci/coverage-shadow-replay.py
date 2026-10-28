@@ -11,8 +11,10 @@ run coverage-shadow.py on it. Writes into --out:
   shadow.jsonl   coverage-shadow.py's own log (run/decision/summary records)
   decision-<sha7>.json   lever A's decision, for audit
 
-Run it from a throwaway clone whose scripts/ci/coverage-shadow.py is the one
-under test (the checkout of an older merge replaces tracked files only).
+Run it from a throwaway clone, with this script, coverage-shadow.py and
+select-affected.py COPIED to a directory outside the clone (the checkout of an
+older merge removes or replaces the tracked copies), and --declrefs pointing at
+a binary built from a current checkout.
 Usage:
   coverage-shadow-replay.py --out DIR [--merges 200] [--want 20]
         [--scan-only] [--max-seconds-per-pr 2400] [--test-timeout 15m]
@@ -43,8 +45,14 @@ def main():
     ap.add_argument("--test-timeout", default="15m")
     ap.add_argument("--only-prs", default="", help="comma-separated PR numbers: replay only these")
     ap.add_argument("--skip-prs", default="", help="comma-separated PR numbers to leave out")
+    ap.add_argument("--pg-dsn-map", help="JSON {package: DSN} passed to coverage-shadow.py: one Postgres database per package")
+    ap.add_argument("--tmpdir", help="directory for coverage-shadow.py's private temp root (default: $TMPDIR)")
+    ap.add_argument("--declrefs", help="prebuilt scripts/ci/declrefs binary")
+    ap.add_argument("--no-refine", action="store_true", help="plain coverage verdicts (the CI-SELECT-2-1 behaviour)")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
+    if not args.no_refine and not args.declrefs:
+        ap.error("--declrefs BIN is required (go build -o BIN ./scripts/ci/declrefs, from a current checkout): older merges do not have it")
     skip = {s for s in args.skip_prs.split(",") if s}
     only = {s for s in args.only_prs.split(",") if s}
     shas = sh("git", "log", "--first-parent", "--merges", f"-n{args.merges}", "--format=%H %s", args.ref).splitlines()
@@ -80,9 +88,15 @@ def main():
                 continue
             found += 1
             if not args.scan_only:
-                subprocess.run([sys.executable, os.path.join(HERE, "coverage-shadow.py"), "--base", base, "--head", sha,
-                                "--pr", pr, "--decision", dpath, "--log", os.path.join(args.out, "shadow.jsonl"),
-                                "--test-timeout", args.test_timeout, "--max-seconds", str(args.max_seconds_per_pr)], check=False)
+                cmd = [sys.executable, os.path.join(HERE, "coverage-shadow.py"), "--base", base, "--head", sha,
+                       "--pr", pr, "--decision", dpath, "--log", os.path.join(args.out, "shadow.jsonl"),
+                       "--test-timeout", args.test_timeout, "--max-seconds", str(args.max_seconds_per_pr)]
+                if args.pg_dsn_map:
+                    cmd += ["--pg-dsn-map", args.pg_dsn_map]
+                if args.tmpdir:
+                    cmd += ["--tmpdir", args.tmpdir]
+                cmd += ["--no-refine"] if args.no_refine else ["--declrefs", os.path.abspath(args.declrefs)]
+                subprocess.run(cmd, check=False)
             if found >= args.want:
                 break
     print(f"replay: done, {found} merge(s) with dependents", file=sys.stderr)
