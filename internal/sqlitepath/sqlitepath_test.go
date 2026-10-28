@@ -22,6 +22,17 @@ func TestDatabaseFile(t *testing.T) {
 		{"file:/data/secrets.db?_busy_timeout=5000", "/data/secrets.db", true},
 		{"file:///data/my%20data/secrets.db#frag", "/data/my data/secrets.db", true},
 		{"file://localhost/data/secrets.db", "/data/secrets.db", true},
+		// REVFIX-3732-3 (REVIEW-3732-DEEP-2 M1): SQLite reads only the
+		// "mode" key of a file: URI's query, the last one wins, and
+		// everything after "#" is the fragment. A query that merely
+		// contains "mode=memory" names a real file.
+		{"file:/data/secrets.db?_journal_mode=memory", "/data/secrets.db", true},
+		{"file:/data/secrets.db?_pragma=journal_mode=memory", "/data/secrets.db", true},
+		{"file:/data/secrets.db?xmode=memory", "/data/secrets.db", true},
+		{"file:/data/secrets.db?mode=memory&mode=rwc", "/data/secrets.db", true},
+		{"file:/data/secrets.db#f?mode=memory", "/data/secrets.db", true},
+		// A decoded %00 drops the rest of its key: the last key is "mode".
+		{"file:/data/secrets.db?mode=memory&mode%00x=rwc", "/data/secrets.db", true},
 		{"", "", false},
 		{":memory:", "", false},
 		{":memory:?_busy_timeout=5000", "", false},
@@ -29,6 +40,10 @@ func TestDatabaseFile(t *testing.T) {
 		{"file::memory:?_busy_timeout=5000", "", false},
 		{"file:x?mode=memory", "", false},
 		{"file:x.db?_busy_timeout=5000&mode=memory", "", false},
+		{"file:x.db?mode=rwc&mode=memory", "", false},
+		{"file:x.db?mode=memory#frag", "", false},
+		{"file:x.db?mo%64e=memory", "", false},
+		{"file:x.db?mode=memory%00junk", "", false},
 	} {
 		got, real := DatabaseFile(tc.in)
 		if got != tc.want || real != tc.real {

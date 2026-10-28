@@ -121,8 +121,8 @@ func sqliteDSN(dbPath string) string {
 const secureLocalStoragePerm = 0o600
 
 // localStorageDBFile resolves dbPath to the file SQLite opens and reports whether there is
-// one at all: false for an in-memory database (":memory:", or "mode=memory" in a "file:" URI's
-// query, both used throughout this package's own test suite; a plain name's query is dropped
+// one at all: false for an in-memory database (":memory:", or a "file:" URI whose last "mode" key
+// is "memory", both used throughout this package's own test suite; a plain name's query is dropped
 // by the driver, so it is a real file). Neither #1647 concern (an insecure inherited
 // mode, a mode left over from before this fix) applies to a database that was never written to
 // disk. It is sqlitepath.DatabaseFile, the resolver the server lock sidecar uses, so a
