@@ -325,7 +325,7 @@ func (ls *LocalStorage) assignUserRole(ctx context.Context, userID, roleID uint,
 			// free for the fresh Create below, mirroring how live-authorization queries
 			// elsewhere (e.g. GetUserRoles) already exclude expired grants.
 			if existing.ExpiresAt == nil || existing.ExpiresAt.After(ls.rbacEffectiveNow(time.Now().UTC())) {
-				return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+				return storage.Typed(storage.ErrRoleAlreadyAssigned, i18n.T("ErrorRoleAlreadyAssigned", nil), nil)
 			}
 			if derr := tx.Where(sqlWhereUserRoleEnv,
 				userID, roleID, scope.ProjectID, scope.EnvironmentID).
@@ -1036,7 +1036,7 @@ func (ls *LocalStorage) RemovePermissionFromRole(ctx context.Context, roleID, pe
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 		}
 		if result.RowsAffected == 0 {
-			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+			return storage.NotFound(storage.ErrRolePermissionNotAssigned, i18n.T("ErrorNotFound", nil), nil)
 		}
 		return bumpRolePermissionsGenerationTx(ctx, &LocalStorage{db: tx})
 	})
@@ -1144,7 +1144,7 @@ func (ls *LocalStorage) assignGroupRole(ctx context.Context, groupID, roleID uin
 			// row so the composite primary key (group_id, role_id, project_id, environment_id)
 			// is free for the fresh Create below, mirroring assignUserRole's identical fix.
 			if existing.ExpiresAt == nil || existing.ExpiresAt.After(ls.rbacEffectiveNow(time.Now().UTC())) {
-				return fmt.Errorf("%s", i18n.T("ErrorRoleAlreadyAssigned", nil))
+				return storage.Typed(storage.ErrRoleAlreadyAssigned, i18n.T("ErrorRoleAlreadyAssigned", nil), nil)
 			}
 			if derr := tx.Where(sqlWhereGroupRoleEnv,
 				groupID, roleID, scope.ProjectID, scope.EnvironmentID).

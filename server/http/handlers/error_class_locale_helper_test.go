@@ -41,6 +41,9 @@ func withErrorTextLocale(t *testing.T, lang string) {
 		"ErrorRetrievalFailed":   "сбой получения данных",
 		"ErrorStorageFailed":     "сбой хранилища",
 		"ErrorDatabaseOperation": "сбой базы данных",
+
+		"ErrorRoleNotAssigned":     "роль не назначена",
+		"ErrorRoleAlreadyAssigned": "роль уже назначена",
 	})
 	require.NoError(t, err)
 	t.Cleanup(restore)

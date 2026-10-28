@@ -23,7 +23,6 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/core/storage"
-	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
@@ -186,11 +185,13 @@ func (h *RBACHandler) CreateRole(w http.ResponseWriter, r *http.Request) {
 		log.Printf("Error creating role: %v", err)
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "reserved"):
+		case errors.Is(err, core.ErrRoleNameReserved):
 			sendError(w, "ConflictError", "this role name is reserved and cannot be created", http.StatusConflict, nil)
+		// SQL-dialect driver text for a duplicate role name: no typed storage
+		// error exists for it (listed in docs/error-text-match-exempt.tsv).
 		case strings.Contains(msg, "already exists"), strings.Contains(msg, "UNIQUE"):
 			sendError(w, "ConflictError", "Role with this name already exists", http.StatusConflict, nil)
-		case strings.Contains(msg, i18n.T("ErrorValidation", nil)):
+		case errors.Is(err, core.ErrRoleValidation):
 			sendError(w, "ValidationError", msg, http.StatusBadRequest, nil)
 		default:
 			sendError(w, "InternalError", "Failed to create role", http.StatusInternalServerError, nil)
@@ -247,7 +248,7 @@ func (h *RBACHandler) GetRole(w http.ResponseWriter, r *http.Request) {
 	role, perms, err := h.coreService.GetRoleWithPermissions(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting role: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrRoleNotFound) {
 			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
@@ -288,7 +289,7 @@ func (h *RBACHandler) GetRoleByName(w http.ResponseWriter, r *http.Request) {
 	role, err := h.coreService.Storage().GetRoleByName(r.Context(), name)
 	if err != nil {
 		log.Printf("Error getting role by name: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrRoleNotFound) {
 			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
@@ -324,7 +325,7 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	role, err := h.coreService.Storage().GetRole(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting role: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrRoleNotFound) {
 			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", errFailedGetRole, http.StatusInternalServerError, nil)
@@ -341,7 +342,7 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 	if req.Permissions != nil {
 		toAssign, aerr := h.authorizeAndCollectPermissions(r.Context(), userCtx, *req.Permissions)
 		if aerr != nil {
-			if strings.Contains(aerr.Error(), "cannot bundle") {
+			if errors.Is(aerr, core.ErrActorLacksPermission) {
 				sendError(w, "Forbidden", aerr.Error(), http.StatusForbidden, nil)
 			} else {
 				log.Printf("failed to resolve permissions for role update: %v", aerr)
@@ -381,7 +382,7 @@ func (h *RBACHandler) UpdateRole(w http.ResponseWriter, r *http.Request) { // NO
 		if sendPartialMutation(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), "built-in") {
+		if errors.Is(err, core.ErrBuiltinRole) {
 			sendError(w, "Forbidden", "Cannot update built-in role: "+role.Name, http.StatusForbidden, nil)
 		} else if errors.Is(err, core.ErrRoleValidation) {
 			sendError(w, "ValidationError", "assignable_scope must be one of: global, project, any", http.StatusBadRequest, nil)
@@ -413,7 +414,7 @@ func (h *RBACHandler) authorizeAndCollectPermissions(ctx context.Context, userCt
 			return nil, fmt.Errorf("failed to resolve actor authority for %q: %w", permName, aerr)
 		}
 		if !ok {
-			return nil, fmt.Errorf("cannot bundle permission %q into a role: you do not hold it yourself", permName)
+			return nil, fmt.Errorf("cannot bundle permission %q into a role: %w", permName, core.ErrActorLacksPermission)
 		}
 		toAssign = append(toAssign, perm)
 	}
@@ -433,12 +434,11 @@ func (h *RBACHandler) DeleteRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.coreService.DeleteRole(r.Context(), userCtx.UserID, id); err != nil {
-		msg := err.Error()
 		switch {
-		case strings.Contains(msg, errNotFound):
+		case errors.Is(err, storage.ErrRoleNotFound):
 			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
-		case strings.Contains(msg, "built-in role"):
-			sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
+		case errors.Is(err, core.ErrBuiltinRole):
+			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 		default:
 			log.Printf("Error deleting role: %v", err)
 			sendError(w, "InternalError", "Failed to delete role", http.StatusInternalServerError, nil)
@@ -512,7 +512,7 @@ func (h *RBACHandler) AssignRole(w http.ResponseWriter, r *http.Request) {
 		if sendRoleScopeError(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), "already assigned") {
+		if errors.Is(err, storage.ErrRoleAlreadyAssigned) {
 			sendError(w, "ConflictError", "Role already assigned to user", http.StatusConflict, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to assign role", http.StatusInternalServerError, nil)
@@ -544,7 +544,7 @@ func (h *RBACHandler) RemoveRole(w http.ResponseWriter, r *http.Request) {
 	// Through the audited core choke point (records role.removed with the actor).
 	if err := h.coreService.RemoveUserRole(r.Context(), userCtx.UserID, req.UserID, req.RoleID, scope); err != nil {
 		log.Printf("Error removing role: %v", err)
-		if strings.Contains(err.Error(), "not assigned") {
+		if errors.Is(err, storage.ErrRoleNotAssigned) {
 			sendError(w, "NotFound", "Role not assigned to user", http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to remove role", http.StatusInternalServerError, nil)
@@ -570,7 +570,7 @@ func (h *RBACHandler) GetUserRoles(w http.ResponseWriter, r *http.Request) {
 	assignment, err := h.coreService.GetUserRoleAssignment(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting user role assignment: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", "User not found", http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get user roles", http.StatusInternalServerError, nil)
@@ -633,7 +633,7 @@ func (h *RBACHandler) GetPermission(w http.ResponseWriter, r *http.Request) {
 	perm, err := h.coreService.Storage().GetPermission(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting permission: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrPermissionNotFound) {
 			sendError(w, "NotFound", "Permission not found", http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get permission", http.StatusInternalServerError, nil)
@@ -659,7 +659,7 @@ func (h *RBACHandler) GetRolePermissions(w http.ResponseWriter, r *http.Request)
 	role, perms, err := h.coreService.GetRoleWithPermissions(r.Context(), id)
 	if err != nil {
 		log.Printf("Error getting role permissions: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrRoleNotFound) {
 			sendError(w, "NotFound", errRoleNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get role permissions", http.StatusInternalServerError, nil)
@@ -709,12 +709,12 @@ func (h *RBACHandler) AssignPermissionToRole(w http.ResponseWriter, r *http.Requ
 		}
 		log.Printf("Error assigning permission to role: %v", err)
 		switch {
-		case strings.Contains(err.Error(), errNotFound):
+		case errors.Is(err, storage.ErrRoleNotFound), errors.Is(err, storage.ErrPermissionNotFound):
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "do not hold it yourself"):
+		case errors.Is(err, core.ErrActorLacksPermission):
 			// #169: the actor doesn't hold the permission being bundled — 403, not 500.
 			sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
-		case strings.Contains(err.Error(), "already has permission"):
+		case errors.Is(err, storage.ErrDuplicateRolePermission):
 			// storage.ErrDuplicateRolePermission (role_permissions' composite primary
 			// key already held) — 409, not 500. Found by SESSION-I's fresh-install API
 			// smoke driver: a re-assign of an already-held permission (a plausible
@@ -747,7 +747,7 @@ func (h *RBACHandler) RemovePermissionFromRole(w http.ResponseWriter, r *http.Re
 
 	if err := h.coreService.RemovePermissionFromRole(r.Context(), userCtx.UserID, roleID, permID); err != nil {
 		log.Printf("Error removing permission from role: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrRoleNotFound) || errors.Is(err, storage.ErrRolePermissionNotAssigned) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to remove permission", http.StatusInternalServerError, nil)
@@ -775,7 +775,7 @@ func (h *RBACHandler) GetGroupRoles(w http.ResponseWriter, r *http.Request) {
 	roles, err := h.coreService.GetGroupRoleGrants(r.Context(), groupID)
 	if err != nil {
 		log.Printf("Error getting group roles: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrGroupNotFound) {
 			sendError(w, "NotFound", "Group not found", http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get group roles", http.StatusInternalServerError, nil)
@@ -840,9 +840,9 @@ func (h *RBACHandler) AssignRoleToGroup(w http.ResponseWriter, r *http.Request) 
 		if sendRoleScopeError(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrGroupNotFound) || errors.Is(err, storage.ErrRoleNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), "already assigned") {
+		} else if errors.Is(err, storage.ErrRoleAlreadyAssigned) {
 			sendError(w, "ConflictError", "Role already assigned to group", http.StatusConflict, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to assign role to group", http.StatusInternalServerError, nil)
@@ -877,7 +877,7 @@ func (h *RBACHandler) RemoveRoleFromGroup(w http.ResponseWriter, r *http.Request
 		log.Printf("Error removing role from group: %v", err)
 		if errors.Is(err, storage.ErrRoleNotAssigned) {
 			sendError(w, "NotFound", "Role not assigned to group", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), errNotFound) {
+		} else if errors.Is(err, storage.ErrGroupNotFound) || errors.Is(err, storage.ErrRoleNotFound) {
 			sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to remove role from group", http.StatusInternalServerError, nil)
