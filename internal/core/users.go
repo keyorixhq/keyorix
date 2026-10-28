@@ -1263,7 +1263,10 @@ func (c *KeyorixCore) RestoreUser(ctx context.Context, actorID, id uint) error {
 	})
 	if err != nil {
 		if storage.IsUserNotFound(err) {
-			return fmt.Errorf("%s: user not found or not deleted", i18n.T("ErrorUserNotFound", nil))
+			// Same text as before, but the sentinel stays in the chain: the handler
+			// classifies with errors.Is, and this text is translated.
+			return storage.NotFound(storage.ErrUserNotFound,
+				fmt.Sprintf("%s: user not found or not deleted", i18n.T("ErrorUserNotFound", nil)), err)
 		}
 		if errors.Is(err, ErrMutationAuditUnavailable) {
 			return err
