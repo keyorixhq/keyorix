@@ -14,6 +14,9 @@ Usage:
                      [--max-dependents N] [--max-seconds S]
 
   --log FILE     append JSON lines there ("-" = stdout, the default)
+  --pg-dsn-map F JSON {package: DSN}: each dependent's tests get their own
+                 KEYORIX_TEST_PG_DSN (none when absent), as CI's test legs do
+  --declrefs B   a prebuilt scripts/ci/declrefs (default: built from the tree)
   --decision F   a saved `select-affected.py --json` output (replay/tests);
                  without it select-affected.py is run for --base/--head
   The working tree must be --head (a merge_group checkout is): coverage line
@@ -30,6 +33,27 @@ Per dependent D (lever A's `affected` minus its `seeds`):
     undetermined  no block and not ignorable (a const, type, case label,
                   package-level var, a deleted line, a file absent from the
                   profile because of build tags ...): coverage cannot say
+  Before the verdict, `undetermined` lines are refined (refine_file; --no-refine
+  turns it off) with three provable facts, each of which only ever moves a line
+  to covered or uncovered, never to ignored:
+    unlinked      the file's package is not in this dependent's test binary
+                  (checked against `go list` for linux, darwin and windows), so
+                  none of its code can run. Never applied to a pure-deletion
+                  marker: what was deleted is not in this tree's profile.
+    func-header   a func signature line has no block; it takes the status of
+                  its own body (any block with count > 0 = the function ran).
+    declaration   a const / type / var line has no block. scripts/ci/declrefs
+                  (go/ast) names what it declares and lists every mention of
+                  those names in the repo. No relevant mention = nothing can
+                  reach it: uncovered. A mention on a covered line = covered. A
+                  mention we cannot judge, or only on uncovered lines, = stays
+                  undetermined (the strict rule). A const group that uses iota
+                  or repeats implicitly is judged as a whole (adding a spec
+                  renumbers the rest), and a var whose initialiser can run code
+                  (anything but literals and errors.New) is never refined.
+  verdict_if_uncovered_refs_ok = SKIPPABLE marks a dependent that would be
+  SKIPPABLE if mentions on provably uncovered lines were also ignored: a logged
+  what-if, never the verdict.
   KEEP when any line is covered. SKIPPABLE only when no line is covered, none
   is undetermined and at least one is uncovered (or every changed line is
   ignorable). EVERY doubt resolves to KEEP, because a false SKIPPABLE would
@@ -304,6 +328,116 @@ def verdict_from_match(per_file):
     return "KEEP", "no-go-change"
 
 
+# --------------------------------------------------------------------------
+# refining "undetermined": declarations, function headers, unlinked packages
+# --------------------------------------------------------------------------
+
+class DeclEval:
+    """Decides a changed const/type/var line from where its names are mentioned.
+
+    refs: declrefs' {"<declaring file>#<name>": [{"file","line","test"}]}.
+    A mention is judged against ONE dependent's test run:
+      irrelevant  cannot run in it: a _test.go file of another package, or a
+                  non-test file of a package its test binary does not link
+      covered     a profile block holding that line has count > 0
+      uncovered   blocks hold it and all have count 0
+      unknown     anything else (a test file of the dependent itself, code of
+                  a package outside the profile, a line without a block)
+    A declaration with a covered mention is covered. With no relevant mention
+    it is unreachable from this run: uncovered. With only uncovered mentions it
+    stays undetermined (strict, the default); `relaxed` calls it uncovered and
+    only feeds the logged what-if verdict_if_uncovered_refs_ok."""
+
+    def __init__(self, refs, owning, closure, dependent, profile):
+        self.refs, self.owning, self.closure, self.dependent, self.profile = refs, owning, closure, dependent, profile
+
+    def site_status(self, site):
+        pkg = self.owning(site["file"])
+        if site.get("test"):
+            return "unknown" if pkg == self.dependent else "irrelevant"
+        if pkg is None:
+            return "unknown"  # another Go module, or no package: do not reason about it
+        if self.closure is not None and pkg not in self.closure:
+            return "irrelevant"
+        hit = [c for s, e, c in self.profile.get(site["file"], []) if s <= site["line"] <= e]
+        if hit:
+            return "covered" if any(c > 0 for c in hit) else "uncovered"
+        return "unknown"
+
+    def verdict(self, decl_file, li, relaxed):
+        """(status, reason) with status covered / uncovered / undetermined."""
+        sites = []
+        for name in li.get("names") or []:
+            got = self.refs.get(f"{decl_file}#{name}")
+            if got is None:
+                return "undetermined", None
+            sites += got
+        states = [self.site_status(s) for s in sites]
+        if "covered" in states:
+            return "covered", "decl-referenced-covered"
+        live = [s for s in states if s != "irrelevant"]
+        if not live:
+            return "uncovered", "decl-unreferenced"
+        if relaxed and all(s == "uncovered" for s in live):
+            return "uncovered", "decl-referenced-only-uncovered"
+        return "undetermined", None
+
+
+def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, relaxed=False):
+    """Move provable lines out of match_file's `undetermined`.
+
+    flags: expand(ranges) ({line: pure-deletion?}); blocks: the file's profile
+    blocks; info: declrefs' {"<line>": {kind, ...}} for the file (None = no
+    help); linked: False when the file's package is not in the dependent's test
+    binary, None when unknown; compiled: the file is part of the package under
+    this GOOS/tags. Returns (res2, notes) where notes = {reason: [lines]}.
+    A pure-deletion marker is never refined: what was deleted is not in this
+    tree's profile. Anything not proven stays undetermined."""
+    out = {k: list(v) for k, v in res.items()}
+    notes, keep = {}, []
+    for ln in res["undetermined"]:
+        status = reason = None
+        if compiled and flags.get(ln) is False:
+            li = (info or {}).get(str(ln))
+            if linked is False:
+                status, reason = "uncovered", "unlinked"
+            elif li and li.get("kind") == "funcheader":
+                lo, hi = li["body"]
+                inside = [c for s, e, c in blocks if s >= lo and e <= hi]
+                if inside:
+                    status = "covered" if any(c > 0 for c in inside) else "uncovered"
+                    reason = "func-header"
+            elif li and li.get("kind") == "decl" and not li.get("impure") and decl_eval:
+                status, reason = decl_eval.verdict(path, li, relaxed)
+        if status in ("covered", "uncovered"):
+            out[status].append(ln)
+            notes.setdefault(reason, []).append(ln)
+        else:
+            keep.append(ln)
+    out["undetermined"] = keep
+    out["covered"].sort()
+    out["uncovered"].sort()
+    return out, notes
+
+
+def test_closure(variants, dependent):
+    """Import paths linked into `dependent`'s test binary, over every package
+    listing in `variants` (one per GOOS, so a platform-specific import counts).
+    None when there is nothing to reason from."""
+    if not variants or not any(dependent in pk for pk in variants):
+        return None
+    out = {dependent}
+    for pk in variants:
+        obj = pk.get(dependent)
+        if not obj:
+            continue
+        out |= set(obj.get("Deps") or [])
+        for q in (obj.get("TestImports") or []) + (obj.get("XTestImports") or []):
+            out.add(q)
+            out |= set((pk.get(q) or {}).get("Deps") or [])
+    return out
+
+
 def to_ranges(nums):
     """[3,4,5,9] -> ["3-5", "9"]."""
     out, i = [], 0
@@ -409,14 +543,20 @@ class Run:
         shutil.rmtree(self.root, ignore_errors=True)
 
 
-def run_go_test(run, go_bin, dependent, coverpkg, test_timeout, kill_after, profile):
+def run_go_test(run, go_bin, dependent, coverpkg, test_timeout, kill_after, profile, env_extra=None):
     """Run the tests of one dependent. Returns a dict: exit, timed_out,
     no_test_files, build_failed, pass/fail/skip counts, tail (last output
     lines). Never raises on a test failure; the process group is killed on
-    timeout."""
+    timeout. env_extra overlays the environment (a None value removes the
+    variable)."""
     cmd = [go_bin, "test", "-covermode=set", f"-coverpkg={','.join(coverpkg)}", f"-coverprofile={profile}",
            f"-timeout={test_timeout}", "-json", dependent]
     env = dict(os.environ, GOTMPDIR=run.gotmp)
+    for k, v in (env_extra or {}).items():
+        if v is None:
+            env.pop(k, None)
+        else:
+            env[k] = v
     info = {"exit": None, "timed_out": False, "no_test_files": False, "build_failed": False,
             "pass": 0, "fail": 0, "skip": 0, "skip_reasons": []}
     tail = deque(maxlen=6)
@@ -436,6 +576,8 @@ def run_go_test(run, go_bin, dependent, coverpkg, test_timeout, kill_after, prof
                     info["no_test_files"] = True
                 if "[build failed]" in out or "[setup failed]" in out:
                     info["build_failed"] = True
+                if "panic: test timed out" in out:
+                    info["timed_out"] = True  # go test's own -timeout fired: a timeout, not a failing test
                 if out.strip():
                     tail.append(out.strip()[:300])
                     if len(info["skip_reasons"]) < 3 and "--- SKIP" in out:
@@ -469,12 +611,17 @@ def parse_duration_s(text):
     return total if found else 600.0
 
 
-def measure_dependent(run, go_bin, dependent, coverpkg, changes, ignorable_by_file, test_timeout, module=MODULE, grace=120):
-    """Decision record fields for one dependent (without the run-level rules)."""
+def measure_dependent(run, go_bin, dependent, coverpkg, changes, ignorable_by_file, test_timeout, module=MODULE, grace=120,
+                      refine=None, env_extra=None):
+    """Decision record fields for one dependent (without the run-level rules).
+
+    refine(dependent, path, per_file_result, ranges, profile, relaxed) ->
+    (result, notes) is the optional undetermined-line refinement (see
+    refine_file); without it the verdict is the plain coverage one."""
     profile = run.profile_path()
     started = time.time()
     try:
-        info = run_go_test(run, go_bin, dependent, coverpkg, test_timeout, parse_duration_s(test_timeout) + grace, profile)
+        info = run_go_test(run, go_bin, dependent, coverpkg, test_timeout, parse_duration_s(test_timeout) + grace, profile, env_extra)
         rec = {"duration_s": round(time.time() - started, 1), "go_exit": info["exit"],
                "tests": {k: info[k] for k in ("pass", "fail", "skip")}}
         if info["skip_reasons"]:
@@ -494,10 +641,23 @@ def measure_dependent(run, go_bin, dependent, coverpkg, changes, ignorable_by_fi
             return {**rec, "verdict": "KEEP", "basis": "profile-missing"}
         if not text.startswith("mode:"):
             return {**rec, "verdict": "KEEP", "basis": "profile-missing"}
-        per_file = match_all(changes, parse_profile(text, module), ignorable_by_file)
+        prof = parse_profile(text, module)
+        per_file = match_all(changes, prof, ignorable_by_file)
+        relaxed_file, refined = None, {}
+        if refine:
+            relaxed_file = {}
+            for f, m in list(per_file.items()):
+                per_file[f], notes = refine(dependent, f, m, changes[f], prof, False)
+                relaxed_file[f], _ = refine(dependent, f, m, changes[f], prof, True)
+                for reason, lines in notes.items():
+                    refined.setdefault(reason, {})[f] = to_ranges(lines)
         verdict, basis = verdict_from_match(per_file)
         rec.update(verdict=verdict, basis=basis, files={
             f: {k: to_ranges(v) for k, v in m.items() if v} for f, m in per_file.items()})
+        if refined:
+            rec["refined"] = refined
+        if relaxed_file and verdict == "KEEP" and basis == "undetermined-lines" and verdict_from_match(relaxed_file)[0] == "SKIPPABLE":
+            rec["verdict_if_uncovered_refs_ok"] = "SKIPPABLE"  # what-if only; see DeclEval
         return rec
     finally:
         try:
@@ -510,6 +670,9 @@ def apply_run_level_rules(rec, dependent, tainted, spawns, tree_ok):
     """The rules that do not depend on the profile. KEEP always wins over a
     SKIPPABLE from coverage; the coverage verdict is kept as `coverage_verdict`."""
     if rec["verdict"] != "SKIPPABLE":
+        if rec.get("verdict_if_uncovered_refs_ok") and (not tree_ok or dependent in tainted or dependent in spawns
+                                                        or rec.get("tests", {}).get("skip")):
+            del rec["verdict_if_uncovered_refs_ok"]  # the what-if would be KEEP for the same run-level reason
         return rec
     reason = None
     if not tree_ok:
@@ -556,6 +719,85 @@ def lever_a_decision(args):
     out = subprocess.run([sys.executable, os.path.join(here, "select-affected.py"), "--base", args.base, "--head", args.head, "--json"],
                          capture_output=True, text=True, check=True).stdout
     return json.loads(out)
+
+
+def dsn_env(dsn_map, dependent):
+    """env overlay giving `dependent` its own Postgres database (or none)."""
+    if dsn_map is None:
+        return None
+    rel = dependent[len(MODULE) + 1:] if dependent.startswith(MODULE + "/") else dependent
+    return {"KEYORIX_TEST_PG_DSN": dsn_map.get(dependent) or dsn_map.get(rel)}
+
+
+def package_variants(sa, host):
+    """`go list` of the module for the host and every other GOOS we ship to,
+    so "not linked" means not linked on any of them. None if one fails."""
+    out = [host]
+    old = os.environ.get("GOOS")
+    try:
+        have = subprocess.run(["go", "env", "GOOS"], capture_output=True, text=True, check=True).stdout.strip()
+        for goos in sorted({"linux", "darwin", "windows"} - {have}):
+            os.environ["GOOS"] = goos
+            out.append(sa.load_packages())
+    except Exception as exc:  # noqa: BLE001 - shadow mode: never raise
+        log(f"cannot list packages for every GOOS ({type(exc).__name__}: {exc}): no package is treated as unlinked")
+        return None
+    finally:
+        if old is None:
+            os.environ.pop("GOOS", None)
+        else:
+            os.environ["GOOS"] = old
+    return out
+
+
+def run_declrefs(args, run, repo, here, changes):
+    """declrefs' answer for the changed files, or None (then nothing is refined)."""
+    binary = args.declrefs
+    if not binary:
+        binary = os.path.join(run.root, "declrefs")
+        built = subprocess.run([args.go, "build", "-o", binary, os.path.join(here, "declrefs")], capture_output=True, text=True)
+        if built.returncode != 0:
+            log(f"cannot build declrefs ({built.stderr.strip()[:200]}): declarations stay undetermined")
+            return None
+    req = {"root": repo, "module": MODULE, "files": {f: sorted(expand(r)) for f, r in changes.items()}}
+    try:
+        res = subprocess.run([binary], input=json.dumps(req), capture_output=True, text=True, timeout=600)
+        if res.returncode != 0:
+            raise RuntimeError(res.stderr.strip()[:200])
+        return json.loads(res.stdout)
+    except Exception as exc:  # noqa: BLE001
+        log(f"declrefs failed ({type(exc).__name__}: {exc}): declarations stay undetermined")
+        return None
+
+
+def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here):
+    """The `refine` callable of measure_dependent for this run."""
+    variants = package_variants(sa, packages)
+    answer = run_declrefs(args, run, repo, here, changes)
+    info = (answer or {}).get("lines") or {}
+    refs = (answer or {}).get("refs") or {}
+    if answer and answer.get("parse_errors"):
+        log(f"declrefs could not parse {len(answer['parse_errors'])} file(s): references cannot be trusted, declarations stay undetermined")
+        refs = {}
+    file_pkg = {f: owning_package(f, dir_to_pkg) for f in changes}
+    compiled = {}
+    for f, pkg in file_pkg.items():
+        obj = packages.get(pkg) or {}
+        compiled[f] = os.path.basename(f) in set(obj.get("GoFiles") or []) | set(obj.get("CgoFiles") or [])
+    closures = {}
+
+    def owning(path):
+        return owning_package(path, dir_to_pkg)
+
+    def refine(dep, f, res, ranges, profile, relaxed):
+        if dep not in closures:
+            closures[dep] = test_closure(variants, dep)
+        closure = closures[dep]
+        linked = None if closure is None else file_pkg[f] in closure
+        ev = DeclEval(refs, owning, closure, dep, profile)
+        return refine_file(f, res, expand(ranges), profile.get(f, []), info.get(f), linked, compiled[f], ev, relaxed)
+
+    return refine
 
 
 def shadow(args, out, run):
@@ -612,9 +854,18 @@ def shadow(args, out, run):
     tainted = {d for d in dependents if not sa or reaches(packages.get(d, {}), packages, tainted_pkgs)}
     spawns = {d for d in dependents if "os/exec" in ((packages.get(d) or {}).get("TestImports") or []) + ((packages.get(d) or {}).get("XTestImports") or [])}
 
+    refine = None
+    if sa and coverpkg and not args.no_refine:
+        refine = build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here)
+    dsn_map = None
+    if args.pg_dsn_map:
+        with open(args.pg_dsn_map, encoding="utf-8") as fh:
+            dsn_map = json.load(fh)
+
     out.emit({"type": "run", "schema": SCHEMA, **ident, "dependents": len(dependents), "coverpkg": sorted(coverpkg),
               "changed_go_files": sorted(changes), "generated_files": generated, "deleted_go_files": deleted_files,
-              "lever_a_seeds": len(seeds), "tree_ok": tree_ok})
+              "lever_a_seeds": len(seeds), "tree_ok": tree_ok, "refine": refine is not None,
+              "pg_dsn_per_package": dsn_map is not None})
     log(f"{len(dependents)} lever-A dependents, {len(coverpkg)} changed package(s) under coverage")
 
     counts, started = {}, time.time()
@@ -628,7 +879,8 @@ def shadow(args, out, run):
         if not coverpkg or not sa:
             rec = {"verdict": "KEEP", "basis": "no-go-change" if sa else "lever-a-helpers-unavailable"}
         else:
-            rec = apply_run_level_rules(measure_dependent(run, args.go, dep, sorted(coverpkg), changes, ignorable_by_file, args.test_timeout),
+            rec = apply_run_level_rules(measure_dependent(run, args.go, dep, sorted(coverpkg), changes, ignorable_by_file, args.test_timeout,
+                                                          refine=refine, env_extra=dsn_env(dsn_map, dep)),
                                         dep, tainted, spawns, tree_ok)
         out.emit({"type": "decision", **ident, "dependent": dep, **rec})
         key = f"{rec['verdict']}/{rec['basis']}"
@@ -653,6 +905,10 @@ def main(argv=None):
     ap.add_argument("--test-timeout", default="10m")
     ap.add_argument("--max-dependents", type=int, default=0)
     ap.add_argument("--max-seconds", type=int, default=0)
+    ap.add_argument("--pg-dsn-map", help="JSON {dependent import path or module-relative path: Postgres DSN}; each dependent's tests get "
+                    "KEYORIX_TEST_PG_DSN from it, or none when absent (never a DSN shared with another package)")
+    ap.add_argument("--declrefs", help="prebuilt scripts/ci/declrefs binary (default: built from the checkout)")
+    ap.add_argument("--no-refine", action="store_true", help="plain coverage verdicts: no unlinked/func-header/declaration refinement")
     ap.add_argument("--strict", action="store_true", help="exit non-zero on an internal error (tests); CI never passes this")
     args = ap.parse_args(argv)
 

@@ -263,6 +263,189 @@ class LeverAGlue(unittest.TestCase):
         self.assertEqual(r, {"verdict": "KEEP", "basis": "covered"})
 
 
+DECLS_GO = """package pkg
+
+const unusedLimit = 3
+
+const onlyInUncovered = 4
+
+const inCovered = 5
+
+func Covered() int {
+\treturn inCovered
+}
+
+func Uncovered() int {
+\treturn onlyInUncovered
+}
+
+type neverUsed struct{ n int }
+
+type holder struct{ n int }
+
+func (h holder) Header(
+\ta int,
+) int {
+\treturn a
+}
+
+var sentinel = errors.New("x")
+
+var computed = compute()
+
+func compute() int {
+\treturn 1
+}
+
+const (
+\tmodeA = iota
+\tmodeB
+\tmodeC
+)
+
+func UsesModeC() int {
+\treturn modeC
+}
+"""
+# Profile of a run in which Covered ran and Uncovered, Header, compute and UsesModeC did not.
+DECLS_BLOCKS = [(10, 10, 1), (14, 14, 0), (24, 24, 0), (32, 32, 0), (42, 42, 0)]
+DECLS_FILE = "pkg/decls.go"
+
+
+class DeclarationRefinement(unittest.TestCase):
+    """Real Go source through the real scripts/ci/declrefs helper (go/ast), then
+    the same matcher + refinement the shadow runs. Profile blocks are written by
+    hand to describe one dependent's run."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.work = tempfile.mkdtemp(prefix="cs-declrefs-")
+        cls.binary = os.path.join(cls.work, "declrefs")
+        import subprocess
+        built = subprocess.run(["go", "build", "-o", cls.binary, os.path.join(HERE, "declrefs")], cwd=HERE, capture_output=True, text=True)
+        if built.returncode != 0:
+            raise unittest.SkipTest("cannot build declrefs: " + built.stderr[:200])
+
+    @classmethod
+    def tearDownClass(cls):
+        __import__("shutil").rmtree(cls.work, ignore_errors=True)
+
+    def classify(self, lines, tree=None, blocks=None, profile_extra=None, dependent=f"{MOD}/dep", closure=None,
+                 relaxed=False, deletion=(), path=DECLS_FILE, compiled=True):
+        import subprocess
+        tree = dict(tree or {})
+        tree.setdefault(DECLS_FILE, DECLS_GO)
+        root = tempfile.mkdtemp(prefix="tree-", dir=self.work)
+        for name, body in tree.items():
+            os.makedirs(os.path.dirname(os.path.join(root, name)), exist_ok=True)
+            with open(os.path.join(root, name), "w") as fh:
+                fh.write(body)
+        req = {"root": root, "module": MOD, "files": {path: sorted(lines)}}
+        ans = json.loads(subprocess.run([self.binary], input=json.dumps(req), capture_output=True, text=True, check=True).stdout)
+        dir_to_pkg = {"pkg": f"{MOD}/pkg", "pkg2": f"{MOD}/pkg2", "dep": dependent}
+        profile = {path: DECLS_BLOCKS if blocks is None else blocks, **(profile_extra or {})}
+        ranges = [(ln, ln, ln in deletion) for ln in sorted(lines)]
+        res = cs.match_file(ranges, profile[path], cs.ignorable_lines(tree[path]))
+        ev = cs.DeclEval(ans["refs"], lambda p: cs.owning_package(p, dir_to_pkg), closure, dependent, profile)
+        linked = None if closure is None else f"{MOD}/pkg" in closure
+        res2, notes = cs.refine_file(path, res, cs.expand(ranges), profile[path], ans["lines"].get(path), linked, compiled, ev, relaxed)
+        return res2, notes, cs.verdict_from_match({path: res2})
+
+    LINKED = {f"{MOD}/pkg", f"{MOD}/dep"}
+
+    def test_unused_const_is_skippable_eligible(self):
+        res, notes, verdict = self.classify([3], closure=self.LINKED)
+        self.assertEqual(res["uncovered"], [3])
+        self.assertEqual(notes, {"decl-unreferenced": [3]})
+        self.assertEqual(verdict, ("SKIPPABLE", "uncovered"))
+
+    def test_const_used_only_in_an_uncovered_function_stays_undetermined(self):
+        res, notes, verdict = self.classify([5], closure=self.LINKED)
+        self.assertEqual((res["undetermined"], notes), ([5], {}))
+        self.assertEqual(verdict, ("KEEP", "undetermined-lines"))
+
+    def test_the_relaxed_what_if_calls_that_const_uncovered(self):
+        res, notes, verdict = self.classify([5], closure=self.LINKED, relaxed=True)
+        self.assertEqual(notes, {"decl-referenced-only-uncovered": [5]})
+        self.assertEqual(verdict, ("SKIPPABLE", "uncovered"))
+
+    def test_const_used_in_a_covered_function_is_covered_and_kept(self):
+        res, notes, verdict = self.classify([7], closure=self.LINKED)
+        self.assertEqual((res["covered"], notes), ([7], {"decl-referenced-covered": [7]}))
+        self.assertEqual(verdict, ("KEEP", "covered"))
+        self.assertEqual(self.classify([7], closure=self.LINKED, relaxed=True)[2], ("KEEP", "covered"))
+
+    def test_unreferenced_type_is_unreachable_but_a_type_named_in_a_signature_is_not_proven(self):
+        self.assertEqual(self.classify([17], closure=self.LINKED)[2], ("SKIPPABLE", "uncovered"))
+        # `holder` appears in a method header, a line with no block of its own: unknown
+        self.assertEqual(self.classify([19], closure=self.LINKED)[0]["undetermined"], [19])
+
+    def test_function_header_follows_its_body(self):
+        res, notes, verdict = self.classify([9, 13, 21, 22, 23], closure=self.LINKED)
+        self.assertEqual(res["covered"], [9])  # `func Covered() int {`: its body ran
+        self.assertEqual(res["uncovered"], [13, 21, 22, 23])
+        self.assertEqual(notes["func-header"], [9, 13, 21, 22, 23])
+        # a multi-line signature belongs to the same function
+        self.assertEqual(self.classify([21, 22, 23], closure=self.LINKED)[1].get("func-header"), [21, 22, 23])
+
+    def test_covered_function_header_keeps(self):
+        self.assertEqual(self.classify([9], closure=self.LINKED)[2], ("KEEP", "covered"))
+        self.assertEqual(self.classify([13], closure=self.LINKED)[2], ("SKIPPABLE", "uncovered"))
+
+    def test_var_with_init_effects_is_never_refined(self):
+        self.assertEqual(self.classify([29], closure=self.LINKED)[0]["undetermined"], [29])  # var computed = compute()
+        self.assertEqual(self.classify([27], closure=self.LINKED)[2], ("SKIPPABLE", "uncovered"))  # var sentinel = errors.New
+
+    def test_iota_group_judged_as_a_whole(self):
+        # editing modeB (line 37) renumbers modeC, which UsesModeC (uncovered) reads: strict keeps it
+        self.assertEqual(self.classify([37], closure=self.LINKED)[0]["undetermined"], [37])
+        self.assertEqual(self.classify([37], closure=self.LINKED, relaxed=True)[2], ("SKIPPABLE", "uncovered"))
+        # the same edit when UsesModeC ran: covered
+        blocks = DECLS_BLOCKS[:-1] + [(42, 42, 1)]
+        self.assertEqual(self.classify([37], closure=self.LINKED, blocks=blocks)[2], ("KEEP", "covered"))
+
+    def test_package_not_in_the_test_binary_is_never_executed(self):
+        res, notes, verdict = self.classify([3, 5, 7, 17, 29], closure={f"{MOD}/dep"}, blocks=[])
+        self.assertEqual((res["uncovered"], res["undetermined"]), ([3, 5, 7, 17, 29], []))
+        self.assertEqual(notes, {"unlinked": [3, 5, 7, 17, 29]})
+        self.assertEqual(verdict, ("SKIPPABLE", "uncovered"))
+
+    def test_pure_deletion_marker_is_never_refined_even_unlinked(self):
+        res, _, verdict = self.classify([3, 4], closure={f"{MOD}/dep"}, blocks=[], deletion=(3, 4))
+        self.assertEqual(res["undetermined"], [3, 4])
+        self.assertEqual(verdict, ("KEEP", "undetermined-lines"))
+        self.assertEqual(self.classify([3], closure=self.LINKED, deletion=(3,))[0]["undetermined"], [3])
+
+    def test_no_closure_information_means_no_unlinked_claim(self):
+        # closure None: the const is still judged by its references, never as unlinked
+        res, notes, _ = self.classify([5], closure=None)
+        self.assertEqual(res["undetermined"], [5])
+        self.assertNotIn("unlinked", notes)
+
+    def test_file_not_compiled_here_is_left_alone(self):
+        res, notes, verdict = self.classify([3, 13], closure=self.LINKED, compiled=False)
+        self.assertEqual((res["undetermined"], notes, verdict), ([3, 13], {}, ("KEEP", "undetermined-lines")))
+
+    def test_mentions_in_tests_and_other_packages(self):
+        const_only = "package pkg\n\nconst limit = 1\n"
+        # the dependent's own test uses it: that test code runs, no profile can say
+        own = {"pkg/decls.go": const_only, "dep/x_test.go": "package dep\n\nimport \"testing\"\n\nimport p \"" + MOD + "/pkg\"\n\nfunc TestX(t *testing.T) { _ = p.limit }\n"}
+        res = self.classify([3], tree=own, closure=self.LINKED, blocks=[])[0]
+        self.assertEqual(res["undetermined"], [3])
+        # another package's test does not run in the dependent's test binary
+        other = {"pkg/decls.go": const_only, "pkg2/y_test.go": "package pkg2\n\nimport p \"" + MOD + "/pkg\"\n\nvar _ = p.limit\n"}
+        self.assertEqual(self.classify([3], tree=other, closure=self.LINKED, blocks=[])[0]["uncovered"], [3])
+        # non-test code of a package the binary links, outside the profile: unknown
+        linked = {"pkg/decls.go": const_only, "pkg2/y.go": "package pkg2\n\nimport p \"" + MOD + "/pkg\"\n\nvar v = p.limit\n"}
+        self.assertEqual(self.classify([3], tree=linked, closure=self.LINKED | {f"{MOD}/pkg2"}, blocks=[])[0]["undetermined"], [3])
+        # the same code in a package the binary does not link cannot run
+        self.assertEqual(self.classify([3], tree=linked, closure=self.LINKED, blocks=[])[0]["uncovered"], [3])
+
+    def test_missing_reference_answer_stays_undetermined(self):
+        ev = cs.DeclEval({}, lambda p: None, set(), "d", {})
+        self.assertEqual(ev.verdict("a.go", {"names": ["x"]}, True), ("undetermined", None))
+
+
 FAKE_GO = """#!/bin/sh
 for a in "$@"; do case "$a" in -coverprofile=*) P="${a#-coverprofile=}";; esac; done
 case "$FAKE_MODE" in
@@ -286,6 +469,11 @@ fail)
   ;;
 build)
   printf '%s\\n' '{"Action":"output","Package":"d","Output":"FAIL\\td [build failed]\\n"}'
+  exit 2
+  ;;
+gotimeout)
+  printf 'mode: set\\n' > "$P"
+  printf '%s\\n' '{"Action":"output","Package":"d","Output":"panic: test timed out after 10m0s\\n"}'
   exit 2
   ;;
 hang)
@@ -350,6 +538,11 @@ class RunAndCleanup(unittest.TestCase):
         self.assertEqual((rec["verdict"], rec["basis"]), ("KEEP", "timeout"))
         self.assertEqual(self.leftovers(), ["gotmp"])
         self.assertLess(rec["duration_s"], 30)
+
+    def test_gos_own_timeout_is_a_timeout_not_a_failed_test(self):
+        rec = self.measure("gotimeout")
+        self.assertEqual((rec["verdict"], rec["basis"]), ("KEEP", "timeout"))
+        self.assertEqual(self.leftovers(), ["gotmp"])
 
     def test_skips_then_downgrade(self):
         rec = self.measure("skips", ranges=[(5, 6, False)])
