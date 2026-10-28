@@ -90,8 +90,8 @@ func cryptoInventoryPolicy(c config.CryptoInventoryConfig) (cryptoinventory.Poli
 	if !h.IsZero() {
 		p.Horizon = h
 	}
-	if c.MigrationYears > 0 {
-		p.MigrationYears = c.MigrationYears
+	if c.MigrationYears != nil {
+		p.MigrationYears = *c.MigrationYears
 	}
 	if c.UnboundedLifetimeYears > 0 {
 		p.UnboundedLifetimeYears = c.UnboundedLifetimeYears

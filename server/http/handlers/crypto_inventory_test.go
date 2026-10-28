@@ -112,7 +112,7 @@ func TestCryptoInventoryHandler_JSON(t *testing.T) {
 
 func TestCryptoInventoryHandler_HorizonFromConfig(t *testing.T) {
 	f := newCryptoInvFixture(t)
-	f.cfg.CryptoInventory = config.CryptoInventoryConfig{QuantumHorizon: "2031-03-04", MigrationYears: 4}
+	f.cfg.CryptoInventory = config.CryptoInventoryConfig{QuantumHorizon: "2031-03-04", MigrationYears: config.IntPtr(4)}
 	w := f.get(t, "", true)
 	require.Equal(t, http.StatusOK, w.Code)
 	var env struct {
