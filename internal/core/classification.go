@@ -89,7 +89,7 @@ func (c *KeyorixCore) ClassifySecret(ctx context.Context, actorID uint, username
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if !matched {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		return nil, errSecretNotFoundText()
 	}
 	secret.Classification = level
 	updated := secret

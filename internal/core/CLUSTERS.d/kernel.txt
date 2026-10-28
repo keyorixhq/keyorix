@@ -25,6 +25,7 @@ constants.go
 errors.go
 errors_permission.go
 errors_rbac.go
+errors_secret.go
 gate_read_decision.go
 hash.go
 identity.go

@@ -114,9 +114,9 @@ func (h *SecretHandler) CreateSecret(w http.ResponseWriter, r *http.Request) {
 		if h.trySendSecretSizeError(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), "already exists") {
+		if errors.Is(err, core.ErrSecretAlreadyExists) {
 			h.sendError(w, "ConflictError", "Secret with this name already exists", http.StatusConflict, nil)
-		} else if strings.Contains(err.Error(), "does not belong to project") || strings.Contains(err.Error(), "environment") && strings.Contains(err.Error(), errNotFound) {
+		} else if errors.Is(err, core.ErrSecretTargetInvalid) {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusUnprocessableEntity, nil)
 		} else if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
@@ -174,7 +174,7 @@ func (h *SecretHandler) ClassifySecret(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(msg, "classification must be"):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, errNotFound):
+		case isSecretNotFound(err):
 			status = http.StatusNotFound
 		default:
 			log.Printf("Error classifying secret %d: %v", id, err)
@@ -216,7 +216,7 @@ func (h *SecretHandler) SetAutoRotate(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, errNotFound):
+		case isSecretNotFound(err):
 			status = http.StatusNotFound
 		case strings.Contains(msg, "unknown rotation charset"),
 			strings.Contains(msg, "out of range"),
@@ -310,9 +310,9 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 		if authorized && h.sendSecretReadRefusal(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), errNotFound) {
+		if isSecretNotFound(err) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), errPermissionDenied) {
+		} else if isPermissionRefusal(err) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret", http.StatusInternalServerError, nil)
@@ -337,7 +337,7 @@ func (h *SecretHandler) GetSecret(w http.ResponseWriter, r *http.Request) { // N
 			if h.sendSecretReadRefusal(w, err) {
 				return
 			}
-			if strings.Contains(err.Error(), errPermissionDenied) {
+			if isPermissionRefusal(err) {
 				h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 			} else {
 				h.sendError(w, "InternalError", "Failed to get secret value", http.StatusInternalServerError, nil)
@@ -450,9 +450,9 @@ func (h *SecretHandler) GetSecretByName(w http.ResponseWriter, r *http.Request) 
 	}
 	if err != nil {
 		log.Printf("Error getting secret by name: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if isSecretNotFound(err) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), errPermissionDenied) {
+		} else if isPermissionRefusal(err) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret", http.StatusInternalServerError, nil)
@@ -522,7 +522,7 @@ func (h *SecretHandler) GetSecretValueByRef(w http.ResponseWriter, r *http.Reque
 		if h.sendSecretReadRefusal(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), errPermissionDenied) {
+		if isPermissionRefusal(err) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret value", http.StatusInternalServerError, nil)
@@ -561,7 +561,7 @@ func (h *SecretHandler) RestoreSecret(w http.ResponseWriter, r *http.Request) {
 	if err := h.coreService.RestoreSecret(secretMutationAuditContext(r, userCtx), userCtx.UserID, uint(id)); err != nil {
 		status := http.StatusInternalServerError
 		msg := err.Error()
-		if strings.Contains(msg, errNotFound) {
+		if isSecretNotFound(err) {
 			status = http.StatusNotFound
 		} else {
 			log.Printf("Error restoring secret %d: %v", id, err)
@@ -721,9 +721,9 @@ func (h *SecretHandler) DeleteSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	if deleteErr != nil {
 		log.Printf("Error deleting secret: %v", deleteErr)
-		if strings.Contains(deleteErr.Error(), errNotFound) {
+		if isSecretNotFound(deleteErr) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		} else if strings.Contains(deleteErr.Error(), errPermissionDenied) {
+		} else if isPermissionRefusal(deleteErr) {
 			h.sendError(w, "Forbidden", errAccessDenied, http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to delete secret", http.StatusInternalServerError, nil)
@@ -772,9 +772,9 @@ func (h *SecretHandler) sendUpdateSecretError(w http.ResponseWriter, err error) 
 		h.sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
 		return
 	}
-	if strings.Contains(err.Error(), "not found") {
+	if isSecretNotFound(err) {
 		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-	} else if strings.Contains(err.Error(), "permission denied") {
+	} else if isPermissionRefusal(err) {
 		h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
 	} else if strings.Contains(err.Error(), i18n.T("ErrorValidation", nil)) {
 		h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)

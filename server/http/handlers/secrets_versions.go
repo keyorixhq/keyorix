@@ -51,9 +51,9 @@ func (h *SecretHandler) GetSecretVersions(w http.ResponseWriter, r *http.Request
 	}
 	if err != nil {
 		log.Printf("Error getting secret versions: %v", err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if isSecretNotFound(err) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		} else if strings.Contains(err.Error(), "permission denied") {
+		} else if isPermissionRefusal(err) {
 			h.sendError(w, "Forbidden", "Access denied", http.StatusForbidden, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to get secret versions", http.StatusInternalServerError, nil)
@@ -141,7 +141,7 @@ func (h *SecretHandler) RotateSecret(w http.ResponseWriter, r *http.Request) {
 			// W3 (Session W, 2026-09-29): see secrets_crud.go's sendUpdateSecretError
 			// for why this is 409-and-retry, not a generic 500.
 			h.sendError(w, "Conflict", "High write contention on this secret; retry the request", http.StatusConflict, nil)
-		case strings.Contains(err.Error(), errNotFound):
+		case isSecretNotFound(err):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		case strings.Contains(err.Error(), "backend"):
 			// The upstream rotation failed or only partially completed — surfaced
@@ -197,9 +197,9 @@ func (h *SecretHandler) RollbackSecret(w http.ResponseWriter, r *http.Request) {
 			// which shares UpdateSecret's contention-exhaustion path — see
 			// secrets_crud.go's sendUpdateSecretError for why this is 409, not 500.
 			h.sendError(w, "Conflict", "High write contention on this secret; retry the request", http.StatusConflict, nil)
-		case strings.Contains(err.Error(), errNotFound):
+		case isSecretNotFound(err):
 			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "already the current version"), strings.Contains(err.Error(), "version number must be positive"):
+		case errors.Is(err, core.ErrAlreadyCurrentVersion):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			log.Printf("roll back secret %d: unexpected error: %v", uint(id), err)
