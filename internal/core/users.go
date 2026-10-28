@@ -1083,7 +1083,7 @@ func (c *KeyorixCore) requireUserCredentialsRevokeAuthority(ctx context.Context,
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !allowed {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "revoking a user's credentials requires users.write authority")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "revoking a user's credentials requires users.write authority")
 	}
 	return nil
 }
@@ -1125,7 +1125,7 @@ func (c *KeyorixCore) RequireRolesAssignAuthority(ctx context.Context, actorType
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !allowed {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "this operation requires roles.assign authority")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "this operation requires roles.assign authority")
 	}
 	return nil
 }

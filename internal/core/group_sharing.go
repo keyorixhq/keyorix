@@ -114,7 +114,7 @@ func (c *KeyorixCore) ListGroupShares(ctx context.Context, actorKind string, act
 	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permSecretsRead, Scope{}); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	} else if !allowed {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to list this group's shares")
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to list this group's shares")
 	}
 
 	// Get shares from storage
@@ -141,7 +141,7 @@ func (c *KeyorixCore) ListGroupSharedSecrets(ctx context.Context, actorKind stri
 	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permSecretsRead, Scope{}); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	} else if !allowed {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to list this group's shared secrets")
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to list this group's shared secrets")
 	}
 
 	shares, err := c.storage.ListSharesByGroup(ctx, groupID, c.shareEffectiveNow())
