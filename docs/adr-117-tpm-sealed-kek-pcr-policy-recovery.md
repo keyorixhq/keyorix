@@ -293,7 +293,7 @@ still need lab confirmation (D8).
 | Dual-boot: another OS on the same machine | Its boot loader gives a different PCR 4: refused | **Unseals if that OS is verified by the same authority** (existing risk row) | Refused unless it boots a UKI signed by the same key | Refused when its measurements are not in the locked set [VERIFY] |
 | Secure Boot db/dbx/KEK/PK change | PCR 7 changes: refused | PCR 7 changes: refused ([S2]). This is the main recovery trigger | PCR 7 changes: refused, same recovery event as `secure-boot` (D10.2) | `unlock-firmware-config` before the change, then `make-policy` ([S4]) |
 | Signing key or pcrlock state lost | n/a | n/a | New UKIs signed with a new key do not unseal: recovery code (D3), then reseal to the new key | Recovery PIN for the NV index ([S4]). If that fails, the Keyorix recovery code |
-| Offline attacker: disk or data dir copied, boot chain modified | Refused | Refused for an unsigned or other-authority chain. **Unseals** for a same-authority OS | Refused: no signature from the key refuses an unsigned/other image; Secure Boot off refuses on the PCR 7 term; with Secure Boot on, systemd-stub itself refuses a command-line override, so the genuine UKI cannot be rebooted into a debug shell either | Refused for measurements outside the policy |
+| Offline attacker: disk or data dir copied, boot chain modified | Refused | Refused for an unsigned or other-authority chain. **Unseals** for a same-authority OS | Refused: no signature from the key refuses an unsigned/other image; Secure Boot off refuses on the PCR 7 term; with Secure Boot on, systemd-stub does not honour a command-line override [VERIFY], so the genuine UKI cannot be rebooted into a debug shell either | Refused for measurements outside the policy |
 | Root on the running, correctly booted OS **can** | Unseal now, read the KEK from process memory, extend a PCR to block unseal until reboot (DoS), run Keyorix `reseal` as the service user | Same | Same | Same, and also re-run `make-policy` to bless new boot states [VERIFY: access-PIN protection, D10.3] |
 | Root on the running OS **cannot** | Make the blob unseal on another TPM; reset a PCR without a reboot; change the policy of an existing sealed object | Same | Same, and authorise a new PCR 11 value **if the signing key is kept off the host** | Same as raw, except changing the policy (pcrlock policy is host-owned) |
 
@@ -323,8 +323,8 @@ The full procedures are in the design note. The decisions:
    not recover on that host. They restore onto known-good hardware with the recovery code and
    handle it as a compromise (rotate the recovery code, ADR-010 DEK sweep).
 3. **Offline recovery material.** ADR-117 already names two kinds: the recovery code (D3) and the
-   PQWRAP escrow slot (Decision 4). The brief also asked for a Shamir path. **ADR-117 as merged
-   does not name one**, so this amendment adds it as a custody option for the recovery code. The
+   PQWRAP escrow slot (Decision 4), but no Shamir custody path for the recovery code itself.
+   This amendment adds one as a custody option for the recovery code. The
    operator may split the 256-bit code K-of-N with the existing Shamir code
    (`internal/crypto/shamir.go`, used by `encryption shamir-split`). The shares are recombined
    only on the offline host during `tpm recover`. The check that a recombination is right must
@@ -451,7 +451,8 @@ chosen; the obligations below follow from those options and bind the implementat
 1. **Approval.** Approved as Proposed with the recommended answers to the five questions below,
    so the next session may implement PR A and PR B. Status stays Proposed.
 2. **Default `pcr_policy` for new installs: `secure-boot` when Secure Boot is on, else `none`
-   with a posture note.** *Reason:* PCR 7 binding is the useful default only where Secure Boot
+   with a posture note.** Superseded by D10.5 (Amendment A, resolved 2026-10-28): `signed-uki` →
+   `pcrlock` → `secure-boot` → `none`. *Reason:* PCR 7 binding is the useful default only where Secure Boot
    gives it meaning (D2), and it needs a recovery code to be safe. *Obligations:* `init` under
    `secure-boot` requires a confirmed recovery code (D3); with Secure Boot off it seals with
    `none` and records a posture note; existing installs stay `none` until they opt in.
