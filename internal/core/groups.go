@@ -244,6 +244,23 @@ func (c *KeyorixCore) RestoreGroup(ctx context.Context, actorID, id uint) (*mode
 		// AUDIT-TX-3: restoring reinstates the group's roles, so it is grant-shaped:
 		// the group.restored row is written in this same transaction (fail closed).
 		if err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			// NAMEDLOCK-OVERLAP-2 (txFence): the group's key with LockNamedKeyInTx
+			// (a group grant's transaction takes it too, sodGroupKeyFence), then the
+			// same ceiling check on the group's roles as tx reads them.
+			if err := lockNamedKeysInTxOn(ctx, tx, sodGrantLockKey("group", id)); err != nil {
+				return err
+			}
+			txRoles, err := tx.GetGroupRoles(ctx, id)
+			if err != nil {
+				return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+			}
+			txRoleIDs := make([]uint, 0, len(txRoles))
+			for _, r := range txRoles {
+				txRoleIDs = append(txRoleIDs, r.ID)
+			}
+			if err := requireGlobalAdminToReinstateAdminRolesOn(ctx, tx, actorID, txRoleIDs, "group"); err != nil {
+				return err
+			}
 			if err := tx.RestoreGroup(ctx, id); err != nil {
 				return err
 			}

@@ -240,13 +240,13 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 			return err
 		}
 		if !needed {
-			return write(ctx, noTxFence)
+			return write(ctx, sodGroupKeyFence(groupID))
 		}
 		return c.withGroupMemberSoDLocks(ctx, groupID, func(ctx context.Context, members []*models.User) error {
 			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
 				return err
 			}
-			return write(ctx, sodGroupGrantFence(roleID, members))
+			return write(ctx, chainTxFences(sodGroupKeyFence(groupID), sodGroupGrantFence(roleID, members)))
 		})
 	})
 }

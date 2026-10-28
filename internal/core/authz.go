@@ -519,14 +519,27 @@ func (c *KeyorixCore) idpAutoGrantEscalationVerdict(ctx context.Context, roleID 
 // (e.g. an incident-response revocation), the same escalation-by-proxy shape
 // requireAuthorityForRole closes for direct grants.
 func (c *KeyorixCore) requireGlobalAdminToReinstateAdminRoles(ctx context.Context, actorID uint, roleIDs []uint, objectDesc string) error {
-	containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
+	return requireGlobalAdminToReinstateAdminRolesOn(ctx, c.storage, actorID, roleIDs, objectDesc)
+}
+
+// requireGlobalAdminToReinstateAdminRolesOn is requireGlobalAdminToReinstateAdminRoles
+// read through st (roleSetContainsAdmin and IsGlobalAdmin, both through st).
+func requireGlobalAdminToReinstateAdminRolesOn(ctx context.Context, st storage.Storage, actorID uint, roleIDs []uint, objectDesc string) error {
+	containsAdmin := false
+	var err error
+	if len(roleIDs) > 0 {
+		containsAdmin, err = st.RoleSetBypassesPermissionChecks(ctx, roleIDs)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to resolve role authority: %w", err)
 	}
 	if !containsAdmin {
 		return nil
 	}
-	isAdmin, err := c.IsGlobalAdmin(ctx, actorID)
+	isAdmin := false
+	if patRestrictionFromContext(ctx) == nil { // IsGlobalAdmin's own rule
+		isAdmin, err = targetHasGlobalAdminRoleOn(ctx, st, actorID)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}

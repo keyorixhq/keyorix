@@ -164,3 +164,15 @@ func withoutRole(roleID uint) func(existing []uint) []uint {
 		return slices.DeleteFunc(existing, func(id uint) bool { return id == roleID })
 	}
 }
+
+// sodGroupKeyFence takes sodGrantLockKey("group", groupID) with
+// LockNamedKeyInTx: the key a grant to the group holds, taken again inside its
+// write transaction so RestoreGroup's transaction (which takes it too, then
+// re-reads the group's roles for its ceiling check) and the grant serialize
+// even when one side's named lock was lost. First in the transaction: the
+// group key ranks before the members' rows (sodGroupGrantFence).
+func sodGroupKeyFence(groupID uint) txFence {
+	return func(ctx context.Context, tx storage.Storage) error {
+		return lockNamedKeysInTxOn(ctx, tx, sodGrantLockKey("group", groupID))
+	}
+}
