@@ -68,7 +68,7 @@ func normalizeTags(in []string) ([]string, error) {
 			continue
 		}
 		if len(t) > maxSecretTagLen {
-			return nil, fmt.Errorf("%s: tag %q exceeds %d characters", i18n.T("ErrorValidation", nil), t, maxSecretTagLen)
+			return nil, errSecretInvalidf("%s: tag %q exceeds %d characters", i18n.T("ErrorValidation", nil), t, maxSecretTagLen)
 		}
 		if seen[t] {
 			continue
@@ -77,7 +77,7 @@ func normalizeTags(in []string) ([]string, error) {
 		out = append(out, t)
 	}
 	if len(out) > maxSecretTags {
-		return nil, fmt.Errorf("%s: at most %d tags per secret", i18n.T("ErrorValidation", nil), maxSecretTags)
+		return nil, errSecretInvalidf("%s: at most %d tags per secret", i18n.T("ErrorValidation", nil), maxSecretTags)
 	}
 	sort.Strings(out)
 	return out, nil

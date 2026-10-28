@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -4145,35 +4146,35 @@ func TestToDeletedSecretEntry_NoDeletedAt(t *testing.T) {
 func TestTagError_NotFound(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("record not found"), "fallback")
+	h.tagError(w, storage.NotFound(storage.ErrSecretNotFound, "record not found", nil), "fallback")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestTagError_Forbidden(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("permission denied"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "fallback")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestTagError_Validation(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("tag exceeds maximum"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "tag exceeds maximum", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTagError_AtMost(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("at most 10 tags allowed"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "at most 10 tags allowed", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTagError_ValidationKeyword(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("validation failed: bad tag"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "validation failed: bad tag", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -4187,7 +4188,7 @@ func TestTagError_Internal(t *testing.T) {
 func TestTagError_NotAuthorized(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("not authorized to tag this secret"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "not authorized to tag this secret", nil), "fallback")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 

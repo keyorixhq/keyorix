@@ -53,7 +53,7 @@ func (c *KeyorixCore) SetSecretDescription(ctx context.Context, actorID, secretI
 	}
 	desc := strings.TrimSpace(description)
 	if len(desc) > maxSecretDescriptionLen {
-		return nil, fmt.Errorf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+		return nil, errSecretInvalidf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
 	}
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
@@ -71,7 +71,7 @@ func (c *KeyorixCore) SetSecretDescription(ctx context.Context, actorID, secretI
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if !matched {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		return nil, errSecretNotFoundText()
 	}
 	secret.Description = desc
 	secret.UpdatedAt = now

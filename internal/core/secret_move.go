@@ -44,14 +44,18 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 	if newParentID != nil && *newParentID != 0 {
 		// Prevent moving a node into itself before the storage lookup.
 		if *newParentID == secretID {
-			return nil, fmt.Errorf("%s: cannot move a node into itself", i18n.T("ErrorValidation", nil))
+			return nil, errSecretInvalidf("%s: cannot move a node into itself", i18n.T("ErrorValidation", nil))
 		}
 		parent, err := c.storage.GetSecret(ctx, *newParentID)
 		if err != nil {
-			return nil, fmt.Errorf("%s: parent %d not found", i18n.T("ErrorValidation", nil), *newParentID)
+			if !storage.IsSecretNotFound(err) {
+				return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
+			}
+			return nil, storage.NotFound(storage.ErrSecretNotFound,
+				fmt.Sprintf("%s: parent %d not found", i18n.T("ErrorValidation", nil), *newParentID), err)
 		}
 		if parent.IsSecret {
-			return nil, fmt.Errorf("%s: target parent %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *newParentID)
+			return nil, errSecretInvalidf("%s: target parent %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *newParentID)
 		}
 		// The destination parent was never authorized or scope-checked: actorID's
 		// secrets.write on secretID says nothing about the target folder, which
@@ -63,7 +67,7 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		// no access to, and folder-inheriting ACL/sharing resolution would then
 		// apply that other project's grants to it.
 		if parent.ProjectID != secret.ProjectID || parent.EnvironmentID != secret.EnvironmentID {
-			return nil, fmt.Errorf("%s: target parent %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *newParentID)
+			return nil, errSecretInvalidf("%s: target parent %d does not belong to the same project/environment", i18n.T("ErrorValidation", nil), *newParentID)
 		}
 		// Reject moves that would introduce a cycle: the direct self-parent
 		// check above only catches *newParentID == secretID, but a folder can
@@ -80,7 +84,7 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
 		if slices.Contains(ancestors, secretID) {
-			return nil, fmt.Errorf("%s: cannot move a node into its own descendant", i18n.T("ErrorValidation", nil))
+			return nil, errSecretInvalidf("%s: cannot move a node into its own descendant", i18n.T("ErrorValidation", nil))
 		}
 		secret.ParentID = newParentID
 	} else {
@@ -99,7 +103,7 @@ func (c *KeyorixCore) MoveSecret(ctx context.Context, actorID, secretID uint, ne
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if !matched {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		return nil, errSecretNotFoundText()
 	}
 	secret.UpdatedAt = now
 	updated := secret

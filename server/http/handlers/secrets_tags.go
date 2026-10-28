@@ -3,11 +3,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -69,14 +70,13 @@ func (h *SecretHandler) SetTags(w http.ResponseWriter, r *http.Request) {
 
 // tagError maps a core error to the right status for the tag endpoints.
 func (h *SecretHandler) tagError(w http.ResponseWriter, err error, fallback string) {
-	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "not found"):
+	case isSecretNotFound(err):
 		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+	case isPermissionRefusal(err):
 		h.sendError(w, "Forbidden", "Not authorized for this secret", http.StatusForbidden, nil)
-	case strings.Contains(msg, "validation") || strings.Contains(msg, "exceeds") || strings.Contains(msg, "at most"):
-		h.sendError(w, "BadRequest", msg, http.StatusBadRequest, nil)
+	case errors.Is(err, core.ErrSecretInvalidInput):
+		h.sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 	default:
 		h.sendError(w, "InternalError", fallback, http.StatusInternalServerError, nil)
 	}
