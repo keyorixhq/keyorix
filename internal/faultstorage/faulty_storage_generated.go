@@ -5847,6 +5847,22 @@ func (w *FaultyStorage) LockMachineIdentityForUpdate(ctx context.Context, id uin
 	return w.real.LockMachineIdentityForUpdate(ctx, id)
 }
 
+func (w *FaultyStorage) LockNamedKeyInTx(ctx context.Context, lockKey string) error {
+	fire, kind, injected := w.check("LockNamedKeyInTx")
+	if fire {
+		switch kind {
+		case KindPanic:
+			panic(injected)
+		case KindError:
+			return injected
+		case KindEffectThenError:
+			_ = w.real.LockNamedKeyInTx(ctx, lockKey)
+			return injected
+		}
+	}
+	return w.real.LockNamedKeyInTx(ctx, lockKey)
+}
+
 func (w *FaultyStorage) LockShareRecordForUpdate(ctx context.Context, shareID uint) (*models.ShareRecord, error) {
 	fire, kind, injected := w.check("LockShareRecordForUpdate")
 	if fire {
