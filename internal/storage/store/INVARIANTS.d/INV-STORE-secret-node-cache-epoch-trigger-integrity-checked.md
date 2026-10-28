@@ -26,8 +26,12 @@
   DDL, longer while the batched bump of a large table spans ticks; every replica that sees a
   change rewrites every live `secret_nodes` row once, so a false alarm (such as an older
   release's replica rewriting the function at boot during a rolling upgrade) costs a full-table
-  write and refill per replica, not one cache refill; a superuser below SQL is not detected;
-  SQLite is not checked. Guard: (pg-gated)
+  write and refill per replica, not one cache refill; only the checked trigger and its function
+  are read, so a second BEFORE UPDATE trigger on `secret_nodes` that fires later by name (e.g.
+  `zz_…`) and sets `NEW.cache_epoch := OLD.cache_epoch`, or a rule on `secret_nodes`, is not
+  detected (in single_writer mode the solewriter census fingerprints every `pg_trigger`/
+  `pg_rewrite` row on fenced tables, `secret_nodes` included, and catches it; in the default mode
+  nothing does); a superuser below SQL is not detected; SQLite is not checked. Guard: (pg-gated)
   `TestSecretNodeCacheEpochIntegrity_ReplacedBodyIsRestoredAndFlushed_Postgres`,
   `_ReplaceThenRestoreIsFlushed_Postgres`, `_DisabledTriggerReenabledByBootIsFlushed_Postgres`,
   `_ReplicaTriggerConvergedByBootIsFlushed_Postgres`, `_DroppedFunctionReinstalledByBootIsFlushed_Postgres`,
