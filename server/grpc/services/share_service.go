@@ -2,10 +2,12 @@ package services
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -288,13 +290,17 @@ func mapShareError(err error) error {
 	if reason, ok := core.ShareRefusalMessage(err); ok {
 		return status.Error(codes.PermissionDenied, reason)
 	}
-	msg := err.Error()
+	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, storage.ErrShareNotFound), errors.Is(err, storage.ErrSecretNotFound),
+		errors.Is(err, storage.ErrUserNotFound), errors.Is(err, storage.ErrGroupNotFound):
 		return status.Error(codes.NotFound, "share or secret not found")
-	case strings.Contains(msg, "not authorized"), strings.Contains(msg, "permission denied"):
+	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "not authorized for this share")
-	case strings.Contains(msg, "expiry must be in the future"):
+	// Not yet typed: core/sharing.go and core/group_sharing.go return the expiry
+	// refusal as fmt.Errorf("%s: share expiry must be in the future", i18n ErrorValidation)
+	// at three sites. Exact phrase only; wrap a sentinel there and delete this case.
+	case strings.Contains(err.Error(), "share expiry must be in the future"):
 		// Matches REST's 400 ValidationError for the identical core error
 		// (shares_crud.go) — otherwise this fell into the default Internal bucket,
 		// a transport-dependent error-class divergence for a plain validation

@@ -4295,14 +4295,20 @@ type VerifyAuditChainResponse struct {
 	Reason           string                 `protobuf:"bytes,8,opt,name=reason,proto3" json:"reason,omitempty"`                                             // set only when !valid
 	CheckpointReason string                 `protobuf:"bytes,9,opt,name=checkpoint_reason,json=checkpointReason,proto3" json:"checkpoint_reason,omitempty"` // non-fatal notes (e.g. checkpoint under a prior key)
 	// Incremental verification (docs/specs/audit-incremental-verification.md):
-	// status is valid | broken | not_proven, and valid is true only for "valid";
+	// status is valid | broken | not_proven | sealed, and valid is true only for "valid";
+	// "sealed" means the chain was walked but an audit loss was accepted with
+	// `audit accept-loss` (see state_reason); it is not a clean pass.
 	// mode is incremental (tail check + persisted state) or full (walked now).
 	Status                 string                 `protobuf:"bytes,10,opt,name=status,proto3" json:"status,omitempty"`
 	Mode                   string                 `protobuf:"bytes,11,opt,name=mode,proto3" json:"mode,omitempty"`
 	NotProvenReason        string                 `protobuf:"bytes,12,opt,name=not_proven_reason,json=notProvenReason,proto3" json:"not_proven_reason,omitempty"` // set only when status is not_proven
 	LastFullVerificationAt *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=last_full_verification_at,json=lastFullVerificationAt,proto3,oneof" json:"last_full_verification_at,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// Names the accepted audit loss when status is sealed, and says why a persisted
+	// verification state was ignored when it was. Empty when there is nothing to say.
+	// Same value as "state_reason" on GET /api/v1/audit/verify.
+	StateReason   string `protobuf:"bytes,14,opt,name=state_reason,json=stateReason,proto3" json:"state_reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *VerifyAuditChainResponse) Reset() {
@@ -4424,6 +4430,13 @@ func (x *VerifyAuditChainResponse) GetLastFullVerificationAt() *timestamppb.Time
 		return x.LastFullVerificationAt
 	}
 	return nil
+}
+
+func (x *VerifyAuditChainResponse) GetStateReason() string {
+	if x != nil {
+		return x.StateReason
+	}
+	return ""
 }
 
 // WriteAuditCheckpointResponse is the signed checkpoint that was written.
@@ -11644,7 +11657,7 @@ const file_keyorix_proto_rawDesc = "" +
 	"\n" +
 	"\b_user_idB\r\n" +
 	"\v_project_idB\v\n" +
-	"\t_after_id\"\xb4\x04\n" +
+	"\t_after_id\"\xd7\x04\n" +
 	"\x18VerifyAuditChainResponse\x12\x14\n" +
 	"\x05valid\x18\x01 \x01(\bR\x05valid\x12%\n" +
 	"\x0echained_events\x18\x02 \x01(\x03R\rchainedEvents\x12)\n" +
@@ -11659,7 +11672,8 @@ const file_keyorix_proto_rawDesc = "" +
 	" \x01(\tR\x06status\x12\x12\n" +
 	"\x04mode\x18\v \x01(\tR\x04mode\x12*\n" +
 	"\x11not_proven_reason\x18\f \x01(\tR\x0fnotProvenReason\x12Z\n" +
-	"\x19last_full_verification_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampH\x01R\x16lastFullVerificationAt\x88\x01\x01B\x12\n" +
+	"\x19last_full_verification_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampH\x01R\x16lastFullVerificationAt\x88\x01\x01\x12!\n" +
+	"\fstate_reason\x18\x0e \x01(\tR\vstateReasonB\x12\n" +
 	"\x10_first_broken_idB\x1c\n" +
 	"\x1a_last_full_verification_at\"\xa7\x02\n" +
 	"\x1cWriteAuditCheckpointResponse\x12\x0e\n" +

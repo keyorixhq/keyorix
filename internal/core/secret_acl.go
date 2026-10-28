@@ -139,7 +139,10 @@ func (c *KeyorixCore) RevokeSecretACL(ctx context.Context, actorID, secretID, ac
 		}
 	}
 	if found == nil {
-		return fmt.Errorf("%s: ACL %d does not belong to secret %d", i18n.T("ErrorNotFound", nil), aclID, secretID)
+		// CORE-GRPC-TAILS-1: typed so the gRPC mapper answers NotFound by errors.Is,
+		// not by matching the (translated) message. The text is unchanged.
+		return storage.NotFound(storage.ErrSecretACLNotFound,
+			fmt.Sprintf("%s: ACL %d does not belong to secret %d", i18n.T("ErrorNotFound", nil), aclID, secretID), nil)
 	}
 
 	// AUDIT-TX-3: a revocation: never blocked by the audit log, its row owed from

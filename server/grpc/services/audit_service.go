@@ -288,6 +288,15 @@ func (s *AuditGRPCService) VerifyAuditChain(ctx context.Context, _ *emptypb.Empt
 	if err != nil {
 		return nil, status.Error(codes.Internal, "failed to verify audit chain")
 	}
+	return verifyAuditChainResponse(v), nil
+}
+
+// verifyAuditChainResponse renders a verification report as the gRPC response. It
+// carries the same fields, from the same report, as server/http/handlers'
+// auditVerifyResponse (parity test: server/http/audit_verify_http_grpc_parity_test.go).
+// StateReason is what tells a client WHY a status such as "sealed" is not a clean
+// pass (AUDIT-ACCEPT-LOSS-1): without it gRPC showed status sealed with no reason.
+func verifyAuditChainResponse(v *core.AuditVerifyReport) *pb.VerifyAuditChainResponse {
 	resp := &pb.VerifyAuditChainResponse{
 		Valid:            v.Valid,
 		ChainedEvents:    v.ChainedEvents,
@@ -300,6 +309,7 @@ func (s *AuditGRPCService) VerifyAuditChain(ctx context.Context, _ *emptypb.Empt
 		Status:           v.Status,
 		Mode:             v.Mode,
 		NotProvenReason:  v.NotProvenReason,
+		StateReason:      v.StateReason,
 	}
 	if v.FirstBrokenID != nil {
 		resp.FirstBrokenId = ptrU32(*v.FirstBrokenID)
@@ -307,7 +317,7 @@ func (s *AuditGRPCService) VerifyAuditChain(ctx context.Context, _ *emptypb.Empt
 	if v.LastFullVerificationAt != nil {
 		resp.LastFullVerificationAt = timestamppb.New(*v.LastFullVerificationAt)
 	}
-	return resp, nil
+	return resp
 }
 
 // WriteAuditCheckpoint signs a checkpoint of the verified audit-chain head on demand
