@@ -89,7 +89,7 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	if err != nil {
 		if isEnvironmentNotFoundErr(err) {
 			return nil, storage.Typed(ErrSecretTargetInvalid,
-				fmt.Sprintf("%s: %v", i18n.T("ErrorValidation", nil), err), err)
+				fmt.Sprintf("%s: environment %d not found", i18n.T("ErrorValidation", nil), targetEnvID), err)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
