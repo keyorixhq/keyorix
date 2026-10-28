@@ -16,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/internal/faultstorage"
@@ -89,6 +90,49 @@ func TestSecretMetaRoutes_StorageFaultIs5xxInEveryLocale(t *testing.T) {
 				require.True(t, faulty.Fired(), "%s must reach storage method GetSecret", rt.name)
 				assert.GreaterOrEqual(t, w.Code, 500, "body: %s", w.Body.String())
 				assert.NotContains(t, w.Body.String(), "injected", "the storage error text never reaches the client")
+			})
+		}
+	}
+}
+
+// Copying a source whose own state refuses the value read is answered with that
+// refusal's status and stable code, never the 500 default: suspended and
+// max-reads-exhausted are 409, outside the access schedule is 403, in every locale.
+func TestCopySecret_SourceStateRefusalKeepsItsStatusInEveryLocale(t *testing.T) {
+	states := []struct {
+		name   string
+		status int
+		code   string
+		apply  func(t *testing.T, db *gorm.DB, id uint)
+	}{
+		{"suspended", http.StatusConflict, core.SecretReadRefusalCodeSuspended, func(t *testing.T, db *gorm.DB, id uint) {
+			require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", id).Update("status", core.SecretStatusSuspended).Error)
+		}},
+		{"max reads exhausted", http.StatusConflict, core.SecretReadRefusalCodeMaxReadsExhausted, func(t *testing.T, db *gorm.DB, id uint) {
+			require.NoError(t, db.Model(&models.SecretNode{}).Where("id = ?", id).Updates(map[string]any{"max_reads": 1, "read_count": 1}).Error)
+		}},
+		{"outside schedule", http.StatusForbidden, core.SecretReadRefusalCodeOutsideSchedule, func(t *testing.T, db *gorm.DB, id uint) {
+			require.NoError(t, db.Create(&models.SecretAccessSchedule{
+				SecretNodeID: id, AllowedDays: "*", StartHour: 0, EndHour: 0, Timezone: "UTC",
+			}).Error)
+		}},
+	}
+	for _, lang := range errorClassLocales {
+		for _, st := range states {
+			t.Run(lang+"/"+st.name, func(t *testing.T) {
+				h, db, fx := newSecretsHandlerWithDB(t, lang)
+				created := secretsDo(h.CreateSecret, http.MethodPost,
+					fmt.Sprintf(`{"name":"copy-src","value":"v","project_id":%d,"environment_id":%d,"type":"static"}`, fx.projectID, fx.envID),
+					"", secretsAdminID)
+				require.Equal(t, http.StatusCreated, created.Code, "create source: %s", created.Body.String())
+				var src models.SecretNode
+				require.NoError(t, db.Where("name = ?", "copy-src").First(&src).Error)
+				st.apply(t, db, src.ID)
+
+				w := secretsDo(h.CopySecret, http.MethodPost, fmt.Sprintf(`{"environment_id":%d,"name":"copy"}`, fx.envID),
+					fmt.Sprint(src.ID), secretsAdminID)
+				assert.Equal(t, st.status, w.Code, "body: %s", w.Body.String())
+				assert.Contains(t, w.Body.String(), st.code)
 			})
 		}
 	}
