@@ -99,7 +99,6 @@ internal/testutil/sqlitetest/shared_cache_literal_guard_test.go	operator/**/*.go
 internal/secretenv/describe_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files; skips no module
 internal/guardrules/calendar_guard_test.go	operator/**/*.go,docs/guard-rollout.d/*.tsv	repo-root walk over _test.go files (all modules); also reads every docs/guard-rollout.d row
 internal/testutil/sqlitetest/factory_path_guard_test.go	operator/**/*.go	repo-root walk over .go files; skips no module
-internal/urlleakguard/urlleakguard_test.go	operator/**/*.go,operator/**/*.mod	repo-root walk over non-test .go files (all modules); skips no module
 operator/api/v1alpha1/keyorixsecret_types_test.go	operator/config/crd/bases/*.yaml	generated CRD against the Go types (the operator job runs it too)
 #
 # --- reviewed: does not read operator/ (subtree walk, or skips it / nested modules) --
@@ -125,6 +124,7 @@ internal/storage/store/audit_write_context_completeness_test.go	!operator/**	ski
 internal/storage/store/pg_trigger_registry_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/testutil/pgdsn/shared_database_lock_guard_test.go	!operator/**	walks internal/ and server/
 internal/testutil/srcpath/runtime_caller_guard_test.go	!operator/**	skips nested modules (go.mod)
+internal/urlleakguard/urlleakguard_test.go	!operator/**	skips nested modules (go.mod)
 server/httpguards/grant_primitive_gate_table_test.go	!operator/**	skipSecretACLDir skips nested modules
 server/httpguards/secret_acl_gate_guard_test.go	!operator/**	skipSecretACLDir skips nested modules
 server/httpguards/share_secret_isgroup_guard_test.go	!operator/**	skipSecretACLDir skips nested modules
