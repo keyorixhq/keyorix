@@ -34,12 +34,22 @@ Per dependent D (lever A's `affected` minus its `seeds`):
                   package-level var, a deleted line, a file absent from the
                   profile because of build tags ...): coverage cannot say
   Before the verdict, `undetermined` lines are refined (refine_file; --no-refine
-  turns it off) with three provable facts, each of which only ever moves a line
+  turns it off) with four provable facts, each of which only ever moves a line
   to covered or uncovered, never to ignored:
     unlinked      the file's package is not in this dependent's test binary
                   (checked against `go list` for linux, darwin and windows), so
                   none of its code can run. Never applied to a pure-deletion
                   marker: what was deleted is not in this tree's profile.
+    cut-in-function  a pure-deletion marker whose two lines both lie strictly
+                  inside one function body: what was removed could only have run
+                  if that function ran, so the body's blocks decide (any block
+                  with count > 0 = covered). Cuts at the top level, in imports,
+                  or touching a `{` / `}` line of the function stay undetermined.
+                  Related, in the diff step: a hunk that removed only body-level
+                  code and added at least one real line no longer withholds its
+                  added comment/blank lines from "ignored" (the real line stands
+                  in for the removed code); a hunk that added only comments or
+                  removed a top-level declaration still does.
     func-header   a func signature line has no block; it takes the status of
                   its own body (any block with count > 0 = the function ran).
     declaration   a const / type / var line has no block. scripts/ci/declrefs
@@ -176,27 +186,54 @@ def inert_removed(line):
     return bool(IMPORT_SPEC.match(s)) and not re.match(r"^[_.]\s", s)
 
 
+def body_level_removed(line):
+    """A removed line that sits inside a block: inert, or indented. gofmt puts
+    every top-level declaration (func, method, var, const, type, init) at column
+    0, so a hunk whose removed lines are all `body_level_removed` took nothing
+    out of the package's declarations or method sets, only out of a body (a
+    function, or a struct/var group, whose own lines are judged separately)."""
+    return inert_removed(line) or line[:1] in (" ", "\t")
+
+
 def apply_removed(changes, removed):
     """Use what the diff removed. A pure-deletion cut whose removed lines are all
     inert stops being a deletion marker (its neighbours are judged normally).
     A hunk that adds lines but removed real code must not have its added lines
-    ignored as comment-only: they are returned in `noignore` {path: set(lines)}.
-    A file whose hunks do not line up with parse_diff's keeps its markers."""
+    ignored as comment-only. They are returned in `noignore`
+    {path: [(start, end, force)]}: force=True means always withhold the hunk's
+    ignorable lines; force=False means only when the hunk added nothing but
+    ignorable lines (the code it removed was replaced by a comment), see
+    `withheld_lines`. A hunk that removed a top-level declaration (anything not
+    `body_level_removed`) is always force. A file whose hunks do not line up with
+    parse_diff's keeps its markers and is force throughout."""
     new, noignore = {}, {}
     for f, rngs in changes.items():
         rem = removed.get(f)
         if rem is None or len(rem) != len(rngs):
             new[f] = rngs
-            noignore[f] = {ln for s, e, d in rngs for ln in range(s, e + 1)}
+            noignore[f] = [(s, e, True) for s, e, d in rngs]
             continue
-        out, no = [], set()
+        out, no = [], []
         for (s, e, d), r in zip(rngs, rem):
             inert = all(inert_removed(x) for x in r)
             out.append((s, e, False) if d and inert else (s, e, d))
             if not d and not inert:
-                no.update(range(s, e + 1))
+                no.append((s, e, not all(body_level_removed(x) for x in r)))
         new[f], noignore[f] = out, no
     return new, noignore
+
+
+def withheld_lines(hunks, ignorable):
+    """Lines of `hunks` (apply_removed's noignore for one file) that must not be
+    ignored: a force hunk entirely; any other hunk only when every line it added
+    is ignorable, because then nothing else in the hunk stands in for the code
+    it removed. With a real added line the replacement is judged by its own
+    block, in the same body, at the same place."""
+    out = set()
+    for s, e, force in hunks:
+        if force or all(ln in ignorable for ln in range(s, e + 1)):
+            out.update(range(s, e + 1))
+    return out
 
 
 def parse_profile(text, module=MODULE):
@@ -437,7 +474,7 @@ class DeclEval:
         return "undetermined", None
 
 
-def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, relaxed=False):
+def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, relaxed=False, legacy=False):
     """Move provable lines out of match_file's `undetermined`.
 
     flags: expand(ranges) ({line: pure-deletion?}); blocks: the file's profile
@@ -445,13 +482,30 @@ def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, rel
     help); linked: False when the file's package is not in the dependent's test
     binary, None when unknown; compiled: the file is part of the package under
     this GOOS/tags. Returns (res2, notes) where notes = {reason: [lines]}.
-    A pure-deletion marker is never refined: what was deleted is not in this
-    tree's profile. Anything not proven stays undetermined."""
+    A pure-deletion marker is refined only as cut-in-function (see the module
+    docstring): what was deleted is not in this tree's profile, so only the
+    enclosing function's status can speak for it. Anything not proven stays
+    undetermined."""
     out = {k: list(v) for k, v in res.items()}
     notes, keep = {}, []
     for ln in res["undetermined"]:
         status = reason = None
-        if compiled and flags.get(ln) is False:
+        if compiled and flags.get(ln) is True and not legacy:
+            # A pure-deletion marker. Only a cut strictly inside one function body
+            # is refined (declrefs says "funcbody" for the lines of such a body, not
+            # for its `{` / `}` lines): what was removed could only have run if
+            # that function ran, so the body's blocks decide. Everything else
+            # (imports, between declarations, a removed method or var) stays.
+            li = (info or {}).get(str(ln))
+            if li and li.get("kind") == "funcbody" and linked is False:
+                status, reason = "uncovered", "cut-in-unlinked-function"  # the body is not in the test binary
+            elif li and li.get("kind") == "funcbody":
+                lo, hi = li["body"]
+                inside = [c for s, e, c in blocks if s >= lo and e <= hi]
+                if inside:
+                    status = "covered" if any(c > 0 for c in inside) else "uncovered"
+                    reason = "cut-in-function"
+        elif compiled and flags.get(ln) is False:
             li = (info or {}).get(str(ln))
             if linked is False:
                 status, reason = "uncovered", "unlinked"
@@ -666,7 +720,7 @@ def parse_duration_s(text):
 
 
 def measure_dependent(run, go_bin, dependent, coverpkg, changes, ignorable_by_file, test_timeout, module=MODULE, grace=120,
-                      refine=None, env_extra=None):
+                      refine=None, env_extra=None, legacy_ignorable_by_file=None):
     """Decision record fields for one dependent (without the run-level rules).
 
     refine(dependent, path, per_file_result, ranges, profile, relaxed) ->
@@ -710,6 +764,12 @@ def measure_dependent(run, go_bin, dependent, coverpkg, changes, ignorable_by_fi
             f: {k: to_ranges(v) for k, v in m.items() if v} for f, m in per_file.items()})
         if refined:
             rec["refined"] = refined
+        if legacy_ignorable_by_file is not None:
+            # the verdict the CI-SELECT-2-2 rules would have given on this same profile
+            old = match_all(changes, prof, legacy_ignorable_by_file)
+            if refine:
+                old = {f: refine(dependent, f, m, changes[f], prof, False, True)[0] for f, m in old.items()}
+            rec["legacy"] = dict(zip(("verdict", "basis"), verdict_from_match(old)))
         if relaxed_file and verdict == "KEEP" and basis == "undetermined-lines" and verdict_from_match(relaxed_file)[0] == "SKIPPABLE":
             rec["verdict_if_uncovered_refs_ok"] = "SKIPPABLE"  # what-if only; see DeclEval
         return rec
@@ -741,6 +801,16 @@ def apply_run_level_rules(rec, dependent, tainted, spawns, tree_ok):
     if reason:
         rec["coverage_verdict"] = "SKIPPABLE"
         rec["verdict"], rec["basis"] = "KEEP", reason
+    return rec
+
+
+def legacy_after_run_level(rec, dependent, tainted, spawns, tree_ok):
+    """Apply the same run-level rules to rec["legacy"], so it is comparable with the verdict."""
+    old = rec.get("legacy")
+    if old and old["verdict"] == "SKIPPABLE":
+        got = apply_run_level_rules({"verdict": "SKIPPABLE", "basis": old["basis"], "tests": rec.get("tests", {})},
+                                    dependent, tainted, spawns, tree_ok)
+        rec["legacy"] = {"verdict": got["verdict"], "basis": got["basis"]}
     return rec
 
 
@@ -824,7 +894,12 @@ def run_declrefs(args, run, repo, here, changes):
         return None
 
 
-def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here):
+def mention_packages(refs, owning):
+    """Packages holding a non-test mention of any declaration in declrefs' `refs`."""
+    return {p for sites in refs.values() for site in sites if not site.get("test") for p in [owning(site["file"])] if p}
+
+
+def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here, generated=()):
     """The `refine` callable of measure_dependent for this run."""
     variants = package_variants(sa, packages)
     answer = run_declrefs(args, run, repo, here, changes)
@@ -843,14 +918,20 @@ def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here):
     def owning(path):
         return owning_package(path, dir_to_pkg)
 
-    def refine(dep, f, res, ranges, profile, relaxed):
+    def refine(dep, f, res, ranges, profile, relaxed, legacy=False):
         if dep not in closures:
             closures[dep] = test_closure(variants, dep)
         closure = closures[dep]
         linked = None if closure is None else file_pkg[f] in closure
         ev = DeclEval(refs, owning, closure, dep, profile)
-        return refine_file(f, res, expand(ranges), profile.get(f, []), info.get(f), linked, compiled[f], ev, relaxed)
+        # generated code (accessors, registries) gets no static reasoning: it is treated like a
+        # file that is not compiled here, so its undetermined lines stay undetermined
+        return refine_file(f, res, expand(ranges), profile.get(f, []), info.get(f), linked,
+                           compiled[f] and f not in generated, ev, relaxed, legacy)
 
+    # Packages with a non-test mention of a changed declaration: their code must be in the profile,
+    # otherwise a mention there is "unknown" and the declaration can never be judged.
+    refine.mention_pkgs = mention_packages(refs, owning)
     return refine
 
 
@@ -882,7 +963,7 @@ def shadow(args, out, run):
     dir_to_pkg = package_dirs(packages, repo)
 
     all_ranges, noignore = apply_removed(all_ranges, hunk_removed(diff_go))
-    changes, coverpkg, ignorable_by_file, generated = {}, set(), {}, []
+    changes, coverpkg, ignorable_by_file, generated, legacy_ignorable = {}, set(), {}, [], {}
     for f, rngs in all_ranges.items():
         if f.endswith("_test.go"):
             continue
@@ -896,7 +977,9 @@ def shadow(args, out, run):
                 src = fh.read()
         except OSError:
             src = ""
-        ignorable_by_file[f] = ignorable_lines(src) - noignore.get(f, set())
+        ign = ignorable_lines(src)
+        ignorable_by_file[f] = ign - withheld_lines(noignore.get(f, []), ign)
+        legacy_ignorable[f] = ign - withheld_lines([(a, b, True) for a, b, _ in noignore.get(f, [])], ign)
         if "Code generated" in src[:600] and "DO NOT EDIT" in src[:600]:
             generated.append(f)
     deleted_files = [f for f in deleted_files if not f.endswith("_test.go")]
@@ -911,14 +994,16 @@ def shadow(args, out, run):
 
     refine = None
     if sa and coverpkg and not args.no_refine:
-        refine = build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here)
+        refine = build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here, set(generated))
+    extra_cover = sorted(getattr(refine, "mention_pkgs", set()) - coverpkg) if refine else []
+    coverpkg |= set(extra_cover)
     dsn_map = None
     if args.pg_dsn_map:
         with open(args.pg_dsn_map, encoding="utf-8") as fh:
             dsn_map = json.load(fh)
 
     out.emit({"type": "run", "schema": SCHEMA, **ident, "dependents": len(dependents), "coverpkg": sorted(coverpkg),
-              "changed_go_files": sorted(changes), "generated_files": generated, "deleted_go_files": deleted_files,
+              "changed_go_files": sorted(changes), "coverpkg_extra": extra_cover, "generated_files": generated, "deleted_go_files": deleted_files,
               "lever_a_seeds": len(seeds), "tree_ok": tree_ok, "refine": refine is not None,
               "pg_dsn_per_package": dsn_map is not None})
     log(f"{len(dependents)} lever-A dependents, {len(coverpkg)} changed package(s) under coverage")
@@ -935,8 +1020,10 @@ def shadow(args, out, run):
             rec = {"verdict": "KEEP", "basis": "no-go-change" if sa else "lever-a-helpers-unavailable"}
         else:
             rec = apply_run_level_rules(measure_dependent(run, args.go, dep, sorted(coverpkg), changes, ignorable_by_file, args.test_timeout,
-                                                          refine=refine, env_extra=dsn_env(dsn_map, dep)),
+                                                          refine=refine, env_extra=dsn_env(dsn_map, dep),
+                                                          legacy_ignorable_by_file=legacy_ignorable),
                                         dep, tainted, spawns, tree_ok)
+            legacy_after_run_level(rec, dep, tainted, spawns, tree_ok)
         out.emit({"type": "decision", **ident, "dependent": dep, **rec})
         key = f"{rec['verdict']}/{rec['basis']}"
         counts[key] = counts.get(key, 0) + 1
