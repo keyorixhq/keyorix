@@ -32,6 +32,7 @@ type StoreHooks struct {
 	ConsumeMFARecoveryCode                    func(next storage.Storage, ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error)
 	ConsumeWebAuthnSession                    func(next storage.Storage, ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error)
 	CountPendingAuditEvents                   func(next storage.Storage, ctx context.Context) (int64, error)
+	DeleteEnvironment                         func(next storage.Storage, ctx context.Context, id uint) error
 	OldestPendingAuditEventAt                 func(next storage.Storage, ctx context.Context) (time.Time, bool, error)
 	CountRecentLoginAttempts                  func(next storage.Storage, ctx context.Context, ip string, since time.Time) (int64, error)
 	CountWebAuthnCredentials                  func(next storage.Storage, ctx context.Context, userID uint) (int64, error)
@@ -48,6 +49,7 @@ type StoreHooks struct {
 	CreateProjectMembership                   func(next storage.Storage, ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
 	CreateRotationPolicy                      func(next storage.Storage, ctx context.Context, p *models.RotationPolicy) error
 	CreateSecretAccessLog                     func(next storage.Storage, ctx context.Context, log *models.SecretAccessLog) error
+	CreateSecret                              func(next storage.Storage, ctx context.Context, secret *models.SecretNode, plaintextValue ...string) (*models.SecretNode, error)
 	CreateSecretDependencyExclusive           func(next storage.Storage, ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error)
 	CreateSecretVersion                       func(next storage.Storage, ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
 	CreateSession                             func(next storage.Storage, ctx context.Context, session *models.Session) (*models.Session, error)
@@ -141,6 +143,7 @@ type StoreHooks struct {
 	ResolveMachinePermissionAt                func(next storage.Storage, ctx context.Context, machineID uint, scope storage.Scope, permission string) (*storage.PrincipalPermission, error)
 	ResolveUserPermissionAt                   func(next storage.Storage, ctx context.Context, userID uint, scope storage.Scope, permission string) (*storage.PrincipalPermission, error)
 	RestoreGroup                              func(next storage.Storage, ctx context.Context, id uint) error
+	RestoreSecret                             func(next storage.Storage, ctx context.Context, id uint) error
 	RevokeMachineIdentityCredential           func(next storage.Storage, ctx context.Context, projectID uint, credentialID uint) error
 	RoleSetBypassesPermissionChecks           func(next storage.Storage, ctx context.Context, roleIDs []uint) (bool, error)
 	RoleSetHasPermission                      func(next storage.Storage, ctx context.Context, roleIDs []uint, permission string) (bool, error)

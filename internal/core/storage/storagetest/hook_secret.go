@@ -62,3 +62,17 @@ func (hs *HookStore) UpdateSecretFields(ctx context.Context, id uint, f storage.
 	}
 	return hs.Storage.UpdateSecretFields(ctx, id, f)
 }
+
+func (hs *HookStore) CreateSecret(ctx context.Context, secret *models.SecretNode, plaintextValue ...string) (*models.SecretNode, error) {
+	if hk := hs.h.CreateSecret; hk != nil {
+		return hk(hs.Storage, ctx, secret, plaintextValue...)
+	}
+	return hs.Storage.CreateSecret(ctx, secret, plaintextValue...)
+}
+
+func (hs *HookStore) RestoreSecret(ctx context.Context, id uint) error {
+	if hk := hs.h.RestoreSecret; hk != nil {
+		return hk(hs.Storage, ctx, id)
+	}
+	return hs.Storage.RestoreSecret(ctx, id)
+}
