@@ -56,7 +56,7 @@ signatures are classical), post-quantum data at rest, or that every client is pr
 | **Go default can change.** The default group list is Go's, not ours; a future Go could reorder or drop the hybrid (e.g. for ML-KEM-1024 or a new hybrid). | The integration tests would go red on a Go upgrade, which is the intended tripwire. |
 | **Certificates are still classical.** A quantum adversary active *during* the handshake can impersonate. | Out of scope; stated in the doc. Needs PQ certificates (ML-DSA) in public PKI, not available yet. |
 | **Metric counts handshakes, not connections.** Resumed sessions count again; HTTP/2 connections count once. | Stated in the metric help. |
-| **Non-Go clients unverified.** Java SDK not run (no JDK in the session); Node 26 / Python 3.14 (OpenSSL 4.0.3) verified by hand, not by CI. | Listed as pending in the doc. |
+| **Non-Go clients verified by hand only.** Java SDK on JDK 25.0.5 against a Go test server (other JDKs not run); Node 26 / Python 3.14 (OpenSSL 4.0.3) verified by hand, not by CI. Caddy and nginx front-proxy checks are pending the e2e VM. | Listed as pending in the doc. |
 | **No automated check of Node/Python SDKs.** Their runtimes are outside our build. | A CI job that runs them against a TLS server and reads the server's metric is possible; not built. |
 
 ### Proposal (not implemented): `security.require_pq_key_exchange`

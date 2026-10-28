@@ -1,6 +1,7 @@
 package cryptoinventory
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,12 +21,59 @@ type Inputs struct {
 	FallbackProviders []string
 	DEKPath           string
 	DEKCreatedAt      *time.Time
-	TLS               []TLSInput
-	Recovery          *RecoveryInput
-	WebAuthnEnabled   bool
-	WebAuthnRPID      string
-	OIDCIssuers       []string
+	// DEKCreatedAtEstimated is true when DEKCreatedAt is the key file's mtime
+	// rather than the time the database recorded for this DEK.
+	DEKCreatedAtEstimated bool
+	TLS                   []TLSInput
+	Recovery              *RecoveryInput
+	WebAuthnEnabled       bool
+	WebAuthnRPID          string
+	// WebAuthnEnumerated is true when WebAuthnCredentials is the complete list of
+	// stored credentials (possibly empty). False leaves the single generic asset.
+	WebAuthnEnumerated  bool
+	WebAuthnCredentials []WebAuthnCredentialInput
+	OIDCIssuers         []string
+	SAML                []SAMLInput
+	Database            *DatabaseTLSInput
+	Backup              *BackupInput
 }
+
+// SAMLInput is one SAML provider's IdP metadata (public: entity, endpoints and
+// signing certificates). MetadataErr is set instead when it could not be read.
+type SAMLInput struct {
+	Name        string
+	Metadata    []byte
+	MetadataErr string
+}
+
+// DatabaseTLSInput is the PostgreSQL connection's TLS material, as locations only.
+type DatabaseTLSInput struct {
+	SSLMode string
+	// RootCertFile is the CA bundle file; RootCertSystem means the OS trust store
+	// (nothing to read).
+	RootCertFile   string
+	RootCertSystem bool
+	// ClientCertFile / ClientKeyFile come from the DSN's sslcert / sslkey. The key
+	// is recorded as a location only and never opened.
+	ClientCertFile string
+	ClientKeyFile  string
+}
+
+// BackupInput describes what protects a backup archive.
+type BackupInput struct {
+	// EncryptionEnabled is storage.encryption.enabled: when off, the archive's
+	// secret values are plaintext.
+	EncryptionEnabled bool
+	// ShamirShareFiles is how many Shamir KEK share files (shamir_share_files of
+	// the primary key provider and its fallbacks) `admin backup` writes into the
+	// archive. They are plaintext shares: with threshold-many of them the KEK can
+	// be rebuilt from the archive alone.
+	ShamirShareFiles int
+}
+
+// maxCABundleCerts bounds how many CA certificates one bundle file contributes; a
+// larger bundle is cut with a warning.
+const maxCABundleCerts = 16
 
 // TLSInput is one TLS listener's certificate configuration.
 type TLSInput struct {
@@ -70,11 +118,47 @@ func Build(in Inputs, p Policy, now time.Time) Inventory {
 			inv.Warnings = append(inv.Warnings, warn)
 		}
 	}
-	if in.WebAuthnEnabled {
+	switch {
+	case in.WebAuthnEnabled && in.WebAuthnEnumerated:
+		wa, warns := webAuthnCredentialAssets(in.WebAuthnRPID, in.WebAuthnCredentials)
+		assets = append(assets, wa...)
+		inv.Warnings = append(inv.Warnings, warns...)
+		if len(in.WebAuthnCredentials) == 0 {
+			inv.Notes = append(inv.Notes, "WebAuthn is enabled but no passkey is registered.")
+		}
+	case in.WebAuthnEnabled:
 		assets = append(assets, webAuthnAsset(in.WebAuthnRPID))
 	}
 	for i, iss := range in.OIDCIssuers {
 		assets = append(assets, oidcAsset(i, iss))
+	}
+	for _, sp := range in.SAML {
+		sa, warns := samlAssets(sp)
+		assets = append(assets, sa...)
+		inv.Warnings = append(inv.Warnings, warns...)
+	}
+	switch {
+	case in.Database != nil && in.Database.SSLMode == "disable":
+		// No TLS on the connection: configured certificates are not in use.
+		inv.Notes = append(inv.Notes, "The database connection runs with sslmode=disable, so it uses no TLS: "+
+			"database TLS certificates named in the configuration are not in use and are not inventoried.")
+	case in.Database != nil:
+		da, warns := databaseTLSAssets(*in.Database)
+		assets = append(assets, da...)
+		inv.Warnings = append(inv.Warnings, warns...)
+	}
+	if in.Backup != nil {
+		assets = append(assets, backupAsset(*in.Backup))
+		switch {
+		case !in.Backup.EncryptionEnabled:
+			inv.Warnings = append(inv.Warnings,
+				"encryption is disabled: backup archives carry secret values as plaintext (the archive container is never encrypted either way)")
+		case in.Backup.ShamirShareFiles > 0:
+			inv.Warnings = append(inv.Warnings, fmt.Sprintf(
+				"backup archives carry %d Shamir KEK share file(s) as plaintext: with threshold-many of them the KEK, and every secret value, "+
+					"can be recovered from the archive alone. Protect backups like the KEK itself, or supply the shares through shamir_share_env, which is not backed up",
+				in.Backup.ShamirShareFiles))
+		}
 	}
 	inv.Notes = append(inv.Notes,
 		"Keyorix signs no JWTs of its own: sessions are opaque tokens stored hashed. JWT keys listed are external issuers' verification keys.")
@@ -150,8 +234,13 @@ func dekAsset(in Inputs) Asset {
 	a := Asset{ID: "dek", Name: "Data encryption key (DEK)", Class: ClassDEK,
 		Primitive: "ae", Algorithm: "AES-256-GCM", KeySizeBits: 256, CreatedAt: in.DEKCreatedAt,
 		Storage: "file " + path + ", wrapped with AES-256-GCM under the KEK"}
-	if in.DEKCreatedAt != nil {
-		a.Notes = "created_at is the key file's last-modified time (creation or last rotation)"
+	switch {
+	case in.DEKCreatedAt == nil:
+	case in.DEKCreatedAtEstimated:
+		a.CreatedAtEstimated = true
+		a.Notes = "created_at is estimated: the key file's last-modified time (creation, last rotation or KEK rewrap)"
+	default:
+		a.Notes = "created_at is recorded in the database: the time this DEK became the database's DEK (epoch seeded, or the rotation that made it current)"
 	}
 	return a
 }
@@ -227,4 +316,126 @@ func oidcAsset(i int, issuer string) Asset {
 		AssumedLifetimeDays: 365,
 		Storage:             "fetched from the issuer's JWKS endpoint " + issuer + " (public keys only)",
 		Notes:               "verification only; the issuer holds the private keys and controls the migration"}
+}
+
+// certAsset is the shared shape of a certificate-backed asset.
+func certAsset(id, name string, class Class, ci CertInfo) Asset {
+	nb, na := ci.NotBefore, ci.NotAfter
+	return Asset{ID: id, Name: name, Class: class, Primitive: "signature", Asymmetric: true,
+		Algorithm: ci.KeyAlgorithm, KeySizeBits: ci.KeySizeBits, CreatedAt: &nb, ExpiresAt: &na,
+		Certificate: &ci, Notes: "signed with " + ci.SignatureAlgorithm}
+}
+
+// unreadableCertAsset records a certificate that could not be inspected. It is
+// scored by the fail-closed rule for an unclassifiable algorithm.
+func unreadableCertAsset(id, name string, class Class, storage string, err error) Asset {
+	return Asset{ID: id, Name: name, Class: class, Primitive: "signature", Algorithm: "unknown",
+		Storage: storage, Notes: "certificate could not be read: " + err.Error()}
+}
+
+// samlAssets inventories the IdP signing certificates Keyorix trusts for one
+// SAML provider (see SAMLSigningCertificates for which ones), and warns when the
+// cap cut some. Keyorix holds no SAML signing key of its own.
+func samlAssets(sp SAMLInput) ([]Asset, []string) {
+	id := "saml." + sp.Name
+	name := "SAML IdP signing certificate (" + sp.Name + ")"
+	storage := "IdP metadata of SSO provider " + sp.Name + " (public certificate only)"
+	var cause error
+	if sp.MetadataErr != "" {
+		cause = errors.New(sp.MetadataErr)
+	}
+	var infos []CertInfo
+	var more bool
+	if cause == nil {
+		infos, more, cause = SAMLSigningCertificates(sp.Metadata)
+	}
+	if cause != nil {
+		return []Asset{unreadableCertAsset(id, name, ClassSAMLCertificate, storage, cause)},
+			[]string{fmt.Sprintf("SAML provider %q signing certificates could not be inspected: %v", sp.Name, cause)}
+	}
+	var warns []string
+	if more {
+		warns = append(warns, fmt.Sprintf("SAML provider %q trusts more than %d IdP signing certificates; only the first %d are inventoried",
+			sp.Name, maxSAMLMetadataCerts, maxSAMLMetadataCerts))
+	}
+	assets := make([]Asset, 0, len(infos))
+	for i, ci := range infos {
+		a := certAsset(fmt.Sprintf("%s.%d", id, i), name, ClassSAMLCertificate, ci)
+		a.Storage = storage
+		a.Notes += "; verification only, the IdP holds the private key and controls the migration"
+		assets = append(assets, a)
+	}
+	return assets, warns
+}
+
+// databaseTLSAssets inventories the PostgreSQL client certificate and the CA
+// bundle that verifies the server.
+func databaseTLSAssets(d DatabaseTLSInput) ([]Asset, []string) {
+	var assets []Asset
+	var warns []string
+	if d.ClientCertFile != "" {
+		storage := "certificate " + d.ClientCertFile
+		if d.ClientKeyFile != "" {
+			storage += "; private key " + d.ClientKeyFile
+		}
+		const id, name = "database-tls.client", "Database TLS client certificate"
+		infos, err := LoadCertificates(d.ClientCertFile, 1)
+		if err != nil {
+			assets = append(assets, unreadableCertAsset(id, name, ClassDatabaseTLSCert, storage, err))
+			warns = append(warns, fmt.Sprintf("database TLS client certificate could not be inspected: %v", err))
+		} else {
+			a := certAsset(id, name, ClassDatabaseTLSCert, infos[0])
+			a.Storage = storage
+			assets = append(assets, a)
+		}
+	}
+	switch {
+	case d.RootCertSystem:
+		// the OS trust store is not a file Keyorix can read
+	case d.RootCertFile != "":
+		const name = "Database TLS CA certificate"
+		storage := "CA bundle " + d.RootCertFile
+		// One past the cap tells a bundle that was cut from one that fits.
+		infos, err := LoadCertificates(d.RootCertFile, maxCABundleCerts+1)
+		if err != nil {
+			assets = append(assets, unreadableCertAsset("database-tls.ca.0", name, ClassDatabaseTLSCert, storage, err))
+			warns = append(warns, fmt.Sprintf("database TLS CA certificate could not be inspected: %v", err))
+			break
+		}
+		if len(infos) > maxCABundleCerts {
+			infos = infos[:maxCABundleCerts]
+			warns = append(warns, fmt.Sprintf("database TLS CA bundle %s holds more than %d certificates; only the first %d are inventoried",
+				d.RootCertFile, maxCABundleCerts, maxCABundleCerts))
+		}
+		for i, ci := range infos {
+			a := certAsset(fmt.Sprintf("database-tls.ca.%d", i), name, ClassDatabaseTLSCert, ci)
+			a.Storage = storage
+			assets = append(assets, a)
+		}
+	}
+	return assets, warns
+}
+
+// backupAsset describes the protection of a backup archive. The archive is a
+// tar+gzip container that is not encrypted as a whole: secret values travel as
+// the AES-256-GCM ciphertext already stored, the DEK travels wrapped under the
+// KEK, and the manifest is HMAC-signed (see the backup-manifest-hmac asset).
+func backupAsset(b BackupInput) Asset {
+	a := Asset{ID: "backup-archive", Name: "Backup archive encryption", Class: ClassBackupEncryption,
+		Primitive: "ae", Algorithm: "AES-256-GCM", KeySizeBits: 256,
+		Storage: "backup archive (tar+gzip): secret values as stored ciphertext, DEK wrapped under the KEK, no archive-level encryption",
+		Notes: "confidentiality rests on the KEK, which is not in the archive (a TPM/KMS-wrapped KEK blob may be, and opens only with that TPM/KMS); " +
+			"the manifest is HMAC-signed"}
+	switch {
+	case !b.EncryptionEnabled:
+		a.Algorithm, a.KeySizeBits, a.Primitive = "none", 0, "unknown"
+		a.Notes = "encryption is disabled, so the archive carries secret values as plaintext"
+	case b.ShamirShareFiles > 0:
+		// Fail closed: whether the archive holds threshold-many shares is not
+		// known here, and if it does the stored ciphertext protects nothing.
+		a.Algorithm, a.KeySizeBits, a.Primitive = "unknown", 0, "unknown"
+		a.Notes = fmt.Sprintf("the archive also carries %d plaintext Shamir KEK share file(s); with threshold-many of them the KEK can be "+
+			"rebuilt from the archive alone, so its encryption cannot be credited", b.ShamirShareFiles)
+	}
+	return a
 }

@@ -380,6 +380,7 @@ func refuseConnectionService(d *DatabaseConfig) error {
 // dsnTLS is what parseDSNTLS reads from a connection string.
 type dsnTLS struct {
 	sslmode, sslrootcert string
+	sslcert, sslkey      string
 }
 
 // dsnTLSSettings is parseDSNTLS's sslmode and sslrootcert.
@@ -406,7 +407,8 @@ func parseDSNTLS(dsn string) (dsnTLS, error) {
 	if err != nil {
 		return dsnTLS{}, err
 	}
-	return dsnTLS{sslmode: settings["sslmode"], sslrootcert: settings["sslrootcert"]}, nil
+	return dsnTLS{sslmode: settings["sslmode"], sslrootcert: settings["sslrootcert"],
+		sslcert: settings["sslcert"], sslkey: settings["sslkey"]}, nil
 }
 
 // urlTLSSettings reads sslmode/sslrootcert from a connection URL's query the
@@ -438,6 +440,10 @@ func urlTLSSettings(dsn string) (dsnTLS, error) {
 			sslWasLast = true
 		case "sslrootcert":
 			s.sslrootcert = kv[1]
+		case "sslcert":
+			s.sslcert = kv[1]
+		case "sslkey":
+			s.sslkey = kv[1]
 		}
 	}
 	if ssl == "true" && sslWasLast {

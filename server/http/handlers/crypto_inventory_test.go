@@ -43,7 +43,7 @@ func newCryptoInvFixture(t *testing.T) *cryptoInvFixture {
 	require.NoError(t, i18n.InitializeForTesting())
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&models.User{}, &models.AuditEvent{}, &models.RecoveryKeyRecord{}))
+	require.NoError(t, db.AutoMigrate(&models.User{}, &models.AuditEvent{}, &models.RecoveryKeyRecord{}, &models.SystemMetadata{}))
 
 	dir := t.TempDir()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -104,7 +104,8 @@ func TestCryptoInventoryHandler_JSON(t *testing.T) {
 	assert.Equal(t, "ECDSA-P256", byID["tls.http"].Algorithm)
 	require.Contains(t, byID, "dek")
 	assert.False(t, byID["dek"].Risk.QuantumVulnerable)
-	assert.NotNil(t, byID["dek"].CreatedAt, "DEK created_at is taken from the key file's mtime")
+	assert.NotNil(t, byID["dek"].CreatedAt, "DEK created_at falls back to the key file's mtime")
+	assert.True(t, byID["dek"].CreatedAtEstimated, "...and is marked estimated when no epoch row records it")
 	assert.Equal(t, 2035, env.Data.Policy.Horizon.Year(), "documented default horizon")
 	assert.GreaterOrEqual(t, env.Data.Summary.QuantumVulnerable, 1)
 }
