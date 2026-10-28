@@ -26,7 +26,9 @@ func createTLSConfig(cfg *config.Config) (*tls.Config, error) {
 		return nil, err
 	}
 
-	tlsConfig := &tls.Config{GetCertificate: tlsmetrics.Wrap(tlsmetrics.HTTP, reloader.GetCertificate), VerifyConnection: tlsmetrics.ObserveHandshake(tlsmetrics.HTTP)} // nosemgrep: go.lang.security.audit.crypto.missing-ssl-minversion.missing-ssl-minversion -- applyTLSHardening below sets MinVersion unconditionally on every path
+	// MinVersion here is the floor before hardening; applyTLSHardening sets the
+	// final MinVersion (TLS 1.2, or 1.3 in strict mode) on every path.
+	tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: tlsmetrics.Wrap(tlsmetrics.HTTP, reloader.GetCertificate), VerifyConnection: tlsmetrics.ObserveHandshake(tlsmetrics.HTTP)}
 	if err := applyTLSHardening(tlsConfig, cfg.Server.HTTP.TLS, cfg.Server.HTTP.TLSMode); err != nil {
 		return nil, err
 	}
