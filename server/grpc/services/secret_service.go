@@ -741,8 +741,13 @@ func mapSecretError(err error) error {
 	// validation below still reads the message.
 	msg := err.Error()
 	switch {
+	// core.ErrSecretTargetInvalid: CreateSecret's target environment is missing or in
+	// another project (core secrets.go pre-check and withEnvironmentSecretGuard). Both
+	// answer NotFound, as the old text match did for the missing case, so a foreign
+	// environment reads the same as a missing one.
 	case errors.Is(err, storage.ErrSecretNotFound), errors.Is(err, storage.ErrSecretVersionNotFound),
-		errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound):
+		errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound),
+		errors.Is(err, core.ErrSecretTargetInvalid):
 		return status.Error(codes.NotFound, "secret not found")
 	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied to this secret")

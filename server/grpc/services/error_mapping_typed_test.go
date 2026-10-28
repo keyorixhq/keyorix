@@ -118,6 +118,7 @@ func TestMapSecretError_ClassifiesBySentinel(t *testing.T) {
 		{"missing secret", fmt.Errorf("get: %w", storage.ErrSecretNotFound), codes.NotFound},
 		{"missing secret version", fmt.Errorf("Secret version not found: %w", storage.ErrSecretVersionNotFound), codes.NotFound},
 		{"missing project", fmt.Errorf("create: %w", storage.ErrProjectNotFound), codes.NotFound},
+		{"bad target environment", storage.Typed(core.ErrSecretTargetInvalid, "environment 7 not found", nil), codes.NotFound},
 		{"authz refusal", fmt.Errorf("update: %w", core.ErrPermissionDenied), codes.PermissionDenied},
 		{"secret exists", fmt.Errorf("create: %w", core.ErrSecretAlreadyExists), codes.AlreadyExists},
 		// Not yet typed: rotation validation (rotation_executor.go).
