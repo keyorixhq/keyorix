@@ -55,7 +55,10 @@ func refuseRedirect(req *http.Request, _ []*http.Request) error {
 	return fmt.Errorf("rfc3161: refusing to follow redirect to %q", netutil.RedactURLHost(req.URL.String()))
 }
 
-func (r *RFC3161) Provider() string { return "rfc3161:" + r.url }
+// Provider names the TSA as scheme://host only: the value is persisted as
+// audit_checkpoints.anchor_provider and served by the audit APIs and export,
+// and the configured URL can carry userinfo, a path token or a ?key= query.
+func (r *RFC3161) Provider() string { return "rfc3161:" + netutil.RedactURLHost(r.url) }
 
 // validateTSAURL checks that the configured TSA URL is a well-formed absolute
 // URL using https. Plaintext http is accepted ONLY to a loopback host

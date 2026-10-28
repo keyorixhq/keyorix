@@ -56,6 +56,9 @@ func TestWebhook_ConstructionErrorsRedactEndpoint(t *testing.T) {
 		cfg  WebhookConfig
 	}{
 		{"unparsable", WebhookConfig{Endpoint: "https://user:tok3n@evidence.example.test:bad/path?key=secret"}},
+		// url.Parse cuts the authority at the unescaped '/' and quotes the
+		// password prefix as an invalid port in its inner error.
+		{"unescaped slash in password", WebhookConfig{Endpoint: "https://user:tok3n/x@evidence.example.test/path?key=secret"}},
 		{"plaintext http", WebhookConfig{Endpoint: "http://user:tok3n@evidence.example.test/path?key=secret"}},
 		{"unsupported scheme", WebhookConfig{Endpoint: "ftp://user:tok3n@evidence.example.test/path?key=secret"}},
 		{"private target", WebhookConfig{Endpoint: "https://user:tok3n@10.0.0.5/path?key=secret"}},

@@ -35,6 +35,30 @@ func TestSanitizeErrorURLs_SchemeIsCaseInsensitive(t *testing.T) {
 	assert.Contains(t, got, "hooks.slack.test")
 }
 
+// An unescaped '/', '?' or '#' in the userinfo password makes url.Parse cut the
+// authority there and report the password prefix as the port, so the inner
+// error text of a parse failure quotes credential bytes and must not survive.
+func TestRedactErrorURLs_ParseErrorDropsInnerText(t *testing.T) {
+	for _, raw := range []string{
+		"https://svc:Ab3dSecret/xyz@evidence.example.test/hook",
+		"https://svc:Ab3dSecret?xyz@evidence.example.test/hook",
+		"https://svc:Ab3dSecret#xyz@evidence.example.test/hook",
+	} {
+		_, perr := url.Parse(raw)
+		require.Error(t, perr, raw)
+		got := RedactErrorURLs(perr)
+		require.Error(t, got)
+		for _, frag := range []string{"Ab3dSecret", "svc", "xyz", "hook"} {
+			assert.NotContains(t, got.Error(), frag, "%s: %s", raw, got)
+		}
+		var ue *url.Error
+		assert.False(t, errors.As(got, &ue), "the *url.Error layer must not stay reachable")
+		for e := errors.Unwrap(got); e != nil; e = errors.Unwrap(e) {
+			assert.NotContains(t, e.Error(), "Ab3dSecret", "an unwrapped cause must not carry the parse text either")
+		}
+	}
+}
+
 func TestRedactErrorURLs_ScrubsURLsLeftInCauseText(t *testing.T) {
 	got := RedactErrorURLs(errors.New(`upstream said: see https://hooks.slack.test/services/T/B/TOKEN for details`))
 	assert.NotContains(t, got.Error(), "TOKEN")
