@@ -55,9 +55,17 @@
 // every live secret_nodes row per replica per detection, in batches of secretNodeCacheEpochInvalidateBatch rows, spread
 // over as many ticks as the table needs.
 //
-// Limits, stated: the window is one interval (plus at most one tick timeout),
-// also while a repair keeps failing, for deliberate DDL only (the accidental
-// states keep the per-statement proofs' zero window). A superuser below SQL
+// Limits, stated: the window is one interval (plus at most one tick timeout)
+// for deliberate DDL only (the accidental states keep the per-statement
+// proofs' zero window). For the role-permission target that holds also while
+// a repair keeps failing, since its bump commits first. The cache-epoch target
+// bumps nothing until a repair commits, so a session with the server's role
+// that keeps the repair failing every tick (a transaction left open holding a
+// lock the repair's DDL waits on: an ACCESS SHARE lock on secret_nodes is
+// enough for its DROP TRIGGER or ALTER TABLE) leaves warm replicas serving
+// stale nodes under a replaced body until secretMetaCacheTTL (5 minutes)
+// expires them, the bound before this check. So does a row lock held for good
+// inside one invalidation batch: the bump never gets past it. A superuser below SQL
 // (native code, the data directory, a replaced plpgsql handler or a
 // redefined pg_catalog function the body calls) is not detected. A session
 // whose replication role is not 'origin' is reported every tick and cannot

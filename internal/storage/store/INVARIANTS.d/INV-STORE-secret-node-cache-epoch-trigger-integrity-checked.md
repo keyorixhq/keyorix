@@ -23,7 +23,13 @@
   `OLD.cache_epoch`, a trigger disabled while a row is changed and re-enabled by the next boot, or
   the DISABLE/write/ENABLE sandwich left warm replicas serving the pre-change row (a suspended
   secret read as active) until the entry's TTL. Residual risk, stated: one interval for deliberate
-  DDL, longer while the batched bump of a large table spans ticks; every replica that sees a
+  DDL, longer while the batched bump of a large table spans ticks; nothing is invalidated until a
+  repair commits, so a session with the server's role that keeps the repair failing every tick (a
+  transaction left open holding a lock the repair's DDL waits on: an ACCESS SHARE lock on
+  `secret_nodes` is enough for its `DROP TRIGGER` or `ALTER TABLE`) leaves warm replicas serving
+  stale nodes under a replaced body, and one that holds a row lock for good inside one
+  invalidation batch leaves the rows the bump never gets past stale, in both cases until
+  `secretMetaCacheTTL` (5 minutes) expires them, the bound before this check; every replica that sees a
   change rewrites every live `secret_nodes` row once, so a false alarm (such as an older
   release's replica rewriting the function at boot during a rolling upgrade) costs a full-table
   write and refill per replica, not one cache refill; only the checked trigger and its function
