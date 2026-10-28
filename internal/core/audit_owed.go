@@ -210,7 +210,7 @@ func owedRequestID(ctx context.Context) *string {
 // the storage funnel stamps it exactly as it stamps a live request's rows -- the only
 // writer of audit_events.request_id stays logAuditEvent, and a writer still cannot choose
 // the value. The holder is always replaced, so a row recorded without an id (or before
-// epoch 8) is appended with none even if the backfill itself runs inside a request: it
+// epoch 9) is appended with none even if the backfill itself runs inside a request: it
 // never takes the id of the pass that writes it late.
 func owedBackfillContext(ctx context.Context, p *models.PendingAuditEvent) context.Context {
 	h := &logging.Holder{}
