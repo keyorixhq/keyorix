@@ -27,6 +27,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -63,6 +65,34 @@ type AuditLossRequest struct {
 	// Anchor (a verified file) or AnchorDigest (a digest only, recorded).
 	Anchor       *AuditLossAnchor
 	AnchorDigest string
+}
+
+// Limits on the operator name and reason, which the seal stores in its record
+// and in the in-chain event description.
+const (
+	AuditLossOperatorMaxLen = 256
+	AuditLossReasonMaxLen   = 1024
+)
+
+// AuditLossTextProblem says why an operator name or reason cannot be stored
+// ("" when both can): invalid UTF-8, a control or format character (a newline,
+// a terminal escape or a bidi override would forge or hide lines wherever the
+// event description is shown), or more bytes than its limit.
+func AuditLossTextProblem(operator, reason string) string {
+	for _, f := range []struct {
+		name, val string
+		max       int
+	}{{"--operator", operator, AuditLossOperatorMaxLen}, {"--reason", reason, AuditLossReasonMaxLen}} {
+		switch {
+		case !utf8.ValidString(f.val):
+			return f.name + " is not valid UTF-8"
+		case strings.ContainsFunc(f.val, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }):
+			return f.name + " contains a control or format character (newlines and escape sequences are not stored)"
+		case len(f.val) > f.max:
+			return fmt.Sprintf("%s is longer than %d bytes", f.name, f.max)
+		}
+	}
+	return ""
 }
 
 // AuditLossPlan is what accept-loss will write, for the operator to confirm.
@@ -141,6 +171,9 @@ func (c *KeyorixCore) PlanAuditLossAcceptance(ctx context.Context, req AuditLoss
 	}
 	if strings.TrimSpace(req.Operator) == "" || strings.TrimSpace(req.Reason) == "" || req.Evidence == "" {
 		return nil, auditLossRefused("an operator name, a reason and an evidence digest are required")
+	}
+	if why := AuditLossTextProblem(strings.TrimSpace(req.Operator), strings.TrimSpace(req.Reason)); why != "" {
+		return nil, auditLossRefused("%s", why)
 	}
 	f, err := c.auditLossPreflight(ctx)
 	if err != nil {
@@ -281,6 +314,11 @@ func (c *KeyorixCore) auditLossPreflight(ctx context.Context) (*auditLossFinding
 		case !c.checkpointSigMatches(hw, sig):
 			return nil, auditLossRefused("the audit high-water mark fails its signature under the current key (tampered, not a row loss)")
 		}
+	} else if !ok && !resume && cp != nil {
+		// Every checkpoint write advances the mark beside it, so a signed
+		// checkpoint without one is a deleted mark (the tail check reads it as
+		// tampering), and it would under-measure what the seal records.
+		return nil, auditLossRefused("the audit high-water mark is missing although signed checkpoint #%d exists (deleted: an unauthenticated store, not a row loss)", cp.ID)
 	}
 	anchor, err := c.loadAuditRetentionAnchor(ctx)
 	if err != nil {
@@ -352,12 +390,12 @@ func (c *KeyorixCore) auditLossResumeCheck(ctx context.Context, f *auditLossFind
 		}
 	}
 	// Rows certified after the seal are not what it recorded as surviving. A
-	// checkpoint or high-water mark signed under the current seal list (this
-	// acceptance's re-seal, or a server since) only ever certified the sealed
-	// chain, so one that certifies a head or count the chain no longer has is
-	// a new loss. Completing over it would lower the mark and seal the loss
-	// unrecorded.
-	certs, err := c.auditLossSealedCertifications(ctx)
+	// checkpoint, high-water mark or state pin signed under the current seal
+	// list (this acceptance's re-seal, or a server since) only ever certified
+	// the sealed chain, so one that certifies a head or count the chain no
+	// longer has is a new loss. Completing over it would lower the mark and
+	// seal the loss unrecorded.
+	certs, err := c.auditLossSealedCertifications(ctx, f, last)
 	if err != nil {
 		return err
 	}
@@ -381,24 +419,53 @@ func (c *KeyorixCore) auditLossResumeCheck(ctx context.Context, f *auditLossFind
 	return nil
 }
 
-// auditLossSealedCertifications are the latest checkpoint and the high-water
-// mark that authenticate under the current seal binding (a certification under
-// fewer seals predates the acceptance and certified the lost rows).
-func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context) ([]AuditSealCount, error) {
+// auditLossSealedCertifications are the certifications a resumed acceptance
+// of seal last must not lower: the latest checkpoint and the high-water mark
+// when they authenticate under the current seal binding, and the verification
+// state's pin when the state was saved under the current seal count (a
+// certification under fewer seals predates the acceptance and certified the
+// lost rows). Only this acceptance's own not-yet-rewritten artifacts may be
+// skipped: a checkpoint or mark that authenticates under the binding before
+// seal last. A removed or garbled certification is not "no certification": a
+// latest checkpoint or a mark that authenticates under neither binding, or a
+// mark that is missing although seal last recorded a certification before the
+// loss (the acceptance overwrites the mark, it never deletes it), is refused.
+func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *auditLossFindings, last *auditSeal) ([]AuditSealCount, error) {
 	var out []AuditSealCount
+	cur, prev := sealBindingOf(f.seals.recs), sealBindingOf(f.seals.recs[:len(f.seals.recs)-1])
 	cp, err := c.storage.LatestAuditCheckpoint(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if cp != nil && c.checkpointSignatureValid(cp) {
-		out = append(out, AuditSealCount{Events: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, Source: fmt.Sprintf("signed checkpoint #%d", cp.ID)})
+	if cp != nil {
+		switch {
+		case hmac.Equal([]byte(c.signCheckpointUnder(cp, cur)), []byte(cp.Signature)):
+			out = append(out, AuditSealCount{Events: cp.ChainedEvents, HeadID: cp.HeadID, HeadHash: cp.HeadHash, Source: fmt.Sprintf("signed checkpoint #%d", cp.ID)})
+		case hmac.Equal([]byte(c.signCheckpointUnder(cp, prev)), []byte(cp.Signature)):
+			// Signed before this seal: the re-seal has not replaced it yet.
+		default:
+			return nil, auditLossRefused("the latest checkpoint #%d authenticates neither under seal #%d nor before it (deleted newer checkpoints or a garbled signature, not a half-written acceptance): investigate before completing seal #%d", cp.ID, last.Seq, last.Seq)
+		}
 	}
-	hw, err := c.authenticatedHighWaterBase(ctx)
+	val, ok, err := c.storage.GetSystemMetadata(ctx, auditHighWaterKey)
 	if err != nil {
 		return nil, err
 	}
-	if hw != nil {
-		out = append(out, AuditSealCount{Events: hw.ChainedEvents, HeadID: hw.HeadID, HeadHash: hw.HeadHash, Source: "the signed high-water mark"})
+	if ok {
+		hw, b, sig, parsed := parseAuditHighWaterSealed(val)
+		switch {
+		case parsed && b == cur && hmac.Equal([]byte(c.signCheckpointUnder(hw, cur)), []byte(sig)):
+			out = append(out, AuditSealCount{Events: hw.ChainedEvents, HeadID: hw.HeadID, HeadHash: hw.HeadHash, Source: "the signed high-water mark"})
+		case parsed && b == prev && hmac.Equal([]byte(c.signCheckpointUnder(hw, prev)), []byte(sig)):
+			// Signed before this seal: the re-seal has not lowered it yet.
+		default:
+			return nil, auditLossRefused("the audit high-water mark authenticates neither under seal #%d nor before it (garbled or relabelled, not a half-written acceptance): investigate before completing seal #%d", last.Seq, last.Seq)
+		}
+	} else if last.Before != nil {
+		return nil, auditLossRefused("the audit high-water mark is missing although seal #%d recorded %d certified events (%s): an acceptance overwrites the mark, it never deletes it; investigate before completing seal #%d", last.Seq, last.Before.Events, last.Before.Source, last.Seq)
+	}
+	if p := f.state.Pin; p != nil && f.state.Seals == len(f.seals.recs) {
+		out = append(out, AuditSealCount{Events: p.Events, HeadID: p.HeadID, HeadHash: p.HeadHash, Source: "the signed verification state"})
 	}
 	return out, nil
 }

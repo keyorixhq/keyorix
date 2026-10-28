@@ -11,6 +11,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -127,6 +128,23 @@ func TestAcceptLoss_FlagValidation(t *testing.T) {
 	acceptLossEvidence = "not-a-digest"
 	_, err = acceptLossRequest()
 	assert.ErrorContains(t, err, "--evidence-sha256")
+	acceptLossFlags(5)
+	acceptLossOperator = "ops\nseal #2 accepted by root"
+	_, err = acceptLossRequest()
+	assert.ErrorContains(t, err, "--operator contains a control")
+	acceptLossFlags(5)
+	acceptLossReason = "INC-42 \x1b[2K"
+	_, err = acceptLossRequest()
+	assert.ErrorContains(t, err, "--reason contains a control")
+	acceptLossFlags(5)
+	acceptLossReason = strings.Repeat("r", core.AuditLossReasonMaxLen+1)
+	_, err = acceptLossRequest()
+	assert.ErrorContains(t, err, "--reason is longer than")
+	acceptLossFlags(5)
+	acceptLossOperator = strings.Repeat("o", core.AuditLossOperatorMaxLen)
+	acceptLossReason = strings.Repeat("r", core.AuditLossReasonMaxLen)
+	_, err = acceptLossRequest()
+	assert.NoError(t, err, "values at the limit are accepted")
 	acceptLossFlags(5)
 	acceptLossAnchorSHA256 = "zz"
 	_, err = acceptLossRequest()

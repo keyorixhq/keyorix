@@ -18,13 +18,21 @@
   The writes go record, event, checkpoint and high-water mark, state; an acceptance stopped
   after any of them reads broken until a re-run of the command completes it, which first
   checks the chain still holds what the seal recorded as surviving and everything the latest
-  checkpoint and the high-water mark signed under the current seals certify (a post-seal
-  truncation is refused, never completed over), refuses ids other than the seal's own, and
-  keeps any discontinuity or failure the state carries in its accepted list.
+  checkpoint, the high-water mark and the state's pin signed under the current seals certify
+  (a post-seal truncation is refused, never completed over). It skips only its own
+  half-written artifacts (a checkpoint or mark signed under the seals before it): one that
+  authenticates under neither, or a mark missing although the seal recorded a certification,
+  is refused, not read as "no certification". It refuses ids other than the seal's own, and
+  keeps any discontinuity or failure the state carries in its accepted list. A first
+  acceptance refuses a missing mark beside a signed checkpoint, and an operator name or reason
+  with a control or format character or over its length limit.
   Why: AUDIT-ACCEPT-LOSS-1, constraints 1-8 of docs/design/recovery-options.md §2. Guard:
   `TestAuditSeal_*` (`internal/core`, SQLite and PostgreSQL; `_CrashAtEveryStepResumes`,
   `_DeletedSealKeepsStatePin`,
-  `_ResumeRefusesPostSealTruncation`, `_ResumeRefusesOtherIDs`), `TestSealDifferential_*`
+  `_ResumeRefusesPostSealTruncation`, `_ResumeRefusesOtherIDs`,
+  `_ResumeRefusesRemovedCertifications`, `_ResumeRefusesRemovedCertificationsUncertifiedSeal`,
+  `_ResumeRefusesUnaccountedArtifacts`, `_RefusesMissingHighWater`,
+  `_RefusesUnsafeOperatorText`), `TestSealDifferential_*`
   (`internal/auditverify`), `TestPerformRecoverAdmin_NeverSealsALoss`,
   `TestAcceptLoss_RequiresConfirmThenSeals`, `scripts/drills/accept-loss.sh`. Not covered: a
   verification state discontinuity with an intact chain cannot be accepted (it stays

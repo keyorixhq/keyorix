@@ -137,6 +137,8 @@ func acceptLossRequest() (core.AuditLossRequest, error) {
 		return req, fmt.Errorf("--operator is required")
 	case req.Reason == "":
 		return req, fmt.Errorf("--reason is required (an incident or ticket reference; it is stored, so no secrets)")
+	case core.AuditLossTextProblem(req.Operator, req.Reason) != "":
+		return req, fmt.Errorf("%s", core.AuditLossTextProblem(req.Operator, req.Reason))
 	case !sha256HexRE.MatchString(acceptLossEvidence):
 		return req, fmt.Errorf("--evidence-sha256 must be the 64-hex-digit SHA-256 of the evidence you keep (for example: shasum -a 256 secrets.db.bak)")
 	case acceptLossAnchorSHA256 != "" && !sha256HexRE.MatchString(acceptLossAnchorSHA256):
