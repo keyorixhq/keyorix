@@ -131,16 +131,16 @@ type UpdateSecretRequest struct {
 // CreateSecret creates a new secret with business logic validation.
 func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest) (*models.SecretNode, error) { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	if err := c.validateCreateSecretRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, errSecretValidation(err)
 	}
 	if err := c.secretValuePolicy.Validate(req.Value); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, errSecretValidation(err)
 	}
 	if err := c.checkSecretSize(req.Value); err != nil {
 		return nil, err
 	}
 	if err := c.validateSecretName(req.Name); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, errSecretValidation(err)
 	}
 	// #1642: NFC-normalize once here, use everywhere below (the duplicate-name
 	// pre-check and the stored row) — secret names are addresses, not
@@ -149,10 +149,10 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// the NFC-vs-NFD collision gap.
 	normalizedName, nerr := identity.NewAddressName(req.Name)
 	if nerr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), nerr)
+		return nil, errSecretValidation(nerr)
 	}
 	if len(strings.TrimSpace(req.Description)) > maxSecretDescriptionLen {
-		return nil, fmt.Errorf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+		return nil, errSecretInvalidf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
 	}
 
 	// Verify the environment belongs to the stated project.

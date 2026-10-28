@@ -132,6 +132,13 @@ func TestSecretMetaRoutes_InvalidInputIs400InEveryLocale(t *testing.T) {
 					fmt.Sprint(src.ID), secretsAdminID)
 				assert.Equal(t, http.StatusBadRequest, w.Code, "copy into %s: %s", name, w.Body.String())
 			}
+
+			// A name that breaks the configured naming policy is the client's
+			// error: CreateSecret rejects it and the copy answers 400, not 500.
+			require.NoError(t, h.coreService.SetSecretNamePolicy(core.SecretNamePolicy{Enabled: true, Pattern: "^[a-z-]+$"}))
+			w = secretsDo(h.CopySecret, http.MethodPost, fmt.Sprintf(`{"environment_id":%d,"name":"BAD_NAME_1"}`, fx.envID),
+				fmt.Sprint(src.ID), secretsAdminID)
+			assert.Equal(t, http.StatusBadRequest, w.Code, "copy with a name outside the policy: %s", w.Body.String())
 		})
 	}
 }

@@ -33,6 +33,14 @@ func errSecretInvalidf(format string, a ...any) error {
 	return storage.Typed(ErrSecretInvalidInput, fmt.Sprintf(format, a...), nil)
 }
 
+// errSecretValidation wraps a CreateSecret validation failure (request shape,
+// value policy, name policy, address name). It renders as before ("Validation
+// error: <cause>"), keeps cause in the chain, and matches ErrSecretInvalidInput
+// under errors.Is, so callers (create, copy) answer 400 from the kind of failure.
+func errSecretValidation(cause error) error {
+	return storage.Typed(ErrSecretInvalidInput, fmt.Sprintf("%s: %v", i18n.T("ErrorValidation", nil), cause), cause)
+}
+
 // errSecretNotFoundText is the not-found refusal for a secret that a write
 // matched no row of (it was deleted between the read and the write). It renders
 // the translated i18n text exactly as before and matches
