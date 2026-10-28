@@ -195,14 +195,27 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 // kept as the cheap same-process fast path, taken inside the named lock (the
 // same named-lock-then-mutex order removeGlobalAdminRoleIfApplicable uses).
 // AddSecretDependency goes through here, so both callers share the lock.
+//
+// NAMEDLOCK-OVERLAP-2: the named lock alone does not hold when its connection
+// dies (txFence): a second replica can then take the key and run its
+// read-check-insert at the same time. So the storage call runs inside a
+// transaction that first takes the same key with LockNamedKeyInTx: a second
+// replica's transaction waits for this one to end, and its cycle check (its own
+// statements, after the key is granted) reads this one's edge. The storage
+// call's own transaction nests as a savepoint of this one.
 func (c *KeyorixCore) LockedCreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
 	var created *models.SecretDependency
 	err := c.storage.WithNamedLock(ctx, secretDependencyGraphLockKey(d.ProjectID), func(ctx context.Context) error {
 		c.secretDependencyMu.Lock()
 		defer c.secretDependencyMu.Unlock()
-		var cerr error
-		created, cerr = c.storage.CreateSecretDependencyExclusive(ctx, d)
-		return cerr
+		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := lockNamedKeysInTxOn(ctx, tx, secretDependencyGraphLockKey(d.ProjectID)); err != nil {
+				return err
+			}
+			var cerr error
+			created, cerr = tx.CreateSecretDependencyExclusive(ctx, d)
+			return cerr
+		})
 	})
 	if err != nil {
 		return nil, err
