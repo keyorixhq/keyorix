@@ -575,6 +575,14 @@ class DeclarationRefinement(unittest.TestCase):
         # the same code in a package the binary does not link cannot run
         self.assertEqual(self.classify([3], tree=linked, closure=self.LINKED, blocks=[])[0]["uncovered"], [3])
 
+    def test_mention_packages_are_the_non_test_mentions_in_known_packages(self):
+        refs = {"a.go#X": [{"file": "pkg/a.go", "line": 1, "test": False}, {"file": "pkg2/b_test.go", "line": 2, "test": True},
+                           {"file": "other/mod.go", "line": 3, "test": False}],
+                "a.go#Y": [{"file": "pkg3/c.go", "line": 4, "test": False}]}
+        owning = {"pkg/a.go": f"{MOD}/pkg", "pkg3/c.go": f"{MOD}/pkg3"}.get
+        self.assertEqual(cs.mention_packages(refs, owning), {f"{MOD}/pkg", f"{MOD}/pkg3"})
+        self.assertEqual(cs.mention_packages({}, owning), set())
+
     def test_missing_reference_answer_stays_undetermined(self):
         ev = cs.DeclEval({}, lambda p: None, set(), "d", {})
         self.assertEqual(ev.verdict("a.go", {"names": ["x"]}, True), ("undetermined", None))

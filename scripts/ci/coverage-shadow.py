@@ -892,6 +892,11 @@ def run_declrefs(args, run, repo, here, changes):
         return None
 
 
+def mention_packages(refs, owning):
+    """Packages holding a non-test mention of any declaration in declrefs' `refs`."""
+    return {p for sites in refs.values() for site in sites if not site.get("test") for p in [owning(site["file"])] if p}
+
+
 def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here, generated=()):
     """The `refine` callable of measure_dependent for this run."""
     variants = package_variants(sa, packages)
@@ -922,6 +927,9 @@ def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here, gene
         return refine_file(f, res, expand(ranges), profile.get(f, []), info.get(f), linked,
                            compiled[f] and f not in generated, ev, relaxed, legacy)
 
+    # Packages with a non-test mention of a changed declaration: their code must be in the profile,
+    # otherwise a mention there is "unknown" and the declaration can never be judged.
+    refine.mention_pkgs = mention_packages(refs, owning)
     return refine
 
 
@@ -985,13 +993,15 @@ def shadow(args, out, run):
     refine = None
     if sa and coverpkg and not args.no_refine:
         refine = build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here, set(generated))
+    extra_cover = sorted(getattr(refine, "mention_pkgs", set()) - coverpkg) if refine else []
+    coverpkg |= set(extra_cover)
     dsn_map = None
     if args.pg_dsn_map:
         with open(args.pg_dsn_map, encoding="utf-8") as fh:
             dsn_map = json.load(fh)
 
     out.emit({"type": "run", "schema": SCHEMA, **ident, "dependents": len(dependents), "coverpkg": sorted(coverpkg),
-              "changed_go_files": sorted(changes), "generated_files": generated, "deleted_go_files": deleted_files,
+              "changed_go_files": sorted(changes), "coverpkg_extra": extra_cover, "generated_files": generated, "deleted_go_files": deleted_files,
               "lever_a_seeds": len(seeds), "tree_ok": tree_ok, "refine": refine is not None,
               "pg_dsn_per_package": dsn_map is not None})
     log(f"{len(dependents)} lever-A dependents, {len(coverpkg)} changed package(s) under coverage")
