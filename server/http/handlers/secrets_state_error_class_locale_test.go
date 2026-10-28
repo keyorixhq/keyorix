@@ -128,9 +128,8 @@ func TestReassignOwner_ErrorKindsInEveryLocale(t *testing.T) {
 			require.NoError(t, err)
 			w = secretsDo(fh.ReassignOwner, http.MethodPost,
 				fmt.Sprintf(`{"from_owner_id":%d,"to_owner_id":%d}`, secretsAdminID, secretsPlainID), fmt.Sprint(fx.projectID), secretsAdminID)
-			if faulty.Fired() {
-				assert.GreaterOrEqual(t, w.Code, 500, "storage failure on the new owner lookup: %s", w.Body.String())
-			}
+			require.True(t, faulty.Fired(), "the reassignment must reach GetUser")
+			assert.GreaterOrEqual(t, w.Code, 500, "storage failure on the new owner lookup: %s", w.Body.String())
 		})
 	}
 }

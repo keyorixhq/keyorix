@@ -5,7 +5,6 @@ package handlers
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -36,9 +35,9 @@ func (h *SecretHandler) GetSecretAccessStats(w http.ResponseWriter, r *http.Requ
 	stats, err := h.coreService.GetSecretAccessStats(r.Context(), uint(id), userCtx.UserID, days)
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case isSecretNotFound(err):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
+		case isPermissionRefusal(err):
 			h.sendError(w, "Forbidden", "Not authorized to view this secret", http.StatusForbidden, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to compute access stats", http.StatusInternalServerError, nil)
