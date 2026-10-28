@@ -11,12 +11,24 @@ Threat rows: [`security/threat-models/agent-delegation-tokens.md`](security/thre
 Demo script (future CLI): [`demo/attenuating-agent-tokens.md`](demo/attenuating-agent-tokens.md).
 
 **Source of the external format.** IETF Internet-Draft
-`draft-niyikiza-oauth-attenuating-agent-tokens-02` ("AAT"), dated 2026-10-20. It was
-read in this session from the author's source file
-(`github.com/tenuo-ai/tenuo`, `ietf/draft-niyikiza-oauth-attenuating-agent-tokens-02.md`,
-SHA-256 `a44a309a…87bb`), because the sandbox cannot reach ietf.org. **[VERIFY]** that
-the datatracker copy of -02 matches. Statements below about the draft come from that
-text. Statements about the RFCs it builds on (RFC 9396 RAR, RFC 7800 `cnf`, RFC 8693
+`draft-niyikiza-oauth-attenuating-agent-tokens-02` ("AAT"), **published on the IETF
+datatracker on 2026-10-26** and expiring 2027-04-29:
+<https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/>.
+Statements below about the draft come from that published text.
+
+*Resolved, 2026-10-28 — the earlier [VERIFY] on this point.* This ADR was first
+written against a pre-publication working copy of -02 taken from the author's
+repository (`github.com/tenuo-ai/tenuo`,
+`ietf/draft-niyikiza-oauth-attenuating-agent-tokens-02.md`, SHA-256 `a44a309a…87bb`,
+commit `de8cc33`, 2026-10-21), because the sandbox could not reach ietf.org. That copy
+is **not** the published -02: the author revised -02 in place before submission. The
+published text differs in two rules this ADR and the SMT model depend on, both recorded
+below (decision 6 and decision 14). The author notified us of both on 2026-10-28.
+**Pin by commit, not by version number:** a draft revision number is not immutable
+before publication. The conformance pin is now the published datatracker text plus the
+vector suite SHA-256 that `compare_results.py` prints.
+
+Statements about the RFCs it builds on (RFC 9396 RAR, RFC 7800 `cnf`, RFC 8693
 token exchange, RFC 9449 DPoP, RFC 7638/9278 thumbprints, RFC 8785 JCS) repeat what the
 draft says about them. Those RFCs were not read here, so each is **[VERIFY]**.
 
@@ -49,9 +61,14 @@ Each item states the decision and why.
    Tokens, the PoP JWT, the presentation object and the Section 8 verification
    algorithm follow the draft. *Why:* the draft ships byte-exact test vectors.
    Conformance can therefore be tested, not asserted. The RD-AAT-1 prototype verifier
-   matches all 224 published vectors, both the verdict and the first failing step
-   (design note, "Prototype"). A private format would need its own cryptographic
-   review and would not interoperate.
+   matched all 224 vectors published at the time, both the verdict and the first
+   failing step (design note, "Prototype"). **The suite is now 229 vectors**
+   (2026-10-28). The 224 already run are byte-identical — none was changed or removed —
+   so that result stands; five vectors have never been run: `J.9.6`, `J.16.7`,
+   `J.16.8`, `J.21.22`, `J.21.23`. The prototype was throwaway and is not in the repo,
+   so re-running waits on the step-1 verifier of the implementation plan. Until then
+   this ADR claims 224/229, not full conformance. A private format would need its own
+   cryptographic review and would not interoperate.
 
 2. **Keyorix is the root issuer.** It signs root tokens with a dedicated Ed25519
    issuer key that is used for nothing else. The key is wrapped by the KEK hierarchy
@@ -60,6 +77,15 @@ Each item states the decision and why.
    in the trust-anchor set for one maximum root lifetime. *Why:* the draft leaves
    trust-anchor management to deployments. A key that only signs AATs limits the
    damage if it leaks, and the overlap makes rotation possible without downtime.
+
+   With more than one anchor configured, the verifier MUST compare a root's `iss`
+   with the issuer of the anchor **whose key verified the signature** (Section 8,
+   step 3k; RFC 8725 Section 3.8), not with the issuer of any configured anchor.
+   Keyorix's own rotation keeps one issuer and two keys, so this is invisible in a
+   Keyorix deployment — but the offline verifier of decision 8 may be configured with
+   anchors from several issuers, where accepting any anchor's issuer would let a root
+   from one issuer pass as another. Vectors `J.21.22` (DENY, step 3k) and `J.21.23`
+   (PERMIT) are the red/green pair for exactly this, and neither has been run.
 
 3. **A root token is an agent session in AAT form.** The agent evidence ledger
    design (ADR-118, RD-AGENT-LEDGER-1, open as PR #3668) makes an agent a
@@ -107,6 +133,34 @@ Each item states the decision and why.
    with an unregistered extension type is not conformant, and verifiers that lack
    the type fail closed. Shipping it unregistered would break interoperability with
    any third-party verifier.
+
+   **Two I4 rules changed between the pinned copy and the published -02** (2026-10-28).
+   Both are in Section 4.5 and both are inside the SMT model's scope (decision 14,
+   parts B and C):
+
+   - *Constraint-map keys — the omitted-key rule no longer applies to `"*"`.*
+     Published text: "The derived map MAY omit a key **other than `"*"`** that the
+     parent names only if the parent marks it optional and the derived map does not
+     contain `"*"`." The pinned copy had no "other than `"*"`" carve-out. That older
+     wording was self-contradictory: a `"*"` entry must be a wildcard with no
+     `optional` member, so under it a derived map could never drop `"*"` — while the
+     very next bullet says dropping `"*"` narrows and is allowed. The published text
+     is the fix. **No vector covers this**; it is a text-level correction, so part C
+     of the SMT model is the only place it is checked. Part C must be re-run with
+     `"*"` excluded from the omitted-key obligation, and its "five key rules, each
+     load-bearing" claim re-counted.
+
+   - *`any` — splitting a parent clause is valid; union coverage is not.* Published
+     text: "Dropping, narrowing, or splitting clauses is valid. A derived clause that
+     no single parent clause subsumes is invalid, **even when the parent's clauses
+     together accept every value it accepts**." The pinned copy said only that
+     removing clauses is valid and that adding an unsubsumed clause is invalid, which
+     left "splitting" open to being read as an invalid addition. The rule the model
+     already encodes (`∀j ∃i m_ij`, no one-to-one matching — design note part B) is
+     the published rule, so **the model's encoding is believed correct as written**;
+     what was stale is the prose, not the obligation. Vectors `J.16.7` (split →
+     PERMIT) and `J.16.8` (union-covered → DENY, step 4p4) are the red/green pair and
+     must be run before this is asserted rather than believed.
 
 7. **At the Keyorix server, a verified chain only narrows the session's live
    authority.** The server runs Section 8 in process, with no lookup per derived
@@ -200,6 +254,17 @@ Each item states the decision and why.
     satisfiable. In CI, the vectors and Go property tests carry the guarantee. The
     solver model runs outside CI, like `docs/formal/smt` (RD-SMT-SPIKE-1).
 
+    **Re-run against the published -02 before any of this is quoted** (2026-10-28).
+    The model was built against the pre-publication copy, and the two Section 4.5
+    rules recorded in decision 6 are inside parts B and C. Part B's obligation
+    (`∀j ∃i`) already matches the published `any` rule and is expected to re-prove
+    unchanged; part C's key-rule obligations must have `"*"` excluded from the
+    omitted-key rule. The model was throwaway and is not in the repo either, so this
+    re-run is step 9 of the implementation plan, not a quick fix. Until it is done,
+    the "machine-checked soundness of the draft's I4 rules" claim is a claim about
+    the pinned copy, not about the published draft — it must not appear in ENISA,
+    NGI, investor or conference material in the meantime.
+
 ## Monotonic attenuation, stated once
 
 For a chain `root = T0, …, Tn = leaf` accepted at time `t`:
@@ -241,6 +306,14 @@ everything that offline verification buys rests on the issuance-time inclusion
 - **The draft is young and changing.** Between -01 and -02 it made breaking changes
   (explicit `typ`, `Ed25519` instead of `EdDSA`, `aat_hash`, the optional/`"*"`
   arguments). Pin one revision, and keep the vectors as the conformance test.
+  **Stronger, after 2026-10-28:** -02 itself changed between the working copy we
+  pinned on 2026-10-21 and publication on 2026-10-26, in two Section 4.5 rules
+  (decision 6). A revision number is not a pin before the draft is published. Pin the
+  datatracker text plus the vector-suite SHA-256, re-check both at each revision, and
+  treat any conformance claim as scoped to the suite hash it was measured against.
+  Mitigation that worked here: the author contacted us directly, which is an argument
+  for reporting our results upstream (INTEROP.md) rather than running the suite
+  privately.
 - **The extension type registration is undecided** (whether to use an IANA registry
   or a URI type is open in the draft). This keeps `keyorix_ref_glob` off in v1
   (decision 6, Decision A1).
