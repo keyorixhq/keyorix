@@ -144,12 +144,10 @@ func runMFAResetCrossReplicaApproval(t *testing.T, open func() *gorm.DB, migrate
 	approvals := make([]*MFAResetApproval, len(racers))
 	errs := make([]error, len(racers))
 	for i := range racers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			approvals[i], errs[i] = racers[i].core.ApproveMFAReset(ctx, racers[i].id, false, req.ID, racers[i].code)
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()
