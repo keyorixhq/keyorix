@@ -66,7 +66,7 @@ func riskBand(score int) string {
 func (c *KeyorixCore) ComputeSecretRiskScore(ctx context.Context, secretID uint) (*SecretRiskScore, error) {
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("secret not found: %w", err)
+		return nil, secretLookupError(err)
 	}
 	now := c.now()
 

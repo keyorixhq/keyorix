@@ -96,7 +96,7 @@ func (c *KeyorixCore) ListSecretAccessors(ctx context.Context, secretID, actorID
 	}
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+		return nil, secretLookupError(err)
 	}
 	result := &SecretAccessorsResult{}
 

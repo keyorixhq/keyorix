@@ -41,6 +41,14 @@ func errSecretValidation(cause error) error {
 	return storage.Typed(ErrSecretInvalidInput, fmt.Sprintf("%s: %v", i18n.T("ErrorValidation", nil), cause), cause)
 }
 
+// ErrUnsupportedExportFormat: an access-log export asked for a format other than
+// csv or json. The handler answers 400.
+var ErrUnsupportedExportFormat = errors.New("unsupported export format")
+
+func errUnsupportedExportFormatf(format string) error {
+	return storage.Typed(ErrUnsupportedExportFormat, fmt.Sprintf("unsupported export format %q: must be csv or json", format), nil)
+}
+
 // errSecretNotFoundText is the not-found refusal for a secret that a write
 // matched no row of (it was deleted between the read and the write). It renders
 // the translated i18n text exactly as before and matches
