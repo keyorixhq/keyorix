@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -226,7 +227,11 @@ func relatedType(a Asset) string {
 
 func algorithmComponent(a Asset, ref string) cdxComponent {
 	alg := &cdxAlgorithm{Primitive: a.Primitive, CryptoFuncs: cryptoFuncs(a.Primitive)}
-	if a.KeySizeBits > 0 {
+	if a.Primitive == "hash" {
+		// For a hash the identifier is the digest length (SHA-256 -> "256"), not the
+		// size of the secret it verifies (the recovery key is 260 bits).
+		alg.ParameterSet = digestBits(a.Algorithm)
+	} else if a.KeySizeBits > 0 {
 		alg.ParameterSet = fmt.Sprint(a.KeySizeBits)
 	}
 	if a.Certificate != nil {
@@ -253,6 +258,17 @@ func algorithmComponent(a Asset, ref string) cdxComponent {
 		Type: "cryptographic-asset", BomRef: ref, Name: a.Algorithm,
 		CryptoProperties: cdxCrypto{AssetType: "algorithm", Algorithm: alg},
 	}
+}
+
+// digestBits returns the digest length in a hash name such as "SHA-256" or
+// "SHA3-512", or "" when the name does not end in one (the field is then omitted).
+func digestBits(name string) string {
+	if i := strings.LastIndexByte(name, '-'); i >= 0 {
+		if _, err := strconv.Atoi(name[i+1:]); err == nil {
+			return name[i+1:]
+		}
+	}
+	return ""
 }
 
 func cryptoFuncs(primitive string) []string {
