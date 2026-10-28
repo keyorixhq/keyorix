@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // txFence is the in-transaction half of a WithNamedLock section
@@ -92,5 +93,32 @@ func sodUserGrantFence(userID uint, roleIDs []uint, scope Scope) txFence {
 			return err
 		}
 		return requireNoSoDViolationOn(ctx, tx, userID, roleIDs, scope)
+	}
+}
+
+// sodGroupGrantFence is the fence of a grant of roleID to a group whose
+// members withGroupMemberSoDLocks snapshotted (and named-locked, in ascending
+// ID order): it row-locks every active member's user row in the same order,
+// then re-runs the group grant's separation-of-duties check through tx on that
+// same snapshot. A direct grant to a member, or another group grant reaching
+// one, locks that member's row too (sodUserGrantFence, this fence), so the two
+// transactions serialize and the later one's check sees the earlier one's
+// grant.
+func sodGroupGrantFence(roleID uint, members []*models.User) txFence {
+	ids := make([]uint, 0, len(members))
+	for _, m := range members {
+		if m.IsActive {
+			ids = append(ids, m.ID)
+		}
+	}
+	return func(ctx context.Context, tx storage.Storage) error {
+		if err := lockUserRowsOn(ctx, tx, ids...); err != nil {
+			return err
+		}
+		policies, adding, needed, err := groupGrantSoDContextOn(ctx, tx, roleID)
+		if err != nil || !needed {
+			return err
+		}
+		return requireGroupGrantNoSoDViolationOn(ctx, tx, members, policies, adding)
 	}
 }

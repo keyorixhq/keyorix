@@ -724,21 +724,26 @@ func requireNoSoDViolationOn(ctx context.Context, st storage.Storage, userID uin
 // lock on every group-role grant; the member-lock dance only runs when a
 // policy could genuinely be affected.
 func (c *KeyorixCore) groupGrantSoDContext(ctx context.Context, roleID uint) (policies []*models.SoDPolicy, adding map[string]bool, needed bool, err error) {
-	policies, err = c.storage.ListSoDPolicies(ctx)
+	return groupGrantSoDContextOn(ctx, c.storage, roleID)
+}
+
+// groupGrantSoDContextOn is groupGrantSoDContext read through st.
+func groupGrantSoDContextOn(ctx context.Context, st storage.Storage, roleID uint) (policies []*models.SoDPolicy, adding map[string]bool, needed bool, err error) {
+	policies, err = st.ListSoDPolicies(ctx)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 	}
 	if len(policies) == 0 {
 		return nil, nil, false, nil
 	}
-	role, err := c.storage.GetRole(ctx, roleID)
+	role, err := st.GetRole(ctx, roleID)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 	}
 	if isAdminRoleName(role.Name) {
 		return nil, nil, false, nil
 	}
-	adding, err = c.rolePermissionNameSet(ctx, roleID)
+	adding, err = rolePermissionNameSetOn(ctx, st, roleID)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 	}
@@ -772,18 +777,23 @@ func (c *KeyorixCore) groupGrantSoDContext(ctx context.Context, roleID uint) (po
 // it decides whether to acquire member locks at all — this function no
 // longer re-derives them (or re-applies their early-outs) itself.
 func (c *KeyorixCore) requireGroupGrantNoSoDViolation(ctx context.Context, members []*models.User, policies []*models.SoDPolicy, adding map[string]bool) error { // nosemgrep: keyorix-unbounded-bulk-slice-param -- members is withGroupMemberSoDLocks's own ListGroupMembers(ctx, groupID) result (that group's actual membership), not a raw client-supplied array in one request
+	return requireGroupGrantNoSoDViolationOn(ctx, c.storage, members, policies, adding)
+}
+
+// requireGroupGrantNoSoDViolationOn is requireGroupGrantNoSoDViolation read through st.
+func requireGroupGrantNoSoDViolationOn(ctx context.Context, st storage.Storage, members []*models.User, policies []*models.SoDPolicy, adding map[string]bool) error { // nosemgrep: keyorix-unbounded-bulk-slice-param -- members is withGroupMemberSoDLocks's own ListGroupMembers(ctx, groupID) result (that group's actual membership), not a raw client-supplied array in one request
 	for _, m := range members {
 		if !m.IsActive {
 			continue
 		}
-		adminRole, err := c.isGlobalAdminRoleName(ctx, m.ID)
+		adminRole, err := isGlobalAdminRoleNameOn(ctx, st, m.ID)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 		}
 		if adminRole != "" {
 			continue
 		}
-		held, err := c.userHeldPermissionSet(ctx, m.ID)
+		held, err := userHeldPermissionSetOn(ctx, st, m.ID)
 		if err != nil {
 			return fmt.Errorf("failed to evaluate separation-of-duties policy: %w", err)
 		}

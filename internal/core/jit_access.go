@@ -92,21 +92,21 @@ func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, gr
 	// grant to one of this group's members — see withGroupMemberSoDLocks
 	// (rbac_management.go).
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("group", groupID), func(ctx context.Context) error {
-		write := func(ctx context.Context) error {
-			return c.grantGroupRoleAudited(ctx, actorID, groupID, roleID, scope, &expiresAt)
+		write := func(ctx context.Context, fence txFence) error {
+			return c.grantGroupRoleAudited(ctx, fence, actorID, groupID, roleID, scope, &expiresAt)
 		}
 		policies, adding, needed, err := c.groupGrantSoDContext(ctx, roleID)
 		if err != nil {
 			return err
 		}
 		if !needed {
-			return write(ctx)
+			return write(ctx, noTxFence)
 		}
 		return c.withGroupMemberSoDLocks(ctx, groupID, func(ctx context.Context, members []*models.User) error {
 			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
 				return err
 			}
-			return write(ctx)
+			return write(ctx, sodGroupGrantFence(roleID, members))
 		})
 	})
 }

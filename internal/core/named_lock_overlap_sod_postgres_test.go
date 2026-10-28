@@ -110,3 +110,39 @@ func TestNamedLockOverlap_SoD_ConcurrentWriteTransactions_Postgres(t *testing.T)
 		})
 	}
 }
+
+// The group-grant fence: A grants the roles.assign half to the target's group,
+// B the secrets.delete half to the target directly; B starts at A's grant write
+// (after A's fence row-locked the member) and must wait for A's transaction.
+func TestNamedLockOverlap_SoDGroupGrant_ConcurrentWriteTransactions_Postgres(t *testing.T) {
+	t.Parallel()
+	dsn, setupDB := newPGLastAdminSchemaDSN(t)
+	proj, roleA, roleB, user, _ := seedSoDPG(t, setupDB)
+	grp := models.Group{Name: "sod-members"}
+	require.NoError(t, setupDB.Create(&grp).Error)
+	require.NoError(t, setupDB.Create(&models.UserGroup{UserID: user, GroupID: grp.ID}).Error)
+	closePG(setupDB)
+	scope := Scope{ProjectID: proj}
+
+	errA, errB, early := overlapPGRun(t, dsn, func(start func()) *storagetest.StoreHooks {
+		return &storagetest.StoreHooks{AssignRoleToGroup: func(next storage.Storage, ctx context.Context, groupID, roleID uint, sc storage.Scope) error {
+			start()
+			return next.AssignRoleToGroup(ctx, groupID, roleID, sc)
+		}}
+	}, func(ctx context.Context, c *KeyorixCore) error {
+		return c.AssignRoleToGroup(ctx, 0, grp.ID, roleA, scope, false)
+	}, func(ctx context.Context, c *KeyorixCore) error {
+		return c.AssignUserRole(ctx, 0, user, roleB, scope, false)
+	})
+
+	check := pgOpen(t, dsn)
+	defer closePG(check)
+	var groupGrants, directGrants int64
+	require.NoError(t, check.Model(&models.GroupRole{}).Where("group_id = ? AND role_id = ?", grp.ID, roleA).Count(&groupGrants).Error)
+	require.NoError(t, check.Model(&models.UserRole{}).Where("user_id = ? AND role_id = ?", user, roleB).Count(&directGrants).Error)
+	require.NoError(t, errA, "replica A held the member's row first and must win")
+	require.False(t, early, "replica B's grant transaction must wait for A's (it finished while A's was open: %v)", errB)
+	require.False(t, groupGrants == 1 && directGrants == 1, "two overlapping grant transactions gave the member both halves of a toxic pair (A: %v, B: %v)", errA, errB)
+	require.Error(t, errB)
+	require.True(t, strings.Contains(errB.Error(), "separation-of-duties"), "replica B is refused by the in-transaction re-check, got: %v", errB)
+}

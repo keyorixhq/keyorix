@@ -232,21 +232,21 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	// #1780: the group key alone does not serialize against a concurrent DIRECT
 	// grant to one of this group's members — see withGroupMemberSoDLocks.
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("group", groupID), func(ctx context.Context) error {
-		write := func(ctx context.Context) error {
-			return c.grantGroupRoleAudited(ctx, actorID, groupID, roleID, scope, nil)
+		write := func(ctx context.Context, fence txFence) error {
+			return c.grantGroupRoleAudited(ctx, fence, actorID, groupID, roleID, scope, nil)
 		}
 		policies, adding, needed, err := c.groupGrantSoDContext(ctx, roleID)
 		if err != nil {
 			return err
 		}
 		if !needed {
-			return write(ctx)
+			return write(ctx, noTxFence)
 		}
 		return c.withGroupMemberSoDLocks(ctx, groupID, func(ctx context.Context, members []*models.User) error {
 			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
 				return err
 			}
-			return write(ctx)
+			return write(ctx, sodGroupGrantFence(roleID, members))
 		})
 	})
 }
@@ -658,11 +658,15 @@ func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, fence txFence, a
 // (AssignRoleToGroup, AssignGroupRoleWithExpiry): the group_roles row and its
 // role.group_assigned audit row commit together. Same role-scope check as
 // grantUserRoleAudited: the DEMO-WALK-4 grant was a group grant (#3546).
-func (c *KeyorixCore) grantGroupRoleAudited(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt *time.Time) error {
+// fence runs first in the grant's transaction (txFence, NAMEDLOCK-OVERLAP-2).
+func (c *KeyorixCore) grantGroupRoleAudited(ctx context.Context, fence txFence, actorID, groupID, roleID uint, scope Scope, expiresAt *time.Time) error {
 	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
 		return err
 	}
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := fence(ctx, tx); err != nil {
+			return err
+		}
 		var err error
 		if expiresAt != nil {
 			err = tx.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, *expiresAt)

@@ -140,3 +140,45 @@ func TestNamedLockOverlap_SoD_UserAndMachine_NoToxicPair(t *testing.T) {
 		})
 	}
 }
+
+// Family "SoD, group principals": holder A grants the roles.assign half to
+// group 31, whose only member is user 1; holder B grants the secrets.delete
+// half to user 1 directly inside A's lost-lock window. A's group grant must be
+// refused for that member.
+func TestNamedLockOverlap_SoD_GroupGrant_NoToxicPair(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name   string
+		grantA func(ctx context.Context, c *core.KeyorixCore) error
+	}{
+		{"AssignRoleToGroup", func(ctx context.Context, c *core.KeyorixCore) error {
+			return c.AssignRoleToGroup(ctx, 99, 31, 21, core.Scope{ProjectID: 3}, false)
+		}},
+		{"AssignGroupRoleWithExpiry", func(ctx context.Context, c *core.KeyorixCore) error {
+			return c.AssignGroupRoleWithExpiry(ctx, 99, 31, 21, core.Scope{ProjectID: 3}, time.Now().Add(time.Hour), false)
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			db := newOverlapSoDFixture(t)
+			require.NoError(t, db.Create(&models.Group{ID: 31, Name: "empty-handed"}).Error)
+			require.NoError(t, db.Create(&models.UserGroup{UserID: 1, GroupID: 31}).Error)
+			replicaB := core.NewKeyorixCore(store.NewLocalStorage(db))
+			overlap := newLockLossOverlap(t, "sod-grant:group:31", func(ctx context.Context) error {
+				return replicaB.AssignUserRole(ctx, 99, 1, 22, core.Scope{ProjectID: 3}, false)
+			})
+			replicaA := core.NewKeyorixCore(overlap.store(store.NewLocalStorage(db)))
+
+			errA := tc.grantA(context.Background(), replicaA)
+			t.Logf("holder A: %v; holder B: %v", errA, overlap.secondErr)
+			overlap.requireFired()
+
+			require.NoError(t, overlap.secondErr, "holder B granted one half alone and must succeed")
+			require.False(t, holdsBothHalves(t, db, false),
+				"holder A's group grant committed after holder B's direct grant inside A's lost-lock window: the member holds a toxic pair (A's error: %v)", errA)
+			require.Error(t, errA)
+			require.True(t, strings.Contains(errA.Error(), "separation-of-duties"), "A is refused by the separation-of-duties check, got: %v", errA)
+		})
+	}
+}
