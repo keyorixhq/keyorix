@@ -86,6 +86,10 @@ Do not recover on that host: a recovered KEK on a compromised host is a disclose
 - `init` in a signed mode verifies once, before it reports success, that the current boot
   satisfies the policy it just created. The same rule exists for systemd-cryptenroll's
   `--tpm2-signature` ([S2]).
+- The default-mode chain (ADR-117 D10.5) is evaluated once, at `init`. `reseal` and `recover` use
+  the mode recorded in config/the blob, never re-detecting it; a missing input for that recorded
+  mode at `reseal`/`recover` time is a refusal (the rule above), not a silent re-pick of a weaker
+  mode.
 - Recovery is never reachable over HTTP or gRPC, and never triggered by the server itself.
 
 ## 5. Lab prerequisites (pending e2e VM / hardware)

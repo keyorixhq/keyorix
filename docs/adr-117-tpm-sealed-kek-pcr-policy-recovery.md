@@ -67,22 +67,21 @@ in use.
 - With a policy, the sealed object's `authPolicy` is the PolicyPCR digest and `UserWithAuth` is
   **false**, so the password path is closed. Prototype: a password-session unseal of such an
   object is refused with `TPM_RC_AUTH_UNAVAILABLE`.
-- PCR 7 (Secure Boot state and the authorities that verified the boot chain [VERIFY: TCG PC
-  Client Platform Firmware Profile]) is the default. Firmware updates normally move PCR 0 and 2,
-  and kernel or initrd updates move PCR 4, 8, 9 or 11 [VERIFY], so those PCRs would turn every
-  routine update into a recovery event. A custom list is allowed with a warning.
+- PCR 7 (Secure Boot state and the authorities that verified the boot chain, per the
+  systemd-cryptenroll PCR table [S2]) is the default. Firmware updates normally move PCR 0 and 2,
+  and kernel or initrd updates move PCR 4, 9 or 11; PCR 8 is still `[VERIFY]`. Those PCRs would
+  turn every routine update into a recovery event. A custom list is allowed with a warning.
 - When Secure Boot is off, `secure-boot` mode refuses to seal unless the operator explicitly allows
   it, because binding to "Secure Boot disabled" proves very little.
 - *Amendment A:* D10 proposes ranking a signed policy (`signed-uki`, `pcrlock`) above `secure-boot`.
   Under D10, raw PCR 7 becomes the fallback for hosts without a UKI PCR signature or a pcrlock
-  policy. The two `[VERIFY]` marks on PCR meanings above are now settled for PCR 0, 4, 7 and 11 by
-  the systemd-cryptenroll PCR table ([S2]). PCR 9 is settled too.
+  policy.
 
 *Why:* PCR 7 changes rarely (Secure Boot toggled, db/dbx/KEK/PK updated, a boot chain signed by a
-different authority) and is the selection other unattended-unlock tools default to [VERIFY:
-systemd-cryptenroll, BitLocker]. **What it does not give** (Technical risks below): protection
-against root on the running, correctly booted host, and against a different OS image signed under
-the **same** authority chain.
+different authority) and is the selection other unattended-unlock tools default to, per the
+systemd-cryptenroll PCR table ([S2]; also BitLocker's choice). **What it does not give** (Technical
+risks below): protection against root on the running, correctly booted host, and against a
+different OS image signed under the **same** authority chain.
 
 ### D3. A recovery slot outside the TPM, required whenever a PCR policy is on
 
@@ -240,11 +239,19 @@ Proposed modes for `key_provider.tpm.pcr_policy`, in order of preference:
    after it]. Restricting the unseal to one phase (a `--policyref`, [S3]) is left for a later
    revision. Note the asymmetry: a key signed for the `enter-initrd` phase only (Example 3 in
    [S3]) would deliberately **not** unseal for Keyorix.
-2. **What `signed-uki` gives up.** PCR 11 covers the UKI's sections and the boot-phase strings
-   ([S5]). It does not cover PCR 7 (Secure Boot state) or PCR 12 (kernel command line overrides,
-   add-ons, credentials, [S5]). Adding PCR 7 back brings back the db/dbx breakage, so the mode
-   binds PCR 11 only, the same as systemd's default `--tpm2-public-key-pcrs` ([S2]). A combined
-   `signed-uki+pcr7` is deferred. The PCR 12 gap is a Technical risk row below.
+2. **What `signed-uki` gives up, and the Secure Boot condition (D10.5).**
+   PCR 11 covers the UKI's sections and the boot-phase strings ([S5]). It does not cover PCR 12
+   (kernel command line overrides, add-ons, credentials, [S5]): with Secure Boot off,
+   systemd-stub accepts an overridden command line, measures it into PCR 12 (not PCR 11), and a
+   genuine, same-authority UKI booted that way still unseals under a PCR-11-only policy. So
+   `signed-uki` also binds PCR 7 (Secure Boot state, D2) alongside the PolicyAuthorize term over
+   PCR 11 — TPM-enforced, not a software check — and is only offered when Secure Boot is on; a
+   host with a signed UKI but Secure Boot off does not get `signed-uki` (D10.5). This reintroduces
+   the db/dbx recovery event on Secure Boot certificate changes, the same cost `secure-boot` mode
+   already carries, which Amendment A accepts to close the override path. `signed-uki+pcr7` is the
+   default, not deferred. The PCR 12 gap itself is closed by this Secure Boot condition rather than
+   by binding PCR 12 directly (binding PCR 12 would break on every command-line change, including
+   legitimate ones).
 3. **`pcrlock`.** systemd-pcrlock predicts PCR values from the event log and `.pcrlock` component
    files. Each component may list alternative variants, for example the old and the new kernel.
    It writes the resulting policy into a TPM NV index, and secrets bind to it through
@@ -262,26 +269,28 @@ Proposed modes for `key_provider.tpm.pcr_policy`, in order of preference:
    ([S2]). A raw `0,2,4,7` binding breaks on every firmware update (PCR 0) and boot loader update
    (PCR 4) ([S2]), which is the Flatcar failure ([S1]). It stays reachable only through `custom`,
    with a warning that names the PCRs and the updates that move them.
-5. **Default (changes Decision 2; NEEDS ANDREI).** For new installs: `signed-uki` when the host
-   booted a UKI with a PCR signature and public key; else `pcrlock` when an initialised pcrlock
-   policy exists; else `secure-boot` when Secure Boot is on; else `none` with a posture note.
-   Existing installs keep their mode. Every mode other than `none` requires the recovery slot
-   (D3, unchanged).
+5. **Default (changes Decision 2; resolved 2026-10-28, Andrei).** For new installs: `signed-uki`
+   when the host booted a UKI with a PCR signature and public key **and Secure Boot is on**
+   (D10.2); else `pcrlock` when an initialised pcrlock policy exists; else `secure-boot` when
+   Secure Boot is on; else `none` with a posture note. A host with a signed UKI but Secure Boot
+   off does not get `signed-uki` — it falls through to `pcrlock` or `secure-boot` by the same
+   rule, same as any other host without it. Existing installs keep their mode. Every mode other
+   than `none` requires the recovery slot (D3, unchanged).
 
 #### Comparison: raw PCR set, PCR 7 only, signed policy
 
 The TPM mechanics follow [S2] to [S5]. Rows marked [VERIFY] are reasoned from those texts and
 still need lab confirmation (D8).
 
-| Aspect | Raw 0, 2, 4, 7 | PCR 7 only (`secure-boot`) | Signed PCR 11 (`signed-uki`) | `pcrlock` |
+| Aspect | Raw 0, 2, 4, 7 | PCR 7 only (`secure-boot`) | Signed PCR 11+7 (`signed-uki`, D10.2) | `pcrlock` |
 |---|---|---|---|---|
-| Firmware update | PCR 0 changes: refused, recovery event ([S2]) | Usually no change, unless the update also changes Secure Boot certificates ([S2]) | No effect on PCR 11 | `unlock-firmware-code` before the update, then `make-policy` ([S4]) |
+| Firmware update | PCR 0 changes: refused, recovery event ([S2]) | Usually no change, unless the update also changes Secure Boot certificates ([S2]) | No effect on PCR 11; same PCR 7 exposure as `secure-boot` (previous column) | `unlock-firmware-code` before the update, then `make-policy` ([S4]) |
 | Boot loader or kernel update | PCR 4 changes: refused ([S2]). Flatcar: remove the binding before updating ([S1]) | No change while the same authority signs the new binary [VERIFY] | The new UKI carries its own signature, so it unseals. No Keyorix step | The new kernel is added as a variant and the policy is updated ([S4]) |
 | Rollback to an older, still trusted image | Refused: PCR 4 differs | **Unseals**: same authority, same PCR 7 | **Unseals for every UKI ever signed with the key.** systemd-measure documents no revocation ([S3]). Needs a key rotation or dbx/SBAT revocation of the old binary [VERIFY] | Refused once the old variant is dropped and `make-policy` rewrites the NV index (TPM-enforced) [VERIFY] |
 | Dual-boot: another OS on the same machine | Its boot loader gives a different PCR 4: refused | **Unseals if that OS is verified by the same authority** (existing risk row) | Refused unless it boots a UKI signed by the same key | Refused when its measurements are not in the locked set [VERIFY] |
-| Secure Boot db/dbx/KEK/PK change | PCR 7 changes: refused | PCR 7 changes: refused ([S2]). This is the main recovery trigger | No effect (PCR 7 not bound) | `unlock-firmware-config` before the change, then `make-policy` ([S4]) |
+| Secure Boot db/dbx/KEK/PK change | PCR 7 changes: refused | PCR 7 changes: refused ([S2]). This is the main recovery trigger | PCR 7 changes: refused, same recovery event as `secure-boot` (D10.2) | `unlock-firmware-config` before the change, then `make-policy` ([S4]) |
 | Signing key or pcrlock state lost | n/a | n/a | New UKIs signed with a new key do not unseal: recovery code (D3), then reseal to the new key | Recovery PIN for the NV index ([S4]). If that fails, the Keyorix recovery code |
-| Offline attacker: disk or data dir copied, boot chain modified | Refused | Refused for an unsigned or other-authority chain. **Unseals** for a same-authority OS | Refused for any UKI without a signature from the key | Refused for measurements outside the policy |
+| Offline attacker: disk or data dir copied, boot chain modified | Refused | Refused for an unsigned or other-authority chain. **Unseals** for a same-authority OS | Refused: no signature from the key refuses an unsigned/other image; Secure Boot off refuses on the PCR 7 term; with Secure Boot on, systemd-stub itself refuses a command-line override, so the genuine UKI cannot be rebooted into a debug shell either | Refused for measurements outside the policy |
 | Root on the running, correctly booted OS **can** | Unseal now, read the KEK from process memory, extend a PCR to block unseal until reboot (DoS), run Keyorix `reseal` as the service user | Same | Same | Same, and also re-run `make-policy` to bless new boot states [VERIFY: access-PIN protection, D10.3] |
 | Root on the running OS **cannot** | Make the blob unseal on another TPM; reset a PCR without a reboot; change the policy of an existing sealed object | Same | Same, and authorise a new PCR 11 value **if the signing key is kept off the host** | Same as raw, except changing the policy (pcrlock policy is host-owned) |
 
@@ -323,7 +332,10 @@ The full procedures are in the design note. The decisions:
    `secure-boot` to `none`) or to another provider, beyond the existing `AllowWeakerFallback`
    rules, which stay off by default and audited. A missing signature file, a missing pcrlock NV
    index or an unreadable public key is a refusal, never "seal without policy". Recovery is only
-   the explicit, offline, audited command. The server never recovers on its own.
+   the explicit, offline, audited command. The server never recovers on its own. The D10.5 chain
+   is evaluated once, at `init`; `reseal` and `recover` use the mode recorded in config/the blob,
+   never re-detecting it, so a missing input at `reseal`/`recover` time is a refusal under this
+   rule rather than a silent downgrade to whatever the chain would now pick.
 
 ### D12. Principle: Keyorix never claims to detect a compromised OS
 
@@ -392,8 +404,8 @@ What this design adds, stated modestly:
 2. Recovery use is itself an audited, sticky security event, not a silent unlock.
 3. A failure taxonomy that maps TPM response codes to operator actions, plus software PCR-policy
    prediction to show drift before a reboot fails.
-4. A written statement of what PCR 7 binding does **not** stop (next section), which is evidence
-   in its own right for an assessor.
+4. A written statement of what each mode (`none`/`secure-boot`/`signed-uki`/`pcrlock`) does
+   **not** stop (next section), which is evidence in its own right for an assessor.
 
 This is incremental engineering, not a research result. It should be presented that way in
 funding or certification material.
@@ -404,14 +416,14 @@ signatures ([S3]), and systemd-pcrlock produces NV-index policies for PolicyAuth
 What Keyorix would add is narrow: it consumes the host's existing UKI signature or pcrlock policy
 for an **application** KEK, rather than for a disk, with the same classified fail-closed refusal
 and audited recovery as the PCR modes. It also publishes the comparison and the claims table
-(D10, D12) as assessor evidence. Item 4 above now covers all four modes, not only PCR 7.
+(D10, D12) as assessor evidence. Item 4 above already covers all four modes, not only PCR 7.
 
 ## Technical risks
 
 | Risk | Effect | Mitigation / status |
 |---|---|---|
 | Root on the running, correctly booted host | Unseals: PCRs are correct at runtime | **Not addressed by TPM sealing at all**, same as today. Needs remote attestation (a separate R&D item, e.g. Keylime) or an operator factor at boot |
-| Another OS signed under the same authority (same distro's live image via shim) | PCR 7 can be identical, so it unseals | Stated limit of `secure-boot`. Amendment A (D10): `signed-uki` and `pcrlock` refuse it without adding recovery events on kernel updates |
+| Another OS signed under the same authority (same distro's live image via shim) | PCR 7 can be identical, so it unseals | Stated limit of `secure-boot`. `signed-uki` (D10.2) refuses it only if the operator's signing key signs the one production UKI and never a shared distro/live-image key — PolicyAuthorize accepts any PCR 11 digest that key has signed (D10.1), so a shared key would not refuse it; this is a key-management requirement, not automatic. `pcrlock`'s per-host NV index is unaffected either way and still refuses it |
 | vTPM state copied with the VM image (hypervisor or backup level) | "Stolen VM image" claim fails | Holds only if the vTPM state is not taken with the disk [VERIFY per hypervisor/cloud]. Documented as a limit |
 | fTPM reset by a firmware update; board swap | Blob dead | Recovery slot (D3); runbook step "have the recovery code before updating firmware" |
 | Recovery code leaked | Anyone with the data dir decrypts anywhere | Shown once, TTY only, rotate command, sticky posture after use; D9 for old copies |
