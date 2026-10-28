@@ -9,8 +9,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // maxCertFileBytes bounds how much of a configured certificate file is read.
@@ -33,7 +34,10 @@ func LoadCertificateInfo(path string) (CertInfo, error) {
 // types are skipped unparsed and errors never echo file content. It fails when
 // the file has no certificate or when any selected block is not valid X.509.
 func LoadCertificates(path string, limit int) ([]CertInfo, error) {
-	f, err := os.Open(path) // #nosec G304 -- operator-configured certificate path (tls.cert_file, database ssl_root_cert / sslcert)
+	// Operator-configured certificate path (tls.cert_file, database ssl_root_cert /
+	// sslcert). OpenRegular opens non-blocking and refuses a FIFO or device, so a
+	// mis-pointed path cannot hang the inventory. Symlinks to a regular file are followed.
+	f, _, err := secretenv.OpenRegular(path, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open certificate: %w", err)
 	}
