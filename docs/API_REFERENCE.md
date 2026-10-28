@@ -121,7 +121,7 @@ the match on the hash-covered fields (actor, event type, time) against the log
 line. The id is NULL on rows written by the scheduler or at startup, on rows
 older than schema epoch 6, and on rows from a replica older than that. A row
 that was owed while the audit log refused writes keeps the id of the request that
-caused it (schema epoch 8). Design: `docs/specs/audit-request-id.md`.
+caused it (schema epoch 9). Design: `docs/specs/audit-request-id.md`.
 
 ### A credential with no role grant
 A newly created machine identity holds no role, and its token authenticates but

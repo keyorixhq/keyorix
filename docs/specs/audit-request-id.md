@@ -183,7 +183,7 @@ gRPC request ids (interceptor minting the same id into a holder).
   backfill itself runs inside a request: a late row never takes the id of the pass that
   writes it.
 - **Migration:** `ALTER TABLE pending_audit_events ADD COLUMN request_id TEXT` on both
-  backends (catalog-only on PostgreSQL). **Schema epoch 8, floor unchanged (3):** an epoch-7
+  backends (catalog-only on PostgreSQL). **Schema epoch 9, floor unchanged (3):** an epoch-8
   replica never writes the column, so its owed records have NULL and backfill as "no request
   id", exactly what they had before.
 - Tests: `TestOwedAudit_BackfilledRowKeepsTheRequestID`,

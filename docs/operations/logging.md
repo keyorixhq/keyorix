@@ -61,7 +61,7 @@ Every audit row an HTTP or gRPC request writes stores the server's id in `audit_
 epoch 6). Join an audit row with its log lines on it. A row owed while the audit log refused
 writes (a plain secret suspend, a degraded break-glass activation) is written later by the
 backfill with the id of the request that caused it (`pending_audit_events.request_id`, schema
-epoch 8).
+epoch 9).
 
 To go from a log line to its audit rows, filter by the id:
 
