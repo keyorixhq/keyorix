@@ -69,7 +69,7 @@ func TestNewRFC3161_PositiveTimeout_Respected(t *testing.T) {
 func TestRFC3161_Provider(t *testing.T) {
 	r, err := NewRFC3161("https://freetsa.org/tsr", 5*time.Second)
 	require.NoError(t, err)
-	assert.Equal(t, "rfc3161:https://freetsa.org/tsr", r.Provider())
+	assert.Equal(t, "rfc3161:https://freetsa.org", r.Provider())
 }
 
 // ---------------------------------------------------------------------------

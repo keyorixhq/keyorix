@@ -155,7 +155,7 @@ func wireHumanSSO(cfg *config.Config, coreService *core.KeyorixCore) {
 func ssoCompleteURL(redirectURL string) (string, error) {
 	u, err := url.Parse(redirectURL)
 	if err != nil || u.Scheme == "" || u.Host == "" {
-		return "", fmt.Errorf("invalid redirect_url %q", redirectURL)
+		return "", fmt.Errorf("invalid redirect_url %q", netutil.RedactURLHost(redirectURL))
 	}
 	return u.Scheme + "://" + u.Host + "/auth/sso/complete", nil
 }

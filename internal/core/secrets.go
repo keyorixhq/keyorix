@@ -186,7 +186,13 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	if req.ParentID != nil && *req.ParentID != 0 {
 		parent, perr := c.storage.GetSecret(ctx, *req.ParentID)
 		if perr != nil {
-			return nil, fmt.Errorf("%s: parent folder %d not found", i18n.T("ErrorValidation", nil), *req.ParentID)
+			msg := fmt.Sprintf("%s: parent folder %d not found", i18n.T("ErrorValidation", nil), *req.ParentID)
+			// A definitive miss matches storage.ErrSecretNotFound (gRPC answers
+			// NotFound); the text is unchanged, so HTTP still answers 400.
+			if storage.IsSecretNotFound(perr) {
+				return nil, storage.NotFound(storage.ErrSecretNotFound, msg, perr)
+			}
+			return nil, errors.New(msg)
 		}
 		if parent.IsSecret {
 			return nil, fmt.Errorf("%s: parent %d is a secret, not a folder", i18n.T("ErrorValidation", nil), *req.ParentID)
@@ -323,8 +329,10 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 				return lerr
 			}
 			if !live {
-				return fmt.Errorf("%s: project %d was deleted while this secret was being created",
-					i18n.T("ErrorNotFound", nil), secret.ProjectID)
+				// Typed (same text) so the gRPC mapper answers NotFound (REVFIX-3790-1).
+				return storage.NotFound(storage.ErrProjectNotFound,
+					fmt.Sprintf("%s: project %d was deleted while this secret was being created",
+						i18n.T("ErrorNotFound", nil), secret.ProjectID), nil)
 			}
 			// AUDIT-MUTATION-TX-1: the secret.created row commits with the secret, as
 			// the transaction's last statement (secret_mutation_audit.go).

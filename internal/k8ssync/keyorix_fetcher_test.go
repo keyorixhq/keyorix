@@ -48,7 +48,10 @@ func TestRefuseRedirect(t *testing.T) {
 	err = refuseRedirect(req, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing to follow redirect")
-	assert.Contains(t, err.Error(), "http://example.com/next")
+	// The redirect target is server-controlled and may carry a token in its
+	// path or query: the error names scheme+host only.
+	assert.Contains(t, err.Error(), "http://example.com")
+	assert.NotContains(t, err.Error(), "/next")
 }
 
 // TestValidateFetcherBaseURL covers every branch: a well-formed https URL (always

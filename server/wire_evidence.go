@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/keyorixhq/keyorix/internal/evidencesink"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // wireEvidenceTargets is a core wiring step (coreWiringSteps in main.go).
@@ -27,7 +28,7 @@ func wireEvidenceTargets(cw *coreWiring) error {
 			return fmt.Errorf("failed to init evidence webhook target: %w", ferr)
 		}
 		evidenceTargets = append(evidenceTargets, fwd)
-		log.Printf("Evidence webhook target enabled (endpoint=%s)", ew.Endpoint)
+		log.Printf("Evidence webhook target enabled (endpoint=%s)", netutil.RedactURLHost(ew.Endpoint))
 	}
 	if os := cfg.EvidenceDelivery.ObjectStore; os.Enabled {
 		sink, oerr := evidencesink.NewObjectStore(context.Background(), evidencesink.ObjectStoreConfig{

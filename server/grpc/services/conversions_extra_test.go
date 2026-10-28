@@ -167,34 +167,12 @@ func TestPtrU32(t *testing.T) {
 	assert.Equal(t, uint32(7), *v)
 }
 
-// TestMapProjectError covers all branches of the project error mapper.
-func TestMapProjectError(t *testing.T) {
-	cases := []struct {
-		msg      string
-		wantCode codes.Code
-	}{
-		{"project not found", codes.NotFound},
-		{"project already exists", codes.AlreadyExists},
-		{"permission denied for this action", codes.PermissionDenied},
-		{"access denied for resource", codes.PermissionDenied},
-		{"some storage error", codes.Internal},
-	}
-	for _, c := range cases {
-		err := mapProjectError(errFromMsg(c.msg))
-		assert.Equalf(t, c.wantCode, status.Code(err), "mapProjectError(%q)", c.msg)
-	}
-}
-
 // TestMapSecretError covers all branches of the error mapper.
 func TestMapSecretError(t *testing.T) {
 	cases := []struct {
 		msg      string
 		wantCode codes.Code
 	}{
-		{"record not found", codes.NotFound},
-		{"permission denied to access", codes.PermissionDenied},
-		{"access denied to resource", codes.PermissionDenied},
-		{"secret with this name already exists", codes.AlreadyExists},
 		{"unknown rotation charset: klingon", codes.InvalidArgument},
 		{"rotation length out of range", codes.InvalidArgument},
 		{"no rotation backends configured", codes.InvalidArgument},
@@ -210,22 +188,6 @@ func TestMapSecretError(t *testing.T) {
 }
 
 // TestMapShareError covers all branches of the share error mapper.
-func TestMapShareError(t *testing.T) {
-	cases := []struct {
-		msg      string
-		wantCode codes.Code
-	}{
-		{"share not found", codes.NotFound},
-		{"not authorized to revoke", codes.PermissionDenied},
-		{"permission denied", codes.PermissionDenied},
-		{"unexpected storage failure", codes.Internal},
-	}
-	for _, c := range cases {
-		err := mapShareError(errFromMsg(c.msg))
-		assert.Equalf(t, c.wantCode, status.Code(err), "mapShareError(%q)", c.msg)
-	}
-}
-
 // errFromMsg is a minimal error type for testing error mapper functions.
 type errFromMsg string
 

@@ -185,8 +185,11 @@ rollback of the state row.
 
 ## 4. API status rules
 
-`status` is one of `valid`, `broken`, `not_proven`. `valid` (bool) is true
+`status` is one of `valid`, `broken`, `not_proven`, `sealed`. `valid` (bool) is true
 **only** when `status == "valid"`. `broken` takes precedence over `not_proven`.
+`sealed` means the chain verifies for the rows that remain but a loss of audit
+events was accepted with `audit accept-loss`; it is never `valid`, and
+`state_reason` names the acceptance.
 
 - `broken`: the request's own tail check failed; or the state carries a sticky
   `failure`; or `last_full.valid == false`.
@@ -211,7 +214,7 @@ Existing fields are kept; `valid` has the meaning in §4. New fields:
 
 | field | meaning |
 |---|---|
-| `status` | `valid` \| `broken` \| `not_proven` |
+| `status` | `valid` \| `broken` \| `not_proven` \| `sealed` |
 | `mode` | `incremental` (tail check + persisted state) or `full` (walked now; incremental not configured) |
 | `not_proven_reason` | set when `status = not_proven` |
 | `coverage` | `{tail_from_id, tail_through_id, tail_complete, checkpoint_id}`: what this request walked |
@@ -220,7 +223,7 @@ Existing fields are kept; `valid` has the meaning in §4. New fields:
 | `last_full_verification_through_id` | last row id it covered |
 | `last_full_verification_source` | `rolling` \| `job` \| `checkpoint-full` |
 | `rolling_cycle` | `{started_at, target_id, verified_through_id}` when a cycle is in progress |
-| `state_reason` | why the persisted state was ignored, when it was |
+| `state_reason` | names the accepted audit loss when `status = sealed`; why the persisted state was ignored, when it was |
 
 In `incremental` mode, `chained_events` is the derived live count
 (`cp.chained_events − P + tail_rows`), and `head_id`/`head_hash` are the tail
@@ -268,8 +271,12 @@ These read the persisted state only and walk nothing:
 ### gRPC `VerifyAuditChain`
 
 Same as HTTP default mode. New optional fields: `status`, `mode`,
-`not_proven_reason`, `last_full_verification_at`. The full job is HTTP-only for
-now (gRPC parity is a follow-up).
+`not_proven_reason`, `last_full_verification_at`, `state_reason` (field 14; the
+value HTTP returns, so a `sealed` status carries its reason). `status` takes the
+same four values as HTTP. The full job is HTTP-only for now (gRPC parity is a
+follow-up); the structured detail objects (`coverage`, `rolling_cycle`) are
+HTTP-only too, pinned by `auditVerifyHTTPOnly` in
+`server/http/audit_verify_http_grpc_parity_test.go`.
 
 ### CLI `keyorix audit verify`
 

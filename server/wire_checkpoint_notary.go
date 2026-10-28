@@ -7,6 +7,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/notary"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
@@ -64,7 +65,7 @@ func wireCheckpointNotary(cfg *config.Config, coreService *core.KeyorixCore) err
 	// AuditChainVerification.AnchorTrustRootConfigured) so a caller/auditor can
 	// always tell a recorded-but-unverifiable anchor apart from a verified one.
 	if cn.CACertPath == "" {
-		log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s) — WARNING: no ca_cert_path set, stored anchors are recorded but CANNOT be locally verified (checkpoint reads will report them as unverified)", cn.URL)
+		log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s) — WARNING: no ca_cert_path set, stored anchors are recorded but CANNOT be locally verified (checkpoint reads will report them as unverified)", netutil.RedactURLHost(cn.URL))
 		return nil
 	}
 	roots, err := loadCertPool(cn.CACertPath)
@@ -73,6 +74,6 @@ func wireCheckpointNotary(cfg *config.Config, coreService *core.KeyorixCore) err
 		return nil
 	}
 	coreService.SetCheckpointAnchorRoots(roots, notary.VerifyReceipt)
-	log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s, timeout=%s, trust anchor=%s)", cn.URL, cn.GetTimeout(), cn.CACertPath)
+	log.Printf("Audit checkpoint external anchoring enabled (rfc3161, url=%s, timeout=%s, trust anchor=%s)", netutil.RedactURLHost(cn.URL), cn.GetTimeout(), cn.CACertPath)
 	return nil
 }

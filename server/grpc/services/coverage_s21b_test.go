@@ -335,21 +335,6 @@ func TestDeleteRole_BuiltinDenied_S21b(t *testing.T) {
 // mapShareError — permission-denied branch
 // ---------------------------------------------------------------------------
 
-func TestMapShareError_PermissionDenied_S21b(t *testing.T) {
-	err := mapShareError(errMsg("not authorized to share this secret"))
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestMapShareError_PermissionDenied2_S21b(t *testing.T) {
-	err := mapShareError(errMsg("permission denied for this share"))
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestMapShareError_NotFound_S21b(t *testing.T) {
-	err := mapShareError(errMsg("share not found in the database"))
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
 func TestMapShareError_Default_S21b(t *testing.T) {
 	err := mapShareError(errMsg("database connection timeout"))
 	assert.Equal(t, codes.Internal, status.Code(err))

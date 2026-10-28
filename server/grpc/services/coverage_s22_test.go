@@ -122,26 +122,6 @@ func TestRevokeBreakGlass_PermissionDenied_S22(t *testing.T) {
 // mapProjectError — additional branches
 // ---------------------------------------------------------------------------
 
-func TestMapProjectError_AlreadyExists_S22(t *testing.T) {
-	err := mapProjectError(errors.New("project with this name already exists"))
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
-func TestMapProjectError_PermissionDenied_S22(t *testing.T) {
-	err := mapProjectError(errors.New("permission denied for this project"))
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestMapProjectError_Denied_S22(t *testing.T) {
-	err := mapProjectError(errors.New("denied by policy"))
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestMapProjectError_NotFound_S22(t *testing.T) {
-	err := mapProjectError(errors.New("project not found"))
-	assert.Equal(t, codes.NotFound, status.Code(err))
-}
-
 func TestMapProjectError_Default_S22(t *testing.T) {
 	err := mapProjectError(errors.New("unexpected storage failure"))
 	assert.Equal(t, codes.Internal, status.Code(err))

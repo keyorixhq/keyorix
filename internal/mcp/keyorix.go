@@ -15,6 +15,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // KeyorixClient reads secrets from a Keyorix server with a bearer (machine-identity)
@@ -64,7 +66,7 @@ func NewKeyorixClient(baseURL, token string) (*KeyorixClient, error) {
 // fixed, caller-supplied KEYORIX_URL and has no legitimate reason to follow a redirect
 // at all, so refusing every redirect outright is the simplest and safest fix.
 func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	return fmt.Errorf("keyorix: refusing to follow redirect to %q", req.URL)
+	return fmt.Errorf("keyorix: refusing to follow redirect to %q", netutil.RedactURLHost(req.URL.String()))
 }
 
 // validateKeyorixClientURL rejects a Keyorix base URL that is not https (http is allowed only
