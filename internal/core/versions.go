@@ -107,7 +107,7 @@ func (c *KeyorixCore) GetSecretVersion(ctx context.Context, secretID uint, versi
 			return version, nil
 		}
 	}
-	return nil, fmt.Errorf("%s: version %d not found", i18n.T("ErrorVersionNotFound", nil), versionNumber)
+	return nil, errVersionNotFoundText(versionNumber)
 }
 
 // GetSecretVersionWithPermissionCheck retrieves a specific version of a secret with permission validation.
@@ -441,7 +441,7 @@ func (c *KeyorixCore) RollbackSecret(ctx context.Context, secretID uint, targetV
 	}
 	latest, err := c.storage.GetLatestSecretVersion(ctx, secretID)
 	if err == nil && latest != nil && latest.VersionNumber == targetVersion {
-		return nil, fmt.Errorf("version %d is already the current version", targetVersion)
+		return nil, storage.Typed(ErrAlreadyCurrentVersion, fmt.Sprintf("version %d is already the current version", targetVersion), nil)
 	}
 	// Decrypt the historical version's value to re-instate it. The parent node is
 	// needed to reconstruct the at-rest AAD (secretID:projectID:versionNumber).
