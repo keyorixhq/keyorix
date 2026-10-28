@@ -59,7 +59,7 @@ func (c *KeyorixCore) withEnvironmentSecretGuard(ctx context.Context, environmen
 				return fmt.Errorf("failed to verify target environment %d: %w", environmentID, err)
 			}
 			envGone = true
-			return fmt.Errorf("environment %d not found", environmentID)
+			return errSecretTargetInvalidf("environment %d not found", environmentID)
 		}
 		return fn(ctx)
 	})
@@ -166,16 +166,16 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 			// as a clean validation error instead of the 500 it actually is.
 			return nil, fmt.Errorf("failed to verify target environment %d: %w", req.EnvironmentID, err)
 		}
-		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+		return nil, errSecretTargetInvalidf("environment %d not found", req.EnvironmentID)
 	}
 	if env.ProjectID != req.ProjectID {
-		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
+		return nil, errSecretTargetInvalidf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
 	}
 
 	existing, err := c.storage.GetSecretByName(ctx, normalizedName.String(), req.ProjectID, req.EnvironmentID)
 	switch {
 	case err == nil && existing != nil:
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
+		return nil, storage.Typed(ErrSecretAlreadyExists, i18n.T("ErrorSecretAlreadyExists", nil), nil)
 	case err != nil && !storage.IsSecretNotFound(err):
 		// A real read failure, not "no duplicate" - don't silently assume the
 		// name is free (docs/findings/2026-09-23-FINDING-update-secret-read-error-swallowed.md).
@@ -527,7 +527,7 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 		}
 		if !matched {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			return nil, errSecretNotFoundText()
 		}
 		sink.Flush(c)
 		return secret, nil
@@ -811,7 +811,7 @@ func updateRotationStamp(ctx context.Context, st storage.Storage, id uint, stamp
 		return fmt.Errorf("failed to update rotation timestamp: %w", err)
 	}
 	if !matched {
-		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		return errSecretNotFoundText()
 	}
 	return nil
 }
@@ -887,7 +887,7 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 	secret, err := c.storage.GetSecretIncludingDeleted(ctx, id)
 	if err != nil {
 		if credentialRowGone(err) {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorStorageFailed", nil), i18n.T("ErrorSecretNotFound", nil))
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), errSecretNotFoundText())
 		}
 		return fmt.Errorf("%s: reading secret %d before restoring it: %w", i18n.T("ErrorStorageFailed", nil), id, cmp.Or(errors.Unwrap(err), err))
 	}
