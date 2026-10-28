@@ -1219,7 +1219,7 @@ func filterActiveHoldersOn(ctx context.Context, st storage.Storage, holders map[
 	return holders, nil
 }
 
-// resolveGroupAdminMembers expands groupID's membership into holders, but ONLY
+// resolveGroupAdminMembersOn expands groupID's membership into holders, but ONLY
 // members whose own UserGroup row is global (project_id=0) — resolveGlobalAdminHolders
 // is always resolving GLOBAL-scope role assignments, so a member whose
 // membership in this group is itself scoped to one project does not derive
@@ -1227,11 +1227,6 @@ func filterActiveHoldersOn(ctx context.Context, st storage.Storage, holders map[
 // entirely, over-counting global admin holders and letting the true last
 // global admin be removed because a project-scoped member was miscounted as a
 // backup).
-func (c *KeyorixCore) resolveGroupAdminMembers(ctx context.Context, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
-	return resolveGroupAdminMembersOn(ctx, c.storage, groupID, excludeMember, holders)
-}
-
-// resolveGroupAdminMembersOn is resolveGroupAdminMembers read through st.
 func resolveGroupAdminMembersOn(ctx context.Context, st storage.Storage, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
 	members, merr := st.ListGroupMembersAt(ctx, groupID, Scope{})
 	if merr != nil {
@@ -1281,17 +1276,12 @@ func guardLastGlobalAdminGroupRoleOn(ctx context.Context, st storage.Storage, gr
 	return nil
 }
 
-// guardLastGlobalAdminGroupDelete is guardLastGlobalAdmin's group-deletion
+// guardLastGlobalAdminGroupDeleteOn is guardLastGlobalAdmin's group-deletion
 // counterpart (#107): refuses to delete groupID when it holds a global admin-tier
 // role and doing so would leave the install with zero admin-tier holders —
 // deleting a group cascades to remove EVERY role grant it holds, not just one. A
 // group with no admin-tier grant at all is never blocked, regardless of the
 // install's overall admin count.
-func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, groupID uint) error {
-	return guardLastGlobalAdminGroupDeleteOn(ctx, c.storage, groupID)
-}
-
-// guardLastGlobalAdminGroupDeleteOn is guardLastGlobalAdminGroupDelete read through st.
 func guardLastGlobalAdminGroupDeleteOn(ctx context.Context, st storage.Storage, groupID uint) error {
 	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {
@@ -1319,7 +1309,7 @@ func guardLastGlobalAdminGroupDeleteOn(ctx context.Context, st storage.Storage, 
 	return nil
 }
 
-// guardLastGlobalAdminMembership is guardLastGlobalAdmin's group-membership-
+// guardLastGlobalAdminMembershipOn is guardLastGlobalAdmin's group-membership-
 // removal counterpart (#107): refuses to remove userID from groupID when the
 // group's admin-tier grant is userID's only remaining route to global admin-tier
 // authority and no other user holds one either. The group's grant row survives
@@ -1327,11 +1317,6 @@ func guardLastGlobalAdminGroupDeleteOn(ctx context.Context, st storage.Storage, 
 // excluding an assignment row; it must exclude just this one member's derived
 // authority via this one group. A group with no admin-tier grant at all is never
 // blocked, regardless of the install's overall admin count.
-func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID, groupID uint) error {
-	return guardLastGlobalAdminMembershipOn(ctx, c.storage, userID, groupID)
-}
-
-// guardLastGlobalAdminMembershipOn is guardLastGlobalAdminMembership read through st.
 func guardLastGlobalAdminMembershipOn(ctx context.Context, st storage.Storage, userID, groupID uint) error {
 	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {

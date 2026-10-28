@@ -245,7 +245,7 @@ func guardLastProjectAdminOn(ctx context.Context, st storage.Storage, projectID,
 	return fmt.Errorf("cannot remove or demote the project's last administrator; assign another project admin first")
 }
 
-// resolveProjectAdminHolders is guardLastProjectAdmin's project-scope
+// resolveProjectAdminHoldersOn is guardLastProjectAdmin's project-scope
 // counterpart of resolveGlobalAdminHolders (internal/core/authz.go, #G03):
 // it expands the project-level (environment_id = 0) assignments in
 // `assignments` that carry roles.assign into the set of user IDs who would
@@ -259,11 +259,6 @@ func guardLastProjectAdminOn(ctx context.Context, st storage.Storage, projectID,
 // a grant belonging to the target themselves doesn't count as "another"
 // admin. `assignments` is assumed already scoped to a single project (the
 // caller's ListProjectRoleAssignments(ctx, projectID) result).
-func (c *KeyorixCore) resolveProjectAdminHolders(ctx context.Context, targetID uint, assignments []storage.RoleAssignment) (map[uint]bool, error) {
-	return resolveProjectAdminHoldersOn(ctx, c.storage, targetID, assignments)
-}
-
-// resolveProjectAdminHoldersOn is resolveProjectAdminHolders read through st.
 func resolveProjectAdminHoldersOn(ctx context.Context, st storage.Storage, targetID uint, assignments []storage.RoleAssignment) (map[uint]bool, error) {
 	holders := make(map[uint]bool)
 	checked := make(map[uint]bool, len(assignments))
@@ -298,7 +293,7 @@ func resolveProjectAdminHoldersOn(ctx context.Context, st storage.Storage, targe
 	return filterActiveHoldersOn(ctx, st, holders)
 }
 
-// guardLastProjectAdminGroupDelete is guardLastProjectAdmin's group-deletion
+// guardLastProjectAdminGroupDeleteOn is guardLastProjectAdmin's group-deletion
 // counterpart (findings-core/core-project-members.json#3): generalizes
 // guardLastGlobalAdminGroupDelete (#107, global scope only) to every PROJECT
 // scope the group holds a roles.assign-granting role at. Deleting a group
@@ -306,11 +301,6 @@ func resolveProjectAdminHoldersOn(ctx context.Context, st storage.Storage, targe
 // project's last roles.assign holder, deleting the group leaves that project
 // ungoverned (no one able to manage its membership), a gap the global-only
 // guard cannot see.
-func (c *KeyorixCore) guardLastProjectAdminGroupDelete(ctx context.Context, groupID uint) error {
-	return guardLastProjectAdminGroupDeleteOn(ctx, c.storage, groupID)
-}
-
-// guardLastProjectAdminGroupDeleteOn is guardLastProjectAdminGroupDelete read through st.
 func guardLastProjectAdminGroupDeleteOn(ctx context.Context, st storage.Storage, groupID uint) error {
 	projectIDs, err := projectAdminScopesHeldByGroupOn(ctx, st, groupID)
 	if err != nil {
@@ -326,18 +316,13 @@ func guardLastProjectAdminGroupDeleteOn(ctx context.Context, st storage.Storage,
 	return nil
 }
 
-// guardLastProjectAdminGroupMembership is guardLastProjectAdmin's group-
+// guardLastProjectAdminGroupMembershipOn is guardLastProjectAdmin's group-
 // membership-removal counterpart (findings-core/core-project-members.json#3):
 // refuses to remove userID from groupID when groupID's project-scoped
 // roles.assign grant is userID's only remaining route to administering that
 // project and no other holder survives either. Unlike a group deletion, the
 // group's own grant row survives a membership removal — only that one
 // member's derived authority through THIS group disappears.
-func (c *KeyorixCore) guardLastProjectAdminGroupMembership(ctx context.Context, userID, groupID uint) error {
-	return guardLastProjectAdminGroupMembershipOn(ctx, c.storage, userID, groupID)
-}
-
-// guardLastProjectAdminGroupMembershipOn is guardLastProjectAdminGroupMembership read through st.
 func guardLastProjectAdminGroupMembershipOn(ctx context.Context, st storage.Storage, userID, groupID uint) error {
 	projectIDs, err := projectAdminScopesHeldByGroupOn(ctx, st, groupID)
 	if err != nil {
@@ -510,7 +495,7 @@ func (c *KeyorixCore) lockProjectAdminGuardsInOrder(ctx context.Context, project
 	})
 }
 
-// guardProjectAdminSurvivesGroupChange checks whether projectID still has a
+// guardProjectAdminSurvivesGroupChangeOn checks whether projectID still has a
 // live roles.assign holder after the given group-scoped exclusion — a grant
 // removal (group deletion) or one member's derived authority (membership
 // removal). Reuses resolveGlobalAdminHolders (internal/core/authz.go)
@@ -520,11 +505,6 @@ func (c *KeyorixCore) lockProjectAdminGuardsInOrder(ctx context.Context, project
 // admin-role test is "does this role carry roles.assign" (a permission
 // check, since project administration isn't tied to a specific role name),
 // not the fixed install-admin role-ID set the global guards use.
-func (c *KeyorixCore) guardProjectAdminSurvivesGroupChange(ctx context.Context, projectID uint, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) error {
-	return guardProjectAdminSurvivesGroupChangeOn(ctx, c.storage, projectID, excludeAssignment, excludeMember)
-}
-
-// guardProjectAdminSurvivesGroupChangeOn is guardProjectAdminSurvivesGroupChange read through st.
 func guardProjectAdminSurvivesGroupChangeOn(ctx context.Context, st storage.Storage, projectID uint, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) error {
 	all, err := st.ListProjectRoleAssignments(ctx, projectID)
 	if err != nil {
