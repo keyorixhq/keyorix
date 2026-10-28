@@ -16,6 +16,11 @@
   `TestNamedLockOverlap_UserDeactivation_LastAdminSurvives` (the fake lock backend in
   `named_lock_overlap_harness_test.go`, one case per deactivation path);
   `TestNamedLockOverlap_SuspendUser_ConcurrentWriteTransactions_Postgres` (pg-gated, two
-  replicas, both write transactions open). Not covered: the sites marked "needs check" or
-  NEEDS ANDREI in that table, whose invariant still rests on the named lock alone.
+  replicas, both write transactions open). NAMEDLOCK-OVERLAP-2 closed every other site the
+  same way (`txFence`, named_lock_fence.go): the write transaction's first statement takes
+  the section's key with `Storage.LockNamedKeyInTx` (INV-STORE-named-key-tx-lock) or the rows
+  every competing writer locks (grant rows, then user rows), then re-runs the section's
+  own check through `tx`; one SQLite overlap test and one pg-gated concurrent test per family
+  (`named_lock_overlap_*_test.go`). Not covered: a section added later must bring its own
+  fence; the inventory guard only makes it write down its verdict.
 <!-- section: Atomicity / transactions -->
