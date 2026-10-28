@@ -263,9 +263,10 @@ func algorithmComponent(a Asset, ref string) cdxComponent {
 // digestBits returns the digest length in a hash name such as "SHA-256" or
 // "SHA3-512", or "" when the name does not end in one (the field is then omitted).
 func digestBits(name string) string {
-	if i := strings.LastIndexByte(name, '-'); i >= 0 {
-		if _, err := strconv.Atoi(name[i+1:]); err == nil {
-			return name[i+1:]
+	parts := strings.Split(name, "-")
+	if last := parts[len(parts)-1]; len(parts) > 1 {
+		if _, err := strconv.Atoi(last); err == nil {
+			return last
 		}
 	}
 	return ""

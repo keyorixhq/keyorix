@@ -28,7 +28,7 @@ func loadWithin(t *testing.T, path string) error {
 		if w, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
 			_ = w.Close()
 		}
-		<-done
+		t.Logf("blocked reader released with: %v", <-done)
 		t.Fatalf("LoadCertificates(%s) blocked: a configured certificate path must be opened non-blocking", filepath.Base(path))
 		return nil
 	}
