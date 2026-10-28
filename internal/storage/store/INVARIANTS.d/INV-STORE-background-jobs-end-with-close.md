@@ -1,5 +1,5 @@
 - **INV-STORE-background-jobs-end-with-close** Every goroutine a `LocalStorage` starts in the
-  background (`StartAuditListIndexBuild`, `StartRolePermissionsGenerationIntegrityCheck`) is
+  background (`StartAuditListIndexBuild`, `StartTriggerIntegrityCheck`) is
   created through `newBackgroundJob` and is gone when `Close` returns: `Close` cancels it and
   waits for `done`, and the goroutine deregisters itself (`backgroundJob.exit`) before closing
   `done`. `LiveBackgroundJobs` lists every job still running with the stack that started it.

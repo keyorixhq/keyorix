@@ -6798,7 +6798,8 @@ paths:
       responses:
         '200':
           description: >-
-            Envelope {data, message}. data: status (valid|broken|not_proven), valid (true
+            Envelope {data, message}. data: status (valid|broken|not_proven|sealed; sealed: an
+            audit loss was accepted with admin audit accept-loss, state_reason names it), valid (true
             only for status=valid), mode (incremental|full), chained_events,
             unchained_events, head_id, head_hash, checkpointed; when broken also
             first_broken_id and reason; when not_proven not_proven_reason; in incremental

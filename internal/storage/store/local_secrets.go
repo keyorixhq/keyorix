@@ -1052,7 +1052,7 @@ func (ls *LocalStorage) DeleteSecret(ctx context.Context, id uint) error {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 		}
 		if result.RowsAffected == 0 {
-			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			return storage.NotFound(storage.ErrSecretNotFound, i18n.T("ErrorSecretNotFound", nil), nil)
 		}
 		if err := stampSecretPurgeAt(tx, []uint{id}, ls.softDeleteRetentionDays()); err != nil {
 			return err
@@ -1105,7 +1105,10 @@ func (ls *LocalStorage) GetSecretIncludingDeleted(ctx context.Context, id uint) 
 func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 	var secret models.SecretNode
 	if err := ls.db.WithContext(ctx).Unscoped().Select("id", "project_id", "environment_id").First(&secret, id).Error; err != nil {
-		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return storage.NotFound(storage.ErrSecretNotFound, i18n.T("ErrorSecretNotFound", nil), nil)
+		}
+		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 	}
 	if err := ls.requireLiveProject(ctx, secret.ProjectID); err != nil {
 		return err
@@ -1136,7 +1139,7 @@ func (ls *LocalStorage) RestoreSecret(ctx context.Context, id uint) error {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 			}
 			if result.RowsAffected == 0 {
-				return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+				return storage.NotFound(storage.ErrSecretNotFound, i18n.T("ErrorSecretNotFound", nil), nil)
 			}
 			live, lerr := lockLiveParent(tx, &models.Project{}, sqlWhereID, secret.ProjectID)
 			if lerr != nil {

@@ -49,7 +49,7 @@ func TestCreateStorage_Postgres_CloseStopsBackgroundJobs(t *testing.T) {
 	require.NotEmpty(t, running, "premise: CreateStorage started a background job")
 	found := false
 	for _, stack := range running {
-		found = found || strings.Contains(stack, "StartRolePermissionsGenerationIntegrityCheck")
+		found = found || strings.Contains(stack, "StartTriggerIntegrityCheck")
 	}
 	require.True(t, found, "premise: the integrity check is among the jobs CreateStorage started:\n%s", strings.Join(running, "\n"))
 

@@ -101,10 +101,16 @@ never have that setting silently dropped because their config also happened
 to break. Every report (human and --json) states which source actually
 served the anchor: "flag", "config (audit.offline_anchor_path)", or "none".
 
+A chain with an accepted audit loss ('admin audit accept-loss') is reported
+SEALED: the rows that remain verify, the chain is not whole. The seal records
+are authenticated with --checkpoint-key-file; without it a sealed chain reads
+BROKEN (the seal cannot be trusted, so the gap is not stepped over).
+
 Exit codes: 0 VALID, 1 BROKEN (tamper detected), 2 INDETERMINATE (could not
 fully verify -- e.g. an unauthenticated retention gap, or no key to check a
 real truncation), 3 usage/input error (bad DSN, unreadable file, malformed
-key or anchor, or an unloadable config file that could have configured one).
+key or anchor, or an unloadable config file that could have configured one),
+4 SEALED (verified since an accepted audit loss; never VALID again).
 Never 0 when something was silently left unverified.`,
 	RunE: runVerifyAudit,
 }
@@ -422,6 +428,24 @@ func printVerifyAuditReport(r *auditverify.Result) {
 	if kt := r.KeyTransition; kt.Present {
 		fmt.Printf("\nKey transitions: %d recorded, current epoch authenticated: %v, old-key signatures checked: %d\n",
 			kt.Records, kt.Authenticated, kt.OldKeyVerified)
+	}
+
+	if st := r.Seal; st.Present {
+		fmt.Printf("\nAccepted audit losses (seals): %d recorded, authenticated: %v\n", st.Records, st.Authenticated)
+		for _, sl := range st.Seals {
+			lost := "unmeasured"
+			if sl.LostEvents >= 0 {
+				lost = fmt.Sprintf("%d event(s)", sl.LostEvents)
+			}
+			fmt.Printf("  seal #%d at %s by %s: %s lost; reason: %s; evidence sha256 %s\n",
+				sl.Seq, sl.At.UTC().Format(time.RFC3339), sl.Operator, lost, sl.Reason, sl.Evidence)
+			for _, g := range sl.Gaps {
+				fmt.Printf("    gap after #%d, resuming at #%d\n", g.LastGoodID, g.ResumeID)
+			}
+			if sl.Truncated {
+				fmt.Println("    tail truncation")
+			}
+		}
 	}
 
 	fmt.Println("\nRetention gap:")

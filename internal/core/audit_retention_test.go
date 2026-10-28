@@ -139,6 +139,7 @@ func TestVerifyAuditChain_CheckpointEnforceError(t *testing.T) {
 	c := NewKeyorixCore(ms)
 	// Wire a non-empty key so AuditCheckpointsAvailable() returns true.
 	c.SetAuditCheckpointKey(bytes.Repeat([]byte{0xAB}, 32), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 
 	_, err := c.VerifyAuditChain(context.Background())
 	require.Error(t, err)

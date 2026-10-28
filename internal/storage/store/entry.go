@@ -303,8 +303,8 @@ type LocalStorage struct {
 	// (StartAuditListIndexBuild), cancelled and awaited by Close. nil when none
 	// was started.
 	auditIndexBuild *backgroundJob
-	// rolePermIntegrity is the periodic role-permission generation trigger
-	// check (StartRolePermissionsGenerationIntegrityCheck), cancelled and
+	// rolePermIntegrity is the periodic generation and cache-epoch trigger
+	// check (StartTriggerIntegrityCheck), cancelled and
 	// awaited by Close. nil when none was started.
 	rolePermIntegrity *backgroundJob
 }
@@ -483,7 +483,7 @@ func (ls *LocalStorage) DB() *gorm.DB {
 }
 
 // Close stops the background jobs (StartAuditListIndexBuild,
-// StartRolePermissionsGenerationIntegrityCheck), then closes the native read
+// StartTriggerIntegrityCheck), then closes the native read
 // pool (SetNativeReadPool), the lock pools
 // (SetSchedulerLockDB, SetNamedLockDB) and the request pool, releasing every
 // Postgres connection this storage opened. Call it once, after everything using

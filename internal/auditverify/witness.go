@@ -97,8 +97,9 @@ func ReadWitness(path string) (cp *Checkpoint, sig string, found bool, err error
 // WriteWitnessIfHigher atomically writes encodedValue (the same
 // auditHighWaterValue-encoded string internal/core persists to
 // system_metadata — this package's ParseHighWater already knows that exact
-// format) to path, but ONLY if its ChainedEvents exceeds whatever is already
-// recorded there (or nothing is recorded yet). Mirrors
+// format) to path, but ONLY if it is newer than whatever is already recorded
+// there by HighWaterOrder (or nothing is recorded yet): more accepted-loss
+// seals, or the same number of seals and a higher ChainedEvents. Mirrors
 // internal/core.advanceAuditHighWater's own "never lower the mark"
 // invariant — the witness must never regress, or a later restore could be
 // tricked into comparing against an artificially-lowered reference. Returns
@@ -120,7 +121,9 @@ func WriteWitnessIfHigher(path, encodedValue string) (wrote bool, err error) {
 	if err != nil {
 		return false, err
 	}
-	if found && existingCP.ChainedEvents >= newCP.ChainedEvents {
+	// HighWaterOrder: a mark written after an accepted audit loss (more seals)
+	// is newer even though the loss lowered its count.
+	if found && HighWaterOrder(existingCP, newCP) >= 0 {
 		return false, nil
 	}
 

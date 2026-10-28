@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/sqlitepath"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
@@ -46,20 +46,13 @@ func sqliteSameDatabase(t *testing.T, spelling, canonical, table string) {
 
 func TestSQLiteURISpellings_MeetOnTheSameLock(t *testing.T) {
 	dir := t.TempDir()
-	data := filepath.Join(dir, "my data")
+	data := filepath.Join(dir, "my data 100%")
 	if err := os.MkdirAll(data, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	t.Chdir(data)
 	canonical := filepath.Join(data, "secrets.db")
-	spellings := []string{
-		"file:" + canonical,
-		"file://" + canonical,
-		"file://localhost" + canonical,
-		"file:" + canonical + "?_busy_timeout=5000",
-		"file:secrets.db",
-		"file:" + strings.ReplaceAll(canonical, " ", "%20"),
-	}
+	spellings := sqlitepath.URISpellings(canonical)
 	for i, s := range spellings {
 		sqliteSameDatabase(t, s, canonical, fmt.Sprintf("probe_%d", i))
 	}
@@ -102,7 +95,7 @@ func TestSQLiteModeMemoryDirectoryName_StillLocked(t *testing.T) {
 		t.Fatal("a server and an admin command both held the lock on a real database under a \"mode=memory\" directory")
 	}
 	// The real in-memory forms still need no lock.
-	for _, mem := range []string{":memory:", "file::memory:", "file:x?mode=memory", "x.db?_busy_timeout=5000&mode=memory"} {
+	for _, mem := range sqlitepath.InMemorySpellings {
 		if _, real := sqliteLockPath(&config.Config{Storage: config.StorageConfig{Database: config.DatabaseConfig{Path: mem}}}); real {
 			t.Errorf("%q is in-memory but got a sidecar lock path", mem)
 		}

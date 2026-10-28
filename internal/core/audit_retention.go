@@ -175,7 +175,9 @@ func (c *KeyorixCore) VerifyAuditChain(ctx context.Context) (*storage.AuditChain
 	if err != nil {
 		return nil, fmt.Errorf("failed to load audit chain re-anchor: %w", err)
 	}
-	v, err := c.storage.VerifyAuditChain(ctx, anchor)
+	// Sealed gaps (accepted losses, audit_seal.go) are stepped over at the
+	// exact rows their records name.
+	v, err := c.walkAuditChain(ctx, storage.AuditChainSegment{Anchor: anchor})
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}
