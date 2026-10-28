@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/keyorixhq/keyorix/internal/guardrules"
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
@@ -62,19 +63,23 @@ func TestBreakGlassPermissionRefusalsMatchErrPermissionDenied(t *testing.T) {
 // TestEveryErrorPermissionDeniedRefusalIsTyped: a core refusal built from the
 // i18n "ErrorPermissionDenied" text must be built through a helper that makes it
 // match ErrPermissionDenied, so no handler needs to match the (translated) text.
+// It walks every core-family file, so it reports through guardrules.Rollout:
+// report-only on pull requests while docs/guard-rollout.d has its row
+// (docs/guard-rollout-contract.md rule 2).
 func TestEveryErrorPermissionDeniedRefusalIsTyped(t *testing.T) {
+	g := guardrules.Rollout(t)
 	allowed := map[string]bool{
 		"permissionDeniedf": true, "markPermissionDenied": true,
 		"wrapSoDPermissionDenied": true, "wrapRiskExceptionPermissionDenied": true,
 		"shareRefusal": true,
 	}
 	files, err := srcpath.CoreFamilyGoFiles()
-	require.NoError(t, err)
+	require.NoError(g, err)
 	fset := token.NewFileSet()
 	var bad []string
 	for _, f := range files {
 		file, err := parser.ParseFile(fset, f, nil, 0)
-		require.NoError(t, err)
+		require.NoError(g, err)
 		var stack []ast.Node
 		ast.Inspect(file, func(n ast.Node) bool {
 			if n == nil {
@@ -104,7 +109,7 @@ func TestEveryErrorPermissionDeniedRefusalIsTyped(t *testing.T) {
 			return true
 		})
 	}
-	require.Empty(t, bad, "i18n ErrorPermissionDenied refusals not typed with ErrPermissionDenied")
+	require.Empty(g, bad, "i18n ErrorPermissionDenied refusals not typed with ErrPermissionDenied")
 }
 
 func isI18nT(call *ast.CallExpr, key string) bool {

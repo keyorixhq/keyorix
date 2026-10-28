@@ -5,12 +5,20 @@ import (
 	"fmt"
 )
 
-// ErrPermissionDenied is matched (errors.Is) by every refusal core makes on
-// authorization grounds: the i18n "ErrorPermissionDenied" refusals, the
-// "not authorized: ..." share/ownership refusals, and the specific refusal
-// sentinels (ErrSoDPermissionDenied, ErrRiskExceptionPermissionDenied,
+// ErrPermissionDenied is matched (errors.Is) by these core authorization
+// refusals: the i18n "ErrorPermissionDenied" refusals, the "not authorized: ..."
+// share/ownership refusals, and the specific refusal sentinels
+// (ErrSoDPermissionDenied, ErrRiskExceptionPermissionDenied,
 // ErrMachinePrivilegeCeilingDenied, the ErrShare* refusals), so a handler maps
 // one sentinel to 403/PermissionDenied.
+//
+// Not every refusal matches it yet. TestEveryErrorPermissionDeniedRefusalIsTyped
+// checks only literal i18n.T("ErrorPermissionDenied") calls under the i18n
+// import name. These refusals do not match ErrPermissionDenied:
+// ErrBreakGlassListForbidden, ErrAccessOutsideSchedule,
+// ErrConnectRefNotPermitted, the SCIM i18n "ErrorNotAuthorized" refusals
+// (scim_groups.go), and ClassifySecretReadDenial still classifies the
+// remaining refusals by text (secret_read_denial.go).
 //
 // Classify with errors.Is, never by message text: the text is translated, and an
 // unrelated error that happens to say "permission" (an OS "permission denied")
