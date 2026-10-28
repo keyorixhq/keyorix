@@ -508,6 +508,14 @@ class DeclarationRefinement(unittest.TestCase):
         cs.legacy_after_run_level(rec, "d", set(), set(), True)
         self.assertEqual((rec["verdict"], rec["legacy"]["verdict"], rec["legacy"]["basis"]), ("KEEP", "KEEP", "tests-skipped"))
 
+    def test_cut_inside_a_function_of_a_package_the_binary_does_not_link(self):
+        unlinked = {f"{MOD}/dep"}
+        res, notes, verdict = self.classify([16, 17], tree={DECLS_FILE: self.BODY_GO}, blocks=[], closure=unlinked, deletion=[16, 17])
+        self.assertEqual((res["uncovered"], notes, verdict), ([16, 17], {"cut-in-unlinked-function": [16, 17]}, ("SKIPPABLE", "uncovered")))
+        # a cut on the function's brace line or between declarations is still not provable
+        res, _, verdict = self.classify([10, 11], tree={DECLS_FILE: self.BODY_GO}, blocks=[], closure=unlinked, deletion=[10, 11])
+        self.assertEqual((res["undetermined"], verdict), ([10, 11], ("KEEP", "undetermined-lines")))
+
     def test_cut_inside_a_function_that_ran_is_covered(self):
         res, notes, verdict = self.cut([7, 8])
         self.assertEqual((res["covered"], notes, verdict), ([7, 8], {"cut-in-function": [8]}, ("KEEP", "covered")))

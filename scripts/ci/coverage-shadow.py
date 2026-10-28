@@ -497,7 +497,9 @@ def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, rel
             # that function ran, so the body's blocks decide. Everything else
             # (imports, between declarations, a removed method or var) stays.
             li = (info or {}).get(str(ln))
-            if li and li.get("kind") == "funcbody":
+            if li and li.get("kind") == "funcbody" and linked is False:
+                status, reason = "uncovered", "cut-in-unlinked-function"  # the body is not in the test binary
+            elif li and li.get("kind") == "funcbody":
                 lo, hi = li["body"]
                 inside = [c for s, e, c in blocks if s >= lo and e <= hi]
                 if inside:
