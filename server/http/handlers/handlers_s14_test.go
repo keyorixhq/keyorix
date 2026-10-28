@@ -23,6 +23,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -341,7 +342,7 @@ func TestTagError_InternalBranch_S13(t *testing.T) {
 func TestTagError_NotFoundBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, errors.New("secret not found in store"), "Failed to list tags")
+	h.tagError(w, storage.NotFound(storage.ErrSecretNotFound, "secret not found in store", nil), "Failed to list tags")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -350,7 +351,7 @@ func TestTagError_NotFoundBranch_S13(t *testing.T) {
 func TestTagError_PermissionBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, errors.New("permission denied"), "Failed to list tags")
+	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "Failed to list tags")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -359,7 +360,7 @@ func TestTagError_PermissionBranch_S13(t *testing.T) {
 func TestTagError_ValidationBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, errors.New("at most 50 tags allowed"), "Failed to set tags")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "at most 50 tags allowed", nil), "Failed to set tags")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 

@@ -3,8 +3,11 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
-	"strings"
+
+	"github.com/keyorixhq/keyorix/internal/core"
 )
 
 // MoveSecret handles POST /api/v1/secrets/{id}/move
@@ -43,15 +46,15 @@ func (h *SecretHandler) MoveSecret(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case isSecretNotFound(err):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "validation") ||
-			strings.Contains(msg, "not a folder") ||
-			strings.Contains(msg, "cannot move") ||
-			strings.Contains(msg, "does not belong to the same project"):
+		case errors.Is(err, core.ErrSecretInvalidInput):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+		case isPermissionRefusal(err):
 			status = http.StatusForbidden
+		default:
+			log.Printf("Error moving secret %d: %v", secretID, err) // NOSONAR
+			msg = clientSafe(err)
 		}
 		h.sendError(w, "Error", msg, status, nil)
 		return

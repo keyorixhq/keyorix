@@ -3,10 +3,10 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -45,6 +45,13 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 	// Authorize creating in the target environment (same project as the source).
 	source, err := h.coreService.GetSecret(r.Context(), uint(id))
 	if err != nil {
+		// Missing or expired: the same 404 as before. A storage failure is not
+		// "no such secret".
+		if !isSecretNotFound(err) && !errors.Is(err, core.ErrSecretExpired) {
+			log.Printf("Error reading secret %d for copy: %v", id, err) // NOSONAR
+			h.sendError(w, "InternalError", clientSafe(err), http.StatusInternalServerError, nil)
+			return
+		}
 		h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		return
 	}
@@ -59,11 +66,11 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
-		case strings.Contains(msg, "not found"):
+		case isSecretNotFound(err):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "same project") || strings.Contains(msg, "already exists") || strings.Contains(msg, "validation") || strings.Contains(msg, "required"):
+		case errors.Is(err, core.ErrSecretInvalidInput), errors.Is(err, core.ErrSecretTargetInvalid), errors.Is(err, core.ErrSecretAlreadyExists):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+		case isPermissionRefusal(err):
 			status = http.StatusForbidden
 		default:
 			log.Printf("Error copying secret %d to environment %d: %v", id, reqBody.EnvironmentID, err) // NOSONAR

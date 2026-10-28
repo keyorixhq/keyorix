@@ -24,6 +24,15 @@ func errSecretTargetInvalidf(format string, a ...any) error {
 	return storage.Typed(ErrSecretTargetInvalid, fmt.Sprintf(format, a...), nil)
 }
 
+// ErrSecretInvalidInput: a request to change a secret's tags, description or
+// place in the tree (move, copy) was rejected as invalid: a bound exceeded, a
+// folder expected, a cross-project target. The handlers answer 400.
+var ErrSecretInvalidInput = errors.New("secret request is invalid")
+
+func errSecretInvalidf(format string, a ...any) error {
+	return storage.Typed(ErrSecretInvalidInput, fmt.Sprintf(format, a...), nil)
+}
+
 // errSecretNotFoundText is the not-found refusal for a secret that a write
 // matched no row of (it was deleted between the read and the write). It renders
 // the translated i18n text exactly as before and matches

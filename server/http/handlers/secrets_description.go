@@ -3,11 +3,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -37,12 +39,15 @@ func (h *SecretHandler) DescribeSecret(w http.ResponseWriter, r *http.Request) {
 		status := http.StatusInternalServerError
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "exceeds"):
+		case errors.Is(err, core.ErrSecretInvalidInput):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "not found"):
+		case isSecretNotFound(err):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+		case isPermissionRefusal(err):
 			status = http.StatusForbidden
+		default:
+			log.Printf("Error describing secret %d: %v", id, err) // NOSONAR
+			msg = clientSafe(err)
 		}
 		h.sendError(w, "Error", msg, status, nil)
 		return
