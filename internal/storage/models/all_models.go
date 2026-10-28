@@ -96,8 +96,5 @@ func AllTestModels() []any {
 		&SecretAccessLog{},
 		&SecretMetadataHistory{},
 		&Setting{},
-		// RECOVERY-MFA-RESET-1 (#3751) migrated mfa_reset_requests in production but
-		// left it out of this list, so the faultops worlds had no such table.
-		&MFAResetRequest{},
 	}
 }
