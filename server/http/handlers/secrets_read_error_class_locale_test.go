@@ -105,3 +105,54 @@ func TestExportAccessLog_UnsupportedFormatIs400InEveryLocale(t *testing.T) {
 		})
 	}
 }
+
+// A storage failure whose driver text merely SAYS "permission denied", "not
+// found" or "not authorized" is still a 5xx: the handlers classify by sentinel,
+// not by words in err.Error(). The driver text never reaches the body.
+func TestSecretReadRoutes_LookalikeFaultTextIs5xxInEveryLocale(t *testing.T) {
+	lookalikes := []string{
+		"open /var/db: permission denied",
+		"open /var/db: not found",
+		"open /var/db: not authorized",
+	}
+	for _, lang := range errorClassLocales {
+		for _, rt := range secretsReadRoutes() {
+			for _, text := range lookalikes {
+				t.Run(lang+"/"+rt.name+"/"+text, func(t *testing.T) {
+					_, db, fx := newSecretsHandlerWithDB(t, lang)
+					faulty := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), &faultstorage.FaultSpec{
+						Method: rt.fault, NthCall: 1, Kind: faultstorage.KindError, Err: errors.New(text),
+					})
+					fh, err := NewSecretHandler(core.NewKeyorixCore(faulty))
+					require.NoError(t, err)
+
+					w := rt.call(fh, fx.id(), secretsAdminID)
+					require.True(t, faulty.Fired(), "%s must reach storage method %s", rt.name, rt.fault)
+					assert.GreaterOrEqual(t, w.Code, 500, "body: %s", w.Body.String())
+					assert.NotContains(t, w.Body.String(), "/var/db", "the storage error text never reaches the client")
+				})
+			}
+		}
+	}
+}
+
+// ListAccessors reads the secret twice: once inside the permission check and
+// once to build the report. A fault on the second read is a 5xx too, not a 404.
+func TestListAccessors_SecondSecretReadFaultIs5xxInEveryLocale(t *testing.T) {
+	for _, lang := range errorClassLocales {
+		t.Run(lang, func(t *testing.T) {
+			_, db, fx := newSecretsHandlerWithDB(t, lang)
+			faulty := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), &faultstorage.FaultSpec{
+				Method: "GetSecret", NthCall: 2, Kind: faultstorage.KindError,
+				Err: errors.New("open /var/db: not found"),
+			})
+			fh, err := NewSecretHandler(core.NewKeyorixCore(faulty))
+			require.NoError(t, err)
+
+			w := secretsDo(fh.ListAccessors, http.MethodGet, "", fx.id(), secretsAdminID)
+			require.True(t, faulty.Fired(), "ListAccessors must reach the second GetSecret")
+			assert.GreaterOrEqual(t, w.Code, 500, "body: %s", w.Body.String())
+			assert.NotContains(t, w.Body.String(), "/var/db", "the storage error text never reaches the client")
+		})
+	}
+}
