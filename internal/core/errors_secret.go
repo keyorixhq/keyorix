@@ -56,3 +56,34 @@ func errVersionNotFoundText(versionNumber int) error {
 	return storage.NotFound(storage.ErrSecretVersionNotFound,
 		fmt.Sprintf("%s: version %d not found", i18n.T("ErrorVersionNotFound", nil), versionNumber), nil)
 }
+
+// secretLookupError wraps a failed storage GetSecret of a secret the caller
+// named. A definitive miss keeps the translated not-found text (and the
+// storage.ErrSecretNotFound sentinel through %w); any other failure is a
+// retrieval failure that must not read as "no such secret".
+func secretLookupError(err error) error {
+	if storage.IsSecretNotFound(err) {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+	}
+	return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+}
+
+// ErrSecretNotOwner: an ownership transfer was refused because the caller is not
+// the secret's current owner (and the owner is not gone). It also matches
+// ErrPermissionDenied; the handler gives it a fixed message.
+var ErrSecretNotOwner = errors.New("caller is not the current owner of the secret")
+
+func errSecretNotOwnerf(format string, a ...any) error {
+	return markPermissionDenied(storage.Typed(ErrSecretNotOwner, fmt.Sprintf(format, a...), nil))
+}
+
+// newOwnerLookupError wraps a failed storage GetUser of the prospective new
+// owner of a secret: a definitive miss is a validation refusal that matches
+// storage.ErrUserNotFound, anything else is a retrieval failure.
+func newOwnerLookupError(id uint, err error) error {
+	if storage.IsUserNotFound(err) {
+		return storage.NotFound(storage.ErrUserNotFound,
+			fmt.Sprintf("%s: new owner %d not found", i18n.T("ErrorValidation", nil), id), err)
+	}
+	return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+}

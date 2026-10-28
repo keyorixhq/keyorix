@@ -58,7 +58,7 @@ type SuspendOptions struct {
 func (c *KeyorixCore) SuspendSecretWithOptions(ctx context.Context, secretID, actorID uint, reason string, opts SuspendOptions) (*models.SecretNode, error) {
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+		return nil, secretLookupError(err)
 	}
 	alreadySuspended := secret.Status == SecretStatusSuspended
 	if alreadySuspended && (!opts.ClearSyncedCopies || secret.SuspendClearSyncedCopies) {
@@ -345,7 +345,7 @@ func (c *KeyorixCore) listProjectSecrets(ctx context.Context, projectID uint) ([
 func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) (*models.SecretNode, error) {
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+		return nil, secretLookupError(err)
 	}
 	if secret.Status != SecretStatusSuspended {
 		return secret, nil // not suspended — no-op
@@ -386,8 +386,9 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 				return lerr
 			}
 			if !live {
-				return fmt.Errorf("%s: project %d was deleted; restore it before resuming this secret",
-					i18n.T("ErrorNotFound", nil), secret.ProjectID)
+				return storage.NotFound(storage.ErrProjectNotFound,
+					fmt.Sprintf("%s: project %d was deleted; restore it before resuming this secret",
+						i18n.T("ErrorNotFound", nil), secret.ProjectID), nil)
 			}
 			c.writeAuditEventFullOn(ctx, tgt, EventSecretResumed, &uid, &sid, nil, "",
 				fmt.Sprintf("resumed secret %q", secret.Name))
