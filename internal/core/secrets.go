@@ -323,8 +323,10 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 				return lerr
 			}
 			if !live {
-				return fmt.Errorf("%s: project %d was deleted while this secret was being created",
-					i18n.T("ErrorNotFound", nil), secret.ProjectID)
+				// Typed (same text) so the gRPC mapper answers NotFound (REVFIX-3790-1).
+				return storage.NotFound(storage.ErrProjectNotFound,
+					fmt.Sprintf("%s: project %d was deleted while this secret was being created",
+						i18n.T("ErrorNotFound", nil), secret.ProjectID), nil)
 			}
 			// AUDIT-MUTATION-TX-1: the secret.created row commits with the secret, as
 			// the transaction's last statement (secret_mutation_audit.go).
