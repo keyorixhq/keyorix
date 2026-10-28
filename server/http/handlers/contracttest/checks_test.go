@@ -278,6 +278,14 @@ func TestEnforcedSetMatchesADR074(t *testing.T) {
 		// suspend-all took clear_synced_copies -- openapi_contract_project_suspend_test.go.
 		"suspendProjectSecrets": true,
 		"resumeProjectSecrets":  true,
+
+		// RECOVERY-MFA-RESET-1: the two-admin MFA reset routes carry response
+		// schemas; each is exercised through AssertOpenAPIResponse in
+		// TestContractMFAReset_RequestApproveListCancel / _Cancel.
+		"requestMFAReset":      true,
+		"approveMFAReset":      true,
+		"cancelMFAReset":       true,
+		"listMFAResetRequests": true,
 	}
 
 	loadSpec()

@@ -187,6 +187,7 @@ var restOnlyFamilies = map[string]string{
 	"rbac":                       "RBAC summary for the UI",
 	"rejection-reason-templates": "workflow templates; HTTP-only governance surface",
 	"risk-exceptions":            "risk acceptance workflow; HTTP-only governance surface",
+	"mfa-reset-requests":         "two-admin MFA reset (RECOVERY-MFA-RESET-1); HTTP-only admin recovery surface like risk-exceptions, no gRPC method yet",
 	"rotation-calendar":          "calendar view for the UI",
 	"rotation-policies":          "rotation policy configuration; HTTP-only governance surface",
 	"scim":                       "SCIM 2.0 provisioning is HTTP by specification",

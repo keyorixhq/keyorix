@@ -218,6 +218,18 @@ not applicable to the bundled Helm chart, which is pinned to 1 replica.
   to a 0.95.x chart afterwards needs the volume chowned back to 999. Details: §5
   "Bundled PostgreSQL uid". Compose volumes need nothing.
 
+### Administrator MFA reset (schema epoch 8): before a downgrade
+
+The next release adds `users.mfa_enrolment_required` and the `mfa_reset_requests` table
+(`keyorix-server admin reset-mfa` and the two-admin `POST /api/v1/mfa-reset-requests`
+flow, [lost-totp-runbook.md](operator/lost-totp-runbook.md) §4). Both are additive and the
+compatibility floor stays at 3, so an older replica keeps booting during a rolling
+upgrade. An older binary does not read either. A user who was reset but has not yet
+signed in still has `password_reset_required` and a one-time password, which every
+binary honours, but an older binary will not demand the new MFA enrolment. Before a
+downgrade, cancel pending requests (`POST /api/v1/mfa-reset-requests/{id}/cancel`) and
+make sure reset users have enrolled again.
+
 ### Upgrading Docker Compose from v0.96.x to the next release: Postgres over TLS
 
 The bundled Postgres now serves TLS, and the server connects to it with

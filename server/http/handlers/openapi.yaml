@@ -7738,6 +7738,164 @@ paths:
         '401': {$ref: '#/components/responses/Error'}
         '403': {$ref: '#/components/responses/Error'}
         '404': {$ref: '#/components/responses/Error'}
+  /api/v1/mfa-reset-requests:
+    get:
+      tags: [Users]
+      summary: List two-admin MFA reset requests (RECOVERY-MFA-RESET-1)
+      description: >-
+        Newest first, with each request's effective status (pending, approved,
+        cancelled, expired). Requires users.write at the gate and a human global
+        administrator in core (403 otherwise). `status=pending` keeps only requests
+        that can still be approved.
+      operationId: listMFAResetRequests
+      security: [{bearerAuth: []}]
+      parameters:
+        - {name: status, in: query, required: false, schema: {type: string, enum: [pending]}}
+      responses:
+        '200':
+          description: "Envelope `data.requests[]`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [requests]
+                    properties:
+                      requests:
+                        type: array
+                        items: {$ref: '#/components/schemas/MFAResetRequest'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+    post:
+      tags: [Users]
+      summary: Request a two-admin MFA reset for a user (RECOVERY-MFA-RESET-1)
+      description: >-
+        Opens a request to reset the second factor of a local, non-admin user who lost
+        the authenticator and has no recovery code. Nothing about the user changes
+        until a DIFFERENT global administrator approves it (POST
+        /api/v1/mfa-reset-requests/{id}/approve) within 24 hours. The caller must be a
+        human global administrator with a second factor of their own and proves it
+        afresh in `code` (a current TOTP code, or the account password after a passkey
+        re-authentication). Refused: a machine credential or a non-admin (403), the
+        caller's own account (400), a global-admin target (422, use `keyorix-server
+        admin recover-admin`), a machine identity (422), an SSO/SCIM or suspended
+        account (409), an install with no second eligible administrator (409, use
+        `keyorix-server admin reset-mfa`), a request already pending for the user
+        (409). Audited as mfa.reset_requested; every administrator is notified.
+      operationId: requestMFAReset
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user, reason, verified_by, code]
+              properties:
+                user: {type: string, description: "Username, email address or numeric user id"}
+                reason: {type: string}
+                verified_by: {type: string, enum: [in_person, video, ticket, other], description: "How the requester confirmed the user's identity"}
+                evidence: {type: string, description: "Free text: a ticket id, who was on the call"}
+                code: {type: string, description: "The requester's own current TOTP code, or password after a passkey re-authentication"}
+      responses:
+        '201':
+          description: "Envelope `data.request`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data:
+                    type: object
+                    required: [request]
+                    properties:
+                      request: {$ref: '#/components/schemas/MFAResetRequest'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+  /api/v1/mfa-reset-requests/{id}/approve:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Approve a two-admin MFA reset and reset the user's credentials (RECOVERY-MFA-RESET-1)
+      description: >-
+        A full credential reset, never "MFA off": in one transaction the user's TOTP
+        secret, recovery codes and WebAuthn credentials are removed, every session and
+        personal access token is revoked, the password is replaced by a one-time
+        password (returned ONCE in this response, for the approver to hand over out of
+        band; the response is not cacheable), the account is restricted to a password
+        change and marked as owing a new MFA enrolment. The audit rows
+        (mfa.reset_approved, mfa.reset) are written in the same transaction: if the
+        audit log refuses them nothing is reset (503) and the request stays pending.
+        The approver must be a human global administrator other than the requester and
+        the target, with a fresh `code`. Refused: self-approval (403, audited), a
+        non-admin or machine credential (403), a request already approved or cancelled
+        (409, a replay), an expired one (409), a requester who lost the admin role
+        (409). The user and every administrator are notified.
+      operationId: approveMFAReset
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: {type: string, description: "The approver's own current TOTP code, or password after a passkey re-authentication"}
+      responses:
+        '200':
+          description: "Envelope `data` is the approval with the one-time password."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+                  data: {$ref: '#/components/schemas/MFAResetApproval'}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
+        '422': {$ref: '#/components/responses/Error'}
+        '503': {$ref: '#/components/responses/Error'}
+  /api/v1/mfa-reset-requests/{id}/cancel:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: integer}}
+    post:
+      tags: [Users]
+      summary: Cancel a pending MFA reset request (RECOVERY-MFA-RESET-1)
+      description: >-
+        Any human global administrator may cancel a pending request (the requester, or
+        another administrator who did not expect it). No re-authentication: cancelling
+        only narrows. Audited as mfa.reset_cancelled; every administrator is notified.
+      operationId: cancelMFAReset
+      security: [{bearerAuth: []}]
+      responses:
+        '200':
+          description: "Envelope with a message; no data."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: {type: string}
+        '400': {$ref: '#/components/responses/Error'}
+        '401': {$ref: '#/components/responses/Error'}
+        '403': {$ref: '#/components/responses/Error'}
+        '404': {$ref: '#/components/responses/Error'}
+        '409': {$ref: '#/components/responses/Error'}
   /api/v1/sod/policies:
     get:
       tags: [Dashboard]
@@ -7922,6 +8080,31 @@ components:
                 properties:
                   clear_synced_copies: {type: boolean}
   schemas:
+    MFAResetRequest:
+      type: object
+      required: [id, target_user_id, requested_by, reason, verified_by, status, effective_status, created_at, expires_at]
+      properties:
+        id: {type: integer}
+        target_user_id: {type: integer}
+        requested_by: {type: integer}
+        reason: {type: string}
+        verified_by: {type: string, enum: [in_person, video, ticket, other]}
+        evidence: {type: string}
+        status: {type: string, enum: [pending, approved, cancelled]}
+        effective_status: {type: string, enum: [pending, approved, cancelled, expired]}
+        created_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+        decided_by: {type: integer}
+        decided_at: {type: string, format: date-time}
+    MFAResetApproval:
+      type: object
+      required: [request_id, user_id, username, one_time_password, expires_at]
+      properties:
+        request_id: {type: integer}
+        user_id: {type: integer}
+        username: {type: string}
+        one_time_password: {type: string, description: "Shown once; never stored in clear"}
+        expires_at: {type: string, format: date-time}
     # authLogin/authConsumeSetup/verifyMFALogin all return one of these two
     # shapes in `data`, disambiguated by presence of `mfa_required` -- never by
     # status code (both are 200). See server/http/handlers/auth.go's

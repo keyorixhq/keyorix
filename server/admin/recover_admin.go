@@ -130,15 +130,7 @@ func runRecoverAdmin(cmd *cobra.Command, args []string) error {
 		summary.webAuthnCredentialsCleared, summary.sessionsRevoked)
 	fmt.Println()
 	fmt.Println("One-time password (shown once — copy it now, it cannot be retrieved again):")
-	// Intentional one-time display to the operator, same as user create OTP
-	// (cli/cmd/user.go) -- this stdout line is the only channel by which a
-	// freshly generated recovery password can reach the person recovering
-	// the account. The codeql[...] tag must be the single comment line
-	// directly above the sink (AlertSuppression.qll requires the comment's
-	// own end line == alert line - 1; see internal/connect/vault.go for the
-	// same constraint documented at its own suppression site).
-	// codeql[go/clear-text-logging]
-	fmt.Printf("  %s\n", summary.oneTimePassword)
+	printOneTimePassword(summary.oneTimePassword)
 	fmt.Printf("Expires: %s (UTC). After that, login with it is refused like a wrong password; run recover-admin again for a new one.\n",
 		summary.oneTimePasswordExpiresAt.UTC().Format(time.RFC3339))
 	if cfg.Security.RequireMFA {
@@ -208,4 +200,21 @@ func resolveTargetUser(ctx context.Context, store corestorage.Storage, identifie
 		return nil, fmt.Errorf("no account with email %q: %w", identifier, err)
 	}
 	return user, nil
+}
+
+// printOneTimePassword is the single place a host command (recover-admin,
+// reset-mfa) shows a freshly generated one-time password to the operator.
+// Keeping one sink keeps one reviewed CodeQL dismissal for it: the codeql gate
+// matches by (rule, file), so a second print site in another file would be a
+// new alert.
+func printOneTimePassword(otp string) {
+	// Intentional one-time display to the operator, same as user create OTP
+	// (cli/cmd/user.go) -- this stdout line is the only channel by which a
+	// freshly generated recovery password can reach the person recovering
+	// the account. The codeql[...] tag must be the single comment line
+	// directly above the sink (AlertSuppression.qll requires the comment's
+	// own end line == alert line - 1; see internal/connect/vault.go for the
+	// same constraint documented at its own suppression site).
+	// codeql[go/clear-text-logging]
+	fmt.Printf("  %s\n", otp)
 }
