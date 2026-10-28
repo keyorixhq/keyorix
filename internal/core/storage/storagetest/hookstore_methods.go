@@ -121,6 +121,8 @@ type StoreHooks struct {
 	ListUnreviewedBreakGlassActivationsBefore func(next storage.Storage, ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error)
 	ListUsers                                 func(next storage.Storage, ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error)
 	ListWebAuthnCredentials                   func(next storage.Storage, ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
+	LockMachineIdentityForUpdate              func(next storage.Storage, ctx context.Context, id uint) (*models.MachineIdentity, error)
+	LockNamedKeyInTx                          func(next storage.Storage, ctx context.Context, lockKey string) error
 	LockUserForUpdate                         func(next storage.Storage, ctx context.Context, id uint) (*models.User, error)
 	LogAuditEvent                             func(next storage.Storage, ctx context.Context, event *models.AuditEvent) error
 	LogAuditEventWithAccessLog                func(next storage.Storage, ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error

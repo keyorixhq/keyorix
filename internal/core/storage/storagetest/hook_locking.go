@@ -10,3 +10,10 @@ func (hs *HookStore) WithNamedLock(ctx context.Context, lockKey string, fn func(
 	}
 	return hs.Storage.WithNamedLock(ctx, lockKey, fn)
 }
+
+func (hs *HookStore) LockNamedKeyInTx(ctx context.Context, lockKey string) error {
+	if hk := hs.h.LockNamedKeyInTx; hk != nil {
+		return hk(hs.Storage, ctx, lockKey)
+	}
+	return hs.Storage.LockNamedKeyInTx(ctx, lockKey)
+}

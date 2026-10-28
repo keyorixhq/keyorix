@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 func (hs *HookStore) GetMachineRoleIDsAt(ctx context.Context, machineID uint, scope storage.Scope) ([]uint, error) {
@@ -25,4 +26,11 @@ func (hs *HookStore) RevokeMachineIdentityCredential(ctx context.Context, projec
 		return hk(hs.Storage, ctx, projectID, credentialID)
 	}
 	return hs.Storage.RevokeMachineIdentityCredential(ctx, projectID, credentialID)
+}
+
+func (hs *HookStore) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	if hk := hs.h.LockMachineIdentityForUpdate; hk != nil {
+		return hk(hs.Storage, ctx, id)
+	}
+	return hs.Storage.LockMachineIdentityForUpdate(ctx, id)
 }
