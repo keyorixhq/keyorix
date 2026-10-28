@@ -1237,21 +1237,26 @@ func resolveGroupAdminMembersOn(ctx context.Context, st storage.Storage, groupID
 // counterpart (#107): refuses to remove roleID from groupID at the global scope
 // when doing so would leave the install with zero global admin-tier holders.
 func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID, roleID uint, scope Scope) error {
+	return guardLastGlobalAdminGroupRoleOn(ctx, c.storage, groupID, roleID, scope)
+}
+
+// guardLastGlobalAdminGroupRoleOn is guardLastGlobalAdminGroupRole read through st.
+func guardLastGlobalAdminGroupRoleOn(ctx context.Context, st storage.Storage, groupID, roleID uint, scope Scope) error {
 	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
 		return nil // not the global scope — project admins are recoverable
 	}
-	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {
 		return err // #2496: fail closed — "can't tell" must not read as "not an admin role"
 	}
 	if !adminIDs[roleID] {
 		return nil // not removing an install-admin role
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	assignments, err := st.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("failed to resolve global role assignments: %w", err)
 	}
-	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, func(a storage.RoleAssignment) bool {
+	holders, err := resolveGlobalAdminHoldersOn(ctx, st, adminIDs, assignments, func(a storage.RoleAssignment) bool {
 		return a.PrincipalType == "group" && a.PrincipalID == groupID && a.RoleID == roleID
 	}, nil)
 	if err != nil {
@@ -1270,21 +1275,26 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 // group with no admin-tier grant at all is never blocked, regardless of the
 // install's overall admin count.
 func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, groupID uint) error {
-	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	return guardLastGlobalAdminGroupDeleteOn(ctx, c.storage, groupID)
+}
+
+// guardLastGlobalAdminGroupDeleteOn is guardLastGlobalAdminGroupDelete read through st.
+func guardLastGlobalAdminGroupDeleteOn(ctx context.Context, st storage.Storage, groupID uint) error {
+	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {
 		return err // #2496: fail closed
 	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	assignments, err := st.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("failed to resolve global role assignments: %w", err)
 	}
 	if !groupHoldsGlobalAdminRole(assignments, adminIDs, groupID) {
 		return nil // this group carries no admin-tier grant — irrelevant to the guard
 	}
-	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, func(a storage.RoleAssignment) bool {
+	holders, err := resolveGlobalAdminHoldersOn(ctx, st, adminIDs, assignments, func(a storage.RoleAssignment) bool {
 		return a.PrincipalType == "group" && a.PrincipalID == groupID
 	}, nil)
 	if err != nil {
@@ -1305,21 +1315,26 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 // authority via this one group. A group with no admin-tier grant at all is never
 // blocked, regardless of the install's overall admin count.
 func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID, groupID uint) error {
-	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	return guardLastGlobalAdminMembershipOn(ctx, c.storage, userID, groupID)
+}
+
+// guardLastGlobalAdminMembershipOn is guardLastGlobalAdminMembership read through st.
+func guardLastGlobalAdminMembershipOn(ctx context.Context, st storage.Storage, userID, groupID uint) error {
+	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {
 		return err // #2496: fail closed
 	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	assignments, err := st.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("failed to resolve global role assignments: %w", err)
 	}
 	if !groupHoldsGlobalAdminRole(assignments, adminIDs, groupID) {
 		return nil // this group carries no admin-tier grant — irrelevant to the guard
 	}
-	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, nil, func(gID, uID uint) bool {
+	holders, err := resolveGlobalAdminHoldersOn(ctx, st, adminIDs, assignments, nil, func(gID, uID uint) bool {
 		return gID == groupID && uID == userID
 	})
 	if err != nil {

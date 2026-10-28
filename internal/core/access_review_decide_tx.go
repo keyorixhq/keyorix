@@ -104,8 +104,9 @@ import (
 type reviewRevokeApply struct {
 	// guarded wraps write in the named lock and last-admin guard this removal
 	// requires. Always one of the with*RemovalGuards helpers — never a local
-	// re-derivation.
-	guarded func(ctx context.Context, write func(ctx context.Context) error) error
+	// re-derivation. write runs the fence it is handed first in its transaction
+	// (txFence, NAMEDLOCK-OVERLAP-2).
+	guarded func(ctx context.Context, write func(ctx context.Context, fence txFence) error) error
 	// write performs the removal and its own audit event through the
 	// transaction-scoped handles.
 	write func(ctx context.Context, tx storage.Storage, tgt auditTarget) error
@@ -159,7 +160,7 @@ func (c *KeyorixCore) planReviewRoleRevoke(ctx context.Context, actorID, project
 			return nil, fmt.Errorf("group not found: %w", err)
 		}
 		return &reviewRevokeApply{
-			guarded: func(ctx context.Context, write func(ctx context.Context) error) error {
+			guarded: func(ctx context.Context, write func(ctx context.Context, fence txFence) error) error {
 				return c.withGroupRoleRemovalGuards(ctx, d.PrincipalID, d.RoleID, scope, write)
 			},
 			write: func(ctx context.Context, tx storage.Storage, tgt auditTarget) error {
@@ -172,8 +173,11 @@ func (c *KeyorixCore) planReviewRoleRevoke(ctx context.Context, actorID, project
 			return nil, err
 		}
 		return &reviewRevokeApply{
-			guarded: func(ctx context.Context, write func(ctx context.Context) error) error {
-				return c.withMachineRoleRemovalGuards(ctx, d.PrincipalID, scope, write)
+			guarded: func(ctx context.Context, write func(ctx context.Context, fence txFence) error) error {
+				// No overlap-sensitive invariant (docs/design/named-lock-overlap.md: safe).
+				return c.withMachineRoleRemovalGuards(ctx, d.PrincipalID, scope, func(ctx context.Context) error {
+					return write(ctx, noTxFence)
+				})
 			},
 			write: func(ctx context.Context, tx storage.Storage, tgt auditTarget) error {
 				return c.removeMachineRoleWriteOn(ctx, tx, tgt, m, d.RoleID, scope, actorID)
@@ -181,7 +185,7 @@ func (c *KeyorixCore) planReviewRoleRevoke(ctx context.Context, actorID, project
 		}, nil
 	default:
 		return &reviewRevokeApply{
-			guarded: func(ctx context.Context, write func(ctx context.Context) error) error {
+			guarded: func(ctx context.Context, write func(ctx context.Context, fence txFence) error) error {
 				return c.withUserRoleRemovalGuards(ctx, d.PrincipalID, d.RoleID, scope, write)
 			},
 			write: func(ctx context.Context, tx storage.Storage, tgt auditTarget) error {
@@ -201,8 +205,8 @@ func (c *KeyorixCore) planReviewRoleRevoke(ctx context.Context, actorID, project
 // last-admin guard (a share deletion). Named rather than inlined as nil so every
 // plan has a wrapper and the caller needs no nil check — "no guard" is then a
 // stated property of the plan, not an absent field.
-func runUnguarded(ctx context.Context, write func(ctx context.Context) error) error {
-	return write(ctx)
+func runUnguarded(ctx context.Context, write func(ctx context.Context, fence txFence) error) error {
+	return write(ctx, noTxFence)
 }
 
 // revokeReviewShareOn is revokeReviewShare through an explicit storage handle.
@@ -249,10 +253,13 @@ func (c *KeyorixCore) decideReviewItemRevokeAtomically(ctx context.Context, acto
 	if err != nil {
 		return err
 	}
-	return plan.guarded(ctx, func(lockCtx context.Context) error {
+	return plan.guarded(ctx, func(lockCtx context.Context, fence txFence) error {
 		sink := &auditForwardSink{}
 		if err := c.storage.WithTransaction(lockCtx, func(tx storage.Storage) error {
 			tgt := auditInto(tx, sink)
+			if err := fence(lockCtx, tx); err != nil {
+				return err
+			}
 			if err := c.claimItemDecisionOn(lockCtx, tx, item, itemID, actorID, ReviewItemRevoked, reason); err != nil {
 				return err
 			}

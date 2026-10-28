@@ -279,9 +279,12 @@ func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID,
 		return fmt.Errorf("group not found: %w", err)
 	}
 	var settle func() // appends the owed row; called after the guard lock is released
-	err := c.withGroupRoleRemovalGuards(ctx, groupID, roleID, scope, func(ctx context.Context) error {
+	err := c.withGroupRoleRemovalGuards(ctx, groupID, roleID, scope, func(ctx context.Context, fence txFence) error {
 		var merr error
 		settle, merr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			return c.removeGroupRoleWriteOn(ctx, tx, tgt, actorID, groupID, roleID, scope)
 		})
 		return merr
@@ -299,28 +302,44 @@ func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID,
 // access-review revoke transaction performs the same removal through a
 // transaction-scoped handle and must reuse this decision rather than restate it
 // (#2676).
-func (c *KeyorixCore) withGroupRoleRemovalGuards(ctx context.Context, groupID, roleID uint, scope Scope, write func(ctx context.Context) error) error {
+//
+// write must run the fence it is handed as the first statement of its write
+// transaction (NAMEDLOCK-OVERLAP-2, txFence): at the global scope it row-locks
+// every global admin-tier grant, at project scope it takes the project's
+// projectAdminGuardLockKey with LockNamedKeyInTx, and then it re-runs the same
+// guard through tx.
+func (c *KeyorixCore) withGroupRoleRemovalGuards(ctx context.Context, groupID, roleID uint, scope Scope, write func(ctx context.Context, fence txFence) error) error {
 	switch {
 	case scope.ProjectID == 0 && scope.EnvironmentID == 0:
 		return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
 			if err := c.guardLastGlobalAdminGroupRole(ctx, groupID, roleID, scope); err != nil {
 				return err
 			}
-			return write(ctx)
+			return write(ctx, func(ctx context.Context, tx storage.Storage) error {
+				if err := lockGlobalAdminGrantsOn(ctx, tx); err != nil {
+					return err
+				}
+				return guardLastGlobalAdminGroupRoleOn(ctx, tx, groupID, roleID, scope)
+			})
 		})
 	case scope.ProjectID != 0 && scope.EnvironmentID == 0:
 		return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
 			if err := c.guardLastProjectAdminGroupRole(ctx, groupID, roleID, scope.ProjectID); err != nil {
 				return err
 			}
-			return write(ctx)
+			return write(ctx, func(ctx context.Context, tx storage.Storage) error {
+				if err := lockNamedKeysInTxOn(ctx, tx, projectAdminGuardLockKey(scope.ProjectID)); err != nil {
+					return err
+				}
+				return guardLastProjectAdminGroupRoleOn(ctx, tx, groupID, roleID, scope.ProjectID)
+			})
 		})
 	default:
 		// Environment-scoped: neither guard applies (both early-return for a
 		// non-matching scope) — a project's roles.assign authority is never
 		// carried by an environment-scoped grant, so removing one can't be the
 		// last route to it.
-		return write(ctx)
+		return write(ctx, noTxFence)
 	}
 }
 
@@ -704,9 +723,9 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 		}
 	}
 	var settle func() // appends the owed row; called after the guard lock is released
-	err := c.withUserRoleRemovalGuards(ctx, userID, roleID, scope, func(ctx context.Context) error {
+	err := c.withUserRoleRemovalGuards(ctx, userID, roleID, scope, func(ctx context.Context, fence txFence) error {
 		var rerr error
-		settle, rerr = c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
+		settle, rerr = c.removeUserRoleUnguarded(ctx, fence, actorID, userID, roleID, scope)
 		return rerr
 	})
 	// settle is set only once the removal has committed; the lock is released.
@@ -739,13 +758,13 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 // write therefore runs INSIDE the lock, and receives the lock-marked ctx so a
 // nested same-key acquisition (or a transaction opened within it) stays correct
 // — see WithNamedLock's doc comment on threading the ctx it passes.
-func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, roleID uint, scope Scope, write func(ctx context.Context) error) error {
+func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, roleID uint, scope Scope, write func(ctx context.Context, fence txFence) error) error {
 	if scope.ProjectID == 0 || scope.EnvironmentID != 0 {
 		// Global scope is handled by RemoveUserRole's own earlier branch
 		// (RemoveGlobalAdminRoleGuarded fuses guard and write into one storage
 		// call, so it has no separable write); an environment-scoped grant never
 		// carries a project's roles.assign authority, so neither guard applies.
-		return write(ctx)
+		return write(ctx, noTxFence)
 	}
 	return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
 		existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
@@ -761,7 +780,7 @@ func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, rol
 		if err := c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after); err != nil {
 			return err
 		}
-		return write(ctx)
+		return write(ctx, noTxFence)
 	})
 }
 
@@ -793,8 +812,11 @@ func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, rol
 // waits up to owedAuditWait per refused row, which must not be spent holding a
 // last-admin / project-admin lock. The caller calls settle after releasing the lock
 // (the cache is already evicted here, so the revocation has taken effect).
-func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, userID, roleID uint, scope Scope) (settle func(), err error) {
+func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, fence txFence, actorID, userID, roleID uint, scope Scope) (settle func(), err error) {
 	settle, err = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := fence(ctx, tx); err != nil {
+			return err
+		}
 		return c.removeUserRoleWriteOn(ctx, tx, tgt, actorID, userID, roleID, scope)
 	})
 	if err != nil {

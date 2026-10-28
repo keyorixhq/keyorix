@@ -3,6 +3,8 @@ package core
 import (
 	"context"
 	"fmt"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 // adminBypassRoleIDSet is THE single source of truth for "which roles confer
@@ -46,7 +48,12 @@ import (
 // exactly the second source of truth this function exists to remove; see
 // admin_role_name_list_singleton_test.go, which fails if a second one appears.
 func (c *KeyorixCore) adminBypassRoleIDSet(ctx context.Context) (map[uint]bool, error) {
-	ids, err := c.storage.ListAdminBypassRoleIDs(ctx)
+	return adminBypassRoleIDSetOn(ctx, c.storage)
+}
+
+// adminBypassRoleIDSetOn is adminBypassRoleIDSet read through st.
+func adminBypassRoleIDSetOn(ctx context.Context, st storage.Storage) (map[uint]bool, error) {
+	ids, err := st.ListAdminBypassRoleIDs(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve the install's admin-bypass roles: %w", err)
 	}

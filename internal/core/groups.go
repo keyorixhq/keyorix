@@ -141,20 +141,26 @@ func (c *KeyorixCore) UpdateGroup(ctx context.Context, actorID uint, req *Update
 func (c *KeyorixCore) deleteGroupGuarded(ctx context.Context, id uint, audit func(tgt auditTarget, group *models.Group)) (*models.Group, error) {
 	var group *models.Group
 	var settle func() // appends the owed row; called after the guard locks are released
-	err := c.withGroupProjectAdminGuardLocks(ctx, id, func(ctx context.Context) error {
+	guard := func(ctx context.Context, st storage.Storage) error {
+		if err := guardLastGlobalAdminGroupDeleteOn(ctx, st, id); err != nil {
+			return err
+		}
+		return guardLastProjectAdminGroupDeleteOn(ctx, st, id)
+	}
+	err := c.withGroupProjectAdminGuardLocks(ctx, id, guard, func(ctx context.Context, fence txFence) error {
 		var gerr error
 		group, gerr = c.storage.GetGroup(ctx, id)
 		if gerr != nil {
 			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), gerr)
 		}
-		if err := c.guardLastGlobalAdminGroupDelete(ctx, id); err != nil {
-			return err
-		}
-		if err := c.guardLastProjectAdminGroupDelete(ctx, id); err != nil {
+		if err := guard(ctx, c.storage); err != nil {
 			return err
 		}
 		var merr error
 		settle, merr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			if err := tx.DeleteGroup(ctx, id); err != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 			}
@@ -408,16 +414,22 @@ func (c *KeyorixCore) RemoveUserFromGroup(ctx context.Context, actorID, userID, 
 	// route to admin via this or another group) could each observe "another
 	// admin survives" before either commits.
 	var settle func() // appends the owed row; called after the guard locks are released
-	err := c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
-		if err := c.guardLastGlobalAdminMembership(ctx, userID, groupID); err != nil {
+	guard := func(ctx context.Context, st storage.Storage) error {
+		if err := guardLastGlobalAdminMembershipOn(ctx, st, userID, groupID); err != nil {
 			return err
 		}
-		if err := c.guardLastProjectAdminGroupMembership(ctx, userID, groupID); err != nil {
+		return guardLastProjectAdminGroupMembershipOn(ctx, st, userID, groupID)
+	}
+	err := c.withGroupProjectAdminGuardLocks(ctx, groupID, guard, func(ctx context.Context, fence txFence) error {
+		if err := guard(ctx, c.storage); err != nil {
 			return err
 		}
 		// AUDIT-TX-3: a revocation: never blocked by the audit log, row owed.
 		var merr error
 		settle, merr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			if err := tx.RemoveUserFromGroup(ctx, userID, groupID, projectID); err != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 			}
