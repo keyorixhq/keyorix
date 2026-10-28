@@ -317,3 +317,50 @@ func TestVersionCommentRoutes_KindsInEveryLocale(t *testing.T) {
 		}
 	}
 }
+
+// A secret that is gone by the time a version-comment call reaches core (the router
+// authorized it a moment earlier) is 404, not the 500 default.
+func TestVersionCommentRoutes_MissingSecretIs404InEveryLocale(t *testing.T) {
+	for _, lang := range errorClassLocales {
+		t.Run(lang, func(t *testing.T) {
+			_, db, _ := newSecretsHandlerWithDB(t, lang)
+			h := NewSecretVersionCommentHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+			w := graphDo(h.ListComments, http.MethodGet, "", map[string]string{"id": secretsMissingID, "versionId": "1"}, secretsAdminID)
+			assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}
+
+// Deleting a comment id that does not exist on a real version of the secret is 404
+// (storage.ErrVersionCommentNotFound), not the 500 default.
+func TestDeleteVersionComment_UnknownCommentIs404InEveryLocale(t *testing.T) {
+	for _, lang := range errorClassLocales {
+		t.Run(lang, func(t *testing.T) {
+			_, db, fx := newSecretsHandlerWithDB(t, lang)
+			require.NoError(t, db.AutoMigrate(&models.SecretVersionComment{}))
+			v := &models.SecretVersion{SecretNodeID: fx.secretID, VersionNumber: 1}
+			require.NoError(t, db.Create(v).Error)
+			h := NewSecretVersionCommentHandler(core.NewKeyorixCore(store.NewLocalStorage(db)))
+			w := graphDo(h.DeleteComment, http.MethodDelete, "",
+				map[string]string{"id": fx.id(), "versionId": strconv.Itoa(int(v.ID)), "commentId": "99999"}, secretsAdminID)
+			assert.Equal(t, http.StatusNotFound, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}
+
+// A cycle in a project's stored dependency graph (rejected at add, so only a data
+// fault can leave one) is a 500 on rotation-order, never the 400 it used to be for
+// containing the word "cycle".
+func TestGetProjectRotationOrder_StoredCycleIs500InEveryLocale(t *testing.T) {
+	for _, lang := range errorClassLocales {
+		t.Run(lang, func(t *testing.T) {
+			h, db, fx := newSecretsHandlerWithDB(t, lang)
+			other := seedGraphSecondSecret(t, db, fx)
+			require.NoError(t, db.Create(&models.SecretDependency{ProjectID: fx.projectID, DependentSecretID: fx.secretID, DependsOnSecretID: other}).Error)
+			require.NoError(t, db.Create(&models.SecretDependency{ProjectID: fx.projectID, DependentSecretID: other, DependsOnSecretID: fx.secretID}).Error)
+			w := graphDo(h.GetProjectRotationOrder, http.MethodGet, "",
+				map[string]string{"id": strconv.Itoa(int(fx.projectID))}, secretsAdminID)
+			assert.Equal(t, http.StatusInternalServerError, w.Code, "body: %s", w.Body.String())
+		})
+	}
+}

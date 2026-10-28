@@ -119,6 +119,10 @@ func (c *KeyorixCore) mfaStepUpWindow() time.Duration {
 // machine identity that needs a restricted secret goes through the same human
 // flow on behalf of a user. Any failure to positively confirm a gate condition —
 // including a storage error — denies the read; this never fails open.
+//
+// A refusal (no user, or a gate condition not met) matches ErrPermissionDenied, so
+// a transport answers it 403 by kind. A storage failure while checking a gate
+// ("could not verify ...") does not: it still denies, but as a 5xx.
 func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, secret *models.SecretNode, userID uint) error {
 	if !c.classificationRestrictedRequiresApproval && !c.classificationRestrictedRequiresPermission && !c.classificationRestrictedRequiresMFAStepUp {
 		return nil
@@ -127,7 +131,7 @@ func (c *KeyorixCore) checkRestrictedSecretReadApproval(ctx context.Context, sec
 		return nil
 	}
 	if userID == 0 {
-		return fmt.Errorf("secret %q is restricted: this read has no identifiable user — automated/machine reads of restricted secrets are always denied when any classification gate is active", secret.Name)
+		return permissionDeniedf("secret %q is restricted: this read has no identifiable user — automated/machine reads of restricted secrets are always denied when any classification gate is active", secret.Name)
 	}
 
 	// Gate 1: narrower RBAC permission (fast path — no per-secret DB query).
@@ -159,7 +163,7 @@ func (c *KeyorixCore) checkRestrictedPermissionGate(ctx context.Context, secret 
 		return fmt.Errorf("secret %q is restricted: could not verify the %q permission: %w", secret.Name, PermSecretReadRestricted, err)
 	}
 	if !ok {
-		return fmt.Errorf("secret %q is restricted: the %q permission is required at the project scope to read this secret's value", secret.Name, PermSecretReadRestricted)
+		return permissionDeniedf("secret %q is restricted: the %q permission is required at the project scope to read this secret's value", secret.Name, PermSecretReadRestricted)
 	}
 	return nil
 }
@@ -170,7 +174,7 @@ func (c *KeyorixCore) checkRestrictedApprovalGate(ctx context.Context, secret *m
 		return fmt.Errorf("secret %q is restricted: could not verify an approved access request: %w", secret.Name, err)
 	}
 	if !ok {
-		return fmt.Errorf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
+		return permissionDeniedf("secret %q is restricted: an approved access request for this specific secret is required before its value can be read", secret.Name)
 	}
 	return nil
 }
@@ -181,7 +185,7 @@ func (c *KeyorixCore) checkRestrictedMFAGate(ctx context.Context, secret *models
 		return fmt.Errorf("secret %q is restricted: could not verify MFA step-up: %w", secret.Name, err)
 	}
 	if grant == nil {
-		return fmt.Errorf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
+		return permissionDeniedf("secret %q is restricted: a recent MFA verification (within %s) is required to read this secret's value — re-authenticate with your second factor", secret.Name, c.mfaStepUpWindow())
 	}
 	return nil
 }

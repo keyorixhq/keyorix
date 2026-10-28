@@ -146,7 +146,7 @@ func sendVersionCommentError(w http.ResponseWriter, verb string, secretID, versi
 	status := http.StatusInternalServerError
 	msg := err.Error()
 	switch {
-	case errors.Is(err, storage.ErrSecretVersionNotFound), errors.Is(err, storage.ErrVersionCommentNotFound):
+	case isSecretNotFound(err), errors.Is(err, storage.ErrVersionCommentNotFound):
 		status = http.StatusNotFound
 	default:
 		log.Printf("Error %s version comment (secret %d, version %d): %v", verb, secretID, versionID, err)
