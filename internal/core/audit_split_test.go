@@ -150,7 +150,7 @@ func splitKinds() []splitKind {
 		a, b := scimUser(w), scimUser(w)
 		g, err := w.c.ProvisionSCIMGroup(ctx, 0, w.tag("sp-g"), []uint{a.ID})
 		require.NoError(w.t, err)
-		return &groupCase{g: g, a: a, b: b, rename: w.tag("sp-gr")}
+		return &groupCase{g: g.Group, a: a, b: b, rename: w.tag("sp-gr")}
 	}
 	inactive := func(w *satWorld, s any) bool { return !w.reloadUser(s.(*userAndNew).u.ID).IsActive }
 	gc := func(s any) *groupCase { return s.(*groupCase) }

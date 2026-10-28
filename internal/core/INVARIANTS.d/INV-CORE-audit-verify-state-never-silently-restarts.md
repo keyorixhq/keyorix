@@ -16,8 +16,10 @@
   job) with the reason `audit verification state discontinuity (<kind>)`,
   `keyorix_audit_verify_failure_recorded` and `keyorix_audit_verify_state_discontinuity`
   at 1, a SECURITY log line and one `system.audit_verification_state_discontinuity`
-  event. Every later save keeps it; no verification clears it (an audited acceptance is a
-  design proposal, `docs/design-audit-reseal-options.md`). Every save keeps a live marker
+  event. Every later save keeps it; no verification clears it. Only `admin audit
+  accept-loss` moves a discontinuity of kind deleted, past the chain head or before a
+  recorded break into the state's accepted list, together with a proven loss of rows
+  (INV-CORE-audit-seal-never-valid-tamper-broken). Every save keeps a live marker
   in the chain. An honest first start (no row, no marker, no unauthenticated checkpoint
   artifact) is not a discontinuity. Not covered: a chain cut back past the marker with
   every checkpoint, high-water and state row deleted (indistinguishable in the database

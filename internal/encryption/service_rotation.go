@@ -61,6 +61,11 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 	if err := db.AutoMigrate(&models.SystemMetadata{}); err != nil {
 		return nil, fmt.Errorf("ensure rotation redo-marker table: %w", err)
 	}
+	// An admin binary older than the database's servers must not rotate it
+	// (rotation_protocol.go): refuse before any key file or row is written.
+	if err := refuseNewerRotationProtocol(db); err != nil {
+		return nil, err
+	}
 
 	// A redo marker left by an earlier, completed rotation (its rename happened,
 	// the marker delete did not) must be gone before this rotation stages its
@@ -116,10 +121,21 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 				return err
 			}
 		}
+		// Pre-commit decrypt check (sweep_verify.go): a sample round trip before
+		// the sweep, then every rewritten row read back and opened with the new
+		// DEK before the commit. Any failure rolls the whole sweep back.
+		if err := rewrapCanary(tx, oldSvc, newSvc, newKeyVersion); err != nil {
+			tx.Rollback()
+			return err
+		}
 		result, err := SweepAllTables(tx, oldSvc, newSvc, newKeyVersion, false)
 		if err != nil {
 			tx.Rollback()
 			return fmt.Errorf("sweep failed: %w", err)
+		}
+		if err := verifySweepBeforeCommit(tx, newSvc, result); err != nil {
+			tx.Rollback()
+			return err
 		}
 		if fence != nil {
 			// Same transaction as the re-encryption: the epoch names the new DEK
@@ -143,6 +159,10 @@ func (s *Service) RotateDEKWithSweep(passphrase string, db *gorm.DB) (*SweepResu
 		}).Create(&models.SystemMetadata{Key: dekRotationPromotePendingKey, Value: newKeyVersion}).Error; err != nil {
 			tx.Rollback()
 			return fmt.Errorf("failed to write DEK-rotation redo marker: %w", err)
+		}
+		if err := recordDEKRotationProtocol(tx); err != nil {
+			tx.Rollback()
+			return err
 		}
 		if err := tx.Commit().Error; err != nil {
 			// A failed COMMIT does not say the transaction did not commit (the

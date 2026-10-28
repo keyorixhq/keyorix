@@ -23,6 +23,9 @@ classification_gate.go
 connect.go
 constants.go
 errors.go
+errors_permission.go
+errors_rbac.go
+errors_secret.go
 gate_read_decision.go
 hash.go
 identity.go
@@ -62,6 +65,7 @@ secrets.go
 secrets_validation.go
 security_posture_audit.go
 service.go
+session_eviction.go
 session_undelivered.go
 setup_consume.go
 setup_delivery.go

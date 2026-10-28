@@ -29,7 +29,7 @@ func (c *KeyorixCore) GetSecretSharingStatus(ctx context.Context, actorKind stri
 	if allowed, err := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, secretID, permSecretsRead); err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	} else if !allowed {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
 	}
 
 	shares, err := c.storage.ListSharesBySecret(ctx, secretID, c.shareEffectiveNow())

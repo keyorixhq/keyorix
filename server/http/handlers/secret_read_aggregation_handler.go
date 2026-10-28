@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -62,7 +61,7 @@ func (h *SecretHandler) GetSecretReadSummary(w http.ResponseWriter, r *http.Requ
 			h.sendError(w, "InvalidParameter", err.Error(), http.StatusBadRequest, nil)
 			return
 		}
-		if strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized") {
+		if isPermissionRefusal(err) {
 			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
 			return
 		}
@@ -72,7 +71,7 @@ func (h *SecretHandler) GetSecretReadSummary(w http.ResponseWriter, r *http.Requ
 		// branch it fell through to a generic 500, unlike every one of this
 		// endpoint's 7 sibling read-metadata endpoints (tags, versions,
 		// access-history/list/stats/audit-trail), which all map it to 404.
-		if strings.Contains(err.Error(), errNotFound) {
+		if isSecretNotFound(err) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 			return
 		}

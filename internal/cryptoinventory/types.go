@@ -25,6 +25,14 @@ const (
 	ClassJWTKey         Class = "jwt-key"
 	ClassWebAuthn       Class = "webauthn"
 	ClassAuditHMACKey   Class = "audit-hmac-key"
+	// ClassSAMLCertificate is an IdP signing certificate Keyorix trusts to verify
+	// SAML responses (the SP itself holds no signing key).
+	ClassSAMLCertificate Class = "saml-certificate"
+	// ClassDatabaseTLSCert is the PostgreSQL client certificate or the CA that
+	// verifies the database server.
+	ClassDatabaseTLSCert Class = "database-tls-certificate"
+	// ClassBackupEncryption is the protection applied to a backup archive.
+	ClassBackupEncryption Class = "backup-encryption"
 )
 
 // Risk levels.
@@ -67,7 +75,11 @@ type Asset struct {
 	Asymmetric  bool       `json:"asymmetric"`
 	PostQuantum bool       `json:"post_quantum"`
 	CreatedAt   *time.Time `json:"created_at,omitempty"`
-	ExpiresAt   *time.Time `json:"expires_at,omitempty"`
+	// CreatedAtEstimated marks a CreatedAt that is a stand-in for the real creation
+	// time (for example a key file's modification time). Absent means CreatedAt is
+	// recorded, or there is none.
+	CreatedAtEstimated bool       `json:"created_at_estimated,omitempty"`
+	ExpiresAt          *time.Time `json:"expires_at,omitempty"`
 	// AssumedLifetimeDays stands in for ExpiresAt when the real expiry is unknown
 	// but the rotation cadence is (e.g. an ACME certificate, an IdP JWKS key).
 	// Zero means "no expiry": the policy's UnboundedLifetimeYears applies.

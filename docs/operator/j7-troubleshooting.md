@@ -93,6 +93,13 @@ finishes. An admin command that starts and finishes inside those 5 seconds still
 beside the server. A run with `--force` without the lock is recorded as such in its
 audit event.
 
+The same holds the other way round. If the file is deleted or replaced while an admin
+command runs, the command notices within 5 seconds and takes the new file, so no
+server can start. Then it stops with exit status 1
+(`serverguard admin exclusive lock: ... was deleted or replaced while this admin command held it ...`,
+then `ERROR: this admin command's exclusive database lock was lost ...`). Check that no
+server or admin command started meanwhile, then re-run the command.
+
 On a filesystem without `flock` support or without inode numbers (some network and FUSE
 mounts), the server and every admin command refuse to start with an error saying so: put
 the SQLite database on a local filesystem, or use PostgreSQL.

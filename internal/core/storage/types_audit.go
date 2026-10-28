@@ -190,6 +190,14 @@ type AuditChainVerification struct {
 	// the walk before ThroughID or the end of the chain, so rows after HeadID
 	// were NOT verified.
 	Truncated bool
+
+	// Seals is the number of accepted audit losses (internal/core/audit_seal.go,
+	// `admin audit accept-loss`) the core's walk stepped over; SealReason
+	// describes them. Valid with Seals > 0 means the rows that remain verify
+	// and the chain is NOT whole: every report shows it as "sealed", never as
+	// valid. Never set by the storage layer.
+	Seals      int
+	SealReason string
 }
 
 // AuditChainAnchor is an authenticated re-anchor point for VerifyAuditChain's

@@ -1,6 +1,7 @@
 package auditverify
 
 import (
+	"cmp"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -23,13 +24,32 @@ type Checkpoint struct {
 	AnchorToken    []byte
 	AnchoredAt     *time.Time
 	AnchorProvider string
+	// Seals/SealDigest bind a checkpoint written after an accepted audit loss
+	// (seal.go): the number of seals and the newest seal's digest. Not stored
+	// on a checkpoint row: the verifier sets them from the authenticated seal
+	// record before checking a signature. A sealed high-water mark carries
+	// them (the v2 layout).
+	Seals      int
+	SealDigest string
 }
 
 // checkpointCanonical is the exact byte string signed/verified for a
 // checkpoint. Byte-identical reimplementation of
-// internal/core.checkpointCanonical — a differential test asserts that.
+// internal/core.checkpointCanonicalSealed — a differential test asserts that:
+// the v1 form without seals, "v2" with the seal count and newest seal digest
+// ahead of the v1 fields otherwise.
 func checkpointCanonical(cp *Checkpoint) string {
+	if cp.Seals != 0 {
+		return fmt.Sprintf("v2\x00%d\x00%s\x00%d\x00%d\x00%s\x00%s", cp.Seals, cp.SealDigest, cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion)
+	}
 	return fmt.Sprintf("v1\x00%d\x00%d\x00%s\x00%s", cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion)
+}
+
+// bound returns a copy of cp bound to seal binding b.
+func (cp *Checkpoint) bound(b sealBinding) *Checkpoint {
+	c := *cp
+	c.Seals, c.SealDigest = b.N, b.Digest
+	return &c
 }
 
 // SignCheckpoint computes the hex HMAC-SHA256 over cp's canonical bytes
@@ -61,6 +81,18 @@ const auditHighWaterSep = "\x1f"
 // syntactically valid high-water value should use this rather than
 // hand-rolling the separator-joined layout.
 func EncodeHighWater(cp *Checkpoint, sig string) string {
+	if cp.Seals > 0 {
+		return strings.Join([]string{
+			"v2",
+			strconv.Itoa(cp.Seals),
+			cp.SealDigest,
+			strconv.FormatInt(cp.ChainedEvents, 10),
+			strconv.FormatUint(cp.HeadID, 10),
+			cp.HeadHash,
+			cp.KeyVersion,
+			sig,
+		}, auditHighWaterSep)
+	}
 	return strings.Join([]string{
 		"v1",
 		strconv.FormatInt(cp.ChainedEvents, 10),
@@ -75,8 +107,19 @@ func EncodeHighWater(cp *Checkpoint, sig string) string {
 // value into the checkpoint snapshot and signature it encodes. ok is false
 // on any malformed value (treated as "no mark") — byte-identical contract
 // to internal/core.parseAuditHighWater.
+//
+// A v2 (sealed) mark sets Seals and SealDigest, which its signature covers.
 func ParseHighWater(val string) (cp *Checkpoint, sig string, ok bool) {
 	parts := strings.Split(val, auditHighWaterSep)
+	seals, digest := 0, ""
+	if len(parts) == 8 && parts[0] == "v2" {
+		n, err := strconv.Atoi(parts[1])
+		if err != nil || n < 1 || parts[2] == "" {
+			return nil, "", false
+		}
+		seals, digest = n, parts[2]
+		parts = append([]string{"v1"}, parts[3:]...)
+	}
 	if len(parts) != 6 || parts[0] != "v1" {
 		return nil, "", false
 	}
@@ -90,7 +133,22 @@ func ParseHighWater(val string) (cp *Checkpoint, sig string, ok bool) {
 		HeadID:        headID,
 		HeadHash:      parts[3],
 		KeyVersion:    parts[4],
+		Seals:         seals,
+		SealDigest:    digest,
 	}, parts[5], true
+}
+
+// HighWaterOrder orders two high-water marks for rollback protection: a mark
+// written under more seals is newer whatever its count (an accepted loss
+// lowers the count), and between marks under the same number of seals the
+// higher count is newer. It returns -1, 0 or +1.
+func HighWaterOrder(a, b *Checkpoint) int {
+	switch {
+	case a.Seals != b.Seals:
+		return cmp.Compare(a.Seals, b.Seals)
+	default:
+		return cmp.Compare(a.ChainedEvents, b.ChainedEvents)
+	}
 }
 
 // HighWaterSigMatches reports whether sig is the valid HMAC over cp's

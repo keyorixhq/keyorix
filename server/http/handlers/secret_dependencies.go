@@ -15,27 +15,27 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
-// dependencyErrorStatus maps a core dependency error to an HTTP status by its message,
-// matching the convention used across the secret handlers.
-func dependencyErrorStatus(msg string) int {
+// dependencyErrorStatus maps a core dependency error to an HTTP status by its
+// kind (errors.Is on a sentinel), never by its translated message text.
+func dependencyErrorStatus(err error) int {
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, storage.ErrSecretNotFound),
+		errors.Is(err, storage.ErrSecretDependencyNotFound),
+		storage.IsProjectNotFound(err):
 		return http.StatusNotFound
-	case strings.Contains(msg, "cannot depend on itself"),
-		strings.Contains(msg, "same project"),
-		strings.Contains(msg, "already exists"),
-		strings.Contains(msg, "cycle"),
-		strings.Contains(msg, "is not a secret"):
+	case errors.Is(err, core.ErrDependencyInvalid):
 		return http.StatusBadRequest
-	case strings.Contains(msg, "permission"), strings.Contains(msg, "not authorized"):
+	case errors.Is(err, core.ErrPermissionDenied):
 		return http.StatusForbidden
 	default:
 		return http.StatusInternalServerError
@@ -56,7 +56,7 @@ func (h *SecretHandler) ListSecretDependencies(w http.ResponseWriter, r *http.Re
 	}
 	deps, err := h.coreService.ListSecretDependencies(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	h.sendSuccess(w, deps, "")
@@ -88,7 +88,7 @@ func (h *SecretHandler) AddSecretDependency(w http.ResponseWriter, r *http.Reque
 	}
 	dep, err := h.coreService.AddSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), reqBody.DependsOnID, reqBody.Note, machineID(r))
 	if err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	h.sendSuccess(w, dep, "Dependency added")
@@ -112,7 +112,7 @@ func (h *SecretHandler) RemoveSecretDependency(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if err := h.coreService.RemoveSecretDependency(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id), uint(depID)); err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	h.sendSuccess(w, map[string]bool{"removed": true}, "Dependency removed")
@@ -132,7 +132,7 @@ func (h *SecretHandler) GetSecretImpact(w http.ResponseWriter, r *http.Request) 
 	}
 	impact, err := h.coreService.GetSecretImpact(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	h.sendSuccess(w, impact, "")
@@ -155,7 +155,7 @@ func (h *SecretHandler) GetSecretImpactPreview(w http.ResponseWriter, r *http.Re
 	}
 	preview, err := h.coreService.GetSecretImpactPreview(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	h.sendSuccess(w, preview, "")
@@ -178,12 +178,12 @@ func (h *SecretHandler) GetProjectRotationOrder(w http.ResponseWriter, r *http.R
 	// mirrors the identical fix in the gRPC twin (ProjectGRPCService.
 	// GetProjectRotationOrder).
 	if _, err := h.coreService.GetProject(r.Context(), uint(id)); err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	order, err := h.coreService.GetProjectRotationOrder(r.Context(), uint(id))
 	if err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	h.sendSuccess(w, order, "")
@@ -206,12 +206,12 @@ func (h *SecretHandler) GetProjectRotationPlan(w http.ResponseWriter, r *http.Re
 	// soft-delete, so re-check liveness before returning rotation data — mirrors
 	// the gRPC twin's identical fix.
 	if _, err := h.coreService.GetProject(r.Context(), uint(id)); err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	plan, err := h.coreService.GenerateRotationPlan(r.Context(), uint(id))
 	if err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	h.sendSuccess(w, plan, "")
@@ -228,7 +228,7 @@ func (h *SecretHandler) GetDeploymentRotationPlan(w http.ResponseWriter, r *http
 	}
 	plan, err := h.coreService.GenerateDeploymentRotationPlan(r.Context())
 	if err != nil {
-		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err.Error()), err), dependencyErrorStatus(err.Error()), nil)
+		h.sendError(w, "Error", errorMessageFor(dependencyErrorStatus(err), err), dependencyErrorStatus(err), nil)
 		return
 	}
 	// #G17: the response aggregates every project's own rotation plan; a

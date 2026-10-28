@@ -11,6 +11,8 @@ import (
 // Storage (interface.go) embeds it; the method set of Storage is the union of
 // the per-domain interfaces, so callers and implementers are unaffected.
 type MFAStore interface {
+	// Administrator MFA resets (RECOVERY-MFA-RESET-1), iface_mfa_reset.go.
+	MFAResetStore
 	// MFA / TOTP (per-user two-factor authentication).
 	// UpsertMFASecret stores s as the user's pending TOTP secret: it inserts the
 	// row, or replaces an existing row that is NOT activated. It never replaces an

@@ -6,12 +6,13 @@
 package handlers
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -34,7 +35,7 @@ func (h *SecretHandler) SimulateRotation(w http.ResponseWriter, r *http.Request)
 		SecretID: uint(id),
 	})
 	if err != nil {
-		if strings.Contains(err.Error(), "secret not found") {
+		if errors.Is(err, storage.ErrSecretNotFound) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 			return
 		}

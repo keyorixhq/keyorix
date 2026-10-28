@@ -8,9 +8,11 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -28,7 +30,7 @@ import (
 // events (pass-through from the request); empty is tolerated.
 func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint, newName, actorUsername string, actorID uint, ip, ua string) (*models.SecretNode, error) { // NOSONAR -- domain-driven parameter count
 	if sourceID == 0 || targetEnvID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "source secret ID and target environment ID are required")
+		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "source secret ID and target environment ID are required")
 	}
 
 	// #G14: authorize read access to the source BEFORE the cross-project
@@ -45,7 +47,8 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	// collapsed — a genuine, unrelated storage failure (DB down, read-only,
 	// etc.) still propagates as-is so it isn't misreported and mishandled
 	// upstream as a plain not-found.
-	notFound := fmt.Errorf("%s: %s", i18n.T("ErrorSecretNotFound", nil), "not found")
+	notFound := storage.NotFound(storage.ErrSecretNotFound,
+		fmt.Sprintf("%s: %s", i18n.T("ErrorSecretNotFound", nil), "not found"), nil)
 	// #3273: a refused source read is audited (secret.read, Success=false). A
 	// missing source and a forbidden one answer the same notFound and take the
 	// same path into the recorder; only the row's reason differs.
@@ -62,13 +65,18 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	}
 	source, err := c.GetSecret(ctx, sourceID)
 	if err != nil {
+		// A missing or expired source answers notFound; a storage failure is not
+		// "no such secret" and propagates.
+		if !storage.IsSecretNotFound(err) && !errors.Is(err, ErrSecretExpired) {
+			return nil, err
+		}
 		refuse(SecretReadDeniedNotFound, nil)
 		return nil, notFound
 	}
 	value, err := c.GetSecretValueWithPermissionCheck(ctx, sourceID, actorID)
 	if err != nil {
 		refuse(ClassifySecretReadDenial(err), source)
-		if strings.Contains(err.Error(), "insufficient permissions") {
+		if errors.Is(err, ErrPermissionDenied) {
 			return nil, notFound
 		}
 		return nil, err
@@ -79,10 +87,14 @@ func (c *KeyorixCore) CopySecret(ctx context.Context, sourceID, targetEnvID uint
 	// already proven read access to source above, so this reveals nothing new.
 	targetEnv, err := c.storage.GetEnvironment(ctx, targetEnvID)
 	if err != nil {
+		if isEnvironmentNotFoundErr(err) {
+			return nil, storage.Typed(ErrSecretTargetInvalid,
+				fmt.Sprintf("%s: environment %d not found", i18n.T("ErrorValidation", nil), targetEnvID), err)
+		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
 	}
 	if targetEnv.ProjectID != source.ProjectID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "target environment must be in the same project as the source")
+		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "target environment must be in the same project as the source")
 	}
 	// SESSION-PERF #2403 follow-up (item 3): fail closed, matching this function's
 	// own stated reason for auditing the source read at all — a copy whose audit

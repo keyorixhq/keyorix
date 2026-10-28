@@ -427,6 +427,11 @@ type KeyorixCore struct {
 	// TransitionMachineIdentity when it cannot determine exactly which credential
 	// hashes to evict individually (see evictMachineIdentityCacheOrFlush's doc comment).
 	machineTokenCacheFlusher func()
+	// userTokenCacheEvictor drops every HTTP auth-cache entry of one user (session and PAT)
+	// without knowing the token hashes. Wired at startup (SetUserTokenCacheEvictor); nil in
+	// tests/remote mode. Fail-closed fallback when listing the user's session hashes failed
+	// (session_eviction.go).
+	userTokenCacheEvictor func(userID uint)
 	// auditMaxCertified is an in-memory monotonic high-water mark of the greatest
 	// chained-events count this process has ever certified or verified. It backstops
 	// the persistent signed high-water (SystemMetadata) against an online attacker who
@@ -458,6 +463,16 @@ type KeyorixCore struct {
 	// auditVerifyEvidence caches the in-chain verification-state events seen so
 	// far (audit_verify_state.go), so a load scans only new rows.
 	auditVerifyEvidence auditVerifyEvidenceIndex
+	// auditSealMu guards auditSealBind, the seal binding checkpoint signatures
+	// use (audit_seal.go), and auditSealSeen, the most seals this process read
+	// (a later read of fewer is a replaced record).
+	auditSealMu   sync.Mutex
+	auditSealBind auditSealBinding
+	auditSealSeen int
+	auditSealRecs []*auditSeal
+	// auditSealHook, when set (tests only), runs after each write step of
+	// AcceptAuditLoss; an error stops it there, as a crash would.
+	auditSealHook func(step string) error
 	// auditKeyTransitionHook, when set (tests only), runs after each step of
 	// CompleteAuditKeyTransition; an error stops it there, as a crash would.
 	auditKeyTransitionHook func(step string) error

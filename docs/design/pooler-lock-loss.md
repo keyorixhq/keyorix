@@ -113,20 +113,88 @@ makes the overlap visible, it does not prevent it.
    lock sends, which should be measured through PgBouncer transaction mode first.
 4. D only where an overlap is unacceptable; the two cases where it is (key rotation and
    single_writer) already have it. Named-lock sections should each re-check their
-   precondition inside their write transaction or rely on a constraint; this note does
-   not audit them one by one.
+   precondition inside their write transaction or rely on a constraint; the audit
+   below lists, section by section, which ones do.
 5. C is not recommended: it adds writes and clock dependence and still has a window.
 
 Not changed, and why:
 
 - **Live `admin backup` presence lock.** A live PostgreSQL backup holds the presence
-  lock shared under `key_dir_lock: database` so a rotation cannot start meanwhile. It
-  is watched (Presence.Lost) but the backup does not act on it. Stopping it like the
-  other admin commands would leave a partly written output file (it is written in place,
-  not renamed into place), so it needs its own change: fail the backup and remove the
-  partial file. Left as a follow-up.
-- **The overlap window itself** for named and scheduler locks: closing it needs D per
-  section.
+  lock shared under `key_dir_lock: database` so a rotation cannot start meanwhile.
+  Stopping it like the other admin commands (exit at once) would leave a partly
+  written output file (it is written in place, not renamed into place). Since
+  ADMIN-TAILS-1 it acts on Presence.Lost itself instead: writes to the archive stop,
+  the snapshot reads are cancelled, the partial file is removed and the backup fails
+  with the reason (`TestAdminBackup_Postgres_RealPresenceLockLost_NoArchive`,
+  `TestAdminBackup_Postgres_PresenceLostMidWrite_RemovesTheArchiveAndFails`).
+  SERVERGUARD-LOCK-TAILS-1 made this hold at every point up to the close (the lock is
+  looked at again after the file is closed) and on the exclusive path too (SQLite,
+  `--exclusive`), where the stop is an `os.Exit`: the archive's removal is registered
+  before the first byte and runs before the exit (`onLostDatabaseLock`). The error says
+  the backup is not usable (`TestAdminBackup_SQLiteLockLost_NoArchiveAndNonZeroExit`,
+  `TestAdminBackup_Postgres_LivePresenceLost_NoArchiveAndNonZeroExit`: before the first
+  byte, mid-stream, after the last byte before close).
+- **The overlap window itself** for named and scheduler locks: closing it needs D (or E)
+  per section. The audit below says which sections need it.
+
+## Overlap-window audit (SERVERGUARD-LOCK-TAILS-1)
+
+For each section that runs under a lock held across statements, the table says what a
+second holder could do inside the overlap window after a silent loss. A second holder is
+another replica that took the same key while the first one has not yet noticed. The table
+also says whether anything other than the lock already prevents the bad end state.
+
+"Out of the transaction" means the check reads through `c.storage` (autocommit) and the
+write runs in a later transaction. That is not a re-check: two holders pass their checks,
+then write disjoint rows (write skew). The schema has no foreign keys
+(`internal/storage/testdata/schema_epoch/`).
+
+This is a code-reading audit: no red test was run for the uncovered rows. Each one names the
+test it would take.
+
+| # | Section (call sites) | Protects | A second holder in the window could | Already covered by | Verdict |
+|---|---|---|---|---|---|
+| 1 | `last-admin-guard`, deactivation: `account_state.go` SuspendUser; `users.go` UpdateUser (deactivate), DeleteUser; `scim.go` UpdateSCIMUser (deactivate), DeprovisionSCIMUser; `migrate_user_to_machine.go` | at least one live global admin (#1646) | deactivate admin A while another holder deactivates admin B: each guard sees the other admin as surviving, so the install is left with **zero admins** | nothing: `guardLastAdminDeactivation` reads out of the transaction; the write transaction locks only the target user | **not covered, cheap** (see below) |
+| 2 | `last-admin-guard`, group side: `rbac_management.go` RemoveRoleFromGroup (global, and access-review revoke); `project_members.go` group project-admin guard locks; callers DeleteGroup, RemoveUserFromGroup, SCIM group removals | the same, plus a project admin for every project the group administers | remove two admin groups or the last members of two groups: zero global or project admins | nothing: the guards read out of the transaction; the deletes take no shared row lock | **not covered, cheap** (same change as row 1) |
+| 3 | `last-admin-guard`, direct global admin-role removal: `rbac_management.go` removeGlobalAdminRoleIfApplicable; `role_set_replace.go` (global branch) | the same | nothing against another row-3 holder; zero admins together with a row-1 or row-2 holder | `RemoveGlobalAdminRoleGuarded` (`local_rbac.go`): check and delete in one transaction with FOR UPDATE on every global admin grant row and its holders | **covered against itself**; not across sections until rows 1–2 take the same row locks |
+| 4 | `project-admin-guard`, last project admin: `rbac_management.go` withUserRoleRemovalGuards and RemoveRoleFromGroup (project scope); `project_members.go` RemoveProjectMember; `role_set_replace.go` (project branch, swap); `break_glass.go` RevokeBreakGlassActivationAtomic | at least one project-level `roles.assign` holder | two removals of two different project admins: zero project admins (a global admin can re-add one) | nothing: `guardLastProjectAdmin` reads out of the transaction; the removals are plain deletes | **not covered, cheap** (row 1's change, scoped to the project); low value |
+| 5 | `project-admin-guard`, break-glass activate: `break_glass.go` | an activation's grant never lands after a revoke reported success (#2722) | nothing | record and grant in one transaction (#3109); `uniq_break_glass_active_project_user`; the revoke is one transaction with a conditional update | **covered** (the lock is no longer load-bearing) |
+| 6 | `sod-grant:user`: `rbac_management.go` AssignUserRole, SSO grant, baseline backfill, withOrderedUserSoDLocks; `jit_access.go`; `invitations.go` access-request finalize; `groups.go` AddUserToGroup; `role_set_replace.go` | separation of duties: no principal holds a policy-toxic permission set (#419) | grant two individually clean roles to one user concurrently: an **SoD-conflicting pair** | only a duplicate of the same grant (`user_roles_pkey`); the SoD check reads out of the transaction, or (`role_set_replace.go`) inside it with no shared row lock | **not covered, expensive** |
+| 7 | `sod-grant:group`: `rbac_management.go` AssignRoleToGroup; `jit_access.go` group grant with expiry | SoD across every group member (#1780) | a group grant and a direct grant to a member: a toxic pair | duplicates only (`group_roles_pkey`) | **not covered, expensive** |
+| 8 | `sod-grant:machine`: `machine_token.go` AssignMachineRole; withMachineRoleRemovalGuards | SoD on machine credentials | AssignMachineRole: a toxic pair. The removal section cannot create a conflict | duplicates only | grant: **not covered, expensive**; removal: nothing to protect |
+| 9 | `sod-grant:group`, RestoreGroup: `groups.go` | a non-global admin cannot restore a group carrying an admin role its ceiling check never saw (#2455) | an admin-role grant lands on the deleted group after the restore read its roles | nothing | **not covered, expensive**; low |
+| 10 | `dual-control-approval`: `invitations.go` | M-of-K: the grant is made exactly once, at the K-th distinct approver | (a) a double grant or a double finalize; (b) two approvers straddling K both record a partial approval, so the request stays pending and lapses | (a) `user_roles_pkey`, the conditional `UpdateAccessRequest … WHERE state = 'pending'` with a RowsAffected check, `ux_access_request_approver`; (b) nothing | (a) **covered**; (b) **not covered, expensive** (fails closed: availability only) |
+| 11 | `project-membership`: `membership_lifecycle.go` invite, TransitionMembership | a revoked membership never has a live grant (#2657, #2659); one active onboarding per project and user | the activation's state change commits, a revoke runs and succeeds, then the activation's grant lands: a **revoked member with live access** | the duplicate onboarding by `uniq_project_memberships_active`; not the grant against the revoke (the state change and the grant are separate transactions) | **not covered, cheap** (move the state change into the grant and removal transactions) |
+| 12 | `secret-dependency-graph`: `secret_dependencies.go` | the dependency graph stays acyclic (INV-CORE-31) | add A→B and B→A concurrently: a **cycle** | duplicates by `idx_secret_dep_edge`; not cycles (FOR UPDATE on existing edges does not block a new edge) | **not covered, cheap** (a BEFORE INSERT trigger that takes a per-project transaction lock and checks reachability; no client round trip) |
+| 13 | `environment-secret-guard`: `secrets.go` CreateSecret, CreateFolder, RestoreSecret; `secret_suspend.go` resume; `catalog.go` and `local_secrets.go` DeleteEnvironment | no active secret or folder under a deleted environment | a create passes its environment check, DeleteEnvironment counts zero and deletes, then the insert commits: an **orphaned active secret** | nothing: the create transaction re-checks only the project row; DeleteEnvironment counts, then deletes | **not covered, cheap** (FOR SHARE on the environment row in place of the project lock; delete first, then count, in one transaction) |
+| 14 | `WithBootstrapLock`: `auth_bootstrap.go` | one first-admin seed | nothing | one transaction; the loser hits unique `permissions.name`, `uniq_roles_name_folded`, `uniq_projects_name_active` | **covered** |
+| 15 | `WithAuditCheckpointLock`: `audit_checkpoint.go`, `audit_verify_state.go`, `audit_verify_incremental.go`, `audit_key_transition.go` | the audit high-water mark never moves back; the signed verify state never loses a recorded failure | the slower holder writes a lower high-water mark after the faster one, so a truncation of the newest events goes unseen; a lost update of the verify state can drop a sticky failure | nothing: `advanceAuditHighWater` and `saveAuditVerifyState` write through the `SetSystemMetadata` upsert (its "monotonic by construction" comment holds only while the lock is exclusive) | **not covered, cheap** (compare-and-set on the value read, replacing the upsert) |
+| 16 | `WithSchedulerLock`: `server/scheduler_run.go` (about 20 jobs) | one replica per tick | run the same tick twice: duplicate audit rows and notifications for idempotent sweeps; a double action for jobs with an outside effect (auto-rotation, evidence delivery, recertification) | per job, not audited here | **not audited per job** |
+| 17 | audit list index build: `audit_list_indexes.go` | one builder | the second builder drops the first one's in-progress index as invalid, and the build retries | catalog name uniqueness, the validity check after the build | operational only; accept |
+
+What the uncovered rows need, none of it adding a round trip to a request path:
+
+- **Rows 1, 2 and 4** (last admin): take `RemoveGlobalAdminRoleGuarded`'s FOR UPDATE on the
+  global (or project) admin grant rows as the first statement of every deactivation and
+  removal transaction. Re-check survival there, and drop the out-of-transaction guard read
+  it replaces. That is about ten call sites in `internal/core`.
+- **Row 11** (membership): move the membership state change into the grant and revoke
+  transactions.
+- **Row 12** (dependency cycle): add the trigger.
+- **Row 13** (environment guard): add FOR SHARE on the environment, and in DeleteEnvironment
+  delete first, then count, in one transaction.
+- **Row 15** (audit high-water and verify state): `CompareAndSetSystemMetadata` in place of
+  the upsert.
+- **Rows 6–9** (SoD): move the SoD read into the grant transaction under
+  `pg_advisory_xact_lock` on the same key (option E), across about twelve grant paths.
+- **Row 10b**: an `approvals_count` updated with `RETURNING`.
+- **Row 16**: a per-job idempotence audit, starting with auto-rotation and evidence
+  delivery.
+
+Each fix is proved with the cross-replica fixtures in
+`internal/core/concurrency_check_then_act_exempt_review_postgres_test.go` (`newCTAReview`):
+replica A's `WithNamedLock` is replaced by a pass-through hook to model the silent loss,
+then the two replicas race.
 
 ## Evidence
 

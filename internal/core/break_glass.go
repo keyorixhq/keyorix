@@ -266,7 +266,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		// server/http/handlers/break_glass.go.
 		// refuseBreakGlass keeps the typed ErrBreakGlassDisabled kind that the
 		// HTTP and gRPC mappings match with errors.Is.
-		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorPermissionDenied", nil), errBreakGlassDisabled), ErrBreakGlassDisabled)
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorPermissionDenied", nil), errBreakGlassDisabled), ErrBreakGlassDisabled, ErrPermissionDenied)
 	}
 	if projectID == 0 || userID == 0 {
 		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "project ID and user are required"), ErrBreakGlassInvalidRequest)
@@ -289,7 +289,7 @@ func (c *KeyorixCore) ActivateBreakGlass(ctx context.Context, projectID, userID 
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), merr)
 	}
 	if !affiliated {
-		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "break-glass is available only to members of the project"), ErrBreakGlassNotProjectMember)
+		return nil, refuseBreakGlass(fmt.Sprintf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "break-glass is available only to members of the project"), ErrBreakGlassNotProjectMember, ErrPermissionDenied)
 	}
 	// Note: IsProjectMember has no minimum-tenure requirement — a user added
 	// to the project seconds ago can immediately self-activate break-glass.
@@ -1010,7 +1010,7 @@ func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, 
 		return fmt.Errorf("%w: %s: %s", ErrInvalidInput, i18n.T("ErrorValidation", nil), "project ID is required")
 	}
 	if err := requireHumanReviewer(actorID); err != nil {
-		return fmt.Errorf("%w: %s: %s", ErrBreakGlassUnattributableReviewer, i18n.T("ErrorPermissionDenied", nil), err)
+		return permissionDeniedf("%w: %s: %s", ErrBreakGlassUnattributableReviewer, i18n.T("ErrorPermissionDenied", nil), err)
 	}
 	note = strings.TrimSpace(note)
 	if len(note) < minBreakGlassReviewNoteLen {
@@ -1045,7 +1045,7 @@ func (c *KeyorixCore) ReviewBreakGlass(ctx context.Context, actorID, projectID, 
 		return fmt.Errorf("%w: %s", storage.ErrBreakGlassNotFound, i18n.T("ErrorNotFound", nil))
 	}
 	if actorID == activation.UserID {
-		return fmt.Errorf("%w: %s: %s", ErrBreakGlassSelfReview, i18n.T("ErrorPermissionDenied", nil),
+		return permissionDeniedf("%w: %s: %s", ErrBreakGlassSelfReview, i18n.T("ErrorPermissionDenied", nil),
 			"you cannot review your own break-glass activation; an independent reviewer is required")
 	}
 	if activation.State == BreakGlassActive {

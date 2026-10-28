@@ -105,6 +105,7 @@ func TestCheckpointTruncation_TruncatedCount(t *testing.T) {
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	// chainedEvents < cp.ChainedEvents → truncated
 	cp := &models.AuditCheckpoint{ID: 1, ChainedEvents: 100, HeadID: 5, HeadHash: "abc"}
 	reason, tampered, err := c.checkpointTruncation(context.Background(), 50, cp)
@@ -131,6 +132,7 @@ func TestCheckpointTruncation_HeadHashMismatch(t *testing.T) {
 	ms.On("AuditEntryHashByID", mock.Anything, uint(5)).Return("differenthash", true, nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	cp := &models.AuditCheckpoint{ID: 1, ChainedEvents: 5, HeadID: 5, HeadHash: "expected_hash"}
 	reason, tampered, err := c.checkpointTruncation(context.Background(), 10, cp)
 	require.NoError(t, err)
@@ -227,7 +229,7 @@ func TestGetSecretValueByVersionWithPermissionCheck_PermissionDenied(t *testing.
 	ms.On("ListSharesBySecret", mock.Anything, uint(5)).Return([]*models.ShareRecord{}, nil)
 	ms.On("GetUserGroupsAt", mock.Anything, uint(2), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): no direct grant, and no ancestor folder grant either → deny.
-	ms.On("GetSecretACL", mock.Anything, uint(5), uint(2)).Return(nil, errors.New("record not found"))
+	ms.On("GetSecretACL", mock.Anything, uint(5), uint(2)).Return(nil, storage.ErrSecretACLNotFound)
 	ms.On("GetSecretAncestors", mock.Anything, uint(5)).Return([]uint{}, nil)
 	// RBAC fallback (r124): no roles → deny.
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(2), mock.Anything).Return([]uint{}, nil)
@@ -379,6 +381,7 @@ func TestWriteAuditCheckpointLocked_VerifyFails(t *testing.T) {
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	_, _, err := c.WriteAuditCheckpoint(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to verify")
@@ -398,6 +401,7 @@ func TestWriteAuditCheckpointLocked_InvalidChain(t *testing.T) {
 	}, nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	_, _, err := c.WriteAuditCheckpoint(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing to checkpoint")
@@ -420,6 +424,7 @@ func TestWriteAuditCheckpointLocked_LookAlikeErrorNotSpoofed(t *testing.T) {
 	ms.On("VerifyAuditChain", mock.Anything, mock.Anything).Return(nil, lookAlike)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	_, _, err := c.WriteAuditCheckpoint(context.Background())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "refusing to checkpoint", "the look-alike text is present in the raw error")
@@ -445,6 +450,7 @@ func TestWriteAuditCheckpointLocked_ValidChain_NoExistingCP(t *testing.T) {
 	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	cp, ok, err := c.WriteAuditCheckpoint(context.Background())
 	require.NoError(t, err)
 	assert.True(t, ok)

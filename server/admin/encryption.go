@@ -146,6 +146,9 @@ func runEncRotate(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	defer lock.Release() //nolint:errcheck
+	if err := refuseForcedDEKRotation(cfg, encRotateDryRun); err != nil {
+		return err
+	}
 	if err := encryptionops.RotateWithConfig(cfg, encRotateConfirm, encRotateDryRun, encPassphraseSource); err != nil {
 		return err
 	}
@@ -332,9 +335,11 @@ var encMigrateProviderCleanupCmd = &cobra.Command{
 	Short: "Securely delete leftover pre-migration wrapped-DEK backups",
 	Long: `Find and securely delete every "<dek_path>.migrate-backup.*" file left behind
 by a previous migrate-provider run. Requires --confirm; use --dry-run to
-preview first. Holds this tree's exclusive database-presence lock for its
-whole run — a narrow TOCTOU against a concurrent migrate-provider run is
-theoretically possible without it (docs/cli-split-inventory.md §2.4).`,
+preview first. Holds this tree's exclusive database-presence lock and the
+exclusive key-directory lock (dek.lock) for its whole run, so it never runs
+beside a migrate-provider whose rollback may still need a backup, even with
+--force (which only goes past the database lock). A live server holds dek.lock
+too: stop the server before running it.`,
 	RunE: runEncMigrateProviderCleanup,
 }
 

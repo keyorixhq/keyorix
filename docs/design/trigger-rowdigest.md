@@ -177,8 +177,10 @@ interval. C costs a table scan for little gain over B. D leaves a silent, unboun
   now expects exactly the pinned `proconfig`, and the installers re-create an older unpinned
   function on the next boot.
 - The `secret_nodes` cache-epoch trigger (`secret_node_cache_epoch.go`) has the same owner-level
-  exposure as this trigger. B's job is built so that a second function can be registered; that is
-  a follow-up.
+  exposure as this trigger. Closed by STARTUP-GUARD-TAILS-1: the job checks it as a second target
+  (`secretNodeCacheEpochIntegrityTarget`) and invalidates by moving `cache_epoch` on every live row
+  after the repair (INV-STORE-secret-node-cache-epoch-trigger-integrity-checked). Both targets
+  also reject a reading taken on a session that is not in `session_replication_role = origin`.
 - The check covers the triggers and their function, not the row they write. The owner can make
   the bump a no-op on `system_metadata` itself (a `BEFORE UPDATE` trigger on the generation key
   that keeps `OLD.value`, a rule, or forced row-level security that hides the row from the

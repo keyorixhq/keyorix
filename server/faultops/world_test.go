@@ -219,7 +219,7 @@ func newFaultWorld(t *testing.T, spec *faultstorage.FaultSpec) *faultWorld {
 // (world_reuse_test.go), so a fresh and a reused world cannot differ in schema.
 func migrateWorldSchema(tb tbLite, db *gorm.DB) {
 	tb.Helper()
-	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
+	if err := db.AutoMigrate(worldModels()...); err != nil {
 		tb.Fatal(err)
 	}
 	// audit_checkpoints is not in AllTestModels (so it stays out of the

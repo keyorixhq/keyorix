@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
 )
 
@@ -182,7 +181,7 @@ func snapshotDB(db *gorm.DB) (dbSnapshot, error) {
 	snap := dbSnapshot{Tables: make(map[string]tableSnapshot)}
 	var tableLines []string
 
-	for _, m := range models.AllTestModels() {
+	for _, m := range worldModels() {
 		mt := reflect.TypeOf(m).Elem() // m is a *models.X zero value
 		sliceType := reflect.SliceOf(reflect.PointerTo(mt))
 		rowsPtr := reflect.New(sliceType)

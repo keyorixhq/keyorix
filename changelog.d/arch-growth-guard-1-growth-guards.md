@@ -1,0 +1,2 @@
+### Internal
+- **Architecture-growth guard.** `make check-growth` fails when a package under `internal/` or `server/` has more than 260 non-test `.go` files or more than 44 transitive dependents in the module (today's max: 226 `internal/core`, 38 `internal/core/ports`), naming the package and the overshoot. It also warns, without failing, when a PR only appends more than 50 lines to an existing doc or data file. Baseline and method: `docs/design/architecture-growth-baseline.md`; rule: `docs/ARCHITECTURE.md`, "Growth ceilings". Not yet run by CI.

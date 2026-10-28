@@ -6,6 +6,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -25,7 +26,10 @@ func (ls *LocalStorage) CreateSecretDependency(ctx context.Context, d *models.Se
 func (ls *LocalStorage) GetSecretDependency(ctx context.Context, id uint) (*models.SecretDependency, error) {
 	var d models.SecretDependency
 	if err := ls.db.WithContext(ctx).First(&d, id).Error; err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorNotFound", nil), err)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, storage.NotFound(storage.ErrSecretDependencyNotFound, fmt.Sprintf("%s: %v", i18n.T("ErrorNotFound", nil), err), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	return &d, nil
 }
@@ -62,7 +66,7 @@ func (ls *LocalStorage) DeleteSecretDependency(ctx context.Context, id uint) err
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrSecretDependencyNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }

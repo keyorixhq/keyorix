@@ -266,8 +266,11 @@ func (c *KeyorixCore) evictUserSessionCache(ctx context.Context, userID uint) {
 			log.Printf("SECURITY: evictUserSessionCache panicked for user %d (best-effort, primary operation already succeeded): %v", userID, r)
 		}
 	}()
-	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
-	c.clearCachedTokens(hashes...)
+	// A listing failure (after one retry) evicts every cache entry of the user instead
+	// and is logged and audited: see session_eviction.go. Some callers hold a named lock
+	// here; the audit write on that failure path is a single non-waiting best-effort
+	// append, not an owed row.
+	c.evictSessionsAndAudit(ctx, userID, c.listSessionHashesForEviction(ctx, userID), evictClearNarrowing, "evictUserSessionCache")
 }
 
 // EventSessionRevocationPanicked audits a panic recovered inside
@@ -366,14 +369,20 @@ func (c *KeyorixCore) deleteSessionsForUserAndEvict(ctx context.Context, userID,
 			err = nil
 		}
 	}()
-	hashes, _ := c.storage.ListSessionTokenHashesForUser(ctx, userID)
+	ev := c.listSessionHashesForEviction(ctx, userID)
 	err = c.storage.DeleteSessionsForUserExcept(ctx, userID, keepID)
 	if err != nil {
 		log.Printf("SECURITY: deleteSessionsForUserAndEvict failed to purge sessions for user %d (best-effort, primary operation already succeeded): %v", userID, err)
 		c.writeAuditEventFailedFull(ctx, EventSessionRevocationFailed, &userID, nil, nil, "",
 			fmt.Sprintf("failed to purge sessions for user %d: %v — sessions may not have been fully revoked, review manually", userID, err))
 	}
-	for _, h := range hashes {
+	if ev.ListErr != nil {
+		// Without the hash list the kept session cannot be told apart, so the fallback
+		// evicts it too: it re-validates once on its next request and stays logged in.
+		c.evictSessionsAndAudit(ctx, userID, ev, evictTombstone, "deleteSessionsForUserAndEvict")
+		return err
+	}
+	for _, h := range ev.Hashes {
 		if h != "" && h != keepHash {
 			c.invalidateTokenCache(h)
 		}
@@ -399,11 +408,8 @@ func (c *KeyorixCore) validateNewPassword(ctx context.Context, user *models.User
 // "must differ from the current password": for any other caller that wording would
 // confirm a guess at the current password for free.
 func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.User, newPassword string, currentVerified bool) error {
-	// The refusal text is assembled from the policy's fixed wording for each broken
-	// rule. It is never built from, or wrapping, an error returned by a check that
-	// was handed the candidate: the text must not be derivable from the password.
-	if unmet := c.passwordPolicy.Unmet(newPassword, user); len(unmet) > 0 {
-		return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": password must " + c.passwordPolicy.DescribeAll(unmet)}
+	if refusal := c.refuseUnmetRules(newPassword, user); refusal != nil {
+		return refusal
 	}
 	// Stateful history rule: forbid reuse of the last N passwords (ADR-025).
 	if c.passwordHistoryEnabled() {
@@ -420,6 +426,20 @@ func (c *KeyorixCore) validateNewPasswordAs(ctx context.Context, user *models.Us
 		if c.passwordInHistory(ctx, user, newPassword) {
 			return newHistoryRefusal()
 		}
+	}
+	return nil
+}
+
+// refuseUnmetRules is the policy half of every new-password check (change, setup
+// consume, user create, bootstrap): nil when newPassword meets the configured
+// rules, else a policyRefusal (ErrPasswordPolicy) naming each broken rule. user
+// supplies the personal-info context and may be nil. The text is assembled from the
+// policy's fixed wording for each broken rule. It is never built from, or wrapping,
+// an error returned by a check that was handed the candidate: the text must not be
+// derivable from the password.
+func (c *KeyorixCore) refuseUnmetRules(newPassword string, user *models.User) error {
+	if unmet := c.passwordPolicy.Unmet(newPassword, user); len(unmet) > 0 {
+		return policyRefusal{msg: i18n.T("ErrorValidation", nil) + ": password must " + c.passwordPolicy.DescribeAll(unmet)}
 	}
 	return nil
 }

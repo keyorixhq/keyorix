@@ -124,6 +124,9 @@ func (h *NotificationChannelHandler) Create(w http.ResponseWriter, r *http.Reque
 	}
 	created, err := h.coreService.CreateNotificationChannel(r.Context(), ch, u.Username, u.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if isValidationError(err) {
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 			return
@@ -176,6 +179,9 @@ func (h *NotificationChannelHandler) Update(w http.ResponseWriter, r *http.Reque
 	}
 	updated, err := h.coreService.UpdateNotificationChannel(r.Context(), id, body, u.UserID)
 	if err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), channelNotFound) {
 			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return
@@ -203,6 +209,9 @@ func (h *NotificationChannelHandler) Delete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if err := h.coreService.DeleteNotificationChannel(r.Context(), id, u.UserID); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if strings.Contains(err.Error(), channelNotFound) {
 			sendError(w, "NotFound", channelNotFoundMessage, http.StatusNotFound, nil)
 			return
@@ -240,6 +249,9 @@ func (h *NotificationChannelHandler) SetRetryPolicy(w http.ResponseWriter, r *ht
 		RetryBackoffMs: body.RetryBackoffMs,
 	}
 	if err := h.coreService.SetNotificationRetryPolicy(r.Context(), u.UserID, id, cfg); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		if isRetryPolicyValidationError(err) {
 			sendError(w, "BadRequest", err.Error(), http.StatusBadRequest, nil)
 			return

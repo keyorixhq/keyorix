@@ -63,7 +63,7 @@ func tx3Kinds() []grantKind {
 		u := scimUser(w).(*models.User)
 		g, err := w.c.ProvisionSCIMGroup(ctx, 0, w.tag("g3-sg"), nil)
 		require.NoError(w.t, err)
-		return [2]any{g, u}
+		return [2]any{g.Group, u}
 	}
 	channel := func(w *satWorld) any {
 		ch, err := w.c.CreateNotificationChannel(ctx, &models.NotificationChannel{
@@ -121,6 +121,16 @@ func tx3Kinds() []grantKind {
 				return u
 			},
 			mutate: func(w *satWorld, c *KeyorixCore, s any) error { return c.RestoreUser(ctx, w.f.adminID, uid(s)) }},
+		// UNLOCK-AUDIT-1 (#3599): lifting a brute-force lockout lets the account log in
+		// again, so account.unlocked commits with the clear or not at all.
+		{name: "unlock-user",
+			prepare: func(w *satWorld) any {
+				u := w.newUser("g3-lk", "project_viewer")
+				at, until := time.Now(), time.Now().Add(time.Hour)
+				require.NoError(w.t, w.f.setup.Storage().UpdateLoginLockoutState(ctx, u.ID, 5, &at, &until, 1))
+				return u
+			},
+			mutate: func(w *satWorld, c *KeyorixCore, s any) error { return c.UnlockUser(ctx, w.f.adminID, uid(s)) }},
 		// reissue-one-time-password narrows (sessions end) and widens (a new credential):
 		// split into two commits, covered by audit_split_test.go (MERGE-FIX-3482G).
 		// groups
@@ -371,6 +381,19 @@ func tx3Kinds() []grantKind {
 			mutate: func(w *satWorld, c *KeyorixCore, s any) error {
 				ids := s.([2]uint)
 				_, err := c.ClassifyMachineToken(ctx, w.f.projectID, ids[0], ids[1], "restricted", w.f.adminID)
+				return err
+			}},
+		// secrets: UNLOCK-AUDIT-1 (#3599): a resume makes a suspended secret readable
+		// again, so secret.resumed commits with the status flip or not at all.
+		{name: "resume-secret",
+			prepare: func(w *satWorld) any {
+				s := w.f.secret(w.tag("g3-rsm"), w.member.ID)
+				_, err := w.c.SuspendSecret(ctx, s.ID, w.f.adminID, "incident")
+				require.NoError(w.t, err)
+				return s
+			},
+			mutate: func(w *satWorld, c *KeyorixCore, s any) error {
+				_, err := c.ResumeSecret(ctx, s.(*models.SecretNode).ID, w.f.adminID)
 				return err
 			}},
 		// access review campaigns

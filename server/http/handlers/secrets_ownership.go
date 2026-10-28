@@ -4,11 +4,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -44,15 +46,13 @@ func (h *SecretHandler) TransferOwnership(w http.ResponseWriter, r *http.Request
 	secret, err := h.coreService.TransferSecretOwnership(r.Context(), uint(id), reqBody.NewOwnerID, userCtx.UserID, userCtx.ActorKind())
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case isSecretNotFound(err), storage.IsUserNotFound(err):
 			h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "only the current owner"):
+		case errors.Is(err, core.ErrSecretNotOwner):
 			h.sendError(w, "Forbidden", "Only the current owner can transfer this secret", http.StatusForbidden, nil)
-		case strings.Contains(err.Error(), "roles.assign"),
-			strings.Contains(err.Error(), "must already hold"),
-			strings.Contains(err.Error(), "no access to this secret's project/environment"):
+		case isPermissionRefusal(err):
 			h.sendError(w, "Forbidden", err.Error(), http.StatusForbidden, nil)
-		case strings.Contains(err.Error(), "already owned"):
+		case errors.Is(err, core.ErrSecretInvalidInput):
 			h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to transfer ownership", http.StatusInternalServerError, nil)

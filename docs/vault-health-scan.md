@@ -85,6 +85,24 @@ vault token create -policy=healthscan-readonly -ttl=1h
 
 (Or mint an AppRole with this policy for a repeatable, non-interactive scan.)
 
+### The same policy for `vault plan-access`, `apply-access` and `audit-access`
+
+The access-migration commands read Vault with the same GET/LIST-only client, so this file is
+also their token policy. A test (`migrate/cmd/vaultaccess_policy_test.go`) runs their shared
+Vault read against a fake Vault that enforces the parsed file and fails if it grants less or
+more than they call. What they need beyond the scan's core stanzas:
+
+| Vault surface | Capability | Stanza |
+|---|---|---|
+| KV v2 tree (`<mount>/metadata/`) | `list` | `+/metadata/*` |
+| **KV v1 tree** (`<mount>/`, `<mount>/<project>/`) | `list` only: a v1 mount has no `metadata/` and no config to read, and no value is ever read | one stanza per v1 mount, **`kv1/*` in the file: replace `kv1` with your mount's path** |
+| userpass users (names and token policies) | `list`, `read` | `auth/+/users`, `auth/+/users/+` |
+
+`+/metadata/*` never matches a KV v1 mount. Without a stanza for it, `plan-access` cannot list
+that mount: it warns `could not list KV mount <mount>` and reports every default-convention
+policy that mount could hold as unmappable (`cross-mount-scope`), failing closed. It does not
+widen anything. Find your v1 mounts in `sys/mounts` (type `kv`, no `options.version = "2"`).
+
 ## Running it
 
 ```

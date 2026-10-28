@@ -9,6 +9,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
+	"runtime/debug"
 	"slices"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -121,10 +123,57 @@ func scimMembersRefused(rejected []uint) error {
 	return fmt.Errorf("%s: %w (rejected member id(s): %v)", i18n.T("ErrorNotAuthorized", nil), ErrSCIMMemberNotManaged, rejected)
 }
 
+// SCIMGroupState is a SCIM group as its own write left it: the group row and its
+// members. The SCIM response needs both, and a read after the commit (GetGroup, then
+// the handler's member list) that fails would report a write that already committed as
+// failed, which an IdP answers by retrying or by resyncing from a state it thinks did
+// not change (SCIM-GROUPS-ERR-1). A write that can widen access (a create, an add, a
+// rename) reads it INSIDE its transaction, so for a single-commit write a failed read
+// rolls the write back and the error is a true "not applied". Two exceptions:
+//   - A pure member removal is a revocation (owed audit, AUDIT-TX-3) and nothing
+//     non-essential may roll it back, so it reads after its commit; a failed read there
+//     is ErrSCIMGroupStateUnavailable, the removal applied.
+//   - In a split request (MERGE-FIX-3482G) the removals commit first and stand; a failed
+//     read in commit 2 rolls back only the adds/rename (PartialMutationError).
+type SCIMGroupState struct {
+	*models.Group
+	Members []*models.User
+}
+
+// readSCIMGroupState reads groupID and its members through tx. Errors keep their
+// storage typing (a missing group stays storage.ErrGroupNotFound).
+func (c *KeyorixCore) readSCIMGroupState(ctx context.Context, tx storage.Storage, groupID uint) (*SCIMGroupState, error) {
+	g, err := tx.GetGroup(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	members, err := tx.ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+	}
+	return &SCIMGroupState{Group: g, Members: members}, nil
+}
+
+// readBackAfterRevocation runs read, the response's read-back after a pure member
+// removal committed (outside its transaction, see SCIMGroupState). A failure, a panic
+// included, is ErrSCIMGroupStateUnavailable wrapping the cause: the removal stands.
+func readBackAfterRevocation(read func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("SCIM group read-back panicked after a member removal committed (the removal stands): %v\n%s", r, debug.Stack())
+			err = fmt.Errorf("%w: the read-back panicked: %v", ErrSCIMGroupStateUnavailable, r)
+		}
+	}()
+	if rerr := read(); rerr != nil {
+		return fmt.Errorf("%w: %w", ErrSCIMGroupStateUnavailable, rerr)
+	}
+	return nil
+}
+
 // ProvisionSCIMGroup creates a group from a SCIM Create and adds its initial members.
 // Only SCIM-managed members may be added (scimManagedMember, #167); a non-SCIM-managed
 // id in memberIDs is refused.
-func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*models.Group, error) {
+func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, displayName string, memberIDs []uint) (*SCIMGroupState, error) {
 	if displayName == "" {
 		return nil, fmt.Errorf("%w: displayName is required", ErrInvalidInput)
 	}
@@ -160,10 +209,11 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 	//
 	// AUDIT-TX-3: a group created with members confers whatever roles it later holds
 	// to them, so the scim.group_provisioned row commits with the group or not at all.
-	var group *models.Group
+	//
+	// The state the response renders is read in the same transaction (SCIMGroupState).
+	var state *SCIMGroupState
 	err := c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
-		var cerr error
-		group, cerr = tx.CreateGroup(ctx, &models.Group{Name: displayName, NameFolded: foldedName.Folded()})
+		group, cerr := tx.CreateGroup(ctx, &models.Group{Name: displayName, NameFolded: foldedName.Folded()})
 		if cerr != nil {
 			return cerr
 		}
@@ -174,17 +224,18 @@ func (c *KeyorixCore) ProvisionSCIMGroup(ctx context.Context, actorID uint, disp
 		}
 		c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupProvisioned, actorPtr(actorID), nil, nil, "",
 			fmt.Sprintf("SCIM provisioned group %d (%q) with %d member(s)", group.ID, displayName, len(allowed)))
-		return nil
+		state, cerr = c.readSCIMGroupState(ctx, tx, group.ID)
+		return cerr
 	})
 	if err != nil {
 		return nil, err
 	}
-	return group, nil
+	return state, nil
 }
 
 // ReplaceSCIMGroup applies a SCIM Replace (PUT): an optional rename plus the FULL
 // member set (members not in memberIDs are removed; new ones are added).
-func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uint, displayName string, memberIDs []uint) (*models.Group, error) {
+func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uint, displayName string, memberIDs []uint) (*SCIMGroupState, error) {
 	if len(memberIDs) > maxSCIMGroupMembersPerCall {
 		return nil, fmt.Errorf("%w: memberIDs exceeds the maximum batch size of %d", ErrInvalidInput, maxSCIMGroupMembersPerCall)
 	}
@@ -243,21 +294,25 @@ func (c *KeyorixCore) ReplaceSCIMGroup(ctx context.Context, actorID, groupID uin
 	} else if len(rejected) > 0 {
 		return nil, scimMembersRefused(rejected)
 	}
+	var state *SCIMGroupState
 	if err := c.applyGroupMembershipChanges(ctx, groupID, want, current, toAdd, rename, func(tgt auditTarget) {
 		c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 			fmt.Sprintf("SCIM replaced group %d: removed the members not in the new set", groupID))
 	}, func(tgt auditTarget) {
 		c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 			fmt.Sprintf("SCIM replaced group %d (members=%d)", groupID, len(want)))
+	}, func(tx storage.Storage) (rerr error) {
+		state, rerr = c.readSCIMGroupState(ctx, tx, groupID)
+		return rerr
 	}); err != nil {
 		return nil, err
 	}
-	return c.storage.GetGroup(ctx, groupID)
+	return state, nil
 }
 
 // PatchSCIMGroup applies a SCIM PATCH: an optional rename plus incremental member
 // add/remove. nil newName leaves the name unchanged.
-func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint, newName *string, addIDs, removeIDs []uint) (*models.Group, error) {
+func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint, newName *string, addIDs, removeIDs []uint) (*SCIMGroupState, error) {
 	if len(addIDs) > maxSCIMGroupMembersPerCall || len(removeIDs) > maxSCIMGroupMembersPerCall {
 		return nil, fmt.Errorf("%w: addIDs/removeIDs exceeds the maximum batch size of %d", ErrInvalidInput, maxSCIMGroupMembersPerCall)
 	}
@@ -307,6 +362,7 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	// guard locks, and the adds/rename follow as their own fail-closed commit.
 	var split bool
 	var settle func()
+	var state *SCIMGroupState // the group as the last commit left it (readSCIMGroupState)
 	if err := c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
 		// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
 		// applying any of them, so a PATCH that would strip the install's last route
@@ -378,13 +434,27 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 			}
 			c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 				fmt.Sprintf("SCIM patched group %d (+%d/-%d members)", groupID, len(addIDs), len(removeIDs)))
-			return nil
+			if !widens {
+				return nil // a revocation: read back after the commit, below
+			}
+			var rerr error
+			state, rerr = c.readSCIMGroupState(ctx, tx, groupID)
+			return rerr
 		}); err != nil {
 			return err
 		}
 		return nil
 	}); err != nil {
 		return nil, err
+	}
+	if !widens {
+		if err := readBackAfterRevocation(func() (rerr error) {
+			state, rerr = c.readSCIMGroupState(ctx, c.storage, groupID)
+			return rerr
+		}); err != nil {
+			return nil, err
+		}
+		return state, nil
 	}
 	if split {
 		// After the guard locks (F6: the owed row never settles under them), then
@@ -408,12 +478,14 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 			}
 			c.writeAuditEventFullOn(ctx, tgt, EventSCIMGroupUpdated, actorPtr(actorID), nil, nil, "",
 				fmt.Sprintf("SCIM patched group %d (+%d members)", groupID, len(addIDs)))
-			return nil
+			var rerr error
+			state, rerr = c.readSCIMGroupState(ctx, tx, groupID)
+			return rerr
 		}); err != nil {
 			return nil, err
 		}
 	}
-	return c.storage.GetGroup(ctx, groupID)
+	return state, nil
 }
 
 // scimRemovesAMember reports whether removing ids from groupID removes at least one
@@ -545,7 +617,10 @@ func filterNonZero(ids []uint) []uint {
 // (MERGE-FIX-3482G): the removals commit alone under the locks (owed, their row
 // written by auditRemovals), and the rename and adds follow after the locks as their
 // own fail-closed commit (audit writes its row).
-func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint, rename func(tx storage.Storage) error, auditRemovals, audit func(tgt auditTarget)) error {
+//
+// readBack reads the state the response renders: inside the last transaction when
+// the change widens, after the commit for a pure removal (SCIMGroupState).
+func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID uint, want map[uint]bool, current []*models.User, toAdd []uint, rename func(tx storage.Storage) error, auditRemovals, audit func(tgt auditTarget), readBack func(tx storage.Storage) error) error {
 	var removals []uint
 	for _, u := range current {
 		if !want[u.ID] {
@@ -604,10 +679,22 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 				}
 			}
 			audit(tgt)
-			return nil
+			if !widens {
+				return nil // a revocation: read back after the commit, below
+			}
+			return readBack(tx)
 		})
-	}); err != nil || !split {
+	}); err != nil {
 		return err
+	}
+	if !widens {
+		// A pure removal committed (owed): its read-back must not be able to roll it
+		// back, so it reads outside the transaction and a failure is reported as
+		// applied (ErrSCIMGroupStateUnavailable).
+		return readBackAfterRevocation(func() error { return readBack(c.storage) })
+	}
+	if !split {
+		return nil
 	}
 	// After the guard locks (F6: the owed row never settles under them), then commit 2.
 	// A retry of the same PUT removes nothing more, so it is fail closed as a whole.
@@ -624,7 +711,7 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 			}
 		}
 		audit(tgt)
-		return nil
+		return readBack(tx)
 	})
 }
 

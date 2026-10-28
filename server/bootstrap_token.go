@@ -89,6 +89,9 @@ func wireBootstrapToken(cw *coreWiring) error {
 	// Fail-closed fallback for TransitionMachineIdentity when it can't determine exactly
 	// which credential hashes to evict individually (see evictMachineIdentityCacheOrFlush).
 	coreService.SetMachineTokenCacheFlusher(middleware.InvalidateAllMachineTokenCache)
+	// Fail-closed fallback for the session-revocation paths when the user's session
+	// hashes could not be listed (see evictSessionsWhenListFailed).
+	coreService.SetUserTokenCacheEvictor(middleware.InvalidateUserTokenCache)
 	if needs, berr := coreService.SystemNeedsBootstrap(context.Background()); berr == nil && needs && bootstrapToken != "" {
 		if bootstrapTokenGenerated {
 			masked := bootstrapToken[:8] + "***" + bootstrapToken[len(bootstrapToken)-4:]

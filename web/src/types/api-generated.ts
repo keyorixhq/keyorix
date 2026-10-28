@@ -5095,6 +5095,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/mfa-reset-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List two-admin MFA reset requests (RECOVERY-MFA-RESET-1)
+         * @description Newest first, with each request's effective status (pending, approved, cancelled, expired). Requires users.write at the gate and a human global administrator in core (403 otherwise). `status=pending` keeps only requests that can still be approved.
+         */
+        get: operations["listMFAResetRequests"];
+        put?: never;
+        /**
+         * Request a two-admin MFA reset for a user (RECOVERY-MFA-RESET-1)
+         * @description Opens a request to reset the second factor of a local, non-admin user who lost the authenticator and has no recovery code. Nothing about the user changes until a DIFFERENT global administrator approves it (POST /api/v1/mfa-reset-requests/{id}/approve) within 24 hours. The caller must be a human global administrator with a second factor of their own and proves it afresh in `code` (a current TOTP code, or the account password after a passkey re-authentication). Refused: a machine credential or a non-admin (403), the caller's own account (400), a global-admin target (422, use `keyorix-server admin recover-admin`), a machine identity (422), an SSO/SCIM or suspended account (409), an install with no second eligible administrator (409, use `keyorix-server admin reset-mfa`), a request already pending for the user (409). Audited as mfa.reset_requested; every administrator is notified.
+         */
+        post: operations["requestMFAReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mfa-reset-requests/{id}/approve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Approve a two-admin MFA reset and reset the user's credentials (RECOVERY-MFA-RESET-1)
+         * @description A full credential reset, never "MFA off": in one transaction the user's TOTP secret, recovery codes and WebAuthn credentials are removed, every session and personal access token is revoked, the password is replaced by a one-time password (returned ONCE in this response, for the approver to hand over out of band; the response is not cacheable), the account is restricted to a password change and marked as owing a new MFA enrolment. The audit rows (mfa.reset_approved, mfa.reset) are written in the same transaction: if the audit log refuses them nothing is reset (503) and the request stays pending. The approver must be a human global administrator other than the requester and the target, with a fresh `code`. Refused: self-approval (403, audited), a non-admin or machine credential (403), a request already approved or cancelled (409, a replay), an expired one (409), a requester who lost the admin role (409). The user and every administrator are notified.
+         */
+        post: operations["approveMFAReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mfa-reset-requests/{id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Cancel a pending MFA reset request (RECOVERY-MFA-RESET-1)
+         * @description Any human global administrator may cancel a pending request (the requester, or another administrator who did not expect it). No re-authentication: cancelling only narrows. Audited as mfa.reset_cancelled; every administrator is notified.
+         */
+        post: operations["cancelMFAReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/sod/policies": {
         parameters: {
             query?: never;
@@ -5183,6 +5251,35 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        MFAResetRequest: {
+            id: number;
+            target_user_id: number;
+            requested_by: number;
+            reason: string;
+            /** @enum {string} */
+            verified_by: "in_person" | "video" | "ticket" | "other";
+            evidence?: string;
+            /** @enum {string} */
+            status: "pending" | "approved" | "cancelled";
+            /** @enum {string} */
+            effective_status: "pending" | "approved" | "cancelled" | "expired";
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            expires_at: string;
+            decided_by?: number;
+            /** Format: date-time */
+            decided_at?: string;
+        };
+        MFAResetApproval: {
+            request_id: number;
+            user_id: number;
+            username: string;
+            /** @description Shown once; never stored in clear */
+            one_time_password: string;
+            /** Format: date-time */
+            expires_at: string;
+        };
         /**
          * @description Stable code of a 409 secret-state read refusal (see the SecretReadRefused response).
          * @enum {string}
@@ -6217,6 +6314,24 @@ export interface components {
                     } | null;
                     /** @description Values: change_password, enroll_mfa. Present on a 403 from the account-setup gate (error PasswordChangeRequired or MFAEnrollmentRequired, #3024): the setup steps the caller still owes. Until they are done only these are reachable -- change_password: POST /api/v1/auth/change-password; enroll_mfa: POST /api/v1/auth/mfa/enroll, /auth/mfa/activate, /auth/webauthn/register/begin|finish and GET /auth/webauthn/credentials; always GET /api/v1/auth/profile. Owing both opens both, in either order. */
                     pending_steps?: string[];
+                };
+            };
+        };
+        /** @description The change was refused because its audit row could not be recorded (AUDIT-503-MAP-1). Security-relevant mutations (role and permission grants, group and project membership, shares, machine identities, user lifecycle, policies, ...) commit together with their audit row; when the audit log cannot take the row the transaction rolls back and NOTHING was changed. The answer is 503 with a `Retry-After` header (seconds) and the stable `error` code `audit_unavailable`; `message` is a fixed sentence. The request is safe to retry unchanged once the audit log is back. A revocation is never refused for this reason (its audit row is owed, not required). The suspend endpoints that clear synced copies keep their own code, `SuspendAuditUnavailable`. The gRPC twin is `Unavailable` with the same message. */
+        AuditUnavailable: {
+            headers: {
+                /** @description Seconds to wait before retrying. */
+                "Retry-After"?: number;
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": {
+                    success?: boolean;
+                    /** @description Always 503. */
+                    code?: number;
+                    /** @description Always `audit_unavailable`. */
+                    error?: string;
+                    message?: string;
                 };
             };
         };
@@ -7318,6 +7433,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     getProject: {
@@ -8295,6 +8411,7 @@ export interface operations {
             };
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     cloneEnvironment: {
@@ -12916,6 +13033,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     getGroup: {
@@ -13172,6 +13290,7 @@ export interface operations {
             401: components["responses"]["Error"];
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     removeRoleFromGroup: {
@@ -13297,6 +13416,7 @@ export interface operations {
             400: components["responses"]["Error"];
             401: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            503: components["responses"]["AuditUnavailable"];
         };
     };
     getRole: {
@@ -14978,6 +15098,153 @@ export interface operations {
             401: components["responses"]["Error"];
             403: components["responses"]["Error"];
             404: components["responses"]["Error"];
+        };
+    };
+    listMFAResetRequests: {
+        parameters: {
+            query?: {
+                status?: "pending";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope `data.requests[]`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: {
+                            requests: components["schemas"]["MFAResetRequest"][];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+        };
+    };
+    requestMFAReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Username, email address or numeric user id */
+                    user: string;
+                    reason: string;
+                    /**
+                     * @description How the requester confirmed the user's identity
+                     * @enum {string}
+                     */
+                    verified_by: "in_person" | "video" | "ticket" | "other";
+                    /** @description Free text: a ticket id, who was on the call */
+                    evidence?: string;
+                    /** @description The requester's own current TOTP code, or password after a passkey re-authentication */
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Envelope `data.request`. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: {
+                            request: components["schemas"]["MFAResetRequest"];
+                        };
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    approveMFAReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description The approver's own current TOTP code, or password after a passkey re-authentication */
+                    code: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Envelope `data` is the approval with the one-time password. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message?: string;
+                        data?: components["schemas"]["MFAResetApproval"];
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            503: components["responses"]["Error"];
+        };
+    };
+    cancelMFAReset: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Envelope with a message; no data. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        message?: string;
+                    };
+                };
+            };
+            400: components["responses"]["Error"];
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     listSoDPolicies: {

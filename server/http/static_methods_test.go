@@ -33,7 +33,7 @@ func TestStaticAssets_RejectMutatingMethods(t *testing.T) {
 		return resp.StatusCode
 	}
 
-	for _, asset := range []string{"/sw.js", "/manifest.json", "/favicon.ico", "/assets/x.js", "/static/x.css"} {
+	for _, asset := range []string{"/sw.js", "/manifest.json", "/favicon.ico", "/favicon.svg", "/assets/x.js", "/static/x.css", "/fonts/x.woff2"} {
 		for _, m := range []string{http.MethodDelete, http.MethodPut, http.MethodPost, http.MethodPatch} {
 			assert.Equal(t, http.StatusMethodNotAllowed, do(m, asset), "%s %s must be 405", m, asset)
 		}

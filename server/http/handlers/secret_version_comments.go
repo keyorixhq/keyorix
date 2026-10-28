@@ -9,11 +9,12 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 )
 
 // SecretVersionCommentHandler handles secret version comment requests.
@@ -145,7 +146,7 @@ func sendVersionCommentError(w http.ResponseWriter, verb string, secretID, versi
 	status := http.StatusInternalServerError
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, errNotFound):
+	case isSecretNotFound(err), errors.Is(err, storage.ErrVersionCommentNotFound):
 		status = http.StatusNotFound
 	default:
 		log.Printf("Error %s version comment (secret %d, version %d): %v", verb, secretID, versionID, err)

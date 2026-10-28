@@ -38,6 +38,7 @@ Served at: server `GET /metrics` (unauthenticated; keep inside your perimeter)
 | `keyorix_role_permission_generation_tamper_total` | counter | - | Times the role-permission generation triggers were found changed (replaced function, re-created or re-enabled trigger) and every replica's permission cache was invalidated. |
 | `keyorix_scheduler_run_duration_seconds` | histogram | `scheduler` | Duration of scheduler ticks that actually ran (success or failure), by scheduler name. |
 | `keyorix_scheduler_runs_total` | counter | `scheduler`, `outcome` | Background scheduler ticks, by scheduler name and outcome (success\|failure\|skipped). |
+| `keyorix_secret_node_cache_epoch_tamper_total` | counter | - | Times the secret_nodes cache-epoch trigger was found changed (replaced function, re-created or re-enabled trigger) and every replica's secret metadata cache was invalidated. |
 | `keyorix_siem_forward_retries_total` | counter | - | SIEM audit-event forwards retried after a transient failure. |
 | `keyorix_siem_forwards_total` | counter | `outcome` | SIEM audit-event forwards by terminal outcome (delivered\|failed\|dropped\|spool_corrupt). |
 | `keyorix_single_writer_enabled` | gauge | - | 1 when storage.database.single_writer is on for this process, else 0. |

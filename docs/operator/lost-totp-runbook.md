@@ -16,7 +16,7 @@ below and it weakens every account on the install.
 | Still has an **unused recovery code** | Section 2: self-service, no operator needed. |
 | Is a **global admin**, no recovery code, you have shell access to the server host | Section 3: `recover-admin`. |
 | Signs in through **SSO** | Their identity provider owns the second factor. Fix it there. Keyorix cannot reset it (`user reissue-one-time-password` also refuses SSO users). |
-| Is a **non-admin with local credentials**, no recovery code | Section 4: there is no supported reset today. |
+| Is a **non-admin with local credentials**, no recovery code | Section 4: an administrator MFA reset (host command `admin reset-mfa`). |
 | Is **locked out** after failed codes (the code is right, the account is refused) | Section 5. |
 
 ## 2. Self-service with a recovery code
@@ -78,23 +78,69 @@ master passphrase enough to recover an admin: that is the existing trust model.
 `security.recover_admin.insecure_keyless_admin_recovery` skips the key. It exists for labs and demos;
 do not turn it on for a pilot.
 
-## 4. A non-admin with no recovery code: no supported path
+## 4. A non-admin with no recovery code: administrator MFA reset
 
-Facts, all from the current source:
+First confirm who is asking, out of band (in person, a video call, a ticket from a known
+address). A reset gives whoever receives the one-time password the account.
 
-- `recover-admin` refuses a non-admin account (it "is specifically for restoring ADMIN accounts").
-- `keyorix user reissue-one-time-password <user>` resets the **password**, not the second factor:
-  "an enrolled second factor is left alone: stripping it would let a users.write holder take over
-  an MFA-protected account" (`internal/core/reissue_otp.go`).
-- There is no admin-initiated MFA-reset route in the OpenAPI document, and `mfa/disable` needs
-  the user's own code or password on a signed-in session, which a user without a factor cannot
-  reach on a `require_mfa` install.
+A reset is a **full credential reset, never "MFA off"**. In one transaction it removes the TOTP
+secret, every recovery code and every WebAuthn credential, revokes every session and personal
+access token of that account, replaces the password with a one-time password and marks the
+account as owing a new MFA enrolment (`users.mfa_enrolment_required`). The audit row is written
+in the same transaction: if it cannot be written, nothing is reset.
 
-So nothing here, run by an administrator, gets a non-admin without a recovery code past the second
-factor. This is a gap, listed in section 6. Do not work around it by editing `mfa_secrets` or
-`users` rows in the database: that skips the audit trail for an authentication change and is not
-a path the product supports. Ask the user to look for a saved recovery code first (a password
-manager, the codes printed at activation). Pending a product fix, escalate to the maintainers.
+Refused, with nothing changed: a global admin (section 3), an SSO/SCIM account (its identity
+provider owns the factor), a suspended or inactive account (reactivate it first) and a machine
+identity (rotate its credentials instead).
+
+### 4a. On the server host
+
+Needs the host, the recovery key ([j5-lost-admin.md](j5-lost-admin.md) §0) and the database to
+itself: the command holds the exclusive database-presence lock and refuses while the server runs.
+
+```bash
+# stop keyorix-server first
+printf '%s' "$RECOVERY_KEY" | keyorix-server admin reset-mfa --user alice --recovery-key - --config ./keyorix.yaml
+```
+
+`--user` takes a username, an email address or a numeric user id. The command prints what it
+removed and the one-time password, once (it expires after
+`security.recovery_one_time_password_ttl`, default 24h). It writes `admin.reset_mfa` to the audit
+trail naming the host user who ran it (a wrong key writes `admin.reset_mfa_failed` and changes
+nothing), and leaves an in-app notification for the user and for every admin.
+
+Give the one-time password to the user out of band. They sign in with it, set a new password and
+enrol a new authenticator.
+
+### 4b. Online, two administrators
+
+With the server running, a reset needs two different global administrators, each with a second
+factor of their own; neither may be the user being reset. Admin A opens the request, admin B
+approves it within 24 hours. Each proves their own factor again in `code`: a current TOTP code,
+or (passkey-only account) the account password right after a passkey re-authentication. There is
+no `keyorix` CLI subcommand for this yet; use the API (or `curl`):
+
+```bash
+# admin A
+curl -sS -H "Authorization: Bearer $TOKEN_A" -H 'Content-Type: application/json' \
+  -d '{"user":"alice","reason":"lost phone","verified_by":"video","evidence":"call 10:05, ticket T-123","code":"123456"}' \
+  https://keyorix.example.com/api/v1/mfa-reset-requests
+# admin B: list, then approve; the response carries the one-time password, once
+curl -sS -H "Authorization: Bearer $TOKEN_B" 'https://keyorix.example.com/api/v1/mfa-reset-requests?status=pending'
+curl -sS -H "Authorization: Bearer $TOKEN_B" -H 'Content-Type: application/json' \
+  -d '{"code":"654321"}' https://keyorix.example.com/api/v1/mfa-reset-requests/7/approve
+```
+
+`verified_by` is `in_person`, `video`, `ticket` or `other`. A requester approving their own
+request is refused and audited; an approved or cancelled request cannot be approved again; any
+admin can cancel a pending one (`POST .../{id}/cancel`). If the install has no second eligible
+admin, the request is refused and names `admin reset-mfa` (section 4a). Audit:
+`mfa.reset_requested`, `mfa.reset_approved`, `mfa.reset`, `mfa.reset_cancelled`. Every admin is
+notified when a request is opened, approved or cancelled; the user gets an in-app notice after
+signing in. Admin B hands the one-time password to the user out of band.
+
+Do not work around a refusal by editing `mfa_secrets` or `users` rows in the database: that skips
+the audit trail for an authentication change and is not a path the product supports.
 
 ## 5. Refused despite a correct code: lockout, not MFA
 
@@ -113,12 +159,14 @@ off fails every code.
 
 ## 6. Verify and gaps
 
-After any path: `keyorix audit logs --limit 20` shows the sequence (`mfa.disabled` or
-`admin.recover_admin`, `mfa.enrolled`, `mfa.activated`, `auth.password_changed`).
+After any path: `keyorix audit logs --limit 20` shows the sequence (`mfa.disabled`,
+`admin.recover_admin` or `admin.reset_mfa`, `mfa.enrolled`, `mfa.activated`, `auth.password_changed`).
 
 Gaps:
 
-- No administrator-run MFA reset for a non-admin user with local credentials and no recovery
-  code (section 4).
+- `users.mfa_enrolment_required` is recorded by every reset, but the account-setup gate does not
+  read it yet: on an install with `security.require_mfa` off, a reset user is confined to the
+  password change and is then not forced to enrol (RECOVERY-MFA-RESET-1 follow-up). Turn
+  `require_mfa` on, or check `keyorix audit logs` for the user's `mfa.activated`.
 - The CLI has no `mfa disable`, `mfa recovery-codes` or `mfa regenerate-recovery-codes`; they are
   web UI / API only (section 2).

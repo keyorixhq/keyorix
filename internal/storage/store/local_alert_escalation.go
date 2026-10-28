@@ -11,6 +11,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -26,7 +27,7 @@ func (ls *LocalStorage) GetAlertEscalationPolicy(ctx context.Context, id uint) (
 	var row models.AlertEscalationPolicy
 	err := ls.db.WithContext(ctx).First(&row, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, storage.NotFound(storage.ErrAlertEscalationNotFound, i18n.T("ErrorNotFound", nil), err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

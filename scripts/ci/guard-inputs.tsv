@@ -55,6 +55,7 @@ server/http/g80_triage_doc_closure_guard_test.go	!server/**/*.md	reads the cited
 server/middleware/j5_doc_messages_test.go	docs/operator/j5-lost-admin.md	J5 messages quoted in the runbook
 #
 # --- web/ ---------------------------------------------------------------------------
+server/http/airgap_external_hosts_guard_test.go	web/index.html,web/src/**/*.css,web/public/**,server/webui/dist/**,!operator/**	the served markup it scans for external hosts: the web entry page, the CSS and public assets, the embedded dist (web/dist is untracked build output; operator/ is not read)
 deploy/hsts_nginx_behaviour_test.go	web/nginx.conf,web/nginx-hsts.conf,web/keyorix-backend.conf,web/docker-entrypoint.d/**	nginx configs and the HSTS entrypoint hook (runs nginx in Docker when available)
 server/http/suspend_audit_refusal_message_drift_test.go	web/src/features/secrets/__tests__/SuspendAuditRefusal.test.tsx,web/src/features/secrets/__tests__/SuspendSecretModal.test.tsx,cli/cmd/suspend_audit_refusal_test.go	the refusal text quoted by the web and CLI tests
 server/middleware/nginx_conf_header_scope_test.go	web/nginx.conf	nginx header scoping
@@ -71,6 +72,7 @@ scripts/ci/codeql_web_gate_test.go	.github/workflows/codeql.yml,!web/**,!README.
 scripts/ci/codeql_gate_realdata_test.go	scripts/ci/codeql-gate.sh,scripts/ci/testdata/codeql/**,!demo/app.js	the gate script against recorded SARIF in testdata/codeql; demo/app.js is a finding location inside the recorded data, not a file read
 scripts/ci/global_guards_test.go	scripts/ci/global-guards.txt,!scripts/**	every listed guard package exists
 scripts/ci/select_affected_test.go	scripts/ci/select-affected.py,scripts/ci-test-legs.sh,scripts/ci-test-quick.py,!**	the selection script; other paths are fake changed-file inputs
+scripts/ci/coverage_shadow_test.go	scripts/ci/coverage-shadow.py,scripts/ci/coverage_shadow_unittest.py,scripts/ci/select-affected.py,scripts/ci/declrefs/**	the lever-C shadow script's unit tests (they also load select-affected.py's helpers and build scripts/ci/declrefs)
 scripts/demo/demo_scripts_test.go	scripts/demo/**/*.sh	demo shell scripts
 scripts/demo/native_up_helpers_test.go	scripts/demo/**/*.sh	native-up helpers
 server/container_bind_configs_test.go	scripts/dast/keyorix-dast.yaml,scripts/demo/up.sh	container bind configs used by DAST and the demo
@@ -83,6 +85,7 @@ internal/core/guards/g80_1530_machine_actor_attribution_guard_test.go	operator/*
 internal/core/guards/interleave_production_purity_test.go	operator/**/*.go,!operator/go.mod	repo-root walk
 internal/core/guards/mfa_stepup_purpose_guard_test.go	operator/**/*.go	repo-root walk
 internal/core/guards/role_read_wrapper_forwarding_guard_test.go	operator/**/*.go	repo-root walk
+internal/core/guards/second_factor_clearer_callers_guard_test.go	operator/**/*.go	repo-root walk over non-test .go files for DeleteMFAForUser / DeleteWebAuthnCredential callers; operator/ included
 internal/core/guards/session_auth_read_wrapper_forwarding_guard_test.go	operator/**/*.go	repo-root walk
 internal/crypto/password_provider_iterations_guard_test.go	operator/**/*.go	repo-root walk
 internal/statemap/no_time_local_assignment_guard_test.go	operator/**/*.go	repo-root walk over _test.go files

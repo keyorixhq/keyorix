@@ -42,17 +42,11 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
-
-// isNotFoundErr reports whether err is a storage "not found" error. Originated in
-// server/http/handlers/dynamic_secrets_proxy.go, removed with the ADR-108 Phase 6
-// /system proxy tier deletion; kept here for this file's own live caller.
-func isNotFoundErr(err error) bool {
-	return strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "record not found")
-}
 
 // secretUpdateFieldClass classifies one models.SecretNode field for the default-deny diff.
 type secretUpdateFieldClass int
@@ -337,7 +331,7 @@ func (h *SecretHandler) updateSecretViaDiff(w http.ResponseWriter, r *http.Reque
 
 	authoritative, err := h.coreService.Storage().GetSecret(ctx, id)
 	if err != nil {
-		if isNotFoundErr(err) {
+		if storage.IsSecretNotFound(err) {
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
 			return
 		}

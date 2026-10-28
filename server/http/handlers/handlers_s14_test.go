@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/config"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -341,7 +343,7 @@ func TestTagError_InternalBranch_S13(t *testing.T) {
 func TestTagError_NotFoundBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, errors.New("secret not found in store"), "Failed to list tags")
+	h.tagError(w, storage.NotFound(storage.ErrSecretNotFound, "secret not found in store", nil), "Failed to list tags")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
@@ -350,7 +352,7 @@ func TestTagError_NotFoundBranch_S13(t *testing.T) {
 func TestTagError_PermissionBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, errors.New("permission denied"), "Failed to list tags")
+	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "Failed to list tags")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
@@ -359,7 +361,7 @@ func TestTagError_PermissionBranch_S13(t *testing.T) {
 func TestTagError_ValidationBranch_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, errors.New("at most 50 tags allowed"), "Failed to set tags")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "at most 50 tags allowed", nil), "Failed to set tags")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -476,67 +478,64 @@ func TestSendRenderTemplateError_ErrSecretRefNotFound_GlobalPermission_S13(t *te
 	assert.Contains(t, w.Body.String(), "Secret not found")
 }
 
-// TestSendRenderTemplateError_NotFoundSubstring_S13 — generic "not found" error → 404.
+// The render error classes are sentinels, never message text (ERRLOSS-SENTINELS-1):
+// the text is translated, and an unrelated error that says "permission denied" is
+// not an authorization refusal.
+
+// TestSendRenderTemplateError_NotFoundSubstring_S13 — a typed not-found error → 404.
 func TestSendRenderTemplateError_NotFoundSubstring_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
 	req, userCtx := renderErrReqS13()
-	h.sendRenderTemplateError(w, req, userCtx, errors.New("project not found"))
+	h.sendRenderTemplateError(w, req, userCtx, storage.NotFound(storage.ErrSecretNotFound, "any translated text", nil))
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
-// TestSendRenderTemplateError_PermissionSubstring_S13 — "permission" error → 403.
+// TestSendRenderTemplateError_PermissionSubstring_S13 — core.ErrPermissionDenied → 403.
 func TestSendRenderTemplateError_PermissionSubstring_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
 	req, userCtx := renderErrReqS13()
-	h.sendRenderTemplateError(w, req, userCtx, errors.New("permission denied for user"))
+	h.sendRenderTemplateError(w, req, userCtx, fmt.Errorf("any translated text: %w", core.ErrPermissionDenied))
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-// TestSendRenderTemplateError_NotAuthorizedSubstring_S13 — "not authorized" → 403.
+// TestSendRenderTemplateError_NotAuthorizedSubstring_S13 — a specific refusal that
+// matches core.ErrPermissionDenied → 403.
 func TestSendRenderTemplateError_NotAuthorizedSubstring_S13(t *testing.T) {
 	h, _ := freshSecretHandlerS14(t)
 	w := httptest.NewRecorder()
 	req, userCtx := renderErrReqS13()
-	h.sendRenderTemplateError(w, req, userCtx, errors.New("user is not authorized to read secret"))
+	h.sendRenderTemplateError(w, req, userCtx, core.ErrMachinePrivilegeCeilingDenied)
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
-// TestSendRenderTemplateError_InvalidReference_S13 — "invalid reference" → 400.
+// TestSendRenderTemplateError_LookalikeText_S13 — errors that merely SAY "not found"
+// or "permission denied" (an OS error, a driver error) are not classified: 500.
+func TestSendRenderTemplateError_LookalikeText_S13(t *testing.T) {
+	for _, msg := range []string{"project not found", "open /etc/x: permission denied", "user is not authorized to read secret"} {
+		h, _ := freshSecretHandlerS14(t)
+		w := httptest.NewRecorder()
+		req, userCtx := renderErrReqS13()
+		h.sendRenderTemplateError(w, req, userCtx, errors.New(msg))
+		assert.Equal(t, http.StatusInternalServerError, w.Code, msg)
+	}
+}
+
+// TestSendRenderTemplateError_InvalidReference_S13 — core.ErrSecretInvalidInput (a
+// bad reference, an unterminated or empty placeholder, a value that cannot be
+// substituted safely) → 400.
 func TestSendRenderTemplateError_InvalidReference_S13(t *testing.T) {
-	h, _ := freshSecretHandlerS14(t)
-	w := httptest.NewRecorder()
-	req, userCtx := renderErrReqS13()
-	h.sendRenderTemplateError(w, req, userCtx, errors.New("invalid reference syntax"))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestSendRenderTemplateError_Unterminated_S13 — "unterminated" → 400.
-func TestSendRenderTemplateError_Unterminated_S13(t *testing.T) {
-	h, _ := freshSecretHandlerS14(t)
-	w := httptest.NewRecorder()
-	req, userCtx := renderErrReqS13()
-	h.sendRenderTemplateError(w, req, userCtx, errors.New("unterminated secret reference"))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestSendRenderTemplateError_EmptySecretReference_S13 — "empty secret reference" → 400.
-func TestSendRenderTemplateError_EmptySecretReference_S13(t *testing.T) {
-	h, _ := freshSecretHandlerS14(t)
-	w := httptest.NewRecorder()
-	req, userCtx := renderErrReqS13()
-	h.sendRenderTemplateError(w, req, userCtx, errors.New("empty secret reference in template"))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
-}
-
-// TestSendRenderTemplateError_CannotBeSafelySubstituted_S13 — "cannot be safely substituted" → 400.
-func TestSendRenderTemplateError_CannotBeSafelySubstituted_S13(t *testing.T) {
-	h, _ := freshSecretHandlerS14(t)
-	w := httptest.NewRecorder()
-	req, userCtx := renderErrReqS13()
-	h.sendRenderTemplateError(w, req, userCtx, errors.New("value cannot be safely substituted"))
-	assert.Equal(t, http.StatusBadRequest, w.Code)
+	for _, msg := range []string{
+		"invalid reference syntax", "unterminated secret reference",
+		"empty secret reference in template", "value cannot be safely substituted",
+	} {
+		h, _ := freshSecretHandlerS14(t)
+		w := httptest.NewRecorder()
+		req, userCtx := renderErrReqS13()
+		h.sendRenderTemplateError(w, req, userCtx, storage.Typed(core.ErrSecretInvalidInput, msg, nil))
+		assert.Equal(t, http.StatusBadRequest, w.Code, msg)
+	}
 }
 
 // TestSendRenderTemplateError_DefaultInternal_S13 — unknown error → 500.

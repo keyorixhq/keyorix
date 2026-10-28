@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -39,7 +40,8 @@ func (k *KeyorixCore) versionBelongsToSecret(ctx context.Context, secretID, vers
 			return nil
 		}
 	}
-	return fmt.Errorf("%s: version %d does not belong to secret %d", i18n.T("ErrorVersionNotFound", nil), versionID, secretID)
+	return storage.NotFound(storage.ErrSecretVersionNotFound,
+		fmt.Sprintf("%s: version %d does not belong to secret %d", i18n.T("ErrorVersionNotFound", nil), versionID, secretID), nil)
 }
 
 // CreateSecretVersionComment annotates a secret version with a free-text comment.

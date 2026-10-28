@@ -143,7 +143,7 @@ func (c *KeyorixCore) checkSecretPermission(ctx context.Context, secretID, userI
 	// caller with no grant at all, so it is not an existence oracle either.
 	if !patRestrictionFromContext(ctx).Allows(permissionLevelToRBACPerm(requiredPermission),
 		Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}) {
-		return nil, nil, fmt.Errorf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
+		return nil, nil, permissionDeniedf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
 	}
 
 	// Owners have all permissions, but only while still a member of the secret's
@@ -249,7 +249,7 @@ func (c *KeyorixCore) checkSecretPermission(ctx context.Context, secretID, userI
 	if c.shareCoversButNotElevated(ctx, userID, secretID, secret.ProjectID, requiredPermission, action) {
 		return nil, nil, shareRefusal(ErrShareActionNotElevated)
 	}
-	return nil, nil, fmt.Errorf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
+	return nil, nil, permissionDeniedf("%s: insufficient permissions", i18n.T("ErrorPermissionDenied", nil))
 }
 
 // permissionLevelToRBACPerm maps a PermissionLevel to the equivalent RBAC permission

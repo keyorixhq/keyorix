@@ -19,3 +19,16 @@
   `TestInspectFence_ReportsARoleThatReachesBelowSQL`,
   `TestPoll_MigrationTriggerFunctionReplacedLeavesAuthoritative` (every migration trigger's
   function re-created identically; red without the trigger-function part of the fingerprint).
+  Sequences are deliberately not in the census (REVIEW-SOLEWRITER-1 census question, decided by
+  STARTUP-GUARD-TAILS-1): `setval`/`ALTER SEQUENCE` on a fenced table's id sequence changes no
+  row, so no cache derived from a fenced row can go stale through it. A rewound sequence only
+  makes a later INSERT reuse an id, and every INSERT, UPDATE and DELETE row and every TRUNCATE of a
+  fenced table runs the guard trigger whatever id it carries (`triggerSpecs`): a foreign writer's
+  insert is refused, and the holder's own insert bumps the epoch, which flushes every
+  authoritative cache, so an entry for the id's previous row cannot answer for the new one. An
+  insert the sequence would refuse (an id still in use) fails on the primary key, which is a
+  denial of service the role owning the sequence can cause anyway. The fence's own holder and
+  epoch tables have no sequence (`id = 1`). Guarded by the fence's own row-trigger coverage
+  (`TestFence_RefusesEveryForeignWriteWhileHolderLives`, `TestTriggerSpecs_EveryDMLGuardIsPerRow`)
+  and INV-SW-in-process-writes-seen (`TestTracker_EveryEpochMoveIsAWriteTheTrackerSaw`); revisit if a cache ever keys on an id across a delete without
+  the epoch (for example a negative-lookup cache that survives epoch bumps).

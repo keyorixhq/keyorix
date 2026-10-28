@@ -29,11 +29,14 @@ import (
 // previously collapsed BOTH cases into "environment %d not found"
 // unconditionally, so a transient storage failure during secret creation
 // surfaced to the caller as a clean 422 validation error instead of the 500
-// it actually is. No sentinel error type exists to check via errors.Is --
-// GetEnvironment returns a plain fmt.Errorf either way -- so this compares
-// the exact literal text GetEnvironment uses for the not-found case.
+// it actually is. ERRLOSS-MFA-1: GetEnvironment now wraps
+// storage.ErrEnvironmentNotFound for the not-found case, so this matches the
+// sentinel, not the text. The text match it replaces also sat on the role
+// scope guard, the machine-role environment check and the access-review
+// report, where a storage error worded "environment not found" was taken
+// for a missing environment.
 func isEnvironmentNotFoundErr(err error) bool {
-	return err != nil && err.Error() == "environment not found"
+	return storage.IsEnvironmentNotFound(err)
 }
 
 // withEnvironmentSecretGuard acquires storage.EnvironmentSecretGuardLockKey
@@ -56,7 +59,7 @@ func (c *KeyorixCore) withEnvironmentSecretGuard(ctx context.Context, environmen
 				return fmt.Errorf("failed to verify target environment %d: %w", environmentID, err)
 			}
 			envGone = true
-			return fmt.Errorf("environment %d not found", environmentID)
+			return errSecretTargetInvalidf("environment %d not found", environmentID)
 		}
 		return fn(ctx)
 	})
@@ -128,16 +131,16 @@ type UpdateSecretRequest struct {
 // CreateSecret creates a new secret with business logic validation.
 func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest) (*models.SecretNode, error) { // NOSONAR -- cognitive complexity 27, suppress go:S3776
 	if err := c.validateCreateSecretRequest(req); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, errSecretValidation(err)
 	}
 	if err := c.secretValuePolicy.Validate(req.Value); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, errSecretValidation(err)
 	}
 	if err := c.checkSecretSize(req.Value); err != nil {
 		return nil, err
 	}
 	if err := c.validateSecretName(req.Name); err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), err)
+		return nil, errSecretValidation(err)
 	}
 	// #1642: NFC-normalize once here, use everywhere below (the duplicate-name
 	// pre-check and the stored row) — secret names are addresses, not
@@ -146,10 +149,10 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// the NFC-vs-NFD collision gap.
 	normalizedName, nerr := identity.NewAddressName(req.Name)
 	if nerr != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), nerr)
+		return nil, errSecretValidation(nerr)
 	}
 	if len(strings.TrimSpace(req.Description)) > maxSecretDescriptionLen {
-		return nil, fmt.Errorf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
+		return nil, errSecretInvalidf("%s: description exceeds %d characters", i18n.T("ErrorValidation", nil), maxSecretDescriptionLen)
 	}
 
 	// Verify the environment belongs to the stated project.
@@ -163,16 +166,16 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 			// as a clean validation error instead of the 500 it actually is.
 			return nil, fmt.Errorf("failed to verify target environment %d: %w", req.EnvironmentID, err)
 		}
-		return nil, fmt.Errorf("environment %d not found", req.EnvironmentID)
+		return nil, errSecretTargetInvalidf("environment %d not found", req.EnvironmentID)
 	}
 	if env.ProjectID != req.ProjectID {
-		return nil, fmt.Errorf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
+		return nil, errSecretTargetInvalidf("environment %d does not belong to project %d", req.EnvironmentID, req.ProjectID)
 	}
 
 	existing, err := c.storage.GetSecretByName(ctx, normalizedName.String(), req.ProjectID, req.EnvironmentID)
 	switch {
 	case err == nil && existing != nil:
-		return nil, fmt.Errorf("%s", i18n.T("ErrorSecretAlreadyExists", nil))
+		return nil, storage.Typed(ErrSecretAlreadyExists, i18n.T("ErrorSecretAlreadyExists", nil), nil)
 	case err != nil && !storage.IsSecretNotFound(err):
 		// A real read failure, not "no duplicate" - don't silently assume the
 		// name is free (docs/findings/2026-09-23-FINDING-update-secret-read-error-swallowed.md).
@@ -524,7 +527,7 @@ func (c *KeyorixCore) UpdateSecret(ctx context.Context, req *UpdateSecretRequest
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 		}
 		if !matched {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			return nil, errSecretNotFoundText()
 		}
 		sink.Flush(c)
 		return secret, nil
@@ -808,7 +811,7 @@ func updateRotationStamp(ctx context.Context, st storage.Storage, id uint, stamp
 		return fmt.Errorf("failed to update rotation timestamp: %w", err)
 	}
 	if !matched {
-		return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+		return errSecretNotFoundText()
 	}
 	return nil
 }
@@ -884,7 +887,7 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 	secret, err := c.storage.GetSecretIncludingDeleted(ctx, id)
 	if err != nil {
 		if credentialRowGone(err) {
-			return fmt.Errorf("%s: %s", i18n.T("ErrorStorageFailed", nil), i18n.T("ErrorSecretNotFound", nil))
+			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), errSecretNotFoundText())
 		}
 		return fmt.Errorf("%s: reading secret %d before restoring it: %w", i18n.T("ErrorStorageFailed", nil), id, cmp.Or(errors.Unwrap(err), err))
 	}

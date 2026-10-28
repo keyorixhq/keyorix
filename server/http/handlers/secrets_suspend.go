@@ -6,10 +6,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -40,7 +40,7 @@ func (h *SecretHandler) SuspendSecret(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if core.IsSuspendAuditRefusal(err) {
 			h.sendError(w, core.SuspendAuditUnavailableCode, core.SuspendAuditUnavailableMessage, http.StatusInternalServerError, nil)
-		} else if strings.Contains(err.Error(), "not found") {
+		} else if isSecretNotFound(err) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to suspend secret", http.StatusInternalServerError, nil)
@@ -65,7 +65,12 @@ func (h *SecretHandler) ResumeSecret(w http.ResponseWriter, r *http.Request) {
 	}
 	secret, err := h.coreService.ResumeSecret(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
+		// A secret whose project was deleted cannot be resumed until the project is
+		// restored: the same 404 as a missing secret.
+		if isSecretNotFound(err) || storage.IsProjectNotFound(err) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to resume secret", http.StatusInternalServerError, nil)

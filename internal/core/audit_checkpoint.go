@@ -77,6 +77,11 @@ func (c *KeyorixCore) SeedAuditWatermark(ctx context.Context) {
 	if !c.AuditCheckpointsAvailable() {
 		return
 	}
+	// The mark is signed under the current seal list (audit_seal.go).
+	if _, err := c.loadAuditSeals(ctx); err != nil {
+		log.Printf("audit high-water: failed to read the audit seal record at startup: %v", err)
+		return
+	}
 	floor, _, _, _, err := c.auditHighWaterFloor(ctx, false)
 	if err != nil {
 		log.Printf("audit high-water: failed to seed in-memory watermark at startup: %v", err)
@@ -137,7 +142,7 @@ func (c *KeyorixCore) anchorCheckpoint(ctx context.Context, cp *models.AuditChec
 	if c.checkpointNotary == nil {
 		return
 	}
-	rec, err := c.checkpointNotary.Anchor(ctx, []byte(checkpointCanonical(cp)))
+	rec, err := c.checkpointNotary.Anchor(ctx, []byte(c.checkpointCanonical(cp)))
 	if err != nil {
 		log.Printf("audit checkpoint #%d: external anchor failed (left unanchored): %v", cp.ID, err)
 		return
@@ -163,7 +168,7 @@ func (c *KeyorixCore) VerifyCheckpointAnchor(cp *models.AuditCheckpoint) (anchor
 	if c.checkpointAnchorVerify == nil {
 		return time.Time{}, true, fmt.Errorf("notary: no TSA trust anchor configured — cannot verify receipt issuer")
 	}
-	at, err := c.checkpointAnchorVerify(c.checkpointAnchorRoots, []byte(checkpointCanonical(cp)), cp.AnchorToken)
+	at, err := c.checkpointAnchorVerify(c.checkpointAnchorRoots, []byte(c.checkpointCanonical(cp)), cp.AnchorToken)
 	if err != nil {
 		return time.Time{}, true, err
 	}
@@ -282,7 +287,7 @@ func (c *KeyorixCore) writeAuditCheckpointLocked(ctx context.Context) (*models.A
 	if err != nil {
 		return nil, fmt.Errorf("failed to load audit chain re-anchor: %w", err)
 	}
-	raw, err := c.storage.VerifyAuditChain(ctx, anchor)
+	raw, err := c.walkAuditChain(ctx, storage.AuditChainSegment{Anchor: anchor})
 	if err != nil {
 		return nil, fmt.Errorf("failed to verify audit chain: %w", err)
 	}
@@ -506,15 +511,23 @@ func (c *KeyorixCore) failCheckpoint(v *storage.AuditChainVerification, brokenID
 	}
 }
 
-// checkpointCanonical is the exact byte string signed/verified for a checkpoint.
-// Null-separated and version-prefixed so fields cannot be ambiguously re-split.
+// checkpointCanonical is the v1 byte string signed/verified for a checkpoint
+// written while no audit loss was accepted. Null-separated and version-prefixed
+// so fields cannot be ambiguously re-split.
 func checkpointCanonical(cp *models.AuditCheckpoint) string {
-	return fmt.Sprintf("v1\x00%d\x00%d\x00%s\x00%s", cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion)
+	return checkpointCanonicalSealed(cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion, auditSealBinding{})
+}
+
+// checkpointCanonical is the byte string a checkpoint is signed and verified
+// over under the current seal list (audit_seal.go): v1 without seals, the v2
+// form bound to the seal count and newest seal digest otherwise.
+func (c *KeyorixCore) checkpointCanonical(cp *models.AuditCheckpoint) string {
+	return checkpointCanonicalSealed(cp.ChainedEvents, cp.HeadID, cp.HeadHash, cp.KeyVersion, c.sealBinding())
 }
 
 func (c *KeyorixCore) signCheckpoint(cp *models.AuditCheckpoint) string {
 	mac := hmac.New(sha256.New, c.auditCkptKey)
-	mac.Write([]byte(checkpointCanonical(cp)))
+	mac.Write([]byte(c.checkpointCanonical(cp)))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -563,6 +576,27 @@ const auditHighWaterSep = "\x1f"
 // only ever hashed as HMAC input, never persisted as a standalone string, so it doesn't
 // need to dodge the Postgres NUL restriction.
 func auditHighWaterValue(cp *models.AuditCheckpoint, sig string) string {
+	return auditHighWaterValueSealed(cp, auditSealBinding{}, sig)
+}
+
+// auditHighWaterValueSealed is auditHighWaterValue for a mark signed under seal
+// binding b: without seals the v1 layout, otherwise "v2" with the seal count
+// and newest seal digest ahead of the v1 fields. The signature already covers
+// the binding (checkpointCanonicalSealed); the stored copy lets `admin restore`
+// order a witness and an archive across a seal (auditverify.WriteWitnessIfHigher).
+func auditHighWaterValueSealed(cp *models.AuditCheckpoint, b auditSealBinding, sig string) string {
+	if b.N > 0 {
+		return strings.Join([]string{
+			"v2",
+			strconv.Itoa(b.N),
+			b.Digest,
+			strconv.FormatInt(cp.ChainedEvents, 10),
+			strconv.FormatUint(uint64(cp.HeadID), 10),
+			cp.HeadHash,
+			cp.KeyVersion,
+			sig,
+		}, auditHighWaterSep)
+	}
 	return strings.Join([]string{
 		"v1",
 		strconv.FormatInt(cp.ChainedEvents, 10),
@@ -575,22 +609,53 @@ func auditHighWaterValue(cp *models.AuditCheckpoint, sig string) string {
 
 // parseAuditHighWater parses a stored high-water value back into a checkpoint snapshot
 // and its signature. ok is false on any malformed value (treated as "no mark").
+//
+// A v2 (sealed) mark parses to the same snapshot; use parseAuditHighWaterBound
+// wherever the signature is checked.
 func parseAuditHighWater(val string) (cp *models.AuditCheckpoint, sig string, ok bool) {
+	cp, _, sig, ok = parseAuditHighWaterSealed(val)
+	return cp, sig, ok
+}
+
+// parseAuditHighWaterBound is parseAuditHighWater for a signature check under
+// the current seal list: a mark whose stored seal binding is not the current
+// one (a v1 mark after a seal, a v2 mark naming another seal list) returns an
+// empty signature, which never matches, so it reads as tampered like any other
+// mark that fails its signature.
+func (c *KeyorixCore) parseAuditHighWaterBound(val string) (cp *models.AuditCheckpoint, sig string, ok bool) {
+	cp, b, sig, ok := parseAuditHighWaterSealed(val)
+	if ok && b != c.sealBinding() {
+		sig = ""
+	}
+	return cp, sig, ok
+}
+
+// parseAuditHighWaterSealed parses a v1 or v2 (sealed) mark with its stored
+// seal binding (zero for v1).
+func parseAuditHighWaterSealed(val string) (cp *models.AuditCheckpoint, b auditSealBinding, sig string, ok bool) {
 	parts := strings.Split(val, auditHighWaterSep)
+	if len(parts) == 8 && parts[0] == "v2" {
+		n, err := strconv.Atoi(parts[1])
+		if err != nil || n < 1 || parts[2] == "" {
+			return nil, b, "", false
+		}
+		b = auditSealBinding{N: n, Digest: parts[2]}
+		parts = append([]string{"v1"}, parts[3:]...)
+	}
 	if len(parts) != 6 || parts[0] != "v1" {
-		return nil, "", false
+		return nil, b, "", false
 	}
 	chained, err1 := strconv.ParseInt(parts[1], 10, 64)
 	headID, err2 := strconv.ParseUint(parts[2], 10, 32)
 	if err1 != nil || err2 != nil {
-		return nil, "", false
+		return nil, b, "", false
 	}
 	return &models.AuditCheckpoint{
 		ChainedEvents: chained,
 		HeadID:        uint(headID),
 		HeadHash:      parts[3],
 		KeyVersion:    parts[4],
-	}, parts[5], true
+	}, b, parts[5], true
 }
 
 // auditHighWaterFloor returns the greatest chained-events count this server can prove
@@ -628,7 +693,7 @@ func (c *KeyorixCore) auditHighWaterFloor(ctx context.Context, strict bool) (flo
 	if !ok {
 		return floor, false, false, "", nil
 	}
-	cp, sig, parsed := parseAuditHighWater(val)
+	cp, sig, parsed := c.parseAuditHighWaterBound(val)
 	if !parsed {
 		// A malformed mark under a configured key is itself suspicious, but we cannot
 		// attribute it; treat as absent rather than asserting a specific floor.
@@ -722,7 +787,7 @@ func (c *KeyorixCore) advanceAuditHighWater(ctx context.Context, cp *models.Audi
 		c.bumpWatermark(floor)
 		return
 	}
-	val := auditHighWaterValue(cp, c.signCheckpoint(cp))
+	val := auditHighWaterValueSealed(cp, c.sealBinding(), c.signCheckpoint(cp))
 	if err := c.storage.SetSystemMetadata(ctx, auditHighWaterKey, val); err != nil {
 		log.Printf("audit high-water: failed to persist mark at %d events: %v", cp.ChainedEvents, err)
 	}

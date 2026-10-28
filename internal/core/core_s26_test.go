@@ -512,7 +512,7 @@ func TestCheckSecretPermission_Denied(t *testing.T) {
 	// CheckGroupPermissions calls GetUserGroupsAt
 	ms.On("GetUserGroupsAt", mock.Anything, uint(1), mock.Anything).Return([]*models.Group{}, nil)
 	// ACL fallback (r140): no direct grant, and no ancestor folder grant either → deny.
-	ms.On("GetSecretACL", mock.Anything, uint(5), uint(1)).Return(nil, errors.New("record not found"))
+	ms.On("GetSecretACL", mock.Anything, uint(5), uint(1)).Return(nil, storage.ErrSecretACLNotFound)
 	ms.On("GetSecretAncestors", mock.Anything, uint(5)).Return([]uint{}, nil)
 	// RBAC fallback (r124): no roles → deny.
 	ms.On("GetUserRoleIDsAt", mock.Anything, uint(1), mock.Anything).Return([]uint{}, nil)
@@ -652,6 +652,7 @@ func TestSeedAuditWatermark_WithKey_NoMark(t *testing.T) {
 	ms.On("GetSystemMetadata", mock.Anything, auditHighWaterKey).Return("", false, nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	c.SeedAuditWatermark(context.Background())
 	assert.Equal(t, int64(0), c.watermark())
 }
@@ -665,6 +666,7 @@ func TestAdvanceAuditHighWater_WritesMetadata(t *testing.T) {
 	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	cp := &models.AuditCheckpoint{ChainedEvents: 5, HeadID: 1, HeadHash: "abc", KeyVersion: "v1"}
 	c.advanceAuditHighWater(context.Background(), cp)
 	assert.Equal(t, int64(5), c.watermark())
@@ -676,6 +678,7 @@ func TestAdvanceAuditHighWater_DoesNotLowerMark(t *testing.T) {
 	// Existing persisted mark at 100 events.
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	c.bumpWatermark(100)
 	// Build a valid high-water value for 100 events so GetSystemMetadata returns it.
 	bigCP := &models.AuditCheckpoint{ChainedEvents: 100, HeadID: 0, HeadHash: "", KeyVersion: "v1"}
@@ -699,6 +702,7 @@ func TestAdvanceAuditHighWater_WritesWitnessFile(t *testing.T) {
 	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 
 	witnessPath := filepath.Join(t.TempDir(), auditverify.AuditHighWaterWitnessFileName)
 	c.SetAuditHighWaterWitnessPath(witnessPath)
@@ -723,6 +727,7 @@ func TestAdvanceAuditHighWater_NoWitnessPathIsANoop(t *testing.T) {
 	ms.On("SetSystemMetadata", mock.Anything, auditHighWaterKey, mock.AnythingOfType("string")).Return(nil)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 
 	cp := &models.AuditCheckpoint{ChainedEvents: 7, HeadID: 1, HeadHash: "abc", KeyVersion: "v1"}
 	require.NotPanics(t, func() { c.advanceAuditHighWater(context.Background(), cp) })
@@ -950,6 +955,7 @@ func TestCheckpointSignatureValid_Roundtrip(t *testing.T) {
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("testkeywithenoughbytes1234567890"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	cp := &models.AuditCheckpoint{ChainedEvents: 5, HeadID: 1, HeadHash: "hash1", KeyVersion: "v1"}
 	cp.Signature = c.signCheckpoint(cp)
 	assert.True(t, c.checkpointSignatureValid(cp))
@@ -960,6 +966,7 @@ func TestCheckpointSignatureValid_TamperedData(t *testing.T) {
 	ms := new(MockStorage)
 	c := NewKeyorixCore(ms)
 	c.SetAuditCheckpointKey([]byte("testkeywithenoughbytes1234567890"), "v1")
+	ms.On("GetSystemMetadata", mock.Anything, auditSealsKey).Return("", false, nil).Maybe() // no accepted loss (audit_seal.go)
 	cp := &models.AuditCheckpoint{ChainedEvents: 5, HeadID: 1, HeadHash: "hash1", KeyVersion: "v1"}
 	cp.Signature = c.signCheckpoint(cp)
 	// Tamper with data after signing.

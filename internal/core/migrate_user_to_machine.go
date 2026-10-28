@@ -84,7 +84,7 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 		// actually held, so a lock-acquisition failure leaves nothing behind.
 		// WithNamedLock is reentrant via the lock-marked ctx it hands fn (see
 		// its own doc comment), so the guard below can be called inside it.
-		var evictHashes []string
+		var evictHashes sessionEvictions
 		lockErr := c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
 			// ---- every refusal, before any write ----
 			// The last-admin guard, under the same lock acquisition as the write
@@ -154,7 +154,7 @@ func (c *KeyorixCore) MigrateUserToMachine(ctx context.Context, username string,
 		// own ordering) and never claims an identity was created.
 		// AccountSuspended blocks login, so the TOMBSTONING primitive is the
 		// right one here — see accountStateNeedsEvictionSweep.
-		c.invalidateTokenCache(evictHashes...)
+		c.evictSessionsAndAudit(ctx, user.ID, evictHashes, evictTombstone, "MigrateUserToMachine")
 		purgeStepUpGrants(ctx, c.storage, user.ID)
 		c.logMachineEvent(ctx, "machine_identity.created", m, actorID)
 		aid := actorID

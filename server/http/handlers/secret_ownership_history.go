@@ -5,7 +5,6 @@ package handlers
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -31,9 +30,9 @@ func (h *SecretHandler) OwnershipHistory(w http.ResponseWriter, r *http.Request)
 	records, err := h.coreService.GetSecretOwnershipHistory(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case isSecretNotFound(err):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
+		case isPermissionRefusal(err):
 			h.sendError(w, "Forbidden", "Not authorized to view this secret's ownership history", http.StatusForbidden, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to retrieve ownership history", http.StatusInternalServerError, nil)

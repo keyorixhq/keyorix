@@ -6,12 +6,14 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -51,9 +53,9 @@ func (h *SecretHandler) DiffSecretVersions(w http.ResponseWriter, r *http.Reques
 		log.Printf("DiffSecretVersions error: %v", err)
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found") || strings.Contains(msg, "version") && strings.Contains(msg, "not found"):
+		case errors.Is(err, storage.ErrSecretNotFound), errors.Is(err, storage.ErrSecretVersionNotFound):
 			h.sendError(w, "NotFound", msg, http.StatusNotFound, nil)
-		case strings.Contains(msg, "validation") || strings.Contains(msg, "must differ") || strings.Contains(msg, "must be positive"):
+		case errors.Is(err, core.ErrVersionDiffInvalid):
 			h.sendError(w, "ValidationError", msg, http.StatusBadRequest, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to diff secret versions", http.StatusInternalServerError, nil)

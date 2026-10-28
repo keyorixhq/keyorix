@@ -39,8 +39,10 @@
 // whose encryption happened before its replica saw the fence and whose INSERT
 // starts more than dekEpochFenceWait - dekEpochMaxStaleness later (a stall of
 // several seconds between the two). That needs the presence guard to have
-// been bypassed or lost as well: `admin encryption rotate` normally refuses
-// while any server is attached to the database (internal/serverguard). A
+// been lost as well: `admin encryption rotate` refuses while any server is
+// attached to the database (internal/serverguard), and on PostgreSQL --force
+// cannot override that (server/admin/rotate_force_guard.go,
+// DEK-ROTATE-SAFETY-1; before it, --force ran next to live replicas). A
 // server binary that predates this file does not check the epoch at all;
 // upgrade every replica before rotating.
 package encryption
@@ -246,6 +248,10 @@ func (s *Service) StartDEKEpochGuard(db *gorm.DB, release func()) error {
 	if err := s.clearCompletedRotationMarker(db); err != nil {
 		log.Printf("[WARN] could not clear the redo marker of a completed DEK rotation: %v", err)
 	}
+	// Keeps an older admin binary from rotating this database (rotation_protocol.go).
+	if err := recordDEKRotationProtocol(db); err != nil {
+		return err
+	}
 	w := &dekEpochWatch{db: db, own: own, release: release, base: base, stop: make(chan struct{}), done: make(chan struct{})}
 	w.markMatch(0) // verified just now, after base
 	s.mu.Lock()
@@ -269,9 +275,17 @@ func (s *Service) verifyOrSeedDEKEpoch(db *gorm.DB, own string) error {
 			return fmt.Errorf("%w: the database has no DEK epoch yet and this server's DEK cannot decrypt its newest secret version (%v). "+
 				"Start a replica that holds the current key set first", ErrDEKEpochMismatch, err)
 		}
-		if err := db.Clauses(clause.OnConflict{DoNothing: true}).
-			Create(&models.SystemMetadata{Key: dekEpochKey, Value: own}).Error; err != nil {
-			return fmt.Errorf("seed DEK epoch: %w", err)
+		res := db.Clauses(clause.OnConflict{DoNothing: true}).
+			Create(&models.SystemMetadata{Key: dekEpochKey, Value: own})
+		if res.Error != nil {
+			return fmt.Errorf("seed DEK epoch: %w", res.Error)
+		}
+		if res.RowsAffected == 1 {
+			// Best effort: without the row the crypto inventory reports the DEK's
+			// time as estimated, which is not a reason to refuse to start.
+			if err := recordDEKCreatedAt(db, own, time.Now()); err != nil {
+				log.Printf("[WARN] could not record when the DEK epoch was seeded: %v", err)
+			}
 		}
 		if v, _, err = readDEKEpoch(db); err != nil {
 			return err
@@ -442,6 +456,11 @@ func (f *rotationEpochFence) commitNewEpoch(tx *gorm.DB, newSvc *EncryptionServi
 	}
 	if !ok {
 		return fmt.Errorf("the DEK rotation fence was lifted while the sweep ran (a server restarted and cleared it); the old DEK stays active, retry the rotation")
+	}
+	// In the sweep transaction, so the new DEK is dated exactly when it becomes
+	// current; lift never touches this row (dek_created_at.go).
+	if err := recordDEKCreatedAt(tx, next, time.Now()); err != nil {
+		return fmt.Errorf("record the new DEK's creation time: %w", err)
 	}
 	return nil
 }

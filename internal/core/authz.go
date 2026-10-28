@@ -1185,9 +1185,11 @@ func filterActiveHoldersOn(ctx context.Context, st storage.Storage, holders map[
 	for id := range holders {
 		user, err := st.GetUser(ctx, id)
 		if err != nil {
-			if isNotFound(err) {
-				// Soft-deleted: GetUser's default scope excludes it — this holder no
-				// longer counts, but is not itself an error.
+			if storage.IsUserNotFound(err) {
+				// Soft-deleted: GetUser's default scope excludes it and wraps
+				// ErrUserNotFound — this holder no longer counts, but is not itself an
+				// error. Any other GetUser failure propagates (ERRLOSS-ACL-1: matching
+				// the text "not found" depended on the server locale).
 				delete(holders, id)
 				continue
 			}

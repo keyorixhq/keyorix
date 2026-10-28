@@ -2,12 +2,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 	"github.com/keyorixhq/keyorix/server/validation"
 )
@@ -54,7 +55,7 @@ func (h *UsersRolesHandler) GetUserRolesForUser(w http.ResponseWriter, r *http.R
 	roles, err := h.coreService.GetUserRolesByID(r.Context(), userID)
 	if err != nil {
 		log.Printf("Error getting roles for user %d: %v", userID, err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get user roles", http.StatusInternalServerError, nil)
@@ -126,7 +127,7 @@ func (h *UsersRolesHandler) GetUserPermissionsForUser(w http.ResponseWriter, r *
 	perms, err := h.coreService.GetUserPermissionsByID(r.Context(), userID)
 	if err != nil {
 		log.Printf("Error getting permissions for user %d: %v", userID, err)
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to get user permissions", http.StatusInternalServerError, nil)
@@ -305,6 +306,9 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 
 	scope := core.Scope{ProjectID: req.ProjectID, EnvironmentID: req.EnvironmentID}
 	if err := h.coreService.SetUserRoles(r.Context(), actor.UserID, userID, req.RoleIDs, scope, actor.ActorKind() == core.ActorTypeMachine); err != nil {
+		if sendAuditUnavailable(w, err) {
+			return
+		}
 		log.Printf("Error setting roles for user %d: %v", userID, err)
 		if sendPartialMutation(w, err) {
 			return // the removals applied, the additions did not (#3488)
@@ -312,7 +316,7 @@ func (h *UsersRolesHandler) UpdateUserRoles(w http.ResponseWriter, r *http.Reque
 		if sendRoleScopeError(w, err) {
 			return
 		}
-		if strings.Contains(err.Error(), errNotFound) {
+		if errors.Is(err, storage.ErrUserNotFound) {
 			sendError(w, "NotFound", errUserNotFound, http.StatusNotFound, nil)
 		} else {
 			sendError(w, "InternalError", "Failed to update user roles", http.StatusInternalServerError, nil)

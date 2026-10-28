@@ -98,6 +98,18 @@ var actorSentinelAllowlist = map[string]actorSentinelEntry{
 			"comparison itself is unchanged, and logAccessReviewDecision is now a one-line delegate with no " +
 			"comparison of its own.",
 	},
+	"mfa_reset.go:requireMFAResetActor": {
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "RECOVERY-MFA-RESET-1: refuses actorID==0 outright together with actorIsMachine (audited as denied): a two-person MFA reset needs two attributable human global admins, and a machine credential (UserID 0) is never one of them. TestMFAReset_NonAdminOrMachineApproverRefused drives the machine case.",
+	},
+	"mfa_reset.go:CancelMFAReset": {
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "RECOVERY-MFA-RESET-1: refuses actorID==0 / actorIsMachine before the global-admin check; cancelling only narrows, but it still needs an attributable human admin.",
+	},
+	"mfa_reset.go:ListMFAResetRequests": {
+		class: classPerActorCeiling, status: statusEnforced,
+		note: "RECOVERY-MFA-RESET-1: refuses actorID==0 / actorIsMachine before the global-admin check; the list names users and requesters.",
+	},
 	"anomaly_alerting.go:AcknowledgeAnomalyAlert": {
 		class: classAuditOnly,
 		note:  "attribution-only audit pointer; the write-permission gate at the transport already authorized the call.",

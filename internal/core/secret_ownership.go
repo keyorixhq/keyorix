@@ -91,18 +91,18 @@ func (c *KeyorixCore) TransferSecretOwnership(ctx context.Context, secretID, new
 //     already do with it.
 func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerID, actorID uint, actorKind string) (*models.SecretNode, error) {
 	if secretID == 0 || newOwnerID == 0 || actorID == 0 {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID, new owner ID and actor ID are required")
+		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "secret ID, new owner ID and actor ID are required")
 	}
 
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorSecretNotFound", nil), err)
+		return nil, secretLookupError(err)
 	}
 	if secret.OwnerID == newOwnerID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret is already owned by that user")
+		return nil, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "secret is already owned by that user")
 	}
 	if _, err := c.storage.GetUser(ctx, newOwnerID); err != nil {
-		return nil, fmt.Errorf("%s: new owner %d not found", i18n.T("ErrorValidation", nil), newOwnerID)
+		return nil, newOwnerLookupError(newOwnerID, err)
 	}
 
 	scope := Scope{ProjectID: secret.ProjectID, EnvironmentID: secret.EnvironmentID}
@@ -111,12 +111,12 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 	// the recovery path, gated on roles.assign (see doc comment above).
 	if !secretOwnedBy(secret.OwnerID, actorID) {
 		if !c.currentOwnerGone(ctx, secret.OwnerID) {
-			return nil, fmt.Errorf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
+			return nil, errSecretNotOwnerf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
 		}
 		if ok, aerr := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, scope); aerr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)
 		} else if !ok {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
 				"recovering an orphaned or departed-owner secret requires roles.assign at this scope")
 		}
 	}
@@ -136,7 +136,7 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 		hasWrite = hasManage
 	}
 	if !hasWrite {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
 			"the new owner must already hold secrets.write (or secrets.manage) access to this secret's project/environment")
 	}
 
@@ -161,7 +161,7 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 			return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), uerr)
 		}
 		if !matched {
-			return fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			return errSecretNotFoundText()
 		}
 		n, rerr := tx.ReassignSecretShareOwner(ctx, secret.ID, newOwnerID)
 		if rerr != nil {

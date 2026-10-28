@@ -1174,6 +1174,9 @@ func checkOraclesReporting(t fuzzVerdict, in oracleInput) {
 	// Oracle (f), #2844: no undelivered session. Independent of every other
 	// oracle and of the tolerance tables. See undelivered_session_oracle_test.go.
 	checkNoUndeliveredSession(t, label, in)
+	// Oracle (g), MFA-RESET-TESTS-1: no cleared factor beside a live old credential.
+	// See mfa_reset_oracle_test.go.
+	checkMFAResetNeverClearedWithLiveCredential(t, label, in)
 
 	report := func(oracle string, diff []string, format string, args ...any) {
 		msg := fmt.Sprintf(format, args...)

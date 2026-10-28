@@ -119,7 +119,8 @@ type Item struct {
 	// (ImpliedReadVersionMetadata) on the same subtree: access the migration adds that Vault
 	// never granted (names and metadata only, ADR-114 known residual).
 	ImpliedAccess []string
-	// CrossMountEvidence is set on a KindRole item resolved by the default convention: one
+	// CrossMountEvidence is set on a KindRole item resolved by the default convention or by a
+	// --path-map entry (the scope an entry maps into is named by the convention too): one
 	// "<mount><project>/[<env>/]: <state>" line per KV mount, as plan-access listed the Vault
 	// tree. apply-access refuses to run when its fresh read differs from the reviewed plan's.
 	CrossMountEvidence []string

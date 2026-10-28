@@ -54,10 +54,10 @@ func TestLookup_TerminatorEdgeCases(t *testing.T) {
 }
 
 func TestLookup_SizeCapIsInclusive(t *testing.T) {
-	t.Setenv(testVar+"_FILE", writeSecret(t, strings.Repeat("a", maxSecretFileSize), 0o600))
+	t.Setenv(testVar+"_FILE", writeSecret(t, strings.Repeat("a", MaxSecretFileSize), 0o600))
 	v, _, err := Lookup(testVar)
 	require.NoError(t, err, "a file of exactly the cap is accepted")
-	assert.Len(t, v, maxSecretFileSize)
+	assert.Len(t, v, MaxSecretFileSize)
 }
 
 // Precedence is decided before the file is touched: both set is a refusal even

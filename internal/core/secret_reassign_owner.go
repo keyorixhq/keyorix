@@ -42,19 +42,19 @@ import (
 // too avoids repeating that.
 func (c *KeyorixCore) ReassignOwnedSecrets(ctx context.Context, actorKind string, actorID, projectID, fromOwnerID, toOwnerID uint) (int, error) {
 	if projectID == 0 || fromOwnerID == 0 || toOwnerID == 0 || actorID == 0 {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "project ID, from-owner, to-owner and actor ID are required")
+		return 0, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "project ID, from-owner, to-owner and actor ID are required")
 	}
 	if fromOwnerID == toOwnerID {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "from-owner and to-owner must differ")
+		return 0, errSecretInvalidf("%s: %s", i18n.T("ErrorValidation", nil), "from-owner and to-owner must differ")
 	}
 	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, Scope{ProjectID: projectID}); err != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	} else if !allowed {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to reassign secrets in this project")
+		return 0, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to reassign secrets in this project")
 	}
 	// The new owner must exist (fail fast — TransferSecretOwnership re-checks per secret).
 	if _, err := c.storage.GetUser(ctx, toOwnerID); err != nil {
-		return 0, fmt.Errorf("%s: new owner %d not found", i18n.T("ErrorValidation", nil), toOwnerID)
+		return 0, newOwnerLookupError(toOwnerID, err)
 	}
 
 	secrets, err := c.listProjectSecrets(ctx, projectID)

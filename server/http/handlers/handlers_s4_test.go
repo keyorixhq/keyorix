@@ -26,6 +26,7 @@ import (
 	"gorm.io/gorm/logger"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/internal/storage/store"
@@ -2585,12 +2586,15 @@ func TestInitCoreHandlers_HappyPath(t *testing.T) {
 
 // ── Secret dependency handlers ────────────────────────────────────────────────
 
-func TestDependencyErrorStatus_Messages(t *testing.T) {
-	assert.Equal(t, http.StatusNotFound, dependencyErrorStatus("secret not found"))
-	assert.Equal(t, http.StatusBadRequest, dependencyErrorStatus("cannot depend on itself"))
-	assert.Equal(t, http.StatusBadRequest, dependencyErrorStatus("cycle detected"))
-	assert.Equal(t, http.StatusForbidden, dependencyErrorStatus("permission denied"))
-	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus("some random error"))
+func TestDependencyErrorStatus_Kinds(t *testing.T) {
+	assert.Equal(t, http.StatusNotFound, dependencyErrorStatus(fmt.Errorf("x: %w", storage.ErrSecretNotFound)))
+	assert.Equal(t, http.StatusNotFound, dependencyErrorStatus(fmt.Errorf("x: %w", storage.ErrSecretDependencyNotFound)))
+	assert.Equal(t, http.StatusBadRequest, dependencyErrorStatus(fmt.Errorf("x: %w", core.ErrDependencyInvalid)))
+	assert.Equal(t, http.StatusForbidden, dependencyErrorStatus(fmt.Errorf("x: %w", core.ErrPermissionDenied)))
+	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus(errors.New("some random error")))
+	// Text that merely looks like a classified failure is not one.
+	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus(errors.New("secret not found")))
+	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus(errors.New("cycle detected")))
 }
 
 func TestListSecretDependencies_Unauthorized(t *testing.T) {
@@ -4145,35 +4149,35 @@ func TestToDeletedSecretEntry_NoDeletedAt(t *testing.T) {
 func TestTagError_NotFound(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("record not found"), "fallback")
+	h.tagError(w, storage.NotFound(storage.ErrSecretNotFound, "record not found", nil), "fallback")
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
 func TestTagError_Forbidden(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("permission denied"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "permission denied", nil), "fallback")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 
 func TestTagError_Validation(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("tag exceeds maximum"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "tag exceeds maximum", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTagError_AtMost(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("at most 10 tags allowed"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "at most 10 tags allowed", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
 func TestTagError_ValidationKeyword(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("validation failed: bad tag"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrSecretInvalidInput, "validation failed: bad tag", nil), "fallback")
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
@@ -4187,7 +4191,7 @@ func TestTagError_Internal(t *testing.T) {
 func TestTagError_NotAuthorized(t *testing.T) {
 	h := newSecretHandlerS4(t)
 	w := httptest.NewRecorder()
-	h.tagError(w, fmt.Errorf("not authorized to tag this secret"), "fallback")
+	h.tagError(w, storage.Typed(core.ErrPermissionDenied, "not authorized to tag this secret", nil), "fallback")
 	assert.Equal(t, http.StatusForbidden, w.Code)
 }
 

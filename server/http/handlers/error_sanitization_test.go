@@ -4,10 +4,8 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -71,15 +69,7 @@ func TestGetProject_DBErrorSanitizedInResponseButLoggedForOperators(t *testing.T
 	require.NotContains(t, rawErr.Error(), "not found",
 		"test must exercise the sanitize branch, not the deliberate not-found branch")
 
-	var logBuf bytes.Buffer
-	origOutput := log.Writer()
-	origFlags := log.Flags()
-	log.SetOutput(&logBuf)
-	log.SetFlags(0)
-	t.Cleanup(func() {
-		log.SetOutput(origOutput)
-		log.SetFlags(origFlags)
-	})
+	logBuf := captureLogBuf(t)
 
 	req := withUserCtx(httptest.NewRequest(http.MethodGet, "/api/v1/projects/1", nil))
 	req = withChiParam(req, "id", "1")

@@ -159,6 +159,11 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 			}
 		}
 		summary.webAuthnCredentialsCleared = len(creds)
+		// The flag with the rows: a WebAuthnEnabled account with no credential is
+		// asked at login for a passkey it no longer has (a permanent lockout).
+		if err := tx.SetUserWebAuthnEnabled(ctx, user.ID, false); err != nil {
+			return fmt.Errorf("clear WebAuthn flag: %w", err)
+		}
 		if err := tx.UpdateLoginLockoutState(ctx, user.ID, 0, nil, nil, 0); err != nil {
 			return fmt.Errorf("clear login-lockout state: %w", err)
 		}
@@ -194,22 +199,16 @@ func performRecoverAdminWithTTL(ctx context.Context, store corestorage.Storage, 
 // that tradeoff), and surface the broken-chain fact loudly rather than
 // silently.
 //
-// Design §4 additionally asks for the new entry to be written as an
-// "explicitly-marked chain restart (a new segment whose first entry records
-// 'prior chain verification failed at row N' instead of chaining onto the
-// broken tail)". This implementation does NOT do that: LogAuditEvent (this
-// package's only write path, shared with every other admin command) always
-// chains onto whatever the current tail is, broken or not -- reworking its
-// hashing to support a genuine segment restart is real surgery on
-// internal/storage/store/local_audit_chain.go shared by every caller, out
-// of scope for this PR. What this DOES do, and what actually delivers the
-// detectability property design §4 is after: verify the chain before
-// writing, and when broken, name the exact broken row in both a loud
-// stderr warning (never just the human report) AND the event's own
-// Description -- so the fact "recovery happened while the audit trail was
-// already compromised" is recorded, even though the low-level chain-segment
-// mechanics design §4 sketches are not implemented here. Flagged explicitly
-// as an open item, not silently narrowed -- see the PR description.
+// Design §4's idea that recover-admin writes a chain restart is retired
+// (docs/design/recovery-options.md §2 "recover-admin"): recover-admin NEVER
+// seals or restarts the chain. Accepting a loss is a separate, deliberate,
+// audited act with its own evidence, `admin audit accept-loss`
+// (audit_accept_loss.go); folding it into a lockout recovery would let a
+// recovery silently bless tampering. What this does: verify the chain before
+// writing and, when broken, name the exact broken row in both a loud stderr
+// warning and the event's own Description, so "recovery happened while the
+// audit trail was already compromised" is recorded. Guard:
+// TestPerformRecoverAdmin_NeverSealsALoss.
 func recordRecoveryAuditEvent(ctx context.Context, store corestorage.Storage, summary *recoverAdminSummary) {
 	verification, err := store.VerifyAuditChain(ctx, nil)
 	keyDetail := fmt.Sprintf("recovery key generation %d", summary.recoveryKeyVersion)
