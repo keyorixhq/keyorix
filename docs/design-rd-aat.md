@@ -133,6 +133,18 @@ follow by structural induction on depth (bounded by `MAX_CONSTRAINT_DEPTH`).
 satisfies; `"*"` is a wildcard. Child accepts ∧ rules ∧ parent rejects is unsat; removing
 any one of the five key rules is sat (each rule is load-bearing).
 
+> **Stale against the published -02 (2026-10-28).** This part was encoded from the
+> pre-publication copy, where the omitted-key rule applied to every key. The published
+> §4.5 reads "the derived map MAY omit a key **other than `"*"`** that the parent
+> names only if the parent marks it optional…". Whether the encoding above already
+> excludes `"*"` from that obligation cannot be told from this sketch, and the model
+> is not in the repo, so it has to be re-derived rather than inspected. Re-encode with
+> `"*"` carved out, re-run the five mutants, and re-count whether it is still five
+> load-bearing rules. No vector covers this rule, so part C is the only check on it.
+> Part B (`∀j ∃i`) is unaffected: it is already the published `any` rule, which now
+> states explicitly that splitting a parent clause is valid and that union coverage
+> by several parent clauses is not.
+
 **D. Chain bounds.** Eight links unrolled with I2/I3 per link: the leaf never outlives
 the root and depth never passes the root's `del_max_depth`. Dropping
 `del_max_depth ≤ parent's` at one link is sat.
@@ -177,10 +189,30 @@ A stdlib-only Go verifier of Section 8 (strict JSON with duplicate rejection, nu
 admissibility, JCS, Ed25519, every DENY labelled with its step and reason), a deriver
 that refuses to sign a widening child with the same reason, and a demo.
 
-- Published draft-02 vectors (`tests/vectors/aat-jws-vectors.json` in the draft's
-  repository, 224 vectors: 52 PERMIT, 172 DENY): **224/224 verdicts and 224/224 first
-  failing steps**. The first run had 3 step mismatches (an RSA or short key in `cnf.jwk`
-  accepted until the PoP step); the fix validates the holder key at 3l/4b2.
+- Draft-02 vectors (`tests/vectors/aat-jws-vectors.json` in the draft's
+  repository, 224 vectors at the time: 52 PERMIT, 172 DENY): **224/224 verdicts and
+  224/224 first failing steps**. The first run had 3 step mismatches (an RSA or short
+  key in `cnf.jwk` accepted until the PoP step); the fix validates the holder key at
+  3l/4b2.
+
+  *Superseded in scope, 2026-10-28.* The suite is now **229 vectors**. Diffing the
+  suite at the pinned commit (`de8cc33`) against current `main`: the 224 above are
+  byte-identical, none changed or removed, so the result stands for them. Five were
+  added and have never been run:
+
+  | Vector | Expect | What it pins |
+  | --- | --- | --- |
+  | `J.9.6` | DENY, step 6b | A `scope` claim in a derived token names a tool its `attenuating_agent_token` entry does not grant. Only the leaf's entry authorizes a tool. |
+  | `J.16.7` | PERMIT | `any[one_of[pdf,csv]]` → `any[exact pdf, exact csv]`: one parent clause split into two. A verifier matching clauses one-to-one, or rejecting added clauses, would wrongly DENY. |
+  | `J.16.8` | DENY, step 4p4 | `any[range 0..10, range 5..20]` → `any[range 0..20]`: covered only by the union of parent clauses. A verifier comparing accepted value sets instead of clauses would wrongly PERMIT. |
+  | `J.21.22` | DENY, step 3k | Root signed by the second anchor's key but carrying the first anchor's issuer. A verifier accepting any configured anchor's issuer would wrongly PERMIT. |
+  | `J.21.23` | PERMIT | Root signed by the second anchor's key with that anchor's issuer. A verifier trying only the first anchor would wrongly DENY. |
+
+  `J.16.7`/`J.16.8` are the pair the draft's author flagged directly; they are the
+  red/green test of the `any` rule that part B already encodes as `∀j ∃i` (no
+  one-to-one matching), so both are expected to pass unchanged — expected, not shown,
+  until the verifier exists again. `J.21.22`/`J.21.23` are the ones to watch: they
+  exercise multi-anchor handling, which the prototype never had.
 - Five planted subsumption bugs: four flip a verdict on the vectors, one (a child adding
   `"*"`) is still denied by a later check and shows only as a step change.
 - `keyorix_ref_glob` property test against `path.Match` (400,000 random pattern pairs,
