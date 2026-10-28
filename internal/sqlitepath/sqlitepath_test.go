@@ -24,9 +24,9 @@ func TestDatabaseFile(t *testing.T) {
 		{"file://localhost/data/secrets.db", "/data/secrets.db", true},
 		{"", "", false},
 		{":memory:", "", false},
-		{":memory:?cache=shared", "", false},
+		{":memory:?_busy_timeout=5000", "", false},
 		{"file::memory:", "", false},
-		{"file::memory:?cache=shared", "", false},
+		{"file::memory:?_busy_timeout=5000", "", false},
 		{"file:x?mode=memory", "", false},
 		{"file:x.db?_busy_timeout=5000&mode=memory", "", false},
 	} {
