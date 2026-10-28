@@ -762,12 +762,18 @@ message VerifyAuditChainResponse {
   string reason = 8; // set only when !valid
   string checkpoint_reason = 9; // non-fatal notes (e.g. checkpoint under a prior key)
   // Incremental verification (docs/specs/audit-incremental-verification.md):
-  // status is valid | broken | not_proven, and valid is true only for "valid";
+  // status is valid | broken | not_proven | sealed, and valid is true only for "valid";
+  // "sealed" means the chain was walked but an audit loss was accepted with
+  // `audit accept-loss` (see state_reason); it is not a clean pass.
   // mode is incremental (tail check + persisted state) or full (walked now).
   string status = 10;
   string mode = 11;
   string not_proven_reason = 12; // set only when status is not_proven
   optional google.protobuf.Timestamp last_full_verification_at = 13;
+  // Names the accepted audit loss when status is sealed, and says why a persisted
+  // verification state was ignored when it was. Empty when there is nothing to say.
+  // Same value as "state_reason" on GET /api/v1/audit/verify.
+  string state_reason = 14;
 }
 
 // WriteAuditCheckpointResponse is the signed checkpoint that was written.
