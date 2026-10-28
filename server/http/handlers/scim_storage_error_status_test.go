@@ -20,9 +20,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -62,6 +64,43 @@ func setupSCIMFaultTest(t *testing.T) (*SCIMHandler, *faultstorage.FaultyStorage
 	require.NoError(t, db.Create(&models.Role{Name: "system_viewer"}).Error)
 	fs := faultstorage.NewFaultyStorage(store.NewLocalStorage(db), nil)
 	return NewSCIMHandler(core.NewKeyorixCore(fs)), fs, db
+}
+
+// scimLogCapture is captureLogBuf with a lock the reader shares with the writer.
+// The standard logger is process-global, so a background goroutine a EARLIER test
+// left behind (the last-used coalescer's timer flush logs through log.Printf) can
+// write while this test reads; a bare bytes.Buffer made `go test -race` fail with
+// a data race in the merge queue. Stray lines from that goroutine are harmless to
+// the assertion (it only looks for the injected detail).
+type scimLogCapture struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (c *scimLogCapture) Write(p []byte) (int, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.Write(p)
+}
+
+func (c *scimLogCapture) String() string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.buf.String()
+}
+
+func captureSCIMLog(t *testing.T) *scimLogCapture {
+	t.Helper()
+	c := &scimLogCapture{}
+	origOutput := log.Writer()
+	origFlags := log.Flags()
+	log.SetOutput(c)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(origOutput)
+		log.SetFlags(origFlags)
+	})
+	return c
 }
 
 // scimStorageFaults are the "any other storage error" class: none of them may
@@ -148,7 +187,7 @@ func TestSCIM_UserWriteStorageError_Is500NotNotFound(t *testing.T) {
 				t.Run(op.name+"/"+site.method+"/"+kind, func(t *testing.T) {
 					h, fs, db := setupSCIMFaultTest(t)
 					id := provisionUser(t, h, "u@corp.com")
-					logBuf := captureLogBuf(t)
+					logBuf := captureSCIMLog(t)
 
 					fs.Arm(&faultstorage.FaultSpec{Method: site.method, NthCall: site.nth, Kind: faultstorage.KindError, Err: ferr})
 					w := op.do(h, id)
