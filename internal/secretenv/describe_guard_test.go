@@ -18,6 +18,7 @@ import (
 // DescribeFile (cli/cmd/secretfile.go: its copy, describeSecretFile).
 var fileEnvReaders = []string{
 	"internal/secretenv/secretenv.go",
+	"internal/secretenv/snapshot.go", // Snapshot: names a path only through NewFileError
 	"cli/cmd/secretfile.go",
 }
 
@@ -26,9 +27,10 @@ var fileEnvReaders = []string{
 // SecretFilePaths). Each was reviewed to name the path only through DescribeFile,
 // NewFileError or CheckPermissionsNamed; a new caller needs the same review.
 var rawPathAPICallers = []string{
-	"internal/config/config.go",     // EnforceSecretFilePermissions: CheckPermissionsNamed; SecretFilePaths
-	"internal/crypto/passphrase.go", // PassphraseSource.Describe: DescribeFile
-	"cmd/keyorix-k8s-sync/main.go",  // resolveToken: NewFileError
+	"internal/config/config.go",          // SecretFilePaths
+	"internal/config/secret_snapshot.go", // SecretFilePermissionProblems: CheckPermissionsNamed / Snapshot.CheckPermissions (NewFileError)
+	"internal/crypto/passphrase.go",      // PassphraseSource.Describe: DescribeFile
+	"cmd/keyorix-k8s-sync/main.go",       // resolveToken: NewFileError
 }
 
 // nonSecretFileEnvVars are *_FILE variables whose value is not a secret's path

@@ -145,13 +145,26 @@ func (p *ShamirKeyProvider) Name() string { return "shamir" }
 
 // readShareFile reads an operator-configured share file through
 // secretenv.OpenRegular, so a FIFO or device is refused instead of blocking the
-// boot in open(2).
+// boot in open(2), and judges the descriptor it reads with the secretenv owner +
+// mode rule (secretenv.CheckInfo, SECRETENV-TAILS-2 F10).
+//
+// A failed judgment is a WARNING naming the file and the problem, not a refusal:
+// whether a too-open or foreign-owned share file refuses to start is decided by
+// the startup permission check (internal/keyfiles.Registry in ValidateStartup:
+// warn, ADR-112 grace, or refuse under security.enable_file_permission_check),
+// and this package cannot see that state. Refusing here would be a new policy for
+// warn/grace deployments (ask secretenv-shamir-share-file-read-policy). What the
+// read-time judgment adds is a verdict on the very bytes used: a file swapped
+// after the boot check is named, where before nothing looked at it again.
 func readShareFile(path string) ([]byte, error) {
-	f, _, err := secretenv.OpenRegular(path, 0)
+	f, info, err := secretenv.OpenRegular(path, 0)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
+	if err := secretenv.CheckInfo(info); err != nil {
+		log.Printf("WARNING: shamir key provider: share file %s: %v (judged on the descriptor that was read; the startup permission check decides whether this refuses to start)", path, err)
+	}
 	return io.ReadAll(f)
 }
 

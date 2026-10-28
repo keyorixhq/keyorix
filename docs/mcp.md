@@ -31,6 +31,12 @@ The server needs two environment variables:
   `secrets.read` only for the secrets the agent should reach. Create one with
   `keyorix machine create …`. The token is read from the environment, never from a tool
   argument, so the model can't coax it out.
+- `KEYORIX_TOKEN_FILE` — instead of `KEYORIX_TOKEN`, the path of a file holding the token
+  (a Docker secret or a Kubernetes Secret volume), so it does not sit in the process
+  environment (`/proc/<pid>/environ`, child processes). The file must be a regular file,
+  mode 0600/0400 and owned by the running user or root (or a root-owned 0440 mount in a
+  group the process belongs to), at most 1 MiB; one trailing newline is stripped. It is
+  the same rule the server applies to key material. Setting both variables is an error.
 
 Two more provide **defense-in-depth on top of** (never instead of) the token's own
 server-side RBAC scope — `KEYORIX_MCP_ALLOWED_REFS` is optional and opt-in;
@@ -127,7 +133,7 @@ remain the primary controls.
 
 | Symptom | Likely cause |
 |---|---|
-| Server exits immediately | `KEYORIX_URL` or `KEYORIX_TOKEN` unset, `KEYORIX_URL` is not https (and not loopback), `KEYORIX_MCP_MAX_READS` is not a positive integer, or `KEYORIX_MCP_ALLOWED_REFS` is set but has no usable patterns after parsing — it logs which to stderr. |
+| Server exits immediately | `KEYORIX_URL` or `KEYORIX_TOKEN` unset, both `KEYORIX_TOKEN` and `KEYORIX_TOKEN_FILE` set, the token file too open or owned by another account, `KEYORIX_URL` is not https (and not loopback), `KEYORIX_MCP_MAX_READS` is not a positive integer, or `KEYORIX_MCP_ALLOWED_REFS` is set but has no usable patterns after parsing — it logs which to stderr. |
 | `could not read the requested secret` from `keyorix_get_secret` | The token lacks `secrets.read` for that ref, the ref doesn't exist, the ref is outside `KEYORIX_MCP_ALLOWED_REFS`, or the per-process read cap is exhausted — check stderr for the specific reason. |
 | `could not list secrets` | The token's `ListSecrets` call failed — check stderr for the specific reason. |
 | `invalid request …` | `ref` is not a three-part `project/environment/name`. |

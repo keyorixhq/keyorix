@@ -37,10 +37,11 @@ import (
 // FileSuffix is appended to a variable name to form its file-variant.
 const FileSuffix = "_FILE"
 
-// maxSecretFileSize bounds what Lookup will read. No legitimate secret in this
-// product is larger; the cap stops a mis-pointed X_FILE (a log, a device) from
-// being slurped into memory.
-const maxSecretFileSize = 1 << 20
+// MaxSecretFileSize bounds what Lookup (and ReadCapped's other callers, e.g.
+// --passphrase-file) will read. No legitimate secret in this product is larger;
+// the cap stops a mis-pointed X_FILE (a log, a device) from being slurped into
+// memory.
+const MaxSecretFileSize = 1 << 20
 
 // Lookup resolves the secret called name.
 //
@@ -207,35 +208,58 @@ func ReadRegularFile(what, path string) ([]byte, error) {
 }
 
 func readSecretFile(path string, checkPerms bool) (string, error) {
+	v, _, _, err := readSecretFileJudged(path, checkPerms)
+	return v, err
+}
+
+// readSecretFileJudged reads a secret file and judges the descriptor it read:
+// permErr is checkInfo's verdict on the fstat of that descriptor, and judged says
+// whether the file got far enough to be judged (it was opened and is regular).
+// With refuse set, a failed judgment is returned as err before anything is read
+// (LookupChecked); without it, it is only reported in permErr (the caller applies
+// the warn-or-refuse matrix).
+func readSecretFileJudged(path string, refuse bool) (v string, permErr error, judged bool, err error) {
 	f, info, err := OpenRegular(path, 0)
 	if err != nil {
 		if errors.Is(err, ErrNotRegular) {
-			return "", err
+			return "", nil, false, err
 		}
-		return "", fmt.Errorf("cannot open secret file: %w", unwrapPathError(err))
+		return "", nil, false, fmt.Errorf("cannot open secret file: %w", unwrapPathError(err))
 	}
 	defer func() { _ = f.Close() }()
 
-	if checkPerms {
-		if err := checkInfo(info); err != nil {
-			return "", err
-		}
+	permErr = checkInfo(info)
+	if refuse && permErr != nil {
+		return "", permErr, true, permErr
 	}
-	if info.Size() > maxSecretFileSize {
-		return "", fmt.Errorf("secret file is too large (%d bytes, limit %d)", info.Size(), maxSecretFileSize)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxSecretFileSize+1))
+	data, err := ReadCapped(f, info)
 	if err != nil {
-		return "", fmt.Errorf("cannot read secret file: %w", unwrapPathError(err))
+		return "", permErr, true, err
 	}
-	if len(data) > maxSecretFileSize {
-		return "", fmt.Errorf("secret file is too large (limit %d bytes)", maxSecretFileSize)
-	}
-	v := trimOneTerminator(string(data))
+	v = trimOneTerminator(string(data))
 	if v == "" {
-		return "", fmt.Errorf("secret file is empty")
+		return "", permErr, true, fmt.Errorf("secret file is empty")
 	}
-	return v, nil
+	return v, permErr, true, nil
+}
+
+// ReadCapped reads a secret file opened by OpenRegular (f, with its fstat info)
+// up to MaxSecretFileSize bytes, and refuses a larger one -- by its fstat size
+// before reading, and by what was read for a file that reports size 0 (/proc) or
+// grows. The error names the cap; it never carries the contents. It is the one
+// size rule for X_FILE secrets and --passphrase-file (SECRETENV-TAILS-2 F11).
+func ReadCapped(f *os.File, info os.FileInfo) ([]byte, error) {
+	if info.Size() > MaxSecretFileSize {
+		return nil, fmt.Errorf("secret file is too large (%d bytes, limit %d)", info.Size(), MaxSecretFileSize)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, MaxSecretFileSize+1))
+	if err != nil {
+		return nil, fmt.Errorf("cannot read secret file: %w", unwrapPathError(err))
+	}
+	if len(data) > MaxSecretFileSize {
+		return nil, fmt.Errorf("secret file is too large (limit %d bytes)", MaxSecretFileSize)
+	}
+	return data, nil
 }
 
 // trimOneTerminator strips one trailing "\n", then one trailing "\r": a "\n",
@@ -356,6 +380,13 @@ func OverrideOwnershipForTest(fileUID, processUIDValue int) (restore func()) {
 	}
 	return func() { processUID, fileOwner = oldUID, oldOwner }
 }
+
+// CheckInfo applies CheckPermissions' rule (mode and owner) to info, which must
+// come from OpenRegular: the fstat of the descriptor the caller then reads, so
+// the verdict is about the bytes used, not about a path that may have been
+// swapped since a separate stat. The policy on a failure (refuse or warn) is the
+// caller's; the error names the problem, never the contents.
+func CheckInfo(info os.FileInfo) error { return checkInfo(info) }
 
 func checkInfo(info os.FileInfo) error {
 	mode := info.Mode()

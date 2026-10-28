@@ -233,6 +233,9 @@ func collectInsecureSettingsPosture(cfg *config.Config, explicit map[string]bool
 		// The value says WHICH weak state, where an entry has more than one
 		// (#2908: insecure_skip_startup_validation is "off" or "grace-warn-only").
 		detail := fmt.Sprintf("%s is in effect (%s) — %s", s.Name, s.Value(cfg), s.Describe)
+		if s.Name == allowUnsafeFilePermissionsSetting {
+			detail += secretFilesNamedIn(cfg, secretFilesOnAllowUnsafeLine)
+		}
 		// Origin is a fact about the config FILE: explicit when it writes one
 		// of the paths this entry reads, shipped-default when it is silent and
 		// the weak state is what Load resolves the absent key to. Not keyed on
@@ -278,7 +281,7 @@ func collectFilePermissionPosture(cfg *config.Config, configPath string, report 
 	// the database to tell apart; collectStartupValidationStatePosture reports
 	// them once it has been read.
 	if !cfg.Security.EnableFilePermissionCheck {
-		report.deviate("file-permissions", "security.enable_file_permission_check is disabled (ADR-112 requires it enabled by default)")
+		report.deviate("file-permissions", "security.enable_file_permission_check is disabled (ADR-112 requires it enabled by default)"+secretFilesNamedIn(cfg, secretFilesOnDisabledLine))
 	}
 
 	// configPath, not ResolvedPath(""): --config must be the file validated
@@ -324,6 +327,56 @@ func collectFilePermissionPosture(cfg *config.Config, configPath string, report 
 	}
 }
 
+// allowUnsafeFilePermissionsSetting is the InsecureSettingsRegistry entry whose
+// deviation line names the too-open secret files in that warn mode.
+const allowUnsafeFilePermissionsSetting = "security.insecure_allow_unsafe_file_permissions"
+
+// secretFilesLine is the one deviation line that names the too-open *_FILE
+// secrets, chosen by the warn mode the server boots in.
+type secretFilesLine int
+
+const (
+	secretFilesOnDisabledLine    secretFilesLine = iota + 1 // enable_file_permission_check: false
+	secretFilesOnAllowUnsafeLine                            // insecure_allow_unsafe_file_permissions
+	secretFilesOnGraceLine                                  // ADR-112 upgrade grace (warn only)
+)
+
+// secretFilesWarnLine says which deviation line carries the names: the first warn
+// mode that applies, so a file is named once. 0 in an enforcing mode, where the
+// server and every admin command refuse the file instead (EnforceSecretFilePermissions).
+func secretFilesWarnLine(cfg *config.Config) secretFilesLine {
+	switch {
+	case !cfg.Security.EnableFilePermissionCheck:
+		return secretFilesOnDisabledLine
+	case cfg.Security.AllowUnsafeFilePermissions:
+		return secretFilesOnAllowUnsafeLine
+	case cfg.Security.StartupValidationState() == config.StartupValidationGraceWarnOnly:
+		return secretFilesOnGraceLine
+	}
+	return 0
+}
+
+// secretFilesNamedIn is the suffix that names every *_FILE secret (and
+// metrics_token_file) failing the owner + mode rule -- the variable or config key
+// and the path, never the contents (SECRETENV-REVIEW-1 F7) -- when line is the one
+// secretFilesWarnLine picks, and "" otherwise. It only extends an existing
+// deviation line, so the deviation count does not change: the warn mode itself is
+// what is counted.
+func secretFilesNamedIn(cfg *config.Config, line secretFilesLine) string {
+	if secretFilesWarnLine(cfg) != line {
+		return ""
+	}
+	problems, keyProblems := cfg.SecretFilePermissionProblems()
+	var out string
+	if len(problems) > 0 {
+		out += "; secret files that only warn because of this: " + strings.Join(problems, "; ")
+	}
+	if len(keyProblems) > 0 {
+		out += "; key-material secret files (refused wherever they are read, whatever this setting): " + strings.Join(keyProblems, "; ")
+	}
+	return out
+}
+
 // collectStartupValidationStatePosture reports where
 // security.enable_file_permission_check stands when the config file never set
 // it (#2908). The registry entry (security.insecure_skip_startup_validation)
@@ -344,7 +397,7 @@ func collectStartupValidationStatePosture(cfg *config.Config, graceKnown bool, e
 	case !graceKnown:
 		report.deviateShippedDefault("grace-period", "security.enable_file_permission_check is on its ADR-112 implicit default and the database could not be read, so whether this deployment is in the upgrade grace period (a failed startup check only WARNS) is unknown — counted until it can be checked")
 	case sec.StartupValidationState() == config.StartupValidationGraceWarnOnly:
-		report.deviateShippedDefault("grace-period", "security.enable_file_permission_check is in its ADR-112 upgrade grace period: this upgraded deployment never set it, so a failed startup check only WARNS and the server starts anyway. Fix anything the startup checks report; the first clean boot then ends the grace period for good (adr112.file_permission_check.enforced), or set security.enable_file_permission_check: true explicitly")
+		report.deviateShippedDefault("grace-period", "security.enable_file_permission_check is in its ADR-112 upgrade grace period: this upgraded deployment never set it, so a failed startup check only WARNS and the server starts anyway. Fix anything the startup checks report; the first clean boot then ends the grace period for good (adr112.file_permission_check.enforced), or set security.enable_file_permission_check: true explicitly"+secretFilesNamedIn(cfg, secretFilesOnGraceLine))
 	case enforcedSince != "":
 		report.info("security.enable_file_permission_check is enforcing on its ADR-112 secure-by-default value (never set explicitly; enforced since " + enforcedSince + ")")
 	default:

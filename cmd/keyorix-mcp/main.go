@@ -6,7 +6,8 @@ to Keyorix's scoped permission, max_reads, suspension, and audit. Secret values 
 never logged.
 
 Configure it in your agent client (e.g. Claude Desktop/Code) as a stdio MCP server with
-KEYORIX_URL and a scoped KEYORIX_TOKEN in the environment.
+KEYORIX_URL and a scoped KEYORIX_TOKEN (or KEYORIX_TOKEN_FILE, the path of a file
+holding it) in the environment.
 
 Copyright (C) 2025 Keyorix Contributors. Licensed under the AGPL-3.0-or-later.
 */
@@ -14,6 +15,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -21,6 +23,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/mcp"
+	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
 // version is overridden at build time via -ldflags.
@@ -94,6 +97,31 @@ func resolveAllowedRefs(raw string) ([]string, error) {
 	return patterns, nil
 }
 
+// resolveToken returns the machine-identity token from KEYORIX_TOKEN or from the
+// file KEYORIX_TOKEN_FILE names (SECRETENV-TAILS-2 F8: a value in the environment
+// is readable through /proc/PID/environ and by every child process, a mounted file
+// is not). The file goes through secretenv.LookupChecked, the rule the server
+// applies to key material and the CLI to its own KEYORIX_TOKEN_FILE: regular file,
+// mode and owner judged on the descriptor that is read (0600/0400 owned by the
+// running user or root, or a root-owned 0440 orchestrator mount in a held group),
+// 1 MiB cap, exactly one trailing line terminator stripped. Both variables set is
+// an error (DEPLOY-2: no silent precedence). Errors name the variable and, for an
+// absolute path, the path -- never the token.
+func resolveToken() (string, error) {
+	token, found, err := secretenv.LookupChecked("KEYORIX_TOKEN")
+	if err != nil {
+		return "", err
+	}
+	if found && os.Getenv("KEYORIX_TOKEN") != "" {
+		// From the environment: trimmed as before, for compatibility.
+		token = strings.TrimSpace(token)
+	}
+	if token == "" {
+		return "", errors.New("KEYORIX_TOKEN is required (a least-privilege Keyorix machine-identity token; or set KEYORIX_TOKEN_FILE to the path of a 0600 file holding it)")
+	}
+	return token, nil
+}
+
 func main() {
 	// Logs go to stderr so they never corrupt the JSON-RPC stream on stdout.
 	log.SetOutput(os.Stderr)
@@ -103,9 +131,9 @@ func main() {
 	if baseURL == "" {
 		log.Fatal("KEYORIX_URL is required (the Keyorix server base URL)")
 	}
-	token := strings.TrimSpace(os.Getenv("KEYORIX_TOKEN"))
-	if token == "" {
-		log.Fatal("KEYORIX_TOKEN is required (a least-privilege Keyorix machine-identity token)")
+	token, err := resolveToken()
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	client, err := mcp.NewKeyorixClient(baseURL, token)
