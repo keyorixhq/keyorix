@@ -6,12 +6,13 @@ package handlers
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -38,11 +39,11 @@ func (h *SecretHandler) ExportAccessLog(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		msg := err.Error()
 		switch {
-		case strings.Contains(msg, "not found"):
+		case isSecretNotFound(err):
 			h.sendError(w, "NotFound", errSecretNotFound, http.StatusNotFound, nil)
-		case strings.Contains(msg, "unsupported export format"):
+		case errors.Is(err, core.ErrUnsupportedExportFormat):
 			h.sendError(w, "InvalidParameter", msg, http.StatusBadRequest, nil)
-		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+		case isPermissionRefusal(err):
 			h.sendError(w, "Forbidden", msg, http.StatusForbidden, nil)
 		default:
 			log.Printf("Error exporting access log for secret %d: %v", id, err)

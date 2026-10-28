@@ -8,7 +8,6 @@ package handlers
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -30,7 +29,7 @@ func (h *SecretHandler) GetSecretRisk(w http.ResponseWriter, r *http.Request) {
 
 	risk, err := h.coreService.ComputeSecretRiskScore(r.Context(), uint(id))
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
+		if isSecretNotFound(err) {
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
 		} else {
 			h.sendError(w, "InternalError", "Failed to compute secret risk", http.StatusInternalServerError, nil)
