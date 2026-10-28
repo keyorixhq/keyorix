@@ -28,7 +28,7 @@ func (ls *LocalStorage) GetNotificationChannel(ctx context.Context, id uint) (*m
 	var row models.NotificationChannel
 	err := ls.db.WithContext(ctx).First(&row, id).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return nil, storage.NotFound(storage.ErrNotificationChannelNotFound, i18n.T("ErrorNotFound", nil), err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)

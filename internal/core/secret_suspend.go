@@ -9,7 +9,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
@@ -258,7 +257,7 @@ func (c *KeyorixCore) SuspendProjectSecretsWithOptions(ctx context.Context, proj
 // isSuspendSkip reports whether a per-secret error during a bulk suspend is a skip
 // (permission denied, or the secret no longer exists) rather than a failure.
 func isSuspendSkip(err error) bool {
-	return storage.IsSecretNotFound(err) || strings.Contains(err.Error(), i18n.T("ErrorPermissionDenied", nil))
+	return storage.IsSecretNotFound(err) || errors.Is(err, ErrPermissionDenied)
 }
 
 // BulkSuspendPartialError is returned by SuspendProjectSecretsWithOptions when a

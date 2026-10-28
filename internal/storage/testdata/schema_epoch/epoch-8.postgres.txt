@@ -1,4 +1,4 @@
-# schema of a fresh postgres install at currentSchemaEpoch 7; see schema_epoch_snapshot_test.go
+# schema of a fresh postgres install at currentSchemaEpoch 8; see schema_epoch_snapshot_test.go
 column access_request_approvals.approver_id bigint nullable=NO default=<none>
 column access_request_approvals.approver_machine_identity_id bigint nullable=NO default=0
 column access_request_approvals.created_at timestamp with time zone nullable=YES default=<none>
@@ -323,6 +323,17 @@ column mfa_recovery_codes.code_hash text nullable=YES default=<none>
 column mfa_recovery_codes.id bigint nullable=NO default=nextval('mfa_recovery_codes_id_seq'::regclass)
 column mfa_recovery_codes.used_at timestamp with time zone nullable=YES default=<none>
 column mfa_recovery_codes.user_id bigint nullable=YES default=<none>
+column mfa_reset_requests.created_at timestamp with time zone nullable=YES default=<none>
+column mfa_reset_requests.decided_at timestamp with time zone nullable=YES default=<none>
+column mfa_reset_requests.decided_by bigint nullable=YES default=<none>
+column mfa_reset_requests.evidence text nullable=YES default=<none>
+column mfa_reset_requests.expires_at timestamp with time zone nullable=YES default=<none>
+column mfa_reset_requests.id bigint nullable=NO default=nextval('mfa_reset_requests_id_seq'::regclass)
+column mfa_reset_requests.reason text nullable=YES default=<none>
+column mfa_reset_requests.requested_by bigint nullable=NO default=<none>
+column mfa_reset_requests.status text nullable=NO default='pending'::text
+column mfa_reset_requests.target_user_id bigint nullable=NO default=<none>
+column mfa_reset_requests.verified_by text nullable=YES default=<none>
 column mfa_secrets.activated boolean nullable=YES default=false
 column mfa_secrets.created_at timestamp with time zone nullable=YES default=<none>
 column mfa_secrets.id bigint nullable=NO default=nextval('mfa_secrets_id_seq'::regclass)
@@ -677,6 +688,7 @@ column users.last_login_at timestamp with time zone nullable=YES default=<none>
 column users.login_locked_until timestamp with time zone nullable=YES default=<none>
 column users.login_lockout_count bigint nullable=YES default=0
 column users.mfa_enabled boolean nullable=YES default=false
+column users.mfa_enrolment_required boolean nullable=YES default=false
 column users.one_time_password_expires_at timestamp with time zone nullable=YES default=<none>
 column users.password_changed_at timestamp with time zone nullable=YES default=<none>
 column users.password_hash text nullable=YES default=<none>
@@ -772,6 +784,9 @@ index idx_mfa_challenges_token_hash on mfa_challenges: CREATE UNIQUE INDEX idx_m
 index idx_mfa_challenges_user_id on mfa_challenges: CREATE INDEX idx_mfa_challenges_user_id ON mfa_challenges USING btree (user_id)
 index idx_mfa_recovery_codes_code_hash on mfa_recovery_codes: CREATE INDEX idx_mfa_recovery_codes_code_hash ON mfa_recovery_codes USING btree (code_hash)
 index idx_mfa_recovery_codes_user_id on mfa_recovery_codes: CREATE INDEX idx_mfa_recovery_codes_user_id ON mfa_recovery_codes USING btree (user_id)
+index idx_mfa_reset_requests_expires_at on mfa_reset_requests: CREATE INDEX idx_mfa_reset_requests_expires_at ON mfa_reset_requests USING btree (expires_at)
+index idx_mfa_reset_requests_status on mfa_reset_requests: CREATE INDEX idx_mfa_reset_requests_status ON mfa_reset_requests USING btree (status)
+index idx_mfa_reset_requests_target_user_id on mfa_reset_requests: CREATE INDEX idx_mfa_reset_requests_target_user_id ON mfa_reset_requests USING btree (target_user_id)
 index idx_mfa_secrets_user_id on mfa_secrets: CREATE UNIQUE INDEX idx_mfa_secrets_user_id ON mfa_secrets USING btree (user_id)
 index idx_mfa_step_up_grants_purpose on mfa_step_up_grants: CREATE INDEX idx_mfa_step_up_grants_purpose ON mfa_step_up_grants USING btree (purpose)
 index idx_mfa_step_up_grants_user_id on mfa_step_up_grants: CREATE INDEX idx_mfa_step_up_grants_user_id ON mfa_step_up_grants USING btree (user_id)
@@ -842,6 +857,7 @@ index machine_identity_oidc_bindings_pkey on machine_identity_oidc_bindings: CRE
 index machine_identity_roles_pkey on machine_identity_roles: CREATE UNIQUE INDEX machine_identity_roles_pkey ON machine_identity_roles USING btree (machine_identity_id, role_id, project_id, environment_id)
 index mfa_challenges_pkey on mfa_challenges: CREATE UNIQUE INDEX mfa_challenges_pkey ON mfa_challenges USING btree (id)
 index mfa_recovery_codes_pkey on mfa_recovery_codes: CREATE UNIQUE INDEX mfa_recovery_codes_pkey ON mfa_recovery_codes USING btree (id)
+index mfa_reset_requests_pkey on mfa_reset_requests: CREATE UNIQUE INDEX mfa_reset_requests_pkey ON mfa_reset_requests USING btree (id)
 index mfa_secrets_pkey on mfa_secrets: CREATE UNIQUE INDEX mfa_secrets_pkey ON mfa_secrets USING btree (id)
 index mfa_step_up_grants_pkey on mfa_step_up_grants: CREATE UNIQUE INDEX mfa_step_up_grants_pkey ON mfa_step_up_grants USING btree (id)
 index mfa_stepup_tokens_pkey on mfa_stepup_tokens: CREATE UNIQUE INDEX mfa_stepup_tokens_pkey ON mfa_stepup_tokens USING btree (id)
@@ -944,6 +960,7 @@ table machine_identity_oidc_bindings
 table machine_identity_roles
 table mfa_challenges
 table mfa_recovery_codes
+table mfa_reset_requests
 table mfa_secrets
 table mfa_step_up_grants
 table mfa_stepup_tokens

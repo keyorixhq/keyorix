@@ -111,12 +111,12 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 	// the recovery path, gated on roles.assign (see doc comment above).
 	if !secretOwnedBy(secret.OwnerID, actorID) {
 		if !c.currentOwnerGone(ctx, secret.OwnerID) {
-			return nil, fmt.Errorf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
+			return nil, permissionDeniedf("%s: only the current owner can transfer this secret", i18n.T("ErrorPermissionDenied", nil))
 		}
 		if ok, aerr := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, scope); aerr != nil {
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), aerr)
 		} else if !ok {
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+			return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
 				"recovering an orphaned or departed-owner secret requires roles.assign at this scope")
 		}
 	}
@@ -136,7 +136,7 @@ func (c *KeyorixCore) transferOwnership(ctx context.Context, secretID, newOwnerI
 		hasWrite = hasManage
 	}
 	if !hasWrite {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil),
 			"the new owner must already hold secrets.write (or secrets.manage) access to this secret's project/environment")
 	}
 

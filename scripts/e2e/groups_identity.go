@@ -68,6 +68,18 @@ func groupUsersRolesRBAC(ctx *smokeCtx) {
 	}
 	c.callExpect("DELETE", "DELETE /api/v1/users/{id}", tu, nil, 200, 204)
 
+	// Two-admin MFA reset (RECOVERY-MFA-RESET-1). The smoke admin has no second
+	// factor, so request and approve are refused before anything is written (403:
+	// the actor must enrol MFA first); an unknown request id is a 404 for cancel.
+	// The full flow with two TOTP admins: server/http/handlers
+	// TestContractMFAReset_RequestApproveListCancel.
+	c.callExpect("GET", "GET /api/v1/mfa-reset-requests", "/api/v1/mfa-reset-requests?status=pending", nil, 200)
+	c.callExpect("POST", "POST /api/v1/mfa-reset-requests", "/api/v1/mfa-reset-requests", map[string]string{
+		"user": "e2esmokeuser", "reason": "e2e smoke", "verified_by": "other", "code": "000000",
+	}, 403)
+	c.callExpect("POST", "POST /api/v1/mfa-reset-requests/{id}/approve", "/api/v1/mfa-reset-requests/999999/approve", map[string]string{"code": "000000"}, 403)
+	c.callExpect("POST", "POST /api/v1/mfa-reset-requests/{id}/cancel", "/api/v1/mfa-reset-requests/999999/cancel", nil, 404)
+
 	// Roles: create a custom role bundling a permission the bootstrap admin
 	// already holds (secrets.read), assign it to the new user via the
 	// user-roles endpoints, then read it back both ways

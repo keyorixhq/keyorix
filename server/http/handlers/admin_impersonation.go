@@ -14,11 +14,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -86,7 +88,7 @@ func (h *ImpersonationHandler) Start(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.Contains(err.Error(), "yourself"):
 			sendError(w, "BadRequest", "Cannot impersonate yourself", http.StatusBadRequest, nil)
-		case strings.Contains(err.Error(), "not found"):
+		case errors.Is(err, storage.ErrUserNotFound):
 			sendError(w, "NotFound", "Target user not found", http.StatusNotFound, nil)
 		default:
 			sendError(w, "InternalError", "Failed to start impersonation", http.StatusInternalServerError, nil)

@@ -27,7 +27,7 @@ func (ls *LocalStorage) GetRotationPolicy(ctx context.Context, id uint) (*models
 	var policy models.RotationPolicy
 	if err := ls.db.WithContext(ctx).First(&policy, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("rotation policy not found")
+			return nil, storage.NotFound(storage.ErrRotationPolicyNotFound, storage.ErrRotationPolicyNotFound.Error(), err)
 		}
 		return nil, fmt.Errorf("failed to get rotation policy: %w", err)
 	}
@@ -81,14 +81,14 @@ func (ls *LocalStorage) DeleteRotationPolicy(ctx context.Context, id uint) error
 
 // GetRotationPolicyBySecret returns the first active rotation policy that covers
 // a secret (matched by the secret's project_id or environment_id). Returns
-// a "rotation policy not found" error (checked via strings.Contains by callers)
-// when no policy exists for the secret.
+// an error matching storage.ErrRotationPolicyNotFound (classify with errors.Is,
+// never by message text) when no policy exists for the secret.
 func (ls *LocalStorage) GetRotationPolicyBySecret(ctx context.Context, secretID uint) (*models.RotationPolicy, error) {
 	// Resolve the secret's project + environment so we can match policies.
 	var secret models.SecretNode
 	if err := ls.db.WithContext(ctx).First(&secret, secretID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("secret not found")
+			return nil, storage.NotFound(storage.ErrSecretNotFound, storage.ErrSecretNotFound.Error(), err)
 		}
 		return nil, fmt.Errorf("GetRotationPolicyBySecret: secret lookup: %w", err)
 	}
@@ -102,7 +102,7 @@ func (ls *LocalStorage) GetRotationPolicyBySecret(ctx context.Context, secretID 
 		Order("CASE scope WHEN 'environment' THEN 0 ELSE 1 END").
 		First(&policy).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("rotation policy not found")
+		return nil, storage.NotFound(storage.ErrRotationPolicyNotFound, storage.ErrRotationPolicyNotFound.Error(), err)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("GetRotationPolicyBySecret: policy lookup: %w", err)

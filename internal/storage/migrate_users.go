@@ -92,6 +92,14 @@ func alterUsers(db *gorm.DB, exec func(string) error) error {
 			return fmt.Errorf("failed to add users.one_time_password_expires_at: %w", err)
 		}
 	}
+
+	// Administrator MFA reset (RECOVERY-MFA-RESET-1). Existing rows default to false:
+	// nobody owes an enrolment they were never reset into.
+	if tableExists(db, "users") && !columnExists(db, "users", "mfa_enrolment_required") {
+		if err := exec("ALTER TABLE users ADD COLUMN mfa_enrolment_required BOOLEAN NOT NULL DEFAULT false"); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

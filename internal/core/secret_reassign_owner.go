@@ -50,7 +50,7 @@ func (c *KeyorixCore) ReassignOwnedSecrets(ctx context.Context, actorKind string
 	if allowed, err := c.AuthorizePrincipal(ctx, actorKind, actorID, permRolesAssign, Scope{ProjectID: projectID}); err != nil {
 		return 0, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	} else if !allowed {
-		return 0, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to reassign secrets in this project")
+		return 0, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized to reassign secrets in this project")
 	}
 	// The new owner must exist (fail fast — TransferSecretOwnership re-checks per secret).
 	if _, err := c.storage.GetUser(ctx, toOwnerID); err != nil {

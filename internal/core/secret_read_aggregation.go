@@ -73,7 +73,7 @@ func (c *KeyorixCore) GetSecretReadSummary(ctx context.Context, actorKind string
 	if allowed, err := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, req.SecretID, permSecretsManage); err != nil {
 		return nil, fmt.Errorf("GetSecretReadSummary: %w", err)
 	} else if !allowed {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "insufficient permissions")
 	}
 
 	limit := req.Limit

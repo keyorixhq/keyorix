@@ -29,7 +29,7 @@ import (
 // default instead of the correct 400/403.
 var (
 	ErrSoDValidation       = errors.New("sod validation")
-	ErrSoDPermissionDenied = errors.New("sod permission denied")
+	ErrSoDPermissionDenied = newPermissionSentinel("sod permission denied")
 	ErrSoDNotFound         = errors.New("sod policy not found")
 )
 
@@ -41,9 +41,11 @@ type sodClassifiedError struct {
 	target error
 }
 
-func (e *sodClassifiedError) Error() string        { return e.err.Error() }
-func (e *sodClassifiedError) Unwrap() error        { return e.err }
-func (e *sodClassifiedError) Is(target error) bool { return target == e.target }
+func (e *sodClassifiedError) Error() string { return e.err.Error() }
+func (e *sodClassifiedError) Unwrap() error { return e.err }
+func (e *sodClassifiedError) Is(target error) bool {
+	return target == e.target || errors.Is(e.target, target)
+}
 
 func wrapSoDValidation(err error) error {
 	return &sodClassifiedError{err: err, target: ErrSoDValidation}

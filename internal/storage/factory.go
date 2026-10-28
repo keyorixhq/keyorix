@@ -809,6 +809,7 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	secretAccessLogExists := tableExists(db, "secret_access_logs")
 	secretMetadataHistoryExists := tableExists(db, "secret_metadata_histories")
 	settingExists := tableExists(db, "settings")
+	mfaResetRequestsExists := tableExists(db, "mfa_reset_requests")
 
 	// Migration steps, part 2 (every boot, after the snapshot): create a table an
 	// existing database is missing, or add columns to one it has via the Migrator.
@@ -970,6 +971,10 @@ func (f *DefaultStorageFactory) migrateDatabase(db *gorm.DB) error { // NOSONAR 
 	}
 
 	if err := createU1Tables(db, apiClientExists, apiTokenExists, apiCallLogExists, externalIdentityExists, grpcServiceExists, identityProviderExists, passwordResetExists, rateLimitExists, secretAccessLogExists, secretMetadataHistoryExists, settingExists); err != nil {
+		return err
+	}
+
+	if err := createMFAResetRequests(db, mfaResetRequestsExists); err != nil {
 		return err
 	}
 

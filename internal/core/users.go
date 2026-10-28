@@ -1083,7 +1083,7 @@ func (c *KeyorixCore) requireUserCredentialsRevokeAuthority(ctx context.Context,
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !allowed {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "revoking a user's credentials requires users.write authority")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "revoking a user's credentials requires users.write authority")
 	}
 	return nil
 }
@@ -1125,7 +1125,7 @@ func (c *KeyorixCore) RequireRolesAssignAuthority(ctx context.Context, actorType
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
 	if !allowed {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "this operation requires roles.assign authority")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "this operation requires roles.assign authority")
 	}
 	return nil
 }
@@ -1263,7 +1263,10 @@ func (c *KeyorixCore) RestoreUser(ctx context.Context, actorID, id uint) error {
 	})
 	if err != nil {
 		if storage.IsUserNotFound(err) {
-			return fmt.Errorf("%s: user not found or not deleted", i18n.T("ErrorUserNotFound", nil))
+			// Same text as before, but the sentinel stays in the chain: the handler
+			// classifies with errors.Is, and this text is translated.
+			return storage.NotFound(storage.ErrUserNotFound,
+				fmt.Sprintf("%s: user not found or not deleted", i18n.T("ErrorUserNotFound", nil)), err)
 		}
 		if errors.Is(err, ErrMutationAuditUnavailable) {
 			return err

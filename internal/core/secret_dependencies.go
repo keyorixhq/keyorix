@@ -120,7 +120,7 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 	if allowed, aerr := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, dependsOnID, permSecretsWrite); aerr != nil {
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), aerr)
 	} else if !allowed {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
+		return nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
 	}
 
 	// #1623: actorID alone cannot be persisted into CreatedBy for a machine
@@ -242,7 +242,7 @@ func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorKind stri
 	if allowed, aerr := c.AuthorizeSecretPrincipal(ctx, actorKind, actorID, peerID, permSecretsWrite); aerr != nil {
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), aerr)
 	} else if !allowed {
-		return fmt.Errorf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
+		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "not authorized on the dependency target")
 	}
 	if err := c.storage.DeleteSecretDependency(ctx, edgeID); err != nil {
 		return err
