@@ -21,6 +21,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"io/fs"
 	"os"
 	"path"
@@ -76,9 +77,12 @@ type declInfo struct {
 
 var skipDirs = map[string]bool{".git": true, "node_modules": true, ".scratch": true, "web": true, "testdata": true, "vendor": true, ".claude": true}
 
+// maxRequestBytes caps the stdin request; it is a map of changed files to line numbers, far below this.
+const maxRequestBytes = 16 << 20
+
 func main() {
 	var req request
-	if err := json.NewDecoder(os.Stdin).Decode(&req); err != nil {
+	if err := json.NewDecoder(io.LimitReader(os.Stdin, maxRequestBytes)).Decode(&req); err != nil {
 		fmt.Fprintln(os.Stderr, "declrefs: bad request:", err)
 		os.Exit(2)
 	}
@@ -341,7 +345,6 @@ func scan(req request, decls []declInfo, resp *response) error {
 		for pkgDir, ds := range byPkg {
 			if dir == pkgDir && af.Name.Name == ds[0].pkgName {
 				for _, d := range ds {
-					d := d
 					ast.Inspect(af, func(n ast.Node) bool {
 						if id, ok := n.(*ast.Ident); ok && id.Name == d.name {
 							record(d, rel, fset.Position(id.Pos()), test)
@@ -357,7 +360,6 @@ func scan(req request, decls []declInfo, resp *response) error {
 				continue
 			}
 			for _, d := range ds {
-				d := d
 				ast.Inspect(af, func(n ast.Node) bool {
 					switch n := n.(type) {
 					case *ast.SelectorExpr:

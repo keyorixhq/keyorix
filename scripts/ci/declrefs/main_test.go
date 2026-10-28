@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -60,12 +61,7 @@ func TestSamePackageReferenceIsASite(t *testing.T) {
 }
 
 func contains(ss []Site, s Site) bool {
-	for _, x := range ss {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ss, s)
 }
 
 func TestCrossPackageReferenceThroughImportAlias(t *testing.T) {
