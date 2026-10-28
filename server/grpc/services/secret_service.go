@@ -9,6 +9,7 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"github.com/keyorixhq/keyorix/server/grpc/interceptors"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
@@ -586,9 +587,11 @@ func mapSecretACLError(err error) error {
 	if aerr, ok := auditUnavailableStatus(err); ok {
 		return aerr
 	}
-	msg := err.Error()
+	// CORE-GRPC-TAILS-1: not-found and not-authorized are classified by sentinel
+	// (errors.Is), not by err.Error() text; only the untyped validation cases below
+	// still read the message.
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, storage.ErrSecretACLNotFound), errors.Is(err, storage.ErrSecretNotFound):
 		return status.Error(codes.NotFound, "ACL or secret not found")
 	// "invalid"/"required" don't only match GrantSecretACL's own validation
 	// messages (invalid permission, missing IDs) -- CreateOrUpdateSecretACL's
@@ -597,9 +600,10 @@ func mapSecretACLError(err error) error {
 	// paths), and a raw SQL/driver error can coincidentally contain either
 	// word. Fixed message, not msg, so a driver error never reaches the
 	// client verbatim (matches mapUserError's GRPC-003 remediation).
-	case strings.Contains(msg, "invalid"), strings.Contains(msg, "required"):
+	// Not yet typed: GrantSecretACL's own validation (secret_acl.go) has no sentinel.
+	case strings.Contains(strings.ToLower(err.Error()), "invalid"), strings.Contains(strings.ToLower(err.Error()), "required"):
 		return status.Error(codes.InvalidArgument, "invalid ACL request")
-	case strings.Contains(msg, "not authorized"):
+	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "not authorized to manage this secret's ACLs")
 	default:
 		return status.Error(codes.Internal, "ACL operation failed")
@@ -731,13 +735,16 @@ func mapSecretError(err error) error {
 	if reason, ok := core.ShareRefusalMessage(err); ok {
 		return status.Error(codes.PermissionDenied, reason)
 	}
+	// CORE-GRPC-TAILS-1: not-found, permission-denied and already-exists are classified
+	// by sentinel (errors.Is), not by err.Error() text; only the untyped rotation
+	// validation below still reads the message.
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, storage.ErrSecretNotFound):
 		return status.Error(codes.NotFound, "secret not found")
-	case strings.Contains(msg, "permission denied"), strings.Contains(msg, "access denied"):
+	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied to this secret")
-	case strings.Contains(msg, "already exists"):
+	case errors.Is(err, core.ErrSecretAlreadyExists), errors.Is(err, storage.ErrDuplicateSecretVersion):
 		return status.Error(codes.AlreadyExists, "secret with this name already exists")
 	// Fixed message, not msg -- these are genuinely safe caller-echo validation
 	// text today (rotation_executor.go), but "exceeds" in particular is used

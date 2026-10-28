@@ -104,17 +104,17 @@ func TestGroupError_Default(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMapUserError_NotFound(t *testing.T) {
-	err := mapUserError(errors.New("user not found"))
+	err := mapUserError(fmt.Errorf("get user: %w", storage.ErrUserNotFound))
 	assert.Equal(t, codes.NotFound, status.Code(err))
 }
 
 func TestMapUserError_AlreadyExists(t *testing.T) {
-	err := mapUserError(errors.New("user already exists"))
+	err := mapUserError(fmt.Errorf("create user: %w", core.ErrUserAlreadyExists))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 
 func TestMapUserError_Duplicate(t *testing.T) {
-	err := mapUserError(errors.New("duplicate email in users"))
+	err := mapUserError(fmt.Errorf("create user: %w", storage.ErrDuplicateEmail))
 	assert.Equal(t, codes.AlreadyExists, status.Code(err))
 }
 

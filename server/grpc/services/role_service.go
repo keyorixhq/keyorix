@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -395,6 +396,15 @@ func validateRoleDescription(description string) error {
 	return nil
 }
 
+// isUntypedDuplicateRoleName recognises the raw driver error for a role-name
+// unique-index hit, the one role failure storage does not type yet. Narrower than
+// the old substring match: it needs the role table's index, so an unrelated
+// "duplicate"/"unique" message elsewhere is not a duplicate role.
+func isUntypedDuplicateRoleName(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "unique") && strings.Contains(msg, "roles")
+}
+
 // mapRoleError translates core/storage role errors into gRPC status codes.
 func mapRoleError(err error) error {
 	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
@@ -406,13 +416,16 @@ func mapRoleError(err error) error {
 	if scopeMsg, ok := core.RoleScopeClientMessage(err); ok {
 		return status.Error(codes.InvalidArgument, scopeMsg)
 	}
-	msg := strings.ToLower(err.Error())
+	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, storage.ErrRoleNotFound):
 		return status.Error(codes.NotFound, "role not found")
-	case strings.Contains(msg, "reserved"):
+	case errors.Is(err, core.ErrRoleNameReserved):
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
-	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"), strings.Contains(msg, "unique"):
+	// Not yet typed: storage's CreateRole/UpdateRole return the raw driver error
+	// for a unique-index hit (no storage.ErrDuplicateRoleName exists), so this is
+	// the one text match left here. Delete it when that sentinel exists.
+	case isUntypedDuplicateRoleName(err):
 		return status.Error(codes.AlreadyExists, "a role with that name already exists")
 	// #1660/FIX-4 (restored 2026-09-03): core.CreateRole's own validation
 	// (name fold rejects control/bidi characters, length bounds) surfaces
@@ -433,7 +446,7 @@ func mapRoleError(err error) error {
 	// #1669 was correct to remove.
 	case errors.Is(err, core.ErrRoleValidation):
 		return status.Error(codes.InvalidArgument, "invalid role name, description or assignable_scope")
-	case strings.Contains(msg, "built-in"):
+	case errors.Is(err, core.ErrBuiltinRole):
 		return status.Error(codes.FailedPrecondition, "cannot modify a built-in role")
 	default:
 		return status.Error(codes.Internal, "role operation failed")

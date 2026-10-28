@@ -10,6 +10,7 @@ import (
 	"github.com/keyorixhq/keyorix/internal/besteffort"
 	"github.com/keyorixhq/keyorix/internal/core"
 	corestorage "github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/identity"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 	"google.golang.org/grpc/codes"
@@ -363,6 +364,15 @@ func optStringValue(s string) *string {
 	return &s
 }
 
+// isUntypedUserValidation is the remaining text match in mapUserError: the field
+// validation errors core/users.go and identity.NewFoldedName return without a
+// sentinel. See the case that calls it.
+func isUntypedUserValidation(err error) bool {
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "validation") || strings.Contains(msg, "required") ||
+		strings.Contains(msg, "invalid") || strings.Contains(msg, "must be")
+}
+
 // mapUserError translates core user errors into gRPC status codes.
 func mapUserError(err error) error {
 	// AUDIT-503-MAP-1: an audit-log outage is retryable (Unavailable), not Internal.
@@ -390,16 +400,26 @@ func mapUserError(err error) error {
 	if ruleMsg, ok := core.PolicyRefusalMessage(err); ok {
 		return status.Error(codes.InvalidArgument, ruleMsg)
 	}
-	msg := strings.ToLower(err.Error())
+	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
 	switch {
-	case strings.Contains(msg, "not found"):
+	case errors.Is(err, corestorage.ErrUserNotFound):
 		return status.Error(codes.NotFound, "user not found")
-	case strings.Contains(msg, "already exists"), strings.Contains(msg, "duplicate"):
+	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail):
 		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")
-	case strings.Contains(msg, "cannot grant this role"):
+	// Not yet typed: core's roles.assign ceiling refusals (internal/core/authz.go,
+	// three fmt.Errorf sites) carry no sentinel. Match their fixed leading phrase
+	// only; type them (a permissionSentinel) and delete this case.
+	case strings.Contains(err.Error(), "cannot grant this role"):
 		return status.Error(codes.PermissionDenied, "insufficient privileges to assign this role") // GRPC-003: was err.Error() — leaked internal role name
-	case strings.Contains(msg, "validation"), strings.Contains(msg, "required"), strings.Contains(msg, "invalid"), strings.Contains(msg, "must be"):
+	case errors.Is(err, core.ErrInvalidInput), errors.Is(err, identity.ErrEmpty):
 		return status.Error(codes.InvalidArgument, "invalid request parameters") // GRPC-003: was err.Error() — leaked password policy thresholds
+	// Not yet typed: core/users.go builds its field validation as
+	// fmt.Errorf("%s: <rule>", i18n.T("ErrorValidation", nil)) (about nine sites:
+	// length bounds, "... is required"), and identity.NewFoldedName wraps the precis
+	// error without a sentinel. Text match kept for these only, after every typed
+	// check above; replace with a core.ErrValidation wrap and delete.
+	case isUntypedUserValidation(err):
+		return status.Error(codes.InvalidArgument, "invalid request parameters")
 	default:
 		return status.Error(codes.Internal, "user operation failed")
 	}

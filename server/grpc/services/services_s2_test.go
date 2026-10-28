@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -161,7 +162,7 @@ func TestMapMachineError_PrivilegeCeilingDenied(t *testing.T) {
 // --- mapRoleError ---
 
 func TestMapRoleError_NotFound(t *testing.T) {
-	err := mapRoleError(errors.New("role not found"))
+	err := mapRoleError(fmt.Errorf("get role: %w", storage.ErrRoleNotFound))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.NotFound {
 		t.Errorf("expected NotFound, got %v", st.Code())
@@ -169,7 +170,7 @@ func TestMapRoleError_NotFound(t *testing.T) {
 }
 
 func TestMapRoleError_AlreadyExists(t *testing.T) {
-	err := mapRoleError(errors.New("role already exists in the system"))
+	err := mapRoleError(fmt.Errorf("create role: %w", core.ErrRoleNameReserved))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.AlreadyExists {
 		t.Errorf("expected AlreadyExists, got %v", st.Code())
@@ -177,7 +178,7 @@ func TestMapRoleError_AlreadyExists(t *testing.T) {
 }
 
 func TestMapRoleError_Duplicate(t *testing.T) {
-	err := mapRoleError(errors.New("duplicate role name"))
+	err := mapRoleError(errors.New("UNIQUE constraint failed: roles.name_folded"))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.AlreadyExists {
 		t.Errorf("expected AlreadyExists, got %v", st.Code())
@@ -236,7 +237,7 @@ func TestMapRoleError_ValidationTextWithoutSentinel_NotEchoed(t *testing.T) {
 // AST-pattern-matched semgrep rule (Errorf, not Error) without being any
 // safer in substance, and had zero test coverage.
 func TestMapRoleError_BuiltIn(t *testing.T) {
-	err := mapRoleError(errors.New("permission denied: cannot update built-in role: system_admin"))
+	err := mapRoleError(fmt.Errorf("permission denied: cannot update %w: system_admin", core.ErrBuiltinRole))
 	st, _ := status.FromError(err)
 	if st.Code() != codes.FailedPrecondition {
 		t.Errorf("expected FailedPrecondition, got %v", st.Code())

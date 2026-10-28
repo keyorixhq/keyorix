@@ -2,13 +2,14 @@ package services
 
 import (
 	"context"
-	"strings"
+	"errors"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	pb "github.com/keyorixhq/keyorix/server/proto/pb"
 )
 
@@ -33,13 +34,20 @@ func mapProjectError(err error) error {
 	if aerr, ok := auditUnavailableStatus(err); ok {
 		return aerr
 	}
-	msg := err.Error()
+	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
 	switch {
-	case strings.Contains(msg, "not found"):
+	// Not yet typed: storage's lockProjectRowForCascade (internal/storage/store/
+	// local_secrets.go) returns a bare fmt.Errorf("project not found") to
+	// DeleteProject/DeleteProjectIfEmpty for a missing or already-deleted project.
+	// Exact-text match, scoped to that one message, until it wraps
+	// storage.ErrProjectNotFound; then delete this line.
+	case err.Error() == "project not found":
 		return status.Error(codes.NotFound, "project not found")
-	case strings.Contains(msg, "already exists"):
+	case errors.Is(err, storage.ErrProjectNotFound):
+		return status.Error(codes.NotFound, "project not found")
+	case errors.Is(err, storage.ErrDuplicateProjectName):
 		return status.Error(codes.AlreadyExists, "a project with this name already exists")
-	case strings.Contains(msg, "permission") || strings.Contains(msg, "denied"):
+	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied")
 	default:
 		return status.Error(codes.Internal, "project operation failed")
