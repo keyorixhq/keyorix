@@ -272,7 +272,10 @@ after the break is not notarised: decide soon.
      measures the loss. `--anchor-sha256` only records the digest of one kept elsewhere.
    - It writes the seal record, **one** `system.audit_loss_accepted` event, a fresh checkpoint
      and high-water mark of what survives, and the verification state, in that order. If it stops
-     part way the chain reads broken; run the same command again, which completes it.
+     part way the chain reads broken; run the same command again, which completes it. The
+     resume plan says when the seal was recorded, by whom and why. Confirm a resume only if you
+     started that acceptance yourself: a resume of a seal you did not just run is a rollback of
+     the database until proven otherwise (section 8).
    - `--reason` and `--operator` are stored in the audit chain. Put no secrets in them.
 
    Afterwards:
@@ -281,7 +284,7 @@ after the break is not notarised: decide soon.
    |---|---|
    | `keyorix audit verify`, `GET /api/v1/audit/verify`, posture | `not_proven` until a full verification completes, then `sealed` (`state_reason` names each seal); `valid` is false |
    | `keyorix-server admin verify-audit --checkpoint-key-file ...` | `Verdict: SEALED`, exit code 4, the seals listed; without the key, BROKEN (a seal is only trusted with the key) |
-   | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers |
+   | Deleted, altered, moved or replayed seal record, removed seal event, rows removed or put back around the gap | BROKEN, on both verifiers (except a rollback that reads as an unfinished acceptance, section 8) |
 
    Then write and export a fresh anchor (above) and keep it with the evidence. A `rotate-kek` or
    `migrate-provider` carries the seal over. A restore of an archive taken before the seal
@@ -290,6 +293,16 @@ after the break is not notarised: decide soon.
 
 ## 8. Gaps in the product today
 
+- A resume can hide a rollback. Someone with write access to the database and a copy from
+  before an acceptance (the evidence copy in section 6, or any backup) can cut rows certified
+  after a completed seal and put the copy's high-water mark and verification state back. Inside
+  the database that reads exactly like an acceptance that stopped part way, and `accept-loss`
+  offers to complete it. On SQLite the command reads the host's `.audit-highwater-witness` and
+  refuses when it certifies rows that are gone (or when the witness exists but is damaged). On
+  PostgreSQL there is no witness and nothing inside the database tells the two apart. Treat a
+  resume of a seal you did not just run (check the "recorded ... by ..." line of the plan) as a
+  rollback until proven otherwise: compare the trail with an external anchor (`export-checkpoint`)
+  taken after the seal before you confirm.
 - A verification state discontinuity with an intact chain (a deleted or garbled state row, a
   key epoch problem) cannot be accepted: `accept-loss` seals only lost rows (section 7, option 3),
   and those discontinuities stay sticky.

@@ -25,8 +25,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"slices"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -75,9 +78,10 @@ const (
 )
 
 // AuditLossTextProblem says why an operator name or reason cannot be stored
-// ("" when both can): invalid UTF-8, a control or format character (a newline,
-// a terminal escape or a bidi override would forge or hide lines wherever the
-// event description is shown), or more bytes than its limit.
+// ("" when both can): invalid UTF-8, a control or format character or a line
+// or paragraph separator (a newline, U+2028, a terminal escape or a bidi
+// override would forge or hide lines wherever the event description is
+// shown), or more bytes than its limit.
 func AuditLossTextProblem(operator, reason string) string {
 	for _, f := range []struct {
 		name, val string
@@ -86,8 +90,8 @@ func AuditLossTextProblem(operator, reason string) string {
 		switch {
 		case !utf8.ValidString(f.val):
 			return f.name + " is not valid UTF-8"
-		case strings.ContainsFunc(f.val, func(r rune) bool { return unicode.IsControl(r) || unicode.Is(unicode.Cf, r) }):
-			return f.name + " contains a control or format character (newlines and escape sequences are not stored)"
+		case strings.ContainsFunc(f.val, func(r rune) bool { return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) }):
+			return f.name + " contains a control or format character or a line separator (newlines and escape sequences are not stored)"
 		case len(f.val) > f.max:
 			return fmt.Sprintf("%s is longer than %d bytes", f.name, f.max)
 		}
@@ -116,7 +120,9 @@ type AuditLossPlan struct {
 func (p *AuditLossPlan) Describe() []string {
 	var out []string
 	if p.Resume {
-		out = append(out, fmt.Sprintf("Seal #%d was recorded but its acceptance did not finish; this run completes it (no new record).", p.Seq))
+		out = append(out, fmt.Sprintf("Seal #%d was recorded but its acceptance did not finish; this run completes it (no new record).", p.Seq),
+			fmt.Sprintf("  recorded %s by %q (host user %q), reason %q", p.seal.At.UTC().Format(time.RFC3339), p.seal.Operator, p.seal.OSUser, p.seal.Reason),
+			"  If you did not start this acceptance, do not confirm: a resume you did not start is a rollback of the database until proven otherwise (compare the trail with an external anchor first).")
 	}
 	out = append(out, fmt.Sprintf("Seal #%d accepts %s.", p.Seq, p.seal.lostRange()))
 	for _, g := range p.Gaps {
@@ -467,7 +473,57 @@ func (c *KeyorixCore) auditLossSealedCertifications(ctx context.Context, f *audi
 	if p := f.state.Pin; p != nil && f.state.Seals == len(f.seals.recs) {
 		out = append(out, AuditSealCount{Events: p.Events, HeadID: p.HeadID, HeadHash: p.HeadHash, Source: "the signed verification state"})
 	}
+	// The host witness (SQLite installs) lives outside the database, so a
+	// rollback of every row above (a copy from before the acceptance put
+	// back) does not reach it. Under the seal it certified the sealed chain
+	// and what followed; before it, it is this acceptance's not-yet-rewritten
+	// mirror (possibly signed under the key before a key change, which
+	// re-signs the mark but not the witness). Anything else is refused, as
+	// `admin restore` refuses a damaged witness.
+	wcp, wb, wsig, found, err := c.readAuditWitness()
+	if err != nil {
+		return nil, auditLossRefused("the host's high-water witness file cannot be used (%v): a damaged witness is not treated as absent; investigate before completing seal #%d", err, last.Seq)
+	}
+	if found {
+		switch {
+		case wb == cur && hmac.Equal([]byte(c.signCheckpointUnder(wcp, cur)), []byte(wsig)):
+			out = append(out, AuditSealCount{Events: wcp.ChainedEvents, HeadID: wcp.HeadID, HeadHash: wcp.HeadHash, Source: "the host's high-water witness file"})
+		case wb == prev && (wcp.KeyVersion != c.auditCkptKeyVersion || hmac.Equal([]byte(c.signCheckpointUnder(wcp, prev)), []byte(wsig))):
+			// Written before this seal: the re-seal has not replaced it yet.
+		default:
+			return nil, auditLossRefused("the host's high-water witness file authenticates neither under seal #%d nor before it (garbled or replaced, not a half-written acceptance): investigate before completing seal #%d", last.Seq, last.Seq)
+		}
+	}
 	return out, nil
+}
+
+// readAuditWitness reads the host's high-water witness file. found is false
+// only when no witness is configured or the file does not exist; one that is
+// not a regular file or does not parse as a mark is an error, never absent.
+func (c *KeyorixCore) readAuditWitness() (cp *models.AuditCheckpoint, b auditSealBinding, sig string, found bool, err error) {
+	path := c.auditHighWaterWitnessPath
+	if path == "" {
+		return nil, b, "", false, nil
+	}
+	fi, err := os.Lstat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, b, "", false, nil
+	}
+	if err != nil {
+		return nil, b, "", false, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, b, "", false, fmt.Errorf("%s is not a regular file", path)
+	}
+	data, err := os.ReadFile(path) // #nosec G304 -- the configured witness path beside the database
+	if err != nil {
+		return nil, b, "", false, err
+	}
+	cp, b, sig, ok := parseAuditHighWaterSealed(string(data))
+	if !ok {
+		return nil, b, "", false, fmt.Errorf("%s does not parse as a high-water mark", path)
+	}
+	return cp, b, sig, true, nil
 }
 
 // auditLossResumeAccepted is what a resumed acceptance clears: what seal s
@@ -796,7 +852,8 @@ func (c *KeyorixCore) sealHook(step string) error {
 
 // resealAuditCheckpoint writes a checkpoint and high-water mark of the sealed
 // chain under the current seal binding. The mark is overwritten, not advanced:
-// it is lowered to what survives (the accepted loss).
+// it is lowered to what survives (the accepted loss). The witness is lowered
+// with it only from a binding before the current one.
 func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditCheckpoint, string, error) {
 	anchor, err := c.loadAuditRetentionAnchor(ctx)
 	if err != nil {
@@ -811,6 +868,14 @@ func (c *KeyorixCore) resealAuditCheckpoint(ctx context.Context) (*models.AuditC
 	}
 	cp := &models.AuditCheckpoint{ChainedEvents: v.ChainedEvents + anchorPurgedEvents(anchor), HeadID: v.HeadID, HeadHash: v.HeadHash, KeyVersion: c.auditCkptKeyVersion}
 	cp.Signature = c.signCheckpoint(cp)
+	// A witness under the current seal list certified rows written after this
+	// seal; lowering it would destroy the evidence of their loss. Checked
+	// before anything is written.
+	if w, b, sig, found, err := c.readAuditWitness(); err == nil && found && b == c.sealBinding() &&
+		hmac.Equal([]byte(c.signCheckpointUnder(w, b)), []byte(sig)) && w.ChainedEvents > cp.ChainedEvents {
+		return nil, "", fmt.Errorf("accept-loss: the host's high-water witness file certifies %d events through #%d under the current seal list, only %d remain: rows certified after the seal are gone; investigate",
+			w.ChainedEvents, w.HeadID, cp.ChainedEvents)
+	}
 	if err := c.storage.CreateAuditCheckpoint(ctx, cp); err != nil {
 		return nil, "", fmt.Errorf("accept-loss: write the checkpoint: %w", err)
 	}
