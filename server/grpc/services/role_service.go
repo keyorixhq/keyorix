@@ -428,6 +428,10 @@ func mapRoleError(err error) error {
 		return status.Error(codes.NotFound, "user not found")
 	case errors.Is(err, core.ErrRoleNameReserved):
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")
+	// CreateRole with a permission listed twice: the second grant hits
+	// role_permissions' primary key (HTTP's AssignPermissionToRole answers 409).
+	case errors.Is(err, storage.ErrDuplicateRolePermission):
+		return status.Error(codes.AlreadyExists, "the role already has that permission")
 	// Not yet typed: storage's CreateRole/UpdateRole return the raw driver error
 	// for a unique-index hit (no storage.ErrDuplicateRoleName exists), so this is
 	// the one text match left here. Delete it when that sentinel exists.

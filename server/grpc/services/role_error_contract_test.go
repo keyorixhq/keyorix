@@ -22,3 +22,18 @@ func TestRoleService_GetUserRoles_MissingUser_NotFound(t *testing.T) {
 	assert.Equal(t, codes.NotFound, status.Code(err), "%v", err)
 	assert.Equal(t, "user not found", status.Convert(err).Message())
 }
+
+// REVFIX-3790-5 (REVIEW-3790-DEEP-5 F1): CreateRole with a permission listed
+// twice reaches mapRoleError with storage.ErrDuplicateRolePermission (the second
+// AssignPermissionToRole hits role_permissions' primary key). main's substring
+// match answered AlreadyExists; the typed mapper must too, not Internal.
+func TestRoleService_CreateRole_RepeatedPermission_AlreadyExists(t *testing.T) {
+	svc, h := newRoleService(t)
+	perm := somePermission(t, h)
+
+	_, err := svc.CreateRole(roleAdminCtx(), &pb.CreateRoleRequest{
+		Name: "repeated-perm-role", Description: "d", Permissions: []string{perm, perm},
+	})
+	assert.Equal(t, codes.AlreadyExists, status.Code(err), "%v", err)
+	assert.Equal(t, "the role already has that permission", status.Convert(err).Message())
+}

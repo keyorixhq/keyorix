@@ -57,6 +57,7 @@ func TestMapRoleError_ClassifiesBySentinel(t *testing.T) {
 		{"reserved name", fmt.Errorf("create role: %w", core.ErrRoleNameReserved), codes.AlreadyExists},
 		{"built-in role", fmt.Errorf("permission denied: cannot update %w: x", core.ErrBuiltinRole), codes.FailedPrecondition},
 		{"validation", fmt.Errorf("create role: %w", core.ErrRoleValidation), codes.InvalidArgument},
+		{"permission listed twice", fmt.Errorf("%w: UNIQUE constraint failed: role_permissions.role_id, role_permissions.permission_id", storage.ErrDuplicateRolePermission), codes.AlreadyExists},
 		// Not yet typed: the raw unique-index error from the roles table.
 		{"untyped roles unique index", errors.New("UNIQUE constraint failed: roles.name_folded"), codes.AlreadyExists},
 		{"text only: not found", errors.New("record not found"), codes.Internal},
