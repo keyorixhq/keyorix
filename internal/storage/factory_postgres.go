@@ -100,7 +100,7 @@ func (f *DefaultStorageFactory) createPostgresStorage(cfg *config.Config) (_ sto
 	})
 	// TRIGGER-ROWDIGEST-1: re-check the generation triggers' definition and
 	// catalog row versions every interval (docs/design/trigger-rowdigest.md).
-	ls.StartRolePermissionsGenerationIntegrityCheck(log.Printf)
+	ls.StartTriggerIntegrityCheck(log.Printf)
 	return ls, nil
 }
 

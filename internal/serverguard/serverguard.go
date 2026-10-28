@@ -104,7 +104,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +114,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/keyorixhq/keyorix/internal/config"
+	"github.com/keyorixhq/keyorix/internal/sqlitepath"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -270,32 +270,17 @@ func ProbeRunning(cfg *config.Config) (running bool, detail string, err error) {
 }
 
 // sqliteLockPath resolves the sidecar lock path for cfg's configured
-// database, like internal/storage/factory.go's localStorageDBFile: an
-// in-memory database (no real on-disk file) has nothing to guard. Unlike it,
-// a SQLite URI filename ("file:/data/secrets.db", "file:///...",
-// "file://localhost/...", percent-encoded, with a query) is resolved to the
-// file SQLite opens, so it meets a plain spelling of the same path on one
-// sidecar (TestSQLiteURISpellings_MeetOnTheSameLock), and only the query
-// marks a database in-memory ("mode=memory" in a directory name does not).
+// database through sqlitepath.DatabaseFile, the resolver internal/storage uses for
+// the database file itself: an in-memory database has nothing to guard, and a
+// SQLite URI filename meets a plain spelling of the same path on one sidecar
+// (TestSQLiteURISpellings_MeetOnTheSameLock).
 func sqliteLockPath(cfg *config.Config) (path string, isRealFile bool) {
 	dbPath := cfg.Storage.Database.Path
 	if dbPath == "" {
 		dbPath = "./secrets.db"
 	}
-	base, query, _ := strings.Cut(dbPath, "?")
-	if rest, ok := strings.CutPrefix(base, "file:"); ok {
-		rest, _, _ = strings.Cut(rest, "#")
-		if hier, ok := strings.CutPrefix(rest, "//"); ok {
-			if authority, p, _ := strings.Cut(hier, "/"); authority == "" || authority == "localhost" {
-				rest = "/" + p
-			}
-		}
-		if dec, err := url.PathUnescape(rest); err == nil {
-			rest = dec
-		}
-		base = rest
-	}
-	if base == "" || base == ":memory:" || strings.Contains(query, "mode=memory") {
+	base, isRealFile := sqlitepath.DatabaseFile(dbPath)
+	if !isRealFile {
 		return "", false
 	}
 	return base + serverLockSuffix, true

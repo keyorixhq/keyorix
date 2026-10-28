@@ -207,6 +207,7 @@ cleartext/trusted-proxy lines, `no recovery key is configured`.
 | C | serverguard.go:274, 364 | `an admin operation is running against this database; retry when it finishes` |
 | R | admin.go:195 | `appears to be using this database` |
 | C | admin.go:180, 197 | `--force cannot override it`, `cannot connect to the database to check for a running server` |
+| C | admin.go (acquireDatabaseLock) | `cannot open the server lock file: ` (SQLite `.server.lock` cannot be opened, e.g. another user's file) |
 | R | main.go:2049 | `failed to bind HTTP listener` (port in use) |
 
 ### Admin commands

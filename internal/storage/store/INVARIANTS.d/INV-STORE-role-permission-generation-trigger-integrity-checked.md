@@ -1,5 +1,5 @@
 - **INV-STORE-role-permission-generation-trigger-integrity-checked** On PostgreSQL every
-  factory-built store runs `StartRolePermissionsGenerationIntegrityCheck`. Every
+  factory-built store runs `StartTriggerIntegrityCheck`. Every
   `rolePermGenerationIntegrityInterval` (and once at start) it reads both generation triggers
   and their function in one catalog statement. It checks the definition against this release
   (`pgRolePermGenerationTriggerDefOK`, `pgRolePermGenerationFuncOK` over
