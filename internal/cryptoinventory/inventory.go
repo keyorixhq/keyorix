@@ -71,7 +71,8 @@ type BackupInput struct {
 	ShamirShareFiles int
 }
 
-// maxCABundleCerts bounds how many CA certificates one bundle file contributes.
+// maxCABundleCerts bounds how many CA certificates one bundle file contributes; a
+// larger bundle is cut with a warning.
 const maxCABundleCerts = 16
 
 // TLSInput is one TLS listener's certificate configuration.
@@ -136,7 +137,12 @@ func Build(in Inputs, p Policy, now time.Time) Inventory {
 		assets = append(assets, sa...)
 		inv.Warnings = append(inv.Warnings, warns...)
 	}
-	if in.Database != nil {
+	switch {
+	case in.Database != nil && in.Database.SSLMode == "disable":
+		// No TLS on the connection: configured certificates are not in use.
+		inv.Notes = append(inv.Notes, "The database connection runs with sslmode=disable, so it uses no TLS: "+
+			"database TLS certificates named in the configuration are not in use and are not inventoried.")
+	case in.Database != nil:
 		da, warns := databaseTLSAssets(*in.Database)
 		assets = append(assets, da...)
 		inv.Warnings = append(inv.Warnings, warns...)
@@ -328,7 +334,8 @@ func unreadableCertAsset(id, name string, class Class, storage string, err error
 }
 
 // samlAssets inventories the IdP signing certificates Keyorix trusts for one
-// SAML provider. Keyorix holds no SAML signing key of its own.
+// SAML provider (see SAMLSigningCertificates for which ones), and warns when the
+// cap cut some. Keyorix holds no SAML signing key of its own.
 func samlAssets(sp SAMLInput) ([]Asset, []string) {
 	id := "saml." + sp.Name
 	name := "SAML IdP signing certificate (" + sp.Name + ")"
@@ -338,12 +345,18 @@ func samlAssets(sp SAMLInput) ([]Asset, []string) {
 		cause = errors.New(sp.MetadataErr)
 	}
 	var infos []CertInfo
+	var more bool
 	if cause == nil {
-		infos, cause = SAMLSigningCertificates(sp.Metadata)
+		infos, more, cause = SAMLSigningCertificates(sp.Metadata)
 	}
 	if cause != nil {
 		return []Asset{unreadableCertAsset(id, name, ClassSAMLCertificate, storage, cause)},
 			[]string{fmt.Sprintf("SAML provider %q signing certificates could not be inspected: %v", sp.Name, cause)}
+	}
+	var warns []string
+	if more {
+		warns = append(warns, fmt.Sprintf("SAML provider %q trusts more than %d IdP signing certificates; only the first %d are inventoried",
+			sp.Name, maxSAMLMetadataCerts, maxSAMLMetadataCerts))
 	}
 	assets := make([]Asset, 0, len(infos))
 	for i, ci := range infos {
@@ -352,7 +365,7 @@ func samlAssets(sp SAMLInput) ([]Asset, []string) {
 		a.Notes += "; verification only, the IdP holds the private key and controls the migration"
 		assets = append(assets, a)
 	}
-	return assets, nil
+	return assets, warns
 }
 
 // databaseTLSAssets inventories the PostgreSQL client certificate and the CA
@@ -382,11 +395,17 @@ func databaseTLSAssets(d DatabaseTLSInput) ([]Asset, []string) {
 	case d.RootCertFile != "":
 		const name = "Database TLS CA certificate"
 		storage := "CA bundle " + d.RootCertFile
-		infos, err := LoadCertificates(d.RootCertFile, maxCABundleCerts)
+		// One past the cap tells a bundle that was cut from one that fits.
+		infos, err := LoadCertificates(d.RootCertFile, maxCABundleCerts+1)
 		if err != nil {
 			assets = append(assets, unreadableCertAsset("database-tls.ca.0", name, ClassDatabaseTLSCert, storage, err))
 			warns = append(warns, fmt.Sprintf("database TLS CA certificate could not be inspected: %v", err))
 			break
+		}
+		if len(infos) > maxCABundleCerts {
+			infos = infos[:maxCABundleCerts]
+			warns = append(warns, fmt.Sprintf("database TLS CA bundle %s holds more than %d certificates; only the first %d are inventoried",
+				d.RootCertFile, maxCABundleCerts, maxCABundleCerts))
 		}
 		for i, ci := range infos {
 			a := certAsset(fmt.Sprintf("database-tls.ca.%d", i), name, ClassDatabaseTLSCert, ci)
