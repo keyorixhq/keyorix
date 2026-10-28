@@ -66,6 +66,12 @@ func (h *SecretHandler) CopySecret(w http.ResponseWriter, r *http.Request) {
 		if h.trySendSecretSizeError(w, err) {
 			return
 		}
+		// The caller read the source above (read permission is established), so a
+		// suspended / max-reads-exhausted / outside-schedule refusal is answered with
+		// its stable code and status instead of falling through to the 500 default.
+		if h.sendSecretReadRefusal(w, err) {
+			return
+		}
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {

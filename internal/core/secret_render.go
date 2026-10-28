@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/secrettemplate"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -94,13 +95,24 @@ func (c *KeyorixCore) RenderSecretTemplate(ctx context.Context, template string,
 	var refused *secretReadDenial
 	actor := SecretReadDenialActor{UserID: userID, Username: username, IP: ip, UA: ua}
 
+	// resolveFailed tells a reference that could not be resolved (typed by
+	// stageRenderRef) from a template the renderer itself rejected: an
+	// unterminated or empty placeholder, a value that cannot be substituted safely.
+	resolveFailed := false
 	output, err := secrettemplate.Render(template, func(ref string) (string, error) {
-		return c.stageRenderRef(ctx, ref, projectID, userID, envByName, &staged, &refused)
+		v, rerr := c.stageRenderRef(ctx, ref, projectID, userID, envByName, &staged, &refused)
+		if rerr != nil {
+			resolveFailed = true
+		}
+		return v, rerr
 	})
 	if err != nil {
 		if refused != nil {
 			refused.actor = actor
 			c.recordSecretReadDenialInCore(ctx, *refused)
+		}
+		if !resolveFailed {
+			return "", storage.Typed(ErrSecretInvalidInput, err.Error(), err)
 		}
 		return "", err
 	}
@@ -205,6 +217,9 @@ func (c *KeyorixCore) stageRenderRef(ctx context.Context, ref string, projectID,
 	version, err := c.storage.GetLatestSecretVersion(ctx, secret.ID)
 	if err != nil {
 		refuse(SecretReadDeniedInternalError, secret)
+		if !errors.Is(err, storage.ErrSecretVersionNotFound) {
+			return "", fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
 	}
 	val, err := c.decryptVersionValue(secret, version)
@@ -293,7 +308,7 @@ func splitRenderRef(ref string) (env, name string, err error) {
 	ref = strings.TrimSpace(ref)
 	i := strings.IndexByte(ref, '/')
 	if i <= 0 || i == len(ref)-1 {
-		return "", "", fmt.Errorf("invalid reference %q: expected \"<environment>/<name>\"", ref)
+		return "", "", errSecretInvalidf("invalid reference %q: expected \"<environment>/<name>\"", ref)
 	}
 	return ref[:i], ref[i+1:], nil
 }

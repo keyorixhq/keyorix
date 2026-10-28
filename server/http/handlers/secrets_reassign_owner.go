@@ -4,11 +4,13 @@ package handlers
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -40,9 +42,9 @@ func (h *SecretHandler) ReassignOwner(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		status := http.StatusInternalServerError
 		switch {
-		case strings.Contains(err.Error(), "required"), strings.Contains(err.Error(), "must differ"), strings.Contains(err.Error(), "not found"):
+		case errors.Is(err, core.ErrSecretInvalidInput), storage.IsUserNotFound(err):
 			status = http.StatusBadRequest
-		case strings.Contains(err.Error(), "permission"), strings.Contains(err.Error(), "not authorized"):
+		case isPermissionRefusal(err):
 			status = http.StatusForbidden
 		}
 		h.sendError(w, "Error", errorMessageFor(status, err), status, nil)
