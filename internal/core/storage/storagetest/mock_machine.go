@@ -33,7 +33,15 @@ func (m *MockStorage) GetMachineIdentity(ctx context.Context, id uint) (*models.
 	return args.Get(0).(*models.MachineIdentity), args.Error(1)
 }
 
+// LockMachineIdentityForUpdate has no row lock in the mock. A test that does not
+// stub it gets the GetMachineIdentity expectation instead: AssignMachineRole's
+// grant transaction now row-locks the machine first (NAMEDLOCK-OVERLAP-2 fence),
+// and a test about something else should not have to stub that. A test that
+// stubs it gets exactly what it stubbed.
 func (m *MockStorage) LockMachineIdentityForUpdate(ctx context.Context, id uint) (*models.MachineIdentity, error) {
+	if !m.mockHasExpectation("LockMachineIdentityForUpdate") {
+		return m.GetMachineIdentity(ctx, id)
+	}
 	a := m.Called(ctx, id)
 	v, _ := a.Get(0).(*models.MachineIdentity)
 	return v, a.Error(1)

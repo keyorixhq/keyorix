@@ -92,6 +92,11 @@ func (c *KeyorixCore) replaceUserRoleSet(ctx context.Context, r roleSetReplace) 
 			return err
 		}
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			// NAMEDLOCK-OVERLAP-2 (txFence): the user's row first; applyRoleSetOn
+			// re-reads the set and re-runs the separation-of-duties check after it.
+			if err := lockUserRowsOn(ctx, tx, r.userID); err != nil {
+				return err
+			}
 			_, err := c.applyRoleSetOn(ctx, tx, tgt, r, nil, add, true) // additions only
 			return err
 		})
@@ -211,6 +216,9 @@ func (c *KeyorixCore) swapUserRoleSet(ctx context.Context, r roleSetReplace, rem
 			return err
 		}
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := lockUserRowsOn(ctx, tx, r.userID); err != nil { // txFence, as in replaceUserRoleSet
+				return err
+			}
 			var err error
 			removed, err = c.applyRoleSetOn(ctx, tx, tgt, r, inSet(remove), add, true)
 			return err

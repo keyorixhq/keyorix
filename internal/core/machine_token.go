@@ -627,6 +627,14 @@ func (c *KeyorixCore) AssignMachineRole(ctx context.Context, machineID, roleID u
 		}
 		// AUDIT-TX-2: the grant and its role_granted row commit together.
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			// NAMEDLOCK-OVERLAP-2 (txFence): the machine's row, then the same check
+			// through tx.
+			if _, err := tx.LockMachineIdentityForUpdate(ctx, machineID); err != nil {
+				return err
+			}
+			if err := requireMachineGrantNoSoDViolationOn(ctx, tx, machineID, roleID); err != nil {
+				return err
+			}
 			if err := tx.AssignMachineRole(ctx, machineID, roleID, scope); err != nil {
 				return err
 			}

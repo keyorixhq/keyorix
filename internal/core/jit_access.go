@@ -50,7 +50,7 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.assignUserRoleWithExpirySkipSoD(ctx, actorID, userID, roleID, scope, expiresAt)
+		return c.grantUserRoleAudited(ctx, sodUserGrantFence(userID, []uint{roleID}, Scope{}), actorID, userID, roleID, scope, &expiresAt, false)
 	})
 }
 
@@ -68,7 +68,7 @@ func (c *KeyorixCore) AssignUserRoleWithExpiry(ctx context.Context, actorID, use
 // access-request TTL-approval path must go through AssignUserRoleWithExpiry
 // so both gates apply.
 func (c *KeyorixCore) assignUserRoleWithExpirySkipSoD(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt time.Time) error {
-	return c.grantUserRoleAudited(ctx, actorID, userID, roleID, scope, &expiresAt, false)
+	return c.grantUserRoleAudited(ctx, noTxFence, actorID, userID, roleID, scope, &expiresAt, false)
 }
 
 // AssignGroupRoleWithExpiry assigns a time-bound role to a group at scope, gated by

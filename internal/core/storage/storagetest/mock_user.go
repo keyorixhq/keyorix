@@ -2,6 +2,7 @@ package storagetest
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
@@ -31,7 +32,14 @@ func (m *MockStorage) GetUser(ctx context.Context, id uint) (*models.User, error
 }
 
 // LockUserForUpdate has no row lock in the mock; it reuses the GetUser expectation.
+// Unstubbed, it answers "not found" as storage.ErrUserNotFound, like the other
+// lookup-only getters (mockHasExpectation): every grant transaction now row-locks
+// its user first (NAMEDLOCK-OVERLAP-2 fences), and a test about something else
+// should not have to stub that.
 func (m *MockStorage) LockUserForUpdate(ctx context.Context, id uint) (*models.User, error) {
+	if !m.mockHasExpectation("GetUser") {
+		return nil, fmt.Errorf("%w: %w", errMockLookupNotStubbed, storage.ErrUserNotFound)
+	}
 	return m.GetUser(ctx, id)
 }
 

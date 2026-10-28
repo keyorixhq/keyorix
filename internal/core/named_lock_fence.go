@@ -63,3 +63,34 @@ func projectAdminGuardKeys(projectIDs ...uint) []string {
 	}
 	return keys
 }
+
+// lockUserRowsOn row-locks each user in ids (LockUserForUpdate), in ascending
+// ID order: the row every separation-of-duties fence for that user takes, so
+// two grants that change the same user's permissions serialize. A user with no
+// live row (deleted, soft-deleted) has nothing to lock and is skipped; the
+// caller's re-check still runs.
+func lockUserRowsOn(ctx context.Context, tx storage.Storage, ids ...uint) error {
+	sorted := slices.Clone(ids)
+	slices.Sort(sorted)
+	for _, id := range slices.Compact(sorted) {
+		if _, err := tx.LockUserForUpdate(ctx, id); err != nil && !storage.IsUserNotFound(err) {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+	}
+	return nil
+}
+
+// sodUserGrantFence is the fence of a direct grant of roleIDs to userID at
+// scope: it row-locks the user, then re-runs requireNoSoDViolationOn through
+// tx with the inputs the grant's own check used. Every writer that can add to
+// a user's permissions under sodGrantLockKey("user", ...) takes the same row:
+// the direct grants, a group join (AddUserToGroup), a role-set replacement,
+// and a group grant for each member (sodGroupGrantFence).
+func sodUserGrantFence(userID uint, roleIDs []uint, scope Scope) txFence {
+	return func(ctx context.Context, tx storage.Storage) error {
+		if err := lockUserRowsOn(ctx, tx, userID); err != nil {
+			return err
+		}
+		return requireNoSoDViolationOn(ctx, tx, userID, roleIDs, scope)
+	}
+}

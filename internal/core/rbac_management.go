@@ -554,7 +554,7 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.grantUserRoleAudited(ctx, actorID, userID, roleID, scope, nil, false)
+		return c.grantUserRoleAudited(ctx, sodUserGrantFence(userID, []uint{roleID}, Scope{}), actorID, userID, roleID, scope, nil, false)
 	})
 }
 
@@ -590,7 +590,7 @@ func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, us
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.grantUserRoleAudited(ctx, actorID, userID, roleID, scope, nil, false)
+		return c.grantUserRoleAudited(ctx, sodUserGrantFence(userID, []uint{roleID}, Scope{}), actorID, userID, roleID, scope, nil, false)
 	})
 }
 
@@ -611,7 +611,7 @@ func (c *KeyorixCore) grantBaselineRoleBackfill(ctx context.Context, userID, rol
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.grantUserRoleAudited(ctx, 0, userID, roleID, Scope{}, nil, true)
+		return c.grantUserRoleAudited(ctx, sodUserGrantFence(userID, []uint{roleID}, Scope{}), 0, userID, roleID, Scope{}, nil, true)
 	})
 }
 
@@ -624,11 +624,18 @@ func (c *KeyorixCore) grantBaselineRoleBackfill(ctx context.Context, userID, rol
 // baselineBackfill tags the row as LogRoleAssignedBackfill does.
 // GROUP-ROLE-SCOPE-1 (#3546): refuses a scope the role is not meaningful at
 // (requireScopeValidForRole) before writing, for every one of those callers.
-func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt *time.Time, baselineBackfill bool) error {
+//
+// fence runs first in the grant's transaction (txFence, NAMEDLOCK-OVERLAP-2):
+// sodUserGrantFence for every caller whose grant passed the separation-of-duties
+// check, noTxFence for break-glass, which skips that check by design.
+func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, fence txFence, actorID, userID, roleID uint, scope Scope, expiresAt *time.Time, baselineBackfill bool) error {
 	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
 		return err
 	}
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := fence(ctx, tx); err != nil {
+			return err
+		}
 		var err error
 		if expiresAt != nil {
 			err = tx.AssignRoleWithExpiry(ctx, userID, roleID, scope, *expiresAt)

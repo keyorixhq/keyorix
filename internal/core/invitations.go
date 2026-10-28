@@ -1196,6 +1196,9 @@ func (c *KeyorixCore) finalizeAccessRequestApproval(ctx context.Context, req *mo
 		// AUDIT-TX-2: the grant's role.assigned row and the access_request.approved
 		// row are the last statements of the same transaction.
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := sodUserGrantFence(req.UserID, []uint{roleModel.ID}, Scope{})(ctx, tx); err != nil {
+				return err
+			}
 			if grantTTL > 0 {
 				if err := tx.AssignRoleWithExpiry(ctx, req.UserID, roleModel.ID, scope, expiresAt); err != nil {
 					return fmt.Errorf("failed to grant role: %w", err)

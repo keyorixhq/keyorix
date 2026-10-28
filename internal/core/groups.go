@@ -381,6 +381,20 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 		// AUDIT-TX-2: a membership confers every role the group holds, so it
 		// commits with its group.member_added row or not at all.
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			// NAMEDLOCK-OVERLAP-2 (txFence): the user's row, then the same
+			// separation-of-duties check validateGroupJoinRoles ran, through tx.
+			if err := lockUserRowsOn(ctx, tx, userID); err != nil {
+				return err
+			}
+			if actorID != 0 || actorIsMachine {
+				grants, err := tx.ListGroupRoleAssignments(ctx, groupID)
+				if err != nil {
+					return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+				}
+				if err := requireGroupJoinNoSoDViolationOn(ctx, tx, userID, grants); err != nil {
+					return err
+				}
+			}
 			if err := tx.AddUserToGroup(ctx, userID, groupID, projectID); err != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 			}
