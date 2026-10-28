@@ -138,7 +138,7 @@ func (c *KeyorixCore) CreateRoleWithScope(ctx context.Context, actorID uint, nam
 		return nil, nil, WrapRoleValidation(fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ferr))
 	}
 	if IsBuiltinRole(foldedName.Folded()) {
-		return nil, nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this role name is reserved and cannot be created")
+		return nil, nil, fmt.Errorf("%s: %w", i18n.T("ErrorValidation", nil), ErrRoleNameReserved)
 	}
 
 	var role *models.Role
@@ -227,7 +227,7 @@ func (c *KeyorixCore) CreateRoleWithScope(ctx context.Context, actorID uint, nam
 func (c *KeyorixCore) UpdateRole(ctx context.Context, actorID uint, role *models.Role, newPermissionIDs *[]uint) (*models.Role, []*models.Permission, error) {
 	if IsBuiltinRole(role.Name) {
 		c.LogRoleUpdateDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
-		return nil, nil, permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "cannot update built-in role: "+role.Name)
+		return nil, nil, permissionDeniedf("%s: cannot update %w: %s", i18n.T("ErrorPermissionDenied", nil), ErrBuiltinRole, role.Name)
 	}
 	// #3546 Phase 2: "" keeps the stored assignable scope (read in the
 	// transaction below); anything else must be a valid one.
@@ -439,7 +439,7 @@ func (c *KeyorixCore) DeleteRole(ctx context.Context, actorID, id uint) error {
 	}
 	if IsBuiltinRole(role.Name) {
 		c.LogRoleDeleteDenied(ctx, actorID, role.ID, role.Name, "target is a built-in role")
-		return permissionDeniedf("%s: %s", i18n.T("ErrorPermissionDenied", nil), "cannot delete built-in role: "+role.Name)
+		return permissionDeniedf("%s: cannot delete %w: %s", i18n.T("ErrorPermissionDenied", nil), ErrBuiltinRole, role.Name)
 	}
 	// AUDIT-TX-3: a revocation (it cascades every grant of the role away): never
 	// blocked by the audit log, its row owed from the delete's own transaction.

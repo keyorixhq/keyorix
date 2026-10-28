@@ -24,6 +24,10 @@ var (
 	ErrPermissionNotFound          = errors.New("permission not found")
 	ErrAlertEscalationNotFound     = errors.New("alert escalation policy not found")
 	ErrRotationPolicyNotFound      = errors.New("rotation policy not found")
+
+	// ErrRolePermissionNotAssigned: RemovePermissionFromRole matched no
+	// role_permissions row (the permission was not bundled into that role).
+	ErrRolePermissionNotAssigned = errors.New("permission not assigned to role")
 )
 
 // notFoundError carries a caller-visible message (typically a translated i18n
