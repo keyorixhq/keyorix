@@ -7,6 +7,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+func (hs *HookStore) CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
+	if hk := hs.h.CreateSecretDependencyExclusive; hk != nil {
+		return hk(hs.Storage, ctx, d)
+	}
+	return hs.Storage.CreateSecretDependencyExclusive(ctx, d)
+}
+
 func (hs *HookStore) CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
 	if hk := hs.h.CreateSecretVersion; hk != nil {
 		return hk(hs.Storage, ctx, version)

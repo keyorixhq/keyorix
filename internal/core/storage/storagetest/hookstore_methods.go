@@ -48,6 +48,7 @@ type StoreHooks struct {
 	CreateProjectMembership                   func(next storage.Storage, ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
 	CreateRotationPolicy                      func(next storage.Storage, ctx context.Context, p *models.RotationPolicy) error
 	CreateSecretAccessLog                     func(next storage.Storage, ctx context.Context, log *models.SecretAccessLog) error
+	CreateSecretDependencyExclusive           func(next storage.Storage, ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error)
 	CreateSecretVersion                       func(next storage.Storage, ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
 	CreateSession                             func(next storage.Storage, ctx context.Context, session *models.Session) (*models.Session, error)
 	CreateSetupToken                          func(next storage.Storage, ctx context.Context, t *models.SetupToken) (*models.SetupToken, error)
