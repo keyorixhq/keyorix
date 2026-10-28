@@ -402,7 +402,8 @@ func mapUserError(err error) error {
 	}
 	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
 	switch {
-	case errors.Is(err, corestorage.ErrUserNotFound):
+	case errors.Is(err, corestorage.ErrUserNotFound), errors.Is(err, corestorage.ErrRoleNotFound),
+		errors.Is(err, corestorage.ErrGroupNotFound), errors.Is(err, corestorage.ErrProjectNotFound):
 		return status.Error(codes.NotFound, "user not found")
 	case errors.Is(err, core.ErrUserAlreadyExists), errors.Is(err, core.ErrEmailInUse), errors.Is(err, corestorage.ErrDuplicateEmail):
 		return status.Error(codes.AlreadyExists, "a user with that username or email already exists")

@@ -43,7 +43,7 @@ func mapProjectError(err error) error {
 	// storage.ErrProjectNotFound; then delete this line.
 	case err.Error() == "project not found":
 		return status.Error(codes.NotFound, "project not found")
-	case errors.Is(err, storage.ErrProjectNotFound):
+	case errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound):
 		return status.Error(codes.NotFound, "project not found")
 	case errors.Is(err, storage.ErrDuplicateProjectName):
 		return status.Error(codes.AlreadyExists, "a project with this name already exists")

@@ -418,7 +418,7 @@ func mapRoleError(err error) error {
 	}
 	// CORE-GRPC-TAILS-1: classified by sentinel (errors.Is), not by err.Error() text.
 	switch {
-	case errors.Is(err, storage.ErrRoleNotFound):
+	case errors.Is(err, storage.ErrRoleNotFound), errors.Is(err, storage.ErrPermissionNotFound):
 		return status.Error(codes.NotFound, "role not found")
 	case errors.Is(err, core.ErrRoleNameReserved):
 		return status.Error(codes.AlreadyExists, "this role name is reserved and cannot be created")

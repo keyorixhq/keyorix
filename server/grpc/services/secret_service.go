@@ -591,7 +591,8 @@ func mapSecretACLError(err error) error {
 	// (errors.Is), not by err.Error() text; only the untyped validation cases below
 	// still read the message.
 	switch {
-	case errors.Is(err, storage.ErrSecretACLNotFound), errors.Is(err, storage.ErrSecretNotFound):
+	case errors.Is(err, storage.ErrSecretACLNotFound), errors.Is(err, storage.ErrSecretNotFound),
+		errors.Is(err, storage.ErrUserNotFound):
 		return status.Error(codes.NotFound, "ACL or secret not found")
 	// "invalid"/"required" don't only match GrantSecretACL's own validation
 	// messages (invalid permission, missing IDs) -- CreateOrUpdateSecretACL's
@@ -740,7 +741,8 @@ func mapSecretError(err error) error {
 	// validation below still reads the message.
 	msg := err.Error()
 	switch {
-	case errors.Is(err, storage.ErrSecretNotFound):
+	case errors.Is(err, storage.ErrSecretNotFound), errors.Is(err, storage.ErrSecretVersionNotFound),
+		errors.Is(err, storage.ErrProjectNotFound), errors.Is(err, storage.ErrEnvironmentNotFound):
 		return status.Error(codes.NotFound, "secret not found")
 	case errors.Is(err, core.ErrPermissionDenied):
 		return status.Error(codes.PermissionDenied, "access denied to this secret")

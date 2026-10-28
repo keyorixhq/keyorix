@@ -39,6 +39,7 @@ func runTypedMapCases(t *testing.T, mapper func(error) error, cases []typedMapCa
 func TestMapProjectError_ClassifiesBySentinel(t *testing.T) {
 	runTypedMapCases(t, mapProjectError, []typedMapCase{
 		{"missing project", fmt.Errorf("get project: %w", storage.ErrProjectNotFound), codes.NotFound},
+		{"missing environment", fmt.Errorf("get env: %w", storage.ErrEnvironmentNotFound), codes.NotFound},
 		{"duplicate name", fmt.Errorf("create: %w", storage.ErrDuplicateProjectName), codes.AlreadyExists},
 		{"authz refusal", fmt.Errorf("delete: %w", core.ErrPermissionDenied), codes.PermissionDenied},
 		// The one storage message not typed yet (lockProjectRowForCascade): exact text only.
@@ -67,6 +68,7 @@ func TestMapRoleError_ClassifiesBySentinel(t *testing.T) {
 func TestMapUserError_ClassifiesBySentinel(t *testing.T) {
 	runTypedMapCases(t, mapUserError, []typedMapCase{
 		{"missing user", fmt.Errorf("get user: %w", storage.ErrUserNotFound), codes.NotFound},
+		{"missing role on assign", fmt.Errorf("assign: %w", storage.ErrRoleNotFound), codes.NotFound},
 		{"user exists", fmt.Errorf("create user: %w", core.ErrUserAlreadyExists), codes.AlreadyExists},
 		{"email in use", fmt.Errorf("update user: %w", core.ErrEmailInUse), codes.AlreadyExists},
 		{"duplicate email (storage)", fmt.Errorf("create user: %w", storage.ErrDuplicateEmail), codes.AlreadyExists},
@@ -99,6 +101,7 @@ func TestMapShareError_ClassifiesBySentinel(t *testing.T) {
 func TestMapSecretACLError_ClassifiesBySentinel(t *testing.T) {
 	runTypedMapCases(t, mapSecretACLError, []typedMapCase{
 		{"missing ACL", fmt.Errorf("revoke: %w", storage.ErrSecretACLNotFound), codes.NotFound},
+		{"missing grantee", fmt.Errorf("grant: %w", storage.ErrUserNotFound), codes.NotFound},
 		{"missing secret", fmt.Errorf("grant: %w", storage.ErrSecretNotFound), codes.NotFound},
 		{"authz refusal", fmt.Errorf("grant: %w", core.ErrPermissionDenied), codes.PermissionDenied},
 		// Not yet typed: GrantSecretACL's own validation.
@@ -112,6 +115,8 @@ func TestMapSecretACLError_ClassifiesBySentinel(t *testing.T) {
 func TestMapSecretError_ClassifiesBySentinel(t *testing.T) {
 	runTypedMapCases(t, mapSecretError, []typedMapCase{
 		{"missing secret", fmt.Errorf("get: %w", storage.ErrSecretNotFound), codes.NotFound},
+		{"missing secret version", fmt.Errorf("Secret version not found: %w", storage.ErrSecretVersionNotFound), codes.NotFound},
+		{"missing project", fmt.Errorf("create: %w", storage.ErrProjectNotFound), codes.NotFound},
 		{"authz refusal", fmt.Errorf("update: %w", core.ErrPermissionDenied), codes.PermissionDenied},
 		{"secret exists", fmt.Errorf("create: %w", core.ErrSecretAlreadyExists), codes.AlreadyExists},
 		// Not yet typed: rotation validation (rotation_executor.go).
