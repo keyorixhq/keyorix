@@ -326,12 +326,44 @@ class RemovedLines(unittest.TestCase):
         new, noignore = cs.apply_removed(ranges, cs.hunk_removed(self.DIFF))
         got = new["p/a.go"]
         self.assertEqual([d for _, _, d in got], [False, True, False, False])
-        self.assertEqual(noignore["p/a.go"], {26})  # only the comment that replaced code
+        # only the hunk that replaced body code; it removed nothing top-level, so not forced
+        self.assertEqual(noignore["p/a.go"], [(26, 26, False)])
+        self.assertEqual(cs.withheld_lines(noignore["p/a.go"], {26}), {26})  # a comment-only replacement is withheld
 
     def test_misaligned_hunks_keep_every_marker_and_forbid_ignoring(self):
         new, noignore = cs.apply_removed({"p/a.go": [(1, 2, True)]}, {})
         self.assertEqual(new["p/a.go"], [(1, 2, True)])
-        self.assertEqual(noignore["p/a.go"], {1, 2})
+        self.assertEqual(cs.withheld_lines(noignore["p/a.go"], {1, 2}), {1, 2})
+
+    def diff_of(self, removed, added, start=10):
+        body = "".join(f"-{x}\n" for x in removed) + "".join(f"+{x}\n" for x in added)
+        d = f"diff --git a/p/a.go b/p/a.go\n--- a/p/a.go\n+++ b/p/a.go\n@@ -{start},{len(removed)} +{start},{len(added)} @@\n{body}"
+        ranges, _ = cs.parse_diff(d)
+        return cs.apply_removed(ranges, cs.hunk_removed(d))[1]["p/a.go"]
+
+    def test_comment_next_to_replacement_code_is_not_withheld(self):
+        hunks = self.diff_of(["\treturn nil, fmt.Errorf(\"x\")"], ["\t// why", "\t// why 2", "\treturn nil, ErrX"])
+        self.assertEqual(hunks, [(10, 12, False)])
+        # lines 10, 11 are comments; 12 is code, so the hunk added real code: nothing withheld
+        self.assertEqual(cs.withheld_lines(hunks, {10, 11}), set())
+
+    def test_comment_only_replacement_is_still_withheld(self):
+        hunks = self.diff_of(["\tx := f()"], ["\t// x := f()", "\t// y"])
+        self.assertEqual(cs.withheld_lines(hunks, {10, 11}), {10, 11})
+
+    def test_removed_top_level_declaration_always_withholds(self):
+        # a deleted method changes the method set (interface satisfaction, reflection)
+        # even if the hunk also adds code: never trade it for a nearby real line
+        for gone in ("func (h holder) Close() error {", "func init() {", "var registry = build()", "type T struct{}", "const K = 1"):
+            hunks = self.diff_of([gone, "\treturn nil", "}"], ["\t// replaced", "\tx := 1"])
+            self.assertEqual(hunks, [(10, 11, True)], gone)
+            self.assertEqual(cs.withheld_lines(hunks, {10}), {10, 11}, gone)
+
+    def test_body_level_removed(self):
+        for line in ("\tx := 1", "    y()", "\t}", "", "// c"):
+            self.assertTrue(cs.body_level_removed(line), repr(line))
+        for line in ("func f() {", "func (t T) M() {", "var a = 1", "type T int", "init()"):
+            self.assertFalse(cs.body_level_removed(line), repr(line))
 
     def test_inert_removed_lines(self):
         for line in ("", "  ", "\t}", "// note", '\t"slices"', '\talias "x/y"'):
@@ -443,6 +475,67 @@ class DeclarationRefinement(unittest.TestCase):
         self.assertEqual(res["undetermined"], [3, 4])
         self.assertEqual(verdict, ("KEEP", "undetermined-lines"))
         self.assertEqual(self.classify([3], closure=self.LINKED, deletion=(3,))[0]["undetermined"], [3])
+
+    # --- cut-in-function: a pure deletion strictly inside one function body ---
+    # Marker lines that already sit inside a profile block are classified by that block;
+    # the lines this refinement is for are the ones between blocks (the blank line after
+    # an `if` closes), which have no block of their own.
+    BODY_GO = (
+        "package pkg\n\n"                                                                 # 1-2
+        "func Ran() int {\n\ta := 1\n\tif a > 0 {\n\t\ta++\n\t}\n\n\treturn a\n}\n\n"     # 3-11
+        "func NotRan() int {\n\ta := 1\n\tif a > 0 {\n\t\ta++\n\t}\n\n\treturn a\n}\n\n"  # 12-20
+        "type holder struct{}\n\n"                                                        # 21-22
+        "func (holder) Close() error {\n\tif false {\n\t\treturn nil\n\t}\n\n\treturn nil\n}\n"  # 23-29
+    )
+    BODY_BLOCKS = [(4, 5, 1), (5, 7, 1), (9, 9, 1),        # Ran ran
+                   (13, 14, 0), (14, 16, 0), (18, 18, 0),  # NotRan did not
+                   (24, 24, 0), (24, 26, 0), (28, 28, 0)]  # Close did not
+
+    def cut(self, lines, blocks=None, **kw):
+        return self.classify(lines, tree={DECLS_FILE: self.BODY_GO}, blocks=self.BODY_BLOCKS if blocks is None else blocks,
+                             closure=self.LINKED, deletion=lines, **kw)
+
+    def test_cut_inside_a_function_that_ran_is_covered(self):
+        res, notes, verdict = self.cut([7, 8])
+        self.assertEqual((res["covered"], notes, verdict), ([7, 8], {"cut-in-function": [8]}, ("KEEP", "covered")))
+
+    def test_cut_inside_a_function_that_never_ran_is_uncovered(self):
+        res, notes, verdict = self.cut([16, 17])
+        self.assertEqual((res["uncovered"], notes, verdict), ([16, 17], {"cut-in-function": [17]}, ("SKIPPABLE", "uncovered")))
+
+    def test_cut_touching_the_function_braces_or_between_declarations_stays(self):
+        # (9, 10): the `}` of Ran; (10, 11): `}` and the blank after the function;
+        # (2, 3): the blank above a header and the header itself; (19, 20): NotRan's `}`
+        for lines in ([10], [10, 11], [2, 3], [3], [19], [19, 20], [11, 12], [20, 21]):
+            res, notes, verdict = self.cut(lines)
+            self.assertTrue(res["undetermined"], lines)
+            self.assertEqual(notes, {}, lines)
+
+    def test_cut_next_to_a_removed_method_is_not_attributed_to_a_neighbour(self):
+        # a method deleted after NotRan: the cut is on the blank after its `}` and the
+        # next declaration, neither strictly inside a body
+        res, _, verdict = self.cut([20, 21])
+        self.assertEqual((res["undetermined"], verdict), ([20, 21], ("KEEP", "undetermined-lines")))
+
+    def test_cut_in_a_function_without_profile_blocks_stays(self):
+        res, _, verdict = self.cut([17], blocks=[])
+        self.assertEqual((res["undetermined"], verdict), ([17], ("KEEP", "undetermined-lines")))
+
+    def test_a_function_run_by_reflection_or_an_interface_is_covered_by_its_own_blocks(self):
+        # Close() is only ever reached through an interface or reflect.Call: the profile
+        # still counts its body, so a cut inside it is covered, not "unreferenced"
+        blocks = self.BODY_BLOCKS[:6] + [(24, 24, 1), (24, 26, 0), (28, 28, 1)]
+        res, notes, verdict = self.cut([27], blocks=blocks)
+        self.assertEqual((res["covered"], notes, verdict), ([27], {"cut-in-function": [27]}, ("KEEP", "covered")))
+        # and when it did not run, the same cut is uncovered
+        self.assertEqual(self.cut([27])[2], ("SKIPPABLE", "uncovered"))
+
+    def test_generated_file_is_refined_like_an_uncompiled_one_so_not_at_all(self):
+        # build_refiner passes compiled=False for a generated file ("Code generated ... DO NOT EDIT")
+        res, notes, verdict = self.cut([17], compiled=False)
+        self.assertEqual((res["undetermined"], notes, verdict), ([17], {}, ("KEEP", "undetermined-lines")))
+        res, notes, verdict = self.classify([3], closure=self.LINKED, compiled=False)
+        self.assertEqual((res["undetermined"], notes), ([3], {}))
 
     def test_no_closure_information_means_no_unlinked_claim(self):
         # closure None: the const is still judged by its references, never as unlinked

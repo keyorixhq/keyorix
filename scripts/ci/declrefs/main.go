@@ -39,8 +39,8 @@ type request struct {
 
 // LineInfo describes what owns one changed line.
 type LineInfo struct {
-	Kind string `json:"kind"` // funcheader | decl | other
-	// funcheader: first and last line of the body ({ ... }).
+	Kind string `json:"kind"` // funcheader | funcbody | decl | other
+	// funcheader, funcbody: first and last line of the body ({ ... }).
 	Body []int `json:"body,omitempty"`
 	// decl: the names declared by the spec(s) on the line (blank names are
 	// left out), the declaring file, and whether evaluating the spec can run
@@ -141,6 +141,10 @@ func classify(fset *token.FileSet, af *ast.File, rel string, lines []int) (map[s
 			case *ast.FuncDecl:
 				if d.Body != nil && ln <= line(d.Body.Lbrace) {
 					info = LineInfo{Kind: "funcheader", Body: []int{line(d.Body.Lbrace), line(d.Body.Rbrace)}}
+				} else if d.Body != nil && ln < line(d.Body.Rbrace) {
+					// Strictly inside the braces (not the `{` or `}` line): a cut
+					// between two such lines removed code from this body only.
+					info = LineInfo{Kind: "funcbody", Body: []int{line(d.Body.Lbrace), line(d.Body.Rbrace)}}
 				}
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {

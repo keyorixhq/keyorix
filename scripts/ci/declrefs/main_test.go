@@ -111,8 +111,24 @@ func TestFuncHeaderSpansMultilineSignature(t *testing.T) {
 			t.Errorf("line %s = %+v, want funcheader body 6-9", ln, l[ln])
 		}
 	}
-	if l["7"].Kind != "other" {
+	if l["7"].Kind != "funcbody" {
 		t.Errorf("a body line is not a header: %+v", l["7"])
+	}
+}
+
+func TestFuncBodyLinesAreStrictlyInsideTheBraces(t *testing.T) {
+	// 1 package a / 3 func f() { / 4 x := 1 / 5 y := 2 / 6 } / 8 func g() { return }
+	src := "package a\n\nfunc f() {\n\tx := 1\n\ty := 2\n}\n\nfunc g() int { return 1 }\n"
+	l := ask(t, map[string]string{"a/a.go": src}, map[string][]int{"a/a.go": {3, 4, 5, 6, 7, 8}}).Lines["a/a.go"]
+	for _, ln := range []string{"4", "5"} {
+		if l[ln].Kind != "funcbody" || !reflect.DeepEqual(l[ln].Body, []int{3, 6}) {
+			t.Errorf("line %s = %+v, want funcbody body 3-6", ln, l[ln])
+		}
+	}
+	// the `{` line is the header, the `}` line and the blank after it are not interior,
+	// and a one-line function is a header only
+	if l["3"].Kind != "funcheader" || l["6"].Kind != "other" || l["7"].Kind != "other" || l["8"].Kind != "funcheader" {
+		t.Errorf("edges wrong: %+v", l)
 	}
 }
 
