@@ -7,7 +7,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/internal/core"
@@ -71,13 +70,11 @@ func (h *SecretHandler) sendRenderTemplateError(w http.ResponseWriter, r *http.R
 			return
 		}
 		h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
-	case strings.Contains(err.Error(), "not found"):
+	case isSecretNotFound(err):
 		h.sendError(w, "NotFound", err.Error(), http.StatusNotFound, nil)
-	case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
+	case isPermissionRefusal(err):
 		h.sendError(w, "Forbidden", "Not authorized to read a referenced secret", http.StatusForbidden, nil)
-	case strings.Contains(err.Error(), "invalid reference"), strings.Contains(err.Error(), "unterminated"),
-		strings.Contains(err.Error(), "empty secret reference"),
-		strings.Contains(err.Error(), "cannot be safely substituted"):
+	case errors.Is(err, core.ErrSecretInvalidInput):
 		h.sendError(w, "ValidationError", err.Error(), http.StatusBadRequest, nil)
 	default:
 		h.sendError(w, "InternalError", "Failed to render template", http.StatusInternalServerError, nil)
