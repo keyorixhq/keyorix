@@ -24,6 +24,7 @@ type StoreHooks struct {
 	AdvanceWebAuthnCredentialCounter          func(next storage.Storage, ctx context.Context, credentialID []byte, userID uint, newBlob []byte, newSignCount uint32, lastUsedAt time.Time) (bool, error)
 	AssignPermissionToRole                    func(next storage.Storage, ctx context.Context, roleID uint, permissionID uint) error
 	AssignRole                                func(next storage.Storage, ctx context.Context, userID uint, roleID uint, scope storage.Scope) error
+	AssignRoleToGroup                         func(next storage.Storage, ctx context.Context, groupID uint, roleID uint, scope storage.Scope) error
 	AssignRoleWithExpiry                      func(next storage.Storage, ctx context.Context, userID uint, roleID uint, scope storage.Scope, expiresAt time.Time) error
 	ClaimPendingAuditEvent                    func(next storage.Storage, ctx context.Context, id uint) (bool, error)
 	ClearProjectSecretOwnership               func(next storage.Storage, ctx context.Context, userID uint, projectID uint) error

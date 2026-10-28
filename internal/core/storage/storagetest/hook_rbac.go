@@ -148,6 +148,13 @@ func (hs *HookStore) RemoveRole(ctx context.Context, userID uint, roleID uint, s
 	return hs.Storage.RemoveRole(ctx, userID, roleID, scope)
 }
 
+func (hs *HookStore) AssignRoleToGroup(ctx context.Context, groupID uint, roleID uint, scope storage.Scope) error {
+	if hk := hs.h.AssignRoleToGroup; hk != nil {
+		return hk(hs.Storage, ctx, groupID, roleID, scope)
+	}
+	return hs.Storage.AssignRoleToGroup(ctx, groupID, roleID, scope)
+}
+
 func (hs *HookStore) RemoveRoleFromGroup(ctx context.Context, groupID uint, roleID uint, scope storage.Scope) error {
 	if hk := hs.h.RemoveRoleFromGroup; hk != nil {
 		return hk(hs.Storage, ctx, groupID, roleID, scope)
