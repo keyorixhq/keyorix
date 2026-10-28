@@ -135,3 +135,32 @@ func sodGroupGrantFence(roleID uint, members []*models.User) txFence {
 		return requireGroupGrantNoSoDViolationOn(ctx, tx, members, policies, adding)
 	}
 }
+
+// projectAdminRemovalFence is the fence of a write that removes some of
+// userID's roles at projectID's project scope: projectAdminGuardLockKey with
+// LockNamedKeyInTx (every writer of the project's last-admin invariant takes
+// it in its write transaction, the group paths included:
+// withGroupProjectAdminGuardLocks, withGroupRoleRemovalGuards), then
+// guardLastProjectAdmin through tx, on the user's project-level roles as tx
+// reads them once the key is held and on what after says the write leaves of
+// them.
+func projectAdminRemovalFence(projectID, userID uint, after func(existing []uint) []uint) txFence {
+	return func(ctx context.Context, tx storage.Storage) error {
+		if err := lockNamedKeysInTxOn(ctx, tx, projectAdminGuardLockKey(projectID)); err != nil {
+			return err
+		}
+		existing, err := tx.GetUserRoleIDsExact(ctx, userID, Scope{ProjectID: projectID})
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		return guardLastProjectAdminOn(ctx, tx, projectID, userID, existing, after(slices.Clone(existing)))
+	}
+}
+
+// withoutRole returns an after function for projectAdminRemovalFence: the
+// existing roles minus roleID.
+func withoutRole(roleID uint) func(existing []uint) []uint {
+	return func(existing []uint) []uint {
+		return slices.DeleteFunc(existing, func(id uint) bool { return id == roleID })
+	}
+}

@@ -144,9 +144,12 @@ func (c *KeyorixCore) requireGranterHoldsRoleSet(ctx context.Context, r roleSetR
 // one transaction instead (atomicAdminSwap).
 func (c *KeyorixCore) narrowUserRoleSet(ctx context.Context, r roleSetReplace, add []uint) (removed []uint, swapped bool, err error) {
 	var settle func()
-	owed := func(ctx context.Context, removable func(id uint) bool, adminIDs []uint) error {
+	owed := func(ctx context.Context, fence txFence, removable func(id uint) bool, adminIDs []uint) error {
 		var rerr error
 		settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			// The additions are only judged here (assign false): they must pass the
 			// separation-of-duties gate on the set this transaction leaves, or nothing is
 			// removed. Commit 2 judges them again under its lock.
@@ -167,7 +170,9 @@ func (c *KeyorixCore) narrowUserRoleSet(ctx context.Context, r roleSetReplace, a
 		err = c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
 			c.globalAdminGuardMu.Lock()
 			defer c.globalAdminGuardMu.Unlock()
-			return owed(ctx, anyRole, ids)
+			// The global admin roles go through RemoveGlobalAdminRoleGuarded, which
+			// row-locks and re-checks inside this transaction itself (safe).
+			return owed(ctx, noTxFence, anyRole, ids)
 		})
 	case r.scope.EnvironmentID == 0:
 		// withUserRoleRemovalGuards' project branch, for the whole set at once.
@@ -187,11 +192,15 @@ func (c *KeyorixCore) narrowUserRoleSet(ctx context.Context, r roleSetReplace, a
 			if gerr != nil {
 				return gerr
 			}
-			return owed(ctx, inSet(remove), nil)
+			// NAMEDLOCK-OVERLAP-2 (txFence): the same guard, on the set tx reads.
+			return owed(ctx, projectAdminRemovalFence(r.scope.ProjectID, r.userID, func(existing []uint) []uint {
+				remove, _ := roleSetDiff(existing, r.want)
+				return slices.DeleteFunc(existing, func(id uint) bool { return slices.Contains(remove, id) })
+			}), inSet(remove), nil)
 		})
 	default:
 		// An environment-scoped grant carries no project's roles.assign authority.
-		err = owed(ctx, anyRole, nil)
+		err = owed(ctx, noTxFence, anyRole, nil)
 	}
 	if err != nil {
 		return nil, swapped, err
@@ -216,7 +225,16 @@ func (c *KeyorixCore) swapUserRoleSet(ctx context.Context, r roleSetReplace, rem
 			return err
 		}
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
-			if err := lockUserRowsOn(ctx, tx, r.userID); err != nil { // txFence, as in replaceUserRoleSet
+			// NAMEDLOCK-OVERLAP-2 (txFence): the project's key and the swap's own
+			// last-admin verdict (the removals AND the additions) through tx, then
+			// the user's row for the separation-of-duties re-check.
+			if err := projectAdminRemovalFence(r.scope.ProjectID, r.userID, func(existing []uint) []uint {
+				after := slices.DeleteFunc(existing, func(id uint) bool { return slices.Contains(remove, id) })
+				return append(after, add...)
+			})(ctx, tx); err != nil {
+				return err
+			}
+			if err := lockUserRowsOn(ctx, tx, r.userID); err != nil {
 				return err
 			}
 			var err error

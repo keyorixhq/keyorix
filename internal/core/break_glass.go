@@ -908,6 +908,11 @@ func (c *KeyorixCore) RevokeBreakGlassActivationAtomic(ctx context.Context, acto
 		var rerr error
 		settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 			roleRemoved = false // the fallback may run this closure twice
+			// NAMEDLOCK-OVERLAP-2 (txFence): the project's key, then the same
+			// last-project-admin guard through tx.
+			if err := projectAdminRemovalFence(scope.ProjectID, activation.UserID, withoutRole(activation.RoleID))(ctx, tx); err != nil {
+				return err
+			}
 			if err := tx.RemoveRole(ctx, activation.UserID, activation.RoleID, scope); err != nil {
 				if !errors.Is(err, storage.ErrRoleNotAssigned) {
 					return err

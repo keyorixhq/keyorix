@@ -798,7 +798,7 @@ func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, rol
 		if err := c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after); err != nil {
 			return err
 		}
-		return write(ctx, noTxFence)
+		return write(ctx, projectAdminRemovalFence(scope.ProjectID, userID, withoutRole(roleID)))
 	})
 }
 

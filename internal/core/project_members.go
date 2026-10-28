@@ -145,6 +145,11 @@ func (c *KeyorixCore) RemoveProjectMember(ctx context.Context, actorID, projectI
 		// after the lock is released.
 		var merr error
 		settle, merr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			// NAMEDLOCK-OVERLAP-2 (txFence): the project's key, then the same
+			// guard on the member's project roles as tx reads them.
+			if err := projectAdminRemovalFence(projectID, userID, func([]uint) []uint { return nil })(ctx, tx); err != nil {
+				return err
+			}
 			if err := tx.RemoveAllProjectRoleGrants(ctx, userID, projectID); err != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 			}
