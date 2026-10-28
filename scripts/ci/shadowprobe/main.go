@@ -64,7 +64,7 @@ func cs23Hit(id string) {
 
 func parseLines(s string) ([]int, error) {
 	var out []int
-	for _, part := range strings.Split(s, ",") {
+	for part := range strings.SplitSeq(s, ",") {
 		part = strings.TrimSpace(part)
 		if part == "" {
 			continue
@@ -85,11 +85,6 @@ func parseLines(s string) ([]int, error) {
 		}
 	}
 	return out, nil
-}
-
-type site struct {
-	list *[]ast.Stmt
-	idx  int
 }
 
 // instrument returns the rewritten source and a per-line report.
@@ -209,7 +204,7 @@ func main() {
 		os.Exit(2)
 	}
 	path := filepath.Join(*root, *file)
-	src, err := os.ReadFile(path)
+	src, err := os.ReadFile(path) // #nosec G304 -- CI-only tool: path is the -root/-file flags of a throwaway checkout
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
@@ -219,11 +214,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if err := os.WriteFile(path, out, 0o644); err != nil {
+	if err := os.WriteFile(path, out, 0o644); err != nil { // #nosec G306 G703 -- rewrites a source file in a throwaway checkout; keeps its normal mode
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
-	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "cs23_probe.go"), []byte(fmt.Sprintf(probeFile, pkg)), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(filepath.Dir(path), "cs23_probe.go"), []byte(fmt.Sprintf(probeFile, pkg)), 0o644); err != nil { // #nosec G306 G703 -- probe file lands next to the instrumented source in a throwaway checkout
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
