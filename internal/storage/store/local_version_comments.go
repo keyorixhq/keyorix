@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -41,7 +42,7 @@ func (ls *LocalStorage) DeleteSecretVersionComment(ctx context.Context, secretID
 		return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), result.Error)
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+		return storage.NotFound(storage.ErrVersionCommentNotFound, i18n.T("ErrorNotFound", nil), nil)
 	}
 	return nil
 }

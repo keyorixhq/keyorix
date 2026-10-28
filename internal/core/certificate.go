@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/certparse"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
@@ -53,7 +54,7 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 	}
 	secret, err := c.storage.GetSecret(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %d not found", i18n.T("ErrorNotFound", nil), secretID)
+		return nil, secretLookupError(err)
 	}
 	// #G09: previously only checked suspended status, independently
 	// reimplementing a subset of the guard bundle every other value
@@ -71,7 +72,10 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 
 	version, err := c.storage.GetLatestSecretVersion(ctx, secretID)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
+		if storage.IsSecretVersionNotFound(err) {
+			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
 	// Decrypt WITHOUT touching the max-reads counter — inspecting public certificate
@@ -84,7 +88,7 @@ func (c *KeyorixCore) InspectCertificate(ctx context.Context, actorID, secretID 
 
 	cert, err := parseLeafCertificate(value)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "secret value is not a parseable X.509 certificate")
+		return nil, storage.Typed(ErrCertificateUnparseable, fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), "secret value is not a parseable X.509 certificate"), err)
 	}
 
 	now := c.now()

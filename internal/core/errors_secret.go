@@ -95,3 +95,34 @@ func newOwnerLookupError(id uint, err error) error {
 	}
 	return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 }
+
+// ErrDependencyInvalid: a secret dependency request was rejected as invalid (a
+// self-edge, a target outside the project and environment, a duplicate, a cycle,
+// a folder as an endpoint). The handlers answer 400.
+var ErrDependencyInvalid = errors.New("secret dependency request is invalid")
+
+func errDependencyInvalidf(format string, a ...any) error {
+	return storage.Typed(ErrDependencyInvalid, fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), fmt.Sprintf(format, a...)), nil)
+}
+
+// ErrCertificateUnparseable: the secret's value is not a parseable X.509
+// certificate (InspectCertificate). The handler answers 400.
+var ErrCertificateUnparseable = errors.New("secret value is not a parseable X.509 certificate")
+
+// ErrVersionDiffInvalid: a version diff request was rejected as invalid (missing
+// secret, non-positive version numbers, identical versions). The handler answers 400.
+var ErrVersionDiffInvalid = errors.New("secret version diff request is invalid")
+
+func errVersionDiffInvalidf(format string, a ...any) error {
+	return storage.Typed(ErrVersionDiffInvalid, fmt.Sprintf("%s: %s", i18n.T("ErrorValidation", nil), fmt.Sprintf(format, a...)), nil)
+}
+
+// diffVersionLookupError wraps a failed GetSecretVersion of a diff endpoint: a
+// definitive miss keeps the version-not-found text and sentinel, anything else
+// (a storage failure) stays out of the not-found class.
+func diffVersionLookupError(err error) error {
+	if storage.IsSecretVersionNotFound(err) {
+		return fmt.Errorf("%s: %w", i18n.T("ErrorVersionNotFound", nil), err)
+	}
+	return err
+}

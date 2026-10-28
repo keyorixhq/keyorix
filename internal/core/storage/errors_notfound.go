@@ -25,6 +25,14 @@ var (
 	ErrAlertEscalationNotFound     = errors.New("alert escalation policy not found")
 	ErrRotationPolicyNotFound      = errors.New("rotation policy not found")
 
+	// ErrSecretDependencyNotFound: GetSecretDependency / DeleteSecretDependency
+	// matched no secret_dependencies row.
+	ErrSecretDependencyNotFound = errors.New("secret dependency not found")
+
+	// ErrVersionCommentNotFound: DeleteSecretVersionComment matched no comment of
+	// that secret and version.
+	ErrVersionCommentNotFound = errors.New("secret version comment not found")
+
 	// ErrRolePermissionNotAssigned: RemovePermissionFromRole matched no
 	// role_permissions row (the permission was not bundled into that role).
 	ErrRolePermissionNotAssigned = errors.New("permission not assigned to role")

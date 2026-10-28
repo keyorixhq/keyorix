@@ -6,12 +6,14 @@
 package handlers
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/server/middleware"
 )
 
@@ -41,11 +43,11 @@ func (h *SecretHandler) GetSecretCertificate(w http.ResponseWriter, r *http.Requ
 		msg := err.Error()
 		status := http.StatusInternalServerError
 		switch {
-		case strings.Contains(msg, "not found"):
+		case errors.Is(err, storage.ErrSecretNotFound), errors.Is(err, storage.ErrSecretVersionNotFound):
 			status = http.StatusNotFound
-		case strings.Contains(msg, "not a parseable"):
+		case errors.Is(err, core.ErrCertificateUnparseable):
 			status = http.StatusBadRequest
-		case strings.Contains(msg, "permission") || strings.Contains(msg, "not authorized"):
+		case errors.Is(err, core.ErrPermissionDenied):
 			status = http.StatusForbidden
 		default:
 			log.Printf("Error inspecting certificate for secret %d: %v", id, err)

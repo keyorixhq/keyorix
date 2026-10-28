@@ -98,7 +98,7 @@ type RotationOrder struct {
 // guardLastGlobalAdmin use.
 func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string, actorID, dependentID, dependsOnID uint, note string, createdByMachineID uint) (*models.SecretDependency, error) {
 	if dependentID == dependsOnID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "a secret cannot depend on itself")
+		return nil, errDependencyInvalidf("a secret cannot depend on itself")
 	}
 	dependent, err := c.requireSecret(ctx, dependentID)
 	if err != nil {
@@ -110,8 +110,11 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 	// existence-and-type oracle (probe arbitrary IDs by 404-vs-400). Collapse them into a
 	// single opaque error.
 	dependsOn, derr := c.requireSecret(ctx, dependsOnID)
+	if derr != nil && !errors.Is(derr, storage.ErrSecretNotFound) && !errors.Is(derr, ErrDependencyInvalid) {
+		return nil, derr // a storage failure is not "no such secret": do not answer it as a validation refusal
+	}
 	if derr != nil || dependsOn.ProjectID != dependent.ProjectID || dependsOn.EnvironmentID != dependent.EnvironmentID {
-		return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "the dependency target must be a secret in the same project and environment")
+		return nil, errDependencyInvalidf("the dependency target must be a secret in the same project and environment")
 	}
 	// #G32: same project+environment is NOT the same as "the caller is authorized on
 	// it" — a per-secret ACL grant on the dependent (path) secret does not extend to
@@ -147,9 +150,9 @@ func (c *KeyorixCore) AddSecretDependency(ctx context.Context, actorKind string,
 	if err != nil {
 		switch {
 		case errors.Is(err, storage.ErrDuplicateSecretDependency):
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this dependency already exists")
+			return nil, errDependencyInvalidf("this dependency already exists")
 		case errors.Is(err, storage.ErrSecretDependencyCycle):
-			return nil, fmt.Errorf("%s: %s", i18n.T("ErrorValidation", nil), "this dependency would create a cycle")
+			return nil, errDependencyInvalidf("this dependency would create a cycle")
 		default:
 			return nil, fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
 		}
@@ -233,7 +236,7 @@ func (c *KeyorixCore) RemoveSecretDependency(ctx context.Context, actorKind stri
 		return err
 	}
 	if edge.DependentSecretID != focalSecretID && edge.DependsOnSecretID != focalSecretID {
-		return fmt.Errorf("%s: dependency %d does not reference secret %d", i18n.T("ErrorNotFound", nil), edgeID, focalSecretID)
+		return storage.NotFound(storage.ErrSecretDependencyNotFound, fmt.Sprintf("%s: dependency %d does not reference secret %d", i18n.T("ErrorNotFound", nil), edgeID, focalSecretID), nil)
 	}
 	peerID := edge.DependentSecretID
 	if peerID == focalSecretID {
@@ -363,10 +366,13 @@ func (c *KeyorixCore) GetProjectRotationOrder(ctx context.Context, projectID uin
 func (c *KeyorixCore) requireSecret(ctx context.Context, id uint) (*models.SecretNode, error) {
 	node, err := c.storage.GetSecret(ctx, id)
 	if err != nil {
-		return nil, fmt.Errorf("%s: secret %d not found", i18n.T("ErrorNotFound", nil), id)
+		if storage.IsSecretNotFound(err) {
+			return nil, storage.NotFound(storage.ErrSecretNotFound, fmt.Sprintf("%s: secret %d not found", i18n.T("ErrorNotFound", nil), id), err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 	if !node.IsSecret {
-		return nil, fmt.Errorf("%s: %d is not a secret", i18n.T("ErrorValidation", nil), id)
+		return nil, errDependencyInvalidf("%d is not a secret", id)
 	}
 	return node, nil
 }

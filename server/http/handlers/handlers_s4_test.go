@@ -2586,12 +2586,15 @@ func TestInitCoreHandlers_HappyPath(t *testing.T) {
 
 // ── Secret dependency handlers ────────────────────────────────────────────────
 
-func TestDependencyErrorStatus_Messages(t *testing.T) {
-	assert.Equal(t, http.StatusNotFound, dependencyErrorStatus("secret not found"))
-	assert.Equal(t, http.StatusBadRequest, dependencyErrorStatus("cannot depend on itself"))
-	assert.Equal(t, http.StatusBadRequest, dependencyErrorStatus("cycle detected"))
-	assert.Equal(t, http.StatusForbidden, dependencyErrorStatus("permission denied"))
-	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus("some random error"))
+func TestDependencyErrorStatus_Kinds(t *testing.T) {
+	assert.Equal(t, http.StatusNotFound, dependencyErrorStatus(fmt.Errorf("x: %w", storage.ErrSecretNotFound)))
+	assert.Equal(t, http.StatusNotFound, dependencyErrorStatus(fmt.Errorf("x: %w", storage.ErrSecretDependencyNotFound)))
+	assert.Equal(t, http.StatusBadRequest, dependencyErrorStatus(fmt.Errorf("x: %w", core.ErrDependencyInvalid)))
+	assert.Equal(t, http.StatusForbidden, dependencyErrorStatus(fmt.Errorf("x: %w", core.ErrPermissionDenied)))
+	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus(errors.New("some random error")))
+	// Text that merely looks like a classified failure is not one.
+	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus(errors.New("secret not found")))
+	assert.Equal(t, http.StatusInternalServerError, dependencyErrorStatus(errors.New("cycle detected")))
 }
 
 func TestListSecretDependencies_Unauthorized(t *testing.T) {
