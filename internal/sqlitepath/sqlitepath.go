@@ -15,8 +15,10 @@ import (
 // ("file:/data/secrets.db", "file:///...", "file://localhost/...",
 // percent-encoded, with a query or fragment) resolves to the same path as its
 // plain spelling; a query (DSN parameters) is never part of the path. Only
-// the query marks a database in-memory ("mode=memory"; a directory named
-// "mode=memory" is a real directory), besides ":memory:" itself.
+// a "file:" URI's query marks a database in-memory ("mode=memory"; a directory
+// named "mode=memory" is a real directory), besides ":memory:" itself. The
+// driver (modernc.org/sqlite) drops a plain name's query before the open, so
+// "/data/secrets.db?mode=memory" is the real file /data/secrets.db.
 //
 // The one resolver for every file the server derives from that path: the
 // server lock sidecar here, and internal/storage's pre-created database file,
@@ -36,9 +38,17 @@ func DatabaseFile(dbPath string) (path string, isRealFile bool) {
 		if dec, err := url.PathUnescape(rest); err == nil {
 			rest = dec
 		}
-		base = rest
+		if rest == "" || rest == ":memory:" || strings.Contains(query, "mode=memory") {
+			return "", false
+		}
+		return rest, true
 	}
-	if base == "" || base == ":memory:" || strings.Contains(query, "mode=memory") {
+	// A plain name: the driver cuts the query only after the first byte
+	// (conn.go newConn, "pos >= 1"), so a leading "?" is part of the name.
+	if base == "" {
+		base = dbPath
+	}
+	if base == "" || base == ":memory:" {
 		return "", false
 	}
 	return base, true
@@ -59,8 +69,11 @@ func URISpellings(canonical string) []string {
 		"file:" + canonical + "#frag",
 		"file:" + filepath.Base(canonical),
 		"file:" + strings.ReplaceAll(canonical, " ", "%20"),
+		// A plain name's query is dropped before the open, "mode=memory"
+		// included: this is the real file, not an in-memory database.
+		canonical + "?_busy_timeout=5000&mode=memory",
 	}
 }
 
 // InMemorySpellings are database paths that name no file.
-var InMemorySpellings = []string{":memory:", "file::memory:", "file:x?mode=memory", "x.db?_busy_timeout=5000&mode=memory"}
+var InMemorySpellings = []string{":memory:", "file::memory:", "file:x?mode=memory", "file:x.db?_busy_timeout=5000&mode=memory"}
