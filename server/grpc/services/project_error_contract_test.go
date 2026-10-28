@@ -109,3 +109,17 @@ func TestSecretService_CreateSecret_BadTargetEnvironment_NotFound(t *testing.T) 
 		assert.Equal(t, "secret not found", status.Convert(err).Message(), name)
 	}
 }
+
+// REVFIX-3790-4: CreateSecret with a parent folder that does not exist. Core's
+// "parent folder N not found" refusal matches storage.ErrSecretNotFound, so the
+// typed mapper answers NotFound "secret not found", as the old text match did.
+func TestSecretService_CreateSecret_MissingParentFolder_NotFound(t *testing.T) {
+	r := newSecretTestRig(t)
+	ctx := authCtx(1, "writer", "secrets.write", "secrets.read")
+
+	_, err := r.svc.CreateSecret(ctx, &pb.CreateSecretRequest{
+		Name: "orphan", Value: "v", ProjectId: 1, EnvironmentId: 1, Type: "password", ParentId: ptrU32(999),
+	})
+	assert.Equal(t, codes.NotFound, status.Code(err), "%v", err)
+	assert.Equal(t, "secret not found", status.Convert(err).Message())
+}
