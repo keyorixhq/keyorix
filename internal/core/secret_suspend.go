@@ -369,8 +369,11 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 	// audit write that errors or panics rolls the status flip back. The row is
 	// written last, after every check that can still refuse the resume.
 	uid, sid := actorID, secretID
-	guarded := func(ctx context.Context) error {
+	guarded := func(ctx context.Context, fence txFence) error {
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			matched, terr := tx.TransitionSecretStatus(ctx, secret, fromStatus)
 			if terr != nil {
 				return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), terr)
@@ -398,7 +401,7 @@ func (c *KeyorixCore) ResumeSecret(ctx context.Context, secretID, actorID uint) 
 	if secret.EnvironmentID != 0 {
 		err = c.withEnvironmentSecretGuard(ctx, secret.EnvironmentID, guarded)
 	} else {
-		err = guarded(ctx)
+		err = guarded(ctx, noTxFence)
 	}
 	if errors.Is(err, errSecretResumeLostRace) {
 		// Lost the race: the row's persisted status moved away from fromStatus

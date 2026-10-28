@@ -21,12 +21,21 @@ import (
 	"github.com/keyorixhq/keyorix/internal/core/storage/storagetest"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	localstore "github.com/keyorixhq/keyorix/internal/storage/store"
+	"github.com/keyorixhq/keyorix/internal/testutil/pgdsn"
 )
 
-// overlapPGRun runs opA on a replica whose named locks are granted without
-// PostgreSQL (lost), and starts opB on a real replica when A's write
-// transaction reaches the storage call hooks names (through hookAt). It returns
-// both errors and whether B finished while A's transaction was still open.
+// overlapPGRun runs opA on a replica whose named locks are lost, and starts opB
+// on a real replica when A's write transaction reaches the storage call hooks
+// names (through hookAt). It returns both errors and whether B finished while
+// A's transaction was still open.
+//
+// The lost lock: A's WithNamedLock is the real one, but its lock sessions are
+// in another database (SetNamedLockDB on an isolated database; advisory locks
+// are per database), so they exclude nothing B takes. That is the state after a
+// real loss: A's call chain still runs as the holder (the store's re-entrancy
+// markers are set, so a nested acquisition of the same key inside A's section,
+// such as the storage-level RestoreSecret/DeleteEnvironment ones, passes
+// through), while B can take the key at once.
 func overlapPGRun(t *testing.T, dsn string, hookAt func(start func()) *storagetest.StoreHooks,
 	opA func(ctx context.Context, c *KeyorixCore) error, opB func(ctx context.Context, c *KeyorixCore) error,
 ) (errA, errB error, bFinishedEarly bool) {
@@ -52,10 +61,11 @@ func overlapPGRun(t *testing.T, dsn string, hookAt func(start func()) *storagete
 	}
 	hooks := hookAt(func() { once.Do(startB) })
 	hooks.WrapTx = true
-	hooks.WithNamedLock = func(_ storage.Storage, ctx context.Context, _ string, fn func(context.Context) error) error {
-		return fn(ctx) // the lost lock: A keeps running its section without holding the key
-	}
-	replicaA := NewKeyorixCore(storagetest.Hooked(localstore.NewLocalStorage(dbA), hooks))
+	lockDB, err := pgOpen(t, pgdsn.IsolatedDatabase(t, pgTestDSN(t), "overlap_lost_lock")).DB()
+	require.NoError(t, err)
+	storeA := localstore.NewLocalStorage(dbA)
+	storeA.SetNamedLockDB(lockDB)
+	replicaA := NewKeyorixCore(storagetest.Hooked(storeA, hooks))
 	errA = opA(context.Background(), replicaA)
 	select {
 	case <-bDone:

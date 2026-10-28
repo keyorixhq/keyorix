@@ -526,10 +526,12 @@ func (ls *LocalStorage) GetEnvironment(ctx context.Context, id uint) (*models.En
 // DIFFERENT goroutine already holding that same mutex while THIS call's own
 // enclosing transaction holds a DB write lock would deadlock the two
 // goroutines against each other until busy_timeout expires. core.DeleteEnvironment
-// (tagged caller) calls this on a transaction handle, but takes the SAME named lock
-// first, outside the transaction (the lock is re-entrant per ctx), so the lock is
-// never acquired from inside an open transaction. Any other in-transaction caller
-// must do the same.
+// calls this on a transaction handle, but takes the SAME named lock first, outside
+// the transaction (the lock is re-entrant per ctx), so the lock is never acquired
+// from inside an open transaction. Any other in-transaction caller must do the
+// same. (That transaction also takes the key with LockNamedKeyInTx before this
+// count, NAMEDLOCK-OVERLAP-2, so a create whose named lock was lost cannot commit
+// between the count and the delete.)
 func (ls *LocalStorage) DeleteEnvironment(ctx context.Context, id uint) error {
 	return ls.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(id), func(ctx context.Context) error {
 		var secretCount int64

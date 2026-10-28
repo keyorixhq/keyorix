@@ -93,7 +93,9 @@ func TestNamedLockOverlap_SecretDependency_LostLocksRace_Postgres(t *testing.T) 
 	dsn := newDependencyPGSchema(t)
 	lost := func(db *gorm.DB) *KeyorixCore {
 		return NewKeyorixCore(storagetest.Hooked(localstore.NewLocalStorage(db), &storagetest.StoreHooks{
-			WithNamedLock: func(_ storage.Storage, ctx context.Context, _ string, fn func(context.Context) error) error { return fn(ctx) },
+			WithNamedLock: func(_ storage.Storage, ctx context.Context, _ string, fn func(context.Context) error) error {
+				return fn(ctx)
+			},
 		}))
 	}
 	dbA, dbB, setupDB := pgOpen(t, dsn), pgOpen(t, dsn), pgOpen(t, dsn)

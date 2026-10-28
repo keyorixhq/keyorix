@@ -619,15 +619,32 @@ func (c *KeyorixCore) requireAuthorityToReinstateProjectRoles(ctx context.Contex
 // takes that same lock FIRST, outside the transaction (WithNamedLock is
 // re-entrant per ctx), so the lock is never acquired from inside an open
 // transaction, which storage.DeleteEnvironment forbids.
+//
+// NAMEDLOCK-OVERLAP-2: the count-then-delete runs in a transaction that first
+// takes the same key with LockNamedKeyInTx (txFence), as every create/restore
+// transaction under withEnvironmentSecretGuard/RestoreSecret does: a create on
+// another replica (this lock lost) either commits first and is counted, or
+// waits and then finds the environment gone.
 func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	actor, tagged := mutationAuditActorFromContext(ctx)
-	if !tagged {
-		return c.storage.DeleteEnvironment(ctx, id)
+	fence := func(ctx context.Context, tx storage.Storage) error {
+		return lockNamedKeysInTxOn(ctx, tx, storage.EnvironmentSecretGuardLockKey(id))
 	}
 	var settle func()
 	if err := c.storage.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(id), func(ctx context.Context) error {
+		if !tagged {
+			return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+				if err := fence(ctx, tx); err != nil {
+					return err
+				}
+				return tx.DeleteEnvironment(ctx, id)
+			})
+		}
 		var rerr error
 		settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			if err := tx.DeleteEnvironment(ctx, id); err != nil {
 				return err
 			}
@@ -640,7 +657,9 @@ func (c *KeyorixCore) DeleteEnvironment(ctx context.Context, id uint) error {
 	}
 	// After the secret-guard lock is released: an audit outage waits up to
 	// owedAuditWait here, which must not extend the lock hold.
-	settle()
+	if settle != nil {
+		settle()
+	}
 	return nil
 }
 

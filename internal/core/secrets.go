@@ -51,17 +51,35 @@ func isEnvironmentNotFoundErr(err error) bool {
 // GetEnvironment check uses, so the HTTP handler's not-found -> 422 mapping
 // still matches; any other failure (a real storage error, or fn's own
 // error) is wrapped with ErrorStorageFailed.
-func (c *KeyorixCore) withEnvironmentSecretGuard(ctx context.Context, environmentID uint, fn func(ctx context.Context) error) error {
+//
+// NAMEDLOCK-OVERLAP-2: fn must run the fence it is handed as the first
+// statement of its write transaction (txFence): it takes the same key with
+// LockNamedKeyInTx, which DeleteEnvironment's transaction also takes before it
+// counts, and re-runs the existence check through tx. A delete on another
+// replica (this lock lost) then either commits first, and this check refuses,
+// or waits for this write and counts the new row.
+func (c *KeyorixCore) withEnvironmentSecretGuard(ctx context.Context, environmentID uint, fn func(ctx context.Context, fence txFence) error) error {
 	var envGone bool
-	lockErr := c.storage.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(environmentID), func(ctx context.Context) error {
-		if _, err := c.storage.GetEnvironment(ctx, environmentID); err != nil {
+	check := func(ctx context.Context, st storage.Storage) error {
+		if _, err := st.GetEnvironment(ctx, environmentID); err != nil {
 			if !isEnvironmentNotFoundErr(err) {
 				return fmt.Errorf("failed to verify target environment %d: %w", environmentID, err)
 			}
 			envGone = true
 			return errSecretTargetInvalidf("environment %d not found", environmentID)
 		}
-		return fn(ctx)
+		return nil
+	}
+	lockErr := c.storage.WithNamedLock(ctx, storage.EnvironmentSecretGuardLockKey(environmentID), func(ctx context.Context) error {
+		if err := check(ctx, c.storage); err != nil {
+			return err
+		}
+		return fn(ctx, func(ctx context.Context, tx storage.Storage) error {
+			if err := lockNamedKeysInTxOn(ctx, tx, storage.EnvironmentSecretGuardLockKey(environmentID)); err != nil {
+				return err
+			}
+			return check(ctx, tx)
+		})
 	})
 	if lockErr != nil {
 		if envGone {
@@ -281,8 +299,11 @@ func (c *KeyorixCore) CreateSecret(ctx context.Context, req *CreateSecretRequest
 	// existence check INSIDE the lock, immediately before the transaction.
 	var createdSecret *models.SecretNode
 	sink := &auditForwardSink{}
-	if err := c.withEnvironmentSecretGuard(ctx, req.EnvironmentID, func(ctx context.Context) error {
+	if err := c.withEnvironmentSecretGuard(ctx, req.EnvironmentID, func(ctx context.Context, fence txFence) error {
 		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			var err error
 			createdSecret, err = tx.CreateSecret(ctx, secret, string(req.Value))
 			if err != nil {
@@ -905,6 +926,15 @@ func (c *KeyorixCore) RestoreSecret(ctx context.Context, actorID, id uint) error
 	sink := &auditForwardSink{}
 	restore := func(ctx context.Context) error {
 		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			// NAMEDLOCK-OVERLAP-2 (txFence): the environment's key first, as
+			// DeleteEnvironment's transaction takes it before it counts; the
+			// storage restore then re-checks the environment through tx
+			// (requireLiveEnvironment), after the key is held.
+			if secret.EnvironmentID != 0 {
+				if err := lockNamedKeysInTxOn(ctx, tx, storage.EnvironmentSecretGuardLockKey(secret.EnvironmentID)); err != nil {
+					return err
+				}
+			}
 			if err := tx.RestoreSecret(ctx, id); err != nil {
 				return err
 			}
@@ -1023,7 +1053,7 @@ func (c *KeyorixCore) CreateFolder(
 	// CreateSecret does -- same lock, same in-lock re-check, same reasoning;
 	// see CreateSecret's own doc comment on this pattern.
 	var created *models.SecretNode
-	if err := c.withEnvironmentSecretGuard(ctx, envID, func(ctx context.Context) error {
+	if err := c.withEnvironmentSecretGuard(ctx, envID, func(ctx context.Context, fence txFence) error {
 		// #2711: wrapped in a transaction purely so the project re-check below
 		// can share one with the insert — the insert alone needed none. Same
 		// write-then-check as CreateSecret above; see its comment for why the
@@ -1032,6 +1062,9 @@ func (c *KeyorixCore) CreateFolder(
 		// counts toward DeleteEnvironment's active-secret guard, and ends up
 		// live under a deleted project the same way).
 		return c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			var cerr error
 			created, cerr = tx.CreateSecret(ctx, node, "")
 			if cerr != nil {
