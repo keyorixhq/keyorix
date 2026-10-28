@@ -22,7 +22,8 @@ In: the `tpm` key provider. Optional PCR policy, an off-TPM recovery slot, a fai
 classified unseal, recovery and reseal commands, alerting, a swtpm-based test plan, and docs.
 
 Out: remote attestation (a separate R&D item, e.g. a Keylime comparison); signed or authorized PCR policies
-(PolicyAuthorize); TPM-backed audit signing; NV-index rollback counters; Windows TPM (TBS).
+(PolicyAuthorize; now proposed in ADR-117 Amendment A and
+[design/tpm-signed-pcr-policy.md](design/tpm-signed-pcr-policy.md)); TPM-backed audit signing; NV-index rollback counters; Windows TPM (TBS).
 Where they would plug in is noted in §12.
 
 ## 2. What main does, and what a throwaway prototype showed
@@ -259,7 +260,8 @@ obligations are in the ADR, section "Decisions (Andrei, 2026-10-23)".
 
 1. **Default `pcr_policy` for new TPM installs.** Decided: `secure-boot` when Secure Boot is on
    (init then requires the recovery code); otherwise `none` with a posture note. Existing installs
-   stay `none`.
+   stay `none`. Superseded by ADR-117 D10.5 (Amendment A, resolved 2026-10-28): `signed-uki` →
+   `pcrlock` → `secure-boot` → `none`.
 2. **Recovery slot without a PCR policy.** Decided: offered by default at init, skippable with
    `--no-recovery-slot` (it covers board loss, which `none` installs face too).
 3. **"Suspend for one reboot" before planned updates** (seal without policy for one boot, then
