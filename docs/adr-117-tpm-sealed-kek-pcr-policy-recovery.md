@@ -251,7 +251,7 @@ Proposed modes for `key_provider.tpm.pcr_policy`, in order of preference:
    PCR 11 — TPM-enforced, not a software check — and is only offered when Secure Boot is on; a
    host with a signed UKI but Secure Boot off does not get `signed-uki` (D10.5). This reintroduces
    the db/dbx recovery event on Secure Boot certificate changes, the same cost `secure-boot` mode
-   already carries, which Amendment A accepts to close the override path. `signed-uki+pcr7` is the
+   already carries, which Amendment A accepts to close the override path. `signed-uki` is the
    default, not deferred. The PCR 12 gap itself is closed by this Secure Boot condition rather than
    by binding PCR 12 directly (binding PCR 12 would break on every command-line change, including
    legitimate ones).
@@ -312,8 +312,9 @@ The full procedures are in the design note. The decisions:
    any update that touches firmware, Secure Boot variables, the boot loader or the kernel. Where
    the prediction says "will refuse", the operator either does the host-side step first
    (`pcrlock make-policy`, or a vendor UKI that carries a signature) or confirms that the
-   recovery code is at hand. The "suspend for one reboot" mode stays out (Decision 5). A reseal
-   **after** the update and reboot is the only Keyorix step, and it uses the recovery code.
+   recovery code is at hand. The "suspend for one reboot" mode stays out (Decision 5). Running
+   `admin encryption tpm recover` with the recovery code **after** the update and reboot is the
+   only Keyorix step.
 2. **Unplanned refusal.** The server refuses to start. It prints the class and, for
    `boot-state-changed`, the PCR diff or the missing signature. It exits non-zero and increments
    the metric if the listener came up (D5, D6). The operator then: (a) treats the refusal as a
@@ -361,7 +362,7 @@ Keyorix makes one of three statements about host integrity, and no others:
 |---|---|---|
 | "A copied data directory does not unseal on another TPM (without the recovery code)." | **Allowed now** | `TestTPMBinding_BlobCopiedToOtherHostDoesNotUnseal` (reference TPM). Add "hardware validation pending" until the D8 lab runs |
 | "Keyorix never falls back to a weaker key provider silently." | **Allowed now** | `TestNewKeyProviderFromConfig_WeakFallback_RejectedWithoutOptIn`, `…_RuntimeAuditEvent` |
-| "Keyorix refuses to start when the measured boot state is not one its policy accepts, and says why." | Only in future tense ("designed to") until PR A merges | The D5/D10 tests named in the design note §8, green on main |
+| "Keyorix refuses to start when the measured boot state is not one its policy accepts, and says why." | Only in future tense ("designed to") until PR A merges | D5 tests in design §8, green on main; D10 tests to be added with the signed modes |
 | "Kernel updates do not need a Keyorix step under a signed policy." | Future tense until built; never for raw PCR modes | `signed-uki` tests plus one lab run on a signed-UKI host |
 | "Recovery after a board or TPM loss uses an offline code, and its use is an audited event." | Future tense until PR B merges | `TestTPMRecovery_*`, `TestTPMRecoveryAudit_EventAndStickyPosture` |
 | "Sealing to a TPM with a recovery key is established practice; Keyorix applies it to an application KEK with audited recovery." | **Allowed** (it is the "New vs state of the art" wording) | This ADR |
