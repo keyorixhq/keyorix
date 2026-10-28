@@ -5,7 +5,6 @@ package handlers
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/keyorixhq/keyorix/server/middleware"
@@ -29,9 +28,9 @@ func (h *SecretHandler) ListAccessors(w http.ResponseWriter, r *http.Request) {
 	result, err := h.coreService.ListSecretAccessors(r.Context(), uint(id), userCtx.UserID)
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case isSecretNotFound(err):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
+		case isPermissionRefusal(err):
 			h.sendError(w, "Forbidden", "Not authorized to view this secret's access", http.StatusForbidden, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to list accessors", http.StatusInternalServerError, nil)

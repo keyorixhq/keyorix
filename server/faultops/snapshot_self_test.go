@@ -14,7 +14,7 @@ func newSnapshotTestDB(t *testing.T) *gorm.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(models.AllTestModels()...); err != nil {
+	if err := db.AutoMigrate(worldModels()...); err != nil {
 		t.Fatal(err)
 	}
 	return db

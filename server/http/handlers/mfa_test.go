@@ -16,6 +16,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -26,27 +27,60 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
-// captureLogBuf redirects the standard logger to a buffer for the duration of
-// the test and restores it on cleanup.
-func captureLogBuf(t *testing.T) *bytes.Buffer {
+// syncBuffer is a bytes.Buffer safe for concurrent use. The standard logger is
+// process-global, so a goroutine an EARLIER test left behind (the last-used
+// coalescer's timer flush logs through log.Printf) can write while the current
+// test reads; a bare bytes.Buffer made `go test -race` fail in the merge queue.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func (b *syncBuffer) Bytes() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]byte(nil), b.buf.Bytes()...)
+}
+
+func (b *syncBuffer) Reset() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.buf.Reset()
+}
+
+// captureLogBuf redirects the standard logger to a synchronized buffer for the
+// duration of the test and restores it on cleanup.
+func captureLogBuf(t *testing.T) *syncBuffer {
 	t.Helper()
-	var buf bytes.Buffer
+	buf := &syncBuffer{}
 	origOutput := log.Writer()
 	origFlags := log.Flags()
-	log.SetOutput(&buf)
+	log.SetOutput(buf)
 	log.SetFlags(0)
 	t.Cleanup(func() {
 		log.SetOutput(origOutput)
 		log.SetFlags(origFlags)
 	})
-	return &buf
+	return buf
 }
 
 // assertNoRawDBLeak checks BOTH halves of the fix: the client-facing response
 // body must never contain the raw SQLite driver error text ("no such table",
 // the dropped table's name), and the original error must still have reached
 // the server-side log for operators to debug.
-func assertNoRawDBLeak(t *testing.T, w *httptest.ResponseRecorder, logBuf *bytes.Buffer, droppedTable string) {
+func assertNoRawDBLeak(t *testing.T, w *httptest.ResponseRecorder, logBuf *syncBuffer, droppedTable string) {
 	t.Helper()
 	body := w.Body.String()
 	assert.NotContains(t, body, "no such table")

@@ -16,7 +16,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -94,16 +93,7 @@ func forceReadOnly(t *testing.T, db *gorm.DB) {
 // the test and returns a function to read what was written.
 func captureLog(t *testing.T) func() string {
 	t.Helper()
-	var buf bytes.Buffer
-	origOutput := log.Writer()
-	origFlags := log.Flags()
-	log.SetOutput(&buf)
-	log.SetFlags(0)
-	t.Cleanup(func() {
-		log.SetOutput(origOutput)
-		log.SetFlags(origFlags)
-	})
-	return buf.String
+	return captureLogBuf(t).String
 }
 
 func assertSanitizedInternalError(t *testing.T, w *httptest.ResponseRecorder, rawErr error, logs func() string) {

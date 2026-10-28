@@ -18,6 +18,9 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
 // RotationDryRunRequest identifies which secret to simulate rotation for.
@@ -49,7 +52,10 @@ type DryRunCheck struct {
 func (c *KeyorixCore) SimulateRotation(ctx context.Context, req RotationDryRunRequest) (*RotationDryRunResult, error) {
 	secret, err := c.storage.GetSecret(ctx, req.SecretID)
 	if err != nil {
-		return nil, fmt.Errorf("secret not found: %w", err)
+		if storage.IsSecretNotFound(err) {
+			return nil, fmt.Errorf("secret not found: %w", err)
+		}
+		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
 	}
 
 	res := &RotationDryRunResult{

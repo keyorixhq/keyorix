@@ -159,7 +159,7 @@ func TestLookup_FollowsSymlink(t *testing.T) {
 }
 
 func TestLookup_TooLarge_Refuses(t *testing.T) {
-	t.Setenv(testVar+"_FILE", writeSecret(t, strings.Repeat("a", maxSecretFileSize+1), 0o600))
+	t.Setenv(testVar+"_FILE", writeSecret(t, strings.Repeat("a", MaxSecretFileSize+1), 0o600))
 	_, _, err := Lookup(testVar)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "too large")

@@ -509,7 +509,17 @@ func (c *KeyorixCore) ListMFAResetRequests(ctx context.Context, actorID uint, ac
 // reset. Best effort, after the commit: a missed notice is a detection gap, never
 // a reason to fail a committed step, and it is logged.
 func (c *KeyorixCore) notifyMFAResetAdmins(ctx context.Context, title, msg string) {
-	ids, err := c.globalAdminIDs(ctx)
+	// The admin lookup is storage work too: a panic in it (the transport's recovery
+	// would turn it into a 500 for a step that already committed, and for an
+	// approval lose the one-time password) is logged like an error, not propagated.
+	ids, err := func() (ids []uint, err error) {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("panic: %v", r)
+			}
+		}()
+		return c.globalAdminIDs(ctx)
+	}()
 	if err != nil {
 		log.Printf("SECURITY: MFA reset notification: could not list the admins (%v); %q was not delivered", err, title)
 	}

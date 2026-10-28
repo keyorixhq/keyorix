@@ -27,7 +27,7 @@ func (h *SecretHandler) GetBlastRadius(w http.ResponseWriter, r *http.Request) {
 	}
 	report, err := h.coreService.GetBlastRadius(r.Context(), userCtx.ActorKind(), userCtx.PrincipalID(), uint(id))
 	if err != nil {
-		status := dependencyErrorStatus(err.Error())
+		status := dependencyErrorStatus(err)
 		msg := err.Error()
 		if status == http.StatusInternalServerError {
 			log.Printf("Error getting blast radius for secret %d: %v", id, err)

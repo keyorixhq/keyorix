@@ -6,12 +6,9 @@
 package handlers
 
 import (
-	"bytes"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -60,9 +57,7 @@ func TestCompleteSAML_TraversalLimit(t *testing.T) {
 		req := withChiParam(httptest.NewRequest(http.MethodPost, "/auth/saml/corp/acs", strings.NewReader(body)), "provider", "corp")
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
-		var buf bytes.Buffer
-		log.SetOutput(&buf)
-		defer log.SetOutput(os.Stderr)
+		buf := captureLogBuf(t)
 		require.NotPanics(t, func() { h.CompleteSAML(w, req) })
 		return w, buf.String()
 	}

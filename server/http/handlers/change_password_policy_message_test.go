@@ -12,8 +12,6 @@
 package handlers
 
 import (
-	"bytes"
-	"log"
 	"net/http"
 	"testing"
 
@@ -30,13 +28,9 @@ const (
 )
 
 // captureLog collects the standard logger's output for the test.
-func captureChangePasswordLog(t *testing.T) *bytes.Buffer {
+func captureChangePasswordLog(t *testing.T) *syncBuffer {
 	t.Helper()
-	var buf bytes.Buffer
-	prev := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(prev) })
-	return &buf
+	return captureLogBuf(t)
 }
 
 func requireNoPasswordMaterial(t *testing.T, where, text string, secrets ...string) {

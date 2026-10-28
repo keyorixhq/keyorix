@@ -4,7 +4,6 @@ package handlers
 import (
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -85,9 +84,9 @@ func (h *SecretHandler) AccessHistory(w http.ResponseWriter, r *http.Request) {
 	logs, err := h.coreService.ListSecretAccessHistory(r.Context(), uint(id), userCtx.UserID, since)
 	if err != nil {
 		switch {
-		case strings.Contains(err.Error(), "not found"):
+		case isSecretNotFound(err):
 			h.sendError(w, "NotFound", "Secret not found", http.StatusNotFound, nil)
-		case strings.Contains(err.Error(), "permission") || strings.Contains(err.Error(), "not authorized"):
+		case isPermissionRefusal(err):
 			h.sendError(w, "Forbidden", "Not authorized to view this secret's access log", http.StatusForbidden, nil)
 		default:
 			h.sendError(w, "InternalError", "Failed to list access history", http.StatusInternalServerError, nil)

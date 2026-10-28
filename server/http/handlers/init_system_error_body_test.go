@@ -1,9 +1,7 @@
 package handlers
 
 import (
-	"bytes"
 	"errors"
-	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -37,9 +35,7 @@ func TestInitSystem_ServerFaultReturnsStandardBodyAndLogsDetail(t *testing.T) {
 	})
 	h := NewAuthHandler(core.NewKeyorixCore(faulty), false)
 
-	var logs bytes.Buffer
-	log.SetOutput(&logs)
-	t.Cleanup(func() { log.SetOutput(log.Writer()) })
+	logs := captureLogBuf(t)
 
 	body := `{"username":"admin","email":"admin@example.com","password":"Admin1234!"}`
 	req := httptest.NewRequest(http.MethodPost, "/system/init", strings.NewReader(body))

@@ -358,7 +358,7 @@ func TestSCIM_ServiceProviderConfig(t *testing.T) {
 // field, not {message}, so this checks that key instead. Both halves of the
 // G50 fix still apply: no raw driver text in the response, but the original
 // error still reaches the server-side log for operators.
-func assertSCIMNoRawDBLeak(t *testing.T, w *httptest.ResponseRecorder, logBuf *bytes.Buffer, droppedTable string) {
+func assertSCIMNoRawDBLeak(t *testing.T, w *httptest.ResponseRecorder, logBuf *syncBuffer, droppedTable string) {
 	t.Helper()
 	body := w.Body.String()
 	assert.NotContains(t, body, "no such table")

@@ -159,7 +159,9 @@ func readPassphraseFile(path string) ([]byte, error) {
 		return nil, fmt.Errorf("--passphrase-file %q: %w", path, err)
 	}
 
-	data, err := io.ReadAll(f)
+	// The X_FILE size rule (1 MiB, SECRETENV-TAILS-2 F11): a mis-pointed path to a
+	// large regular file (a log, a disk image) is refused, not read into memory.
+	data, err := secretenv.ReadCapped(f, info)
 	if err != nil {
 		return nil, fmt.Errorf("reading --passphrase-file %q: %w", path, err)
 	}

@@ -195,8 +195,13 @@ func parseDurationDefault(raw string, def time.Duration) time.Duration {
 // the operator intended. The accessors that call this return a bare string, so
 // the error itself is reported by Config.ValidateSecretSources, which
 // Config.Validate runs at startup; the server refuses to boot on it.
+//
+// A *_FILE secret is answered from secretSnapshot, read once by Load from the
+// descriptor whose permissions EnforceSecretFilePermissions judges, so every
+// accessor call and every boot check sees the same bytes (SECRETENV-REVIEW-1
+// F5/F6).
 func resolveSecret(envVar, fallback string) string {
-	v, found, err := secretenv.Lookup(envVar)
+	v, found, err := secretSnapshot.Lookup(envVar)
 	if err != nil {
 		return ""
 	}
@@ -272,7 +277,7 @@ func (c *Config) secretEnvNames() []string {
 func (c *Config) ValidateSecretSources() error {
 	var problems []string
 	for _, n := range c.secretEnvNames() {
-		if _, _, err := secretenv.Lookup(n); err != nil {
+		if _, _, err := secretSnapshot.Lookup(n); err != nil {
 			problems = append(problems, err.Error())
 		}
 	}
@@ -324,40 +329,7 @@ func (c *Config) SecretFilePaths() []string {
 // when the upgrade grace turned a refusal into a warning, so the caller can
 // avoid recording that boot as "enforced".
 func (c *Config) EnforceSecretFilePermissions() (graceSoftened bool, err error) {
-	keyMaterial := map[string]bool{} // the key-material secrets, by variable name
-	for _, n := range c.keyMaterialSecretEnvNames() {
-		keyMaterial[n] = true
-	}
-	// Each file is named by the variable or config key it came from, through
-	// secretenv.DescribeFile (CheckPermissionsNamed): a relative path is never
-	// shown, it may be the secret itself (SECRETENV-REVIEW-1 F4).
-	var problems, keyProblems []string
-	seen := map[string]bool{}
-	for _, fv := range secretenv.FileVars(c.secretEnvNames()...) {
-		if seen[fv.Path] {
-			continue
-		}
-		seen[fv.Path] = true
-		if err := secretenv.CheckPermissionsNamed(fv.Var(), fv.Path); err != nil {
-			if keyMaterial[fv.Name] {
-				keyProblems = append(keyProblems, err.Error())
-				continue
-			}
-			problems = append(problems, err.Error())
-		}
-	}
-	for _, m := range []struct{ key, path string }{
-		{"server.http.metrics_token_file", c.Server.HTTP.MetricsTokenFile},
-		{"server.grpc.metrics_token_file", c.Server.GRPC.MetricsTokenFile},
-	} {
-		if m.path == "" || seen[m.path] {
-			continue
-		}
-		seen[m.path] = true
-		if err := secretenv.CheckPermissionsNamed(m.key, m.path); err != nil {
-			problems = append(problems, err.Error())
-		}
-	}
+	problems, keyProblems := c.SecretFilePermissionProblems()
 	if len(problems)+len(keyProblems) == 0 {
 		return false, nil
 	}
@@ -552,6 +524,7 @@ func Load(path string) (*Config, error) {
 	}
 	cfg.DeprecatedSettingWarnings = deprecatedWarnings
 
+	cfg.snapshotSecrets()
 	return &cfg, nil
 }
 

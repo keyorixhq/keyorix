@@ -1,0 +1,4 @@
+### Fixed
+
+- The secret suspend, resume, ownership-transfer, ownership-history, bulk-reassign-owner and template-render routes now answer from the kind of failure (`errors.Is` on a sentinel) instead of matching the translated error text. Under a non-English locale a real 404, 403 or 400 on these routes is no longer a 500, a storage failure while reading the secret, the new owner or a referenced secret's latest version is a 5xx instead of a 404, and an unrelated error that says "permission denied" is no longer a 403. Error texts are unchanged (ERRLOSS-SENTINELS-1).
+- Copying a secret whose source is suspended, has used all its reads or is outside its access schedule now answers that refusal's status and stable code (409/409/403) instead of a 500. The "environment not found" refusal of a copy names the environment instead of echoing the storage error.
