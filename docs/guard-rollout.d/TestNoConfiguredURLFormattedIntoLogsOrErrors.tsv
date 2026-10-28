@@ -1,0 +1,1 @@
+TestNoConfiguredURLFormattedIntoLogsOrErrors	internal/urlleakguard	#3762	new repo-wide guard (REDACT-URLS-1), report-only until its first green nightly on main

@@ -67,6 +67,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 const (
@@ -357,7 +359,7 @@ func validateAPIServerHost(host string) error {
 // bounce the bearer-token-bearing request to an internal host (e.g. cloud IMDS)
 // at request time (CWE-918).
 func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	return fmt.Errorf("kubernetes: refusing to follow redirect to %q", req.URL)
+	return fmt.Errorf("kubernetes: refusing to follow redirect to %q", netutil.RedactURLHost(req.URL.String()))
 }
 
 // drainAndClose discards any unread response body before closing it, so the

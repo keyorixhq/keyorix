@@ -93,7 +93,7 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 		}).DialContext
 	}
 	if cfg.InsecureSkipVerify {
-		log.Printf("WARNING: evidencesink webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", cfg.Endpoint)
+		log.Printf("WARNING: evidencesink webhook %q has TLS verification disabled (insecure_skip_verify); do not use in production", netutil.RedactURLHost(cfg.Endpoint))
 		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} // #nosec G402 -- NOSONAR go:S4830 go:S5527: InsecureSkipVerify is an explicit operator opt-in, guarded by config flag and WARNING log
 	}
 	return &Webhook{cfg: cfg, client: &http.Client{Timeout: webhookTimeout, Transport: transport, CheckRedirect: refuseRedirect}, baseBackoff: baseBackoff}, nil
@@ -116,21 +116,22 @@ func newWebhook(cfg WebhookConfig, baseBackoff time.Duration) (*Webhook, error) 
 func validateEndpoint(raw string, allowPrivateNetwork, allowInsecureTransport bool) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("evidencesink: invalid endpoint %q: %w", raw, err)
+		// url.Parse returns a *url.Error that quotes the full raw URL; keep only its cause.
+		return fmt.Errorf("evidencesink: invalid endpoint %q: %w", netutil.RedactURLHost(raw), netutil.RedactErrorURLs(err))
 	}
 	switch u.Scheme {
 	case "https":
 		// scheme OK; fall through to the destination-IP check
 	case "http":
 		if !allowInsecureTransport && !isLoopbackHost(u.Hostname()) {
-			return fmt.Errorf("evidencesink: endpoint %q must use https (set evidence_delivery.webhook.insecure_allow_plaintext_evidence_transport only for a trusted internal or loopback target)", raw)
+			return fmt.Errorf("evidencesink: endpoint %q must use https (set evidence_delivery.webhook.insecure_allow_plaintext_evidence_transport only for a trusted internal or loopback target)", netutil.RedactURLHost(raw))
 		}
 	default:
-		return fmt.Errorf("evidencesink: endpoint %q must use https", raw)
+		return fmt.Errorf("evidencesink: endpoint %q must use https", netutil.RedactURLHost(raw))
 	}
 	if !allowPrivateNetwork {
 		if err := refuseDisallowedHost(u.Hostname()); err != nil {
-			return fmt.Errorf("evidencesink: endpoint %q %w", raw, err)
+			return fmt.Errorf("evidencesink: endpoint %q %w", netutil.RedactURLHost(raw), err)
 		}
 	}
 	return nil
@@ -235,7 +236,7 @@ func (w *Webhook) ForwardEvidence(ctx context.Context, name string, data []byte,
 func (w *Webhook) post(ctx context.Context, name string, data []byte, signature string) (retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, w.cfg.Endpoint, bytes.NewReader(data))
 	if err != nil {
-		return false, err
+		return false, netutil.RedactErrorURLs(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	if name != "" {
@@ -249,7 +250,7 @@ func (w *Webhook) post(ctx context.Context, name string, data []byte, signature 
 	}
 	resp, err := w.client.Do(req)
 	if err != nil {
-		return true, err // transport / timeout — transient
+		return true, netutil.RedactErrorURLs(err) // transport / timeout — transient; strips the *url.Error that quotes the endpoint
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {

@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/k8ssync"
+	"github.com/keyorixhq/keyorix/internal/netutil"
 	"github.com/keyorixhq/keyorix/internal/secretenv"
 )
 
@@ -155,7 +156,7 @@ func runAgent(cfg *k8ssync.Config, fetcher k8ssync.Fetcher, sink k8ssync.Sink, o
 			mode = " (dry-run)"
 		}
 		log.Printf("k8s-sync: one-shot reconcile of %d mapping(s) from %s%s",
-			len(cfg.Mappings), cfg.KeyorixURL, mode)
+			len(cfg.Mappings), netutil.RedactURLHost(cfg.KeyorixURL), mode)
 		res := k8ssync.Sync(ctx, engine, cfg.Mappings, log.Printf)
 		if res.Failed > 0 {
 			return 1
@@ -182,7 +183,7 @@ func runAgent(cfg *k8ssync.Config, fetcher k8ssync.Fetcher, sink k8ssync.Sink, o
 		loopMode = " (dry-run)"
 	}
 	log.Printf("k8s-sync: syncing %d mapping(s) from %s every %s (health :%d)%s",
-		len(cfg.Mappings), cfg.KeyorixURL, cfg.GetInterval(), cfg.GetHealthPort(), loopMode)
+		len(cfg.Mappings), netutil.RedactURLHost(cfg.KeyorixURL), cfg.GetInterval(), cfg.GetHealthPort(), loopMode)
 	k8ssync.Run(ctx, engine, cfg.Mappings, cfg.GetInterval(), log.Printf, status)
 	log.Println("k8s-sync: stopped")
 	return 0

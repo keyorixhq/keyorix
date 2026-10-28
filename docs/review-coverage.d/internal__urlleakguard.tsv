@@ -1,0 +1,1 @@
+internal/urlleakguard	none	-	REDACT-URLS-1: test-only package (doc.go + urlleakguard_test.go) holding the repo-wide source-scanning guard that no log call or error constructor formats a configured endpoint, URL or DSN verbatim; no production code, no importers; what the guard does and does not recognise is stated in its test file header	test-helper

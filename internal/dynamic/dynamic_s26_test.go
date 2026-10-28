@@ -103,7 +103,9 @@ func TestRefuseRedirect(t *testing.T) {
 	err = refuseRedirect(req, nil)
 	require.Error(t, err, "the TokenRequest/Secret client must never follow a redirect (CWE-918)")
 	assert.Contains(t, err.Error(), "refusing to follow redirect")
-	assert.Contains(t, err.Error(), req.URL.String())
+	// The redirect target is server-controlled: the error names scheme+host only.
+	assert.Contains(t, err.Error(), "https://10.0.0.1")
+	assert.NotContains(t, err.Error(), "/api/v1/secrets")
 }
 
 // ─────────────────────────── kubernetes.go: newRealK8sMinter host validation ──

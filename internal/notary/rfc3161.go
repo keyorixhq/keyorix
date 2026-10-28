@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/digitorus/timestamp"
+
+	"github.com/keyorixhq/keyorix/internal/netutil"
 )
 
 // defaultTimeout bounds the round-trip to the timestamp authority.
@@ -50,10 +52,13 @@ func NewRFC3161(url string, timeout time.Duration) (*RFC3161, error) {
 // request to an internal host (e.g. cloud IMDS) even though the configured URL
 // itself was fine at setup time (CWE-918).
 func refuseRedirect(req *http.Request, _ []*http.Request) error {
-	return fmt.Errorf("rfc3161: refusing to follow redirect to %q", req.URL)
+	return fmt.Errorf("rfc3161: refusing to follow redirect to %q", netutil.RedactURLHost(req.URL.String()))
 }
 
-func (r *RFC3161) Provider() string { return "rfc3161:" + r.url }
+// Provider names the TSA as scheme://host only: the value is persisted as
+// audit_checkpoints.anchor_provider and served by the audit APIs and export,
+// and the configured URL can carry userinfo, a path token or a ?key= query.
+func (r *RFC3161) Provider() string { return "rfc3161:" + netutil.RedactURLHost(r.url) }
 
 // validateTSAURL checks that the configured TSA URL is a well-formed absolute
 // URL using https. Plaintext http is accepted ONLY to a loopback host
@@ -70,13 +75,14 @@ func (r *RFC3161) Provider() string { return "rfc3161:" + r.url }
 func validateTSAURL(raw string) error {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return fmt.Errorf("rfc3161: invalid url %q: %w", raw, err)
+		// url.Parse returns a *url.Error that quotes the full raw URL; keep only its cause.
+		return fmt.Errorf("rfc3161: invalid url %q: %w", netutil.RedactURLHost(raw), netutil.RedactErrorURLs(err))
 	}
 	if u.Host == "" {
-		return fmt.Errorf("rfc3161: url %q is missing a host", raw)
+		return fmt.Errorf("rfc3161: url %q is missing a host", netutil.RedactURLHost(raw))
 	}
 	if u.Scheme != "https" && !(u.Scheme == "http" && isLoopbackHost(u.Hostname())) {
-		return fmt.Errorf("rfc3161: url %q must use https (http is allowed only for a loopback host, for local testing)", raw)
+		return fmt.Errorf("rfc3161: url %q must use https (http is allowed only for a loopback host, for local testing)", netutil.RedactURLHost(raw))
 	}
 	return nil
 }
@@ -128,11 +134,11 @@ func (r *RFC3161) Anchor(ctx context.Context, message []byte) (_ *Receipt, err e
 
 	resp, err := r.client.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("rfc3161: post to %s: %w", r.url, err)
+		return nil, fmt.Errorf("rfc3161: post to %s: %w", netutil.RedactURLHost(r.url), netutil.RedactErrorURLs(err))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("rfc3161: %s returned HTTP %d", r.url, resp.StatusCode)
+		return nil, fmt.Errorf("rfc3161: %s returned HTTP %d", netutil.RedactURLHost(r.url), resp.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
