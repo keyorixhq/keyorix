@@ -19,6 +19,7 @@ import (
 	"runtime/debug"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -76,9 +77,14 @@ func (c *KeyorixCore) StartImpersonation(ctx context.Context, adminID, targetID 
 	}
 	target, err := c.storage.GetUser(ctx, targetID)
 	if err != nil {
+		if !storage.IsUserNotFound(err) {
+			// A storage failure is not "no such user": the handler maps this to 5xx,
+			// not a 404 the admin would read as a wrong id.
+			return nil, nil, fmt.Errorf("target user lookup failed: %w", err)
+		}
 		c.writeImpersonationDeniedEvent(ctx, adminID, &targetID, ip,
 			fmt.Sprintf("%s attempted to impersonate user %d, but the target was not found", admin.Username, targetID))
-		return nil, nil, fmt.Errorf("target user not found")
+		return nil, nil, storage.NotFound(storage.ErrUserNotFound, "target user not found", err)
 	}
 	// Don't mint a session for a target who cannot log in: it would be dead on arrival
 	// (ValidateSessionToken rejects blocked/inactive accounts on every request) and would

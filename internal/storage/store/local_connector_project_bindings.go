@@ -22,7 +22,7 @@ func (ls *LocalStorage) GetConnectorProjectBinding(ctx context.Context, connecto
 	var binding models.ConnectorProjectBinding
 	if err := ls.db.WithContext(ctx).Where("connector = ?", connector).First(&binding).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%w", storage.ErrConnectorBindingNotFound)
+			return nil, storage.NotFound(storage.ErrConnectorBindingNotFound, storage.ErrConnectorBindingNotFound.Error(), err)
 		}
 		return nil, fmt.Errorf("failed to get connector project binding: %w", err)
 	}
