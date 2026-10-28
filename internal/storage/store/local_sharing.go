@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 	"gorm.io/gorm"
@@ -154,7 +155,7 @@ func (ls *LocalStorage) GetShareRecord(ctx context.Context, shareID uint) (*mode
 	var share models.ShareRecord
 	if err := ls.db.First(&share, shareID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorShareNotFound", nil))
+			return nil, storage.NotFound(storage.ErrShareNotFound, i18n.T("ErrorShareNotFound", nil), err)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -180,7 +181,7 @@ func (ls *LocalStorage) LockShareRecordForUpdate(ctx context.Context, shareID ui
 	var share models.ShareRecord
 	if err := q.First(&share, shareID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("%s", i18n.T("ErrorShareNotFound", nil))
+			return nil, storage.NotFound(storage.ErrShareNotFound, i18n.T("ErrorShareNotFound", nil), err)
 		}
 		return nil, fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}
@@ -455,7 +456,7 @@ func (ls *LocalStorage) CheckSharePermission(ctx context.Context, secretID, user
 	var secret models.SecretNode
 	if err := ls.db.First(&secret, secretID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return "", fmt.Errorf("%s", i18n.T("ErrorSecretNotFound", nil))
+			return "", storage.NotFound(storage.ErrSecretNotFound, i18n.T("ErrorSecretNotFound", nil), err)
 		}
 		return "", fmt.Errorf("%s: %w", i18n.T("ErrorDatabaseOperation", nil), err)
 	}

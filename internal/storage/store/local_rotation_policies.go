@@ -27,7 +27,7 @@ func (ls *LocalStorage) GetRotationPolicy(ctx context.Context, id uint) (*models
 	var policy models.RotationPolicy
 	if err := ls.db.WithContext(ctx).First(&policy, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("rotation policy not found")
+			return nil, fmt.Errorf("%w", storage.ErrRotationPolicyNotFound)
 		}
 		return nil, fmt.Errorf("failed to get rotation policy: %w", err)
 	}
@@ -88,7 +88,7 @@ func (ls *LocalStorage) GetRotationPolicyBySecret(ctx context.Context, secretID 
 	var secret models.SecretNode
 	if err := ls.db.WithContext(ctx).First(&secret, secretID).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, fmt.Errorf("secret not found")
+			return nil, fmt.Errorf("%w", storage.ErrSecretNotFound)
 		}
 		return nil, fmt.Errorf("GetRotationPolicyBySecret: secret lookup: %w", err)
 	}
@@ -102,7 +102,7 @@ func (ls *LocalStorage) GetRotationPolicyBySecret(ctx context.Context, secretID 
 		Order("CASE scope WHEN 'environment' THEN 0 ELSE 1 END").
 		First(&policy).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, fmt.Errorf("rotation policy not found")
+		return nil, fmt.Errorf("%w", storage.ErrRotationPolicyNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("GetRotationPolicyBySecret: policy lookup: %w", err)
