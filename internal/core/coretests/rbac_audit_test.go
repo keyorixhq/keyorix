@@ -26,6 +26,9 @@ func newRBACAuditCore(t *testing.T) (*core.KeyorixCore, *gorm.DB) {
 		// same transaction — see role_permission_cache.go.
 		&models.RolePermission{}, &models.SystemMetadata{}, &models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SoDPolicy{},
+		// A grant transaction row-locks its user first (NAMEDLOCK-OVERLAP-2
+		// fence); the table must exist, the row need not.
+		&models.User{},
 	))
 	// The roles and the {project 3, environment 7} scope these tests grant at
 	// must exist: the #3546 role-scope check resolves both before a grant.
@@ -139,7 +142,7 @@ func TestRBACAuditTrail_GroupRole(t *testing.T) {
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Group{}, &models.Role{}, &models.GroupRole{}, &models.SoDPolicy{},
 		&models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
-		&models.Project{}, &models.Environment{}, &models.UserGroup{},
+		&models.Project{}, &models.Environment{}, &models.UserGroup{}, &models.User{},
 	))
 	require.NoError(t, db.Create(&models.Group{ID: 7, Name: "platform"}).Error)
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
@@ -170,7 +173,7 @@ func TestRBACAuditTrail_PermissionToRole(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(
 		&models.AuditEvent{}, &models.Role{}, &models.Permission{}, &models.RolePermission{}, &models.SystemMetadata{}, &models.UserRole{},
-		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{},
+		&models.Group{}, &models.UserGroup{}, &models.GroupRole{}, &models.Project{}, &models.Environment{}, &models.User{},
 	))
 	require.NoError(t, db.Create(&models.Role{ID: 2, Name: "editor"}).Error)
 	require.NoError(t, db.Create(&models.Permission{ID: 8, Name: "secrets.write", Resource: "secrets", Action: "write"}).Error)
