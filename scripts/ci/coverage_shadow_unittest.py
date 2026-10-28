@@ -495,6 +495,19 @@ class DeclarationRefinement(unittest.TestCase):
         return self.classify(lines, tree={DECLS_FILE: self.BODY_GO}, blocks=self.BODY_BLOCKS if blocks is None else blocks,
                              closure=self.LINKED, deletion=lines, **kw)
 
+    def test_legacy_verdict_is_the_old_rules_on_the_same_profile(self):
+        # a cut with no block of its own: old rules KEEP (undetermined), new rules SKIPPABLE
+        ranges = [(16, 17, True)]
+        prof = {DECLS_FILE: self.BODY_BLOCKS}
+        old = cs.match_file(ranges, self.BODY_BLOCKS, cs.ignorable_lines(self.BODY_GO))
+        self.assertEqual(cs.verdict_from_match({DECLS_FILE: old}), ("KEEP", "undetermined-lines"))
+        self.assertEqual(self.cut([16, 17])[2], ("SKIPPABLE", "uncovered"))
+        # run-level rules demote the logged legacy verdict exactly like the real one
+        rec = {"verdict": "SKIPPABLE", "basis": "uncovered", "tests": {"skip": 1}, "legacy": {"verdict": "SKIPPABLE", "basis": "uncovered"}}
+        cs.apply_run_level_rules(rec, "d", set(), set(), True)
+        cs.legacy_after_run_level(rec, "d", set(), set(), True)
+        self.assertEqual((rec["verdict"], rec["legacy"]["verdict"], rec["legacy"]["basis"]), ("KEEP", "KEEP", "tests-skipped"))
+
     def test_cut_inside_a_function_that_ran_is_covered(self):
         res, notes, verdict = self.cut([7, 8])
         self.assertEqual((res["covered"], notes, verdict), ([7, 8], {"cut-in-function": [8]}, ("KEEP", "covered")))

@@ -474,7 +474,7 @@ class DeclEval:
         return "undetermined", None
 
 
-def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, relaxed=False):
+def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, relaxed=False, legacy=False):
     """Move provable lines out of match_file's `undetermined`.
 
     flags: expand(ranges) ({line: pure-deletion?}); blocks: the file's profile
@@ -490,7 +490,7 @@ def refine_file(path, res, flags, blocks, info, linked, compiled, decl_eval, rel
     notes, keep = {}, []
     for ln in res["undetermined"]:
         status = reason = None
-        if compiled and flags.get(ln) is True:
+        if compiled and flags.get(ln) is True and not legacy:
             # A pure-deletion marker. Only a cut strictly inside one function body
             # is refined (declrefs says "funcbody" for the lines of such a body, not
             # for its `{` / `}` lines): what was removed could only have run if
@@ -718,7 +718,7 @@ def parse_duration_s(text):
 
 
 def measure_dependent(run, go_bin, dependent, coverpkg, changes, ignorable_by_file, test_timeout, module=MODULE, grace=120,
-                      refine=None, env_extra=None):
+                      refine=None, env_extra=None, legacy_ignorable_by_file=None):
     """Decision record fields for one dependent (without the run-level rules).
 
     refine(dependent, path, per_file_result, ranges, profile, relaxed) ->
@@ -762,6 +762,12 @@ def measure_dependent(run, go_bin, dependent, coverpkg, changes, ignorable_by_fi
             f: {k: to_ranges(v) for k, v in m.items() if v} for f, m in per_file.items()})
         if refined:
             rec["refined"] = refined
+        if legacy_ignorable_by_file is not None:
+            # the verdict the CI-SELECT-2-2 rules would have given on this same profile
+            old = match_all(changes, prof, legacy_ignorable_by_file)
+            if refine:
+                old = {f: refine(dependent, f, m, changes[f], prof, False, True)[0] for f, m in old.items()}
+            rec["legacy"] = dict(zip(("verdict", "basis"), verdict_from_match(old)))
         if relaxed_file and verdict == "KEEP" and basis == "undetermined-lines" and verdict_from_match(relaxed_file)[0] == "SKIPPABLE":
             rec["verdict_if_uncovered_refs_ok"] = "SKIPPABLE"  # what-if only; see DeclEval
         return rec
@@ -793,6 +799,16 @@ def apply_run_level_rules(rec, dependent, tainted, spawns, tree_ok):
     if reason:
         rec["coverage_verdict"] = "SKIPPABLE"
         rec["verdict"], rec["basis"] = "KEEP", reason
+    return rec
+
+
+def legacy_after_run_level(rec, dependent, tainted, spawns, tree_ok):
+    """Apply the same run-level rules to rec["legacy"], so it is comparable with the verdict."""
+    old = rec.get("legacy")
+    if old and old["verdict"] == "SKIPPABLE":
+        got = apply_run_level_rules({"verdict": "SKIPPABLE", "basis": old["basis"], "tests": rec.get("tests", {})},
+                                    dependent, tainted, spawns, tree_ok)
+        rec["legacy"] = {"verdict": got["verdict"], "basis": got["basis"]}
     return rec
 
 
@@ -895,7 +911,7 @@ def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here, gene
     def owning(path):
         return owning_package(path, dir_to_pkg)
 
-    def refine(dep, f, res, ranges, profile, relaxed):
+    def refine(dep, f, res, ranges, profile, relaxed, legacy=False):
         if dep not in closures:
             closures[dep] = test_closure(variants, dep)
         closure = closures[dep]
@@ -904,7 +920,7 @@ def build_refiner(args, run, sa, packages, repo, changes, dir_to_pkg, here, gene
         # generated code (accessors, registries) gets no static reasoning: it is treated like a
         # file that is not compiled here, so its undetermined lines stay undetermined
         return refine_file(f, res, expand(ranges), profile.get(f, []), info.get(f), linked,
-                           compiled[f] and f not in generated, ev, relaxed)
+                           compiled[f] and f not in generated, ev, relaxed, legacy)
 
     return refine
 
@@ -937,7 +953,7 @@ def shadow(args, out, run):
     dir_to_pkg = package_dirs(packages, repo)
 
     all_ranges, noignore = apply_removed(all_ranges, hunk_removed(diff_go))
-    changes, coverpkg, ignorable_by_file, generated = {}, set(), {}, []
+    changes, coverpkg, ignorable_by_file, generated, legacy_ignorable = {}, set(), {}, [], {}
     for f, rngs in all_ranges.items():
         if f.endswith("_test.go"):
             continue
@@ -953,6 +969,7 @@ def shadow(args, out, run):
             src = ""
         ign = ignorable_lines(src)
         ignorable_by_file[f] = ign - withheld_lines(noignore.get(f, []), ign)
+        legacy_ignorable[f] = ign - withheld_lines([(a, b, True) for a, b, _ in noignore.get(f, [])], ign)
         if "Code generated" in src[:600] and "DO NOT EDIT" in src[:600]:
             generated.append(f)
     deleted_files = [f for f in deleted_files if not f.endswith("_test.go")]
@@ -991,8 +1008,10 @@ def shadow(args, out, run):
             rec = {"verdict": "KEEP", "basis": "no-go-change" if sa else "lever-a-helpers-unavailable"}
         else:
             rec = apply_run_level_rules(measure_dependent(run, args.go, dep, sorted(coverpkg), changes, ignorable_by_file, args.test_timeout,
-                                                          refine=refine, env_extra=dsn_env(dsn_map, dep)),
+                                                          refine=refine, env_extra=dsn_env(dsn_map, dep),
+                                                          legacy_ignorable_by_file=legacy_ignorable),
                                         dep, tainted, spawns, tree_ok)
+            legacy_after_run_level(rec, dep, tainted, spawns, tree_ok)
         out.emit({"type": "decision", **ident, "dependent": dep, **rec})
         key = f"{rec['verdict']}/{rec['basis']}"
         counts[key] = counts.get(key, 0) + 1
