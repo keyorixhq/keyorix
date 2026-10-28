@@ -10,8 +10,10 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -49,6 +51,10 @@ func TestLocalStorage_NotFoundSentinels(t *testing.T) {
 			func(ls *LocalStorage) error { _, err := ls.GetAlertEscalationPolicy(ctx, 1); return err }},
 		{"rotation policy", []any{&models.RotationPolicy{}}, storage.ErrRotationPolicyNotFound,
 			func(ls *LocalStorage) error { _, err := ls.GetRotationPolicy(ctx, 1); return err }},
+		{"share permission check (secret missing)", []any{&models.SecretNode{}}, storage.ErrSecretNotFound,
+			func(ls *LocalStorage) error { _, err := ls.CheckSharePermission(ctx, 1, 1, time.Now()); return err }},
+		{"rotation policy by secret (secret missing)", []any{&models.SecretNode{}, &models.RotationPolicy{}}, storage.ErrSecretNotFound,
+			func(ls *LocalStorage) error { _, err := ls.GetRotationPolicyBySecret(ctx, 1); return err }},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -66,4 +72,19 @@ func TestLocalStorage_NotFoundSentinels(t *testing.T) {
 				"a non-not-found driver error must NOT match %v; got %v", c.sentinel, derr)
 		})
 	}
+}
+
+// GetRotationPolicyBySecret has two not-found branches: the secret row is
+// missing (ErrSecretNotFound, covered in the table above) and the secret
+// exists but no active policy covers it (ErrRotationPolicyNotFound). Both keep
+// the gorm cause, like every other typed not-found.
+func TestGetRotationPolicyBySecret_NoPolicyIsRotationPolicyNotFound(t *testing.T) {
+	t.Parallel()
+	ls := newPartialSecretsDB(t, &models.SecretNode{}, &models.RotationPolicy{})
+	require.NoError(t, ls.db.Create(&models.SecretNode{}).Error)
+
+	_, err := ls.GetRotationPolicyBySecret(context.Background(), 1)
+	require.Error(t, err)
+	require.True(t, errors.Is(fmt.Errorf("handler: %w", err), storage.ErrRotationPolicyNotFound), "got %v", err)
+	require.True(t, errors.Is(err, gorm.ErrRecordNotFound), "the gorm cause must stay in the chain; got %v", err)
 }
