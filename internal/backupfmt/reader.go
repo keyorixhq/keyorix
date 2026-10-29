@@ -116,7 +116,7 @@ func ExtractArchive(r io.Reader, stagingDir string, maxEntryBytes, maxTotalBytes
 		}
 		if declaredSize < 0 || declaredSize > maxEntryBytes {
 			return Manifest{}, fmt.Errorf(
-				"archive manifest declares %q at %d bytes, exceeding the %d-byte per-entry limit", hdr.Name, declaredSize, maxEntryBytes)
+				"archive manifest declares %q at %d bytes, exceeding the %d-byte per-entry limit (a large table is legitimate: raise it with `admin restore --max-entry-bytes`)", hdr.Name, declaredSize, maxEntryBytes)
 		}
 		// Streamed to the staged file with a running hash: a table's NDJSON is as
 		// large as the table (gigabytes at scale), so it must never be held whole.
@@ -180,9 +180,9 @@ func readCapped(tr *tar.Reader, limit, maxTotalBytes int64, totalRead *int64, na
 	}
 	if int64(len(data)) > effLimit {
 		if effLimit < limit {
-			return nil, fmt.Errorf("archive exceeds the %d-byte total decompressed size limit", maxTotalBytes)
+			return nil, fmt.Errorf("archive exceeds the %d-byte total decompressed size limit (a large database is legitimate: raise it with `admin restore --max-total-bytes`)", maxTotalBytes)
 		}
-		return nil, fmt.Errorf("archive entry %q exceeds the %d-byte per-entry size limit", name, limit)
+		return nil, fmt.Errorf("archive entry %q exceeds the %d-byte per-entry size limit (raise it with `admin restore --max-entry-bytes`)", name, limit)
 	}
 	*totalRead += int64(len(data))
 	return data, nil
@@ -230,9 +230,9 @@ func stageStreamCapped(tr *tar.Reader, stagingDir, name string, limit, maxTotalB
 	}
 	if probed > 0 {
 		if effLimit < limit {
-			return n, "", fmt.Errorf("archive exceeds the %d-byte total decompressed size limit", maxTotalBytes)
+			return n, "", fmt.Errorf("archive exceeds the %d-byte total decompressed size limit (a large database is legitimate: raise it with `admin restore --max-total-bytes`)", maxTotalBytes)
 		}
-		return n, "", fmt.Errorf("archive entry %q exceeds the %d-byte per-entry size limit", name, limit)
+		return n, "", fmt.Errorf("archive entry %q exceeds the %d-byte per-entry size limit (raise it with `admin restore --max-entry-bytes`)", name, limit)
 	}
 	*totalRead += n
 	return n, hex.EncodeToString(h.Sum(nil)), nil
