@@ -8,6 +8,7 @@
 //	migratecheck table-sums  --config keyorix.yaml [--audit-max-id N] [--strict]
 //	migratecheck meta        --config keyorix.yaml --key schema_epoch
 //	migratecheck rows        --config keyorix.yaml --key <table> [--audit-max-id N]   (the canonical rows, for diffing)
+//	migratecheck count       --config keyorix.yaml --key <table>   (row count; fails if the table does not exist)
 //	migratecheck epoch                      (this binary's schema epoch)
 //	migratecheck audit-tail  --config keyorix.yaml --after N   (event_type of audit rows with id > N)
 //	migratecheck reset-pg    --config keyorix.yaml   (DROP SCHEMA public CASCADE + recreate: the
@@ -91,7 +92,7 @@ func main() {
 	ageDays := fs.Int("age-days", 0, "seed-audit: age of the events in days")
 	tag := fs.String("tag", "seed", "seed-audit: description tag")
 	restamp := fs.Int("restamp-head", 0, "seed-audit: re-date the first K existing audit rows to just before the seeded ones and re-chain")
-	key := fs.String("key", "", "meta: system_metadata key to print")
+	key := fs.String("key", "", "meta: system_metadata key to print; rows/count: table name")
 	after := fs.Uint("after", 0, "audit-tail: print audit rows with id > N")
 	fs.BoolVar(&strict, "strict", false, "table-sums/rows: also compare the values a restore deliberately does not carry over")
 	auditMax := fs.Uint("audit-max-id", 0, "table-sums: only audit_events with id <= N (0 = all)")
@@ -120,6 +121,17 @@ func main() {
 		for _, l := range tableRows(gdb, *key, *auditMax) {
 			fmt.Println(strings.ReplaceAll(l, "\x1f", " | "))
 		}
+	case "count":
+		gdb, err := storage.OpenGormDB(cfg)
+		if err != nil {
+			fatalf("open db: %v", err)
+		}
+		var n int64
+		// *key is a table name from the harness, never request content
+		if err := gdb.Table(*key).Count(&n).Error; err != nil {
+			fatalf("count %s: %v", *key, err)
+		}
+		fmt.Println(n)
 	case "audit-tail":
 		gdb, err := storage.OpenGormDB(cfg)
 		if err != nil {

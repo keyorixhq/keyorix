@@ -6,7 +6,7 @@
 // available with the same flags on Linux. Like scripts/migrate/migratecheck it is a
 // fixture tool, not part of any shipped binary (the //go:build ignore tag).
 //
-//	rssrun --stats FILE --log FILE [--kill TERM|KILL --when PATTERN [--after-ms N]] -- cmd args...
+//	rssrun --stats FILE --log FILE [--kill TERM|KILL [--when PATTERN] [--after-ms N]] -- cmd args...
 //
 // The command's stdout and stderr go to --log. FILE receives one JSON line:
 // {"exit":N,"signal":"","wall_s":1.23,"maxrss_kb":12345,"killed":false}. Peak RSS is
@@ -14,6 +14,8 @@
 // macOS, kilobytes on Linux; normalised to KB here). With --kill, rssrun polls the
 // log and sends the signal to the command (its own PID, so the harness never uses
 // the shared `kill`) as soon as PATTERN appears in it, optionally --after-ms later.
+// Without --when the signal goes --after-ms after the command started (for a command
+// that prints nothing until it is done, like `admin backup`).
 // The exit status is the command's, or 99 when it ended by the injected signal.
 package main
 
@@ -25,6 +27,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -34,7 +37,7 @@ func main() {
 	logPath := flag.String("log", "", "file for the command's stdout+stderr")
 	killSig := flag.String("kill", "", "TERM or KILL: signal to send when --when appears in the log")
 	when := flag.String("when", "", "log substring that triggers --kill")
-	afterMS := flag.Int("after-ms", 0, "delay between the pattern and the signal")
+	afterMS := flag.Int("after-ms", 0, "delay between the pattern and the signal (or, without --when, after the start)")
 	flag.Parse()
 	if *stats == "" || *logPath == "" || flag.NArg() == 0 {
 		fmt.Fprintln(os.Stderr, "usage: rssrun --stats FILE --log FILE [--kill TERM|KILL --when PATTERN [--after-ms N]] -- cmd args...")
@@ -51,8 +54,8 @@ func main() {
 		fmt.Fprintln(os.Stderr, "rssrun: --kill must be TERM or KILL")
 		os.Exit(2)
 	}
-	if sig != 0 && *when == "" {
-		fmt.Fprintln(os.Stderr, "rssrun: --kill needs --when")
+	if sig != 0 && *when == "" && *afterMS <= 0 {
+		fmt.Fprintln(os.Stderr, "rssrun: --kill needs --when or --after-ms")
 		os.Exit(2)
 	}
 	logf, err := os.Create(*logPath)
@@ -68,7 +71,7 @@ func main() {
 		os.Exit(2)
 	}
 	done := make(chan struct{})
-	var killed bool
+	var killed atomic.Bool
 	if sig != 0 {
 		go func() {
 			needle := []byte(*when)
@@ -78,9 +81,17 @@ func main() {
 					return
 				case <-time.After(10 * time.Millisecond):
 				}
+				if *when == "" {
+					if time.Since(start) < time.Duration(*afterMS)*time.Millisecond {
+						continue
+					}
+					killed.Store(true)
+					_ = cmd.Process.Signal(sig)
+					return
+				}
 				if data, err := os.ReadFile(*logPath); err == nil && bytes.Contains(data, needle) {
 					time.Sleep(time.Duration(*afterMS) * time.Millisecond)
-					killed = true
+					killed.Store(true)
 					_ = cmd.Process.Signal(sig)
 					return
 				}
@@ -90,7 +101,7 @@ func main() {
 	werr := cmd.Wait()
 	close(done)
 	wall := time.Since(start)
-	res := map[string]any{"wall_s": float64(wall.Milliseconds()) / 1000, "killed": killed, "exit": 0, "signal": ""}
+	res := map[string]any{"wall_s": float64(wall.Milliseconds()) / 1000, "killed": killed.Load(), "exit": 0, "signal": ""}
 	if ru, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage); ok {
 		kb := int64(ru.Maxrss)
 		if runtime.GOOS == "darwin" {
