@@ -165,6 +165,9 @@ type Result struct {
 	// stateEventID is the newest in-chain row saying a verification state row
 	// exists (its marker, or a discontinuity the server recorded); 0 = none.
 	stateEventID uint64
+	// retentionAnchorRowID is the retention anchor's RowID when the anchor
+	// authenticated under the checkpoint key; 0 otherwise.
+	retentionAnchorRowID uint64
 	// activeTransition is the authenticated record for the current key epoch,
 	// set by checkKeyTransitions; nil when there is none.
 	activeTransition *KeyTransition
@@ -271,6 +274,7 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 			if len(opts.CheckpointKey) > 0 && a.SigMatches(opts.CheckpointKey) {
 				anchor = &RetentionAnchor{RowID: a.RowID, PrevHash: a.PrevHash, EntryHash: a.EntryHash, PurgedEvents: a.PurgedEvents}
 				anchorAuthenticated = true
+				result.retentionAnchorRowID = a.RowID
 				// Only an authenticated count is ever credited (#3257).
 				result.PurgedEvents = a.PurgedEvents
 			}

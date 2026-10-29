@@ -79,6 +79,20 @@ func TestReviewAV_VerifyStateRow_OfflineAgreesWithServer(t *testing.T) {
 				f.exec("DELETE FROM audit_events WHERE id > 12")
 				f.eraseLocalCheckpointState()
 			}},
+		// REVIEW-3810-DEEP-1: the same cut, then the tail regrown past the
+		// head the row claims, so claimedThrough no longer exceeds the head.
+		// The head row the row certified is gone or rewritten (head-gone rule).
+		{name: "tail cut, checkpoints and mark erased, state row kept, regrown past its head", wantBroken: true, reason: "the server's authentic audit verification state certified",
+			tamper: func(f *diffFixture) {
+				f.exec("DELETE FROM audit_events WHERE id > 12")
+				f.eraseLocalCheckpointState()
+				f.logEvents(14, 0)
+			}},
+		{name: "rows below the certified head rewritten and re-chained, checkpoints and mark erased", wantBroken: true, reason: "was rewritten",
+			tamper: func(f *diffFixture) {
+				f.eraseLocalCheckpointState()
+				f.rewriteAndRechainFrom(5)
+			}},
 		{name: "state row deleted", wantBroken: true, reason: "state row is missing",
 			tamper: func(f *diffFixture) {
 				f.exec("DELETE FROM system_metadata WHERE key = 'audit_verification_state'")
@@ -114,6 +128,33 @@ func TestReviewAV_VerifyStateRow_OfflineAgreesWithServer(t *testing.T) {
 			assert.Contains(t, got.Reason, tc.reason)
 		})
 	}
+}
+
+// rewriteAndRechainFrom alters the description of audit event #from and
+// recomputes prev_hash/entry_hash of it and every later row, as a DB-write
+// actor would (the chain hash is unkeyed): the walk stays clean and the ids
+// stay put, only the hashes change.
+func (f *diffFixture) rewriteAndRechainFrom(from uint64) {
+	f.t.Helper()
+	rows, err := f.openIndependent().StreamAuditEvents(f.ctx, 0, 10_000)
+	require.NoError(f.t, err)
+	prev := auditverify.GenesisHash
+	rewrote := false
+	for _, e := range rows {
+		if e.ID < from {
+			prev = e.EntryHash
+			continue
+		}
+		if e.ID == from {
+			e.Description += " (rewritten)"
+			rewrote = true
+		}
+		e.PrevHash, e.EntryHash = prev, auditverify.ComputeEntryHash(e, prev)
+		f.exec(`UPDATE audit_events SET description = ?, prev_hash = ?, entry_hash = ? WHERE id = ?`,
+			e.Description, e.PrevHash, e.EntryHash, e.ID)
+		prev = e.EntryHash
+	}
+	require.True(f.t, rewrote, "test bug: no audit event #%d", from)
 }
 
 // A discontinuity the server already recorded in the row stays BROKEN offline

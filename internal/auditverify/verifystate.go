@@ -13,10 +13,11 @@ import (
 
 // The server's signed audit verification state row (AUDIT-VERIFY-STATE-1,
 // internal/core/audit_verify_state.go). Online, a row that is deleted while the
-// chain says one exists, fails its signature, claims rows past the chain head
-// or carries a discontinuity is a sticky BROKEN. This is an independent
-// reimplementation of those four rules over the fields they read; the rest of
-// the row (pin, failure, cycle bookkeeping) is not checked here.
+// chain says one exists, fails its signature, claims rows past the chain head,
+// certified a head row that is now missing or rewritten, or carries a
+// discontinuity is a sticky BROKEN. This is an independent reimplementation of
+// those five rules over the fields they read; the rest of the row (failure,
+// seal count, cycle bookkeeping) is not checked here.
 const (
 	auditVerifyStateKey                = "audit_verification_state"
 	auditVerifyStateMarkerEvent        = "system.audit_verification_state_initialized"
@@ -28,10 +29,13 @@ const (
 type verifyStateRow struct {
 	AuditHead uint64 `json:"audit_head"`
 	Pin       *struct {
-		HeadID uint64 `json:"head_id"`
+		HeadID   uint64 `json:"head_id"`
+		HeadHash string `json:"head_hash"`
 	} `json:"pin"`
 	LastCheck *struct {
 		ThroughID uint64 `json:"through_id"`
+		Valid     bool   `json:"valid"`
+		HeadHash  string `json:"head_hash"`
 	} `json:"last_check"`
 	LastFull *struct {
 		ThroughID uint64 `json:"through_id"`
@@ -136,7 +140,45 @@ func checkVerifyState(ctx context.Context, db *DB, opts Options, result *Result)
 		result.escalate(VerdictBroken, fmt.Sprintf(
 			"the server's authentic audit verification state covers audit event #%d, but the chain ends at #%d: "+
 				"rows it verified were removed", claimed, head))
+		return nil
 	}
+	return checkVerifyStateHead(ctx, db, &row, result)
+}
+
+// checkVerifyStateHead is internal/core's auditVerifyStateHeadGone: the head
+// row the authentic row certified (its pin, or for a row saved before pins its
+// last valid tail check) must still exist with that hash, unless the
+// authenticated retention anchor is past it (a sanctioned purge removed it).
+// Ids are never reused, so after the tail was cut and regrown past the claimed
+// head, or rows below it were rewritten and re-chained, this is what still
+// shows the gap.
+func checkVerifyStateHead(ctx context.Context, db *DB, row *verifyStateRow, result *Result) error {
+	var id uint64
+	var hash string
+	switch {
+	case row.Pin != nil && row.Pin.HeadID != 0:
+		id, hash = row.Pin.HeadID, row.Pin.HeadHash
+	case row.LastCheck != nil && row.LastCheck.Valid && row.LastCheck.ThroughID != 0:
+		id, hash = row.LastCheck.ThroughID, row.LastCheck.HeadHash
+	default:
+		return nil
+	}
+	got, found, err := db.AuditEntryHashByID(ctx, id)
+	switch {
+	case err != nil:
+		return err
+	case found && got == hash:
+		return nil
+	case found:
+		result.escalate(VerdictBroken, fmt.Sprintf(
+			"audit event #%d, the head the server's authentic audit verification state certified, was rewritten", id))
+		return nil
+	case id < result.retentionAnchorRowID:
+		return nil // removed by a sanctioned (authenticated) retention purge
+	}
+	result.escalate(VerdictBroken, fmt.Sprintf(
+		"audit event #%d, the head the server's authentic audit verification state certified, is missing: "+
+			"rows it verified were removed", id))
 	return nil
 }
 
