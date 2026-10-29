@@ -2,16 +2,20 @@ package admin
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/keyorixhq/keyorix/internal/core"
+	"github.com/keyorixhq/keyorix/internal/crypto"
 	"github.com/keyorixhq/keyorix/internal/encryption"
 	"github.com/keyorixhq/keyorix/internal/i18n"
+	"github.com/keyorixhq/keyorix/internal/restorejournal"
 	"github.com/keyorixhq/keyorix/internal/storage"
 )
 
@@ -38,23 +42,129 @@ const (
 // family arrives, and the webhook URL ends up encrypted under the restored
 // keys with no plaintext left in the legacy column.
 func TestAdminRestore_V0953Archive(t *testing.T) {
-	t.Run("SQLite", func(t *testing.T) {
-		runV0953ArchiveRestore(t, func(dir string) string {
-			return fmt.Sprintf("  type: local\n  database:\n    path: %s\n", filepath.Join(dir, "secrets.db"))
+	for _, in := range v0953PassphraseInputs {
+		t.Run("SQLite/"+in.name, func(t *testing.T) {
+			runV0953ArchiveRestore(t, in.set, func(dir string) string {
+				return fmt.Sprintf("  type: local\n  database:\n    path: %s\n", filepath.Join(dir, "secrets.db"))
+			})
 		})
-	})
-	t.Run("Postgres", func(t *testing.T) {
-		base := pgAdminTestDSN(t)
-		runV0953ArchiveRestore(t, func(string) string {
-			return fmt.Sprintf("  type: postgres\n  database:\n    dsn: %q\n", pgAdminIsolatedDatabaseDSN(t, base))
+		t.Run("Postgres/"+in.name, func(t *testing.T) {
+			base := pgAdminTestDSN(t)
+			runV0953ArchiveRestore(t, in.set, func(string) string {
+				return fmt.Sprintf("  type: postgres\n  database:\n    dsn: %q\n", pgAdminIsolatedDatabaseDSN(t, base))
+			})
 		})
-	})
+	}
 }
 
-func runV0953ArchiveRestore(t *testing.T, storageBlock func(dir string) string) {
+// v0953PassphraseInputs are the documented ways to hand restore the master
+// passphrase. A piped --passphrase-stdin and --passphrase-fd can be read only
+// once (EOF, closed fd): REVIEW-3807-DEEP-2 found the URL backfill reading the
+// source a second time after the commit, so a restore given either failed
+// after it had committed and left the webhook URL in plaintext.
+var v0953PassphraseInputs = []struct {
+	name string
+	set  func(t *testing.T)
+}{
+	{"env", func(t *testing.T) { t.Setenv("KEYORIX_MASTER_PASSWORD", v0953FixturePassphrase) }},
+	{"stdin-pipe", func(t *testing.T) {
+		r := v0953PassphrasePipe(t)
+		oldStdin := os.Stdin
+		os.Stdin = r
+		t.Cleanup(func() { os.Stdin = oldStdin; _ = r.Close() })
+		setRestorePassphraseSource(t, crypto.PassphraseSource{Stdin: true})
+	}},
+	{"passphrase-fd", func(t *testing.T) {
+		r := v0953PassphrasePipe(t)
+		// The reader closes the fd it is given, like a real inherited fd: hand it
+		// a duplicate so r's own Close cannot close a reused descriptor number.
+		fd, err := syscall.Dup(int(r.Fd()))
+		require.NoError(t, err)
+		require.NoError(t, r.Close())
+		setRestorePassphraseSource(t, crypto.PassphraseSource{FD: fd, FDSet: true})
+	}},
+}
+
+// v0953PassphrasePipe returns the read end of a pipe that holds the fixture
+// passphrase and nothing more (its write end is closed).
+func v0953PassphrasePipe(t *testing.T) *os.File {
+	t.Helper()
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	_, err = w.WriteString(v0953FixturePassphrase + "\n")
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return r
+}
+
+func setRestorePassphraseSource(t *testing.T, src crypto.PassphraseSource) {
+	t.Helper()
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "") // only the one-shot source may supply it
+	old := restorePassphraseSource
+	restorePassphraseSource = src
+	t.Cleanup(func() { restorePassphraseSource = old })
+}
+
+func runV0953ArchiveRestore(t *testing.T, setPassphrase func(*testing.T), storageBlock func(dir string) string) {
+	setupV0953ArchiveRestore(t, storageBlock)
+	setPassphrase(t)
+
+	out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })
+	require.NoError(t, err, "restore output:\n%s", out)
+	require.Contains(t, out, "verify-audit on the restored database: VALID")
+	require.NotContains(t, out, "could not derive the audit-checkpoint key",
+		"the automatic verify-audit must get the same passphrase the restore was given")
+	requireV0953ArchiveRestored(t, out)
+}
+
+// TestAdminRestore_V0953Archive_URLEncryptionFailureIsRecoverable: the URL
+// encryption runs before the restore journal is removed, so when it fails
+// (here: --recover given the wrong passphrase) the journal stays, the server
+// stays refused and the next --recover finishes it. Before that ordering the
+// journal was already gone: the command failed, a later --recover had nothing
+// to do, and the plaintext URL stayed in the database.
+func TestAdminRestore_V0953Archive_URLEncryptionFailureIsRecoverable(t *testing.T) {
+	setupV0953ArchiveRestore(t, func(dir string) string {
+		return fmt.Sprintf("  type: local\n  database:\n    path: %s\n", filepath.Join(dir, "secrets.db"))
+	})
+	t.Setenv("KEYORIX_MASTER_PASSWORD", v0953FixturePassphrase)
+	orig := restoreStepHook
+	t.Cleanup(func() { restoreStepHook = orig })
+	restoreStepHook = func(step string) error {
+		if step == "installed-1" {
+			return errors.New("injected failure after the commit")
+		}
+		return nil
+	}
+	out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })
+	require.Error(t, err, "output:\n%s", out)
+	restoreStepHook = orig
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	restoreRecover = true
+	t.Cleanup(func() { restoreRecover = false })
+	t.Setenv("KEYORIX_MASTER_PASSWORD", "not-the-v0953-fixture-passphrase")
+	out, err = captureStdout(t, func() error { return runAdminRestore(nil, nil) })
+	require.Error(t, err, "output:\n%s", out)
+	require.Contains(t, err.Error(), "encrypting the notification channel URLs")
+	require.Contains(t, err.Error(), "admin restore --recover")
+	require.Error(t, restorejournal.RefuseIfPresent(cfg), "the journal must survive a failed URL encryption")
+
+	t.Setenv("KEYORIX_MASTER_PASSWORD", v0953FixturePassphrase)
+	out, err = captureStdout(t, func() error { return runAdminRestore(nil, nil) })
+	require.NoError(t, err, "recover output:\n%s", out)
+	require.Contains(t, out, "Rolled forward")
+	require.NoError(t, restorejournal.RefuseIfPresent(cfg), "recovery must remove the journal")
+	requireV0953ArchiveRestored(t, out)
+}
+
+// setupV0953ArchiveRestore points the restore flags at the fixture archive
+// and a fresh target directory (the working directory from here on).
+func setupV0953ArchiveRestore(t *testing.T, storageBlock func(dir string) string) {
+	t.Helper()
 	resetBackupRestoreFlags(t)
 	require.NoError(t, i18n.InitializeForTesting())
-	t.Setenv("KEYORIX_MASTER_PASSWORD", v0953FixturePassphrase)
 
 	wd, err := os.Getwd()
 	require.NoError(t, err)
@@ -68,9 +178,13 @@ func runV0953ArchiveRestore(t *testing.T, storageBlock func(dir string) string) 
 		"  encryption:\n    enabled: true\n    dek_path: keys/dek.key\n    salt_path: keys/kek.salt\n"), 0o600))
 	configPathFlag = cfgPath
 	restoreInput = fixturePath
+}
 
-	out, err := captureStdout(t, func() error { return runAdminRestore(nil, nil) })
-	require.NoError(t, err, "restore output:\n%s", out)
+// requireV0953ArchiveRestored checks the restored target: every seeded row
+// family, no plaintext in the legacy column, and the URL decrypting to the
+// original under the restored keys.
+func requireV0953ArchiveRestored(t *testing.T, out string) {
+	t.Helper()
 	require.Contains(t, out, "verify-audit on the restored database: VALID")
 	require.Contains(t, out, "Encrypted 1 notification channel URL(s)")
 

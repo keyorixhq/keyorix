@@ -22,9 +22,12 @@ import (
 // `admin backup` taken before the first server start would otherwise not
 // carry it at all: the current model does not map the legacy column.
 //
-// Idempotent, and a no-op on a database without the legacy column. A failure
-// leaves the restored data in place; the server's own startup runs the same
-// backfill and refuses to start until it succeeds, so the error says so.
+// Idempotent, and a no-op on a database without the legacy column. It runs
+// while the restore journal still exists, so a failure keeps the journal and
+// `admin restore --recover` runs it again; the server's own startup runs the
+// same backfill too and refuses to start until it succeeds. It unlocks with
+// the restore run's passphrase (restorePassphrase), never by reading a
+// one-shot --passphrase-stdin/--passphrase-fd source a second time.
 func encryptRestoredNotificationURLs(cfg *config.Config) error {
 	// Opened directly, not through the storage factory: the factory migrates,
 	// and a restore must not rewrite the rows it just loaded.
@@ -38,7 +41,7 @@ func encryptRestoredNotificationURLs(cfg *config.Config) error {
 	}
 	var enc ports.EncryptionProvider
 	if cfg.Storage.Encryption.Enabled {
-		svc, err := unlockEncryptionService(cfg, restorePassphraseSource)
+		svc, err := unlockEncryptionService(cfg, restorePassphrase.resolve)
 		if err != nil {
 			return err
 		}

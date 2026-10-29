@@ -120,7 +120,11 @@ func runExportCheckpointKey(cmd *cobra.Command, args []string) error {
 // (password provider only), take the exclusive key lock, derive the KEK and return
 // a copy of the KEK-derived checkpoint key plus its public key version.
 func deriveCheckpointKey(cfg *config.Config, src crypto.PassphraseSource) ([]byte, string, error) {
-	svc, err := unlockEncryptionService(cfg, src)
+	return deriveCheckpointKeyWith(cfg, passphraseFrom(src))
+}
+
+func deriveCheckpointKeyWith(cfg *config.Config, passphrase masterPassphrase) ([]byte, string, error) {
+	svc, err := unlockEncryptionService(cfg, passphrase)
 	if err != nil {
 		return nil, "", err
 	}
@@ -135,10 +139,10 @@ func deriveCheckpointKey(cfg *config.Config, src crypto.PassphraseSource) ([]byt
 // unlockEncryptionService resolves the master passphrase (password provider
 // only), takes the exclusive key lock and derives the KEK from cfg's key
 // files. The caller must Shutdown the returned service (releases the lock).
-func unlockEncryptionService(cfg *config.Config, src crypto.PassphraseSource) (*encryption.Service, error) {
+func unlockEncryptionService(cfg *config.Config, resolve masterPassphrase) (*encryption.Service, error) {
 	var passphrase string
 	if t := cfg.Storage.Encryption.KeyProvider.Type; t == "" || t == "password" {
-		pb, err := crypto.ResolvePassphrase(src, "KEYORIX_MASTER_PASSWORD")
+		pb, err := resolve()
 		if err != nil {
 			return nil, fmt.Errorf("no master passphrase available (%w); set KEYORIX_MASTER_PASSWORD, pass "+
 				"--passphrase-fd/--passphrase-file/--passphrase-stdin, or configure storage.encryption.key_provider "+

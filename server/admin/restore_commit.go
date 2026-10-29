@@ -331,7 +331,9 @@ func moveAsideSQLiteDB(dbPath, ts string, overwrite bool) error {
 }
 
 // finishRestore runs the steps after the install: the audit events the
-// restore owes, the rollback-protection witness, then the journal's removal.
+// restore owes, the rollback-protection witness, the encryption of any
+// plaintext credential column an older archive carried, then the journal's
+// removal.
 func finishRestore(cfg *config.Config, journalPath string, j restorejournal.Journal) error {
 	recordAdminAction(cfg, "admin.restore_completed", j.CompletedEvent, true)
 	if j.WitnessValue != "" {
@@ -341,6 +343,14 @@ func finishRestore(cfg *config.Config, journalPath string, j restorejournal.Jour
 	}
 	if j.RollbackOverrideEvent != "" {
 		recordAdminAction(cfg, "admin.restore_rollback_override", j.RollbackOverrideEvent, true)
+	}
+	// Before the journal goes: a failure here keeps it, so the server stays
+	// refused and --recover retries the encryption instead of the restore
+	// reporting a half-finished success.
+	if err := encryptRestoredNotificationURLs(cfg); err != nil {
+		return fmt.Errorf("the restored data is committed, but encrypting the notification channel URLs it carried "+
+			"failed (%w) -- the journal %s is kept and the server refuses to start; fix the cause and run "+
+			"`keyorix-server admin restore --recover`", err, journalPath)
 	}
 	if err := restoreStepHook("finishing"); err != nil {
 		return err
@@ -353,10 +363,6 @@ func finishRestore(cfg *config.Config, journalPath string, j restorejournal.Jour
 		if err := deletePostgresRestoreToken(cfg); err != nil {
 			fmt.Printf("note: could not remove the %s row (harmless): %v\n", restoreTokenMetadataKey, err)
 		}
-	}
-	if err := encryptRestoredNotificationURLs(cfg); err != nil {
-		return fmt.Errorf("the restore is complete, but encrypting the notification channel URLs it carried failed "+
-			"(%w) -- the server runs the same step at startup and refuses to start until it succeeds", err)
 	}
 	return nil
 }
