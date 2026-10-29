@@ -118,19 +118,8 @@ func ExtractArchive(r io.Reader, stagingDir string, maxEntryBytes, maxTotalBytes
 			return Manifest{}, fmt.Errorf(
 				"archive manifest declares %q at %d bytes, exceeding the %d-byte per-entry limit (a large table is legitimate: raise it with `admin restore --max-entry-bytes`)", hdr.Name, declaredSize, maxEntryBytes)
 		}
-		// Streamed to the staged file with a running hash: a table's NDJSON is as
-		// large as the table (gigabytes at scale), so it must never be held whole.
-		n, gotSHA256, err := stageStreamCapped(tr, stagingDir, hdr.Name, declaredSize, maxTotalBytes, &totalRead)
-		if err != nil {
+		if err := stageEntry(tr, stagingDir, hdr.Name, declaredSize, declaredSHA256, maxTotalBytes, &totalRead); err != nil {
 			return Manifest{}, err
-		}
-		if n != declaredSize {
-			return Manifest{}, fmt.Errorf("archive entry %q failed integrity check (size mismatch: got %d, want %d) -- "+
-				"the backup file may be corrupted or tampered with", hdr.Name, n, declaredSize)
-		}
-		if gotSHA256 != declaredSHA256 {
-			return Manifest{}, fmt.Errorf("archive entry %q failed integrity check (checksum mismatch) -- "+
-				"the backup file may be corrupted or tampered with", hdr.Name)
 		}
 	}
 
@@ -188,56 +177,6 @@ func readCapped(tr *tar.Reader, limit, maxTotalBytes int64, totalRead *int64, na
 	return data, nil
 }
 
-// stageStreamCapped is readCapped + stageFile for an entry too large to hold:
-// it copies at most limit bytes of the current tar entry (never more, whatever the
-// entry claims to decompress to, and never past the archive's running total) into
-// stagingDir/name, hashing as it goes, and returns the byte count and the SHA-256
-// hex of what it wrote. Memory is one copy buffer, not the entry. The path rules
-// are stageFile's: name is refused unless local. A failed or oversized entry leaves
-// its partial file in stagingDir, which the caller removes as a whole.
-func stageStreamCapped(tr *tar.Reader, stagingDir, name string, limit, maxTotalBytes int64, totalRead *int64) (int64, string, error) {
-	if !filepath.IsLocal(name) {
-		return 0, "", fmt.Errorf("refusing to stage %q: not a safe relative path", name)
-	}
-	dest := filepath.Join(stagingDir, name)
-	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
-		return 0, "", fmt.Errorf("create staging subdirectory for %q: %w", name, err)
-	}
-	f, err := os.OpenFile(dest, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0600) // #nosec G304 -- dest is stagingDir joined with a name checked by filepath.IsLocal above
-	if err != nil {
-		return 0, "", fmt.Errorf("stage %q: %w", name, err)
-	}
-	remaining := max(maxTotalBytes-*totalRead, 0)
-	effLimit := min(remaining, limit)
-	h := sha256.New()
-	n, copyErr := io.Copy(io.MultiWriter(f, h), io.LimitReader(tr, effLimit))
-	// One byte past the limit is only probed, never written: nothing beyond the cap
-	// reaches the staging directory.
-	var extra [1]byte
-	probed := 0
-	if copyErr == nil {
-		var perr error
-		probed, perr = io.ReadFull(tr, extra[:])
-		if perr != nil && !errors.Is(perr, io.EOF) {
-			copyErr = perr
-		}
-	}
-	if cerr := f.Close(); copyErr == nil && cerr != nil {
-		copyErr = cerr
-	}
-	if copyErr != nil {
-		return n, "", fmt.Errorf("read tar entry %q: %w", name, copyErr)
-	}
-	if probed > 0 {
-		if effLimit < limit {
-			return n, "", fmt.Errorf("archive exceeds the %d-byte total decompressed size limit (a large database is legitimate: raise it with `admin restore --max-total-bytes`)", maxTotalBytes)
-		}
-		return n, "", fmt.Errorf("archive entry %q exceeds the %d-byte per-entry size limit (raise it with `admin restore --max-entry-bytes`)", name, limit)
-	}
-	*totalRead += n
-	return n, hex.EncodeToString(h.Sum(nil)), nil
-}
-
 // stageFile writes data to stagingDir/name, creating any intermediate
 // directories the tar entry's own name implies (e.g. "tables/", "keyfiles/").
 // name comes from an archive entry's tar header, which is attacker-controlled
@@ -254,6 +193,59 @@ func stageFile(stagingDir, name string, data []byte) error {
 	}
 	if err := os.WriteFile(dest, data, 0600); err != nil {
 		return fmt.Errorf("stage %q: %w", name, err)
+	}
+	return nil
+}
+
+// stageEntry streams one table or key-file entry from tr into stagingDir,
+// hashing it on the way, and keeps the file only when its size and SHA-256
+// match what the manifest declared. Streaming, not readCapped: a table entry
+// is a whole table's NDJSON (up to maxEntryBytes), and holding it in memory
+// made restore's peak RSS grow with the largest table (#3462). The limits
+// and refusals are readCapped's; a refused entry leaves no staged file.
+func stageEntry(tr io.Reader, stagingDir, name string, declaredSize int64, declaredSHA256 string,
+	maxTotalBytes int64, totalRead *int64) (err error) {
+	if !filepath.IsLocal(name) {
+		return fmt.Errorf("refusing to stage %q: not a safe relative path", name)
+	}
+	dest := filepath.Join(stagingDir, name)
+	if err := os.MkdirAll(filepath.Dir(dest), 0700); err != nil {
+		return fmt.Errorf("create staging subdirectory for %q: %w", name, err)
+	}
+	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // #nosec G304 -- dest is stagingDir plus a filepath.IsLocal entry name
+	if err != nil {
+		return fmt.Errorf("stage %q: %w", name, err)
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("stage %q: %w", name, cerr)
+		}
+		if err != nil {
+			_ = os.Remove(dest)
+		}
+	}()
+
+	remaining := max(maxTotalBytes-*totalRead, 0)
+	effLimit := min(remaining, declaredSize)
+	h := sha256.New()
+	n, err := io.Copy(io.MultiWriter(f, h), io.LimitReader(tr, effLimit+1))
+	if err != nil {
+		return fmt.Errorf("read tar entry %q: %w", name, err)
+	}
+	if n > effLimit {
+		if effLimit < declaredSize {
+			return fmt.Errorf("archive exceeds the %d-byte total decompressed size limit (a large database is legitimate: raise it with `admin restore --max-total-bytes`)", maxTotalBytes)
+		}
+		return fmt.Errorf("archive entry %q exceeds the %d-byte per-entry size limit (raise it with `admin restore --max-entry-bytes`)", name, declaredSize)
+	}
+	*totalRead += n
+	if n != declaredSize {
+		return fmt.Errorf("archive entry %q failed integrity check (size mismatch: got %d, want %d) -- "+
+			"the backup file may be corrupted or tampered with", name, n, declaredSize)
+	}
+	if got := hex.EncodeToString(h.Sum(nil)); got != declaredSHA256 {
+		return fmt.Errorf("archive entry %q failed integrity check (checksum mismatch) -- "+
+			"the backup file may be corrupted or tampered with", name)
 	}
 	return nil
 }

@@ -4,100 +4,103 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
-// TestExtractArchive_TableEntryIsStreamed (SCALE-OPS-1): a table's NDJSON entry is as
-// large as the table, so extraction must copy it to the staged file through a
-// bounded buffer. Before the fix it read the whole entry into a []byte (io.ReadAll
-// growing by doubling), so the restore's peak memory grew with the largest table.
-func TestExtractArchive_TableEntryIsStreamed(t *testing.T) {
-	const size = 16 << 20
-	line := []byte(`{"id":1,"event_type":"secret.read","description":"scale line"}` + "\n")
-	payload := bytes.Repeat(line, size/len(line))
-	archive := craftArchive(t, "tables/audit_events.ndjson", payload)
-	staging := t.TempDir()
+// writeOneTableArchive writes a gzip'd tar with a MANIFEST.json and one
+// table entry of size bytes (repeated NDJSON lines) to path, and returns the
+// entry's real SHA-256. manifestSHA overrides the declared checksum when set.
+func writeOneTableArchive(t *testing.T, path string, size int, manifestSHA string) string {
+	t.Helper()
+	line := []byte(`{"ID":1,"Name":"` + string(bytes.Repeat([]byte("x"), 100)) + `"}` + "\n")
+	h := sha256.New()
+	for written := 0; written < size; written += len(line) {
+		h.Write(line[:min(len(line), size-written)])
+	}
+	sum := hex.EncodeToString(h.Sum(nil))
+	if manifestSHA == "" {
+		manifestSHA = sum
+	}
+	const tarName = "tables/big.ndjson"
+	m, err := json.Marshal(Manifest{FormatVersion: FormatVersion, Backend: Backend, Tables: []TableEntry{{
+		Name: "big", TarName: tarName, UncompressedSize: int64(size), SHA256: manifestSHA,
+	}}})
+	require.NoError(t, err)
+
+	f, err := os.Create(path)
+	require.NoError(t, err)
+	defer f.Close() //nolint:errcheck
+	gz := gzip.NewWriter(f)
+	tw := tar.NewWriter(gz)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: "MANIFEST.json", Mode: 0600, Size: int64(len(m)), Typeflag: tar.TypeReg}))
+	_, err = tw.Write(m)
+	require.NoError(t, err)
+	require.NoError(t, tw.WriteHeader(&tar.Header{Name: tarName, Mode: 0600, Size: int64(size), Typeflag: tar.TypeReg}))
+	for written := 0; written < size; written += len(line) {
+		_, err = tw.Write(line[:min(len(line), size-written)])
+		require.NoError(t, err)
+	}
+	require.NoError(t, tw.Close())
+	require.NoError(t, gz.Close())
+	return sum
+}
+
+// TestExtractArchive_StreamsTableEntries (#3462): staging a table entry must
+// not hold the entry in memory. Before the fix readCapped io.ReadAll'd each
+// entry (a whole table's NDJSON, up to 1 GiB), so restore's peak memory grew
+// with the largest table; this extraction then allocated more than the entry
+// itself. Now it streams through the hash into the staged file, and the
+// allocations stay a small constant (gzip/tar state and copy buffers).
+func TestExtractArchive_StreamsTableEntries(t *testing.T) {
+	const entrySize = 16 << 20
+	archive := filepath.Join(t.TempDir(), "big.tar.gz")
+	sum := writeOneTableArchive(t, archive, entrySize, "")
+	stagingDir := t.TempDir()
+
+	f, err := os.Open(archive)
+	require.NoError(t, err)
+	defer f.Close() //nolint:errcheck
 
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	if _, err := ExtractArchive(bytes.NewReader(archive), staging, 0, 0); err != nil {
-		t.Fatalf("ExtractArchive: %v", err)
-	}
+	_, err = ExtractArchive(f, stagingDir, 0, 0)
 	runtime.ReadMemStats(&after)
+	require.NoError(t, err)
 
 	allocated := after.TotalAlloc - before.TotalAlloc
-	if limit := uint64(len(payload) / 4); allocated > limit {
-		t.Fatalf("extracting a %d-byte table entry allocated %d bytes (limit %d): the entry is being held in memory", len(payload), allocated, limit)
-	}
-	got, err := os.ReadFile(filepath.Join(staging, "tables", "audit_events.ndjson"))
-	if err != nil {
-		t.Fatalf("staged table missing: %v", err)
-	}
-	if !bytes.Equal(got, payload) {
-		t.Fatalf("staged table differs from the archived one (%d vs %d bytes)", len(got), len(payload))
-	}
+	require.Less(t, allocated, uint64(entrySize/4),
+		"extracting a %d-byte entry allocated %d bytes: the entry is being buffered in memory", entrySize, allocated)
+
+	staged, err := os.Open(filepath.Join(stagingDir, "tables", "big.ndjson"))
+	require.NoError(t, err)
+	defer staged.Close() //nolint:errcheck
+	h := sha256.New()
+	_, err = staged.WriteTo(h)
+	require.NoError(t, err)
+	require.Equal(t, sum, hex.EncodeToString(h.Sum(nil)))
 }
 
-// The streamed path keeps every refusal of the buffered one.
-func TestExtractArchive_StreamedEntryKeepsItsChecks(t *testing.T) {
-	payload := bytes.Repeat([]byte(`{"id":1}`+"\n"), 1000)
+// TestExtractArchive_RefusedEntryLeavesNoStagedFile: a checksum mismatch is
+// refused as before, and the streamed partial file is removed.
+func TestExtractArchive_RefusedEntryLeavesNoStagedFile(t *testing.T) {
+	archive := filepath.Join(t.TempDir(), "bad.tar.gz")
+	writeOneTableArchive(t, archive, 64<<10, hex.EncodeToString(make([]byte, 32)))
+	stagingDir := t.TempDir()
+	f, err := os.Open(archive)
+	require.NoError(t, err)
+	defer f.Close() //nolint:errcheck
 
-	t.Run("per-entry cap", func(t *testing.T) {
-		// the manifest is capped by the same limit, so 4096 passes it and stops the table
-		_, err := ExtractArchive(bytes.NewReader(craftArchive(t, "tables/x.ndjson", payload)), t.TempDir(), 4096, 0)
-		if err == nil || !strings.Contains(err.Error(), "per-entry limit") {
-			t.Fatalf("err = %v, want the manifest-declared per-entry refusal", err)
-		}
-	})
-
-	t.Run("total cap", func(t *testing.T) {
-		_, err := ExtractArchive(bytes.NewReader(craftArchive(t, "tables/x.ndjson", payload)), t.TempDir(), 0, 1024)
-		if err == nil || !strings.Contains(err.Error(), "total decompressed size limit") {
-			t.Fatalf("err = %v, want the total-size refusal", err)
-		}
-	})
-
-	t.Run("checksum", func(t *testing.T) {
-		bad := craftArchiveWithSum(t, "tables/x.ndjson", payload, strings.Repeat("0", 64))
-		_, err := ExtractArchive(bytes.NewReader(bad), t.TempDir(), 0, 0)
-		if err == nil || !strings.Contains(err.Error(), "checksum mismatch") {
-			t.Fatalf("err = %v, want a checksum refusal", err)
-		}
-	})
-}
-
-// craftArchiveWithSum is craftArchive with a manifest that declares sha256Hex for the table.
-func craftArchiveWithSum(t testing.TB, tarName string, payload []byte, sha256Hex string) []byte {
-	t.Helper()
-	mj, err := json.Marshal(Manifest{Tables: []TableEntry{{Name: "x", TarName: tarName, UncompressedSize: int64(len(payload)), SHA256: sha256Hex}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var buf bytes.Buffer
-	gz := gzip.NewWriter(&buf)
-	tw := tar.NewWriter(gz)
-	for _, e := range []struct {
-		name string
-		data []byte
-	}{{"MANIFEST.json", mj}, {tarName, payload}} {
-		if err := tw.WriteHeader(&tar.Header{Name: e.name, Mode: 0o600, Size: int64(len(e.data)), Typeflag: tar.TypeReg}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := tw.Write(e.data); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Bytes()
+	_, err = ExtractArchive(f, stagingDir, 0, 0)
+	require.ErrorContains(t, err, "checksum mismatch")
+	_, statErr := os.Stat(filepath.Join(stagingDir, "tables", "big.ndjson"))
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }

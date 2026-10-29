@@ -47,6 +47,9 @@ type ReconcileResult struct {
 //   - IntentAbandoned, or no intent: writes nothing, and warns about leftover
 //     staging files.
 //
+// Whatever the intent, it first removes the staging files interrupted
+// manifest writes left (removeManifestStagingFiles), with a warning each.
+//
 // fs is the write path (internal/encryption passes its fault-injectable one).
 func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS) (*ReconcileResult, error) {
 	st, err := InspectKeySet(enc, baseDir)
@@ -56,6 +59,9 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 	res := &ReconcileResult{}
 	if st.Fresh {
 		return res, nil
+	}
+	if st.ManifestPath != "" {
+		removeManifestStagingFiles(filepath.Dir(st.ManifestPath), res)
 	}
 	fs = fs.withDefaults()
 	required, err := RequiredKeyFilePaths(enc, baseDir)
@@ -149,6 +155,36 @@ func ReconcileKeySet(enc *config.EncryptionConfig, baseDir string, fs ManifestFS
 		}
 	}
 	return res, nil
+}
+
+// removeManifestStagingFiles deletes the staging files interrupted manifest
+// writes left in dir (ManifestStagingFiles). Each write stages under its own
+// name, so a leftover is never reused or overwritten by a later write and
+// would otherwise stay, and keep `key-secret export` refusing, for good. No
+// reader ever reads one: the manifest in place is the last committed one, and
+// InspectKeySet has already classified the set against it. The caller holds
+// the exclusive key lock, so no live write's staging file is among them (and
+// if a broken lock let one through, that write's rename fails rather than
+// committing anything torn). A file that cannot be removed (a read-only key
+// directory) is reported instead.
+func removeManifestStagingFiles(dir string, res *ReconcileResult) {
+	staged, err := ManifestStagingFiles(dir)
+	if err != nil {
+		res.Warnings = append(res.Warnings, fmt.Sprintf("could not check for key-set manifest staging files: %v", err))
+		return
+	}
+	for _, p := range staged {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			res.Warnings = append(res.Warnings, fmt.Sprintf(
+				"%s is a staging file left over from an interrupted key-set manifest write and could not be removed (%v); "+
+					"the manifest in place is the last committed one, so the file can be deleted, and `key-secret export` "+
+					"refuses this directory until it is", p, err))
+			continue
+		}
+		res.Warnings = append(res.Warnings, fmt.Sprintf(
+			"removed %s, a staging file left over from an interrupted key-set manifest write; the manifest in place is "+
+				"the last committed one", p))
+	}
 }
 
 // adoptFailedWarning is the WARN when adoption cannot write the manifest

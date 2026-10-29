@@ -1,0 +1,1 @@
+auditverify-prerotation-anchor-001	./internal/auditverify	TestReviewAV_PreRotationAnchorAuthenticatedByPreviousKey	default-ci	pending-merge	-	An --anchor exported before rotate-kek / migrate-provider stayed unauthenticated (advisory) even with --previous-checkpoint-key-file, so a truncation it would catch read VALID. Previous keys now authenticate it. Red on main a73f23733.

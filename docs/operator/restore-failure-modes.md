@@ -38,7 +38,9 @@ journal"). Older releases (v0.96.x and earlier) installed the archive's key file
    is then rewritten as `"installed": true`.
 6. **Finish.** The `admin.restore_completed` audit event (and
    `admin.restore_rollback_override` under `--allow-rollback`), the rollback-protection
-   witness, removal of the journal, then the automatic `verify-audit`. The audit events are
+   witness, the encryption of any plaintext notification-channel URL a v0.95.x archive
+   carried (a failure there keeps the journal, so `--recover` runs it again), removal of the
+   journal, then the automatic `verify-audit`. The audit events are
    written before the journal is removed, so a crash between the two makes `--recover`
    write them a second time: the trail can show the same restore twice, never zero times.
 

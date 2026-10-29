@@ -148,6 +148,8 @@ func runAdminRestore(cmd *cobra.Command, args []string) error {
 	if restoreInput == "" && !restoreRecover {
 		return fmt.Errorf("--input is required")
 	}
+	restorePassphrase = &passphraseOnce{src: restorePassphraseSource}
+	defer restorePassphrase.wipe()
 
 	cfg, err := loadConfig()
 	if err != nil {
@@ -332,7 +334,7 @@ func runAdminRestoreV2(cfg *config.Config) error { // NOSONAR -- cognitive compl
 	if err != nil {
 		return err
 	}
-	manifestKey, err := unwrapManifestKey(stagedCfg, kekStagingDir, restorePassphraseSource, nil)
+	manifestKey, err := unwrapManifestKeyWith(stagedCfg, kekStagingDir, restorePassphrase.resolve, nil)
 	if err != nil {
 		return err
 	}
@@ -1152,7 +1154,7 @@ func runVerifyRestoredAudit(cfg *config.Config, db *auditverify.DB) error {
 	// ever purged restored as INDETERMINATE, while `admin verify-audit
 	// --checkpoint-key-file` on the same data said VALID). A failure to derive it is
 	// not fatal: verification still runs, and says why it could not authenticate.
-	if key, _, kerr := deriveCheckpointKey(cfg, restorePassphraseSource); kerr == nil {
+	if key, _, kerr := deriveCheckpointKeyWith(cfg, restorePassphrase.resolve); kerr == nil {
 		defer crypto.WipeBytes(key)
 		opts.CheckpointKey = key
 	} else {

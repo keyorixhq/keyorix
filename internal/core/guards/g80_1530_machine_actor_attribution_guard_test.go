@@ -50,6 +50,12 @@ var auditAttributionAllowlist = map[string]string{
 		"human-style event types (secret.read, auth.login, ...) with no ActorType, no UserID and no " +
 		"MachineIdentityID at all, so it can never emit a machine-identity-typed event that needs the " +
 		"emitAudit attribution stamp; the rows only exist to be counted and compared after the migration.",
+	"scripts/release-qa/scalegen/main.go:run": "#3462 UPGRADE-RESTORE-COMPAT-1: scalegen is the restore " +
+		"scale scenario's synthetic-data generator (scripts/release-qa/scenario_restore_scale.sh), a " +
+		"standalone dev binary that is never linked into the server. It writes only secret.read events " +
+		"with no ActorType, no UserID and no MachineIdentityID, so it can never emit a machine-identity-" +
+		"typed event that needs the emitAudit attribution stamp; the rows only exist to be backed up, " +
+		"restored and verified at volume.",
 	"internal/core/audit_target.go:emitAuditOn": "#2676: emitAuditOn is emitAudit against an explicit " +
 		"storage handle (the transaction-scoped one the access-review revoke path needs so its evidence " +
 		"row commits or rolls back with the removal it describes). It is NOT a bypass of the attribution " +

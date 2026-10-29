@@ -162,7 +162,17 @@ func readKeySet(enc *config.EncryptionConfig, baseDir string) ([]keySetFile, err
 		dekFull = filepath.Clean(enc.DEKPath)
 	}
 	manifest := filepath.Join(filepath.Dir(dekFull), KeySetManifestName)
-	for _, p := range append(slices.Clone(paths), manifest) {
+	// A manifest write stages under a unique name per write (keyfiles'
+	// writeManifest), so its leftovers are listed by keyfiles, never guessed
+	// from "<manifest>.pending" here.
+	staged, err := keyfiles.ManifestStagingFiles(filepath.Dir(dekFull))
+	if err != nil {
+		return nil, err
+	}
+	if len(staged) > 0 {
+		return nil, fmt.Errorf("%s exists: a key operation (rotate-kek, migrate-provider) was interrupted in this directory while it wrote the key-set manifest; do not export it (docs/multi-replica-keys.md, \"Crash at any step\")", strings.Join(staged, ", "))
+	}
+	for _, p := range paths {
 		if _, err := os.Lstat(p + ".pending"); err != nil {
 			continue
 		}

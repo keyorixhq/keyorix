@@ -1,0 +1,1 @@
+scripts/release-qa/scalegen	none	-	release-QA data generator (main package, no importers): fills an empty migrated database for scenario_restore_scale.sh; refuses a database that already has secret versions; not shipped in the release	test-helper

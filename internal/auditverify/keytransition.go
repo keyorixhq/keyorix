@@ -32,7 +32,10 @@ type KeyTransition struct {
 	HeadHash     string `json:"head_hash"`
 	CheckpointID uint64 `json:"checkpoint_id"`
 	Checkpoint   string `json:"checkpoint"`
-	Prev         string `json:"prev"`
+	// State is the digest of the verification state row the record carries
+	// over (verifystate.go).
+	State string `json:"state"`
+	Prev  string `json:"prev"`
 
 	payload        []byte
 	macOld, macNew string
@@ -148,6 +151,7 @@ func checkKeyTransitions(ctx context.Context, db *DB, opts Options, result *Resu
 		if broken, err := keyTransitionHeadGone(ctx, db, result, last); err != nil || broken {
 			return err
 		}
+		result.activeTransition = last
 	case last.OldKID == epoch:
 		if !last.OldMACValid(opts.CheckpointKey) {
 			result.escalate(VerdictBroken, fmt.Sprintf("pending key transition #%d from the current key version %q fails its old-key signature (forged or altered)", last.Seq, epoch))
