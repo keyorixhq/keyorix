@@ -55,9 +55,10 @@ package core
 import (
 	"cmp"
 	"context"
+	"crypto/rand"
 	"fmt"
 	"log"
-	"math/rand/v2"
+	"math/big"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -466,7 +467,21 @@ func (a *lastUsedCoalescer) backoffDelay(n int) time.Duration {
 	if d <= 0 {
 		return 0
 	}
-	return d/2 + rand.N(d/2+1) // #nosec G404 -- retry jitter, not security-sensitive
+	return d/2 + time.Duration(jitterN(int64(d/2)+1))
+}
+
+// jitterN returns a uniform value in [0, n) for backoff jitter. It reads
+// crypto/rand so no math/rand generator is involved; on a (never expected)
+// entropy failure it returns 0, i.e. the shortest wait in the range.
+func jitterN(n int64) int64 {
+	if n <= 0 {
+		return 0
+	}
+	v, err := rand.Int(rand.Reader, big.NewInt(n))
+	if err != nil {
+		return 0
+	}
+	return v.Int64()
 }
 
 // writeChunk writes one chunk and returns the entries that were not written

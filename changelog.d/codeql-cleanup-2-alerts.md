@@ -1,0 +1,2 @@
+### Security
+- **Code-scanning and Dependabot cleanup (round 2).** `fast-uri` 3.1.9 (CI SBOM tooling lockfile) and `undici` 8.12.3 (web dev dependency via jsdom); the last-used coalescer's flush backoff jitter reads `crypto/rand`; the HTTP TLS config literal sets `MinVersion` itself (the hardening step still sets the final floor); an nginx comment that a header-redefinition scanner matched as a directive was reworded (no directive changed).
