@@ -42,12 +42,7 @@ func createMachineIdentities(db *gorm.DB, exec func(string) error, machineExists
 			}
 		}
 		if !columnExists(db, "machine_identities", "cascade_suspended_at") {
-			// Per-dialect type for the reason given at secret_nodes.purge_at.
-			ts := "DATETIME"
-			if db.Dialector.Name() == "postgres" {
-				ts = "TIMESTAMP WITH TIME ZONE"
-			}
-			if err := exec("ALTER TABLE machine_identities ADD COLUMN cascade_suspended_at " + ts); err != nil {
+			if err := exec("ALTER TABLE machine_identities ADD COLUMN cascade_suspended_at " + sqlTimestampType(db)); err != nil {
 				return err
 			}
 		}

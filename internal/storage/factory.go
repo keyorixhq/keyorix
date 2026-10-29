@@ -524,7 +524,7 @@ func rebuildRolePKSQLite(db *gorm.DB, table, idCol, pkCols string) error {
 		createExpiresCol := ""
 		if hasExpiresAt {
 			selectCols += ", expires_at"
-			createExpiresCol = ",\n\t\texpires_at TIMESTAMP WITH TIME ZONE"
+			createExpiresCol = ",\n\t\texpires_at " + sqlTimestampType(tx)
 		}
 
 		createSQL := fmt.Sprintf(`CREATE TABLE %s (
