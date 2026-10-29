@@ -6,4 +6,4 @@
   Why: REVIEW-AUDITVERIFY-KEYFILES-1. Guard: `TestReviewAV_RowsOutsideTheWalkAreBroken`,
   `TestReviewAV_Postgres_IDZeroRowIsBroken` (review_adversarial_test.go).
   **Not covered**: the online `VerifyAuditChain` (internal/storage/store) has the same id-0
-  blind spot.
+  blind spot (#3808).
