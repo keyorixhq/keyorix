@@ -44,6 +44,7 @@ internal/statemap/invariants_fragments_guard_test.go	**/INVARIANTS.md,**/INVARIA
 internal/statemap/statemap_test.go	!cli/**/*.md,!internal/**/*.md	"cli"/"internal" name Go packages here; no Markdown is read
 internal/storage/store/child_parent_liveness_registry_test.go	docs/child-parent-liveness-exempt.tsv	exemption ledger
 internal/storage/store/full_row_write_guard_test.go	docs/full-row-write-exempt.tsv,!operator/**	exemption ledger; walks internal/storage/store and internal/core only
+internal/storage/migrate_timestamp_guard_test.go	!operator/**	walks only non-test Go files under internal/storage (#3440); its input globs are the default Go-job selection
 internal/threatmodelcheck/evidence_test.go	**/*.go,**/*.md,**/*.tsv,**/*.yaml,**/*.yml,**/*.sh,**/*.sql,**/*.proto,**/*.json,**/*.toml	threat-model evidence: every cited path (pathExts) must exist, every cited test must exist in a *_test.go
 server/admin/docs_commands_test.go	QUICK_START.md,docs/CONFIGURATION.md,docs/SELF_HOSTING.md,docs/AIRGAP_RUNBOOK.md,docs/operator/*.md,!operator/**,!docs/**	documented server admin commands; "operator" names docs/operator only
 server/admin/docs_container_admin_test.go	QUICK_START.md,README.md,docs/SELF_HOSTING.md,docs/UPGRADING.md	container admin commands in the docs
