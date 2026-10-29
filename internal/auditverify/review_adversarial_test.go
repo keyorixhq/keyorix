@@ -296,3 +296,21 @@ func TestReviewAV_NoCheckpointIsStatedNotProven(t *testing.T) {
 	require.Equal(t, auditverify.VerdictValid, r.Verdict, r.Reason)
 	assert.Contains(t, strings.Join(r.NotProven, "\n"), "no signed checkpoint was found")
 }
+
+// The same over Postgres (the row count is the dialect-rebound query): a row
+// with id 0, which a bigserial column accepts when the id is given.
+func TestReviewAV_Postgres_IDZeroRowIsBroken(t *testing.T) {
+	t.Parallel()
+	f := newPGFixture(t)
+	f.logEvents(5, time.Hour)
+	r, err := auditverify.Verify(f.ctx, f.openIndependent(), auditverify.Options{})
+	require.NoError(t, err)
+	require.Equal(t, auditverify.VerdictValid, r.Verdict, r.Reason)
+
+	require.NoError(t, f.db.Exec(`INSERT INTO audit_events (id, event_type, description, event_time, actor_type, prev_hash, entry_hash, ip_address, diff, impersonation)
+		VALUES (0, 'secret.read', 'forged', ?, 'user', 'x', 'y', '', '', false)`, time.Now().UTC()).Error)
+	r, err = auditverify.Verify(f.ctx, f.openIndependent(), auditverify.Options{})
+	require.NoError(t, err)
+	assert.Equal(t, auditverify.VerdictBroken, r.Verdict, r.Reason)
+	assert.Contains(t, r.Reason, "outside the chain")
+}
