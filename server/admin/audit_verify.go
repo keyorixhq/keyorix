@@ -417,7 +417,8 @@ func printVerifyAuditReport(r *auditverify.Result) {
 	fmt.Println("\nCheckpoint:")
 	switch {
 	case !r.Checkpoint.Present:
-		fmt.Println("  none found -- no checkpoint has ever been written for this trail")
+		// Not "never written": a DB-write actor can delete every checkpoint row.
+		fmt.Println("  none found in this database -- never written, or deleted (see what this run does not prove)")
 	case r.Checkpoint.Authenticated:
 		fmt.Printf("  authenticated, key version %q, certifies %d chained events\n",
 			r.Checkpoint.KeyVersion, r.Checkpoint.ChainedEventsCertified)
