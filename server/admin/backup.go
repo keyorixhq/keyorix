@@ -500,10 +500,14 @@ func backupLockLostError(exclusive bool, output string) error {
 // key files, never the live target's, so no concurrent-rotation race
 // applies there.
 func unwrapManifestKey(cfg *config.Config, baseDir string, passphraseSource crypto.PassphraseSource, onLocked func() error) ([]byte, error) {
+	return unwrapManifestKeyWith(cfg, baseDir, passphraseFrom(passphraseSource), onLocked)
+}
+
+func unwrapManifestKeyWith(cfg *config.Config, baseDir string, resolve masterPassphrase, onLocked func() error) ([]byte, error) {
 	providerType := cfg.Storage.Encryption.KeyProvider.Type
 	var passphrase string
 	if providerType == "" || providerType == "password" {
-		passphraseBytes, err := crypto.ResolvePassphrase(passphraseSource, "KEYORIX_MASTER_PASSWORD")
+		passphraseBytes, err := resolve()
 		if err != nil {
 			return nil, fmt.Errorf("no master passphrase available (%w); set KEYORIX_MASTER_PASSWORD, pass "+
 				"--passphrase-fd/--passphrase-file/--passphrase-stdin, or configure storage.encryption.key_provider "+

@@ -20,9 +20,10 @@
 #      deleted secrets behave as before, verify-audit is VALID (also against the
 #      off-host checkpoint anchor taken before the move: no new genesis), the
 #      retention anchor is byte-identical, the schema epoch is the binary's;
-#   5. failure and rollback: `kill -9` an `admin restore` midway, show the state it
-#      leaves, that a re-run is refused or resumes, that the documented cleanup lets
-#      it restart cleanly, and that the SQLite source file is untouched by restore.
+#   5. failure and rollback: `kill -9` an `admin restore` midway: no key file is
+#      installed and no row committed, a re-run is refused until `admin restore
+#      --recover` rolls it back, then --overwrite-existing or a recreated empty
+#      database lets it complete, and the SQLite source file is untouched by restore.
 #
 # Usage (needs a PostgreSQL the script may fill: two EMPTY databases, URLs in files so
 # the password never travels on a command line):
@@ -413,17 +414,20 @@ kill_restore_at() {
     return 1
 }
 
-# restore_cleanup <inst>: the documented way to start a failed restore over -- remove the key files the
-# interrupted restore installed and recreate the (empty) database. (docs/SELF_HOSTING.md)
+# restore_cleanup <inst>: start a rolled-back restore over from an empty database. Since #3583/#3618
+# restore installs no key file before its data commits, so there are no key files to remove; the
+# migrated (empty) schema a kill leaves is what a plain re-run refuses.
 restore_cleanup() {
-    rm -f "$DRILL_DIR/$1/keys/dek.key" "$DRILL_DIR/$1/keys/kek.salt"
     mc "$1" reset-pg >/dev/null || fail "reset-pg on $1"
 }
 
 # failure_leg <label> <log pattern to kill at> <overwrite|cleanup>: kill -9 a restore into database B at
-# that point, check what it left, that a plain re-run is refused, and that the chosen recovery works:
-#   overwrite  re-run with --overwrite-existing (what the refusal message suggests)
-#   cleanup    remove the key files it installed and recreate the empty database, then re-run
+# that point and check what it left: no key file installed (only staged *.restoring-* files and the
+# restore journal), no committed row, the SQLite source untouched. Then: a plain re-run is refused
+# while the journal exists, `admin restore --recover` rolls the uncommitted restore back (journal and
+# staged files gone, still no key file), and the chosen recovery completes it:
+#   overwrite  re-run with --overwrite-existing (the migrated, empty schema is all that is replaced)
+#   cleanup    recreate the empty database, then a plain re-run
 failure_leg() {
     local label="$1" pattern="$2" mode="$3" inst="kill-${1// /-}-$3" f
     step "kill -9 during restore: $label; recover by: $mode"
@@ -434,8 +438,14 @@ failure_leg() {
 
     local keys rows ae
     keys=""
-    for f in "$DRILL_DIR/$inst/keys"/*; do [ -e "$f" ] && keys="$keys$(basename "$f") "; done
-    echo "    left behind: key files [${keys:-none}]"
+    for f in "$DRILL_DIR/$inst/keys"/* "$DRILL_DIR/$inst/keys"/.keyorix-restore-journal.json; do
+        [ -e "$f" ] && keys="$keys$(basename "$f") "
+    done
+    echo "    left behind: [${keys:-nothing}] in keys/"
+    for f in dek.key kek.salt; do
+        [ ! -e "$DRILL_DIR/$inst/keys/$f" ] || fail "a key file ($f) was installed before the restore's data committed"
+    done
+    [ -e "$DRILL_DIR/$inst/keys/.keyorix-restore-journal.json" ] || fail "the killed restore left no restore journal"
     if rows="$(mc "$inst" table-sums 2>/dev/null)"; then
         ae="$(echo "$rows" | jq -r 'select(.table=="audit_events") | .count')"
         echo "    left behind: schema present, $(echo "$rows" | jq -s 'map(select(.table!="__audit_max_id")) | map(.count) | add') data rows, $ae audit events"
@@ -445,21 +455,34 @@ failure_leg() {
     fi
     [ "$(shasum -a 256 "$DRILL_DIR/$SRC/keyorix.db" | awk '{print $1}')" = "$SRC_DB_SHA" ] \
         || fail "the SQLite source changed while a restore was killed"
-    ok "the SQLite source file is untouched"
+    ok "no key file installed, no row committed, the SQLite source file is untouched"
 
     if inst_admin "$inst" restore --input "$EXT/backup.tar.gz" >"$DRILL_DIR/rerun-$inst.log" 2>&1; then
-        fail "a restore over the leftovers of a killed restore was accepted without --overwrite-existing"
+        fail "a restore was accepted while a killed restore's journal was unresolved"
     fi
-    echo "    plain re-run: refused: $(tail -1 "$DRILL_DIR/rerun-$inst.log" | cut -c1-150)..."
+    grep -q -- '--recover' "$DRILL_DIR/rerun-$inst.log" \
+        || { cat "$DRILL_DIR/rerun-$inst.log" >&2; fail "the refusal does not point at admin restore --recover"; }
+    echo "    plain re-run: refused: $(grep -m1 'interrupted' "$DRILL_DIR/rerun-$inst.log" | cut -c1-150)..."
+    inst_admin "$inst" restore --recover >"$DRILL_DIR/recover-$inst.log" 2>&1 \
+        || { cat "$DRILL_DIR/recover-$inst.log" >&2; fail "admin restore --recover after a killed restore failed"; }
+    grep -q 'Rolled back' "$DRILL_DIR/recover-$inst.log" \
+        || { cat "$DRILL_DIR/recover-$inst.log" >&2; fail "--recover did not roll back a restore killed before its commit"; }
+    keys=""
+    for f in "$DRILL_DIR/$inst/keys"/* "$DRILL_DIR/$inst/keys"/.keyorix-restore-journal.json; do
+        [ -e "$f" ] && keys="$keys$(basename "$f") "
+    done
+    [ -z "$keys" ] || fail "--recover left files in keys/: $keys"
+    ok "--recover rolled back: journal and staged files removed, still no key file"
+
     case "$mode" in
         overwrite)
             inst_admin "$inst" restore --input "$EXT/backup.tar.gz" --overwrite-existing >"$DRILL_DIR/restart-$inst.log" 2>&1 \
-                || { cat "$DRILL_DIR/restart-$inst.log" >&2; fail "restore --overwrite-existing over the leftovers of a killed restore failed"; }
+                || { cat "$DRILL_DIR/restart-$inst.log" >&2; fail "restore --overwrite-existing after --recover failed"; }
             ;;
         cleanup)
             restore_cleanup "$inst"
             inst_admin "$inst" restore --input "$EXT/backup.tar.gz" >"$DRILL_DIR/restart-$inst.log" 2>&1 \
-                || { cat "$DRILL_DIR/restart-$inst.log" >&2; fail "restore after the documented cleanup failed"; }
+                || { cat "$DRILL_DIR/restart-$inst.log" >&2; fail "restore into the recreated empty database failed"; }
             ;;
     esac
     grep -q 'VALID' "$DRILL_DIR/restart-$inst.log" || fail "the restarted restore did not report verify-audit VALID"
@@ -469,8 +492,8 @@ failure_leg() {
     mc "$inst" reset-pg >/dev/null || true
 }
 
-failure_leg "while migrating the target" "Running migrations against the fresh target" overwrite
-failure_leg "while migrating the target" "Running migrations against the fresh target" cleanup
+failure_leg "while migrating the target" "Running migrations against the target database" overwrite
+failure_leg "while migrating the target" "Running migrations against the target database" cleanup
 failure_leg "while loading rows" "Loading data into the restored database" overwrite
 failure_leg "while loading rows" "Loading data into the restored database" cleanup
 

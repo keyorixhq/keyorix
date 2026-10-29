@@ -83,6 +83,65 @@ scenario_version_skip_postgres.sh <old-server-bin> <old-cli-bin> \
   by server URL; without clearing it, the new binary's login can fail against a
   stale cached token from the old binary's session.
 
+## scenario_restore_compat.sh / restore_compat_matrix.sh
+
+The same version-skip idea as above, for the backup an existing customer
+already has: an OLD release's `admin backup`, restored by the NEW binary on
+SQLite and on PostgreSQL (#3452). Native binaries only, no Docker.
+
+```
+scenario_restore_compat.sh <old-server-bin> <old-cli-bin> \
+    <new-server-bin> <new-cli-bin> <empty-postgres-dsn|-> [work-dir]
+restore_compat_matrix.sh <work-dir> <tag>[=<empty-postgres-dsn>] ...
+```
+
+- The OLD binary seeds what upgrades have broken before: an admin with TOTP
+  enrolled, a second user, a project secret shared with that user, a webhook
+  notification channel, and the audit chain those writes produce.
+- Each restore leg asserts: `admin restore` succeeds; `admin verify-audit`
+  is VALID; a fresh `admin backup` of the restored database has the same
+  per-table row counts as the OLD archive (only `audit_events` and
+  `system_metadata` may grow: restore writes its own rows there); login with
+  password + TOTP; the secret reads back byte-identical; the channel's URL
+  decrypts (a read shows scheme://host only since #3438).
+- `restore_compat_matrix.sh` builds each tag from `git archive <tag>` into
+  the work dir (the checkout is untouched), builds HEAD, runs every leg and
+  prints one PASS/FAIL line per tag. Give each tag its own empty database
+  (`kpg dsn <name>` in a sandboxed session).
+- `restore_compat_client.py` (stdlib only) does the HTTP steps the old CLIs
+  lack (MFA enrolment, the two-step TOTP login) and reads manifest row
+  counts. A restored database keeps the old server's last accepted TOTP
+  step, so the helper never reuses a step (`KEYORIX_QA_TOTP_STATE`) and may
+  wait up to 30 s for the next one.
+- `KEYORIX_QA_MASTER_PASSWORD`, `KEYORIX_QA_SECRET_VALUE` and
+  `KEYORIX_QA_CHANNEL_URL` pin the seeded values; that is how
+  `server/admin/testdata/v0.95.3-backup.tar.gz` was produced. The default
+  channel URL is an IP literal (203.0.113.10): the channel validator resolves
+  hostnames, and a sandboxed run has no DNS.
+- Not covered: Docker Compose / Helm upgrade legs (need the e2e VM).
+
+## scenario_restore_scale.sh (+ scalegen/)
+
+Backup/restore/migrate at scale (#3462): `scalegen` fills an empty SQLite
+database with N secret versions and N audit events (written through the
+storage layer, so the hash chain verifies), then the script measures wall
+time and peak RSS of `admin backup` (SQLite), `admin restore` to SQLite, to
+PostgreSQL, `admin backup` (PostgreSQL) and `admin restore` PostgreSQL ->
+SQLite. Every restore must report verify-audit VALID.
+
+```
+scenario_restore_scale.sh <server-bin> <empty-postgres-dsn|-> <work-dir> \
+    [versions=300000] [audit=300000] [secrets=1000]
+```
+
+- Results land in `<work-dir>/results.tsv`. Put numbers in reports, never
+  in repo docs.
+- Peak RSS is read with `getrusage(RUSAGE_CHILDREN)` (a Python wrapper),
+  not `/usr/bin/time -l`, which a sandboxed macOS session cannot run.
+- `KEYORIX_QA_REUSE_SRC=1` reuses `<work-dir>/src` from an earlier run, so
+  two binaries can be compared on the same dataset (copy `src/` and fix the
+  database path in its `keyorix.yaml`).
+
 ## Not yet covered here (exercised manually during the campaign; good follow-ups)
 
 - Docker Compose / Helm chart boot checks — deliberately NOT added here yet,

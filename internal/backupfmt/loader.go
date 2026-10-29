@@ -50,7 +50,7 @@ func checkSchemaDelta(modelName string, currentColumns []string, archived TableE
 		}
 	}
 	for _, col := range archived.Columns {
-		if current[col] || removed[col] {
+		if current[col] || removed[col] || isLegacyColumn(modelName, col) {
 			continue
 		}
 		return fmt.Errorf("table %q (archive, model %s) has column %q, which this binary's current schema neither has "+
@@ -286,6 +286,9 @@ func LoadArchive(db *gorm.DB, manifest Manifest, stagingDir string) error {
 		}
 		if _, err := loadTable(db, m, entry, stagingDir); err != nil {
 			return fmt.Errorf("load table %q: %w", entry.Name, err)
+		}
+		if err := carryLegacyColumns(db, name, entry, stagingDir); err != nil {
+			return err
 		}
 		loadedModels = append(loadedModels, m)
 	}
