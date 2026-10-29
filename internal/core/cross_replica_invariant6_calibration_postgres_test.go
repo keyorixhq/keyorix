@@ -27,10 +27,17 @@
 //	              the #2659 end state, built by construction (zero goroutines,
 //	              so this one can never go flaky).
 //	sensitivity — TestInvariant6_MembershipLockIsLoadBearing_OpenModeInvite
-//	              and ..._Activate: remove membershipLockKey from one replica,
-//	              force the real interleaving, and confirm the predicate
-//	              reports the violation. These also re-prove that #2669's lock
-//	              is load-bearing rather than decorative.
+//	              and ..._Activate: remove membershipLockKey from one replica
+//	              in BOTH its forms (the WithNamedLock section and the
+//	              LockNamedKeyInTx fence key, NAMEDLOCK-OVERLAP-2), force the
+//	              real interleaving, and confirm the predicate reports the
+//	              violation. These also re-prove that the membership key is
+//	              load-bearing rather than decorative.
+//	fence       — TestInvariant6_MembershipFenceSurvivesLostNamedLock_*:
+//	              remove only the WithNamedLock section (the lock-loss window
+//	              NAMEDLOCK-OVERLAP-2 is about) and run B's revoke concurrent
+//	              with, or before, A's fence: invariant 6 must stay empty and
+//	              the revoke must win.
 //
 // Postgres only, same KEYORIX_TEST_PG_DSN gate as every other
 // concurrency_*_postgres_test.go in this package.
@@ -38,11 +45,13 @@ package core
 
 import (
 	"context"
-
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
@@ -65,40 +74,127 @@ func legacyInvariant6Join(t *testing.T, f *ctaReview) int64 {
 }
 
 // noNamedLockStorage turns every WithNamedLock into a direct call, which on
-// replica A removes the membershipLockKey #2669 added — the mutation these
-// tests exist to apply — and takes the whole family with it. Same approach,
-// and the same reason, as noRowLockStorage's own WithNamedLock override
+// replica A removes the membershipLockKey section #2669 added and takes the
+// whole family with it: the shape of a replica whose named lock was lost
+// (NAMEDLOCK-OVERLAP-1's window). Same approach, and the same reason, as
+// noRowLockStorage's own WithNamedLock override
 // (concurrency_scim_account_state_race_postgres_test.go): proving the
 // property holds when the guard is missing is the point, and a wrapper that
 // strips the entire family is simpler to reason about than one that strips a
-// key prefix.
+// key prefix. lockInTx, when non-nil, replaces LockNamedKeyInTx (the
+// transaction-scoped fence keys, NAMEDLOCK-OVERLAP-2); nil leaves the fence
+// keys real.
 //
-// It is also what keeps these tests DEADLOCK-FREE, which a narrower wrapper
-// did not: pg_advisory_lock keys live in the DATABASE, while this package's
-// Postgres fixtures isolate only the SCHEMA (pgIsolatedSchemaDSN), and every
-// ctaReview fixture bootstraps the same IDs — so "project-membership:2:2" and
+// pg_advisory_lock keys live in the DATABASE, while this package's Postgres
+// fixtures isolate only the SCHEMA (pgIsolatedSchemaDSN), and every ctaReview
+// fixture bootstraps the same IDs — so "project-membership:2:2" and
 // "sod-grant:user:2" are literally the same advisory locks in every parallel
-// test in the package. With replica A holding one of them across the
-// synchronous hook below, A, replica B and an unrelated parallel test formed
-// a three-way cycle (observed: two tests hung past a 10-minute timeout).
-// Replica A now holds no advisory lock at any point, so no cycle through A
-// can form, and B's own waits are on holders that always make progress.
-func noNamedLockStorage(inner storage.Storage) storage.Storage {
+// test in the package. With replica A holding one of them across a
+// synchronous hook, A, replica B and an unrelated parallel test formed a
+// three-way cycle (observed: two tests hung past a 10-minute timeout), and
+// since NAMEDLOCK-OVERLAP-2 A's grant transaction holds the membership key
+// itself (membershipActiveFence), so a B run synchronously inside that
+// transaction waits on A forever. So B never runs synchronously while A holds
+// a key B takes: it runs in a goroutine (beforeACreateUntilBlockedOnA), or
+// synchronously only before A's fence takes the key (revokeBeforeMembershipFence).
+func noNamedLockStorage(inner storage.Storage, lockInTx func(next storage.Storage, ctx context.Context, key string) error) storage.Storage {
 	return hooked(inner, &storeHooks{
 		WrapTx: true,
 		WithNamedLock: func(_ storage.Storage, ctx context.Context, _ string, fn func(ctx context.Context) error) error {
 			return fn(ctx)
 		},
+		LockNamedKeyInTx: lockInTx,
 	})
 }
 
+// noTxNamedKeys turns every LockNamedKeyInTx into a no-op: with noNamedLockStorage
+// it removes membershipLockKey in both its forms, the pre-#2669 code shape.
+func noTxNamedKeys(storage.Storage, context.Context, string) error { return nil }
+
 // unlockedMembershipCore is replica A with membershipLockKey (and every other
-// named lock) removed — the pre-#2669 code shape.
+// named lock and fence key) removed — the pre-#2669 code shape.
 func unlockedMembershipCore(t *testing.T, f *ctaReview) *KeyorixCore {
 	t.Helper()
-	c := NewKeyorixCore(noNamedLockStorage(localstore.NewLocalStorage(f.dbA)))
+	return namedLockLostCore(t, f, noTxNamedKeys)
+}
+
+// namedLockLostCore is replica A with every WithNamedLock section removed (its
+// named lock lost) and LockNamedKeyInTx replaced by lockInTx (nil: the real
+// fence keys).
+func namedLockLostCore(t *testing.T, f *ctaReview, lockInTx func(next storage.Storage, ctx context.Context, key string) error) *KeyorixCore {
+	t.Helper()
+	c := NewKeyorixCore(noNamedLockStorage(localstore.NewLocalStorage(f.dbA), lockInTx))
 	c.SetAuthEncryptor(f.enc)
 	return c
+}
+
+// beforeACreateUntilBlockedOnA starts concurrent in a goroutine right before
+// A's first INSERT into table and holds A there until concurrent has finished
+// (it ran inside A's window: the unfenced interleaving) or Postgres reports a
+// backend blocked by A's OWN backend (pg_blocking_pids: B waits on a lock A's
+// transaction holds and runs after A commits). Same probe as
+// beforeAShareUpdate: a waiter of a parallel test cannot release A early.
+// blockedOnA reports which of the two happened; call waitB after A returns.
+func (f *ctaReview) beforeACreateUntilBlockedOnA(table string, concurrent func()) (fired, blockedOnA func() bool, waitB func()) {
+	f.t.Helper()
+	var once sync.Once
+	hit, blocked := false, false
+	done := make(chan struct{})
+	require.NoError(f.t, f.dbA.Callback().Create().Before("gorm:create").Register("inv6:before-create-"+table, func(tx *gorm.DB) {
+		if tx.Statement.Table != table {
+			return
+		}
+		once.Do(func() {
+			hit = true
+			var pidA int64
+			require.NoError(f.t, tx.Statement.ConnPool.QueryRowContext(tx.Statement.Context, "SELECT pg_backend_pid()").Scan(&pidA))
+			go func() {
+				defer close(done)
+				concurrent()
+			}()
+			for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				var n int64
+				require.NoError(f.t, f.setupDB.Raw("SELECT count(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))", pidA).
+					Scan(&n).Error)
+				if n > 0 {
+					blocked = true
+					return
+				}
+			}
+			f.t.Errorf("B neither finished nor blocked on A within 10s")
+		})
+	}))
+	return func() bool { return hit }, func() bool { return blocked }, func() {
+		if hit {
+			<-done
+		}
+	}
+}
+
+// revokeBeforeMembershipFence is a LockNamedKeyInTx hook for replica A that
+// runs revoke synchronously right before A's nth LockNamedKeyInTx of key, then
+// takes the key for real. For an activation the first such call is the state
+// CAS and the second is membershipActiveFence; for an open-mode invite the
+// first is the fence. A holds no lock B takes at that point (its named lock is
+// lost and, the fence being the first statement of the grant transaction,
+// nothing else in that transaction ran yet), so B runs to completion there.
+func revokeBeforeMembershipFence(key string, nth int, revoke func()) (hook func(next storage.Storage, ctx context.Context, k string) error, fired func() bool) {
+	calls, hit := 0, false
+	return func(next storage.Storage, ctx context.Context, k string) error {
+		if k == key {
+			calls++
+			if calls == nth {
+				hit = true
+				revoke()
+			}
+		}
+		return next.LockNamedKeyInTx(ctx, k)
+	}, func() bool { return hit }
 }
 
 // TestInvariant6_SoundOnSerialReinvite: `invite(open) → revoke → re-invite`
@@ -310,22 +406,33 @@ func TestOnlyActiveMembershipStateConfersProjectGrant(t *testing.T) {
 	assert.Len(t, seen, len(membershipTransitions), "states exercised: %v", seen)
 }
 
+// inv6MembershipOutcome reads the end state the invariant-6 tests judge: the
+// membership's state, whether the user holds a project grant, and invariant 6's
+// own verdict over the whole database.
+func inv6MembershipOutcome(t *testing.T, f *ctaReview, membershipID, userID uint) (state string, member bool, orphaned []g4OrphanedGrant) {
+	t.Helper()
+	got, err := f.setup.Storage().GetProjectMembership(f.ctx, membershipID)
+	require.NoError(t, err)
+	member, err = f.setup.Storage().IsProjectMember(f.ctx, userID, f.projectID)
+	require.NoError(t, err)
+	orphaned, err = g4OrphanedMembershipGrants(f.setupDB)
+	require.NoError(t, err)
+	return got.State, member, orphaned
+}
+
 // TestInvariant6_MembershipLockIsLoadBearing_OpenModeInvite: the end-to-end
 // mutation. Replica A runs the open-mode invite with membershipLockKey
-// removed (the pre-#2669 shape); replica B's revoke is forced to run, in
+// removed in both its forms (no WithNamedLock section, no LockNamedKeyInTx
+// fence key: the pre-#2669 shape); replica B's revoke is forced to run, in
 // full, on its own connection, immediately before A's user_roles INSERT. B
 // finds no grant to remove, reports success, and A's grant then lands on a
 // membership B has just revoked — #2659 exactly. Invariant 6 must report it.
 //
-// Precondition this forced interleaving depends on, and why B can run
-// SYNCHRONOUSLY inside A's hook (beforeA, not beforeAMayBlock): replica A
-// holds NO advisory lock at all (noNamedLockStorage) and has not yet inserted
-// the user_roles row B would delete, so B — which does take the real locks —
-// waits on nothing A holds and runs to completion inside A's window. That is
-// a stronger guarantee than beforeAMayBlock's timing probe gives, and it is
-// why this test cannot degrade into a silent pass: if B somehow could not
-// finish, fired()/the state assertions below fail loudly. See
-// noNamedLockStorage for the three-way deadlock a narrower mutation caused.
+// B runs in a goroutine and A waits until B finished or is blocked by A's
+// own backend (beforeACreateUntilBlockedOnA). With both forms of the key
+// removed nothing A holds stops B, so B must finish inside A's window; if it
+// is blocked instead, A holds some other lock B needs, the interleaving is not
+// the #2659 one, and the test fails on that instead of passing vacuously.
 func TestInvariant6_MembershipLockIsLoadBearing_OpenModeInvite(t *testing.T) {
 	t.Parallel()
 	f := newCTAReview(t)
@@ -334,7 +441,7 @@ func TestInvariant6_MembershipLockIsLoadBearing_OpenModeInvite(t *testing.T) {
 	u := f.user("inv6-invitee", "")
 
 	var errB error
-	fired := f.beforeA("create", "user_roles", func() {
+	fired, blockedOnA, waitB := f.beforeACreateUntilBlockedOnA("user_roles", func() {
 		m, err := f.coreB.Storage().GetActiveProjectMembership(f.ctx, f.projectID, u.ID)
 		if err != nil {
 			errB = err
@@ -343,20 +450,16 @@ func TestInvariant6_MembershipLockIsLoadBearing_OpenModeInvite(t *testing.T) {
 		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
 	})
 	created, errA := coreA.InviteMember(f.ctx, f.projectID, u.ID, "project_viewer", f.adminID, 0, false)
-	t.Logf("invite (A, no membership lock) err=%v, revoke (B) err=%v", errA, errB)
+	waitB()
+	t.Logf("invite (A, no membership key) err=%v, revoke (B) err=%v, B blocked on A=%v", errA, errB, blockedOnA())
 	require.True(t, fired(), "the hook must have run B's revoke before A's role-grant INSERT")
+	require.False(t, blockedOnA(), "B must run inside A's window: A holds no membership key in this mutation")
 	require.NoError(t, errA)
 	require.NoError(t, errB, "the revoke itself reported success")
 
-	got, err := f.setup.Storage().GetProjectMembership(f.ctx, created.ID)
-	require.NoError(t, err)
-	require.Equal(t, MembershipRevoked, got.State, "B's revoke must have won the membership row")
-	member, err := f.setup.Storage().IsProjectMember(f.ctx, u.ID, f.projectID)
-	require.NoError(t, err)
+	state, member, orphaned := inv6MembershipOutcome(t, f, created.ID, u.ID)
+	require.Equal(t, MembershipRevoked, state, "B's revoke must have won the membership row")
 	require.True(t, member, "A's grant must have landed after the revoke — that is the #2659 bug")
-
-	orphaned, err := g4OrphanedMembershipGrants(f.setupDB)
-	require.NoError(t, err)
 	assert.Contains(t, orphaned, g4OrphanedGrant{UserID: u.ID, ProjectID: f.projectID},
 		"invariant 6 must still report the real #2659 violation after being corrected")
 }
@@ -375,24 +478,154 @@ func TestInvariant6_MembershipLockIsLoadBearing_Activate(t *testing.T) {
 	require.NoError(t, err)
 
 	var errB error
-	fired := f.beforeA("create", "user_roles", func() {
+	fired, blockedOnA, waitB := f.beforeACreateUntilBlockedOnA("user_roles", func() {
 		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
 	})
 	_, errA := coreA.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipActive, f.adminID, false)
-	t.Logf("activate (A, no membership lock) err=%v, revoke (B) err=%v", errA, errB)
+	waitB()
+	t.Logf("activate (A, no membership key) err=%v, revoke (B) err=%v, B blocked on A=%v", errA, errB, blockedOnA())
 	require.True(t, fired(), "the hook must have run B's revoke before A's role-grant INSERT")
+	require.False(t, blockedOnA(), "B must run inside A's window: A holds no membership key in this mutation")
 	require.NoError(t, errB, "the revoke itself reported success")
 
-	got, err := f.setup.Storage().GetProjectMembership(f.ctx, m.ID)
-	require.NoError(t, err)
-	member, err := f.setup.Storage().IsProjectMember(f.ctx, u.ID, f.projectID)
-	require.NoError(t, err)
-	t.Logf("final membership state=%s, holds project grant=%v", got.State, member)
-	require.Equal(t, MembershipRevoked, got.State, "B's revoke must have won the membership row")
+	state, member, orphaned := inv6MembershipOutcome(t, f, m.ID, u.ID)
+	t.Logf("final membership state=%s, holds project grant=%v", state, member)
+	require.Equal(t, MembershipRevoked, state, "B's revoke must have won the membership row")
 	require.True(t, member, "A's grant must have landed after the revoke — that is the #2657 bug")
-
-	orphaned, err := g4OrphanedMembershipGrants(f.setupDB)
-	require.NoError(t, err)
 	assert.Contains(t, orphaned, g4OrphanedGrant{UserID: u.ID, ProjectID: f.projectID},
 		"invariant 6 must still report the real #2657 violation after being corrected")
+}
+
+// TestInvariant6_MembershipFenceSurvivesLostNamedLock_OpenModeInvite_ConcurrentRevoke:
+// the same forced interleaving as ..._MembershipLockIsLoadBearing_OpenModeInvite,
+// with only the WithNamedLock section removed (A's named lock lost) and the
+// fence key real. A's grant transaction holds membershipLockKey
+// (membershipActiveFence) when B's revoke starts, so B's state CAS must wait for
+// A's commit, and B's removal then sees A's grant and removes it: no orphaned
+// grant, the revoke wins. Without the fence key this is the calibration above
+// (B finishes inside A's window and the grant is orphaned).
+func TestInvariant6_MembershipFenceSurvivesLostNamedLock_OpenModeInvite_ConcurrentRevoke(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	coreA := namedLockLostCore(t, f, nil)
+	coreA.SetMembershipValidationMode(ValidationModeOpen)
+	u := f.user("inv6-fence-invitee", "")
+
+	var errB error
+	fired, blockedOnA, waitB := f.beforeACreateUntilBlockedOnA("user_roles", func() {
+		m, err := f.coreB.Storage().GetActiveProjectMembership(f.ctx, f.projectID, u.ID)
+		if err != nil {
+			errB = err
+			return
+		}
+		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
+	})
+	created, errA := coreA.InviteMember(f.ctx, f.projectID, u.ID, "project_viewer", f.adminID, 0, false)
+	waitB()
+	t.Logf("invite (A, named lock lost) err=%v, revoke (B) err=%v, B blocked on A=%v", errA, errB, blockedOnA())
+	require.True(t, fired(), "the hook must have started B's revoke before A's role-grant INSERT")
+	require.True(t, blockedOnA(), "B's revoke must wait on A's grant transaction (it finished inside A's window: %v)", errB)
+	require.NoError(t, errA, "A's invite held the membership key first and must commit")
+	require.NoError(t, errB, "B's revoke runs after A's commit and must succeed")
+
+	state, member, orphaned := inv6MembershipOutcome(t, f, created.ID, u.ID)
+	require.Equal(t, MembershipRevoked, state, "the revoke must win the membership row")
+	require.False(t, member, "a revoked membership kept its role grant")
+	assert.Empty(t, orphaned, "invariant 6: no grant may outlive the revoke of the membership that conferred it")
+}
+
+// TestInvariant6_MembershipFenceSurvivesLostNamedLock_Activate_ConcurrentRevoke:
+// the #2657 sibling of the test above (provisioned→active).
+func TestInvariant6_MembershipFenceSurvivesLostNamedLock_Activate_ConcurrentRevoke(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	coreA := namedLockLostCore(t, f, nil)
+	u := f.user("inv6-fence-activate", "")
+	m, err := f.setup.Storage().CreateProjectMembership(f.ctx, &models.ProjectMembership{
+		ProjectID: f.projectID, UserID: u.ID, Role: "project_viewer", State: MembershipProvisioned,
+	})
+	require.NoError(t, err)
+
+	var errB error
+	fired, blockedOnA, waitB := f.beforeACreateUntilBlockedOnA("user_roles", func() {
+		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
+	})
+	_, errA := coreA.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipActive, f.adminID, false)
+	waitB()
+	t.Logf("activate (A, named lock lost) err=%v, revoke (B) err=%v, B blocked on A=%v", errA, errB, blockedOnA())
+	require.True(t, fired(), "the hook must have started B's revoke before A's role-grant INSERT")
+	require.True(t, blockedOnA(), "B's revoke must wait on A's grant transaction (it finished inside A's window: %v)", errB)
+	require.NoError(t, errA, "A's activation held the membership key first and must commit")
+	require.NoError(t, errB, "B's revoke runs after A's commit and must succeed")
+
+	state, member, orphaned := inv6MembershipOutcome(t, f, m.ID, u.ID)
+	require.Equal(t, MembershipRevoked, state, "the revoke must win the membership row")
+	require.False(t, member, "a revoked membership kept its role grant")
+	assert.Empty(t, orphaned, "invariant 6: no grant may outlive the revoke of the membership that conferred it")
+}
+
+// TestInvariant6_MembershipFenceSurvivesLostNamedLock_OpenModeInvite_RevokeBeforeFence:
+// A's named lock is lost and B's revoke commits in full after A created the
+// `active` membership but before A's grant transaction takes the fence key.
+// The fence's re-read then sees `revoked` and refuses the grant
+// (ErrMembershipStateConflict, the grant transaction rolls back), and the
+// refusal leaves B's revoked row alone: no orphaned grant, the revoke wins.
+func TestInvariant6_MembershipFenceSurvivesLostNamedLock_OpenModeInvite_RevokeBeforeFence(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	u := f.user("inv6-prefence-invitee", "")
+
+	var errB error
+	var membershipID uint
+	hook, fired := revokeBeforeMembershipFence(membershipLockKey(f.projectID, u.ID), 1, func() {
+		m, err := f.coreB.Storage().GetActiveProjectMembership(f.ctx, f.projectID, u.ID)
+		if err != nil {
+			errB = err
+			return
+		}
+		membershipID = m.ID
+		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
+	})
+	coreA := namedLockLostCore(t, f, hook)
+	coreA.SetMembershipValidationMode(ValidationModeOpen)
+	_, errA := coreA.InviteMember(f.ctx, f.projectID, u.ID, "project_viewer", f.adminID, 0, false)
+	t.Logf("invite (A, named lock lost) err=%v, revoke (B) err=%v", errA, errB)
+	require.True(t, fired(), "B's revoke must have run before A's fence took the membership key")
+	require.NoError(t, errB, "B's revoke commits before A's grant and must succeed")
+	require.ErrorIs(t, errA, ErrMembershipStateConflict, "A's fence must refuse the grant on a membership B revoked")
+
+	state, member, orphaned := inv6MembershipOutcome(t, f, membershipID, u.ID)
+	require.Equal(t, MembershipRevoked, state, "the revoke must win the membership row")
+	require.False(t, member, "A's refused grant must not have landed")
+	assert.Empty(t, orphaned, "invariant 6: no grant may outlive the revoke of the membership that conferred it")
+}
+
+// TestInvariant6_MembershipFenceSurvivesLostNamedLock_Activate_RevokeBeforeFence:
+// the #2657 sibling of the test above. A's state CAS (the first
+// LockNamedKeyInTx of the key) committed `active`; B's revoke runs before A's
+// fence (the second).
+func TestInvariant6_MembershipFenceSurvivesLostNamedLock_Activate_RevokeBeforeFence(t *testing.T) {
+	t.Parallel()
+	f := newCTAReview(t)
+	u := f.user("inv6-prefence-activate", "")
+	m, err := f.setup.Storage().CreateProjectMembership(f.ctx, &models.ProjectMembership{
+		ProjectID: f.projectID, UserID: u.ID, Role: "project_viewer", State: MembershipProvisioned,
+	})
+	require.NoError(t, err)
+
+	var errB error
+	hook, fired := revokeBeforeMembershipFence(membershipLockKey(f.projectID, u.ID), 2, func() {
+		_, errB = f.coreB.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipRevoked, f.adminID, false)
+	})
+	coreA := namedLockLostCore(t, f, hook)
+	_, errA := coreA.TransitionMembership(f.ctx, f.projectID, m.ID, MembershipActive, f.adminID, false)
+	t.Logf("activate (A, named lock lost) err=%v, revoke (B) err=%v", errA, errB)
+	require.True(t, fired(), "B's revoke must have run before A's fence took the membership key")
+	require.NoError(t, errB, "B's revoke commits before A's grant and must succeed")
+	require.ErrorIs(t, errA, ErrMembershipStateConflict, "A's fence must refuse the grant on a membership B revoked")
+
+	state, member, orphaned := inv6MembershipOutcome(t, f, m.ID, u.ID)
+	require.Equal(t, MembershipRevoked, state, "the revoke must win the membership row (A's refusal must not revert it)")
+	require.False(t, member, "A's refused grant must not have landed")
+	assert.Empty(t, orphaned, "invariant 6: no grant may outlive the revoke of the membership that conferred it")
 }
