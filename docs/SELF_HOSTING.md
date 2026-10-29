@@ -502,7 +502,8 @@ v0.96.x installed the key files before the load; see the warning earlier in this
 including after killed restores), so rolling back before you cut over is to keep running
 it. After cutover, writes land only in PostgreSQL; there is no reverse sync. To go back
 with them, `admin backup` on PostgreSQL and `admin restore` into a SQLite config (the
-same commands the other way round; this direction is not exercised by the check). Keep
+same commands the other way round; this direction is exercised, at a few hundred thousand
+rows, by `scripts/release-qa/scenario_restore_scale.sh`). Keep
 the SQLite file and the archive until you have run on PostgreSQL long enough to trust it.
 
 ### Version-skipping upgrades
