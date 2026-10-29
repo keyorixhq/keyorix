@@ -5,6 +5,7 @@ package keyfiles
 // manifest.go); these are the accident and crash shapes it must classify.
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -173,5 +174,48 @@ func TestReviewKF_RacingWriters_ManifestNeverTorn(t *testing.T) {
 		if _, err := LoadManifest(filepath.Join(dir, ManifestFileName)); err != nil {
 			t.Fatalf("racing writers left a manifest that does not load: %v", err)
 		}
+	}
+}
+
+// The same race, made deterministic: writer B stages (and then fails to
+// rename) between writer A's staging write and A's rename. A must still
+// install its own manifest. With one shared staging name, B overwrote A's
+// staged bytes and its failure cleanup deleted A's staging file, so A's
+// commit failed (or, had B renamed, installed B's content as A's).
+func TestReviewKF_InterleavedWriter_DoesNotTouchAnothersStagingFile(t *testing.T) {
+	t.Parallel()
+	enc := passwordSetConfig()
+	dir := t.TempDir()
+	provisionGeneration(t, dir, enc)
+	salt, dek := filepath.Join(dir, "kek.salt"), filepath.Join(dir, "dek.key")
+	def := ManifestFS{}.withDefaults()
+	b, err := NewSetWriter(enc, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = b.WithFS(ManifestFS{Rename: func(string, string) error { return errors.New("writer B stopped before its rename") }})
+	a, err := NewSetWriter(enc, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a = a.WithFS(ManifestFS{WriteSync: func(d, name string, data []byte) error {
+		if err := def.WriteSync(d, name, data); err != nil {
+			return err
+		}
+		if err := b.CommitManifest(OpRotateDEK, map[string][]byte{dek: []byte(strings.Repeat("b", 32))}); err == nil {
+			t.Error("test bug: writer B was meant to fail")
+		}
+		return nil
+	}})
+	newSalt := []byte(strings.Repeat("a", 32))
+	if err := a.CommitManifest(OpRotateKEK, map[string][]byte{salt: newSalt}); err != nil {
+		t.Fatalf("writer A's commit failed because of writer B: %v", err)
+	}
+	m, err := LoadManifest(filepath.Join(dir, ManifestFileName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Files["kek.salt"]; got.SHA256 != HashBytes(newSalt) || got.Operation != OpRotateKEK {
+		t.Fatalf("the committed manifest is not writer A's: salt entry %+v", got)
 	}
 }
