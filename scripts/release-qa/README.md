@@ -120,6 +120,28 @@ restore_compat_matrix.sh <work-dir> <tag>[=<empty-postgres-dsn>] ...
   hostnames, and a sandboxed run has no DNS.
 - Not covered: Docker Compose / Helm upgrade legs (need the e2e VM).
 
+## scenario_restore_scale.sh (+ scalegen/)
+
+Backup/restore/migrate at scale (#3462): `scalegen` fills an empty SQLite
+database with N secret versions and N audit events (written through the
+storage layer, so the hash chain verifies), then the script measures wall
+time and peak RSS of `admin backup` (SQLite), `admin restore` to SQLite, to
+PostgreSQL, `admin backup` (PostgreSQL) and `admin restore` PostgreSQL ->
+SQLite. Every restore must report verify-audit VALID.
+
+```
+scenario_restore_scale.sh <server-bin> <empty-postgres-dsn|-> <work-dir> \
+    [versions=300000] [audit=300000] [secrets=1000]
+```
+
+- Results land in `<work-dir>/results.tsv`. Put numbers in reports, never
+  in repo docs.
+- Peak RSS is read with `getrusage(RUSAGE_CHILDREN)` (a Python wrapper),
+  not `/usr/bin/time -l`, which a sandboxed macOS session cannot run.
+- `KEYORIX_QA_REUSE_SRC=1` reuses `<work-dir>/src` from an earlier run, so
+  two binaries can be compared on the same dataset (copy `src/` and fix the
+  database path in its `keyorix.yaml`).
+
 ## Not yet covered here (exercised manually during the campaign; good follow-ups)
 
 - Docker Compose / Helm chart boot checks — deliberately NOT added here yet,
