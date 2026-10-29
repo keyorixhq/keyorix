@@ -213,9 +213,12 @@ func TestKeySecret_Refusals(t *testing.T) {
 		{"interrupted KEK rotation", func(t *testing.T, _ *config.Config, _ *KeySecretOpts) {
 			writeFile(t, "kek.salt.pending", "x")
 		}, "kek.salt.pending exists"},
-		{"interrupted key-set manifest write", func(t *testing.T, _ *config.Config, _ *KeySecretOpts) {
+		{"interrupted key-set manifest write", func(t *testing.T, cfg *config.Config, _ *KeySecretOpts) {
+			killManifestWriteBeforeRename(t, cfg)
+		}, KeySetManifestName + ".pending-"},
+		{"legacy key-set manifest staging file", func(t *testing.T, _ *config.Config, _ *KeySecretOpts) {
 			writeFile(t, KeySetManifestName+".pending", "x")
-		}, ".pending exists"},
+		}, KeySetManifestName + ".pending exists"},
 		{"missing salt", func(t *testing.T, _ *config.Config, _ *KeySecretOpts) {
 			if err := os.Remove("kek.salt"); err != nil {
 				t.Fatal(err)
@@ -443,6 +446,37 @@ func TestKeySecret_RotateDEKInWorkspace_NewFingerprintDataFollows(t *testing.T) 
 	}
 	if got := decryptPasswordResetRow(t, cfg, testBaselinePassphrase, userID); got != plaintext {
 		t.Fatalf("row after rotation: %q", got)
+	}
+}
+
+// killManifestWriteBeforeRename leaves the staging file a key operation's
+// manifest write leaves when the process dies between writing it and renaming
+// it into place: the real keyfiles writer runs, and the rename never returns.
+// The refusal test then checks whatever name the writer actually stages under.
+func killManifestWriteBeforeRename(t *testing.T, cfg *config.Config) {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := keyfiles.NewSetWriter(&cfg.Storage.Encryption, cwd)
+	if err != nil || w == nil {
+		t.Fatalf("NewSetWriter: %v, %v", w, err)
+	}
+	type killed struct{}
+	func() {
+		defer func() {
+			if r := recover(); r != nil && r != (killed{}) {
+				panic(r)
+			}
+		}()
+		_ = w.WithFS(keyfiles.ManifestFS{Rename: func(string, string) error { panic(killed{}) }}).
+			CommitManifestFromDisk(keyfiles.OpRotateKEK, filepath.Join(cwd, cfg.Storage.Encryption.SaltPath))
+		t.Fatal("the manifest write returned without reaching its rename")
+	}()
+	staged, err := filepath.Glob(filepath.Join(cwd, KeySetManifestName+".pending*"))
+	if err != nil || len(staged) != 1 {
+		t.Fatalf("the interrupted manifest write left %v (%v), want one staging file", staged, err)
 	}
 }
 

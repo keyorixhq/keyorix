@@ -36,7 +36,7 @@ type DB struct {
 // it never writes to the artifact being verified, and works unmodified
 // against a copy taken from a live deployment.
 func OpenSQLiteReadOnly(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?mode=ro", path)
+	dsn := "file:" + sqliteURIPath.Replace(path) + "?mode=ro"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
@@ -47,6 +47,12 @@ func OpenSQLiteReadOnly(path string) (*DB, error) {
 	}
 	return &DB{sql: sqlDB, backend: BackendSQLite}, nil
 }
+
+// sqliteURIPath percent-escapes the bytes SQLite's URI parser gives a meaning
+// in the path ('%', '?', '#'). Unescaped, a file named "a?b.db" opened "a"
+// read-write (the "?b.db" became the query and dropped mode=ro), "c#d.db"
+// opened "c", and "%41" was decoded: a different file than the one named.
+var sqliteURIPath = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
 
 // OpenPostgres opens a Postgres DSN via pgx. A read-only DB role is a
 // deployment-level concern (GRANT SELECT ON audit_events, audit_checkpoints,
@@ -134,6 +140,18 @@ func (d *DB) StreamAuditEvents(ctx context.Context, afterID uint64, limit int) (
 		return nil, fmt.Errorf("iterate audit_events: %w", err)
 	}
 	return out, nil
+}
+
+// CountAuditEventsThrough counts the audit_events rows with id <= throughID
+// or a NULL id: every row a complete id-ordered walk that ended on throughID
+// must have visited.
+func (d *DB) CountAuditEventsThrough(ctx context.Context, throughID uint64) (int64, error) {
+	var n int64
+	q := d.rebind(`SELECT COUNT(*) FROM audit_events WHERE id IS NULL OR id <= ?`)
+	if err := d.sql.QueryRowContext(ctx, q, throughID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count audit_events: %w", err)
+	}
+	return n, nil
 }
 
 // rowScanner is the subset of *sql.Rows this package's row decoder needs —
