@@ -7,7 +7,6 @@ import (
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
-	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
 // txFence is the in-transaction half of a WithNamedLock section
@@ -109,22 +108,33 @@ func sodUserGrantFence(userID uint, roleIDs []uint, scope Scope) txFence {
 	}
 }
 
-// sodGroupGrantFence is the fence of a grant of roleID to a group whose
-// members withGroupMemberSoDLocks snapshotted (and named-locked, in ascending
-// ID order): it row-locks every active member's user row in the same order,
-// then re-runs the group grant's separation-of-duties check through tx on that
-// same snapshot. A direct grant to a member, or another group grant reaching
-// one, locks that member's row too (sodUserGrantFence, this fence), so the two
-// transactions serialize and the later one's check sees the earlier one's
-// grant.
-func sodGroupGrantFence(roleID uint, members []*models.User) txFence {
-	ids := make([]uint, 0, len(members))
-	for _, m := range members {
-		if m.IsActive {
-			ids = append(ids, m.ID)
-		}
-	}
+// sodGroupGrantFence is the fence of a grant of roleID to groupID. It runs
+// after sodGroupKeyFence (the group's key, held until commit), re-lists the
+// group's members through tx, row-locks every active member's user row in
+// ascending ID order, then re-runs the group grant's separation-of-duties
+// check through tx on that listing. A direct grant to a member, or another
+// group grant reaching one, locks that member's row too (sodUserGrantFence,
+// this fence), so the two transactions serialize and the later one's check
+// sees the earlier one's grant.
+//
+// The listing is taken again here, not reused from withGroupMemberSoDLocks:
+// a user who joined after that snapshot holds none of its named locks, and
+// AddUserToGroup's transaction takes the group's key before it writes the
+// membership (NAMEDLOCK-FENCE-1). With the key held, every join that will
+// commit before this transaction ends has already committed, so the listing
+// is complete, and each member it adds is row-locked before it is checked.
+func sodGroupGrantFence(groupID, roleID uint) txFence {
 	return func(ctx context.Context, tx storage.Storage) error {
+		members, err := tx.ListGroupMembers(ctx, groupID)
+		if err != nil {
+			return fmt.Errorf("%s: %w", i18n.T("ErrorRetrievalFailed", nil), err)
+		}
+		ids := make([]uint, 0, len(members))
+		for _, m := range members {
+			if m.IsActive {
+				ids = append(ids, m.ID)
+			}
+		}
 		if err := lockUserRowsOn(ctx, tx, ids...); err != nil {
 			return err
 		}
@@ -168,9 +178,11 @@ func withoutRole(roleID uint) func(existing []uint) []uint {
 // sodGroupKeyFence takes sodGrantLockKey("group", groupID) with
 // LockNamedKeyInTx: the key a grant to the group holds, taken again inside its
 // write transaction so RestoreGroup's transaction (which takes it too, then
-// re-reads the group's roles for its ceiling check) and the grant serialize
-// even when one side's named lock was lost. First in the transaction: the
-// group key ranks before the members' rows (sodGroupGrantFence).
+// re-reads the group's roles for its ceiling check), AddUserToGroup's
+// transaction (which takes it too, then re-reads the group's grants for its
+// separation-of-duties check) and the grant serialize even when one side's
+// named lock was lost. First in the transaction: the group key ranks before
+// the members' rows (sodGroupGrantFence).
 func sodGroupKeyFence(groupID uint) txFence {
 	return func(ctx context.Context, tx storage.Storage) error {
 		return lockNamedKeysInTxOn(ctx, tx, sodGrantLockKey("group", groupID))

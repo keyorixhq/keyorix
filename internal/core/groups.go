@@ -400,6 +400,16 @@ func (c *KeyorixCore) AddUserToGroup(ctx context.Context, actorID uint, actorIsM
 		return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 			// NAMEDLOCK-OVERLAP-2 (txFence): the user's row, then the same
 			// separation-of-duties check validateGroupJoinRoles ran, through tx.
+			// NAMEDLOCK-FENCE-1: the group's key first. A grant to the group
+			// shares no named lock with this join (it holds the group key and
+			// its current members' keys, not this user's), so its transaction
+			// and this one serialize only on this key: whichever commits second
+			// re-reads the other's write (the grants below, the members in
+			// sodGroupGrantFence) and refuses a toxic pair. Taken whether or not
+			// the check below runs, so a grant always sees the join.
+			if err := lockNamedKeysInTxOn(ctx, tx, sodGrantLockKey("group", groupID)); err != nil {
+				return err
+			}
 			if err := lockUserRowsOn(ctx, tx, userID); err != nil {
 				return err
 			}
