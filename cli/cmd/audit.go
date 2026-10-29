@@ -288,6 +288,7 @@ type csvEventRow struct {
 	IPAddress   string `json:"ip_address"`
 	Success     bool   `json:"success"`
 	Description string `json:"description"`
+	RequestID   string `json:"request_id"`
 }
 
 func uintPtrStr(p *uint) string {
@@ -321,6 +322,7 @@ func runAuditExport(cmd *cobra.Command, _ []string) error {
 		_ = cw.Write([]string{
 			"id", "event_time", "event_type", "actor", "actor_type",
 			"user_id", "project_id", "secret_id", "ip_address", "success", "description",
+			"request_id",
 		})
 	}
 
@@ -355,6 +357,7 @@ func runAuditExport(cmd *cobra.Command, _ []string) error {
 					strconv.FormatUint(uint64(row.ID), 10), row.Timestamp, cliout.CSVSafe(row.EventType),
 					cliout.CSVSafe(row.Actor), cliout.CSVSafe(row.ActorType), uintPtrStr(row.UserID), uintPtrStr(row.ProjectID),
 					uintPtrStr(row.SecretID), cliout.CSVSafe(row.IPAddress), strconv.FormatBool(row.Success), cliout.CSVSafe(row.Description),
+					cliout.CSVSafe(row.RequestID),
 				})
 				continue
 			}
@@ -514,6 +517,9 @@ var (
 	auditLogLimit     int
 	auditLogCursor    string
 	auditLogTotal     bool
+	auditLogRequestID string
+	// auditWide adds the REQUEST-ID column to the logs and search tables.
+	auditWide bool
 )
 
 var auditLogsCmd = &cobra.Command{
@@ -533,6 +539,8 @@ func init() {
 	auditLogsCmd.Flags().IntVar(&auditLogLimit, "limit", 50, "Max events to show (1–100)")
 	auditLogsCmd.Flags().StringVar(&auditLogCursor, "cursor", "", "Continue after a previous page (the cursor printed under it)")
 	auditLogsCmd.Flags().BoolVar(&auditLogTotal, "include-total", false, "Count every matching event (exact total; slower on a large audit trail)")
+	auditLogsCmd.Flags().StringVar(&auditLogRequestID, "request-id", "", "Filter by the server request id (the X-Request-ID of the call); not covered by the audit hash chain; combine with --since")
+	auditLogsCmd.Flags().BoolVar(&auditWide, "wide", false, "Add the REQUEST-ID column")
 }
 
 type logEntry struct {
@@ -544,6 +552,7 @@ type logEntry struct {
 	Timestamp      string `json:"timestamp"`
 	Impersonation  bool   `json:"impersonation"`
 	ImpersonatedBy string `json:"impersonated_by"`
+	RequestID      string `json:"request_id"`
 }
 
 // auditPageFooter is the paging part of the /audit/logs and /audit/search
@@ -590,6 +599,9 @@ func runAuditLogs(_ *cobra.Command, _ []string) error {
 	if auditLogActorType != "" {
 		at := apiclient.ListAuditLogsParamsActorType(auditLogActorType)
 		params.ActorType = &at
+	}
+	if auditLogRequestID != "" {
+		params.RequestId = &auditLogRequestID
 	}
 	if auditLogSince != "" {
 		t, err := time.Parse(time.RFC3339, auditLogSince)
@@ -647,15 +659,27 @@ func printAuditLogTable(logs []logEntry, footer auditPageFooter) {
 	}
 	// Times are always UTC, labelled as such: other commands used to print local
 	// time, and the two disagreed by the local offset on stage (#2942).
-	fmt.Printf("%-6s %-20s %-16s %-9s %-*s %s\n", "ID", "TIME (UTC)", "ACTOR", "KIND", evW, "EVENT", "DESCRIPTION")
+	// REQUEST-ID sits before DESCRIPTION (free-length, last); 24 hex chars wide.
+	reqCol := func(id string) string { return "" }
+	reqHead := ""
+	if auditWide {
+		reqHead = fmt.Sprintf("%-24s ", "REQUEST-ID")
+		reqCol = func(id string) string {
+			if id == "" {
+				id = "-"
+			}
+			return fmt.Sprintf("%-24s ", cliout.SanitizeForTerminal(auditTruncate(id, 24)))
+		}
+	}
+	fmt.Printf("%-6s %-20s %-16s %-9s %-*s %s%s\n", "ID", "TIME (UTC)", "ACTOR", "KIND", evW, "EVENT", reqHead, "DESCRIPTION")
 	for _, e := range logs {
 		actor := e.Actor
 		if e.Impersonation && e.ImpersonatedBy != "" {
 			actor = e.ImpersonatedBy + "→" + e.Actor
 		}
-		fmt.Printf("%-6d %-20s %-16s %-9s %-*s %s\n",
+		fmt.Printf("%-6d %-20s %-16s %-9s %-*s %s%s\n",
 			e.ID, shortTime(e.Timestamp), auditTruncate(cliout.SanitizeForTerminal(actor), 16), e.ActorType,
-			evW, auditTruncate(cliout.SanitizeForTerminal(e.EventType), evW), cliout.SanitizeForTerminal(e.Description))
+			evW, auditTruncate(cliout.SanitizeForTerminal(e.EventType), evW), reqCol(e.RequestID), cliout.SanitizeForTerminal(e.Description))
 	}
 	switch {
 	case footer.Total == nil:
@@ -710,6 +734,7 @@ var (
 	auditSearchOffset       int
 	auditSearchCursor       string
 	auditSearchTotal        bool
+	auditSearchRequestID    string
 )
 
 var auditSearchCmd = &cobra.Command{
@@ -734,6 +759,8 @@ func init() {
 	auditSearchCmd.Flags().IntVar(&auditSearchOffset, "offset", 0, "Pagination offset (offset+limit up to 10000; use --cursor beyond)")
 	auditSearchCmd.Flags().StringVar(&auditSearchCursor, "cursor", "", "Continue after a previous page (the cursor printed under it)")
 	auditSearchCmd.Flags().BoolVar(&auditSearchTotal, "include-total", false, "Count every matching event (exact total; slower on a large audit trail)")
+	auditSearchCmd.Flags().StringVar(&auditSearchRequestID, "request-id", "", "Filter by the server request id (the X-Request-ID of the call); not covered by the audit hash chain; combine with --since")
+	auditSearchCmd.Flags().BoolVar(&auditWide, "wide", false, "Add the REQUEST-ID column")
 }
 
 // searchPage is the GET /api/v1/audit/search envelope. Its events are the same
@@ -789,6 +816,9 @@ func runAuditSearch(_ *cobra.Command, _ []string) error {
 	}
 	if auditSearchIP != "" {
 		params.Ip = &auditSearchIP
+	}
+	if auditSearchRequestID != "" {
+		params.RequestId = &auditSearchRequestID
 	}
 	if auditSearchSuccess != "" {
 		s := apiclient.SearchAuditLogsParamsSuccess(auditSearchSuccess)

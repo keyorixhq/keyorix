@@ -620,6 +620,7 @@ func (c *KeyorixCore) activateBreakGlassDegraded(
 			}
 			if err := tx.CreatePendingAuditEvent(ctx, &models.PendingAuditEvent{
 				EventType: e.EventType, Event: string(encoded), BreakGlassActivationID: a.ID,
+				RequestID: owedRequestID(ctx),
 			}); err != nil {
 				return &pendingRecordError{err}
 			}

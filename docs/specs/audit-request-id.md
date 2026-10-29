@@ -129,7 +129,7 @@ mechanism. Why that is acceptable:
   read it; the offline verifier's explicit column list does not select it.
 - **Audit export (`/audit/export`, `.csv`):** include `request_id` (section 8, follow-up PR).
 
-## 8. API and CLI surface (follow-up PR)
+## 8. API and CLI surface (AUDIT-REQUEST-ID-2)
 
 - `GET /api/v1/audit/logs`, `/audit/search`, `/audit/export`: `request_id` on each entry
   (omitted when NULL); `/audit/export.csv` gets a `request_id` column (formula-escaped like
@@ -139,6 +139,11 @@ mechanism. Why that is acceptable:
 - gRPC `AuditService`: same field and filter; the CLI `keyorix audit logs` gets
   `--request-id` and shows the id in `-o json` / wide output.
 - The OpenAPI and proto edits are in hot wiring files, so they ship as their own PR.
+- Shipped as specified, with these details: the filter is also ignored when empty
+  (`request_id=` matches nothing special), `/audit/export` (JSON) carries the field but takes
+  no filter (it is the after_id-paged SIEM feed), `export.csv`'s new column is last so
+  existing positional readers keep working, and the CLI shows the id with `--wide` rather
+  than widening the default table.
 
 ## 9. Acceptance criteria (this PR)
 
@@ -160,3 +165,32 @@ mechanism. Why that is acceptable:
 
 Follow-ups: section 8; carry the request id through `pending_audit_events` for owed rows;
 gRPC request ids (interceptor minting the same id into a holder).
+
+## 10. Owed audit rows and gRPC (AUDIT-REQUEST-ID-2)
+
+- **gRPC:** `interceptors.RequestIDInterceptor` / `StreamRequestIDInterceptor` run right
+  after Recovery, put a `logging.Holder` on the call's context and mint the id there
+  (`SetServerRequestID`, 24 hex characters, the same shape as HTTP), so `logAuditEvent` stamps
+  gRPC-written rows like any other. The id is returned in the `x-request-id` response header;
+  a client-sent `x-request-id` is kept only as `client_request_id`, so it can never reach the
+  column. If the system random source fails, the call carries no id and its rows are NULL.
+- **Owed rows:** `pending_audit_events.request_id TEXT NULL` records
+  `logging.ServerRequestID(ctx)` wherever a pending record is written (the plain-suspend and
+  `withOwedAuditMutation` paths, their late-queue fallbacks, and the degraded break-glass
+  commit). `BackfillPendingAuditEvents` appends each row under a fresh holder carrying the
+  recorded id (`owedBackfillContext`), so the single stamping point stays `logAuditEvent` and
+  a writer still cannot choose the value. A record without an id appends NULL even if the
+  backfill itself runs inside a request: a late row never takes the id of the pass that
+  writes it.
+- **Migration:** `ALTER TABLE pending_audit_events ADD COLUMN request_id TEXT` on both
+  backends (catalog-only on PostgreSQL). **Schema epoch 9, floor unchanged (3):** an epoch-8
+  replica never writes the column, so its owed records have NULL and backfill as "no request
+  id", exactly what they had before.
+- Tests: `TestOwedAudit_BackfilledRowKeepsTheRequestID`,
+  `TestBreakGlass_DegradedOwedRowsKeepTheRequestID`,
+  `TestPendingAuditRequestID_AddedOnUpgrade_SQLite` / `_Postgres_AddedOnUpgrade`,
+  `TestGRPCMutation_AuditRowCarriesServerMintedRequestID`.
+- **Not done here, found on the way:** the failed-login audit row (`auth.login_failed`) is
+  written by the login handler from a goroutine on `context.Background()`
+  (`server/http/handlers/auth.go`), so it carries no request id. Using
+  `core.DetachedAuditContext(r.Context())` there (which keeps the holder) would stamp it.

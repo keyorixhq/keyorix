@@ -96,6 +96,33 @@ plus, when the term is part of `system` (e.g. `sys`), the kind-`system` events.
 `entry_hash` and a verifier re-derives the hash from the exported fields. The
 displayed kind is in the separate `actor_kind_display` field.
 
+### Audit log request id
+Every audit row written while serving a request stores the id the **server**
+minted for that request in `audit_events.request_id` (24 hex characters; the
+`X-Request-ID` response header of an HTTP call, the `x-request-id` response
+header of a gRPC call). It is returned as `request_id` on each entry of
+`GET /api/v1/audit/logs`, `/audit/search` and `/audit/export` (omitted when the
+row has none), as the `request_id` column of `/audit/export.csv` (last column,
+empty when the row has none), and as `AuditLog.request_id` in gRPC. A caller's
+own `X-Request-ID` / `x-request-id` is never stored: it is only the
+`client_request_id` field of the server log.
+
+Filter by it with `request_id=<id>` on `GET /api/v1/audit/logs` and
+`/audit/search` (exact match; rows without an id never match), the gRPC
+`GetAuditLogs` `request_id`, or `keyorix audit logs|search --request-id <id>`
+(`--wide` adds the id to the table). The column is not indexed, so give the
+query a time window (`start_time`/`end_time`, `since`/`until`, `--since`) when
+the audit trail is large.
+
+**`request_id` is not covered by the audit hash chain.** It is advisory: anyone
+with write access to the database can set, change or clear it and
+`admin verify-audit` will not notice. After finding rows by request id, confirm
+the match on the hash-covered fields (actor, event type, time) against the log
+line. The id is NULL on rows written by the scheduler or at startup, on rows
+older than schema epoch 6, and on rows from a replica older than that. A row
+that was owed while the audit log refused writes keeps the id of the request that
+caused it (schema epoch 9). Design: `docs/specs/audit-request-id.md`.
+
 ### A credential with no role grant
 A newly created machine identity holds no role, and its token authenticates but
 reads nothing. The two list routes that filter rows by the caller's grants

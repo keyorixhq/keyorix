@@ -9,6 +9,8 @@ overrides:
   # whitespace bypass, Set-Cookie injection, SameSite downgrade, keep-alive
   # queue poisoning). react-router pulls the vulnerable range transitively.
   undici@>=5.0.0 <7.29.0: ^7.29.0
+  # undici >=8.0.0 <8.12.2: Dependabot #37. jsdom (vitest's DOM, dev only) pulls it.
+  undici@>=8.0.0 <8.12.2: ^8.12.2
   # brace-expansion <5.0.7: exponential-time DoS. react-router transitively.
   brace-expansion@>=5.0.0 <5.0.7: ^5.0.8
   # source-map-js <1.2.2: GHSA-68fv-2mgg-jv7q. Pulled by postcss (vite, tailwind).

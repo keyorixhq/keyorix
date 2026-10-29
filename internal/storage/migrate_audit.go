@@ -125,6 +125,13 @@ func createPendingAuditEvents(db *gorm.DB, pendingAuditExists bool) error {
 				return fmt.Errorf("failed to index pending_audit_events.break_glass_activation_id: %w", err)
 			}
 		}
+		// Epoch 9 (AUDIT-REQUEST-ID-2): the request id the owed row was recorded under.
+		// Nullable with no default, so Postgres changes only the catalog (no rewrite).
+		if !columnExists(db, "pending_audit_events", "request_id") {
+			if err := db.Exec("ALTER TABLE pending_audit_events ADD COLUMN request_id TEXT").Error; err != nil {
+				return fmt.Errorf("failed to add pending_audit_events.request_id column: %w", err)
+			}
+		}
 	}
 	return nil
 }

@@ -42,6 +42,8 @@ type AuditSearchRequest struct {
 	Action string
 	// IPAddress filters events by the exact originating IP.
 	IPAddress string
+	// RequestID filters events by the exact server-minted request id.
+	RequestID string
 	// Success filters events by outcome: nil = all, true = only successes,
 	// false = only failures.
 	Success *bool
@@ -141,6 +143,9 @@ func buildAuditFilter(req AuditSearchRequest) *storage.AuditFilter {
 	}
 	if req.IPAddress != "" {
 		filter.IPAddress = &req.IPAddress
+	}
+	if req.RequestID != "" {
+		filter.RequestID = &req.RequestID
 	}
 	if req.Success != nil {
 		filter.Success = req.Success
