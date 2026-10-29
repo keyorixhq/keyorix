@@ -61,6 +61,7 @@ func (h *AuditHandler) ExportAuditLogsCSV(w http.ResponseWriter, r *http.Request
 			_ = cw.Write([]string{
 				"id", "event_time", "event_type", "actor", "actor_type",
 				"user_id", "project_id", "secret_id", "ip_address", "success", "description",
+				"request_id",
 			})
 		}
 		writeAuditCSVRows(cw, events, h.coreService.ResolveUsernames(r.Context(), events), h.coreService.ResolveMachineNames(r.Context(), events))
@@ -103,6 +104,7 @@ func writeAuditCSVRows(cw *csv.Writer, events []*models.AuditEvent, actorNames, 
 			csvSafe(e.IPAddress),
 			success,
 			csvSafe(e.Description),
+			csvSafe(auditRequestID(e)),
 		})
 	}
 }

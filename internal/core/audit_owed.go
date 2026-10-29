@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/keyorixhq/keyorix/internal/core/storage"
+	"github.com/keyorixhq/keyorix/internal/logging"
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
@@ -70,7 +71,7 @@ func (c *KeyorixCore) commitOwingAudit(ctx context.Context, effect func(st stora
 			if err := effect(tx); err != nil {
 				return err
 			}
-			p := &models.PendingAuditEvent{EventType: event.EventType, Event: string(encoded)}
+			p := &models.PendingAuditEvent{EventType: event.EventType, Event: string(encoded), RequestID: owedRequestID(ctx)}
 			if err := tx.CreatePendingAuditEvent(ctx, p); err != nil {
 				return &pendingRecordError{err}
 			}
@@ -192,6 +193,33 @@ func (c *KeyorixCore) runOwedAuditMutation(ctx context.Context, fn func(tx stora
 	return func() { c.settleOwedAudit(ctx, sink) }, nil
 }
 
+// owedRequestID is the server-minted request id of ctx, to be recorded with the owed
+// row, or nil when the context has none (a scheduler tick, or an id that did not come
+// from the server: logging.ServerRequestID never returns one). The backfill restores it
+// (owedBackfillContext), so the row it writes carries the id of the request that caused
+// it. Advisory, outside the hash chain (docs/specs/audit-request-id.md).
+func owedRequestID(ctx context.Context) *string {
+	if id := logging.ServerRequestID(ctx); id != "" {
+		return &id
+	}
+	return nil
+}
+
+// owedBackfillContext is the context a backfill pass appends the owed row p under: ctx
+// with a fresh request-log holder carrying p's recorded id as the server-minted id, so
+// the storage funnel stamps it exactly as it stamps a live request's rows -- the only
+// writer of audit_events.request_id stays logAuditEvent, and a writer still cannot choose
+// the value. The holder is always replaced, so a row recorded without an id (or before
+// epoch 9) is appended with none even if the backfill itself runs inside a request: it
+// never takes the id of the pass that writes it late.
+func owedBackfillContext(ctx context.Context, p *models.PendingAuditEvent) context.Context {
+	h := &logging.Holder{}
+	if p.RequestID != nil {
+		h.SetServerRequestID(*p.RequestID)
+	}
+	return logging.WithExistingHolder(ctx, h)
+}
+
 // owedAtRiskNote ends the SECURITY line that names an owed row committing without its
 // pending record: until a later line says it was written or queued, it exists only in
 // this process.
@@ -226,7 +254,7 @@ func (c *KeyorixCore) queueOwedRowsLate(ctx context.Context, rows []owedAuditEnt
 				if err != nil {
 					return err
 				}
-				p := &models.PendingAuditEvent{EventType: e.event.EventType, Event: string(encoded)}
+				p := &models.PendingAuditEvent{EventType: e.event.EventType, Event: string(encoded), RequestID: owedRequestID(ctx)}
 				if err := tx.CreatePendingAuditEvent(wctx, p); err != nil {
 					return err
 				}
@@ -304,7 +332,7 @@ func (c *KeyorixCore) recordOwedOn(ctx context.Context, tgt auditTarget, event *
 			s.failOwed(err)
 			return false
 		}
-		p := &models.PendingAuditEvent{EventType: event.EventType, Event: string(encoded)}
+		p := &models.PendingAuditEvent{EventType: event.EventType, Event: string(encoded), RequestID: owedRequestID(ctx)}
 		if err := tgt.st.CreatePendingAuditEvent(ctx, p); err != nil {
 			s.failOwed(err)
 			return false
@@ -386,7 +414,7 @@ func (c *KeyorixCore) queueOwedAuditLate(ctx context.Context, eventType string, 
 	}()
 	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), owedAuditWait)
 	defer cancel()
-	p := &models.PendingAuditEvent{EventType: eventType, Event: string(encoded)}
+	p := &models.PendingAuditEvent{EventType: eventType, Event: string(encoded), RequestID: owedRequestID(ctx)}
 	if err := c.storage.CreatePendingAuditEvent(wctx, p); err != nil {
 		return 0, err
 	}
@@ -473,7 +501,7 @@ func (c *KeyorixCore) BackfillPendingAuditEvents(ctx context.Context) (int, erro
 			if p.BreakGlassActivationID == 0 {
 				event.EventTime = time.Now()
 			}
-			wrote, err := c.appendOwedAudit(ctx, p.ID, p.BreakGlassActivationID, &event)
+			wrote, err := c.appendOwedAudit(owedBackfillContext(ctx, p), p.ID, p.BreakGlassActivationID, &event)
 			if err != nil {
 				_ = c.storage.RecordPendingAuditEventFailure(ctx, p.ID, err.Error())
 				return written, fmt.Errorf("pending audit event %d (%s): %w", p.ID, p.EventType, err)

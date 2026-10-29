@@ -515,9 +515,11 @@ keyorix audit logs --project-id 3 --event-type secret.read --since 2026-10-01T00
 | `--include-total` | — | — | Count every matching event (exact total; slower on a large audit trail) |
 | `--limit` | `int` | `50` | Max events to show (1–100) |
 | `--project-id` | `uint` | — | Filter by project id |
+| `--request-id` | `string` | — | Filter by the server request id (the X-Request-ID of the call); not covered by the audit hash chain; combine with --since |
 | `--since` | `string` | — | Only events at/after this time (RFC3339) |
 | `--until` | `string` | — | Only events at/before this time (RFC3339) |
 | `--user-id` | `uint` | — | Filter by actor user id |
+| `--wide` | — | — | Add the REQUEST-ID column |
 
 ## `keyorix audit migrate-chain-encoding`
 
@@ -564,12 +566,14 @@ keyorix audit search --resource-type secret --resource-id 42
 | `--limit` | `int` | `100` | Max results (1–1000) |
 | `--offset` | `int` | — | Pagination offset (offset+limit up to 10000; use --cursor beyond) |
 | `--project-id` | `uint` | — | Filter by project ID |
+| `--request-id` | `string` | — | Filter by the server request id (the X-Request-ID of the call); not covered by the audit hash chain; combine with --since |
 | `--resource-id` | `uint` | — | Filter by exact resource ID (secret_node_id) |
 | `--resource-type` | `string` | — | Filter by resource kind (e.g. secret, user, role) |
 | `--since` | `string` | — | Only events at/after this RFC3339 time |
 | `--success` | `string` | — | Filter by outcome: true or false |
 | `--until` | `string` | — | Only events at/before this RFC3339 time |
 | `--user-id` | `uint` | — | Filter by exact actor user ID |
+| `--wide` | — | — | Add the REQUEST-ID column |
 
 ## `keyorix audit verify`
 

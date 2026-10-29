@@ -49,7 +49,7 @@ func TestExportAuditLogsCSV(t *testing.T) {
 		body := w.Body.String()
 		lines := strings.Split(strings.TrimSpace(body), "\n")
 		require.GreaterOrEqual(t, len(lines), 2)
-		assert.Equal(t, "id,event_time,event_type,actor,actor_type,user_id,project_id,secret_id,ip_address,success,description", strings.TrimSpace(lines[0]))
+		assert.Equal(t, "id,event_time,event_type,actor,actor_type,user_id,project_id,secret_id,ip_address,success,description,request_id", strings.TrimSpace(lines[0]))
 		assert.Contains(t, body, "secret.created")
 		assert.Contains(t, body, "alice")
 		assert.Contains(t, body, "created db")

@@ -50,6 +50,10 @@ type AuditLogEntry struct {
 	Impersonation  bool   `json:"impersonation,omitempty"`
 	ImpersonatedBy string `json:"impersonated_by,omitempty"`
 	ActingAs       string `json:"acting_as,omitempty"`
+	// RequestID is the server-minted id of the request that wrote the row, for
+	// joining it with that request's log lines; omitted when the row has none.
+	// Advisory: not covered by the hash chain (docs/specs/audit-request-id.md §5).
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // GetAuditLogs handles GET /api/v1/audit/logs
@@ -103,6 +107,9 @@ func (h *AuditHandler) GetAuditLogs(w http.ResponseWriter, r *http.Request) { //
 	}
 	if at := r.URL.Query().Get("actor_type"); validActorType(at) {
 		filter.ActorType = &at
+	}
+	if rid := r.URL.Query().Get("request_id"); rid != "" {
+		filter.RequestID = &rid
 	}
 
 	offset := (page - 1) * pageSize
@@ -186,6 +193,7 @@ func (h *AuditHandler) toAuditLogEntries(ctx context.Context, events []*models.A
 			ActorType:   storage.AuditActorKind(e),
 			Description: e.Description,
 			Timestamp:   e.EventTime,
+			RequestID:   auditRequestID(e),
 		}
 		if e.Diff != "" {
 			entry.Diff = json.RawMessage(e.Diff)
@@ -232,6 +240,16 @@ type AuditExportEntry struct {
 	// including tail-truncation, which on-box re-verification cannot catch.
 	PrevHash  string `json:"prev_hash,omitempty"`
 	EntryHash string `json:"entry_hash,omitempty"`
+	// RequestID: see AuditLogEntry.RequestID. Not part of the chain.
+	RequestID string `json:"request_id,omitempty"`
+}
+
+// auditRequestID is the row's request id, or "" when it has none.
+func auditRequestID(e *models.AuditEvent) string {
+	if e.RequestID == nil {
+		return ""
+	}
+	return *e.RequestID
 }
 
 // ExportAuditLogs handles GET /api/v1/audit/export — a cursor-paginated,
@@ -308,6 +326,7 @@ func (h *AuditHandler) ExportAuditLogs(w http.ResponseWriter, r *http.Request) {
 			Success:          success,
 			PrevHash:         e.PrevHash,
 			EntryHash:        e.EntryHash,
+			RequestID:        auditRequestID(e),
 		}
 		if e.Diff != "" {
 			entry.Diff = json.RawMessage(e.Diff)
