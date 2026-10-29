@@ -36,7 +36,7 @@ type DB struct {
 // it never writes to the artifact being verified, and works unmodified
 // against a copy taken from a live deployment.
 func OpenSQLiteReadOnly(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?mode=ro", path)
+	dsn := "file:" + sqliteURIPath.Replace(path) + "?mode=ro"
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite %s: %w", path, err)
@@ -47,6 +47,12 @@ func OpenSQLiteReadOnly(path string) (*DB, error) {
 	}
 	return &DB{sql: sqlDB, backend: BackendSQLite}, nil
 }
+
+// sqliteURIPath percent-escapes the bytes SQLite's URI parser gives a meaning
+// in the path ('%', '?', '#'). Unescaped, a file named "a?b.db" opened "a"
+// read-write (the "?b.db" became the query and dropped mode=ro), "c#d.db"
+// opened "c", and "%41" was decoded: a different file than the one named.
+var sqliteURIPath = strings.NewReplacer("%", "%25", "?", "%3f", "#", "%23")
 
 // OpenPostgres opens a Postgres DSN via pgx. A read-only DB role is a
 // deployment-level concern (GRANT SELECT ON audit_events, audit_checkpoints,
