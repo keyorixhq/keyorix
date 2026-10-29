@@ -219,3 +219,76 @@ func TestReviewKF_InterleavedWriter_DoesNotTouchAnothersStagingFile(t *testing.T
 		t.Fatalf("the committed manifest is not writer A's: salt entry %+v", got)
 	}
 }
+
+// REVIEW-3810-DEEP-2 F1/F2: every manifest write stages under its own name, so
+// a write killed between its staging write and its rename leaves a file no
+// later write reuses. ManifestStagingFiles lists exactly those (and the fixed
+// name older binaries staged under), for export's refusal; boot's
+// ReconcileKeySet, under the exclusive key lock, removes them.
+func TestReviewKF_KilledManifestWrites_ListedThenRemovedAtReconcile(t *testing.T) {
+	t.Parallel()
+	enc := passwordSetConfig()
+	dir := t.TempDir()
+	provisionGeneration(t, dir, enc)
+	salt := filepath.Join(dir, "kek.salt")
+	type killed struct{}
+	kill := func() {
+		w, err := NewSetWriter(enc, dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() {
+			if r := recover(); r != (killed{}) {
+				t.Fatalf("the write was meant to be killed at its rename, recovered %v", r)
+			}
+		}()
+		_ = w.WithFS(ManifestFS{Rename: func(string, string) error { panic(killed{}) }}).
+			CommitManifestFromDisk(OpRotateKEK, salt)
+	}
+	kill()
+	kill()
+	legacy := filepath.Join(dir, ManifestFileName+".pending")
+	if err := os.WriteFile(legacy, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Not staging files: the manifest itself and a moved-aside unparseable one.
+	aside := filepath.Join(dir, ManifestFileName+".unparseable-20261029T000000Z")
+	if err := os.WriteFile(aside, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	staged, err := ManifestStagingFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(staged) != 3 || staged[0] != legacy {
+		t.Fatalf("want the legacy staging file and both killed writes' files, got %v", staged)
+	}
+	for _, p := range staged[1:] {
+		if !strings.HasPrefix(filepath.Base(p), ManifestFileName+".pending-") {
+			t.Fatalf("unexpected staging file %s", p)
+		}
+	}
+	if none, err := ManifestStagingFiles(filepath.Join(dir, "absent")); err != nil || none != nil {
+		t.Fatalf("a missing directory has no staging files, got %v, %v", none, err)
+	}
+
+	mustVerify(t, enc, dir)
+	res, err := ReconcileKeySet(enc, dir, ManifestFS{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left, err := ManifestStagingFiles(dir); err != nil || len(left) != 0 {
+		t.Fatalf("reconcile must remove every manifest staging file, left %v (%v)", left, err)
+	}
+	warned := strings.Join(res.Warnings, "\n")
+	for _, p := range staged {
+		if !strings.Contains(warned, "removed "+p) {
+			t.Errorf("no warning names the removed %s: %q", p, warned)
+		}
+	}
+	if _, err := os.Stat(aside); err != nil {
+		t.Fatalf("reconcile removed a file that is not a staging file: %v", err)
+	}
+	mustVerify(t, enc, dir)
+}

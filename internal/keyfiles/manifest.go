@@ -142,6 +142,36 @@ func ManifestPath(enc *config.EncryptionConfig, baseDir string) (string, error) 
 	return filepath.Join(filepath.Dir(resolve(baseDir, clean)), ManifestFileName), nil
 }
 
+// manifestStagingInfix joins the manifest's name and a write's random suffix
+// in its staging file's name (writeManifest).
+const manifestStagingInfix = ".pending-"
+
+// ManifestStagingFiles lists the manifest staging files in dir, sorted: every
+// "<ManifestFileName>.pending-<suffix>" a manifest write leaves when it is
+// killed between writing it and renaming it into place, plus the
+// "<ManifestFileName>.pending" binaries before the unique staging name used.
+// Each one means a key operation was interrupted in dir. A missing dir has
+// none. This is the one definition of the staging name for every reader:
+// export's refusal (internal/encryptionops) and boot's cleanup
+// (ReconcileKeySet).
+func ManifestStagingFiles(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("list %s for key-set manifest staging files: %w", dir, err)
+	}
+	var out []string
+	for _, e := range entries {
+		n := e.Name()
+		if n == ManifestFileName+".pending" || strings.HasPrefix(n, ManifestFileName+manifestStagingInfix) {
+			out = append(out, filepath.Join(dir, n))
+		}
+	}
+	return out, nil // os.ReadDir returns entries sorted by name
+}
+
 // manifestKey names full in the manifest: relative to the manifest's directory
 // when it lies inside it (so moving the whole key directory keeps the
 // manifest valid), the cleaned absolute path otherwise.
@@ -257,7 +287,7 @@ func writeManifest(path string, m *Manifest, fs ManifestFS) error {
 		return fmt.Errorf("write key-set manifest: %w", err)
 	}
 	dir, name := filepath.Dir(path), filepath.Base(path)
-	staged := name + ".pending-" + hex.EncodeToString(nonce[:])
+	staged := name + manifestStagingInfix + hex.EncodeToString(nonce[:])
 	if err := fs.WriteSync(dir, staged, data); err != nil {
 		_ = os.Remove(filepath.Join(dir, staged))
 		return fmt.Errorf("write key-set manifest: %w", err)
