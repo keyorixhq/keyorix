@@ -320,10 +320,8 @@ func TestMapSecretACLError_Classification(t *testing.T) {
 		msg  string
 		want codes.Code
 	}{
-		{"not found", "ACL entry not found", codes.NotFound},
 		{"invalid", "invalid permission set", codes.InvalidArgument},
 		{"required", "user_id is required", codes.InvalidArgument},
-		{"not authorized", "user not authorized to manage ACLs", codes.PermissionDenied},
 		{"default", "storage exploded", codes.Internal},
 	}
 	for _, c := range cases {

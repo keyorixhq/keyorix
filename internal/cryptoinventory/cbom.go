@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -131,7 +132,14 @@ func (inv Inventory) CBOM(opts CBOMOptions) ([]byte, error) {
 		if _, ok := algos[ref]; !ok {
 			algos[ref] = algorithmComponent(a, ref)
 		}
-		bom.Components = append(bom.Components, assetComponent(a, ref))
+		sigRef := ""
+		if a.Certificate != nil && a.Certificate.SignatureAlgorithm != "" {
+			sigRef = sigAlgoRef(a.Certificate.SignatureAlgorithm)
+			if _, ok := algos[sigRef]; !ok {
+				algos[sigRef] = signatureAlgorithmComponent(a.Certificate.SignatureAlgorithm, sigRef)
+			}
+		}
+		bom.Components = append(bom.Components, assetComponent(a, ref, sigRef))
 	}
 	refs := make([]string, 0, len(algos))
 	for r := range algos {
@@ -144,7 +152,27 @@ func (inv Inventory) CBOM(opts CBOMOptions) ([]byte, error) {
 	return json.MarshalIndent(bom, "", "  ")
 }
 
-func assetComponent(a Asset, algRef string) cdxComponent {
+// sigAlgoRef is the bom-ref of the algorithm a certificate was signed with. It has
+// its own prefix so it can never collide with a key algorithm's keyorix:algo: ref.
+func sigAlgoRef(name string) string {
+	return "keyorix:sigalg:" + strings.Trim(nonSlug.ReplaceAllString(strings.ToLower(name), "-"), "-")
+}
+
+// signatureAlgorithmComponent is the algorithm component a certificate's
+// signatureAlgorithmRef points at (for example ECDSA-SHA256 or SHA256-RSA).
+func signatureAlgorithmComponent(name, ref string) cdxComponent {
+	return cdxComponent{
+		Type: "cryptographic-asset", BomRef: ref, Name: name,
+		CryptoProperties: cdxCrypto{AssetType: "algorithm", Algorithm: &cdxAlgorithm{
+			Primitive: "signature", CryptoFuncs: cryptoFuncs("signature"),
+		}},
+	}
+}
+
+// assetComponent renders one asset. algRef is the asset's own (key) algorithm
+// component; sigRef is the certificate's signature algorithm component, empty when
+// the asset is not a certificate or its signature algorithm is unknown.
+func assetComponent(a Asset, algRef, sigRef string) cdxComponent {
 	c := cdxComponent{
 		Type: "cryptographic-asset", BomRef: assetRef(a.ID), Name: a.Name, Description: a.Notes,
 		Properties: []cdxProperty{
@@ -164,8 +192,11 @@ func assetComponent(a Asset, algRef string) cdxComponent {
 		c.CryptoProperties = cdxCrypto{AssetType: "certificate", Certificate: &cdxCertificate{
 			SubjectName: ci.SubjectName, IssuerName: ci.IssuerName,
 			NotBefore: ci.NotBefore.UTC().Format(time.RFC3339), NotAfter: ci.NotAfter.UTC().Format(time.RFC3339),
-			SigAlgRef: algRef, CertFormat: "X.509",
+			SigAlgRef: sigRef, CertFormat: "X.509",
 		}}
+		// subjectPublicKeyRef needs a key component, which the CBOM does not model;
+		// the certified key's algorithm is linked by property instead.
+		c.Properties = append(c.Properties, cdxProperty{"keyorix:key-algorithm-ref", algRef})
 		return c
 	}
 	rel := &cdxRelated{Type: relatedType(a), State: "active", AlgorithmRef: algRef, Size: a.KeySizeBits}
@@ -196,7 +227,11 @@ func relatedType(a Asset) string {
 
 func algorithmComponent(a Asset, ref string) cdxComponent {
 	alg := &cdxAlgorithm{Primitive: a.Primitive, CryptoFuncs: cryptoFuncs(a.Primitive)}
-	if a.KeySizeBits > 0 {
+	if a.Primitive == "hash" {
+		// For a hash the identifier is the digest length (SHA-256 -> "256"), not the
+		// size of the secret it verifies (the recovery key is 260 bits).
+		alg.ParameterSet = digestBits(a.Algorithm)
+	} else if a.KeySizeBits > 0 {
 		alg.ParameterSet = fmt.Sprint(a.KeySizeBits)
 	}
 	if a.Certificate != nil {
@@ -223,6 +258,18 @@ func algorithmComponent(a Asset, ref string) cdxComponent {
 		Type: "cryptographic-asset", BomRef: ref, Name: a.Algorithm,
 		CryptoProperties: cdxCrypto{AssetType: "algorithm", Algorithm: alg},
 	}
+}
+
+// digestBits returns the digest length in a hash name such as "SHA-256" or
+// "SHA3-512", or "" when the name does not end in one (the field is then omitted).
+func digestBits(name string) string {
+	parts := strings.Split(name, "-")
+	if last := parts[len(parts)-1]; len(parts) > 1 {
+		if _, err := strconv.Atoi(last); err == nil {
+			return last
+		}
+	}
+	return ""
 }
 
 func cryptoFuncs(primitive string) []string {

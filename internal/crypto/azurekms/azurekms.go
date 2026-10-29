@@ -145,17 +145,18 @@ var azureKeyVaultHostSuffixes = []string{
 	".managedhsm.usgovcloudapi.net",
 }
 
-// validateKeyVaultHost rejects a vaultURL (as split out by parseKeyID) that
+// validateKeyVaultHost rejects a vault origin (scheme://host, as split out by
+// parseKeyID, which drops userinfo, path and query -- so it is safe to quote) that
 // isn't https, or whose host doesn't look like a real Azure Key Vault /
 // Managed HSM endpoint. This is the construction-time half of the guard —
 // azureKMSTransport below re-validates on every actual connection.
-func validateKeyVaultHost(vaultURL string) error {
-	u, err := url.Parse(vaultURL)
+func validateKeyVaultHost(vaultOrigin string) error {
+	u, err := url.Parse(vaultOrigin)
 	if err != nil {
-		return fmt.Errorf("azure-kms: invalid vault URL %q: %w", vaultURL, err)
+		return fmt.Errorf("azure-kms: invalid vault URL %q: %w", vaultOrigin, err)
 	}
 	if u.Scheme != "https" {
-		return fmt.Errorf("azure-kms: vault URL %q must use https", vaultURL)
+		return fmt.Errorf("azure-kms: vault URL %q must use https", vaultOrigin)
 	}
 	host := strings.ToLower(u.Hostname())
 	for _, suffix := range azureKeyVaultHostSuffixes {

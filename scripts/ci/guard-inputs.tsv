@@ -124,6 +124,7 @@ internal/storage/store/audit_write_context_completeness_test.go	!operator/**	ski
 internal/storage/store/pg_trigger_registry_guard_test.go	!operator/**	skips nested modules (go.mod)
 internal/testutil/pgdsn/shared_database_lock_guard_test.go	!operator/**	walks internal/ and server/
 internal/testutil/srcpath/runtime_caller_guard_test.go	!operator/**	skips nested modules (go.mod)
+internal/urlleakguard/urlleakguard_test.go	!operator/**	skips nested modules (go.mod)
 server/httpguards/grant_primitive_gate_table_test.go	!operator/**	skipSecretACLDir skips nested modules
 server/httpguards/secret_acl_gate_guard_test.go	!operator/**	skipSecretACLDir skips nested modules
 server/httpguards/share_secret_isgroup_guard_test.go	!operator/**	skipSecretACLDir skips nested modules

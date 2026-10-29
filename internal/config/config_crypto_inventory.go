@@ -7,7 +7,7 @@ import (
 
 // CryptoInventoryConfig tunes the quantum-risk score of the crypto inventory /
 // CBOM (RD-CBOM-1, GET /api/v1/compliance/crypto-inventory). Every field is
-// optional: the zero value means the documented default (horizon 2035-01-01,
+// optional: an unset field means the documented default (horizon 2035-01-01,
 // migration 3 years, unbounded lifetime 10 years), which the cryptoinventory
 // package owns so the defaults live in exactly one place.
 type CryptoInventoryConfig struct {
@@ -15,7 +15,9 @@ type CryptoInventoryConfig struct {
 	// relevant quantum computer is assumed to exist.
 	QuantumHorizon string `yaml:"quantum_horizon"`
 	// MigrationYears is how long moving off a quantum-vulnerable algorithm takes.
-	MigrationYears int `yaml:"migration_years"`
+	// A pointer so an explicit 0 ("no migration time") differs from an absent key,
+	// which keeps the default of 3.
+	MigrationYears *int `yaml:"migration_years"`
 	// UnboundedLifetimeYears is the lifetime assumed for a key with no expiry.
 	UnboundedLifetimeYears int `yaml:"unbounded_lifetime_years"`
 }
@@ -37,8 +39,8 @@ func validateCryptoInventorySection(c *Config) error {
 	if _, err := c.CryptoInventory.ParsedHorizon(); err != nil {
 		return err
 	}
-	if c.CryptoInventory.MigrationYears < 0 {
-		return fmt.Errorf("crypto_inventory.migration_years must be >= 0, got %d", c.CryptoInventory.MigrationYears)
+	if my := c.CryptoInventory.MigrationYears; my != nil && *my < 0 {
+		return fmt.Errorf("crypto_inventory.migration_years must be >= 0, got %d", *my)
 	}
 	if c.CryptoInventory.UnboundedLifetimeYears < 0 {
 		return fmt.Errorf("crypto_inventory.unbounded_lifetime_years must be >= 0, got %d", c.CryptoInventory.UnboundedLifetimeYears)

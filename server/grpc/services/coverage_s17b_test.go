@@ -170,10 +170,9 @@ func TestGetGroup_NotFound(t *testing.T) {
 	svc, _ := newGroupService(t)
 	_, err := svc.GetGroup(groupCtx(), &pb.GetGroupRequest{Id: 99999})
 	require.Error(t, err)
-	// groupError wraps i18n key → Internal (key doesn't contain "not found" substring)
-	code := status.Code(err)
-	assert.True(t, code == codes.NotFound || code == codes.Internal,
-		"expected NotFound or Internal, got %v", code)
+	// groupError classifies by storage.ErrGroupNotFound (errors.Is), so a missing
+	// group is NotFound; Internal here would mean the sentinel got lost on the way up.
+	assert.Equal(t, codes.NotFound, status.Code(err), err.Error())
 }
 
 func TestGetGroupMembers_Unauthenticated(t *testing.T) {
@@ -209,9 +208,10 @@ func TestRestoreGroup_PermissionDenied(t *testing.T) {
 func TestRestoreGroup_ErrorPath(t *testing.T) {
 	svc, _ := newGroupService(t)
 	// Try to restore a group that has never been deleted (or doesn't exist at all).
-	// core should return an error that maps to Internal via groupError.
+	// core returns storage.ErrGroupNotFound, which groupError maps to NotFound.
 	_, err := svc.RestoreGroup(groupCtx(), &pb.RestoreGroupRequest{Id: 99999})
 	require.Error(t, err)
+	assert.Equal(t, codes.NotFound, status.Code(err), err.Error())
 }
 
 // ---------------------------------------------------------------------------

@@ -49,10 +49,18 @@ type urlRedactedError struct {
 func (e *urlRedactedError) Error() string { return e.msg }
 func (e *urlRedactedError) Unwrap() error { return e.err }
 
+// errInvalidURL replaces the cause of a URL parse failure. url.Parse's inner
+// errors quote the raw input they choke on (e.g. `invalid port ":<password>"
+// after host` when a userinfo password holds an unescaped '/', '?' or '#'), and
+// that text is not a URL, so SanitizeErrorURLs cannot scrub it.
+var errInvalidURL = errors.New("not a valid URL")
+
 // RedactErrorURLs returns an error with the same cause as err but whose text
 // has every embedded http(s) URL reduced to scheme+host and which no longer
 // wraps a *url.Error (so neither Error() nor errors.As can recover the URL).
-// nil in, nil out.
+// A *url.Error with Op "parse" (url.Parse, http.NewRequest) is replaced as a
+// whole by a fixed "not a valid URL" error: its inner text quotes fragments of
+// the raw URL, credentials included. nil in, nil out.
 func RedactErrorURLs(err error) error {
 	if err == nil {
 		return nil
@@ -62,6 +70,9 @@ func RedactErrorURLs(err error) error {
 		var ue *url.Error
 		if !errors.As(inner, &ue) {
 			break
+		}
+		if ue.Op == "parse" {
+			return &urlRedactedError{msg: errInvalidURL.Error(), err: errInvalidURL}
 		}
 		inner = ue.Err
 	}

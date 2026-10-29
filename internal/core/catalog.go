@@ -164,11 +164,22 @@ func validateEnvironmentName(name string) error {
 // case-insensitive partial unique index on projects.name) as a clean "name already in
 // use" validation error, mirroring CreateUser's translation of ErrDuplicateEmail (#117),
 // rather than letting a raw constraint-violation message reach the caller.
+// The text is unchanged, and the result still matches ErrDuplicateProjectName under
+// errors.Is so a typed transport mapper (gRPC AlreadyExists) can classify it
+// (REVFIX-3790-1).
 func translateProjectNameError(err error) error {
 	if errors.Is(err, storage.ErrDuplicateProjectName) {
-		return fmt.Errorf("%s: a project with this name already exists", i18n.T("ErrorValidation", nil))
+		return storage.Typed(storage.ErrDuplicateProjectName,
+			fmt.Sprintf("%s: a project with this name already exists", i18n.T("ErrorValidation", nil)), nil)
 	}
 	return err
+}
+
+// errProjectGoneMidUpdate is UpdateProject's answer when its column-scoped write
+// matched no live row: the project was deleted after the pre-read. Same text as
+// before, typed as storage.ErrProjectNotFound (REVFIX-3790-1).
+func errProjectGoneMidUpdate() error {
+	return storage.NotFound(storage.ErrProjectNotFound, i18n.T("ErrorNotFound", nil), nil)
 }
 
 // ListProjects returns all projects from storage.
@@ -236,7 +247,7 @@ func (c *KeyorixCore) UpdateProject(ctx context.Context, id uint, name, descript
 			return translateProjectNameError(uerr)
 		}
 		if !matched {
-			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+			return errProjectGoneMidUpdate()
 		}
 		// Return the committed row, not the struct read before the write.
 		if updated, uerr = tx.GetProject(ctx, id); uerr != nil {
@@ -296,7 +307,7 @@ func (c *KeyorixCore) updateProjectSplit(ctx context.Context, id uint, name, des
 			return translateProjectNameError(uerr)
 		}
 		if !matched {
-			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+			return errProjectGoneMidUpdate()
 		}
 		if updated, uerr = tx.GetProject(ctx, id); uerr != nil {
 			return uerr
@@ -321,7 +332,7 @@ func (c *KeyorixCore) updateProjectSplit(ctx context.Context, id uint, name, des
 			return translateProjectNameError(uerr)
 		}
 		if !matched {
-			return fmt.Errorf("%s", i18n.T("ErrorNotFound", nil))
+			return errProjectGoneMidUpdate()
 		}
 		if updated, uerr = tx.GetProject(ctx, id); uerr != nil {
 			return uerr

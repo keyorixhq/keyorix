@@ -43,21 +43,6 @@ import (
 // mapSecretError — uncovered branches
 // ---------------------------------------------------------------------------
 
-func TestMapSecretError_AccessDenied_S23(t *testing.T) {
-	err := mapSecretError(errors.New("access denied to this secret"))
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestMapSecretError_PermissionDenied_S23(t *testing.T) {
-	err := mapSecretError(errors.New("permission denied"))
-	assert.Equal(t, codes.PermissionDenied, status.Code(err))
-}
-
-func TestMapSecretError_AlreadyExists_S23(t *testing.T) {
-	err := mapSecretError(errors.New("secret already exists in this project"))
-	assert.Equal(t, codes.AlreadyExists, status.Code(err))
-}
-
 func TestMapSecretError_UnknownRotationCharset_S23(t *testing.T) {
 	err := mapSecretError(errors.New("unknown rotation charset: klingon"))
 	assert.Equal(t, codes.InvalidArgument, status.Code(err))
