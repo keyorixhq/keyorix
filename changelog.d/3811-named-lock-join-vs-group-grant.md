@@ -1,0 +1,2 @@
+### Security
+- **A user joining a group while a role is granted to that group can no longer end up with a forbidden separation-of-duties pair.** The join and the grant shared no lock, so a join checked against the group's old roles and a grant checked against the group's old members could both commit. The join's write transaction now takes the group's key, and the grant re-reads the group's members inside its transaction under the same key, so whichever commits second is refused. SCIM and SSO group sync are unchanged: they run no separation-of-duties check by design.

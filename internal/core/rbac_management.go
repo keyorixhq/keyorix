@@ -246,7 +246,7 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
 				return err
 			}
-			return write(ctx, chainTxFences(sodGroupKeyFence(groupID), sodGroupGrantFence(roleID, members)))
+			return write(ctx, chainTxFences(sodGroupKeyFence(groupID), sodGroupGrantFence(groupID, roleID)))
 		})
 	})
 }
@@ -484,7 +484,9 @@ func sodGrantLockKey(principalType string, principalID uint) string {
 // (requireGroupGrantNoSoDViolation takes it as a parameter for exactly this
 // reason) rather than re-listing membership — a second listing could observe
 // a member added after this snapshot was taken and lock set acquired, which
-// would then be checked without its own lock held.
+// would then be checked without its own lock held. (The write transaction's
+// sodGroupGrantFence does re-list, safely: it holds the group key a join's
+// transaction also takes, and row-locks each member before checking it.)
 //
 // Sorting ascending is the deadlock-avoidance discipline: any two call chains
 // that need to lock an overlapping set of member/user keys — two

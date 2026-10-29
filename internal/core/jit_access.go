@@ -106,7 +106,7 @@ func (c *KeyorixCore) AssignGroupRoleWithExpiry(ctx context.Context, actorID, gr
 			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
 				return err
 			}
-			return write(ctx, chainTxFences(sodGroupKeyFence(groupID), sodGroupGrantFence(roleID, members)))
+			return write(ctx, chainTxFences(sodGroupKeyFence(groupID), sodGroupGrantFence(groupID, roleID)))
 		})
 	})
 }

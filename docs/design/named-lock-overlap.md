@@ -2,7 +2,8 @@
 
 Status: every inventoried site closed (NAMEDLOCK-OVERLAP-1, 2026-10-27: audit and
 the user-deactivation family; NAMEDLOCK-OVERLAP-2, 2026-10-28: `LockNamedKeyInTx`
-and every remaining family). Follows [pooler-lock-loss.md](pooler-lock-loss.md)
+and every remaining family; NAMEDLOCK-FENCE-1, 2026-10-29: a group join against
+a grant to the same group). Follows [pooler-lock-loss.md](pooler-lock-loss.md)
 (POOLER-LOCKLOSS-1, #3622), whose "Not changed" section leaves this open:
 "Named-lock sections should each re-check their precondition inside their write
 transaction or rely on a constraint; this note does not audit them one by one."
@@ -78,6 +79,15 @@ cannot wait on each other in a cycle: named keys first (`LockNamedKeyInTx`, in
 admin-tier grant rows, then user rows in ascending ID (the order #3753's
 deactivation fence and `RemoveGlobalAdminRoleGuarded` already use).
 
+Where the group key `sod-grant:group:<id>` is taken in a transaction
+(NAMEDLOCK-FENCE-1 writes this down before relying on it; it follows the rule
+above and changes no rank): a grant to the group (`sodGroupKeyFence`),
+`RestoreGroup` and `AddUserToGroup` each take it as their first statement, and
+at most one group key per transaction. Rows come after it: the members' user
+rows in ascending ID (a grant), or the joining user's row (a join). A
+transaction holding a user row never then asks for a group key, so a join, a
+grant to the group and a direct grant to a member cannot wait in a cycle.
+
 ## Inventory
 
 How the list was built: every `WithNamedLock(` call in non-test `internal/core/*.go`
@@ -118,12 +128,12 @@ the lock-key expression exactly as written at the call site.
 | internal/core/rbac_management.go | grantBaselineRoleBackfill | sodGrantLockKey("user", userID) | as above (baseline backfill) | as above | fixed (-2) |
 | internal/core/jit_access.go | AssignUserRoleWithExpiry | sodGrantLockKey("user", userID) | as above (JIT grant) | as above (break-glass, which skips the check by design, gets no fence) | fixed (-2) |
 | internal/core/invitations.go | finalizeAccessRequestApproval | sodGrantLockKey("user", req.UserID) | as above (access-request grant) | as above; the request update is also conditional | fixed (-2) |
-| internal/core/groups.go | AddUserToGroup | sodGrantLockKey("user", userID) | no SoD violation through the joined group's roles | the user's row, then `requireGroupJoinNoSoDViolationOn(tx)` on the grants tx reads (when the check ran) | fixed (-2) |
+| internal/core/groups.go | AddUserToGroup | sodGrantLockKey("user", userID) | no SoD violation through the joined group's roles, including a role granted to the group meanwhile | the group key (`LockNamedKeyInTx`, which every grant to the group also takes), the user's row, then `requireGroupJoinNoSoDViolationOn(tx)` on the grants tx reads (when the check ran) | fixed (-2, FENCE-1) |
 | internal/core/role_set_replace.go | replaceUserRoleSet | sodGrantLockKey("user", r.userID) | no SoD violation for the new set | the user's row, then `applyRoleSetOn`'s own in-tx re-check | fixed (-2) |
 | internal/core/role_set_replace.go | swapUserRoleSet | sodGrantLockKey("user", r.userID) | as above | the project key and last-admin re-check, the user's row, then the in-tx re-check | fixed (-2) |
-| internal/core/rbac_management.go | withOrderedUserSoDLocks | sodGrantLockKey("user", ids[0]) | every member's SoD for a group grant (helper) | `sodGroupGrantFence`: every active member's row in the same ascending order, then the group check through tx | fixed (-2) |
-| internal/core/rbac_management.go | AssignRoleToGroup | sodGrantLockKey("group", groupID) | no SoD violation for any member (check-then-insert) | the group key (`sodGroupKeyFence`), then `sodGroupGrantFence` | fixed (-2) |
-| internal/core/jit_access.go | AssignGroupRoleWithExpiry | sodGrantLockKey("group", groupID) | as above (JIT group grant) | as above | fixed (-2) |
+| internal/core/rbac_management.go | withOrderedUserSoDLocks | sodGrantLockKey("user", ids[0]) | every member's SoD for a group grant (helper) | `sodGroupGrantFence`: the members re-listed through tx under the group key, every active member's row in ascending order, then the group check through tx | fixed (-2, FENCE-1) |
+| internal/core/rbac_management.go | AssignRoleToGroup | sodGrantLockKey("group", groupID) | no SoD violation for any member, including one joining meanwhile (check-then-insert) | the group key (`sodGroupKeyFence`, which `AddUserToGroup` also takes), then `sodGroupGrantFence` | fixed (-2, FENCE-1) |
+| internal/core/jit_access.go | AssignGroupRoleWithExpiry | sodGrantLockKey("group", groupID) | as above (JIT group grant) | as above | fixed (-2, FENCE-1) |
 | internal/core/groups.go | RestoreGroup | sodGrantLockKey("group", id) | only a global admin restores a group carrying admin roles (read-then-restore, #2455) | the group key (`LockNamedKeyInTx`), then the ceiling check on the roles tx reads | fixed (-2) |
 | internal/core/machine_token.go | AssignMachineRole | sodGrantLockKey("machine", machineID) | no SoD violation for the machine (check-then-insert) | the machine's row FOR UPDATE, then `requireMachineGrantNoSoDViolationOn(tx)` | fixed (-2) |
 | internal/core/machine_token.go | withMachineRoleRemovalGuards | sodGrantLockKey("machine", machineID) | none that overlap can break: a removal plus an environment-in-project scope check | removal only | safe |
@@ -186,7 +196,7 @@ commit and is green after it (session report: redproof output).
   PostgreSQL.
 - **SoD, group principals**: every active member's row in ascending ID order (the
   order `withGroupMemberSoDLocks` named-locks them), then the group check through tx
-  on the same snapshot. Tests: `TestNamedLockOverlap_SoD_GroupGrant_NoToxicPair`,
+  (on the members re-listed through tx since NAMEDLOCK-FENCE-1, below). Tests: `TestNamedLockOverlap_SoD_GroupGrant_NoToxicPair`,
   `TestNamedLockOverlap_SoDGroupGrant_ConcurrentWriteTransactions_Postgres`.
 - **Membership**: the activation grant's transaction takes the membership key and
   re-reads the membership, rolling back unless it is still active; the state CAS
@@ -215,19 +225,39 @@ commit and is green after it (session report: redproof output).
   `TestNamedLockOverlap_RestoreGroup_CeilingSeesConcurrentAdminGrant`,
   `TestNamedLockOverlap_RestoreGroup_ConcurrentWriteTransactions_Postgres`.
 
+## Fixed by NAMEDLOCK-FENCE-1: a group join against a grant to the group
+
+NAMEDLOCK-OVERLAP-2 found it outside the inventory: not a lock-loss overlap but a
+gap with every lock held. `AddUserToGroup` takes `sodGrantLockKey("user", userID)`,
+`AssignRoleToGroup` / `AssignGroupRoleWithExpiry` take `sodGrantLockKey("group",
+groupID)` plus the keys of the members they listed, which do not include a user
+still joining. The two shared no key and no row: the grant's check did not see the
+joining member, the join's check did not see the new role, and both committed (on
+SQLite too, when one ran inside the other's section).
+
+Now `AddUserToGroup`'s write transaction takes the group key with
+`LockNamedKeyInTx` before the user's row, and `sodGroupGrantFence` re-lists the
+group's members through tx after the grant's transaction took the same key,
+row-locking each before it re-runs the check. Whichever transaction gets the key
+second re-reads the other's commit (the join: the group's grants; the grant: its
+members) and is refused. The join takes the key even when its own check is skipped
+(actor 0), so a grant's re-check always sees it.
+
+Not covered, by design: SCIM group writes and SSO group reconcile add members with
+`tx.AddUserToGroup` / `storage.AddUserToGroup` directly and run no
+separation-of-duties check at all (the identity provider is authoritative for
+membership; admin-conferring groups are refused separately). A grant's re-check
+still sees any such member committed before its transaction took the group key.
+
+Tests: `TestNamedLockOverlap_SoD_GroupJoinVsGroupGrant_NoToxicPair` (SQLite: grant
+then join, JIT grant then join, join then grant; the first two red before) and
+`TestNamedLockOverlap_SoDGroupJoinVsGroupGrant_ConcurrentWriteTransactions_Postgres`
+(both orders, both write transactions open at once; both red before: the second
+transaction committed while the first was open).
+
 ## Not fixed
 
-Nothing in the inventory. One finding outside it remains (next section).
-
-## Found along the way (not an overlap issue)
-
-`AddUserToGroup` takes `sodGrantLockKey("user", userID)` only, and
-`AssignRoleToGroup` takes `sodGrantLockKey("group", groupID)` plus the locks of the
-group's *current* members. A user joining the group while a role is granted to it
-shares no key with the grant: the grant's SoD check does not see the joining member,
-the join's check does not see the new role, and both commit even with every lock
-held. Not changed by either session; it needs the grant's in-transaction check to
-re-list the members under a key the join also takes. Its own fix(security) PR.
+Nothing in the inventory, and nothing found outside it.
 
 ## Guard
 

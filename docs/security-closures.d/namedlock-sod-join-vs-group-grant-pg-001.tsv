@@ -1,0 +1,1 @@
+namedlock-sod-join-vs-group-grant-pg-001	./internal/core	TestNamedLockOverlap_SoDGroupJoinVsGroupGrant_ConcurrentWriteTransactions_Postgres	pg-gated	pending	-	On PostgreSQL a group join and a grant to that group with both write transactions open at once serialize on the group key (LockNamedKeyInTx), and the second is refused by its separation-of-duties re-check.
