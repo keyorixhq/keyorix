@@ -11,7 +11,7 @@ func TestJitterNBounds(t *testing.T) {
 			t.Fatalf("jitterN(%d) = %d, want 0", n, got)
 		}
 	}
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if got := jitterN(1); got != 0 {
 			t.Fatalf("jitterN(1) = %d, want 0", got)
 		}
@@ -23,7 +23,7 @@ func TestJitterNBounds(t *testing.T) {
 
 func TestBackoffDelayJitterRange(t *testing.T) {
 	a := &lastUsedCoalescer{}
-	for n := 0; n < 6; n++ {
+	for n := range 6 {
 		d := a.backoffDelay(n)
 		if d < 0 || d > time.Hour {
 			t.Fatalf("backoffDelay(%d) = %v, implausible", n, d)
