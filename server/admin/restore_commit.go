@@ -354,6 +354,10 @@ func finishRestore(cfg *config.Config, journalPath string, j restorejournal.Jour
 			fmt.Printf("note: could not remove the %s row (harmless): %v\n", restoreTokenMetadataKey, err)
 		}
 	}
+	if err := encryptRestoredNotificationURLs(cfg); err != nil {
+		return fmt.Errorf("the restore is complete, but encrypting the notification channel URLs it carried failed "+
+			"(%w) -- the server runs the same step at startup and refuses to start until it succeeds", err)
+	}
 	return nil
 }
 

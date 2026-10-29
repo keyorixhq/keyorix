@@ -120,11 +120,27 @@ func runExportCheckpointKey(cmd *cobra.Command, args []string) error {
 // (password provider only), take the exclusive key lock, derive the KEK and return
 // a copy of the KEK-derived checkpoint key plus its public key version.
 func deriveCheckpointKey(cfg *config.Config, src crypto.PassphraseSource) ([]byte, string, error) {
+	svc, err := unlockEncryptionService(cfg, src)
+	if err != nil {
+		return nil, "", err
+	}
+	defer svc.Shutdown()
+	key, keyID, ok := svc.AuditCheckpointKey()
+	if !ok {
+		return nil, "", fmt.Errorf("audit-checkpoint key unavailable (encryption not enabled?)")
+	}
+	return key, keyID, nil
+}
+
+// unlockEncryptionService resolves the master passphrase (password provider
+// only), takes the exclusive key lock and derives the KEK from cfg's key
+// files. The caller must Shutdown the returned service (releases the lock).
+func unlockEncryptionService(cfg *config.Config, src crypto.PassphraseSource) (*encryption.Service, error) {
 	var passphrase string
 	if t := cfg.Storage.Encryption.KeyProvider.Type; t == "" || t == "password" {
 		pb, err := crypto.ResolvePassphrase(src, "KEYORIX_MASTER_PASSWORD")
 		if err != nil {
-			return nil, "", fmt.Errorf("no master passphrase available (%w); set KEYORIX_MASTER_PASSWORD, pass "+
+			return nil, fmt.Errorf("no master passphrase available (%w); set KEYORIX_MASTER_PASSWORD, pass "+
 				"--passphrase-fd/--passphrase-file/--passphrase-stdin, or configure storage.encryption.key_provider "+
 				"(file/env/aws-kms)", err)
 		}
@@ -134,15 +150,11 @@ func deriveCheckpointKey(cfg *config.Config, src crypto.PassphraseSource) ([]byt
 
 	svc := encryption.NewService(&cfg.Storage.Encryption, ".")
 	if err := svc.AcquireExclusiveKeyLock(); err != nil {
-		return nil, "", fmt.Errorf("failed to acquire the encryption key lock (stop the server first): %w", err)
+		return nil, fmt.Errorf("failed to acquire the encryption key lock (stop the server first): %w", err)
 	}
-	defer svc.Shutdown()
 	if err := svc.Initialize(passphrase); err != nil {
-		return nil, "", fmt.Errorf("failed to derive/verify the KEK: %w", err)
+		svc.Shutdown()
+		return nil, fmt.Errorf("failed to derive/verify the KEK: %w", err)
 	}
-	key, keyID, ok := svc.AuditCheckpointKey()
-	if !ok {
-		return nil, "", fmt.Errorf("audit-checkpoint key unavailable (encryption not enabled?)")
-	}
-	return key, keyID, nil
+	return svc, nil
 }
