@@ -1,0 +1,1 @@
+auditverify-sqlite-uri-path-001	./internal/auditverify	TestOpenSQLiteReadOnly_PathWithURICharacters	default-ci	pending-merge	-	OpenSQLiteReadOnly spliced the path into a file: URI unescaped: verify-audit --db 'a?b.db' opened and created 'a' read-write, 'c#d.db' opened 'c', %XX was decoded. Path % ? # now escaped. Red on main a73f23733.

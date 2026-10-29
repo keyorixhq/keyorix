@@ -1,0 +1,1 @@
+verify-audit-erased-checkpoints-report-001	./server/admin	TestVerifyAudit_ErasedCheckpointsNotReportedAsNeverWritten	default-ci	pending-merge	-	verify-audit's report said no checkpoint had ever been written when every checkpoint row was deleted; it now says never written or deleted and NotProven states the residual. Red on main a73f23733.

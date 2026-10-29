@@ -314,3 +314,27 @@ func TestReviewAV_Postgres_IDZeroRowIsBroken(t *testing.T) {
 	assert.Equal(t, auditverify.VerdictBroken, r.Verdict, r.Reason)
 	assert.Contains(t, r.Reason, "outside the chain")
 }
+
+// An --anchor bundle with head_hash and signature swapped (or any field
+// edited) never authenticates, so it can neither clear nor raise a finding;
+// the report says it was not cross-checked.
+func TestReviewAV_SwappedAnchorBundleNeverAuthenticates(t *testing.T) {
+	t.Parallel()
+	f := newDiffFixture(t)
+	f.logEvents(6, time.Hour)
+	_, _, err := f.core.WriteAuditCheckpoint(f.ctx)
+	require.NoError(t, err)
+	good, err := auditverify.ParseExternalAnchorBundle(captureAnchorBundle(t, f))
+	require.NoError(t, err)
+	swapped := *good
+	swapped.HeadHash, swapped.Signature = good.Signature, good.HeadHash
+	inflated := *good
+	inflated.ChainedEvents++
+	for name, b := range map[string]*auditverify.ExternalAnchorBundle{"swapped": &swapped, "inflated count": &inflated} {
+		r := f.verifyWithAnchor(b, fixedCheckpointKey)
+		assert.False(t, r.ExternalAnchor.Authenticated, name)
+		assert.Equal(t, auditverify.VerdictValid, r.Verdict, "%s: %s", name, r.Reason)
+		assert.Contains(t, strings.Join(r.NotProven, "\n"), "could not be authenticated", name)
+	}
+	assert.True(t, f.verifyWithAnchor(good, fixedCheckpointKey).ExternalAnchor.Authenticated)
+}
