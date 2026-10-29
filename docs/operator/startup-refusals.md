@@ -709,11 +709,11 @@ starts as before and logs every fallback decrypt. **In place:** yes.
 
 ### Database newer than this binary (no compatibility floor)
 
-Real output (schema epoch edited to 999 to stand in for a newer release):
+Real output, captured at schema epoch 9 (schema epoch edited to 999 to stand in for a newer release):
 
 ```
 storage: opening existing SQLite database at <datadir>/keyorix.db (configured: "<datadir>/keyorix.db")
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 7 (recorded at 2026-10-27T12:14:09+01:00, 34s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database schema epoch 999 is newer than this binary's schema epoch 9 (recorded at 2026-10-29T10:49:28+01:00, 37s ago) -- this database was migrated by a newer version of Keyorix. Two things produce this, and this process cannot tell them apart on its own: (a) a rolling upgrade in progress -- ... (b) this binary was downgraded against a schema a newer version already migrated -- if so, upgrade this binary to match, or restore a backup taken before the newer version ran. No minimum compatible schema epoch is recorded, so nothing declares this schema safe for an older binary. Refusing to start is the safe default in both cases (ADR-097, ADR-101)
 ```
 
 **Match:** `is newer than this binary's schema epoch`, `checked before migrating; nothing was migrated`
@@ -727,10 +727,10 @@ schema. **In place:** no. [UPGRADING.md §7 Rollback](../UPGRADING.md#7-rollback
 
 ### Database declares a compatibility floor above this binary
 
-Real output (floor edited to 999):
+Real output, captured at schema epoch 9 (floor edited to 999):
 
 ```
-failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 7), above this binary's schema epoch 7 (floor recorded at 2026-10-27T12:14:09+01:00, 25s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
+failed to initialize core service: failed to initialize storage: database schema check failed (checked before migrating; nothing was migrated): database declares a minimum compatible schema epoch of 999 (database schema epoch 9), above this binary's schema epoch 9 (floor recorded at 2026-10-29T09:50:10Z, 1s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 999 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
 ```
 
 **Match:** `database declares a minimum compatible schema epoch of`
@@ -739,6 +739,18 @@ failed to initialize core service: failed to initialize storage: database schema
 dangerous rollback. **Fix.** Roll forward to a release at or above the stated epoch, or
 restore a pre-upgrade backup. **In place:** no. The message prints the numbers it saw; in
 this reproduction both were hand-edited, in a real rollback they come from the release.
+
+Real output of that rollback: a v0.96.3 install (SQLite), migrated by a schema-epoch-9 build
+with `admin migrate`, then the v0.96.3 binary started again. The upgrade raised the
+recorded floor from 2 to 3. v0.96.x words the prefix differently (`failed to migrate
+database:`):
+
+```
+failed to initialize core service: failed to initialize storage: failed to migrate database: database declares a minimum compatible schema epoch of 3 (database schema epoch 9), above this binary's schema epoch 2 (floor recorded at 2026-10-29T10:50:31+01:00, 0s ago) -- a migration this database has already applied was declared unsafe for binaries this old, so this binary must not run against it. If this is a rolling upgrade, this pod is expected to be replaced by the new image; if this binary was rolled back, roll forward to a version with schema epoch 3 or later, or restore a backup taken before the newer version ran. Refusing to start (ADR-101)
+```
+
+Floor 3 is why: v0.96.x misreads the v2 audit retention anchor and never writes the suspend
+clear-copies marker ([UPGRADING.md §6q](../UPGRADING.md#6q-compatibility-floor-3-v096x-cannot-run-against-an-upgraded-database)).
 [UPGRADING.md §7](../UPGRADING.md#7-rollback), [ADR-101](../adr-101-schema-epoch-compatibility-floor.md).
 
 ### Stored epoch unreadable — from code

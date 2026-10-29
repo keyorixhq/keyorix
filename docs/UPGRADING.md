@@ -688,7 +688,17 @@ In short:
 - don't run `POST /api/v1/admin/jobs/purge-audit-logs` until it has finished, because a
   request that lands on an old replica fails;
 - expect `GET /audit/verify` on old replicas to report "broken" after a purge until
-  they are replaced.
+  they are replaced;
+- don't suspend secrets with "also clear synced Kubernetes copies" until it has finished:
+  a v0.96.x replica ignores that option and suspends without clearing the copies. Repeat
+  any such suspend once every replica runs this release.
+
+Releases before v0.96 (v0.93 to v0.95.x) predate both formats too, and are refused as well,
+by their older check: `database schema epoch 9 is newer than this binary's schema epoch 1`.
+`internal/storage/factory_schema_epoch_pre3258_refusal_test.go` pins both refusals with
+copies of the released start-up checks, on a fresh database, the real v0.95.0 upgrade
+fixture and a database a v0.96.x server left behind. A real v0.96.3 rollback transcript is
+in [operator/startup-refusals.md](operator/startup-refusals.md#database-declares-a-compatibility-floor-above-this-binary).
 
 Rollback across this release needs a restore (section 7). Proved with a real v0.96.1
 binary against a database a current server had migrated (PostgreSQL, natively, not a
