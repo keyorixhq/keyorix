@@ -1,0 +1,1 @@
+namedlock-sod-join-vs-group-grant-001	./internal/core	TestNamedLockOverlap_SoD_GroupJoinVsGroupGrant_NoToxicPair	default-ci	pending	-	A group join and a grant to that group, one inside the other's lost-lock window, cannot together give the joining user both halves of a separation-of-duties pair (the grant re-lists members under the group key the join also takes).
