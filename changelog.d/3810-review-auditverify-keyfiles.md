@@ -1,8 +1,8 @@
 ### Security
-- **`verify-audit` now checks the server's verification state row.** A database-write actor who cut the audit tail and erased the checkpoint rows and the high-water mark (with or without the `audit_verification_state` row) got VALID from `verify-audit --checkpoint-key-file` while the server reported a sticky discontinuity. Offline verification now applies the server's deleted / garbled / past-the-head / recorded-discontinuity rules; a pending key transition's row is accepted as the server accepts it.
+- **`verify-audit` now checks the server's verification state row.** A database-write actor who cut the audit tail and erased the checkpoint rows and the high-water mark (with or without the `audit_verification_state` row) got VALID from `verify-audit --checkpoint-key-file` while the server reported a sticky discontinuity. Offline verification now applies the server's deleted / garbled / past-the-head / head-gone / recorded-discontinuity rules, and its rule for an older row put back over a recorded discontinuity; a pending key transition's row is accepted as the server accepts it.
 - **`verify-audit` verifies every row in `audit_events`.** A row with id 0, or (with a hand-edited schema) a NULL or duplicated id, was never visited by the walk and sat unverified; it is now BROKEN.
 - **`verify-audit --db` opens exactly the file named, read-only.** A path containing `?`, `#` or `%` opened a different file, read-write.
-- **Key-set manifest writes can no longer tear each other.** Each write stages under its own name, so writers racing past a broken key lock cannot rename a mix of both into place.
+- **Key-set manifest writes can no longer tear each other.** Each write stages under its own name, so writers racing past a broken key lock cannot rename a mix of both into place. `admin encryption key-secret export` still refuses a directory where a manifest write was interrupted, and server start (or a key command) removes such leftover staging files, with a warning, under the key lock.
 
 ### Fixed
 - `verify-audit --previous-checkpoint-key-file` now also authenticates an `--anchor` exported before rotate-kek / migrate-provider.
