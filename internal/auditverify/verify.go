@@ -162,6 +162,12 @@ type Result struct {
 	// the walk saw; sealEvents the system.audit_loss_accepted rows.
 	keyTransitionEvents []keyTransitionEvent
 	sealEvents          []sealEvent
+	// stateEventID is the newest in-chain row saying a verification state row
+	// exists (its marker, or a discontinuity the server recorded); 0 = none.
+	stateEventID uint64
+	// activeTransition is the authenticated record for the current key epoch,
+	// set by checkKeyTransitions; nil when there is none.
+	activeTransition *KeyTransition
 	// seals is the binding checkpoints are checked under; sealRecs the
 	// authenticated records it was taken from.
 	seals    sealBinding
@@ -307,6 +313,9 @@ func Verify(ctx context.Context, db *DB, opts Options) (*Result, error) {
 			return nil, err
 		}
 		if err := checkKeyTransitions(ctx, db, opts, result); err != nil {
+			return nil, err
+		}
+		if err := checkVerifyState(ctx, db, opts, result); err != nil {
 			return nil, err
 		}
 	} else {
@@ -501,6 +510,8 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 					se.digest = m[1]
 				}
 				result.sealEvents = append(result.sealEvents, se)
+			case auditVerifyStateMarkerEvent, auditVerifyStateDiscontinuityEvent:
+				result.stateEventID = e.ID
 			}
 		}
 
@@ -516,6 +527,20 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 	}
 
 	result.ChainedEvents, result.UnchainedLegacyEvents = chainedEvents, unchained
+	// The keyset walk (id > last id) never visits a row with id 0 or a NULL id,
+	// nor a second row under an id a batch already ended on (a schema edited to
+	// drop the primary key): every row up to the last one walked must have been
+	// walked, or such rows sit in the table unverified.
+	held, err := db.CountAuditEventsThrough(ctx, lastID)
+	if err != nil {
+		return err
+	}
+	if walked := chainedEvents + unchained; held != walked {
+		result.escalate(VerdictBroken, fmt.Sprintf(
+			"audit_events holds %d row(s) with an id up to #%d (or a NULL id), but the id-ordered walk visited %d: "+
+				"rows with id 0, a NULL id or a duplicated id are outside the chain (inserted directly, or through an altered schema)",
+			held, lastID, walked))
+	}
 	return nil
 }
 
@@ -717,8 +742,15 @@ func buildNotProven(opts Options, result *Result) []string {
 	}
 	if result.ExternalAnchor.Supplied && !result.ExternalAnchor.Authenticated {
 		notProven = append(notProven,
-			"an --anchor bundle was supplied but could not be authenticated by either the checkpoint key or an "+
-				"RFC 3161 trust root; its claims were not cross-checked against this database and are advisory only")
+			"an --anchor bundle was supplied but could not be authenticated by either the checkpoint key (current or a "+
+				"supplied previous one) or an RFC 3161 trust root; its claims were not cross-checked against this database "+
+				"and are advisory only")
+	}
+	if len(opts.CheckpointKey) > 0 && !result.Checkpoint.Authenticated && !result.ExternalAnchor.Authenticated {
+		notProven = append(notProven,
+			"no signed checkpoint was found to authenticate: a tail truncation that also deleted every checkpoint row, the "+
+				"high-water mark and the verification state looks exactly like a deployment that never wrote a checkpoint; "+
+				"pass an --anchor exported earlier to rule it out")
 	}
 	return notProven
 }

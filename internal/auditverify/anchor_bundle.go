@@ -57,12 +57,21 @@ func crossCheckExternalAnchor(ctx context.Context, db *DB, opts Options, result 
 	// An anchor exported before an accepted audit loss (seal.go) is bound to
 	// the seals that existed then: try the current binding first, then each
 	// earlier one. preSeal is the number of seals it was exported under.
+	// An anchor exported before a rotate-kek / migrate-provider is signed under
+	// that epoch's key: a supplied previous key authenticates it too. An
+	// authenticated anchor can only add a finding, never clear one.
 	preSeal := len(result.sealRecs)
 	cp := checkpointFromAnchorBundle(b).bound(result.seals)
-	keyAuthenticated := len(opts.CheckpointKey) > 0 && CheckpointSignatureValid(cp, opts.CheckpointKey)
-	for k := len(result.sealRecs) - 1; k >= 0 && !keyAuthenticated && len(opts.CheckpointKey) > 0; k-- {
-		if c := checkpointFromAnchorBundle(b).bound(sealBindingOf(result.sealRecs[:k])); CheckpointSignatureValid(c, opts.CheckpointKey) {
-			cp, preSeal, keyAuthenticated = c, k, true
+	keyAuthenticated := false
+	for _, key := range append([][]byte{opts.CheckpointKey}, opts.PreviousCheckpointKeys...) {
+		if len(key) == 0 || keyAuthenticated {
+			continue
+		}
+		keyAuthenticated = CheckpointSignatureValid(cp, key)
+		for k := len(result.sealRecs) - 1; k >= 0 && !keyAuthenticated; k-- {
+			if c := checkpointFromAnchorBundle(b).bound(sealBindingOf(result.sealRecs[:k])); CheckpointSignatureValid(c, key) {
+				cp, preSeal, keyAuthenticated = c, k, true
+			}
 		}
 	}
 

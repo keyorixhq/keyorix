@@ -136,6 +136,18 @@ func (d *DB) StreamAuditEvents(ctx context.Context, afterID uint64, limit int) (
 	return out, nil
 }
 
+// CountAuditEventsThrough counts the audit_events rows with id <= throughID
+// or a NULL id: every row a complete id-ordered walk that ended on throughID
+// must have visited.
+func (d *DB) CountAuditEventsThrough(ctx context.Context, throughID uint64) (int64, error) {
+	var n int64
+	q := d.rebind(`SELECT COUNT(*) FROM audit_events WHERE id IS NULL OR id <= ?`)
+	if err := d.sql.QueryRowContext(ctx, q, throughID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count audit_events: %w", err)
+	}
+	return n, nil
+}
+
 // rowScanner is the subset of *sql.Rows this package's row decoder needs —
 // satisfied by *sql.Rows in production and by a fixed in-memory stand-in in
 // FuzzAuditChainRowDecode, so the fuzz target can drive the exact same
