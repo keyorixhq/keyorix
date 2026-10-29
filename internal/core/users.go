@@ -675,6 +675,11 @@ func (c *KeyorixCore) UpdateUser(ctx context.Context, req *UpdateUserRequest) (*
 			settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
 				// fn may run again (the owed fallback): start from a clean slate.
 				patHashes, cleanupPatErr, cleanupSessionErr, remainder = nil, nil, nil, false
+				// NAMEDLOCK-OVERLAP-1: the guard above ran under the named lock only;
+				// re-check it on the grant row locks (fenceLastAdminDeactivationOn).
+				if ferr := fenceLastAdminDeactivationOn(ctx, tx, req.ID); ferr != nil {
+					return ferr
+				}
 				// Decided on the row lock, not on the read before it: the stored
 				// username/email is what the request changes, or does not. The write is
 				// built from the locked row too, so a username/email the read before the
@@ -986,6 +991,11 @@ func (c *KeyorixCore) DeleteUser(ctx context.Context, actorID, id uint) error {
 			// enable that committed in between; RestoreUser then let the old
 			// password in. Pattern: UpdateUser's UpdateUserIfActiveStateMatches
 			// plus the SCIM paths' SetAccountStateIfMatches (INV-STORE-21).
+			// NAMEDLOCK-OVERLAP-1: the guard above ran under the named lock only;
+			// re-check it on the grant row locks (fenceLastAdminDeactivationOn).
+			if ferr := fenceLastAdminDeactivationOn(ctx, tx, id); ferr != nil {
+				return ferr
+			}
 			var lerr error
 			if user, lerr = tx.LockUserForUpdate(ctx, id); lerr != nil {
 				return lerr

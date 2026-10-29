@@ -24,6 +24,7 @@ type StoreHooks struct {
 	AdvanceWebAuthnCredentialCounter          func(next storage.Storage, ctx context.Context, credentialID []byte, userID uint, newBlob []byte, newSignCount uint32, lastUsedAt time.Time) (bool, error)
 	AssignPermissionToRole                    func(next storage.Storage, ctx context.Context, roleID uint, permissionID uint) error
 	AssignRole                                func(next storage.Storage, ctx context.Context, userID uint, roleID uint, scope storage.Scope) error
+	AssignRoleToGroup                         func(next storage.Storage, ctx context.Context, groupID uint, roleID uint, scope storage.Scope) error
 	AssignRoleWithExpiry                      func(next storage.Storage, ctx context.Context, userID uint, roleID uint, scope storage.Scope, expiresAt time.Time) error
 	ClaimPendingAuditEvent                    func(next storage.Storage, ctx context.Context, id uint) (bool, error)
 	ClearProjectSecretOwnership               func(next storage.Storage, ctx context.Context, userID uint, projectID uint) error
@@ -31,6 +32,7 @@ type StoreHooks struct {
 	ConsumeMFARecoveryCode                    func(next storage.Storage, ctx context.Context, userID uint, codeHash string, now time.Time) (bool, error)
 	ConsumeWebAuthnSession                    func(next storage.Storage, ctx context.Context, tokenHash string, now time.Time) (*models.WebAuthnSession, error)
 	CountPendingAuditEvents                   func(next storage.Storage, ctx context.Context) (int64, error)
+	DeleteEnvironment                         func(next storage.Storage, ctx context.Context, id uint) error
 	OldestPendingAuditEventAt                 func(next storage.Storage, ctx context.Context) (time.Time, bool, error)
 	CountRecentLoginAttempts                  func(next storage.Storage, ctx context.Context, ip string, since time.Time) (int64, error)
 	CountWebAuthnCredentials                  func(next storage.Storage, ctx context.Context, userID uint) (int64, error)
@@ -47,6 +49,8 @@ type StoreHooks struct {
 	CreateProjectMembership                   func(next storage.Storage, ctx context.Context, m *models.ProjectMembership) (*models.ProjectMembership, error)
 	CreateRotationPolicy                      func(next storage.Storage, ctx context.Context, p *models.RotationPolicy) error
 	CreateSecretAccessLog                     func(next storage.Storage, ctx context.Context, log *models.SecretAccessLog) error
+	CreateSecret                              func(next storage.Storage, ctx context.Context, secret *models.SecretNode, plaintextValue ...string) (*models.SecretNode, error)
+	CreateSecretDependencyExclusive           func(next storage.Storage, ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error)
 	CreateSecretVersion                       func(next storage.Storage, ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error)
 	CreateSession                             func(next storage.Storage, ctx context.Context, session *models.Session) (*models.Session, error)
 	CreateSetupToken                          func(next storage.Storage, ctx context.Context, t *models.SetupToken) (*models.SetupToken, error)
@@ -121,6 +125,8 @@ type StoreHooks struct {
 	ListUnreviewedBreakGlassActivationsBefore func(next storage.Storage, ctx context.Context, cutoff time.Time) ([]*models.BreakGlassActivation, error)
 	ListUsers                                 func(next storage.Storage, ctx context.Context, filter *storage.UserFilter) ([]*models.User, int64, error)
 	ListWebAuthnCredentials                   func(next storage.Storage, ctx context.Context, userID uint) ([]*models.WebAuthnCredential, error)
+	LockMachineIdentityForUpdate              func(next storage.Storage, ctx context.Context, id uint) (*models.MachineIdentity, error)
+	LockNamedKeyInTx                          func(next storage.Storage, ctx context.Context, lockKey string) error
 	LockUserForUpdate                         func(next storage.Storage, ctx context.Context, id uint) (*models.User, error)
 	LogAuditEvent                             func(next storage.Storage, ctx context.Context, event *models.AuditEvent) error
 	LogAuditEventWithAccessLog                func(next storage.Storage, ctx context.Context, event *models.AuditEvent, accessLog *models.SecretAccessLog) error
@@ -137,6 +143,7 @@ type StoreHooks struct {
 	ResolveMachinePermissionAt                func(next storage.Storage, ctx context.Context, machineID uint, scope storage.Scope, permission string) (*storage.PrincipalPermission, error)
 	ResolveUserPermissionAt                   func(next storage.Storage, ctx context.Context, userID uint, scope storage.Scope, permission string) (*storage.PrincipalPermission, error)
 	RestoreGroup                              func(next storage.Storage, ctx context.Context, id uint) error
+	RestoreSecret                             func(next storage.Storage, ctx context.Context, id uint) error
 	RevokeMachineIdentityCredential           func(next storage.Storage, ctx context.Context, projectID uint, credentialID uint) error
 	RoleSetBypassesPermissionChecks           func(next storage.Storage, ctx context.Context, roleIDs []uint) (bool, error)
 	RoleSetHasPermission                      func(next storage.Storage, ctx context.Context, roleIDs []uint, permission string) (bool, error)

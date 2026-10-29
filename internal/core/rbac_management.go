@@ -232,21 +232,21 @@ func (c *KeyorixCore) AssignRoleToGroup(ctx context.Context, actorID, groupID, r
 	// #1780: the group key alone does not serialize against a concurrent DIRECT
 	// grant to one of this group's members — see withGroupMemberSoDLocks.
 	return c.storage.WithNamedLock(ctx, sodGrantLockKey("group", groupID), func(ctx context.Context) error {
-		write := func(ctx context.Context) error {
-			return c.grantGroupRoleAudited(ctx, actorID, groupID, roleID, scope, nil)
+		write := func(ctx context.Context, fence txFence) error {
+			return c.grantGroupRoleAudited(ctx, fence, actorID, groupID, roleID, scope, nil)
 		}
 		policies, adding, needed, err := c.groupGrantSoDContext(ctx, roleID)
 		if err != nil {
 			return err
 		}
 		if !needed {
-			return write(ctx)
+			return write(ctx, sodGroupKeyFence(groupID))
 		}
 		return c.withGroupMemberSoDLocks(ctx, groupID, func(ctx context.Context, members []*models.User) error {
 			if err := c.requireGroupGrantNoSoDViolation(ctx, members, policies, adding); err != nil {
 				return err
 			}
-			return write(ctx)
+			return write(ctx, chainTxFences(sodGroupKeyFence(groupID), sodGroupGrantFence(roleID, members)))
 		})
 	})
 }
@@ -279,9 +279,12 @@ func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID,
 		return fmt.Errorf("group not found: %w", err)
 	}
 	var settle func() // appends the owed row; called after the guard lock is released
-	err := c.withGroupRoleRemovalGuards(ctx, groupID, roleID, scope, func(ctx context.Context) error {
+	err := c.withGroupRoleRemovalGuards(ctx, groupID, roleID, scope, func(ctx context.Context, fence txFence) error {
 		var merr error
 		settle, merr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			return c.removeGroupRoleWriteOn(ctx, tx, tgt, actorID, groupID, roleID, scope)
 		})
 		return merr
@@ -299,28 +302,44 @@ func (c *KeyorixCore) RemoveRoleFromGroup(ctx context.Context, actorID, groupID,
 // access-review revoke transaction performs the same removal through a
 // transaction-scoped handle and must reuse this decision rather than restate it
 // (#2676).
-func (c *KeyorixCore) withGroupRoleRemovalGuards(ctx context.Context, groupID, roleID uint, scope Scope, write func(ctx context.Context) error) error {
+//
+// write must run the fence it is handed as the first statement of its write
+// transaction (NAMEDLOCK-OVERLAP-2, txFence): at the global scope it row-locks
+// every global admin-tier grant, at project scope it takes the project's
+// projectAdminGuardLockKey with LockNamedKeyInTx, and then it re-runs the same
+// guard through tx.
+func (c *KeyorixCore) withGroupRoleRemovalGuards(ctx context.Context, groupID, roleID uint, scope Scope, write func(ctx context.Context, fence txFence) error) error {
 	switch {
 	case scope.ProjectID == 0 && scope.EnvironmentID == 0:
 		return c.storage.WithNamedLock(ctx, lastAdminGuardLockKey, func(ctx context.Context) error {
 			if err := c.guardLastGlobalAdminGroupRole(ctx, groupID, roleID, scope); err != nil {
 				return err
 			}
-			return write(ctx)
+			return write(ctx, func(ctx context.Context, tx storage.Storage) error {
+				if err := lockGlobalAdminGrantsOn(ctx, tx); err != nil {
+					return err
+				}
+				return guardLastGlobalAdminGroupRoleOn(ctx, tx, groupID, roleID, scope)
+			})
 		})
 	case scope.ProjectID != 0 && scope.EnvironmentID == 0:
 		return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
 			if err := c.guardLastProjectAdminGroupRole(ctx, groupID, roleID, scope.ProjectID); err != nil {
 				return err
 			}
-			return write(ctx)
+			return write(ctx, func(ctx context.Context, tx storage.Storage) error {
+				if err := lockNamedKeysInTxOn(ctx, tx, projectAdminGuardLockKey(scope.ProjectID)); err != nil {
+					return err
+				}
+				return guardLastProjectAdminGroupRoleOn(ctx, tx, groupID, roleID, scope.ProjectID)
+			})
 		})
 	default:
 		// Environment-scoped: neither guard applies (both early-return for a
 		// non-matching scope) — a project's roles.assign authority is never
 		// carried by an environment-scoped grant, so removing one can't be the
 		// last route to it.
-		return write(ctx)
+		return write(ctx, noTxFence)
 	}
 }
 
@@ -522,6 +541,13 @@ func (c *KeyorixCore) withOrderedUserSoDLocks(ctx context.Context, ids []uint, f
 // this closes that sibling instance by threading the real value through
 // instead of hardcoding false.
 func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
+	return c.assignUserRole(ctx, noTxFence, actorID, userID, roleID, scope, actorIsMachine)
+}
+
+// assignUserRole is AssignUserRole with a caller fence run first in the grant's
+// transaction, before its own separation-of-duties fence (txFence): a
+// membership activation passes membershipActiveFence.
+func (c *KeyorixCore) assignUserRole(ctx context.Context, first txFence, actorID, userID, roleID uint, scope Scope, actorIsMachine bool) error {
 	if err := c.requireGranterHoldsRolePermissions(ctx, actorID, roleID, scope, actorIsMachine); err != nil {
 		return err
 	}
@@ -535,7 +561,7 @@ func (c *KeyorixCore) AssignUserRole(ctx context.Context, actorID, userID, roleI
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.grantUserRoleAudited(ctx, actorID, userID, roleID, scope, nil, false)
+		return c.grantUserRoleAudited(ctx, chainTxFences(first, sodUserGrantFence(userID, []uint{roleID}, Scope{})), actorID, userID, roleID, scope, nil, false)
 	})
 }
 
@@ -571,7 +597,7 @@ func (c *KeyorixCore) assignUserRoleSystemGrant(ctx context.Context, actorID, us
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.grantUserRoleAudited(ctx, actorID, userID, roleID, scope, nil, false)
+		return c.grantUserRoleAudited(ctx, sodUserGrantFence(userID, []uint{roleID}, Scope{}), actorID, userID, roleID, scope, nil, false)
 	})
 }
 
@@ -592,7 +618,7 @@ func (c *KeyorixCore) grantBaselineRoleBackfill(ctx context.Context, userID, rol
 		if err := c.requireNoSoDViolation(ctx, userID, roleID); err != nil {
 			return err
 		}
-		return c.grantUserRoleAudited(ctx, 0, userID, roleID, Scope{}, nil, true)
+		return c.grantUserRoleAudited(ctx, sodUserGrantFence(userID, []uint{roleID}, Scope{}), 0, userID, roleID, Scope{}, nil, true)
 	})
 }
 
@@ -605,11 +631,18 @@ func (c *KeyorixCore) grantBaselineRoleBackfill(ctx context.Context, userID, rol
 // baselineBackfill tags the row as LogRoleAssignedBackfill does.
 // GROUP-ROLE-SCOPE-1 (#3546): refuses a scope the role is not meaningful at
 // (requireScopeValidForRole) before writing, for every one of those callers.
-func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, actorID, userID, roleID uint, scope Scope, expiresAt *time.Time, baselineBackfill bool) error {
+//
+// fence runs first in the grant's transaction (txFence, NAMEDLOCK-OVERLAP-2):
+// sodUserGrantFence for every caller whose grant passed the separation-of-duties
+// check, noTxFence for break-glass, which skips that check by design.
+func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, fence txFence, actorID, userID, roleID uint, scope Scope, expiresAt *time.Time, baselineBackfill bool) error {
 	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
 		return err
 	}
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := fence(ctx, tx); err != nil {
+			return err
+		}
 		var err error
 		if expiresAt != nil {
 			err = tx.AssignRoleWithExpiry(ctx, userID, roleID, scope, *expiresAt)
@@ -632,11 +665,15 @@ func (c *KeyorixCore) grantUserRoleAudited(ctx context.Context, actorID, userID,
 // (AssignRoleToGroup, AssignGroupRoleWithExpiry): the group_roles row and its
 // role.group_assigned audit row commit together. Same role-scope check as
 // grantUserRoleAudited: the DEMO-WALK-4 grant was a group grant (#3546).
-func (c *KeyorixCore) grantGroupRoleAudited(ctx context.Context, actorID, groupID, roleID uint, scope Scope, expiresAt *time.Time) error {
+// fence runs first in the grant's transaction (txFence, NAMEDLOCK-OVERLAP-2).
+func (c *KeyorixCore) grantGroupRoleAudited(ctx context.Context, fence txFence, actorID, groupID, roleID uint, scope Scope, expiresAt *time.Time) error {
 	if err := c.requireScopeValidForRole(ctx, roleID, scope); err != nil {
 		return err
 	}
 	return c.withAuditedMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := fence(ctx, tx); err != nil {
+			return err
+		}
 		var err error
 		if expiresAt != nil {
 			err = tx.AssignRoleToGroupWithExpiry(ctx, groupID, roleID, scope, *expiresAt)
@@ -704,9 +741,9 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 		}
 	}
 	var settle func() // appends the owed row; called after the guard lock is released
-	err := c.withUserRoleRemovalGuards(ctx, userID, roleID, scope, func(ctx context.Context) error {
+	err := c.withUserRoleRemovalGuards(ctx, userID, roleID, scope, func(ctx context.Context, fence txFence) error {
 		var rerr error
-		settle, rerr = c.removeUserRoleUnguarded(ctx, actorID, userID, roleID, scope)
+		settle, rerr = c.removeUserRoleUnguarded(ctx, fence, actorID, userID, roleID, scope)
 		return rerr
 	})
 	// settle is set only once the removal has committed; the lock is released.
@@ -739,13 +776,13 @@ func (c *KeyorixCore) RemoveUserRole(ctx context.Context, actorID, userID, roleI
 // write therefore runs INSIDE the lock, and receives the lock-marked ctx so a
 // nested same-key acquisition (or a transaction opened within it) stays correct
 // — see WithNamedLock's doc comment on threading the ctx it passes.
-func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, roleID uint, scope Scope, write func(ctx context.Context) error) error {
+func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, roleID uint, scope Scope, write func(ctx context.Context, fence txFence) error) error {
 	if scope.ProjectID == 0 || scope.EnvironmentID != 0 {
 		// Global scope is handled by RemoveUserRole's own earlier branch
 		// (RemoveGlobalAdminRoleGuarded fuses guard and write into one storage
 		// call, so it has no separable write); an environment-scoped grant never
 		// carries a project's roles.assign authority, so neither guard applies.
-		return write(ctx)
+		return write(ctx, noTxFence)
 	}
 	return c.storage.WithNamedLock(ctx, projectAdminGuardLockKey(scope.ProjectID), func(ctx context.Context) error {
 		existing, err := c.storage.GetUserRoleIDsExact(ctx, userID, scope)
@@ -761,7 +798,7 @@ func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, rol
 		if err := c.guardLastProjectAdmin(ctx, scope.ProjectID, userID, existing, after); err != nil {
 			return err
 		}
-		return write(ctx)
+		return write(ctx, projectAdminRemovalFence(scope.ProjectID, userID, withoutRole(roleID)))
 	})
 }
 
@@ -793,8 +830,11 @@ func (c *KeyorixCore) withUserRoleRemovalGuards(ctx context.Context, userID, rol
 // waits up to owedAuditWait per refused row, which must not be spent holding a
 // last-admin / project-admin lock. The caller calls settle after releasing the lock
 // (the cache is already evicted here, so the revocation has taken effect).
-func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, actorID, userID, roleID uint, scope Scope) (settle func(), err error) {
+func (c *KeyorixCore) removeUserRoleUnguarded(ctx context.Context, fence txFence, actorID, userID, roleID uint, scope Scope) (settle func(), err error) {
 	settle, err = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+		if err := fence(ctx, tx); err != nil {
+			return err
+		}
 		return c.removeUserRoleWriteOn(ctx, tx, tgt, actorID, userID, roleID, scope)
 	})
 	if err != nil {

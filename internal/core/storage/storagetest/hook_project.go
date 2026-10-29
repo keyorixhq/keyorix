@@ -54,3 +54,10 @@ func (hs *HookStore) SuspendMachineIdentitiesForDeletedProject(ctx context.Conte
 	}
 	return hs.Storage.SuspendMachineIdentitiesForDeletedProject(ctx, id)
 }
+
+func (hs *HookStore) DeleteEnvironment(ctx context.Context, id uint) error {
+	if hk := hs.h.DeleteEnvironment; hk != nil {
+		return hk(hs.Storage, ctx, id)
+	}
+	return hs.Storage.DeleteEnvironment(ctx, id)
+}

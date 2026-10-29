@@ -281,7 +281,7 @@ func TestAuditService_GetRBACAuditLogs_ReturnsRoleChanges(t *testing.T) {
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
 	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.UserRole{},
+	require.NoError(t, db.AutoMigrate(&models.AuditEvent{}, &models.User{}, &models.UserRole{},
 		&models.Role{}, &models.Permission{}, &models.RolePermission{},
 		&models.Group{}, &models.UserGroup{}, &models.GroupRole{},
 		&models.Project{}, &models.Environment{}, &models.SoDPolicy{}))

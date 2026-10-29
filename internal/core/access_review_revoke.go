@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/keyorixhq/keyorix/internal/core/storage"
 	"github.com/keyorixhq/keyorix/internal/i18n"
 )
 
@@ -133,9 +134,21 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 	if err != nil {
 		return err
 	}
-	return plan.guarded(ctx, func(lockCtx context.Context) error {
-		if err := plan.write(lockCtx, c.storage, c.auditNow()); err != nil {
-			return err
+	// NAMEDLOCK-OVERLAP-2: the removal runs in a transaction so the guard's fence
+	// can run first in it (txFence). A revocation, so never blocked by the audit
+	// log: its row is owed from the same transaction (runOwedAuditMutation, as
+	// RemoveUserRole/RemoveRoleFromGroup do) and appended after the lock.
+	var settle func()
+	err = plan.guarded(ctx, func(lockCtx context.Context, fence txFence) error {
+		var werr error
+		settle, werr = c.runOwedAuditMutation(lockCtx, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(lockCtx, tx); err != nil {
+				return err
+			}
+			return plan.write(lockCtx, tx, tgt)
+		})
+		if werr != nil {
+			return werr
 		}
 		c.logAccessReviewDecisionOn(lockCtx, c.auditNow(), EventAccessReviewRevoked, "revoked", actorID, projectID, d)
 		if plan.afterCommit != nil {
@@ -143,6 +156,11 @@ func (c *KeyorixCore) RevokeAccessReviewGrant(ctx context.Context, actorID, proj
 		}
 		return nil
 	})
+	// settle is set only once the removal has committed; the lock is released.
+	if settle != nil {
+		settle()
+	}
+	return err
 }
 
 // AttestAccessReviewGrant records that the reviewer examined the grant and chose to

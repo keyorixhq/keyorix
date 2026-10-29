@@ -363,21 +363,17 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 	var split bool
 	var settle func()
 	var state *SCIMGroupState // the group as the last commit left it (readSCIMGroupState)
-	if err := c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
-		// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
-		// applying any of them, so a PATCH that would strip the install's last route
-		// to global-admin authority is refused atomically — see
-		// applyGroupMembershipChanges's identical precheck-then-apply shape. Also
-		// checked against guardLastProjectAdminGroupMembership (core-project-
-		// members.json#3) so a removal can't strip a project's last roles.assign
-		// holder either — SCIM group management previously only saw the global case.
-		for _, id := range toRemove {
-			if err := c.guardLastGlobalAdminMembership(ctx, id, groupID); err != nil {
-				return err
-			}
-			if err := c.guardLastProjectAdminGroupMembership(ctx, id, groupID); err != nil {
-				return err
-			}
+	// Check every removal against guardLastGlobalAdminMembership (#G02) BEFORE
+	// applying any of them, so a PATCH that would strip the install's last route
+	// to global-admin authority is refused atomically — see
+	// applyGroupMembershipChanges's identical precheck-then-apply shape. Also
+	// checked against guardLastProjectAdminGroupMembership (core-project-
+	// members.json#3) so a removal can't strip a project's last roles.assign
+	// holder either — SCIM group management previously only saw the global case.
+	guard := scimRemovalsGuard(groupID, toRemove)
+	if err := c.withGroupProjectAdminGuardLocks(ctx, groupID, guard, func(ctx context.Context, fence txFence) error {
+		if err := guard(ctx, c.storage); err != nil {
+			return err
 		}
 		// All add/remove membership writes run in one transaction: a partial apply used
 		// to be best-effort (`_ =`). Both AddUserToGroup and RemoveUserFromGroup are
@@ -401,6 +397,9 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 		if split {
 			var rerr error
 			settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+				if err := fence(ctx, tx); err != nil {
+					return err
+				}
 				for _, id := range toRemove {
 					if err := tx.RemoveUserFromGroup(ctx, id, groupID, 0); err != nil { // SCIM memberships are always global
 						return fmt.Errorf("%s: %w", i18n.T("ErrorStorageFailed", nil), err)
@@ -413,6 +412,9 @@ func (c *KeyorixCore) PatchSCIMGroup(ctx context.Context, actorID, groupID uint,
 			return rerr
 		}
 		if err := c.withAuditedOrOwedMutation(ctx, widens, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			if renaming {
 				matched, uerr := tx.UpdateGroupFields(ctx, groupID, newName, &folded, nil, c.now())
 				if uerr != nil {
@@ -630,14 +632,10 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 	widens := len(toAdd) > 0 || rename != nil
 	var split bool
 	var settle func()
-	if err := c.withGroupProjectAdminGuardLocks(ctx, groupID, func(ctx context.Context) error {
-		for _, id := range removals {
-			if err := c.guardLastGlobalAdminMembership(ctx, id, groupID); err != nil {
-				return err
-			}
-			if err := c.guardLastProjectAdminGroupMembership(ctx, id, groupID); err != nil {
-				return err
-			}
+	guard := scimRemovalsGuard(groupID, removals)
+	if err := c.withGroupProjectAdminGuardLocks(ctx, groupID, guard, func(ctx context.Context, fence txFence) error {
+		if err := guard(ctx, c.storage); err != nil {
+			return err
 		}
 		removeAll := func(tx storage.Storage) error {
 			for _, id := range removals {
@@ -653,6 +651,9 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 		if split {
 			var rerr error
 			settle, rerr = c.runOwedAuditMutation(ctx, func(tx storage.Storage, tgt auditTarget) error {
+				if err := fence(ctx, tx); err != nil {
+					return err
+				}
 				if err := removeAll(tx); err != nil {
 					return err
 				}
@@ -665,6 +666,9 @@ func (c *KeyorixCore) applyGroupMembershipChanges(ctx context.Context, groupID u
 		// to be best-effort (`_ =`). Both storage calls are idempotent, so this stays
 		// safe under an IdP's own retry of the same PUT.
 		return c.withAuditedOrOwedMutation(ctx, widens, func(tx storage.Storage, tgt auditTarget) error {
+			if err := fence(ctx, tx); err != nil {
+				return err
+			}
 			if rename != nil {
 				if err := rename(tx); err != nil {
 					return err
@@ -736,4 +740,22 @@ func (c *KeyorixCore) DeprovisionSCIMGroup(ctx context.Context, actorID, groupID
 			fmt.Sprintf("SCIM deprovisioned group %d", groupID))
 	})
 	return err
+}
+
+// scimRemovalsGuard is the last-admin guard a SCIM membership change runs for
+// each member it removes (global and project), read through st: before the
+// write transaction on c.storage, and again inside it through tx
+// (withGroupProjectAdminGuardLocks' fence, NAMEDLOCK-OVERLAP-2).
+func scimRemovalsGuard(groupID uint, removals []uint) func(ctx context.Context, st storage.Storage) error {
+	return func(ctx context.Context, st storage.Storage) error {
+		for _, id := range removals {
+			if err := guardLastGlobalAdminMembershipOn(ctx, st, id, groupID); err != nil {
+				return err
+			}
+			if err := guardLastProjectAdminGroupMembershipOn(ctx, st, id, groupID); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
 }

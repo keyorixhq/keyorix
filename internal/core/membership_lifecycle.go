@@ -249,7 +249,12 @@ func (c *KeyorixCore) inviteMemberWithMode(ctx context.Context, projectID, userI
 		c.logMembershipEvent(ctx, "membership.invited", created, invitedBy)
 		// If the mode put us straight into active, grant the role now.
 		if created.State == MembershipActive {
-			if err := c.AddProjectMember(ctx, invitedBy, projectID, userID, role, invitedByMachineID != 0); err != nil {
+			if err := c.addProjectMember(ctx, membershipActiveFence(created), invitedBy, projectID, userID, role, invitedByMachineID != 0); err != nil {
+				if errors.Is(err, ErrMembershipStateConflict) {
+					// Another writer moved the membership on (a revoke) before the
+					// grant: nothing was granted, and the row is theirs now.
+					return fmt.Errorf("failed to grant role on activation: %w", err)
+				}
 				// #309: created just committed as `active` above; if the role grant that's
 				// supposed to back it fails (e.g. the composite user_roles primary key
 				// rejects a grant that already exists via some other, independent path —
@@ -393,7 +398,21 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		// reverted (or, if this write lands first, silently clobbered). Route
 		// through the conditional write gated on the state this call actually
 		// observed (prevState).
-		matched, err := c.storage.TransitionProjectMembershipState(ctx, m, prevState)
+		//
+		// NAMEDLOCK-OVERLAP-2: the CAS takes membershipLockKey with
+		// LockNamedKeyInTx, the key an activation's grant transaction holds while
+		// it re-reads the state (membershipActiveFence). A revoke on another
+		// replica (this lock lost) therefore cannot land between that re-read and
+		// the grant's commit: it waits, and its removal then sees the grant.
+		var matched bool
+		err = c.storage.WithTransaction(ctx, func(tx storage.Storage) error {
+			if err := lockNamedKeysInTxOn(ctx, tx, membershipLockKey(m.ProjectID, m.UserID)); err != nil {
+				return err
+			}
+			var terr error
+			matched, terr = tx.TransitionProjectMembershipState(ctx, m, prevState)
+			return terr
+		})
 		if err != nil {
 			return fmt.Errorf("failed to update membership: %w", err)
 		}
@@ -404,7 +423,12 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		// Side effects on the role grant.
 		switch to {
 		case MembershipActive:
-			if err := c.AddProjectMember(ctx, actorID, m.ProjectID, m.UserID, m.Role, actorIsMachine); err != nil {
+			if err := c.addProjectMember(ctx, membershipActiveFence(m), actorID, m.ProjectID, m.UserID, m.Role, actorIsMachine); err != nil {
+				if errors.Is(err, ErrMembershipStateConflict) {
+					// Moved on by another writer before the grant: nothing was
+					// granted, and the row is not ours to revert.
+					return fmt.Errorf("failed to grant role on activation: %w", err)
+				}
 				// #309: m just committed as `active` above; if the role grant fails, revert
 				// to the state m held before this transition (not straight to revoked) —
 				// unlike inviteMemberWithMode's straight-to-active create, this row already
@@ -440,6 +464,29 @@ func (c *KeyorixCore) TransitionMembership(ctx context.Context, projectID, membe
 		c.notifyMembershipActivated(ctx, m)
 	}
 	return m, nil
+}
+
+// membershipActiveFence is the fence of the role grant that backs m's
+// activation (NAMEDLOCK-OVERLAP-2, txFence): it takes membershipLockKey with
+// LockNamedKeyInTx, then re-reads m through tx and refuses the grant
+// (ErrMembershipStateConflict, the transaction rolls back) unless m is still
+// active. Every state CAS takes the same key (TransitionMembership), so once
+// this re-read passed no revoke can commit until the grant has, and the
+// revoke's removal then sees and removes it.
+func membershipActiveFence(m *models.ProjectMembership) txFence {
+	return func(ctx context.Context, tx storage.Storage) error {
+		if err := lockNamedKeysInTxOn(ctx, tx, membershipLockKey(m.ProjectID, m.UserID)); err != nil {
+			return err
+		}
+		cur, err := tx.GetProjectMembership(ctx, m.ID)
+		if err != nil {
+			return fmt.Errorf("failed to re-read membership %d: %w", m.ID, err)
+		}
+		if cur.State != MembershipActive {
+			return fmt.Errorf("membership %d is %s, not active: %w", m.ID, cur.State, ErrMembershipStateConflict)
+		}
+		return nil
+	}
 }
 
 // membershipLockKey is the WithNamedLock key serializing every write that

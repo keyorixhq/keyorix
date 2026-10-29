@@ -102,6 +102,27 @@ type LockingStore interface {
 	// and a nested call self-deadlocks (see store.namedLockHeldCtxKey).
 	WithNamedLock(ctx context.Context, lockKey string, fn func(ctx context.Context) error) error
 
+	// LockNamedKeyInTx takes lockKey for the rest of the transaction this
+	// Storage is bound to, and blocks until no other transaction holds it
+	// (NAMEDLOCK-OVERLAP-2, docs/design/named-lock-overlap.md). It is the fence
+	// that keeps a WithNamedLock section's invariant when the section's session
+	// lock is lost: a second replica may then take lockKey with WithNamedLock and
+	// run its checks, but its write transaction waits here until the first
+	// holder's write transaction has ended, and re-runs its check after that.
+	//
+	// Call it ONLY on the transaction-scoped Storage WithTransaction hands fn, as
+	// the first statement of the write transaction, then re-run the section's
+	// check through that same handle. On any other Storage it returns an error
+	// (it would lock nothing). A transaction that takes several keys takes them
+	// in storage.NamedLockOrder, as WithNamedLock does.
+	//
+	// It does not exclude a WithNamedLock holder of the same key: the two are
+	// separate locks (on PostgreSQL, separate advisory key spaces), because the
+	// holder's own transaction takes this one while the holder keeps the
+	// session lock. On SQLite it takes nothing: write transactions there are
+	// already serialized (BEGIN IMMEDIATE, one process).
+	LockNamedKeyInTx(ctx context.Context, lockKey string) error
+
 	// WithTransaction runs fn inside a single storage transaction: every mutation fn
 	// performs through the provided Storage commits together, or rolls back together if
 	// fn returns an error. LocalStorage opens a real DB transaction and hands fn a

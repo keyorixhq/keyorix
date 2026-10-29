@@ -59,6 +59,9 @@ func TestCompleteInvitationAccept(t *testing.T) {
 		ms.On("GetActiveProjectMembership", ctx, uint(5), uint(20)).Return(nil, assertNotFoundErr())
 		ms.On("CreateProjectMembership", ctx, mock.AnythingOfType("*models.ProjectMembership")).
 			Return(&models.ProjectMembership{ID: 1, ProjectID: 5, UserID: 20, Role: "developer", State: MembershipActive}, nil)
+		// NAMEDLOCK-OVERLAP-2: the activation grant re-reads the membership in its own
+		// transaction (membershipActiveFence) and grants only if it is still active.
+		ms.On("GetProjectMembership", ctx, uint(1)).Return(&models.ProjectMembership{ID: 1, ProjectID: 5, UserID: 20, Role: "developer", State: MembershipActive}, nil)
 		ms.On("GetRole", mock.Anything, uint(9)).Return(&models.Role{ID: 9, Name: "test-role-9", AssignableScope: models.RoleAssignableAny}, nil).Maybe() // #3546 role-scope check
 		ms.On("AssignRole", ctx, uint(20), uint(9), mock.Anything).Return(nil)
 		ms.On("UpdateProjectInvitation", ctx, mock.AnythingOfType("*models.ProjectInvitation")).Return(true, nil)

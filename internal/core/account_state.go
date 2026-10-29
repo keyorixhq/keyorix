@@ -214,7 +214,9 @@ func (c *KeyorixCore) SuspendUser(ctx context.Context, adminID, userID uint) err
 			return err
 		}
 		var serr error
-		settle, serr = c.setAccountStateUnsettled(ctx, adminID, userID, AccountSuspended, "account.suspended")
+		settle, serr = c.setAccountStateUnsettled(ctx, adminID, userID, AccountSuspended, "account.suspended", func(ctx context.Context, tx storage.Storage) error {
+			return fenceLastAdminDeactivationOn(ctx, tx, userID)
+		})
 		return serr
 	}); err != nil {
 		return err
@@ -258,7 +260,7 @@ func (c *KeyorixCore) RequirePasswordReset(ctx context.Context, adminID, userID 
 // succeed while the account stays unchanged. See SetAccountState's doc comment on
 // storage.Storage.
 func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint, state, eventType string) error {
-	settle, err := c.setAccountStateUnsettled(ctx, adminID, userID, state, eventType)
+	settle, err := c.setAccountStateUnsettled(ctx, adminID, userID, state, eventType, nil)
 	if err != nil {
 		return err
 	}
@@ -270,7 +272,11 @@ func (c *KeyorixCore) setAccountState(ctx context.Context, adminID, userID uint,
 // and the auth cache is evicted, settle to append its owed row. It returns with
 // accountStateMu released, so the caller calls settle after every lock it holds (F6):
 // a slow audit log never holds up another account-state change of this process.
-func (c *KeyorixCore) setAccountStateUnsettled(ctx context.Context, adminID, userID uint, state, eventType string) (func(), error) {
+//
+// fence, when non-nil, runs first in the write transaction (SuspendUser's
+// in-transaction last-admin re-check, fenceLastAdminDeactivationOn); its error
+// rolls the transaction back.
+func (c *KeyorixCore) setAccountStateUnsettled(ctx context.Context, adminID, userID uint, state, eventType string, fence func(context.Context, storage.Storage) error) (func(), error) {
 	if userID == 0 {
 		return nil, fmt.Errorf("user ID is required")
 	}
@@ -348,6 +354,11 @@ func (c *KeyorixCore) setAccountStateUnsettled(ctx context.Context, adminID, use
 	for attempt := 0; ; attempt++ {
 		revocation := needsCacheEvictionSweep && accountStateTransitionRevokes(userID, c.currentAccountStateForDirection(ctx, userID), state)
 		settle, err = c.auditedByDirection(ctx, !revocation, func(tx storage.Storage, tgt auditTarget) error {
+			if fence != nil {
+				if ferr := fence(ctx, tx); ferr != nil {
+					return ferr
+				}
+			}
 			if revocation {
 				if locked, lerr := tx.LockUserForUpdate(ctx, userID); lerr == nil && locked != nil &&
 					!accountStateTransitionRevokes(userID, locked.AccountState, state) {

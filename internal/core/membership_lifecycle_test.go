@@ -130,6 +130,9 @@ func TestInviteMember_OpenGrantsRoleImmediately(t *testing.T) {
 	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.State == MembershipActive && m.ActivatedAt != nil
 	})).Return(&models.ProjectMembership{ID: 51, ProjectID: 1, UserID: 2, Role: "project_developer", State: MembershipActive}, nil)
+	// NAMEDLOCK-OVERLAP-2: the activation grant re-reads the membership in its own
+	// transaction (membershipActiveFence) and grants only if it is still active.
+	store.On("GetProjectMembership", ctx, uint(51)).Return(&models.ProjectMembership{ID: 51, ProjectID: 1, UserID: 2, Role: "project_developer", State: MembershipActive}, nil)
 	// Active → role granted: AddProjectMember resolves the role and assigns it.
 	// GetRole: the #3546 role-scope check before the write.
 	store.On("GetRole", ctx, uint(5)).Return(&models.Role{ID: 5, Name: "project_developer"}, nil)
@@ -253,6 +256,9 @@ func TestInviteMember_OpenActivationFailure_RevertsOrphanedActiveMembership(t *t
 	store.On("CreateProjectMembership", ctx, mock.MatchedBy(func(m *models.ProjectMembership) bool {
 		return m.State == MembershipActive && m.ProjectID == 1 && m.UserID == 2
 	})).Return(created, nil)
+	// NAMEDLOCK-OVERLAP-2: the activation grant re-reads the membership in its own
+	// transaction (membershipActiveFence) and grants only if it is still active.
+	store.On("GetProjectMembership", ctx, uint(51)).Return(&models.ProjectMembership{ID: 51, ProjectID: 1, UserID: 2, Role: "project_viewer", State: MembershipActive}, nil)
 	// The composite user_roles primary key rejects the grant — the losing racer (or
 	// any caller whose role is already held via an independent path).
 	store.On("GetRole", ctx, uint(6)).Return(&models.Role{ID: 6, Name: "project_viewer"}, nil) // #3546 role-scope check

@@ -395,11 +395,20 @@ func (c *KeyorixCore) IsGlobalAdmin(ctx context.Context, userID uint) (bool, err
 // for any "is THIS OTHER PRINCIPAL an admin" query; use IsGlobalAdmin only
 // for "should THE CALLER be treated as one."
 func (c *KeyorixCore) targetHasGlobalAdminRole(ctx context.Context, targetID uint) (bool, error) {
-	roleIDs, err := c.scopedRoleIDs(ctx, targetID, Scope{})
+	return targetHasGlobalAdminRoleOn(ctx, c.storage, targetID)
+}
+
+// targetHasGlobalAdminRoleOn is targetHasGlobalAdminRole read through st (a
+// transaction handle, for the in-transaction last-admin re-check).
+func targetHasGlobalAdminRoleOn(ctx context.Context, st storage.Storage, targetID uint) (bool, error) {
+	roleIDs, err := scopedRoleIDsOn(ctx, st, targetID, Scope{})
 	if err != nil {
 		return false, err
 	}
-	return c.roleSetContainsAdmin(ctx, roleIDs)
+	if len(roleIDs) == 0 {
+		return false, nil
+	}
+	return st.RoleSetBypassesPermissionChecks(ctx, roleIDs)
 }
 
 // scopedRoleIDs returns the de-duplicated set of role IDs that apply to userID
@@ -510,14 +519,27 @@ func (c *KeyorixCore) idpAutoGrantEscalationVerdict(ctx context.Context, roleID 
 // (e.g. an incident-response revocation), the same escalation-by-proxy shape
 // requireAuthorityForRole closes for direct grants.
 func (c *KeyorixCore) requireGlobalAdminToReinstateAdminRoles(ctx context.Context, actorID uint, roleIDs []uint, objectDesc string) error {
-	containsAdmin, err := c.roleSetContainsAdmin(ctx, roleIDs)
+	return requireGlobalAdminToReinstateAdminRolesOn(ctx, c.storage, actorID, roleIDs, objectDesc)
+}
+
+// requireGlobalAdminToReinstateAdminRolesOn is requireGlobalAdminToReinstateAdminRoles
+// read through st (roleSetContainsAdmin and IsGlobalAdmin, both through st).
+func requireGlobalAdminToReinstateAdminRolesOn(ctx context.Context, st storage.Storage, actorID uint, roleIDs []uint, objectDesc string) error {
+	containsAdmin := false
+	var err error
+	if len(roleIDs) > 0 {
+		containsAdmin, err = st.RoleSetBypassesPermissionChecks(ctx, roleIDs)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to resolve role authority: %w", err)
 	}
 	if !containsAdmin {
 		return nil
 	}
-	isAdmin, err := c.IsGlobalAdmin(ctx, actorID)
+	isAdmin := false
+	if patRestrictionFromContext(ctx) == nil { // IsGlobalAdmin's own rule
+		isAdmin, err = targetHasGlobalAdminRoleOn(ctx, st, actorID)
+	}
 	if err != nil {
 		return fmt.Errorf("failed to resolve actor authority: %w", err)
 	}
@@ -1138,6 +1160,11 @@ func groupHoldsGlobalAdminRole(assignments []storage.RoleAssignment, adminIDs ma
 // letting the LAST two admins each be deactivated one after another (or
 // concurrently), not just the intended "one may go, one must remain."
 func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs map[uint]bool, assignments []storage.RoleAssignment, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) (map[uint]bool, error) {
+	return resolveGlobalAdminHoldersOn(ctx, c.storage, adminIDs, assignments, excludeAssignment, excludeMember)
+}
+
+// resolveGlobalAdminHoldersOn is resolveGlobalAdminHolders read through st.
+func resolveGlobalAdminHoldersOn(ctx context.Context, st storage.Storage, adminIDs map[uint]bool, assignments []storage.RoleAssignment, excludeAssignment func(storage.RoleAssignment) bool, excludeMember func(groupID, userID uint) bool) (map[uint]bool, error) {
 	holders := make(map[uint]bool)
 	for _, a := range assignments {
 		if !adminIDs[a.RoleID] {
@@ -1150,12 +1177,12 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 		case "user":
 			holders[a.PrincipalID] = true
 		case "group":
-			if err := c.resolveGroupAdminMembers(ctx, a.PrincipalID, excludeMember, holders); err != nil {
+			if err := resolveGroupAdminMembersOn(ctx, st, a.PrincipalID, excludeMember, holders); err != nil {
 				return nil, err
 			}
 		}
 	}
-	return c.filterActiveHolders(ctx, holders)
+	return filterActiveHoldersOn(ctx, st, holders)
 }
 
 // filterActiveHolders drops every holder whose account is no longer usable as a
@@ -1163,8 +1190,13 @@ func (c *KeyorixCore) resolveGlobalAdminHolders(ctx context.Context, adminIDs ma
 // account_state such as suspended) — see resolveGlobalAdminHolders'
 // #G03 doc comment above for why a surviving grant ROW is not sufficient on its own.
 func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]bool) (map[uint]bool, error) {
+	return filterActiveHoldersOn(ctx, c.storage, holders)
+}
+
+// filterActiveHoldersOn is filterActiveHolders read through st.
+func filterActiveHoldersOn(ctx context.Context, st storage.Storage, holders map[uint]bool) (map[uint]bool, error) {
 	for id := range holders {
-		user, err := c.storage.GetUser(ctx, id)
+		user, err := st.GetUser(ctx, id)
 		if err != nil {
 			if storage.IsUserNotFound(err) {
 				// Soft-deleted: GetUser's default scope excludes it and wraps
@@ -1187,7 +1219,7 @@ func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]
 	return holders, nil
 }
 
-// resolveGroupAdminMembers expands groupID's membership into holders, but ONLY
+// resolveGroupAdminMembersOn expands groupID's membership into holders, but ONLY
 // members whose own UserGroup row is global (project_id=0) — resolveGlobalAdminHolders
 // is always resolving GLOBAL-scope role assignments, so a member whose
 // membership in this group is itself scoped to one project does not derive
@@ -1195,8 +1227,8 @@ func (c *KeyorixCore) filterActiveHolders(ctx context.Context, holders map[uint]
 // entirely, over-counting global admin holders and letting the true last
 // global admin be removed because a project-scoped member was miscounted as a
 // backup).
-func (c *KeyorixCore) resolveGroupAdminMembers(ctx context.Context, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
-	members, merr := c.storage.ListGroupMembersAt(ctx, groupID, Scope{})
+func resolveGroupAdminMembersOn(ctx context.Context, st storage.Storage, groupID uint, excludeMember func(groupID, userID uint) bool, holders map[uint]bool) error {
+	members, merr := st.ListGroupMembersAt(ctx, groupID, Scope{})
 	if merr != nil {
 		return fmt.Errorf("failed to resolve group %d membership: %w", groupID, merr)
 	}
@@ -1213,21 +1245,26 @@ func (c *KeyorixCore) resolveGroupAdminMembers(ctx context.Context, groupID uint
 // counterpart (#107): refuses to remove roleID from groupID at the global scope
 // when doing so would leave the install with zero global admin-tier holders.
 func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID, roleID uint, scope Scope) error {
+	return guardLastGlobalAdminGroupRoleOn(ctx, c.storage, groupID, roleID, scope)
+}
+
+// guardLastGlobalAdminGroupRoleOn is guardLastGlobalAdminGroupRole read through st.
+func guardLastGlobalAdminGroupRoleOn(ctx context.Context, st storage.Storage, groupID, roleID uint, scope Scope) error {
 	if scope.ProjectID != 0 || scope.EnvironmentID != 0 {
 		return nil // not the global scope — project admins are recoverable
 	}
-	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {
 		return err // #2496: fail closed — "can't tell" must not read as "not an admin role"
 	}
 	if !adminIDs[roleID] {
 		return nil // not removing an install-admin role
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	assignments, err := st.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("failed to resolve global role assignments: %w", err)
 	}
-	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, func(a storage.RoleAssignment) bool {
+	holders, err := resolveGlobalAdminHoldersOn(ctx, st, adminIDs, assignments, func(a storage.RoleAssignment) bool {
 		return a.PrincipalType == "group" && a.PrincipalID == groupID && a.RoleID == roleID
 	}, nil)
 	if err != nil {
@@ -1239,28 +1276,28 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupRole(ctx context.Context, groupID
 	return nil
 }
 
-// guardLastGlobalAdminGroupDelete is guardLastGlobalAdmin's group-deletion
+// guardLastGlobalAdminGroupDeleteOn is guardLastGlobalAdmin's group-deletion
 // counterpart (#107): refuses to delete groupID when it holds a global admin-tier
 // role and doing so would leave the install with zero admin-tier holders —
 // deleting a group cascades to remove EVERY role grant it holds, not just one. A
 // group with no admin-tier grant at all is never blocked, regardless of the
 // install's overall admin count.
-func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, groupID uint) error {
-	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+func guardLastGlobalAdminGroupDeleteOn(ctx context.Context, st storage.Storage, groupID uint) error {
+	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {
 		return err // #2496: fail closed
 	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	assignments, err := st.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("failed to resolve global role assignments: %w", err)
 	}
 	if !groupHoldsGlobalAdminRole(assignments, adminIDs, groupID) {
 		return nil // this group carries no admin-tier grant — irrelevant to the guard
 	}
-	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, func(a storage.RoleAssignment) bool {
+	holders, err := resolveGlobalAdminHoldersOn(ctx, st, adminIDs, assignments, func(a storage.RoleAssignment) bool {
 		return a.PrincipalType == "group" && a.PrincipalID == groupID
 	}, nil)
 	if err != nil {
@@ -1272,7 +1309,7 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 	return nil
 }
 
-// guardLastGlobalAdminMembership is guardLastGlobalAdmin's group-membership-
+// guardLastGlobalAdminMembershipOn is guardLastGlobalAdmin's group-membership-
 // removal counterpart (#107): refuses to remove userID from groupID when the
 // group's admin-tier grant is userID's only remaining route to global admin-tier
 // authority and no other user holds one either. The group's grant row survives
@@ -1280,22 +1317,22 @@ func (c *KeyorixCore) guardLastGlobalAdminGroupDelete(ctx context.Context, group
 // excluding an assignment row; it must exclude just this one member's derived
 // authority via this one group. A group with no admin-tier grant at all is never
 // blocked, regardless of the install's overall admin count.
-func (c *KeyorixCore) guardLastGlobalAdminMembership(ctx context.Context, userID, groupID uint) error {
-	adminIDs, err := c.adminBypassRoleIDSet(ctx)
+func guardLastGlobalAdminMembershipOn(ctx context.Context, st storage.Storage, userID, groupID uint) error {
+	adminIDs, err := adminBypassRoleIDSetOn(ctx, st)
 	if err != nil {
 		return err // #2496: fail closed
 	}
 	if len(adminIDs) == 0 {
 		return nil // no install-admin role seeded — nothing to guard
 	}
-	assignments, err := c.storage.ListProjectRoleAssignments(ctx, 0)
+	assignments, err := st.ListProjectRoleAssignments(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("failed to resolve global role assignments: %w", err)
 	}
 	if !groupHoldsGlobalAdminRole(assignments, adminIDs, groupID) {
 		return nil // this group carries no admin-tier grant — irrelevant to the guard
 	}
-	holders, err := c.resolveGlobalAdminHolders(ctx, adminIDs, assignments, nil, func(gID, uID uint) bool {
+	holders, err := resolveGlobalAdminHoldersOn(ctx, st, adminIDs, assignments, nil, func(gID, uID uint) bool {
 		return gID == groupID && uID == userID
 	})
 	if err != nil {

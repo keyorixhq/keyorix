@@ -36,6 +36,10 @@ func (m *MockStorage) WithNamedLock(ctx context.Context, _ string, fn func(ctx c
 	return fn(ctx)
 }
 
+// LockNamedKeyInTx is a no-op in tests (single instance, no transactions to
+// fence), like WithNamedLock above.
+func (m *MockStorage) LockNamedKeyInTx(_ context.Context, _ string) error { return nil }
+
 // WithTransaction runs fn directly against the mock (no real transaction in tests).
 func (m *MockStorage) WithTransaction(_ context.Context, fn func(storage.Storage) error) error {
 	return fn(m)

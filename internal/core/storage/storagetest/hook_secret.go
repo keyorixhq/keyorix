@@ -7,6 +7,13 @@ import (
 	"github.com/keyorixhq/keyorix/internal/storage/models"
 )
 
+func (hs *HookStore) CreateSecretDependencyExclusive(ctx context.Context, d *models.SecretDependency) (*models.SecretDependency, error) {
+	if hk := hs.h.CreateSecretDependencyExclusive; hk != nil {
+		return hk(hs.Storage, ctx, d)
+	}
+	return hs.Storage.CreateSecretDependencyExclusive(ctx, d)
+}
+
 func (hs *HookStore) CreateSecretVersion(ctx context.Context, version *models.SecretVersion) (*models.SecretVersion, error) {
 	if hk := hs.h.CreateSecretVersion; hk != nil {
 		return hk(hs.Storage, ctx, version)
@@ -54,4 +61,18 @@ func (hs *HookStore) UpdateSecretFields(ctx context.Context, id uint, f storage.
 		return hk(hs.Storage, ctx, id, f)
 	}
 	return hs.Storage.UpdateSecretFields(ctx, id, f)
+}
+
+func (hs *HookStore) CreateSecret(ctx context.Context, secret *models.SecretNode, plaintextValue ...string) (*models.SecretNode, error) {
+	if hk := hs.h.CreateSecret; hk != nil {
+		return hk(hs.Storage, ctx, secret, plaintextValue...)
+	}
+	return hs.Storage.CreateSecret(ctx, secret, plaintextValue...)
+}
+
+func (hs *HookStore) RestoreSecret(ctx context.Context, id uint) error {
+	if hk := hs.h.RestoreSecret; hk != nil {
+		return hk(hs.Storage, ctx, id)
+	}
+	return hs.Storage.RestoreSecret(ctx, id)
 }

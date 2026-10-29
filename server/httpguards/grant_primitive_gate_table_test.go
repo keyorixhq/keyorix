@@ -75,7 +75,7 @@ var grantPrimitives = []grantPrimitive{
 		name:    "roles.assign: user role grant",
 		symbols: []string{"AssignUserRole", "AssignUserRoleWithExpiry"},
 		core: []coreSpec{
-			{file: "rbac_management.go", fn: "AssignUserRole", gates: []string{"requireGranterHoldsRolePermissions"}, writes: []string{"WithNamedLock"}},
+			{file: "rbac_management.go", fn: "assignUserRole", gates: []string{"requireGranterHoldsRolePermissions"}, writes: []string{"WithNamedLock"}}, // AssignUserRole delegates here (fence-taking variant)
 			{file: "jit_access.go", fn: "AssignUserRoleWithExpiry", gates: []string{"requireGranterHoldsRolePermissions"}, writes: []string{"WithNamedLock"}},
 		},
 		callers: map[string]callerGate{
@@ -103,7 +103,7 @@ var grantPrimitives = []grantPrimitive{
 		symbols: []string{"AddProjectMember", "SetProjectMemberRole", "RemoveProjectMember"},
 		core: []coreSpec{
 			// AddProjectMember has no gate of its own; its only write is AssignUserRole (gated above).
-			{file: "project_members.go", fn: "AddProjectMember", gates: []string{"AssignUserRole"}},
+			{file: "project_members.go", fn: "addProjectMember", gates: []string{"assignUserRole"}}, // AddProjectMember delegates here; assignUserRole is gated above
 			{file: "project_members.go", fn: "SetProjectMemberRole", none: "removes the member's existing roles (removeUserRoleUnguarded) BEFORE AssignUserRole's " +
 				"roles.assign/ceiling check runs, so the removal half is protected only by the route gate; reachable from no other caller today"},
 			{file: "project_members.go", fn: "RemoveProjectMember", none: "removal; protected only by the route's roles.assign gate"},

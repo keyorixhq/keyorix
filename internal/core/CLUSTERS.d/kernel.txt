@@ -32,10 +32,12 @@ identity.go
 impersonation.go
 inactivity_suspend.go
 invitations.go
+last_admin_fence.go
 last_used_coalescer.go
 login_lockout.go
 membership_lifecycle.go
 migrate_user_to_machine.go
+named_lock_fence.go
 notifications.go
 otp_expiry.go
 project_members.go
