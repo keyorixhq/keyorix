@@ -14,16 +14,17 @@ import (
 
 // alterUsers is one of migrateDatabase's ordered steps (factory.go).
 func alterUsers(db *gorm.DB, exec func(string) error) error {
+	// Timestamp ALTERs below: unreachable from a supported upgrade source; see sqlTimestampType (#3440).
 	// Track last successful login per user (nil = never logged in).
 	if tableExists(db, "users") && !columnExists(db, "users", "last_login_at") {
-		if err := exec("ALTER TABLE users ADD COLUMN last_login_at TIMESTAMP WITH TIME ZONE"); err != nil {
+		if err := exec("ALTER TABLE users ADD COLUMN last_login_at " + sqlTimestampType(db)); err != nil {
 			return err
 		}
 	}
 
 	// Track when the current password was set, for max-age expiry (ADR-025).
 	if tableExists(db, "users") && !columnExists(db, "users", "password_changed_at") {
-		if err := exec("ALTER TABLE users ADD COLUMN password_changed_at TIMESTAMP WITH TIME ZONE"); err != nil {
+		if err := exec("ALTER TABLE users ADD COLUMN password_changed_at " + sqlTimestampType(db)); err != nil {
 			return err
 		}
 	}
@@ -57,12 +58,12 @@ func alterUsers(db *gorm.DB, exec func(string) error) error {
 			}
 		}
 		if !columnExists(db, "users", "last_failed_login_at") {
-			if err := exec("ALTER TABLE users ADD COLUMN last_failed_login_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			if err := exec("ALTER TABLE users ADD COLUMN last_failed_login_at " + sqlTimestampType(db)); err != nil {
 				return err
 			}
 		}
 		if !columnExists(db, "users", "login_locked_until") {
-			if err := exec("ALTER TABLE users ADD COLUMN login_locked_until TIMESTAMP WITH TIME ZONE"); err != nil {
+			if err := exec("ALTER TABLE users ADD COLUMN login_locked_until " + sqlTimestampType(db)); err != nil {
 				return err
 			}
 		}

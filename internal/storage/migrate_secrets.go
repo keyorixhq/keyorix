@@ -14,15 +14,16 @@ import (
 
 // alterSecretNodes is one of migrateDatabase's ordered steps (factory.go).
 func alterSecretNodes(db *gorm.DB, exec func(string) error) error {
+	// Timestamp ALTERs below: unreachable from a supported upgrade source; see sqlTimestampType (#3440).
 	// Additive column migration for existing databases (no-op on fresh DBs).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "last_rotated_at") {
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at TIMESTAMP WITH TIME ZONE"); err != nil {
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN last_rotated_at " + sqlTimestampType(db)); err != nil {
 			return err
 		}
 	}
 	// ADR-033: secrets soft-delete. Additive deleted_at (nil = live).
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "deleted_at") {
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN deleted_at TIMESTAMP WITH TIME ZONE"); err != nil {
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN deleted_at " + sqlTimestampType(db)); err != nil {
 			return err
 		}
 	}
@@ -35,11 +36,7 @@ func alterSecretNodes(db *gorm.DB, exec func(string) error) error {
 	// "TIMESTAMP WITH TIME ZONE" is stored but fails on read with "unsupported Scan,
 	// storing driver.Value type string into type *time.Time".
 	if tableExists(db, "secret_nodes") && !columnExists(db, "secret_nodes", "purge_at") {
-		purgeAtType := "DATETIME"
-		if db.Dialector.Name() == "postgres" {
-			purgeAtType = "TIMESTAMP WITH TIME ZONE"
-		}
-		if err := exec("ALTER TABLE secret_nodes ADD COLUMN purge_at " + purgeAtType); err != nil {
+		if err := exec("ALTER TABLE secret_nodes ADD COLUMN purge_at " + sqlTimestampType(db)); err != nil {
 			return err
 		}
 	}
@@ -102,7 +99,7 @@ func alterSecretNodes(db *gorm.DB, exec func(string) error) error {
 		}
 		// ADR-056: cached certificate expiry. Additive (nil = not yet evaluated).
 		if !columnExists(db, "secret_nodes", "cert_not_after") {
-			if err := exec("ALTER TABLE secret_nodes ADD COLUMN cert_not_after TIMESTAMP WITH TIME ZONE"); err != nil {
+			if err := exec("ALTER TABLE secret_nodes ADD COLUMN cert_not_after " + sqlTimestampType(db)); err != nil {
 				return err
 			}
 		}

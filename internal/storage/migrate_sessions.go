@@ -9,6 +9,7 @@ import (
 
 // alterSessionDeviceColumns is one of migrateDatabase's ordered steps (factory.go).
 func alterSessionDeviceColumns(db *gorm.DB, exec func(string) error) error {
+	// Timestamp ALTERs below: unreachable from a supported upgrade source; see sqlTimestampType (#3440).
 	// Enrich sessions for the My Account "active sessions" view (device/IP/last-active).
 	if tableExists(db, "sessions") {
 		if !columnExists(db, "sessions", "user_agent") {
@@ -22,14 +23,14 @@ func alterSessionDeviceColumns(db *gorm.DB, exec func(string) error) error {
 			}
 		}
 		if !columnExists(db, "sessions", "last_seen_at") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN last_seen_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			if err := exec("ALTER TABLE sessions ADD COLUMN last_seen_at " + sqlTimestampType(db)); err != nil {
 				return err
 			}
 		}
 		// Absolute session-lifetime ceiling (short-lived tokens): set at login,
 		// carried through refresh, never extended. nil on legacy rows = uncapped.
 		if !columnExists(db, "sessions", "absolute_expires_at") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN absolute_expires_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			if err := exec("ALTER TABLE sessions ADD COLUMN absolute_expires_at " + sqlTimestampType(db)); err != nil {
 				return err
 			}
 		}
@@ -47,7 +48,7 @@ func alterSessionImpersonationColumns(db *gorm.DB, exec func(string) error) erro
 			}
 		}
 		if !columnExists(db, "sessions", "impersonation_started_at") {
-			if err := exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at TIMESTAMP WITH TIME ZONE"); err != nil {
+			if err := exec("ALTER TABLE sessions ADD COLUMN impersonation_started_at " + sqlTimestampType(db)); err != nil {
 				return err
 			}
 		}
