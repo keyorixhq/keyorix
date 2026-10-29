@@ -22,7 +22,7 @@
 // either its recorded hash or the staged one, and a set where some files match
 // the staged hashes and others do not is an interrupted operation, not a mix
 // of backups. The manifest itself is replaced atomically (write
-// <name>.pending, fsync, rename, fsync the directory), the same
+// <name>.pending-<random>, fsync, rename, fsync the directory), the same
 // write-pending → rename → fsync path the key files use.
 //
 // What the manifest is NOT: an authenticator. The hashes are unkeyed (the KEK
@@ -34,6 +34,7 @@
 package keyfiles
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
@@ -246,12 +247,23 @@ func writeManifest(path string, m *Manifest, fs ManifestFS) error {
 	if err != nil {
 		return err
 	}
-	dir, name := filepath.Dir(path), filepath.Base(path)
-	if err := fs.WriteSync(dir, name+".pending", data); err != nil {
+	// The staging name is unique per write: WriteSync truncates and rewrites
+	// an existing file, so two writers sharing one name could interleave
+	// their bytes and rename a torn manifest into place, which boot then moves
+	// aside and re-adopts (losing the generation record). Callers hold the
+	// exclusive key lock; this keeps a broken lock from tearing the manifest.
+	var nonce [8]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
 		return fmt.Errorf("write key-set manifest: %w", err)
 	}
-	if err := fs.Rename(filepath.Join(dir, name+".pending"), path); err != nil {
-		_ = os.Remove(filepath.Join(dir, name+".pending"))
+	dir, name := filepath.Dir(path), filepath.Base(path)
+	staged := name + ".pending-" + hex.EncodeToString(nonce[:])
+	if err := fs.WriteSync(dir, staged, data); err != nil {
+		_ = os.Remove(filepath.Join(dir, staged))
+		return fmt.Errorf("write key-set manifest: %w", err)
+	}
+	if err := fs.Rename(filepath.Join(dir, staged), path); err != nil {
+		_ = os.Remove(filepath.Join(dir, staged))
 		return fmt.Errorf("commit key-set manifest: %w", err)
 	}
 	if err := fs.SyncDir(dir); err != nil {
