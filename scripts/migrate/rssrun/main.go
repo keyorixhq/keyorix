@@ -63,7 +63,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "rssrun: %v\n", err)
 		os.Exit(2)
 	}
-	cmd := exec.Command(flag.Arg(0), flag.Args()[1:]...) // #nosec G204 -- the command is the operator's own argv to this hand-run measurement tool nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- measurement tool run by hand; no remote input reaches it
+	cmd := exec.Command(flag.Arg(0), flag.Args()[1:]...) // #nosec G204 -- the command is the operator's own argv to this hand-run measurement tool // nosemgrep: go.lang.security.audit.dangerous-exec-command.dangerous-exec-command -- measurement tool run by hand; no remote input reaches it
 	cmd.Stdout, cmd.Stderr = logf, logf
 	start := time.Now()
 	if err := cmd.Start(); err != nil {
