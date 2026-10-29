@@ -176,6 +176,33 @@ func TestReviewAV_VerifyStateRow_RecordedDiscontinuityIsBroken(t *testing.T) {
 	assert.Contains(t, got.Reason, "discontinuity")
 }
 
+// REVIEW-3810-DEEP-2 F3: an older authentic row put back after the server
+// recorded a discontinuity. The row itself carries none, verifies, claims
+// nothing past the head and its pin is intact; only its audit head, below the
+// in-chain discontinuity event, shows it was saved before the break (core's
+// "saved before a break" rule). The server says BROKEN; offline must too.
+func TestReviewAV_VerifyStateRow_OlderRowPutBackOverDiscontinuity(t *testing.T) {
+	t.Parallel()
+	f := incrementalFixture(t)
+	older := f.stateValue()
+	f.exec("DELETE FROM system_metadata WHERE key = 'audit_verification_state'")
+	c := core.NewKeyorixCore(f.local)
+	c.SetAuditCheckpointKey(fixedCheckpointKey, "v1")
+	c.SetAuditIncrementalVerification(time.Minute, 4)
+	_, err := c.RunAuditVerificationTick(f.ctx)
+	require.NoError(t, err)
+	require.NotEqual(t, older, f.stateValue(), "test bug: the tick did not re-save the row with its discontinuity")
+	f.exec(`UPDATE system_metadata SET value = ? WHERE key = 'audit_verification_state'`, older)
+
+	online := f.onlineStatus(fixedCheckpointKey, "v1")
+	require.Equal(t, core.AuditVerifyStatusBroken, online.Status, "test bug: the server's verdict is the oracle (%s)", online.Reason)
+	require.Contains(t, online.Reason, "without the discontinuity recorded", "test bug: the server broke on another rule")
+
+	got := f.verifyWith(fixedCheckpointKey)
+	assert.Equal(t, auditverify.VerdictBroken, got.Verdict, got.Reason)
+	assert.Contains(t, got.Reason, "without the discontinuity recorded")
+}
+
 // rotate-kek with incremental verification: VALID offline under the new key,
 // and in the crash window after the high-water mark and checkpoint were
 // re-signed but before completion saved the state row (old-key row, named by

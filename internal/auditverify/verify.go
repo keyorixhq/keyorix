@@ -165,6 +165,8 @@ type Result struct {
 	// stateEventID is the newest in-chain row saying a verification state row
 	// exists (its marker, or a discontinuity the server recorded); 0 = none.
 	stateEventID uint64
+	// discontinuityEventID is the newest in-chain discontinuity event; 0 = none.
+	discontinuityEventID uint64
 	// retentionAnchorRowID is the retention anchor's RowID when the anchor
 	// authenticated under the checkpoint key; 0 otherwise.
 	retentionAnchorRowID uint64
@@ -514,8 +516,10 @@ func walkChain(ctx context.Context, db *DB, batchSize int, result *Result, ancho
 					se.digest = m[1]
 				}
 				result.sealEvents = append(result.sealEvents, se)
-			case auditVerifyStateMarkerEvent, auditVerifyStateDiscontinuityEvent:
+			case auditVerifyStateMarkerEvent:
 				result.stateEventID = e.ID
+			case auditVerifyStateDiscontinuityEvent:
+				result.stateEventID, result.discontinuityEventID = e.ID, e.ID
 			}
 		}
 

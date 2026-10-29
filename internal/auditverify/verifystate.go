@@ -15,9 +15,10 @@ import (
 // internal/core/audit_verify_state.go). Online, a row that is deleted while the
 // chain says one exists, fails its signature, claims rows past the chain head,
 // certified a head row that is now missing or rewritten, or carries a
-// discontinuity is a sticky BROKEN. This is an independent reimplementation of
-// those five rules over the fields they read; the rest of the row (failure,
-// seal count, cycle bookkeeping) is not checked here.
+// discontinuity, or was saved before a discontinuity the chain records, is a
+// sticky BROKEN. This is an independent reimplementation of those six rules
+// over the fields they read; the rest of the row (failure, seal count, an
+// unplaced row, cycle bookkeeping) is not checked here.
 const (
 	auditVerifyStateKey                = "audit_verification_state"
 	auditVerifyStateMarkerEvent        = "system.audit_verification_state_initialized"
@@ -28,7 +29,10 @@ const (
 // verifyStateRow is the part of the row's JSON payload checked offline.
 type verifyStateRow struct {
 	AuditHead uint64 `json:"audit_head"`
-	Pin       *struct {
+	// Placed: AuditHead is exact (0 included), as core sets on every row it
+	// saves. An unplaced row comes from a binary before AUDIT-VERIFY-STATE-1.
+	Placed bool `json:"placed"`
+	Pin    *struct {
 		HeadID   uint64 `json:"head_id"`
 		HeadHash string `json:"head_hash"`
 	} `json:"pin"`
@@ -140,6 +144,16 @@ func checkVerifyState(ctx context.Context, db *DB, opts Options, result *Result)
 		result.escalate(VerdictBroken, fmt.Sprintf(
 			"the server's authentic audit verification state covers audit event #%d, but the chain ends at #%d: "+
 				"rows it verified were removed", claimed, head))
+		return nil
+	}
+	// core's "saved before a break" rule for the discontinuity: a placed row
+	// without one, saved at an audit head below the newest discontinuity event,
+	// predates that event (ids only grow), so it is an older row put back to
+	// erase the discontinuity the server recorded.
+	if row.Placed && result.discontinuityEventID > row.AuditHead {
+		result.escalate(VerdictBroken, fmt.Sprintf(
+			"the server's authentic audit verification state was saved at audit event #%d without the discontinuity "+
+				"recorded at audit event #%d (an older row put back to erase it)", row.AuditHead, result.discontinuityEventID))
 		return nil
 	}
 	return checkVerifyStateHead(ctx, db, &row, result)
