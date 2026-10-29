@@ -392,8 +392,16 @@ skip.
   by v0.95.0–v0.95.3 restores directly, on SQLite and on PostgreSQL; no
   intermediate version is needed. Those releases stored a notification
   channel's webhook URL in plaintext (the `url` column); restore loads it,
-  then encrypts it under the restored keys and clears the plaintext before
-  it finishes, printing `Encrypted N notification channel URL(s) ...`.
+  then encrypts it under the restored keys and clears the plaintext column
+  before it finishes, printing `Encrypted N notification channel URL(s) ...`.
+  If that step fails, the restore journal is kept and the server refuses to
+  start: fix the cause and run `keyorix-server admin restore --recover`.
+  Clearing the column does not erase the old bytes from the storage files:
+  they stay in SQLite free pages and the WAL, or PostgreSQL dead tuples,
+  until a VACUUM reclaims them. If those URLs carry credentials, run
+  `VACUUM` on the restored database (SQLite: with the server stopped;
+  PostgreSQL: `VACUUM FULL notification_channels` or `pg_repack`) before
+  you put it back in service.
   Releases from v0.96.0 up to the one that carries #3452 refuse such an
   archive (`table "notification_channels" ... has column "url"`); restore
   it with this release or later instead. The archive file itself still

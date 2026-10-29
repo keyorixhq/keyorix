@@ -32,8 +32,7 @@ silently removing it.
 | `internal/pqwrap` | [internal/pqwrap/INVARIANTS.md](../internal/pqwrap/INVARIANTS.md) | 9 | 8 | 1 |
 | `internal/serverguard` | [internal/serverguard/INVARIANTS.md](../internal/serverguard/INVARIANTS.md) | 2 | 2 | 0 |
 | `server/admin` | [server/admin/INVARIANTS.md](../server/admin/INVARIANTS.md) | 2 | 2 | 0 |
-| **Total** | | **245** | **209** | **36** |
-| **Total** | | **246** | **209** | **37** |
+| **Total** | | **248** | **211** | **37** |
 
 ## Highest-priority UNGUARDED gaps
 
