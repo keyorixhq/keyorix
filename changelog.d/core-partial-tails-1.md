@@ -1,0 +1,9 @@
+### Security
+- **A self role-set replacement that would lose the grant ceiling is refused before anything changes (#3684).** `PUT /api/v1/users/{id}/roles` or `SetProjectMemberRole` on the caller themselves, replacing a role that carries `roles.assign` with roles only it let them grant (a second admin present), removed the role, then refused the grant: the caller was left with no role at that scope and got 503 `MutationPartiallyApplied` with `retry_safe: true`, but every retry was refused. The ceiling is now also judged on the role set the removals leave, before they commit; the request is refused and nothing changes. A refusal that still happens after the removals (the caller's authority revoked by someone else in between) now says `retry_safe: false`.
+- **A machine token's IP allowlist stored as `null` or `[]` no longer drops the IP pin (#3396).** Such a row (never written by Keyorix, which stores an empty column for "no restriction") was read as unrestricted. It is now decoded like a personal access token's allowlist: a non-empty value that names no CIDR blocks every source address until the token is re-issued.
+
+### Fixed
+- **`keyorix secret restore --id N` on a secret that is not deleted answers 409 "secret N is not deleted; nothing to restore" (#3737)** instead of "Storage operation failed: Secret not found (HTTP 404)". A missing secret is still 404; no `secret.restored` row is written for the refusal.
+- **An impersonation attempt refused because the target user could not be read now writes its `impersonation.start_failed` audit row (#3786)**, like every other impersonation refusal.
+- **Replacing your own roles no longer leaves you with none and a retry that can never succeed (#3684)**; see Security.
+- **Machine tokens with a corrupted IP allowlist are refused instead of accepted from anywhere (#3396)**; see Security.
