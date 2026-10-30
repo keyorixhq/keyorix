@@ -107,7 +107,7 @@ $regression_body"
     -H "Priority: $priority" \
     -H "Tags: $tags" \
     -d "$body" \
-    >/dev/null || echo "notify-summary: ntfy push failed for $LABEL" >&2
+    >/dev/null || echo "notify-summary: ntfy push failed for $LABEL" >&2 # docs-secrets:allow (summary text, no credential; the ntfy topic is in the 0600 -K config)
 fi
 
 if ! $regressed; then

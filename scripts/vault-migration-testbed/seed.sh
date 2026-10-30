@@ -70,7 +70,8 @@ req() { # method path json-body-or-empty -- path segments are percent-encoded (u
   path="$(urlencode_path "$2")"
   body="${3:-}"
   if [[ -n "$body" ]]; then
-    curl -sf "${H[@]}" -X "$method" "${ADDR}/v1/${path}" -d "$body"
+    # The body (user passwords, secret values) goes in on stdin, not as `-d "$body"` on argv.
+    printf '%s' "$body" | curl -sf "${H[@]}" -X "$method" "${ADDR}/v1/${path}" --data-binary @-
   else
     curl -sf "${H[@]}" -X "$method" "${ADDR}/v1/${path}"
   fi

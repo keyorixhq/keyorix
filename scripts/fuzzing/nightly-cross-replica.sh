@@ -156,7 +156,7 @@ alert() {
     printf 'url = "%s"\n' "$NTFY_TOPIC" > "$cfg"
     curl -fsS -K "$cfg" -H "Title: Keyorix cross-replica fuzz" -H "Priority: high" \
         -H "Tags: rotating_light" -d "$msg" >/dev/null 2>&1 \
-        || log "ALERT: (also) failed to push to ntfy"
+        || log "ALERT: (also) failed to push to ntfy" # docs-secrets:allow (alert text, no credential; the ntfy topic is in the 0600 -K config)
     rm -f "$cfg"
 }
 
