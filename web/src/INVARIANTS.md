@@ -37,11 +37,15 @@ Format: `INV-WEB-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   automatically — `web/src` never reads or stores the credential's value. `localStorage`
   (`utils/index.ts`'s `storage` wrapper, `main.tsx`) holds only UI preferences and expiry
   bookkeeping (`tokenExpiresAt`, `absoluteExpiresAt`), never the credential. Why: explicit
-  doc comments in `services/client.ts` (lines ~41-45) and `utils/auth.ts`. UNGUARDED for the
-  specific NEGATIVE invariant (#issue: no test scans `localStorage` keys for a JWT-shaped
-  value / asserts "no raw session token ever reaches localStorage" — today's protection is
-  architectural, via `persistAuthData` never being handed the credential, not a positive
-  assertion that would catch a future regression).
+  doc comments in `services/client.ts` (lines ~41-45) and `utils/auth.ts`; the real backend DOES
+  return the token in the login/refresh JSON body, so safety rests on every path choosing not to
+  persist it. Guard: `store/__tests__/sessionTokenNeverPersisted.test.ts` drives login → refresh →
+  checkAuth and `completeSetup` through the real `authStore` → `authService` → `authApi` (only the XHR
+  transport is faked), records every `localStorage`/`sessionStorage` write (including later-removed
+  ones) and fails on the literal token or any JWT-shaped key/value; its self-check proves the scanner
+  fires on a planted token. **Not covered**: IndexedDB, Cache Storage; long opaque hex/base64 tokens
+  that are not JWT-shaped and not the fixture token; storage written by code paths the test does
+  not exercise.
 
 ## CSV writer (formula-injection, CWE-1236)
 
