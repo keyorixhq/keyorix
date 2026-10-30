@@ -486,14 +486,9 @@ var rolePermGenerationDef = newPGTriggerDef(&pgTriggerDef{
 }, pgRolePermGenerationTriggerDefOK, pgRolePermGenerationFuncOK, systemMetadataWriteTargetSQL)
 
 // secretNodeCacheEpochDef is this release's secret_nodes cache-epoch
-// definition, versioned the same way.
-var secretNodeCacheEpochDef = newPGTriggerDef(&pgTriggerDef{
-	version:  1,
-	funcName: secretNodeCacheEpochFunc,
-	body:     postgresCacheEpochFuncBody,
-	triggers: []triggerSpec{{"secret_nodes", SecretNodeCacheEpochTrigger}},
-	tgtype:   19, // pgCacheEpochTriggerDefOK
-}, pgCacheEpochTriggerDefOK, pgCacheEpochFuncOK, "")
+// definition, versioned the same way (declared with its target, whose
+// invalidation is the one statement here that touches the table's rows).
+var secretNodeCacheEpochDef = secretNodeCacheEpochIntegrityTarget.def
 
 // newPGTriggerDef fills d's reading statement.
 func newPGTriggerDef(d *pgTriggerDef, triggerDefOK, funcOK, writeTargetSQL string) *pgTriggerDef {
@@ -570,7 +565,13 @@ var rolePermGenerationIntegrityTarget = &triggerIntegrityTarget{
 var secretNodeCacheEpochIntegrityTarget = &triggerIntegrityTarget{
 	what:  "secret_nodes cache-epoch",
 	cache: "secret metadata cache",
-	def:   secretNodeCacheEpochDef,
+	def: newPGTriggerDef(&pgTriggerDef{
+		version:  1,
+		funcName: secretNodeCacheEpochFunc,
+		body:     postgresCacheEpochFuncBody,
+		triggers: []triggerSpec{{"secret_nodes", SecretNodeCacheEpochTrigger}},
+		tgtype:   19, // pgCacheEpochTriggerDefOK
+	}, pgCacheEpochTriggerDefOK, pgCacheEpochFuncOK, ""),
 	// Every live row: a soft-deleted row never hits (readLiveNodeStamp), and
 	// undeleting it is an UPDATE the restored trigger stamps. A row an earlier
 	// batch already passed is stamped by that trigger when it changes again.
