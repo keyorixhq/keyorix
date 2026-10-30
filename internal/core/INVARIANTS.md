@@ -218,9 +218,12 @@ Format: `INV-CORE-NN <rule>. Why: <source>. Guard: <test> | UNGUARDED (#issue)`.
   `purge_test.go:TestPurgeExpiredSoftDeletes_CountsAndAudits`, `_NoAuditWhenNothingPurged`.
 - **INV-CORE-29** Each soft-deleted entity (users/projects/environments/secrets) is purged
   independently on its own `deleted_at`; no cascade logic lives in the purge job itself. Why:
-  ADR-032 "Decision". UNGUARDED (#issue: the four `Purge*Before` mock expectations in
-  `purge_test.go` imply but don't directly assert non-cascading independence — add a direct
-  test or a structural check).
+  ADR-032 "Decision". Guard: `purge_independence_test.go`
+  (`TestPurgeExpiredSoftDeletes_EntitiesPurgedIndependently`, `_EachEntityTypePurgedAlone`,
+  #2497) — runs `PurgeExpiredSoftDeletes` against real `LocalStorage` (SQLite) and asserts from
+  the table rows, in both directions, that an expired parent's live or in-window children
+  survive and expired children of a live or in-window parent are purged. The mock-based
+  `purge_test.go` only implies this.
 - **INV-CORE-30** `SecretNode.DeletedAt` soft-delete is respected by every raw/Table/Joins
   query touching `secret_nodes` — GORM auto-scopes model-based queries but not raw SQL. Why:
   ADR-033 (names six specific call sites). Guard:
