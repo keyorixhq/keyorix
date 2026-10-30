@@ -69,7 +69,11 @@ var iwaPromptRules = []string{
 }
 
 var (
-	iwaSecretPath = regexp.MustCompile(`(^|[/"'=:])(secrets/|keys/)|/run/secrets/|server\.key|\.age$|keyorix\.db|(master|admin|db)_password|bootstrap_token|metrics_token`)
+	// iwaSecretPath matches a word naming a secret file or a whole secret
+	// directory: secrets, keys and /run/secrets with or without a trailing slash
+	// or a file below them (so `cp -r secrets x` and `tar czf x secrets keys`
+	// count), and the known secret file names.
+	iwaSecretPath = regexp.MustCompile(`(^|[/"'=:])(secrets|keys)(/|$)|/run/secrets(/|$)|server\.key|\.age$|keyorix\.db|(master|admin|db)_password|bootstrap_token|metrics_token`)
 	iwaReaders    = []string{
 		"cat", "tac", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "rg", "ag", "awk", "sed",
 		"cut", "sort", "uniq", "xxd", "od", "hexdump", "base64", "base32", "strings", "cp", "scp", "rsync",
@@ -403,6 +407,10 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"bash -c \"cat secrets/master_password\"",
 		"dd if=secrets/master_password of=/dev/stdout",
 		"mv secrets/master_password ./leak",
+		// whole-directory reads: a bare secrets/keys directory name, /run/secrets
+		"cp -r secrets ./leak",
+		"tar czf leak.tgz secrets keys",
+		"docker compose cp backend:/run/secrets ./leak",
 		"sed -i.bak 's|^    # dsn: .*|    dsn: \"host=h user=u password=hunter2\"|' keyorix.yaml",
 		"sed -i.bak 's|^    # dsn: .*|    dsn: \"postgres://u:hunter2@h/db\"|' keyorix.yaml",
 		"keyorix login --server https://localhost:8080",
