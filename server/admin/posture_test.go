@@ -474,12 +474,10 @@ func TestCollectTLSPosture_TLSEnabledDisabledListenerSkipped(t *testing.T) {
 	collectTLSPosture(cfg, report)
 
 	assert.Empty(t, report.deviations)
-	// Nothing at all: a disabled listener contributes nothing, and an enabled
-	// listener WITH TLS has nothing to report either. (The tls_mode
-	// informational line this used to expect is behind a TODO(FIX-4) in
-	// collectTLSPosture -- the field is not in this PR's base chain. Restore
-	// the Len(informational, 1) assertion with it.)
-	assert.Empty(t, report.informational, "an enabled+TLS listener and a disabled listener both contribute nothing")
+	// A disabled listener contributes nothing; the enabled listener WITH TLS
+	// contributes only its informational tls_mode line.
+	require.Len(t, report.informational, 1)
+	assert.Contains(t, report.informational[0], "gRPC listener TLS mode")
 }
 
 // TestCollectAuditDurabilityPosture_DefaultPostgresIsNotADeviation: ADR-112
