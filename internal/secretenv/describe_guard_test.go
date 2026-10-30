@@ -64,8 +64,9 @@ type fileEnvRead struct {
 // "_FILE" or an identifier/selector named FileSuffix. Not recognised: a name
 // built any other way (fmt.Sprintf, a variable or another file's constant holding
 // "X_FILE"), and
-// os.Environ() scans; TestRelativeFileValueNeverEchoed (server, cli/cmd and
-// entrypoint runners) covers the variables behaviourally. Scope: every Go module
+// os.Environ() scans; the relative-echo tests (server's
+// TestRelativeFileValueNeverEchoed_InProcess, _ServerBinary and _Entrypoint, cli's
+// TestLookupSecretEnv_RelativeFileValueNeverEchoed) cover the variables behaviourally. Scope: every Go module
 // in the repository, non-test files, except vendor/, node_modules/ and testdata/.
 func TestSecretFileEnvReadsGoThroughSecretenv(t *testing.T) {
 	root := repoRoot(t)
