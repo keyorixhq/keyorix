@@ -206,6 +206,24 @@ Configuration is invalid: secret source misconfigured: both KEYORIX_MASTER_PASSW
 empty-but-set variable counts). **Fix.** Unset one. **In place:** yes. See
 [SELF_HOSTING.md](../SELF_HOSTING.md#3-configuration-env-and-secrets).
 
+### Secret-name policy pattern does not compile
+
+Real output (`secret_name_policy.enabled: true` with `pattern: "^(prod|dev"`, SQLite):
+
+```
+Invalid secret_name_policy: invalid secret name pattern: error parsing regexp: missing closing ): `^(?:^(prod|dev)$`
+```
+
+**Match:** `Invalid secret_name_policy`, `invalid secret name pattern`
+
+**Cause.** `secret_name_policy.pattern` is not a valid RE2 regular expression. The value is not
+checked while the file is read, so this is the one configuration refusal that comes **after**
+the start-up lines (storage opened, encryption initialised) instead of as `Configuration is
+invalid:`; nothing has been served yet. The pattern in the message is the one the server
+compiled, wrapped as `^(?:...)$`. **Fix.** Correct the pattern (RE2 syntax: no look-ahead or
+back-references), or set `secret_name_policy.enabled: false`, and restart. **In place:** yes.
+[CONFIGURATION.md](../CONFIGURATION.md).
+
 ---
 
 ## TLS
