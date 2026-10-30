@@ -93,7 +93,7 @@ func extractSetKeys(md string, tableKeys bool) []string {
 			keys = append(keys, k)
 		}
 	}
-	for _, line := range strings.Split(md, "\n") {
+	for line := range strings.SplitSeq(md, "\n") {
 		if m := readmeKeyR.FindStringSubmatch(line); tableKeys && m != nil && strings.Contains(m[1], ".") {
 			add(m[1])
 		}
@@ -112,7 +112,7 @@ func extractSetKeys(md string, tableKeys bool) []string {
 // (postgresql.settings.max_connections, resources.limits.cpu) and accepted.
 func chartValueKeyExists(values map[string]any, key string) bool {
 	var cur any = values
-	for _, seg := range strings.Split(indexRe.ReplaceAllString(key, ""), ".") {
+	for seg := range strings.SplitSeq(indexRe.ReplaceAllString(key, ""), ".") {
 		m, ok := cur.(map[string]any)
 		if !ok || len(m) == 0 {
 			return true
