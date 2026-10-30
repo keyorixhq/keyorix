@@ -3,6 +3,11 @@
 //
 // A second factor is removed by exactly two storage methods: DeleteMFAForUser
 // (TOTP secret and recovery codes) and DeleteWebAuthnCredential (one passkey).
+// It is switched off, rows kept, by the flag setters SetUserMFAEnabled(false) and
+// SetUserWebAuthnEnabled(false), or by clearing User.MFAEnabled /
+// User.WebAuthnEnabled on a row written back in full (UpdateUser) (#3801 b):
+// with the flag off the login never asks for the factor, so these are clearers
+// too.
 // Every caller must be a flow that proves who is asking or that two people
 // approved: the user's own re-authenticated disable / delete, the host-side
 // recover-admin, and the two-person MFA reset. A new call site that clears a
@@ -10,15 +15,26 @@
 // the password), so this guard allowlists the callers and fails on any other.
 //
 // What it recognises: any selector expression named DeleteMFAForUser or
-// DeleteWebAuthnCredential (a call, or a method value) in a non-test .go file
-// anywhere in the repository, keyed by file and enclosing top-level function. The
+// DeleteWebAuthnCredential (a call, or a method value); a call of a selector
+// named SetUserMFAEnabled or SetUserWebAuthnEnabled whose last argument is not
+// the identifier true (false, or any value the scan cannot prove is true), and a
+// method value of either (callee "SetUserMFAEnabled(false)"); and an assignment
+// to a selector named MFAEnabled or WebAuthnEnabled of anything but true (callee
+// "MFAEnabled=false"). All in non-test .go files anywhere in the repository,
+// keyed by file and enclosing top-level function. The
 // core method KeyorixCore.DeleteWebAuthnCredential and its HTTP handler share the
 // storage method's name and are listed as callers too, so a second route to the
 // self-service delete has to be named here as well.
 //
 // What it does not see: a call through reflection, a method value stored under
-// another name, or a raw SQL DELETE of mfa_secrets / mfa_recovery_codes /
-// webauthn_credentials. The storage layer's own definitions and the generated or
+// another name, a raw SQL DELETE of mfa_secrets / mfa_recovery_codes /
+// webauthn_credentials or UPDATE of users.mfa_enabled / webauthn_enabled (the
+// storage layer's own setter is one: internal/storage/store's
+// SetUserMFAEnabled writes the column through gorm's Update), a composite literal
+// that builds a user with MFAEnabled: false (every user creation does, so it is
+// not a clearer signal), and a row whose flag was read false and written back
+// over a concurrent enable (a stale full-row UpdateUser: no assignment to see).
+// The storage layer's own definitions and the generated or
 // delegating wrappers of the Storage interface (internal/faultstorage,
 // storagetest) forward every method by construction and are skipped by
 // directory.
@@ -45,7 +61,18 @@ import (
 	"github.com/keyorixhq/keyorix/internal/testutil/srcpath"
 )
 
-var secondFactorClearers = []string{"DeleteMFAForUser", "DeleteWebAuthnCredential"}
+var (
+	secondFactorClearers = []string{"DeleteMFAForUser", "DeleteWebAuthnCredential"}
+	// secondFactorFlagSetters clear a factor when called with anything but true.
+	secondFactorFlagSetters = []string{"SetUserMFAEnabled", "SetUserWebAuthnEnabled"}
+	// secondFactorFlagFields clear a factor when assigned anything but true.
+	secondFactorFlagFields = []string{"MFAEnabled", "WebAuthnEnabled"}
+)
+
+func isIdentTrue(e ast.Expr) bool {
+	id, ok := e.(*ast.Ident)
+	return ok && id.Name == "true"
+}
 
 // The walk does not enter a directory with one of these names anywhere in the
 // tree, nor one of these repo-relative paths. web/ holds no Go; tmp/ is a session
@@ -66,6 +93,13 @@ var allowedSecondFactorClearerSites = map[string]string{
 	"internal/core/mfa_reset_effect.go:ResetMFACredentialsInTx|DeleteWebAuthnCredential":             "same reset, WebAuthn half",
 	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|DeleteMFAForUser":                "host-side recover-admin (recovery key, server stopped)",
 	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|DeleteWebAuthnCredential":        "same recover-admin, WebAuthn half",
+	// #3801 (b): the flag setters with false.
+	"internal/core/mfa.go:KeyorixCore.DisableMFA|SetUserMFAEnabled(false)":                         "self-service disable, the flag half of the DeleteMFAForUser entry above",
+	"internal/core/webauthn.go:KeyorixCore.DeleteWebAuthnCredential|SetUserWebAuthnEnabled(false)": "self-service passkey delete: the flag goes off with the user's last passkey",
+	"internal/core/mfa_reset_effect.go:ResetMFACredentialsInTx|SetUserMFAEnabled(false)":           "the shared full credential reset, TOTP flag",
+	"internal/core/mfa_reset_effect.go:ResetMFACredentialsInTx|SetUserWebAuthnEnabled(false)":      "the shared full credential reset, WebAuthn flag",
+	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|SetUserMFAEnabled(false)":      "host-side recover-admin, TOTP flag",
+	"server/admin/recover_admin_logic.go:performRecoverAdminWithTTL|SetUserWebAuthnEnabled(false)": "host-side recover-admin, WebAuthn flag",
 }
 
 func secondFactorFuncKey(fd *ast.FuncDecl) string {
@@ -116,9 +150,36 @@ func scanSecondFactorClearers(t testing.TB, root string, skipNames, skipPaths []
 			if !ok || fd.Body == nil {
 				continue
 			}
+			site := rel + ":" + secondFactorFuncKey(fd) + "|"
+			// Setter selectors that are the callee of a call are judged by their
+			// argument there; any other use of one is a method value.
+			called := map[*ast.SelectorExpr]bool{}
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				if sel, ok := n.(*ast.SelectorExpr); ok && slices.Contains(secondFactorClearers, sel.Sel.Name) {
-					seen[rel+":"+secondFactorFuncKey(fd)+"|"+sel.Sel.Name] = true
+				switch n := n.(type) {
+				case *ast.CallExpr:
+					if sel, ok := n.Fun.(*ast.SelectorExpr); ok && slices.Contains(secondFactorFlagSetters, sel.Sel.Name) {
+						called[sel] = true
+						if len(n.Args) == 0 || !isIdentTrue(n.Args[len(n.Args)-1]) {
+							seen[site+sel.Sel.Name+"(false)"] = true
+						}
+					}
+				case *ast.SelectorExpr:
+					if slices.Contains(secondFactorClearers, n.Sel.Name) {
+						seen[site+n.Sel.Name] = true
+					}
+					if slices.Contains(secondFactorFlagSetters, n.Sel.Name) && !called[n] {
+						seen[site+n.Sel.Name+"(false)"] = true
+					}
+				case *ast.AssignStmt:
+					for i, lhs := range n.Lhs {
+						sel, ok := lhs.(*ast.SelectorExpr)
+						if !ok || !slices.Contains(secondFactorFlagFields, sel.Sel.Name) {
+							continue
+						}
+						if len(n.Rhs) != len(n.Lhs) || !isIdentTrue(n.Rhs[i]) {
+							seen[site+sel.Sel.Name+"=false"] = true
+						}
+					}
 				}
 				return true
 			})
@@ -173,6 +234,10 @@ func TestSecondFactorClearerGuard_RejectsAnUnlistedCallSite(t *testing.T) {
 		"clearer.go:BackdoorStore.WipeFactors|DeleteMFAForUser",
 		"clearer.go:BackdoorStore.WipeFactors|DeleteWebAuthnCredential",
 		"clearer.go:quietReset|DeleteMFAForUser",
+		"flags.go:flagFromInput|SetUserMFAEnabled(false)",
+		"flags.go:flagsOff|SetUserMFAEnabled(false)",
+		"flags.go:flagsOff|SetUserWebAuthnEnabled(false)",
+		"flags.go:fullRowClear|MFAEnabled=false",
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("guard did not reject the fixture's unlisted call sites:\n got  %q\n want %q", got, want)
