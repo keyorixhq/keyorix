@@ -241,7 +241,8 @@ the TOTP secret and the recovery codes, and asks for the password.
 > - `mfa enroll` prints an `otpauth://` URI and a base32 secret: add it to your
 >   authenticator app.
 > - `mfa activate` asks for a code from the app; it reads the account password
->   from the file.
+>   from the file (v0.96.4 and later, or a source build; older CLIs, including the
+>   v0.96.3 release, ask for the password at a prompt instead).
 > - Move the password in `secrets/admin_password` into your password manager
 >   (open the file yourself), and save the recovery codes `mfa activate` prints,
 >   offline.
@@ -407,11 +408,14 @@ sed -i.bak 's/^KEYORIX_ADMIN_EMAIL=.*/KEYORIX_ADMIN_EMAIL=ADMIN_EMAIL/' .env
 It prints `created` (or `kept`) and a path for each file, never a value. On v0.96.3
 it prints a `sudo chown` line only when the user's own uid is 1001 (the server
 container's uid, which would refuse files that uid owns); newer releases always end with a `sudo chown root:<gid>
-secrets/*` command with the user's group id filled in.
+secrets/*` command with the user's group id filled in. In the uid 1001 case on v0.96.3
+the script also prints `ERROR` and exits non-zero: that exit is expected, not a failure
+to stop on. Go on to C4, then run C3 again once the user says "done".
 
 **C4. HUMAN STEP, only if C3 printed a `sudo chown` line: hand the secret files to
 root.** Show the user the exact `sudo chown` line C3 printed and wait for "done". The
-user runs it in their own terminal (it needs their sudo password). If C3 printed no
+user runs it in their own terminal (it needs their sudo password). If C3 exited with
+the uid 1001 error, run C3 again after "done"; it must now exit 0. If C3 printed no
 such line, skip C4.
 
 **C5. Start the stack.**
@@ -518,7 +522,8 @@ binaries come in as described in
    `(umask 077; cat > ~/keyorix/secrets/db_password)` (paste the password, Enter,
    Ctrl-D), then the same `setup` command with
    `--postgres-dsn "host=... port=... user=... dbname=... sslmode=verify-full sslrootcert=..."`
-   (no password in the DSN).
+   (no password in the DSN). This needs a binary with `admin init --storage-type`
+   (after v0.96.3): with v0.96.3 or older the script stops at its init step.
 3. Do the operator step the script prints (sign in, enrol MFA), in your own terminal.
 4. `sh offline-install.sh finish`. If it prints a second operator step (the recovery
    key), do it and run `finish` again as printed. `finish` ends with the posture check:

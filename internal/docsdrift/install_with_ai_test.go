@@ -42,10 +42,15 @@ import (
 //     admin` lines with `admin validate --posture`.
 //   - prompt: the text block under "## The prompt" still states the rules.
 //
+// A script given to `sh|bash|zsh|dash -c` (also through docker compose exec) is
+// read like the rest of the line (iwaShellCScript).
+//
 // What it does not check: prose that is not in a code span, fences whose info
-// string is not a shell (the prompt is ```text), whether a reader not in
-// iwaReaders can read a file, and whether the steps work (the transcript test in
-// the page's maintainer notes, pending the e2e VM).
+// string is not a shell (the prompt is ```text) or that use ~~~ instead of
+// backticks, the keyorix CLI credential file (~/.config/keyorix/credentials.json,
+// not in iwaSecretPath), whether a reader not in iwaReaders can read a file, and
+// whether the steps work (the transcript test in the page's maintainer notes,
+// pending the e2e VM).
 
 const iwaDoc = "INSTALL-WITH-AI.md"
 
@@ -164,8 +169,8 @@ func iwaWords(line string) []string {
 			if j < 0 {
 				j = len(line) - i - 1
 			}
-			if quoted := line[i+1 : i+1+j]; c == '"' && strings.Contains(quoted, "$(") {
-				flush() // "$(cat x)" runs a command: split it like unquoted text
+			if quoted := line[i+1 : i+1+j]; (c == '"' && strings.Contains(quoted, "$(")) || (!has && iwaShellCScript(words)) {
+				flush() // "$(cat x)" and `sh -c '...'` run a command: split it like unquoted text
 				words = append(words, iwaWords(quoted)...)
 			} else {
 				cur.WriteString(quoted)
@@ -192,6 +197,28 @@ func iwaWords(line string) []string {
 	}
 	flush()
 	return words
+}
+
+// iwaShells are the shells whose -c argument is a script iwaWords must read.
+var iwaShells = []string{"sh", "bash", "zsh", "dash"}
+
+// iwaShellCScript reports whether the next word, if quoted, is the script of a
+// shell run with -c (or -lc, -ec, ...): the last word is such an option and a shell
+// is named earlier on the line, as in `docker compose exec backend sh -c '...'`.
+func iwaShellCScript(words []string) bool {
+	if len(words) < 2 {
+		return false
+	}
+	opt := words[len(words)-1]
+	if len(opt) < 2 || opt[0] != '-' || opt[1] == '-' || !strings.HasSuffix(opt, "c") {
+		return false
+	}
+	for _, w := range words[:len(words)-1] {
+		if slices.Contains(iwaShells, path.Base(w)) {
+			return true
+		}
+	}
+	return false
 }
 
 // iwaCommands splits words into simple commands at | || && ; & ( ) and $( .
@@ -372,6 +399,8 @@ func TestInstallWithAISecretBlindCatchesPlantedErrors(t *testing.T) {
 		"printenv",
 		"docker compose exec backend printenv",
 		"docker compose exec backend env",
+		"docker compose exec backend sh -c 'cat /run/secrets/master_password'",
+		"bash -c \"cat secrets/master_password\"",
 		"dd if=secrets/master_password of=/dev/stdout",
 		"mv secrets/master_password ./leak",
 		"sed -i.bak 's|^    # dsn: .*|    dsn: \"host=h user=u password=hunter2\"|' keyorix.yaml",

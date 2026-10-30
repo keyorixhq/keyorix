@@ -168,6 +168,7 @@ In a terminal of your own on this host:
   ./bin/keyorix login --server https://localhost:$(port) --username admin < secrets/admin_password
   ./bin/keyorix mfa enroll        # add the printed secret to your authenticator app
   KEYORIX_PASSWORD_FILE=secrets/admin_password ./bin/keyorix mfa activate   # asks for a code from the app
+  (a CLI older than v0.96.4 ignores KEYORIX_PASSWORD_FILE and asks for the password at a prompt)
 
 Move secrets/admin_password into your password manager, save the recovery codes
 'mfa activate' prints, then delete the file (shred -u, or rm -P on macOS).
