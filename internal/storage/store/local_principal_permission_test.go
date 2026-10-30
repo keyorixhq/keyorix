@@ -18,8 +18,8 @@ import (
 	"testing"
 	"time"
 
+	sqlite "github.com/keyorixhq/keyorix/internal/storage/sqlitedialect"
 	"github.com/stretchr/testify/require"
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 
@@ -38,13 +38,23 @@ var principalPermModels = []any{
 // newPrincipalPermStorage returns a caching LocalStorage on backend and a
 // function opening another, independent LocalStorage (own pool, own cache) on
 // the same database.
+//
+// The sqlite leg runs on the production dialect (sqlitedialect, modernc).
 func newPrincipalPermStorage(t *testing.T, backend string) (*LocalStorage, func() *LocalStorage) {
+	t.Helper()
+	return newPrincipalPermStorageOn(t, backend, sqlite.Open)
+}
+
+// newPrincipalPermStorageOn is newPrincipalPermStorage with the sqlite dialector
+// chosen by the caller. Only a test that must keep the other SQLite driver, with
+// the reason on the sqlitefidelity allowlist, passes anything but sqlite.Open.
+func newPrincipalPermStorageOn(t *testing.T, backend string, sqliteOpen func(dsn string) gorm.Dialector) (*LocalStorage, func() *LocalStorage) {
 	t.Helper()
 	var open func() *gorm.DB
 	if backend == "sqlite" {
 		path := filepath.Join(t.TempDir(), "pp.db")
 		open = func() *gorm.DB {
-			db, err := gorm.Open(sqlite.Open("file:"+path+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL"), &gorm.Config{Logger: logger.Discard})
+			db, err := gorm.Open(sqliteOpen("file:"+path+"?_foreign_keys=1&_busy_timeout=10000&_journal_mode=WAL"), &gorm.Config{Logger: logger.Discard})
 			require.NoError(t, err)
 			t.Cleanup(func() {
 				if sqlDB, err := db.DB(); err == nil {
