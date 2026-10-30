@@ -1,0 +1,1 @@
+TestEveryDocumentedChartSetKeyExistsInValues	internal/docsdrift	#3842	new repo-wide guard (HELM-PILOT-TAILS-2), report-only until its first green nightly on main
