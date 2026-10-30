@@ -3,6 +3,7 @@
 Status: R&D design, ADR-120 **Proposed**. Nothing here is implemented. The prototype and
 the SMT model were throwaway and are not in the repo. This note records what they
 checked and how to rebuild them.
+SMT parts A-C were rebuilt against the published -02 in [`docs/formal/rd-aat-smt/`](formal/rd-aat-smt/README.md) (RD-AAT-SMT-RERUN-1, 2026-10-30); parts D-F and the prototype were not.
 
 ## 1. What it is for
 
@@ -144,6 +145,7 @@ any one of the five key rules is sat (each rule is load-bearing).
 > Part B (`∀j ∃i`) is unaffected: it is already the published `any` rule, which now
 > states explicitly that splitting a parent clause is valid and that union coverage
 > by several parent clauses is not.
+> **Re-run 2026-10-30 (RD-AAT-SMT-RERUN-1, [`docs/formal/rd-aat-smt/`](formal/rd-aat-smt/README.md)):** with `"*"` carved out the key rules re-prove sound and it is still five load-bearing rules (each removal gives a widening); part B re-proves unchanged.
 
 **D. Chain bounds.** Eight links unrolled with I2/I3 per link: the leaf never outlives
 the root and depth never passes the root's `del_max_depth`. Dropping
@@ -199,6 +201,7 @@ that refuses to sign a widening child with the same reason, and a demo.
   suite at the pinned commit (`de8cc33`) against current `main`: the 224 above are
   byte-identical, none changed or removed, so the result stands for them. Five were
   added and have never been run:
+  *Correction, 2026-10-30:* not byte-identical. Every field a verifier reads is unchanged, but the descriptions of `J.15.3` and `J.21.6` were reworded, and the suite's trust-anchor set grew from one anchor to two (`control_plane2`, `https://auth.example.org`), so the 224/224 result holds for the one-anchor suite and must be re-run against the two-anchor one.
 
   | Vector | Expect | What it pins |
   | --- | --- | --- |
