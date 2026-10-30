@@ -495,8 +495,9 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 			// sweep below reach a stale negative PAT entry too, not just session ones.
 			// Same savepoint + retry + report as the session listing (AUTHZ-ORACLE-1):
 			// the error used to be discarded, so a failed listing evicted no PAT entry
-			// and reported nothing; now it joins ev.ListErr and the post-commit step
-			// evicts every cache entry of the user, logs and audits.
+			// and reported nothing; now it is carried in ev.PATListErr (its own wording,
+			// apart from the session listing) and the post-commit step evicts every
+			// cache entry of the user, logs and audits.
 			var (
 				pats []*models.PersonalAccessToken
 				perr error
@@ -511,7 +512,7 @@ func (c *KeyorixCore) setAccountStateInTx(ctx context.Context, tx storage.Storag
 				}
 			}
 			if perr != nil {
-				ev.ListErr = errors.Join(ev.ListErr, fmt.Errorf("list personal access tokens: %w", perr))
+				ev.PATListErr = perr
 			} else {
 				ev.Hashes = append(ev.Hashes, activePATHashes(pats)...)
 			}
