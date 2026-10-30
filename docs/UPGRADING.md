@@ -744,10 +744,13 @@ hygiene reports work in days. Details: [`specs/last-used-coalescing.md`](specs/l
 
 The recover-admin alert (`admin.recover_admin` use is always notified to your
 notification channels) now remembers how far through the audit table it has looked,
-instead of re-reading the whole table every 10 minutes. On an install that has no
-such mark yet, which is every install the first time it runs this version, the first
-pass has nothing to resume from and **reads the audit table from its first row to
-its last, once**. On a large audit table this takes a while.
+instead of re-reading the whole table every 10 minutes. The first pass resumes from
+the stored mark when there is one. An install that has never used recover-admin has no
+mark yet (the previous job moved it only when an event matched), so its first pass has
+nothing to resume from and **reads the audit table from its first row to its last,
+once**. On a large audit table this takes a while. An install that has used recover-admin
+before already has a mark at its last alerted id, so its first pass reads only the audit
+rows added since then.
 
 What bounds it, from the code (`internal/core/recover_admin_alert.go`):
 
