@@ -1250,6 +1250,141 @@ target. **In place:** no. [drill-backup-restore.md](drill-backup-restore.md).
 | `already exists -- refusing to overwrite` | the `--output` file of `admin recovery-key rotate` already exists; choose another path or remove the old file deliberately |
 | `could not be checked because the config file failed to load` | `admin verify-audit` without `--anchor` could not read the config to see whether `audit.offline_anchor_path` is set, so it will not silently verify without it; pass `--anchor` or fix the config load error shown after it |
 
+### Interrupted restore: recovery refuses
+
+`admin restore --recover` finishes or undoes a restore that stopped between staging and
+completion (see [Interrupted restore](#interrupted-restore--from-code) and
+[restore-failure-modes.md](restore-failure-modes.md), which owns the procedure). It checks
+the journal before it renames anything, and refuses when it cannot vouch for what the journal
+says. Each refusal changes nothing, keeps the journal, and so keeps the server refusing to
+start.
+
+How the blocks below were made: a restore cannot be stopped at that step from the command
+line, so the journal was written by hand (JSON, in the format `internal/restorejournal`
+reads) beside a staged copy of `keys/dek.key` on a SQLite install, and then altered one way
+per block. The text is printed by the real `keyorix-server admin restore --recover`;
+the state it reacts to is a reproduction of what a killed restore leaves, not a killed
+restore. Absolute paths are shown as `<datadir>`.
+
+A staged file whose content is not what the restore staged (real output; the staged copy
+overwritten with other bytes):
+
+```
+Found the journal of an interrupted restore (sqlite backend, started 20261030T184100): <datadir>/.keyorix-restore-journal.json
+Error: staged file "<datadir>/keys/dek.key.restoring-abc123" does not have the content the restore staged for "<datadir>/keys/dek.key" (SHA-256 bbc9c50e35b796df9a30bc9734819e2386ba83321a887f9d0c48e59dec3ba185, journal records b9ff44ba74f02a231f9a0e8a30f33b9fb2a3d3d225db1e48f935e2c1b8759a4e): recovery refuses to install it -- recovery refuses to roll forward and changed nothing; the journal <datadir>/.keyorix-restore-journal.json is kept and the server keeps refusing to start. See docs/operator/restore-failure-modes.md ("Recovery refuses")
+```
+
+A staged file that is gone while the live file is not the restored one reads
+`staged file "..." is missing and "..." is not the restored file (a crash lost the staged copy before it was installed): recovery refuses to install it -- ...` (from code, same ending).
+
+A journal that names a file which is not one of this config's key files or database (real
+output; the entry's `path` changed to `certs/server.key`):
+
+```
+Found the journal of an interrupted restore (sqlite backend, started 20261030T184100): <datadir>/.keyorix-restore-journal.json
+Error: restore journal names "<datadir>/certs/server.key", which is not one of this config's key files or database (relative paths resolve against the working directory: run --recover from the directory the restore ran in) -- recovery refuses to act on it; inspect the journal
+```
+
+A journal that does not parse (real output; the file cut off after the opening of `entries`):
+
+```
+Error: restore journal "<datadir>/.keyorix-restore-journal.json" does not parse: unexpected end of JSON input -- recovery refuses to guess; inspect the file
+```
+
+An install that fails after the data is committed, here because a key file already exists
+beside a journal written for a restore without `--overwrite-existing` (real output):
+
+```
+Found the journal of an interrupted restore (sqlite backend, started 20261030T184100): <datadir>/.keyorix-restore-journal.json
+Error: install "<datadir>/keys/dek.key": "<datadir>/keys/dek.key" was created concurrently during restore and is not empty -- refusing to overwrite it -- the restored data is committed but not every key file is installed; the journal <datadir>/.keyorix-restore-journal.json is kept and the server refuses to start until `keyorix-server admin restore --recover` completes the restore
+```
+
+**Match:** `recovery refuses to roll forward and changed nothing`, `recovery refuses to install it`, `recovery refuses to act on it`, `recovery refuses to guess`, `the restored data is committed but not every key file is installed`, `was created concurrently during restore and is not empty -- refusing to overwrite it`
+
+The same family, not run (each needs a failure or a race that the command line cannot
+produce on demand):
+
+| Match | What it means |
+|---|---|
+| `the restore is complete, but its journal could not be removed` | the restore finished and only deleting the journal failed (the error in parentheses says why). The server refuses to start while the journal exists; run `keyorix-server admin restore --recover`, which finishes the remaining steps (it writes the restore's audit events a second time, see [restore-failure-modes.md](restore-failure-modes.md#the-order)) and removes it |
+| `the restored data is committed, but encrypting the notification channel URLs it carried failed` | an older archive carried plaintext notification-channel URLs and encrypting them failed (the error in parentheses says why). The journal is kept so `--recover` runs that step again; fix the cause, then run `--recover` |
+| `was created concurrently during restore -- refusing to overwrite it` | a file appeared at a key-file path between the check and the install (the empty-file form of the message above); nothing was overwritten. Find what created it, then run `--recover` or restore again |
+| `still has a non-empty WAL after closing` | committed pages of the staged SQLite database still sit in its `-wal` file, which the install does not carry over, so the restore stops before installing it; the live database and key files were not touched. Re-run the restore |
+
+**Cause.** The journal lists the files a restore had staged and the content hash of each.
+Recovery refuses to rename a staged file over a live key file when the staged file is gone or
+changed (a directory entry lost to power loss, a hand-edited file, a planted one), when the
+journal points outside this config's key files and database, or when it cannot be read at all:
+rolling forward would pair the restored data with key files from another point in time, which
+makes secrets unreadable or encrypts new ones under the wrong key, and recovery never guesses.
+An install that fails after the data was committed (a file in the way, a read-only directory,
+a full disk) stops with the journal kept so the same command can be run again.
+**Fix.** Stop every server on this data. Read the named file and the journal; do **not** delete
+the journal and start the server on the files as they are. For an unvouched staged file, keep
+the journal and every `*.restoring-*` and `*.pre-restore-*` file for inspection (move them out
+of the data directory), then restore the archive again with `--overwrite-existing`. For an
+install failure, remove its cause and run `admin restore --recover` again with the same config
+and working directory. **In place:** no, stop first.
+[restore-failure-modes.md](restore-failure-modes.md#recovery-refuses-a-staged-file-it-cannot-vouch-for),
+[`--recover`](restore-failure-modes.md#admin-restore---recover),
+[where the journal is](restore-failure-modes.md#where-the-journal-is-and-who-checks-it).
+
+### Restore: backup older than an accepted audit loss
+
+Real output (an `admin backup` taken before the loss, then `admin restore --input old.kxb
+--overwrite-existing`; the host's witness file was written by hand to the layout an accepted
+loss leaves, one seal, because running a real `admin audit accept-loss` needs a broken chain):
+
+```
+Error: refusing to restore: this backup was taken before audit loss acceptance #1 recorded on this host (the archive's audit trail is under 0 seal(s), this host's under 1) -- restoring it would bring back the state that acceptance replaced and un-revoke access revoked since. Pass --allow-rollback if this is a genuine disaster-recovery restore of an intentionally older backup
+```
+
+**Match:** `this backup was taken before audit loss acceptance`
+
+**Cause.** `admin audit accept-loss` seals a chain break and the host remembers the number of
+seals it has accepted. An archive written under fewer seals predates that acceptance: restoring
+it would bring back the state the acceptance replaced, including access revoked since, so it is
+refused like the older-than-this-host case above. It is refused whatever the event counts say,
+because an accepted loss lowers the count. **Fix.** Restore a backup taken after the
+acceptance. For a real disaster recovery onto this host, `--allow-rollback` records the
+override in the audit trail; re-check who has access afterwards. **In place:** no.
+[audit-chain-break-runbook.md](audit-chain-break-runbook.md#7-containment-and-the-re-anchor-question),
+[drill-backup-restore.md](drill-backup-restore.md).
+
+### Restore: manifest high-water value does not parse — from code
+
+```
+backup archive's manifest carries an audit high-water value that does not parse -- the manifest may be corrupted or tampered with; restore refuses rather than treat this as if the archive had no recorded history
+```
+
+**Match:** `carries an audit high-water value that does not parse`
+
+Not run: the archive's manifest is signed, so an altered value normally fails the signature
+check first; this message was not reached with a real archive.
+**Cause.** The rollback-protection value in the archive manifest is present but unreadable.
+**Fix.** Use another copy of the archive or an earlier backup; do not edit the manifest. The
+restore stopped before it wrote anything. **In place:** yes (nothing was changed).
+[drill-backup-restore.md](drill-backup-restore.md).
+
+### `accept-loss` while a server or another admin command runs
+
+Real output (a server running on the SQLite database, `admin audit accept-loss --force ...`):
+
+```
+WARNING: could not acquire this database's exclusive lock (another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock) — proceeding anyway because --force was given. A live server or another admin command may be concurrently using this database; this command is not protected against that race.
+Error: accept-loss runs only under the exclusive database lock (stop the server and every other admin command); --force is refused: another process holds this database (a live server, or another admin command) via <datadir>/keyorix.db.server.lock
+```
+
+**Match:** `accept-loss runs only under the exclusive database lock`
+
+**Cause.** Sealing an audit loss writes the seal record, an audit event, a new checkpoint and
+the high-water mark, which must not race another writer. Unlike other admin commands,
+`accept-loss` does not let `--force` past the lock; the WARNING line above is the shared lock
+step, and the refusal follows it. **Fix.** Stop the server and every other admin command on this database
+(every replica, on every host), then run it again without `--force`. It prints what it would
+accept and writes nothing without `--confirm`. **In place:** stop first.
+[audit-chain-break-runbook.md](audit-chain-break-runbook.md#7-containment-and-the-re-anchor-question).
+
 ### Rotation commands — from code
 
 | Match | What it means |
