@@ -475,13 +475,11 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 		if !inst.Enabled {
 			return
 		}
-		// TODO(FIX-4): report inst.TLSMode here (informational only -- ADR-112's
-		// recorded decision keeps TLS 1.2 compliant, so neither mode is a
-		// deviation by itself). The field arrived on main with the tls_mode:
-		// strict PR, which is NOT in this PR's base chain
-		// (#2446 -> #2454 -> #2462), so referencing it here would not compile.
-		// Re-add in one line once this stack is rebased onto a main that has it.
 		if inst.TLS.Enabled {
+			// Informational only: ADR-112 keeps TLS 1.2 compliant, so neither mode
+			// is a deviation. Reported only while this listener terminates TLS
+			// itself -- tls_mode has no effect on a cleartext listener.
+			report.info(tlsModeLine(name, inst.TLSMode))
 			return
 		}
 		if cfg.Security.RequireTransportTLS {
@@ -492,6 +490,16 @@ func collectTLSPosture(cfg *config.Config, report *postureReport) {
 	}
 	check("HTTP", cfg.Server.HTTP)
 	check("gRPC", cfg.Server.GRPC)
+}
+
+// tlsModeLine words the informational tls_mode line for one TLS-terminating
+// listener. mode is server.http/grpc.tls_mode, already validated by config
+// Validate(): empty (the default) or config.TLSModeStrict.
+func tlsModeLine(name, mode string) string {
+	if mode == config.TLSModeStrict {
+		return fmt.Sprintf("%s listener TLS mode: strict (TLS 1.3 only)", name)
+	}
+	return fmt.Sprintf("%s listener TLS mode: default (TLS 1.2 floor, forward-secret AEAD suites; ADR-112 keeps this compliant, set tls_mode: strict for TLS 1.3 only)", name)
 }
 
 // collectDatabaseTLSPosture reports how the PostgreSQL connection is

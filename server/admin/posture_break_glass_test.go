@@ -1,7 +1,7 @@
 package admin
 
 // Tests for collectBreakGlassReviewPosture (the two findings Andrei decided on
-// #2461). The
+// #2461) and the tls_mode informational line in collectTLSPosture. The
 // break-glass tests run on SQLite always and on PostgreSQL when
 // KEYORIX_TEST_PG_DSN is set (pgAdminTestDSN skips otherwise).
 
@@ -244,4 +244,29 @@ func TestCollectBreakGlassReviewPosture_QueryErrorIsADeviation(t *testing.T) {
 		assert.Contains(t, findings[1].detail, "independent review impossible")
 		return nil
 	}))
+}
+
+func TestCollectTLSPosture_ReportsTLSModeInformationally(t *testing.T) {
+	cases := []struct {
+		mode string
+		want string
+	}{
+		{"", "HTTP listener TLS mode: default (TLS 1.2 floor"},
+		{config.TLSModeStrict, "HTTP listener TLS mode: strict (TLS 1.3 only)"},
+	}
+	for _, tc := range cases {
+		t.Run("mode="+tc.mode, func(t *testing.T) {
+			cfg := &config.Config{}
+			cfg.Server.HTTP.Enabled = true
+			cfg.Server.HTTP.TLS.Enabled = true
+			cfg.Server.HTTP.TLSMode = tc.mode
+
+			report := &postureReport{}
+			collectTLSPosture(cfg, report)
+
+			assert.Empty(t, report.deviations, "neither TLS mode is a deviation (ADR-112)")
+			require.Len(t, report.informational, 1)
+			assert.Contains(t, report.informational[0], tc.want)
+		})
+	}
 }
